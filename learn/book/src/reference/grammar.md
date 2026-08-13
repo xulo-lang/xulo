@@ -1,3 +1,8 @@
+# 形式语法（EBNF）
+
+> 形式语法正本见仓库 `docs/xulo-ebnf.md`。本节为与当前实现对齐的修订版，差异见文末清单。
+
+```text
 (* Xulo Language Grammar v1.0 *)
 
 (* ============================================================
@@ -34,7 +39,6 @@ letter              = "A" | "B" | ... | "Z" | "a" | "b" | ... | "z" ;
 uppercase_letter    = "A" | "B" | ... | "Z" ;
 digit               = "0" | "1" | ... | "9" ;
 
-
 (* ============================================================
    3. Types
    ============================================================ *)
@@ -64,7 +68,6 @@ field_def           = identifier ":" type_expr ;
 
 param_type_list     = type_expr { "," type_expr } ;
 
-
 (* ============================================================
    4. Type Definitions (type alias, enum)
    ============================================================ *)
@@ -77,14 +80,12 @@ enum_member         = identifier [ "(" [ identifier ":" ] type_expr ")" ] ;
 type_params         = "<" type_param { "," type_param } ">" ;
 type_param          = identifier ;
 
-
 (* ============================================================
    5. Variables
    ============================================================ *)
 
 const_stmt          = "const" identifier [ ":" type_expr ] "=" expr ;
 let_stmt            = "let" identifier [ ":" type_expr ] [ "=" expr ] ;
-
 
 (* ============================================================
    6. Functions
@@ -96,7 +97,6 @@ param_list          = param_def { "," param_def } [ "," ] ;
 param_def           = identifier ":" type_expr [ "=" expr ] ;  (* default value *)
 
 block               = "{" { stmt } "}" ;
-
 
 (* ============================================================
    7. Statements
@@ -120,7 +120,6 @@ stmt                = const_stmt
 
 expr_stmt           = expr [ ";" ] ;
 
-
 (* ============================================================
    8. Control Flow
    ============================================================ *)
@@ -137,7 +136,6 @@ try_stmt            = "try" block "catch" "(" identifier ")" block ;
 
 throw_stmt          = "throw" expr ;
 
-
 (* ============================================================
    9. State / Store / Effect (UI-only contexts)
    ============================================================ *)
@@ -149,7 +147,6 @@ effect_stmt         = "@Effect" fn_expr [ "," "[" [ expr_list ] "]" ] ;
 binding_pattern     = identifier
                     | "{" [ binding_field { "," binding_field } [ "," ] ] "}" ;
 binding_field       = identifier [ ":" identifier ] ;
-
 
 (* ============================================================
    10. Expressions
@@ -207,7 +204,6 @@ match_pattern       = "_"
                     | boolean_literal
                     | type_identifier "::" identifier [ "(" identifier ")" ] ; (* enum [payload] *)
 
-
 (* ============================================================
    11. Call Arguments & Field Initializers
    ============================================================ *)
@@ -220,7 +216,6 @@ field_init          = identifier ":" expr
                     | "..." expr                     (* spread *)
                     ;
 
-
 (* ============================================================
    12. Lists & Expressions Lists
    ============================================================ *)
@@ -229,7 +224,6 @@ expr_list           = element_expr { "," element_expr } [ "," ] ;
 element_expr        = expr
                     | "..." expr                     (* spread a list *)
                     ;
-
 
 (* ============================================================
    13. UI Component Block (syntax sugar for children)
@@ -247,14 +241,9 @@ ui_element          = component_stmt
                     | "{" { ui_element } "}"
                     ;
 
-(* NOTE: state_stmt / store_stmt / effect_stmt are intentionally NOT allowed inside
-   a UI block. They may only appear at the top level of a function returning
-   `Component` (see the language reference, "变量与状态"). *)
-
 text_literal_expr   = string_literal ;   (* naked string literal in UI block *)
 
 component_call      = identifier [ type_args ] [ "(" [ arg_list ] ")" ] ;
-
 
 (* ============================================================
    14. Import / Export (Module System)
@@ -263,9 +252,6 @@ component_call      = identifier [ type_args ] [ "(" [ arg_list ] ")" ] ;
 import_stmt         = "import" [ "type" ] import_spec [ "from" string_literal ]  (* "import type" is erased at runtime *)
                     | "import" [ "type" ] string_literal
                     ;
-
-(* NOTE: the form `import type * as identifier` (without `from`) is a draft
-   artifact and is not supported by the current implementation. *)
 
 import_spec         = identifier
                     | "*" "as" identifier
@@ -288,3 +274,20 @@ export_name_list    = identifier { "," identifier } [ "," ] ;
    ============================================================ *)
 
 source_file         = { ( import_stmt | export_stmt | type_def | enum_def | fn_def | const_stmt | let_stmt ) } ;
+```
+
+## 与规范源的差异
+
+本修订版相对 `docs/xulo-ebnf.md` 的改动：
+
+1. `ui_element` 移除了 `state_stmt` / `store_stmt` / `effect_stmt` —— 装饰器只能在返回 `Component` 的函数顶层使用（见 [变量与状态](variables-and-state.md)），不能嵌套在 UI 块内。
+2. `import_stmt` 移除了 `"import" "type" "*" "as" identifier`（无 `from`）的草案形式。
+
+## 实现与语法的已知差异
+
+| 语法 | 实现 | 说明 |
+|------|------|------|
+| `@Environment` 语句 | 支持 | 语法未列（缺漏）；写法 `@Environment let name: Type` |
+| `$name` 绑定实参 | 支持 | `arg` 未列 binding 形式（缺漏）；用于 `@State`/`@Store` 变量 |
+| 相等 / 比较优先级 | 合并为一层 | 实现把 `== !=` 与 `< > <= >=` 合并在同一左结合层 |
+| 显式泛型调用 `foo<T>()` | 不支持 | 仅支持调用处类型推断（见 [函数](functions.md)） |

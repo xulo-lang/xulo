@@ -84,39 +84,33 @@ struct Loader {
 
 impl Loader {
     fn load_file(&mut self, file: &Path) -> Result<usize, XuloError> {
-        if let Some(&idx) = self.index.get(file) {
+        let file = file.canonicalize().map_err(|e| {
+            XuloError::new(ErrorKind::Io, format!("cannot resolve {}: {e}", file.display()))
+        })?;
+        if let Some(&idx) = self.index.get(&file) {
             return Ok(idx);
         }
-        if self.loading.contains(file) {
+        if self.loading.contains(&file) {
             return Err(XuloError::new(
                 ErrorKind::Semantic,
                 format!("circular import involving {}", file.display()),
             ));
         }
-        let source = std::fs::read_to_string(file).map_err(|e| {
+        let source = std::fs::read_to_string(&file).map_err(|e| {
             XuloError::new(ErrorKind::Io, format!("cannot read {}: {e}", file.display()))
         })?;
-        let tokens = crate::lexer::tokenize(&source).map_err(|e| e.with_file(file.to_path_buf()))?;
+        let tokens = crate::lexer::tokenize(&source).map_err(|e| e.with_file(file.clone()))?;
         let program =
-            crate::parser::parse_program(&tokens).map_err(|e| e.with_file(file.to_path_buf()))?;
+            crate::parser::parse_program(&tokens).map_err(|e| e.with_file(file.clone()))?;
 
-        self.loading.insert(file.to_path_buf());
+        self.loading.insert(file.clone());
         let base = file.parent().map(Path::to_path_buf).unwrap_or_default();
         let mut imports = Vec::new();
         for statement in &program.statements {
             if let Statement::Import(imp) = statement {
                 match resolve_local(&base, &imp.source) {
                     Some(target) => {
-                        self.load_file(&target)?;
-                        let target = target
-                            .canonicalize()
-                            .map_err(|e| {
-                                XuloError::new(
-                                    ErrorKind::Io,
-                                    format!("cannot resolve {}: {e}", target.display()),
-                                )
-                            })?;
-                        let idx = *self.index.get(&target).expect("dependency loaded above");
+                        let idx = self.load_file(&target)?;
                         imports.push(ImportBinding {
                             target: idx,
                             spec: imp.spec.clone(),
@@ -127,13 +121,13 @@ impl Loader {
                 }
             }
         }
-        self.loading.remove(file);
+        self.loading.remove(&file);
 
         let has_main = program_has_main(&program);
         let idx = self.modules.len();
-        self.index.insert(file.to_path_buf(), idx);
+        self.index.insert(file.clone(), idx);
         self.modules.push(Module {
-            file: file.to_path_buf(),
+            file,
             program,
             analysis: None,
             imports,

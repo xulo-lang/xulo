@@ -458,7 +458,8 @@ fn setTheme(state: AppState, theme: Theme): AppState {
   ({ ...state, theme: theme })
 }
 
-export const useAppStore = createStore<AppState>(
+// 注意：当前实现暂不支持显式泛型调用（`createStore<AppState>`），故省略类型实参。
+export const useAppStore = createStore(
   {
     user: null,
     theme: Theme::Light,
@@ -466,8 +467,8 @@ export const useAppStore = createStore<AppState>(
     loading: false
   },
   {
-    setUser,
-    setTheme
+    setUser: setUser,
+    setTheme: setTheme
   }
 )
 ```
@@ -890,7 +891,7 @@ fn main() {
 
 ### 规则
 
-- `fn main(): Component` → 根组件，渲染 UI
+- `fn main(): Component` → 根组件，返回 UI（由外部运行时通过 `__xulo_mount` 钩子挂载/渲染）
 - `fn main()` (void) → 逻辑入口，执行脚本
 - 一个文件只能有一个 `main` 函数
 - 有 `main` 的文件是可执行应用，无 `main` 的文件是库模块
@@ -899,7 +900,7 @@ fn main() {
 
 | 文件类型 | `xulo run` 行为 |
 |---------|----------------|
-| 有 `fn main(): Component` | 渲染到目标平台（Web/Godot/SwiftUI） |
+| 有 `fn main(): Component` | 生成 JS，通过 `__xulo_mount` 钩子交由外部 UI 运行时挂载/渲染 |
 | 有 `fn main()` | 执行脚本，输出到终端 |
 | 无 `main` | 视为库模块，仅导出供其他文件使用 |
 
@@ -982,6 +983,8 @@ fn add(a: number, b: number): number {
 
 ## 22. 完整示例
 
+> 本示例依赖 `@xulo/ui` / `@xulo/store` 等外部运行时与目标平台全局 API（如 `fetch`），展示语言的目标形态；当前编译器对外部 API 的调用在纯静态检查（`xulo check`）下可能提示「未声明 / 不可调用」，属预期。
+
 ### 文件结构
 
 ```
@@ -1029,7 +1032,7 @@ export type Result<T> = {
 
 ```
 import { createStore } from "@xulo/store"
-import { type User, type Theme } from "../types"
+import type { User, Theme } from "../types"
 
 type AppState = {
   user: User?
@@ -1060,7 +1063,8 @@ fn addNotification(state: AppState, message: string): AppState {
   ({ ...state, notifications: state.notifications + [message] })
 }
 
-export const useAppStore = createStore<AppState>(
+// 注意：当前实现暂不支持显式泛型调用（`createStore<AppState>`），故省略类型实参。
+export const useAppStore = createStore(
   {
     user: null,
     theme: Theme::Light,
@@ -1069,11 +1073,11 @@ export const useAppStore = createStore<AppState>(
     error: null
   },
   {
-    setUser,
-    setTheme,
-    setLoading,
-    setError,
-    addNotification
+    setUser: setUser,
+    setTheme: setTheme,
+    setLoading: setLoading,
+    setError: setError,
+    addNotification: addNotification
   }
 )
 
@@ -1096,7 +1100,7 @@ export fn fetchUser(id: string): async {
 ### `components/button.xulo`
 
 ```
-import { type Theme } from "../types"
+import type { Theme } from "../types"
 
 export enum ButtonVariant {
   Primary
@@ -1135,13 +1139,13 @@ export fn OutlineButton(
 ```
 import { useAppStore, fetchUser } from "../stores/app"
 import { PrimaryButton, OutlineButton } from "../components/button"
-import { type User, type Theme, type Status } from "../types"
+import type { User, Theme, Status } from "../types"
 
 type Props = {
   id: string
 }
 
-fn UserProfile(props: Props): Component {
+export fn UserProfile(props: Props): Component {
   // ✅ @State/@Store/@Effect 只能在 Component 函数顶层使用
   @State let editing: boolean = false
   @State let editName: string = ""
@@ -1226,7 +1230,7 @@ fn UserProfile(props: Props): Component {
 import { Screen, VStack, Center } from "@xulo/ui"
 import { UserProfile } from "./pages/profile"
 import { useAppStore } from "./stores/app"
-import { type Theme } from "./types"
+import type { Theme } from "./types"
 
 fn main(): Component {
   @Store const { theme } = useAppStore()
