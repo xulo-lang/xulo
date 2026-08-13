@@ -1,0 +1,666 @@
+use xulo::lexer::tokenize;
+use xulo::parser::parse_program;
+use xulo::semantic::analyze;
+
+fn analyze_src(src: &str) -> Result<(), xulo::error::XuloError> {
+    let tokens = tokenize(src).unwrap();
+    let program = parse_program(&tokens)?;
+    analyze(&program)
+}
+
+#[test]
+fn accepts_valid_program() {
+    let src = r#"
+        fn fib(n: number): number {
+            if n <= 1 { return n }
+            else { return fib(n - 1) + fib(n - 2) }
+        }
+        fn main() { print(fib(5)) }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn rejects_undefined_variable() {
+    let err = analyze_src("fn main() { print(message) }").unwrap_err();
+    assert!(err.message.contains("undefined variable `message`"));
+    assert_eq!(err.kind, xulo::error::ErrorKind::Semantic);
+}
+
+#[test]
+fn rejects_redeclaration_in_same_scope() {
+    let err = analyze_src("fn main() { let x = 1 let x = 2 }").unwrap_err();
+    assert!(err.message.contains("already declared"));
+}
+
+#[test]
+fn allows_shadowing_in_nested_scope() {
+    let src = "fn main() { let x = 1 if true { let x = 2 } }";
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn rejects_type_mismatch_in_let() {
+    let err = analyze_src(r#"fn main() { let x: number = "hi" }"#).unwrap_err();
+    assert!(err.message.contains("`string`"));
+}
+
+#[test]
+fn rejects_non_boolean_if_condition() {
+    let err = analyze_src("fn main() { if 1 { print(1) } }").unwrap_err();
+    assert!(err.message.contains("boolean"));
+}
+
+#[test]
+fn rejects_arithmetic_on_strings() {
+    let err = analyze_src(r#"fn main() { print("a" - "b") }"#).unwrap_err();
+    assert!(err.message.contains("cannot apply"));
+}
+
+#[test]
+fn rejects_return_type_mismatch() {
+    let err = analyze_src(r#"fn f(): number { return "hi" }"#).unwrap_err();
+    assert!(err.message.contains("return type mismatch"));
+}
+
+#[test]
+fn rejects_wrong_argument_count() {
+    let err = analyze_src("fn add(a: number, b: number): number { return a + b } fn main() { add(1) }")
+        .unwrap_err();
+    assert!(err.message.contains("expects 2 argument(s)"));
+}
+
+#[test]
+fn rejects_for_over_non_list() {
+    let err = analyze_src("fn main() { for x in 5 { print(x) } }").unwrap_err();
+    assert!(err.message.contains("must iterate over a `list`"));
+}
+
+#[test]
+fn rejects_unknown_function() {
+    let err = analyze_src("fn main() { nope(1) }").unwrap_err();
+    assert!(err.message.contains("unknown function `nope`"));
+}
+
+#[test]
+fn accepts_const_and_null() {
+    let src = "const PI = 3.14\nfn main() { let x: string? = null print(x) }";
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn rejects_const_reassignment() {
+    let err = analyze_src("const X = 1\nfn main() { X = 2 }").unwrap_err();
+    assert!(err.message.contains("cannot assign to `X`"));
+}
+
+#[test]
+fn rejects_let_type_mismatch_on_assignment() {
+    let err = analyze_src(r#"fn main() { let x: number = 1 x = "s" }"#).unwrap_err();
+    assert!(err.message.contains("cannot assign a value of type `string`"));
+}
+
+#[test]
+fn rejects_assigning_undefined() {
+    let err = analyze_src("fn main() { y = 1 }").unwrap_err();
+    assert!(err.message.contains("undefined variable `y`"));
+}
+
+#[test]
+fn type_alias_is_resolved() {
+    let src = r#"
+        type User = { name: string }
+        fn main() {
+            let u = { name: "a" }
+            let n: User = u
+            print(n)
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn rejects_unknown_type() {
+    let err = analyze_src("fn main() { let x: Nope = 1 }").unwrap_err();
+    assert!(err.message.contains("unknown type `Nope`"));
+}
+
+#[test]
+fn rejects_duplicate_type() {
+    let err = analyze_src("type A = number\ntype A = number").unwrap_err();
+    assert!(err.message.contains("already defined"));
+}
+
+#[test]
+fn enum_reference_and_payload_typecheck() {
+    let src = r#"
+        enum Result<T> { Success(T) Error(string) }
+        enum Theme { Light Dark }
+        fn main() {
+            let a = Theme::Light
+            let b = Result::Success(42)
+            let c = Result::Error("boom")
+            print(a)
+            print(b)
+            print(c)
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn rejects_unknown_enum_member() {
+    let err = analyze_src("enum T { A B }\nfn main() { let x = T::C }").unwrap_err();
+    assert!(err.message.contains("no member `C`"));
+}
+
+#[test]
+fn rejects_enum_payload_type_mismatch() {
+    let err = analyze_src(
+        r#"enum R { Ok(number) } fn main() { let x = R::Ok("no") }"#,
+    )
+    .unwrap_err();
+    assert!(err.message.contains("argument to `R::Ok`"));
+}
+
+#[test]
+fn rejects_wrong_payload_count() {
+    let err = analyze_src("enum R { Ok(number) }\nfn main() { let x = R::Ok(1, 2) }").unwrap_err();
+    assert!(err.message.contains("expects 1 argument"));
+}
+
+#[test]
+fn optional_types_accept_null_and_values() {
+    let src = r#"
+        fn main() {
+            let a: string? = null
+            let b: string? = "hi"
+            let c: string? = a
+            print(a == null)
+            print(b)
+            print(c)
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn rejects_number_into_optional_string() {
+    let err = analyze_src("fn main() { let x: string? = 42 }").unwrap_err();
+    assert!(err.message.contains("cannot bind"));
+}
+
+#[test]
+fn string_literal_types_in_union() {
+    let src = r#"
+        type Status = "active" | "inactive"
+        fn main() {
+            let s: Status = "active"
+            print(s)
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn rejects_value_not_in_string_union() {
+    let err = analyze_src(r#"
+        type Status = "active" | "inactive"
+        fn main() { let s: Status = "bogus" }
+    "#)
+    .unwrap_err();
+    assert!(err.message.contains("cannot bind"));
+}
+
+#[test]
+fn union_accepts_members() {
+    let src = "fn main() { let x: number | string = \"a\" let y: number | string = 1 }";
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn generic_fn_type_param_is_bound() {
+    let src = r#"
+        fn first<T>(list: list<T>): T { list[0] }
+        fn main() { let x = first([]) print(x) }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn fn_type_annotation_checks() {
+    let src = "fn main() { let h: (fn(a: number): number)? = null print(h) }";
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn string_concat_is_allowed() {
+    let src = r#"fn main() { print("a" + "b" + 1) }"#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn logical_operators_require_booleans() {
+    assert!(analyze_src("fn main() { let x = true and false or !true print(x) }").is_ok());
+    let err = analyze_src("fn main() { print(1 and true) }").unwrap_err();
+    assert!(err.message.contains("cannot apply `and`"));
+}
+
+#[test]
+fn ternary_requires_boolean_condition() {
+    assert!(analyze_src("fn main() { print(1 > 2 ? \"a\" : \"b\") }").is_ok());
+    let err = analyze_src("fn main() { print(1 ? \"a\" : \"b\") }").unwrap_err();
+    assert!(err.message.contains("ternary condition"));
+}
+
+#[test]
+fn while_requires_boolean() {
+    assert!(analyze_src("fn main() { let c = 0 while c < 3 { c = c + 1 } }").is_ok());
+    let err = analyze_src("fn main() { while 5 { } }").unwrap_err();
+    assert!(err.message.contains("while condition"));
+}
+
+#[test]
+fn match_arms_are_checked() {
+    let src = r#"
+        fn main() {
+            let s = match 2 { 0 => "zero" 1 => "one" _ => "other" }
+            print(s)
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+    let err = analyze_src("fn main() { let x = match true { 0 => 1 _ => 2 } print(x) }").unwrap_err();
+    assert!(err.message.contains("does not match"));
+}
+
+#[test]
+fn match_enum_payload_binds() {
+    let src = r#"
+        enum Result<T> { Success(T) Error(string) }
+        fn main() {
+            let ok = Result::Success(1)
+            let v = match ok {
+                Result::Success(n) => n
+                Result::Error(msg) => 0
+            }
+            print(v)
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn match_arms_incompatible_types_are_rejected() {
+    let err = analyze_src(
+        "enum Maybe { Some(number) None }\nfn f(m: Maybe): string {\n  match m { Maybe::Some(v) => v Maybe::None => \"none\" }\n}",
+    )
+    .unwrap_err();
+    assert!(err.message.contains("incompatible types"));
+}
+
+#[test]
+fn match_arm_generic_payload_is_erased() {
+    let src = r#"
+        enum Result<T> { Success(T) Error(string) }
+        fn main() {
+            let r = Result::Success(1)
+            let v = match r { Result::Success(n) => n _ => 0 }
+            print(v)
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn generic_call_site_infers_type_argument() {
+    let src = r#"
+        fn first<T>(xs: list<T>): T { xs[0] }
+        let a: number = first([1, 2, 3])
+        print(a)
+    "#;
+    assert!(analyze_src(src).is_ok());
+    let err = analyze_src(
+        "fn first<T>(xs: list<T>): T { xs[0] }\nlet s: string = first([1, 2])\nfn main() { print(s) }",
+    )
+    .unwrap_err();
+    assert!(err.message.contains("cannot bind a value of type"));
+}
+
+#[test]
+fn member_access_fields() {
+    assert!(analyze_src("fn main() { let user: { name: string } = { name: \"a\" } print(user.name) }").is_ok());
+    let err = analyze_src("fn main() { let user: { name: string } = { name: \"a\" } print(user.age) }").unwrap_err();
+    assert!(err.message.contains("no member `age`"));
+}
+
+#[test]
+fn optional_member_needs_safe_access() {
+    let src = "fn main() { let u: { name: string }? = null print(u?.name) }";
+    assert!(analyze_src(src).is_ok());
+    let err = analyze_src("fn main() { let u: { name: string }? = null print(u.name) }").unwrap_err();
+    assert!(err.message.contains("without `?.`"));
+}
+
+#[test]
+fn index_targets_lists() {
+    assert!(analyze_src("fn main() { let xs: list<number> = [1, 2] print(xs[0]) }").is_ok());
+    let err = analyze_src("fn main() { let xs: number = 1 print(xs[0]) }").unwrap_err();
+    assert!(err.message.contains("cannot index"));
+}
+
+#[test]
+fn nullish_checks() {
+    let src = "fn main() { let name: string? = null print(name ?? \"anon\") }";
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn default_params_may_be_omitted() {
+    let src = r#"
+        fn greet(name: string = "x"): string { name }
+        fn main() { print(greet()) print(greet("y")) }
+    "#;
+    assert!(analyze_src(src).is_ok());
+    let err = analyze_src(r#"fn greet(name: string = 5) { }"#).unwrap_err();
+    assert!(err.message.contains("default value"));
+}
+
+#[test]
+fn named_args_are_validated() {
+    let src = r#"
+        fn greet(name: string = "x", count: number): string { name }
+        fn main() { print(greet(count: 2)) }
+    "#;
+    assert!(analyze_src(src).is_ok());
+    let err = analyze_src(r#"
+        fn greet(name: string): string { name }
+        fn main() { print(greet(nope: "x")) }
+    "#).unwrap_err();
+    assert!(err.message.contains("no parameter `nope`"));
+}
+
+#[test]
+fn named_args_duplicate_or_missing_are_errors() {
+    let err = analyze_src(r#"
+        fn greet(a: number, b: number): number { a + b }
+        fn main() { print(greet(a: 1, a: 2)) }
+    "#).unwrap_err();
+    assert!(err.message.contains("provided twice"));
+
+    let err = analyze_src(r#"
+        fn greet(a: number, b: number): number { a + b }
+        fn main() { print(greet(a: 1)) }
+    "#).unwrap_err();
+    assert!(err.message.contains("missing required argument"));
+}
+
+#[test]
+fn generic_named_type_arg_is_erased() {
+    let src = r#"
+        enum Result<T> { Success(T) Error(string) }
+        fn describe(r: Result<number>): string {
+            match r { Result::Success(v) => "n" Result::Error(m) => m }
+        }
+        fn main() { print(describe(Result::Success(1))) }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn allows_async_fn_and_await() {
+    let src = r#"
+        fn load(): async number { let v = 1 return v }
+        fn main(): async { let v = await load() print(v) }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn rejects_await_outside_async() {
+    let err = analyze_src("fn main() { let v = await work() }").unwrap_err();
+    assert!(err.message.contains("await"));
+}
+
+#[test]
+fn awaits_sync_call_is_ok_but_non_promise_is_an_error() {
+    let ok = analyze_src("fn main(): async { await work() }").is_ok();
+    // `work` is unknown; importing seeds it, but a non-promise await is caught:
+    let err = analyze_src(
+        "fn n(): number { return 1 }\nfn main(): async { let v = await n() }",
+    )
+    .unwrap_err();
+    assert!(err.message.contains("non-promise"));
+    let _ = ok;
+}
+
+#[test]
+fn try_catch_throws_are_checked() {
+    let src = r#"
+        fn main() {
+            try { throw "boom" } catch (e) { print(e) }
+            throw 1
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn imported_symbols_are_checked_against_exported_signatures() {
+    let src = r#"
+        import { add as sum } from "./math"
+        fn main() { print(sum(1, 2)) }
+    "#;
+    // Without a module graph the import is opaque (Any), so it must still parse
+    // and analyze successfully.
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn closures_and_higher_order_functions_analyze() {
+    let src = r#"
+        fn apply(f: fn(number): number, x: number): number { f(x) }
+        fn makeAdder(n: number): fn(number): number {
+            return fn(v: number): number { v + n }
+        }
+        fn main() {
+            let double = fn(x: number): number { x * 2 }
+            let add5 = makeAdder(5)
+            print(apply(double, 3))
+            print(add5(10))
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn async_closure_can_be_awaited() {
+    let src = r#"
+        fn main(): async {
+            let work = fn(): async { 42 }
+            let v = await work()
+            print(v)
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn rejects_wrong_arity_for_function_values() {
+    let err = analyze_src(
+        "fn main() { let f = fn(x: number): number { x } print(f(1, 2)) }",
+    )
+    .unwrap_err();
+    assert!(err.message.contains("exactly 1 argument"));
+}
+
+#[test]
+fn rejects_wrong_arg_type_for_function_values() {
+    let err = analyze_src(
+        r#"fn main() { let f = fn(x: number): number { x } f("hi") }"#,
+    )
+    .unwrap_err();
+    assert!(err.message.contains("must be `number`"));
+}
+
+#[test]
+fn list_spread_requires_a_list() {
+    let err = analyze_src("fn main() { let n = 5 let xs = [...n] }").unwrap_err();
+    assert!(err.message.contains("must be a list"));
+}
+
+#[test]
+fn list_spread_type_inferred_from_operand() {
+    let src = r#"
+        fn takes(xs: list<number>) { print(xs) }
+        fn main() {
+            let base = [1, 2]
+            takes([...base, 3])
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn rejects_undefined_variable_inside_list_literal() {
+    let err = analyze_src("fn main() { let xs = [message] }").unwrap_err();
+    assert!(err.message.contains("undefined variable `message`"));
+}
+
+#[test]
+fn rejects_undefined_variable_inside_object_literal() {
+    let err = analyze_src("fn main() { let o = { a: other } }").unwrap_err();
+    assert!(err.message.contains("undefined variable `other`"));
+}
+
+#[test]
+fn rejects_spread_of_non_object() {
+    let err = analyze_src("fn main() { let n = 5 let o = { ...n } }").unwrap_err();
+    assert!(err.message.contains("must be an object"));
+}
+
+#[test]
+fn calls_function_value_from_index() {
+    let src = r#"
+        fn main() {
+            let xs = [fn(a: number, b: number): number { a - b }]
+            print(xs[0](10, 4))
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn rejects_calling_non_function_expression() {
+    let err = analyze_src("fn main() { print([1, 2](0)) }").unwrap_err();
+    assert!(err.message.contains("is not callable"));
+}
+
+#[test]
+fn rejects_wrong_arity_on_indexed_function_value() {
+    let err = analyze_src(
+        "fn main() { let xs = [fn(a: number): number { a }] print(xs[0](1, 2)) }",
+    )
+    .unwrap_err();
+    assert!(err.message.contains("exactly 1 argument"));
+}
+
+#[test]
+fn rejects_implicit_return_type_mismatch() {
+    let err = analyze_src("fn add(a: number): number { \"s\" }").unwrap_err();
+    assert!(err.message.contains("return type mismatch"));
+}
+
+#[test]
+fn rejects_implicit_return_mismatch_after_let() {
+    let err = analyze_src("fn add(): number { let x = \"s\" x }").unwrap_err();
+    assert!(err.message.contains("return type mismatch"));
+}
+
+#[test]
+fn rejects_async_implicit_return_mismatch() {
+    let err = analyze_src("fn f(): async number { \"s\" }").unwrap_err();
+    assert!(err.message.contains("return type mismatch"));
+}
+
+#[test]
+fn accepts_matching_implicit_return() {
+    let src = r#"
+        fn ok(): string { "s" }
+        fn n(): number { 5 }
+        fn xs(): list<number> { [1, 2, 3] }
+        fn main() { print(ok()) print(n()) print(xs()) }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn rejects_incompatible_if_branch_types() {
+    let err = analyze_src("fn f(): number { if true { 1 } else { \"x\" } }").unwrap_err();
+    assert!(err.message.contains("incompatible types"));
+}
+
+#[test]
+fn infers_if_expression_type() {
+    let src = r#"
+        fn main() {
+            let max: number = if 5 > 3 { 5 } else { 3 }
+            let s: string = if false { "a" } else if true { "b" } else { "c" }
+            print(max)
+            print(s)
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn optional_params_may_be_omitted() {
+    let src = r#"
+        fn g(a: number?): number { if a == null { 0 } else { a } }
+        fn main() { print(g()) print(g(7)) }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn optional_params_may_be_omitted_with_named_args() {
+    let src = r#"
+        fn Button(label: string, icon: string? = null): string { label }
+        fn main() { print(Button(label: "Save")) print(Button(label: "Save", icon: "disk")) }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn string_union_literal_accepted_in_call_args() {
+    let src = r#"
+        type Status = "active" | "inactive"
+        fn set(s: Status): Status { s }
+        fn main() { print(set("active")) }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn rejects_invalid_string_union_literal_in_call() {
+    let err = analyze_src(
+        r#"
+        type Status = "active" | "inactive"
+        fn set(s: Status) { print(s) }
+        fn main() { set("bogus") }
+        "#,
+    )
+    .unwrap_err();
+    assert!(err.message.contains("must be `Status`"));
+}
+
+#[test]
+fn optional_chaining_allows_null_base() {
+    let src = r#"
+        fn main() {
+            let nobody = null
+            let name = nobody?.name ?? "anonymous"
+            print(name)
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}

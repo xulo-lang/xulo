@@ -1,0 +1,16 @@
+fn max(a: number, b: number): number {
+    if a > b {
+        return a
+    } else {
+        return b
+    }
+}
+
+fn main() {
+    print(max(3, 7))
+    if 2 > 3 {
+        print("two is greater than three")
+    } else {
+        print("two is not greater than three")
+    }
+}

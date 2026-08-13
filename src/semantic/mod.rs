@@ -1,0 +1,1695 @@
+pub mod symbol_table;
+
+use std::collections::HashMap;
+
+use crate::ast::{
+    AssignStmt, Block, BinaryOperator, CallArg, EnumVariant, Expression, IfExpr, Literal,
+    ObjectField, Program, Statement, Type, TypeAlias,
+};
+use crate::error::{ErrorKind, XuloError};
+use symbol_table::{Symbol, SymbolKind, SymbolTable};
+
+/// Result of a single semantic error, without a source span (spans are
+/// attached by the lexer/parser; semantic checks target names).
+type SResult<T> = Result<T, XuloError>;
+
+/// A named type known to the program: either a user `type` alias or an `enum`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TypeEntryKind {
+    Alias(Type),
+    Enum(Vec<EnumVariant>),
+}
+
+impl TypeEntryKind {
+    pub fn variants(&self) -> Option<&Vec<EnumVariant>> {
+        match self {
+            TypeEntryKind::Enum(variants) => Some(variants),
+            TypeEntryKind::Alias(_) => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypeEntry {
+    pub type_params: Vec<String>,
+    pub kind: TypeEntryKind,
+}
+
+pub struct Analyzer {
+    table: SymbolTable,
+    current_return: Option<Type>,
+    type_table: HashMap<String, TypeEntry>,
+    /// Type-parameter names currently in scope (these are valid as `Named`)
+    /// and are erased to `Any` for kind/arithmetic checks.
+    generics: Vec<String>,
+    /// Depth of enclosing async functions; `await` is only valid when > 0.
+    async_depth: usize,
+    /// Imported names available to this module (name -> symbol).
+    imports: HashMap<String, Symbol>,
+    /// Imported type/alias names available to this module.
+    imported_types: HashMap<String, TypeEntry>,
+    /// Names exported from this module for codegen / module resolution.
+    exported: Vec<String>,
+    exported_default: Option<String>,
+    /// Exported symbols captured for cross-module type checking.
+    exported_symbols: Vec<(String, Symbol)>,
+}
+
+/// The result of analyzing a module: the names/symbols/types it exports, so a
+/// loader can seed dependent modules.
+#[derive(Debug, Clone, Default)]
+pub struct AnalysisResult {
+    pub exported_symbols: Vec<(String, Symbol)>,
+    pub exported_types: Vec<(String, TypeEntry)>,
+    pub default: Option<String>,
+}
+
+/// Run all semantic checks over a parsed program.
+pub fn analyze(program: &Program) -> Result<(), XuloError> {
+    analyze_with(program, &[], &[]).map(|_: AnalysisResult| ())
+}
+
+/// Semantic checks with imported module symbols/types registered before the
+/// module's own declarations. Returns the names/symbols the module exports.
+pub fn analyze_with(
+    program: &Program,
+    imports: &[Symbol],
+    imported_types: &[(String, TypeEntry)],
+) -> Result<AnalysisResult, XuloError> {
+    let mut analyzer = Analyzer {
+        table: SymbolTable::new(),
+        current_return: None,
+        type_table: HashMap::new(),
+        generics: Vec::new(),
+        async_depth: 0,
+        imports: imports.iter().map(|s| (s.name.clone(), s.clone())).collect(),
+        imported_types: imported_types
+            .iter()
+            .map(|(n, t)| (n.clone(), t.clone()))
+            .collect(),
+        exported: Vec::new(),
+        exported_default: None,
+        exported_symbols: Vec::new(),
+    };
+    for statement in &program.statements {
+        analyzer.check_statement(statement)?;
+    }
+    let mut result = AnalysisResult {
+        exported_symbols: analyzer.exported_symbols,
+        exported_types: Vec::new(),
+        default: analyzer.exported_default.clone(),
+    };
+    for name in &analyzer.exported {
+        if let Some(entry) = analyzer.type_table.get(name).cloned() {
+            result.exported_types.push((name.clone(), entry));
+        }
+    }
+    Ok(result)
+}
+
+fn err(message: impl Into<String>) -> XuloError {
+    XuloError::new(ErrorKind::Semantic, message)
+}
+
+impl Analyzer {
+    fn check_statement(&mut self, statement: &Statement) -> SResult<()> {
+        match statement {
+            Statement::Fn(f) => {
+                self.generics.extend(f.type_params.iter().cloned());
+                let result = self.check_fn(f);
+                self.generics
+                    .truncate(self.generics.len().saturating_sub(f.type_params.len()));
+                result
+            }
+            Statement::Let(binding) => {
+                if let Some(annotation) = &binding.type_annotation {
+                    self.check_type(annotation)?;
+                }
+                let value_type = match &binding.value {
+                    Some(value) => self.check_expression(value)?,
+                    None => binding.type_annotation.clone().unwrap_or(Type::Any),
+                };
+                let mut ok = true;
+                if let Some(annotation) = &binding.type_annotation {
+                    if !self.assignable(&value_type, annotation) {
+                        // Value-aware fallback for string-literal types
+                        // (`"active" | "inactive"`): a direct literal may match.
+                        let literal_ok = match &binding.value {
+                            Some(value) => self.literal_matches(value, annotation),
+                            None => false,
+                        };
+                        if !literal_ok {
+                            ok = false;
+                        }
+                    }
+                }
+                if !ok {
+                    return Err(err(format!(
+                        "cannot bind a value of type `{}` to `let {}: {}`",
+                        value_type.name(),
+                        binding.name,
+                        binding.type_annotation.as_ref().unwrap().name()
+                    )));
+                }
+                let declared = self.table.declare(Symbol {
+                    name: binding.name.clone(),
+                    type_: binding.type_annotation.clone().unwrap_or(value_type),
+                    kind: SymbolKind::Variable,
+                    is_const: binding.is_const,
+                });
+                if !declared {
+                    return Err(err(format!(
+                        "binding `{}` is already declared in this scope",
+                        binding.name
+                    )));
+                }
+                Ok(())
+            }
+            Statement::Assign(assign) => self.check_assign(assign),
+            Statement::TypeAlias(alias) => self.check_type_alias(alias),
+            Statement::Enum(e) => self.check_enum(e),
+            Statement::Return(stmt) => {
+                let value_type = self.check_expression(&stmt.value)?;
+                if let Some(expected) = &self.current_return {
+                    let target = match expected {
+                        Type::Async(inner) => inner.as_ref(),
+                        other => other,
+                    };
+                    if !self.assignable(&value_type, target) {
+                        return Err(err(format!(
+                            "return type mismatch: expected `{}`, found `{}`",
+                            expected.name(),
+                            value_type.name()
+                        )));
+                    }
+                }
+                Ok(())
+            }
+            Statement::For(stmt) => {
+                let iterable_type = self.check_expression(&stmt.iterable)?;
+                match iterable_type {
+                    Type::List(_) | Type::Any => {}
+                    other => {
+                        return Err(err(format!(
+                            "for loop must iterate over a `list`, found `{}`",
+                            other.name()
+                        )));
+                    }
+                }
+                self.table.push_scope();
+                self.table.declare(Symbol {
+                    name: stmt.iter_var.clone(),
+                    type_: Type::Any,
+                    kind: SymbolKind::Variable,
+                    is_const: false,
+                });
+                let result = self.check_block(&stmt.body);
+                self.table.pop_scope();
+                result?;
+                Ok(())
+            }
+            Statement::While(stmt) => {
+                let condition = self.check_expression(&stmt.condition)?;
+                if !self.assignable(&condition, &Type::Boolean) {
+                    return Err(err(format!(
+                        "while condition must be a `boolean`, found `{}`",
+                        condition.name()
+                    )));
+                }
+                self.check_block(&stmt.body)?;
+                Ok(())
+            }
+            Statement::Expr(expr) => {
+                self.check_expression(expr)?;
+                Ok(())
+            }
+            Statement::Block(block) => {
+                self.check_block(block)?;
+                Ok(())
+            }
+            Statement::Try(try_stmt) => {
+                self.check_block(&try_stmt.try_block)?;
+                self.table.push_scope();
+                self.table.declare(Symbol {
+                    name: try_stmt.catch_var.clone(),
+                    type_: Type::Any,
+                    kind: SymbolKind::Variable,
+                    is_const: true,
+                });
+                let result = self.check_block(&try_stmt.catch_block);
+                self.table.pop_scope();
+                result
+            }
+            Statement::Throw(expr) => {
+                self.check_expression(expr)?;
+                Ok(())
+            }
+            Statement::Import(import) => self.check_import(import),
+            Statement::Export(export) => self.check_export(export),
+        }
+    }
+
+    fn check_fn(&mut self, f: &crate::ast::FnDef) -> SResult<()> {
+        for p in &f.params {
+            if let Some(ty) = &p.type_annotation {
+                self.check_type(ty)?;
+            }
+            if let Some(default) = &p.default {
+                let default_type = self.check_expression(default)?;
+                let param_type = p.type_annotation.clone().unwrap_or(Type::Any);
+                if !self.assignable(&default_type, &param_type) {
+                    return Err(err(format!(
+                        "default value for parameter `{}` must be `{}`, found `{}`",
+                        p.name,
+                        param_type.name(),
+                        default_type.name()
+                    )));
+                }
+            }
+        }
+        let return_type = f.return_type.clone().unwrap_or(Type::Any);
+        self.check_type(&return_type)?;
+        let symbol = Symbol {
+            name: f.name.clone(),
+            type_: return_type.clone(),
+            kind: SymbolKind::Function(f.type_params.clone(), f.params.clone(), return_type.clone()),
+            is_const: true,
+        };
+        if !self.table.declare(symbol) {
+            return Err(err(format!("function `{}` is already defined", f.name)));
+        }
+
+        self.table.push_scope();
+        for param in &f.params {
+            let ty = param.type_annotation.clone().unwrap_or(Type::Any);
+            self.table.declare(Symbol {
+                name: param.name.clone(),
+                type_: ty,
+                kind: SymbolKind::Variable,
+                is_const: true,
+            });
+        }
+        let saved = self.current_return.replace(return_type.clone());
+        if f.is_async {
+            self.async_depth += 1;
+        }
+        let result = self.check_block_implicit(&f.body);
+        if f.is_async {
+            self.async_depth -= 1;
+        }
+        self.current_return = saved;
+        result?;
+        self.table.pop_scope();
+        Ok(())
+    }
+
+    /// Validate a parameter list and collect each parameter's type (defaults are
+    /// checked against the annotation).
+    fn check_params_types(&mut self, params: &[crate::ast::Param]) -> SResult<Vec<Type>> {
+        let mut types = Vec::with_capacity(params.len());
+        for p in params {
+            if let Some(ty) = &p.type_annotation {
+                self.check_type(ty)?;
+            }
+            if let Some(default) = &p.default {
+                let default_type = self.check_expression(default)?;
+                let param_type = p.type_annotation.clone().unwrap_or(Type::Any);
+                if !self.assignable(&default_type, &param_type) {
+                    return Err(err(format!(
+                        "default value for parameter `{}` must be `{}`, found `{}`",
+                        p.name,
+                        param_type.name(),
+                        default_type.name()
+                    )));
+                }
+            }
+            types.push(p.type_annotation.clone().unwrap_or(Type::Any));
+        }
+        Ok(types)
+    }
+
+    /// An anonymous function literal. Captured names are resolved through the
+    /// enclosing scope (closures); the literal's type is a `fn(...) -> ...`
+    /// signature.
+    fn check_fn_expr(&mut self, f: &crate::ast::FnExpr) -> SResult<Type> {
+        let param_types = self.check_params_types(&f.params)?;
+        let return_type = f.return_type.clone().unwrap_or(Type::Any);
+        self.check_type(&return_type)?;
+
+        self.table.push_scope();
+        for param in &f.params {
+            let ty = param.type_annotation.clone().unwrap_or(Type::Any);
+            self.table.declare(Symbol {
+                name: param.name.clone(),
+                type_: ty,
+                kind: SymbolKind::Variable,
+                is_const: true,
+            });
+        }
+        let saved = self.current_return.replace(return_type.clone());
+        if f.is_async {
+            self.async_depth += 1;
+        }
+        let result = self.check_block_implicit(&f.body);
+        if f.is_async {
+            self.async_depth -= 1;
+        }
+        self.current_return = saved;
+        result?;
+        self.table.pop_scope();
+
+        Ok(Type::FnSig {
+            params: param_types,
+            ret: Some(Box::new(return_type)),
+        })
+    }
+
+    fn check_import(&mut self, import: &crate::ast::ImportStmt) -> SResult<()> {
+        match &import.spec {
+            crate::ast::ImportSpec::Bare => Ok(()),
+            crate::ast::ImportSpec::Namespace(ns) => {
+                if !self.table.declare(Symbol {
+                    name: ns.clone(),
+                    type_: Type::Any,
+                    kind: SymbolKind::Variable,
+                    is_const: true,
+                }) {
+                    return Err(err(format!("`{ns}` is already declared",)));
+                }
+                Ok(())
+            }
+            crate::ast::ImportSpec::Named(names) => {
+                for (name, alias) in names {
+                    let local = alias.clone().unwrap_or_else(|| name.clone());
+                    if import.type_only {
+                        // Type-only imports feed the type table (as an opaque
+                        // alias unless the loader supplied the real entry).
+                        if !self.imported_types.contains_key(&local) {
+                            self.imported_types.insert(
+                                local.clone(),
+                                TypeEntry {
+                                    type_params: Vec::new(),
+                                    kind: TypeEntryKind::Alias(Type::Any),
+                                },
+                            );
+                        }
+                        continue;
+                    }
+                    let sym = match self.imports.get(name) {
+                        Some(symbol) => Symbol {
+                            name: local.clone(),
+                            type_: symbol.type_.clone(),
+                            kind: symbol.kind.clone(),
+                            is_const: true,
+                        },
+                        None => Symbol {
+                            name: local.clone(),
+                            type_: Type::Any,
+                            kind: SymbolKind::Function(Vec::new(), Vec::new(), Type::Any),
+                            is_const: true,
+                        },
+                    };
+                    if !self.table.declare(sym) {
+                        return Err(err(format!("`{local}` is already declared",)));
+                    }
+                }
+                Ok(())
+            }
+            crate::ast::ImportSpec::Default(name) => {
+                if import.type_only {
+                    if !self.imported_types.contains_key(name) {
+                        self.imported_types.insert(
+                            name.clone(),
+                            TypeEntry {
+                                type_params: Vec::new(),
+                                kind: TypeEntryKind::Alias(Type::Any),
+                            },
+                        );
+                    }
+                    return Ok(());
+                }
+                let sym = match self.imports.get(name) {
+                    Some(symbol) => Symbol {
+                        name: name.clone(),
+                        type_: symbol.type_.clone(),
+                        kind: symbol.kind.clone(),
+                        is_const: true,
+                    },
+                    None => Symbol {
+                        name: name.clone(),
+                        type_: Type::Any,
+                        kind: SymbolKind::Function(Vec::new(), Vec::new(), Type::Any),
+                        is_const: true,
+                    },
+                };
+                if !self.table.declare(sym) {
+                    return Err(err(format!("`{name}` is already declared",)));
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn check_export(&mut self, export: &crate::ast::ExportStmt) -> SResult<()> {
+        match &export.item {
+            crate::ast::ExportItem::Fn(f) => {
+                self.check_fn(f)?;
+                self.exported.push(f.name.clone());
+                if let Some(sym) = self.table.lookup(&f.name).cloned() {
+                    self.exported_symbols.push((f.name.clone(), sym));
+                }
+                Ok(())
+            }
+            crate::ast::ExportItem::Let(b) => {
+                self.check_statement(&Statement::Let(b.clone()))?;
+                self.exported.push(b.name.clone());
+                if let Some(sym) = self.table.lookup(&b.name).cloned() {
+                    self.exported_symbols.push((b.name.clone(), sym));
+                }
+                Ok(())
+            }
+            crate::ast::ExportItem::Type(alias) => {
+                self.check_type_alias(alias)?;
+                self.exported.push(alias.name.clone());
+                Ok(())
+            }
+            crate::ast::ExportItem::Enum(e) => {
+                self.check_enum(e)?;
+                self.exported.push(e.name.clone());
+                self.exported_symbols.push((
+                    e.name.clone(),
+                    Symbol {
+                        name: e.name.clone(),
+                        type_: Type::Named(e.name.clone()),
+                        kind: symbol_table::SymbolKind::Variable,
+                        is_const: true,
+                    },
+                ));
+                Ok(())
+            }
+            crate::ast::ExportItem::Default(item) => {
+                // `export default fn main() {...}` exports the function under
+                // its own name (the module system resolves `main` for `run`).
+                if let crate::ast::ExportItem::Fn(f) = item.as_ref() {
+                    self.check_fn(f)?;
+                    if self.exported_default.is_some() {
+                        return Err(err("only one `export default` is allowed per module"));
+                    }
+                    self.exported_default = Some(f.name.clone());
+                    self.exported.push(f.name.clone());
+                    if let Some(sym) = self.table.lookup(&f.name).cloned() {
+                        self.exported_symbols.push((f.name.clone(), sym));
+                    }
+                    Ok(())
+                } else {
+                    Err(err("`export default` requires a function declaration"))
+                }
+            }
+            crate::ast::ExportItem::Names(names) => {
+                for name in names {
+                    if self.table.lookup(name).is_none() {
+                        return Err(err(format!(
+                            "cannot export `{name}`: it is not declared in this module"
+                        )));
+                    }
+                }
+                for name in names {
+                    if let Some(sym) = self.table.lookup(name).cloned() {
+                        self.exported_symbols.push((name.clone(), sym));
+                    }
+                }
+                self.exported.extend(names.iter().cloned());
+                Ok(())
+            }
+        }
+    }
+
+    fn check_assign(&mut self, assign: &AssignStmt) -> SResult<()> {
+        let target = {
+            let Some(sym) = self.table.lookup(&assign.name) else {
+                return Err(err(format!(
+                    "undefined variable `{}` cannot be assigned",
+                    assign.name
+                )));
+            };
+            (sym.type_.clone(), sym.kind.clone(), sym.is_const)
+        };
+        match &target.1 {
+            SymbolKind::Variable => {
+                if target.2 {
+                    return Err(err(format!(
+                        "cannot assign to `{}`: binding is immutable",
+                        assign.name
+                    )));
+                }
+                let value_type = self.check_expression(&assign.value)?;
+                if !self.assignable(&value_type, &target.0) {
+                    return Err(err(format!(
+                        "cannot assign a value of type `{}` to `{}: {}`",
+                        value_type.name(),
+                        assign.name,
+                        target.0.name()
+                    )));
+                }
+                Ok(())
+            }
+            SymbolKind::Function(_, _, _) => Err(err(format!(
+                "cannot assign to `{}`: it is a function",
+                assign.name
+            ))),
+        }
+    }
+
+    fn check_type_alias(&mut self, alias: &TypeAlias) -> SResult<()> {
+        self.generics.extend(alias.type_params.iter().cloned());
+        let result = self.check_type(&alias.type_);
+        self.generics
+            .truncate(self.generics.len().saturating_sub(alias.type_params.len()));
+        result?;
+        if self.type_table.contains_key(&alias.name) {
+            return Err(err(format!("type `{}` is already defined", alias.name)));
+        }
+        self.type_table.insert(
+            alias.name.clone(),
+            TypeEntry {
+                type_params: alias.type_params.clone(),
+                kind: TypeEntryKind::Alias(alias.type_.clone()),
+            },
+        );
+        Ok(())
+    }
+
+    fn check_enum(&mut self, e: &crate::ast::EnumDef) -> SResult<()> {
+        if self.type_table.contains_key(&e.name) {
+            return Err(err(format!("type `{}` is already defined", e.name)));
+        }
+        let mut seen = std::collections::HashSet::new();
+        self.generics.extend(e.type_params.iter().cloned());
+        for variant in &e.variants {
+            if !seen.insert(variant.name.clone()) {
+                self.generics
+                    .truncate(self.generics.len().saturating_sub(e.type_params.len()));
+                return Err(err(format!(
+                    "enum `{}` has a duplicate member `{}`",
+                    e.name, variant.name
+                )));
+            }
+            if let Some(payload) = &variant.payload {
+                if let Err(e2) = self.check_type(payload) {
+                    self.generics
+                        .truncate(self.generics.len().saturating_sub(e.type_params.len()));
+                    return Err(e2);
+                }
+            }
+        }
+        self.generics
+            .truncate(self.generics.len().saturating_sub(e.type_params.len()));
+        self.type_table.insert(
+            e.name.clone(),
+            TypeEntry {
+                type_params: e.type_params.clone(),
+                kind: TypeEntryKind::Enum(e.variants.clone()),
+            },
+        );
+        Ok(())
+    }
+
+    fn check_block(&mut self, block: &Block) -> SResult<()> {
+        self.check_block_tail(block).map(|_| ())
+    }
+
+    /// Check a block and return the type of its trailing expression (the
+    /// block's value), if any. Runs while the block scope is active.
+    fn check_block_tail(&mut self, block: &Block) -> SResult<Option<Type>> {
+        self.table.push_scope();
+        for statement in &block.statements {
+            self.check_statement(statement)?;
+        }
+        let tail = match block.statements.last() {
+            Some(Statement::Expr(e)) => Some(self.check_expression(e)?),
+            _ => None,
+        };
+        self.table.pop_scope();
+        Ok(tail)
+    }
+
+    /// Check a function body block, then validate a trailing expression as its
+    /// implicit return (docs §21.2): when the enclosing function declares a
+    /// return type, a trailing expression statement is that function's value.
+    /// Mirrors codegen's `fn_def`/`fn_expr` rule and must run while the body
+    /// scope is still active.
+    fn check_block_implicit(&mut self, block: &Block) -> SResult<()> {
+        self.table.push_scope();
+        for statement in &block.statements {
+            self.check_statement(statement)?;
+        }
+        if self.current_return.is_some()
+            && let Some(Statement::Expr(last)) = block.statements.last()
+        {
+            let value_type = self.check_expression(last)?;
+            let expected = self.current_return.as_ref().unwrap();
+            let target = match expected {
+                Type::Async(inner) => inner.as_ref(),
+                other => other,
+            };
+            if !self.assignable(&value_type, target) {
+                return Err(err(format!(
+                    "return type mismatch: expected `{}`, found `{}`",
+                    expected.name(),
+                    value_type.name()
+                )));
+            }
+        }
+        self.table.pop_scope();
+        Ok(())
+    }
+
+    /// Check an expression and infer its type.
+    fn check_expression(&mut self, expr: &Expression) -> SResult<Type> {
+        match expr {
+            Expression::Literal(lit) => self.check_literal(lit),
+            Expression::Identifier(name) => {
+                if let Some(sym) = self.table.lookup(name) {
+                    Ok(sym.type_.clone())
+                } else {
+                    Err(err(format!("undefined variable `{name}`")))
+                }
+            }
+            Expression::BinaryOp(bin) => self.check_binary(bin),
+            Expression::Unary(un) => self.check_unary(un),
+            Expression::Call(call) => self.check_call(call),
+            Expression::EnumRef(r) => self.check_enum_ref(r.enum_name.clone(), &r.variant),
+            Expression::If(if_expr) => self.check_if(if_expr),
+            Expression::Ternary(tr) => self.check_ternary(tr),
+            Expression::Match(m) => self.check_match(m),
+            Expression::Member(m) => self.check_member(m),
+            Expression::Index(idx) => self.check_index(idx),
+            Expression::Nullish(n) => self.check_nullish(n),
+            Expression::Range(r) => {
+                self.check_expression(&r.start)?;
+                self.check_expression(&r.end)?;
+                Ok(Type::List(Box::new(Type::Number)))
+            }
+            Expression::Await(operand) => self.check_await(operand),
+            Expression::FnExpr(f) => self.check_fn_expr(f),
+            Expression::Spread(_) => Err(err(
+                "`...` spread is only allowed inside list or object literals",
+            )),
+            Expression::CallValue(cv) => {
+                let callee_type = self.check_expression(&cv.callee)?;
+                match callee_type {
+                    Type::FnSig { params, ret } => {
+                        self.check_fn_value_args(&params, ret, &cv.arguments)
+                    }
+                    Type::Any => {
+                        for a in &cv.arguments {
+                            self.check_expression(&a.value)?;
+                        }
+                        Ok(Type::Any)
+                    }
+                    other => Err(err(format!(
+                        "expression of type `{}` is not callable",
+                        other.name()
+                    ))),
+                }
+            }
+        }
+    }
+
+    /// Check a literal, recursively validating its contents (list items, object
+    /// field values, spread operands) and inferring its type.
+    fn check_literal(&mut self, lit: &Literal) -> SResult<Type> {
+        match lit {
+            Literal::List(items) => {
+                if items.is_empty() {
+                    return Ok(Type::List(Box::new(Type::Any)));
+                }
+                let mut element = Type::Any;
+                let mut first = true;
+                for item in items {
+                    let item_type = match item {
+                        Expression::Spread(spread) => {
+                            let spread_type = self.check_expression(spread)?;
+                            match spread_type {
+                                Type::List(inner) => *inner,
+                                Type::Any => Type::Any,
+                                other => {
+                                    return Err(err(format!(
+                                        "spread operand must be a list, got `{}`",
+                                        other.name()
+                                    )))
+                                }
+                            }
+                        }
+                        other => self.check_expression(other)?,
+                    };
+                    if first {
+                        element = item_type;
+                        first = false;
+                    }
+                }
+                Ok(Type::List(Box::new(element)))
+            }
+            Literal::Object(fields) => {
+                for field in fields {
+                    match field {
+                        ObjectField::Field { value, .. } => {
+                            self.check_expression(value)?;
+                        }
+                        ObjectField::Spread { value } => {
+                            let spread_type = self.check_expression(value)?;
+                            if !matches!(spread_type, Type::Object | Type::Any) {
+                                return Err(err(format!(
+                                    "spread operand must be an object, got `{}`",
+                                    spread_type.name()
+                                )));
+                            }
+                        }
+                    }
+                }
+                Ok(Type::Object)
+            }
+            other => Ok(literal_type(other)),
+        }
+    }
+
+    fn check_await(&mut self, operand: &Expression) -> SResult<Type> {
+        if self.async_depth == 0 {
+            return Err(err("`await` may only be used inside an `async` function"));
+        }
+        let inner = self.check_expression(operand)?;
+        match inner {
+            Type::Async(inner) => Ok(*inner),
+            Type::Any => Ok(Type::Any),
+            other => Err(err(format!(
+                "cannot await a non-promise value of type `{}`",
+                other.name()
+            ))),
+        }
+    }
+
+    fn check_unary(&mut self, un: &crate::ast::UnaryOp) -> SResult<Type> {
+        let operand = self.check_expression(&un.operand)?;
+        match un.operator {
+            crate::ast::UnaryOperator::Not => {
+                if self.assignable(&operand, &Type::Boolean) {
+                    Ok(Type::Boolean)
+                } else {
+                    Err(err(format!(
+                        "unary `!` requires a `boolean` operand, found `{}`",
+                        operand.name()
+                    )))
+                }
+            }
+            crate::ast::UnaryOperator::Neg => {
+                if self.assignable(&operand, &Type::Number) {
+                    Ok(Type::Number)
+                } else {
+                    Err(err(format!(
+                        "unary `-` requires a `number` operand, found `{}`",
+                        operand.name()
+                    )))
+                }
+            }
+        }
+    }
+
+    fn check_ternary(&mut self, tr: &crate::ast::TernaryExpr) -> SResult<Type> {
+        let condition = self.check_expression(&tr.condition)?;
+        if !self.assignable(&condition, &Type::Boolean) {
+            return Err(err(format!(
+                "ternary condition must be a `boolean`, found `{}`",
+                condition.name()
+            )));
+        }
+        let then_type = self.check_expression(&tr.then_value)?;
+        let else_type = self.check_expression(&tr.else_value)?;
+        if self.assignable(&then_type, &else_type) {
+            Ok(else_type)
+        } else if self.assignable(&else_type, &then_type) {
+            Ok(then_type)
+        } else {
+            Ok(Type::Any)
+        }
+    }
+
+    fn check_member(&mut self, m: &crate::ast::MemberAccess) -> SResult<Type> {
+        let object = self.check_expression(&m.object)?;
+        let resolved = self.resolve_alias(&object, 0);
+        let inner = match resolved {
+            Type::Optional(inner) if m.optional => *inner,
+            Type::Null if m.optional => return Ok(Type::Any),
+            Type::Optional(_) => {
+                return Err(err(format!(
+                    "cannot access member of optional type `{}` without `?.`",
+                    object.name()
+                )));
+            }
+            other => other,
+        };
+        self.member_field_type(&inner, &m.property)
+    }
+
+    /// Look up a field type on an object-like type (`ObjectType`, the loose
+    /// `object`, or `Any`).
+    fn member_field_type(&self, ty: &Type, property: &str) -> SResult<Type> {
+        match ty {
+            Type::ObjectType(fields) => fields
+                .iter()
+                .find(|(n, _)| n == property)
+                .map(|(_, t)| t.clone())
+                .ok_or_else(|| err(format!("type has no member `{property}`"))),
+            Type::Object | Type::Any | Type::Named(_) => Ok(Type::Any),
+            other => Err(err(format!(
+                "cannot access member of `{}` (type `{}`)",
+                property,
+                other.name()
+            ))),
+        }
+    }
+
+    fn check_index(&mut self, idx: &crate::ast::IndexExpr) -> SResult<Type> {
+        let object = self.check_expression(&idx.object)?;
+        self.check_expression(&idx.index)?;
+        let resolved = self.resolve_alias(&object, 0);
+        match resolved {
+            Type::List(inner) => Ok(*inner),
+            Type::Object | Type::Any | Type::String | Type::Null => Ok(Type::Any),
+            Type::Named(_) => Ok(Type::Any),
+            other => Err(err(format!(
+                "cannot index into `{}`",
+                other.name()
+            ))),
+        }
+    }
+
+    fn check_nullish(&mut self, n: &crate::ast::NullishExpr) -> SResult<Type> {
+        let left = self.check_expression(&n.left)?;
+        let right = self.check_expression(&n.right)?;
+        if let Type::Optional(inner) = left {
+            Ok(*inner)
+        } else if matches!(left, Type::Null) || matches!(left, Type::Any) {
+            Ok(right)
+        } else {
+            Ok(left)
+        }
+    }
+
+    fn check_match(&mut self, m: &crate::ast::MatchExpr) -> SResult<Type> {
+        let value_type = self.check_expression(&m.value)?;
+        let mut arm_types = Vec::new();
+        for arm in &m.arms {
+            match &arm.pattern {
+                crate::ast::MatchPattern::Wildcard => {}
+                crate::ast::MatchPattern::Literal(lit) => {
+                    let lit_type = literal_type(lit);
+                    if !self.assignable(&lit_type, &value_type) {
+                        return Err(err(format!(
+                            "match arm pattern `{}` does not match value of type `{}`",
+                            pattern_name(arm),
+                            value_type.name()
+                        )));
+                    }
+                }
+                crate::ast::MatchPattern::Enum(r) => {
+                    self.check_enum_ref(r.enum_name.clone(), &r.variant)?;
+                }
+                crate::ast::MatchPattern::EnumPayload {
+                    enum_name,
+                    variant,
+                    binding,
+                } => {
+                    let entry = self
+                        .type_table
+                        .get(enum_name)
+                        .ok_or_else(|| err(format!("unknown enum `{enum_name}`")))?
+                        .clone();
+                    let v = entry
+                        .kind
+                        .variants()
+                        .and_then(|vs| vs.iter().find(|v| v.name == *variant))
+                        .ok_or_else(|| {
+                            err(format!("enum `{enum_name}` has no member `{variant}`"))
+                        })?
+                        .clone();
+                    match &v.payload {
+                        Some(payload) => {
+                            self.generics.extend(entry.type_params.iter().cloned());
+                            self.table.push_scope();
+                            self.table.declare(Symbol {
+                                name: binding.clone(),
+                                type_: self.resolve_alias(payload, 0),
+                                kind: SymbolKind::Variable,
+                                is_const: true,
+                            });
+                            let t = self.check_expression(&arm.value)?;
+                            self.table.pop_scope();
+                            self.generics
+                                .truncate(self.generics.len().saturating_sub(entry.type_params.len()));
+                            arm_types.push(t);
+                            continue;
+                        }
+                        None => {
+                            return Err(err(format!(
+                                "enum member `{enum_name}::{variant}` has no payload to bind"
+                            )));
+                        }
+                    }
+                }
+            }
+            arm_types.push(self.check_expression(&arm.value)?);
+        }
+        if arm_types.is_empty() {
+            return Ok(Type::Any);
+        }
+        let first = &arm_types[0];
+        if arm_types.iter().all(|t| t == first) {
+            return Ok(first.clone());
+        }
+        // Arms must be mutually assignable; the first arm's type is the match
+        // type (mirrors `check_if`'s branch typing).
+        for t in &arm_types[1..] {
+            if !self.assignable(t, first) && !self.assignable(first, t) {
+                return Err(err(format!(
+                    "match arms have incompatible types `{}` and `{}`",
+                    first.name(),
+                    t.name()
+                )));
+            }
+        }
+        Ok(first.clone())
+    }
+
+    fn check_binary(&mut self, bin: &crate::ast::BinaryOp) -> SResult<Type> {
+        let left = self.check_expression(&bin.left)?;
+        let right = self.check_expression(&bin.right)?;
+        match bin.operator {
+            BinaryOperator::Add => {
+                let l = self.resolve_alias(&left, 0);
+                let r = self.resolve_alias(&right, 0);
+                if matches!(l, Type::Number) && matches!(r, Type::Number) {
+                    Ok(Type::Number)
+                } else if self.is_stringish(&l) || self.is_stringish(&r) {
+                    Ok(Type::String)
+                } else if matches!(l, Type::List(_)) && matches!(r, Type::List(_)) {
+                    Ok(Type::List(Box::new(self.join_list(&l, &r))))
+                } else if matches!(l, Type::Any) || matches!(r, Type::Any) {
+                    Ok(Type::Any)
+                } else {
+                    Err(err(format!(
+                        "cannot apply `+` to `{}` and `{}`",
+                        left.name(),
+                        right.name()
+                    )))
+                }
+            }
+            BinaryOperator::Sub
+            | BinaryOperator::Mul
+            | BinaryOperator::Div => {
+                if self.assignable(&left, &Type::Number) && self.assignable(&right, &Type::Number)
+                {
+                    Ok(Type::Number)
+                } else {
+                    Err(err(format!(
+                        "cannot apply `{}` to `{}` and `{}`",
+                        bin.operator.symbol(),
+                        left.name(),
+                        right.name()
+                    )))
+                }
+            }
+            BinaryOperator::Eq | BinaryOperator::Neq => {
+                let comparable = self.assignable(&left, &right) || self.assignable(&right, &left);
+                if comparable {
+                    Ok(Type::Boolean)
+                } else {
+                    Err(err(format!(
+                        "cannot compare `{}` with `{}`",
+                        left.name(),
+                        right.name()
+                    )))
+                }
+            }
+            BinaryOperator::Lt
+            | BinaryOperator::Gt
+            | BinaryOperator::Lte
+            | BinaryOperator::Gte => {
+                let comparable =
+                    self.assignable(&left, &right) && self.assignable(&right, &left);
+                if comparable {
+                    Ok(Type::Boolean)
+                } else {
+                    Err(err(format!(
+                        "cannot compare `{}` with `{}`",
+                        left.name(),
+                        right.name()
+                    )))
+                }
+            }
+            BinaryOperator::And | BinaryOperator::Or => {
+                if self.assignable(&left, &Type::Boolean) && self.assignable(&right, &Type::Boolean)
+                {
+                    Ok(Type::Boolean)
+                } else {
+                    Err(err(format!(
+                        "cannot apply `{}` to `{}` and `{}`",
+                        bin.operator.symbol(),
+                        left.name(),
+                        right.name()
+                    )))
+                }
+            }
+        }
+    }
+
+    fn is_stringish(&self, ty: &Type) -> bool {
+        matches!(ty, Type::String | Type::Literal(_) | Type::Boolean | Type::Null)
+    }
+
+    fn join_list(&self, l: &Type, r: &Type) -> Type {
+        let (Type::List(a), Type::List(b)) = (l, r) else {
+            return Type::Any;
+        };
+        if self.assignable(a, b) {
+            (**b).clone()
+        } else if self.assignable(b, a) {
+            (**a).clone()
+        } else {
+            Type::Any
+        }
+    }
+
+    fn check_call(&mut self, call: &crate::ast::Call) -> SResult<Type> {
+        if call.is_enum() {
+            let (enum_name, variant) = call.enum_parts().unwrap();
+            let args: Vec<&Expression> = call.arguments.iter().map(|a| &a.value).collect();
+            return self.check_enum_call(enum_name.to_string(), variant.to_string(), &args);
+        }
+        if let Some(object) = &call.object {
+            // Method call `obj.method(args)`.
+            self.check_expression(object)?;
+            for arg in &call.arguments {
+                self.check_expression(&arg.value)?;
+            }
+            return Ok(Type::Any);
+        }
+        if call.callee == "print" {
+            for arg in &call.arguments {
+                self.check_expression(&arg.value)?;
+            }
+            return Ok(Type::Any);
+        }
+        let Some(sym) = self.table.lookup(&call.callee) else {
+            return Err(err(format!("unknown function `{}`", call.callee)));
+        };
+        match &sym.kind {
+            SymbolKind::Function(type_params, params, return_type) => {
+                // An unseeded import (no module graph) is opaque: accept any
+                // argument list and return `any`.
+                if matches!(sym.type_, Type::Any)
+                    && params.is_empty()
+                    && matches!(return_type, Type::Any)
+                {
+                    for arg in &call.arguments {
+                        self.check_expression(&arg.value)?;
+                    }
+                    return Ok(Type::Any);
+                }
+                let named = call
+                    .arguments
+                    .iter()
+                    .filter(|a| a.name.is_some())
+                    .collect::<Vec<_>>();
+                let positional = call
+                    .arguments
+                    .iter()
+                    .filter(|a| a.name.is_none())
+                    .collect::<Vec<_>>();
+                let all_named = named.len() == call.arguments.len() && !call.arguments.is_empty();
+                let type_params = type_params.clone();
+                let params = params.clone();
+                let return_type = return_type.clone();
+                self.generics.extend(type_params.iter().cloned());
+                let result = (|| {
+                    if all_named {
+                        // Named arguments must cover every parameter (defaults
+                        // may be omitted) exactly once.
+                        let mut seen = std::collections::HashSet::new();
+                        for arg in &named {
+                            let name = arg.name.as_ref().unwrap();
+                            let Some(param) = params.iter().find(|p| &p.name == name) else {
+                                return Err(err(format!(
+                                    "function `{}` has no parameter `{name}`",
+                                    call.callee
+                                )));
+                            };
+                            if !seen.insert(name.clone()) {
+                                return Err(err(format!(
+                                    "argument `{name}` to `{}` is provided twice",
+                                    call.callee
+                                )));
+                            }
+                            let arg_type = self.check_expression(&arg.value)?;
+                            let expected = param.type_annotation.as_ref().unwrap_or(&Type::Any);
+                            if !self.assignable(&arg_type, expected)
+                                && !self.literal_matches(&arg.value, expected)
+                            {
+                                return Err(err(format!(
+                                    "argument to `{}` must be `{}`, found `{}`",
+                                    call.callee,
+                                    expected.name(),
+                                    arg_type.name()
+                                )));
+                            }
+                        }
+                        let required = params
+                            .iter()
+                            .filter(|p| p.default.is_none() && !param_optional(p))
+                            .map(|p| p.name.clone())
+                            .collect::<Vec<_>>();
+                        let missing = required
+                            .iter()
+                            .find(|name| !seen.contains(*name))
+                            .cloned();
+                        if let Some(name) = missing {
+                            return Err(err(format!(
+                                "function `{}` is missing required argument `{name}`",
+                                call.callee
+                            )));
+                        }
+                        Ok(return_type)
+                    } else {
+                        let expected = params.len();
+                        let required = params
+                            .iter()
+                            .filter(|p| p.default.is_none() && !param_optional(p))
+                            .count();
+                        let actual = positional.len();
+                        if actual < required || actual > expected {
+                            let range = if required == expected {
+                                format!("{expected}")
+                            } else {
+                                format!("{required} to {expected}")
+                            };
+                            return Err(err(format!(
+                                "function `{}` expects {range} argument(s), but {actual} were provided",
+                                call.callee
+                            )));
+                        }
+                        let mut positional_types = Vec::with_capacity(positional.len());
+                        for (arg, param) in positional.iter().zip(params.iter()) {
+                            let arg_type = self.check_expression(&arg.value)?;
+                            positional_types.push(arg_type.clone());
+                            let expected = param.type_annotation.as_ref().unwrap_or(&Type::Any);
+                            if !self.assignable(&arg_type, expected)
+                                && !self.literal_matches(&arg.value, expected)
+                            {
+                                return Err(err(format!(
+                                    "argument to `{}` must be `{}`, found `{}`",
+                                    call.callee,
+                                    expected.name(),
+                                    arg_type.name()
+                                )));
+                            }
+                        }
+                        // Call-site inference for generic functions
+                        // (`first([1, 2])` binds `T = number`).
+                        let mut resolved = return_type;
+                        if !type_params.is_empty() {
+                            let param_types = params
+                                .iter()
+                                .map(|p| p.type_annotation.clone().unwrap_or(Type::Any))
+                                .collect::<Vec<_>>();
+                            let bindings = infer_type_bindings(
+                                &type_params,
+                                &param_types,
+                                &positional_types,
+                            );
+                            resolved = substitute_type(&resolved, &bindings);
+                        }
+                        Ok(resolved)
+                    }
+                })();
+                self.generics.truncate(self.generics.len().saturating_sub(type_params.len()));
+                result
+            }
+            SymbolKind::Variable => {
+                // A function value: `let f = fn() {...}; f(x)`.
+                let sig = match &sym.type_ {
+                    Type::FnSig { params, ret } => Some((params.clone(), ret.clone())),
+                    _ => None,
+                };
+                let Some((params, ret)) = sig else {
+                    return Err(err(format!("`{}` is not a function", call.callee)));
+                };
+                self.check_fn_value_args(&params, ret, &call.arguments)
+            }
+        }
+    }
+
+    /// Validate a call against a function-value signature (`Type::FnSig`):
+    /// positional arguments only, exact arity, per-parameter type checks.
+    fn check_fn_value_args(
+        &mut self,
+        params: &[Type],
+        ret: Option<Box<Type>>,
+        arguments: &[CallArg],
+    ) -> SResult<Type> {
+        if arguments.iter().any(|a| a.name.is_some()) {
+            return Err(err(
+                "named arguments are not supported when calling a function value",
+            ));
+        }
+        let expected = params.len();
+        let actual = arguments.len();
+        if actual != expected {
+            return Err(err(format!(
+                "function values expect exactly {expected} argument(s), but {actual} were provided",
+            )));
+        }
+        for (arg, param) in arguments.iter().zip(params.iter()) {
+            let arg_type = self.check_expression(&arg.value)?;
+            if !self.assignable(&arg_type, param) {
+                return Err(err(format!(
+                    "argument to function value must be `{}`, found `{}`",
+                    param.name(),
+                    arg_type.name()
+                )));
+            }
+        }
+        Ok(ret.map(|r| *r).unwrap_or(Type::Any))
+    }
+
+    fn check_enum_ref(&self, enum_name: String, variant: &str) -> SResult<Type> {
+        let Some(entry) = self.type_entry(&enum_name) else {
+            return Err(err(format!("unknown enum `{enum_name}`")));
+        };
+        match &entry.kind {
+            TypeEntryKind::Enum(variants) => {
+                if !variants.iter().any(|v| v.name == variant) {
+                    return Err(err(format!(
+                        "enum `{enum_name}` has no member `{variant}`"
+                    )));
+                }
+                Ok(Type::Named(enum_name))
+            }
+            TypeEntryKind::Alias(_) => Err(err(format!("`{enum_name}` is not an enum"))),
+        }
+    }
+
+    fn check_enum_call(
+        &mut self,
+        enum_name: String,
+        variant: String,
+        arguments: &[&Expression],
+    ) -> SResult<Type> {
+        let Some(entry) = self.type_entry(&enum_name) else {
+            return Err(err(format!("unknown enum `{enum_name}`")));
+        };
+        let type_params = entry.type_params.clone();
+        let TypeEntryKind::Enum(variants) = &entry.kind else {
+            return Err(err(format!("`{enum_name}` is not an enum")));
+        };
+        let Some(v) = variants.iter().find(|v| v.name == variant) else {
+            return Err(err(
+                format!("enum `{enum_name}` has no member `{variant}`"),
+            ));
+        };
+        let payload = v.payload.clone();
+        self.generics.extend(type_params.iter().cloned());
+        let result = match payload {
+            Some(payload) => {
+                if arguments.len() != 1 {
+                    Err(err(format!(
+                        "enum member `{enum_name}::{variant}` expects 1 argument (payload of type `{}`)",
+                        payload.name()
+                    )))
+                } else {
+                    let arg_type = self.check_expression(&arguments[0])?;
+                    if !self.assignable(&arg_type, &payload) {
+                        Err(err(format!(
+                            "argument to `{enum_name}::{variant}` must be `{}`, found `{}`",
+                            payload.name(),
+                            arg_type.name()
+                        )))
+                    } else {
+                        Ok(Type::Named(enum_name))
+                    }
+                }
+            }
+            None => {
+                if !arguments.is_empty() {
+                    Err(err(format!(
+                        "enum member `{enum_name}::{variant}` takes no payload"
+                    )))
+                } else {
+                    Ok(Type::Named(enum_name))
+                }
+            }
+        };
+        match result {
+            Ok(t) => {
+                self.generics
+                    .truncate(self.generics.len().saturating_sub(type_params.len()));
+                Ok(t)
+            }
+            Err(e) => {
+                self.generics
+                    .truncate(self.generics.len().saturating_sub(type_params.len()));
+                Err(e)
+            }
+        }
+    }
+
+    fn check_if(&mut self, if_expr: &IfExpr) -> SResult<Type> {
+        let condition = self.check_expression(&if_expr.condition)?;
+        if !self.assignable(&condition, &Type::Boolean) {
+            return Err(err(format!(
+                "if condition must be a `boolean`, found `{}`",
+                condition.name()
+            )));
+        }
+        let then_type = self.check_block_tail(&if_expr.then_branch)?;
+        let else_type = match &if_expr.else_branch {
+            Some(branch) => self.check_block_tail(branch)?,
+            None => None,
+        };
+        // An `if` in value position takes the then-branch tail type; when both
+        // branches have values they must be compatible (Rust/Swift style).
+        match (then_type, else_type) {
+            (Some(then_t), Some(else_t))
+                if !self.assignable(&else_t, &then_t) && !self.assignable(&then_t, &else_t) =>
+            {
+                Err(err(format!(
+                    "if branches have incompatible types `{}` and `{}`",
+                    then_t.name(),
+                    else_t.name()
+                )))
+            }
+            (Some(then_t), _) => Ok(then_t),
+            _ => Ok(Type::Any),
+        }
+    }
+
+    /// Validate that every named type referenced by `ty` is defined.
+    fn check_type(&self, ty: &Type) -> SResult<()> {
+        match ty {
+            Type::Named(name) => {
+                if self.generics.contains(name)
+                    || self.type_table.contains_key(name)
+                    || self.imported_types.contains_key(name)
+                {
+                    Ok(())
+                } else {
+                    Err(err(format!("unknown type `{name}`")))
+                }
+            }
+            Type::List(inner) | Type::Optional(inner) => self.check_type(inner),
+            Type::Union(parts) | Type::Intersection(parts) => {
+                for p in parts {
+                    self.check_type(p)?;
+                }
+                Ok(())
+            }
+            Type::ObjectType(fields) => {
+                for (_, t) in fields {
+                    self.check_type(t)?;
+                }
+                Ok(())
+            }
+            Type::Async(inner) => self.check_type(inner),
+            Type::FnSig { params, ret } => {
+                for p in params {
+                    self.check_type(p)?;
+                }
+                if let Some(r) = ret {
+                    self.check_type(r)?;
+                }
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// Resolve a `Named` type to its underlying type. Generic type parameters
+    /// erase to `Any`; enums are returned unchanged. A depth cap guards against
+    /// self-referential aliases.
+    fn resolve_alias(&self, ty: &Type, depth: usize) -> Type {
+        if depth > 32 {
+            return ty.clone();
+        }
+        match ty {
+            Type::Named(name) => {
+                if self.generics.contains(name) {
+                    Type::Any
+                } else {
+                    match self.type_entry(name).map(|e| &e.kind) {
+                        Some(TypeEntryKind::Alias(inner)) => self.resolve_alias(inner, depth + 1),
+                        _ => ty.clone(),
+                    }
+                }
+            }
+            _ => ty.clone(),
+        }
+    }
+
+    /// Look up a type by name, consulting both locally-declared types and
+    /// types imported from other modules.
+    fn type_entry(&self, name: &str) -> Option<&TypeEntry> {
+        self.type_table
+            .get(name)
+            .or_else(|| self.imported_types.get(name))
+    }
+
+    /// Is a value of type `from` acceptable where `to` is expected?
+    fn assignable(&self, from: &Type, to: &Type) -> bool {
+        let from = self.resolve_alias(from, 0);
+        let to = self.resolve_alias(to, 0);
+        if matches!(from, Type::Any) || matches!(to, Type::Any) {
+            return true;
+        }
+        if from == to {
+            return true;
+        }
+        match (&from, &to) {
+            (Type::Null, Type::Optional(_)) => true,
+            (inner, Type::Optional(expected)) => {
+                self.assignable(inner, expected) || matches!(inner, Type::Null)
+            }
+            (Type::Optional(inner), expected) => self.assignable(inner, expected),
+            (Type::Union(parts), expected) => parts.iter().all(|p| self.assignable(p, expected)),
+            (actual, Type::Union(parts)) => parts.iter().any(|p| self.assignable(actual, p)),
+            (Type::Intersection(parts), expected) => {
+                parts.iter().all(|p| self.assignable(p, expected))
+            }
+            (actual, Type::Intersection(parts)) => parts.iter().all(|p| self.assignable(actual, p)),
+            (Type::List(a), Type::List(b)) => self.assignable(a, b),
+            (Type::Object, Type::ObjectType(_)) => true,
+            (Type::ObjectType(_), Type::Object) => true,
+            (Type::ObjectType(_), Type::ObjectType(_)) => true,
+            (Type::Literal(_), Type::String) => true,
+            (Type::Async(a), Type::Async(b)) => self.assignable(a, b),
+            (Type::Async(a), expected) => {
+                matches!(a.as_ref(), Type::Any) || self.assignable(a, expected)
+            }
+            (actual, Type::Async(b)) => {
+                matches!(b.as_ref(), Type::Any) || self.assignable(actual, b)
+            }
+            (
+                Type::FnSig { params: ap, ret: ar },
+                Type::FnSig { params: bp, ret: br },
+            ) => {
+                ap.len() == bp.len()
+                    && ap.iter().zip(bp).all(|(a, b)| self.assignable(a, b))
+                    && match (ar, br) {
+                        (None, None) => true,
+                        (Some(a), Some(b)) => self.assignable(a, b),
+                        (Some(_), None) => true,
+                        (None, Some(_)) => false,
+                    }
+            }
+            _ => false,
+        }
+    }
+
+    /// Value-aware check for string-literal types: does a direct literal
+    /// expression belong to the set of string-literal types in `annotation`?
+    fn literal_matches(&self, value: &Expression, annotation: &Type) -> bool {
+        match annotation {
+            Type::Optional(inner) => match value {
+                Expression::Literal(Literal::Null) => true,
+                _ => self.literal_matches(value, inner),
+            },
+            Type::Union(parts) => parts.iter().any(|p| self.literal_matches(value, p)),
+            Type::Named(_) => {
+                let resolved = self.resolve_alias(annotation, 0);
+                if resolved != *annotation {
+                    self.literal_matches(value, &resolved)
+                } else {
+                    false
+                }
+            }
+            Type::Literal(expected) => match value {
+                Expression::Literal(Literal::String(s)) => s == expected,
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+}
+
+/// True when a parameter is declared optional (`name: T?`), meaning callers may
+/// omit its argument (docs §6 / §15).
+fn param_optional(param: &crate::ast::Param) -> bool {
+    matches!(param.type_annotation, Some(Type::Optional(_)))
+}
+
+/// Infer a function's type-parameter bindings by unifying each declared
+/// parameter type against its (positionally aligned) argument type, e.g.
+/// `first([1, 2])` binds `T = number` when the parameter is `list<T>`.
+fn infer_type_bindings(
+    type_params: &[String],
+    param_types: &[Type],
+    arg_types: &[Type],
+) -> std::collections::HashMap<String, Type> {
+    let mut bindings = std::collections::HashMap::new();
+    for (param_ty, arg_ty) in param_types.iter().zip(arg_types.iter()) {
+        unify_param(param_ty, arg_ty, type_params, &mut bindings);
+    }
+    bindings
+}
+
+fn unify_param(
+    expected: &Type,
+    actual: &Type,
+    type_params: &[String],
+    bindings: &mut std::collections::HashMap<String, Type>,
+) {
+    match expected {
+        Type::Named(name) if type_params.contains(name) => {
+            bindings.entry(name.clone()).or_insert_with(|| actual.clone());
+        }
+        Type::List(inner) => {
+            if let Type::List(element) = actual {
+                unify_param(inner, element, type_params, bindings);
+            }
+        }
+        Type::Optional(inner) => match actual {
+            Type::Optional(a) => unify_param(inner, a, type_params, bindings),
+            Type::Null => {}
+            other => unify_param(inner, other, type_params, bindings),
+        },
+        Type::Union(parts) => {
+            for p in parts {
+                unify_param(p, actual, type_params, bindings);
+            }
+        }
+        Type::Intersection(parts) => {
+            for p in parts {
+                unify_param(p, actual, type_params, bindings);
+            }
+        }
+        Type::Async(inner) => {
+            if let Type::Async(a) = actual {
+                unify_param(inner, a, type_params, bindings);
+            }
+        }
+        Type::FnSig { params, ret } => {
+            if let Type::FnSig {
+                params: actual_params,
+                ret: actual_ret,
+            } = actual
+            {
+                for (p, a) in params.iter().zip(actual_params.iter()) {
+                    unify_param(p, a, type_params, bindings);
+                }
+                if let (Some(pe), Some(ae)) = (ret, actual_ret) {
+                    unify_param(pe, ae, type_params, bindings);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Substitute inferred type-parameter bindings throughout a type.
+fn substitute_type(ty: &Type, bindings: &std::collections::HashMap<String, Type>) -> Type {
+    match ty {
+        Type::Named(name) => {
+            if let Some(bound) = bindings.get(name) {
+                bound.clone()
+            } else {
+                ty.clone()
+            }
+        }
+        Type::List(inner) => Type::List(Box::new(substitute_type(inner, bindings))),
+        Type::Optional(inner) => Type::Optional(Box::new(substitute_type(inner, bindings))),
+        Type::Union(parts) => Type::Union(
+            parts
+                .iter()
+                .map(|p| substitute_type(p, bindings))
+                .collect(),
+        ),
+        Type::Intersection(parts) => Type::Intersection(
+            parts
+                .iter()
+                .map(|p| substitute_type(p, bindings))
+                .collect(),
+        ),
+        Type::Async(inner) => Type::Async(Box::new(substitute_type(inner, bindings))),
+        Type::FnSig { params, ret } => Type::FnSig {
+            params: params
+                .iter()
+                .map(|p| substitute_type(p, bindings))
+                .collect(),
+            ret: ret.as_ref().map(|r| Box::new(substitute_type(r, bindings))),
+        },
+        other => other.clone(),
+    }
+}
+
+fn literal_type(lit: &Literal) -> Type {
+    match lit {
+        Literal::String(_) => Type::String,
+        Literal::Number(_) => Type::Number,
+        Literal::Boolean(_) => Type::Boolean,
+        Literal::Null => Type::Null,
+        Literal::List(items) => {
+            let element = items
+                .iter()
+                .find(|e| !matches!(e, Expression::Spread(_)))
+                .map(expr_type_hint)
+                .unwrap_or(Type::Any);
+            Type::List(Box::new(element))
+        }
+        Literal::Object(_) => Type::Object,
+    }
+}
+
+/// Best-effort type of an expression without semantic checks (used to infer
+/// list element types from literal syntax).
+fn expr_type_hint(expr: &Expression) -> Type {
+    match expr {
+        Expression::Literal(lit) => literal_type(lit),
+        _ => Type::Any,
+    }
+}
+
+/// Render a match arm pattern for error messages.
+fn pattern_name(arm: &crate::ast::MatchArm) -> String {
+    match &arm.pattern {
+        crate::ast::MatchPattern::Literal(Literal::String(s)) => format!("\"{s}\""),
+        crate::ast::MatchPattern::Literal(Literal::Number(n)) => n.to_string(),
+        crate::ast::MatchPattern::Literal(Literal::Boolean(b)) => b.to_string(),
+        crate::ast::MatchPattern::Literal(Literal::Null) => "null".into(),
+        crate::ast::MatchPattern::Literal(Literal::List(_)) => "[...]".into(),
+        crate::ast::MatchPattern::Literal(Literal::Object(_)) => "{...}".into(),
+        crate::ast::MatchPattern::Enum(r) => format!("{}::{}", r.enum_name, r.variant),
+        crate::ast::MatchPattern::EnumPayload {
+            enum_name,
+            variant,
+            ..
+        } => format!("{enum_name}::{variant}"),
+        crate::ast::MatchPattern::Wildcard => "_".into(),
+    }
+}
