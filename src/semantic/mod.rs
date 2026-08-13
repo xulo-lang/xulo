@@ -3,8 +3,8 @@ pub mod symbol_table;
 use std::collections::HashMap;
 
 use crate::ast::{
-    AssignStmt, Block, BinaryOperator, CallArg, EnumVariant, Expression, IfExpr, Literal,
-    ObjectField, Program, Statement, Type, TypeAlias,
+    AssignStmt, Block, BinaryOperator, CallArg, EnumVariant, Expression, IfExpr, LetBinding,
+    Literal, ObjectField, Program, Statement, Type, TypeAlias,
 };
 use crate::error::{ErrorKind, XuloError};
 use symbol_table::{Symbol, SymbolKind, SymbolTable};
@@ -44,6 +44,12 @@ pub struct Analyzer {
     generics: Vec<String>,
     /// Depth of enclosing async functions; `await` is only valid when > 0.
     async_depth: usize,
+    /// Depth of enclosing `Component`-returning functions; `@State`/`@Store`/
+    /// `@Effect`/`@Environment` are only valid when > 0.
+    component_depth: usize,
+    /// Depth of nested blocks below the current function body's top level;
+    /// decorators are only allowed when this is 0 (docs §12).
+    block_depth: usize,
     /// Imported names available to this module (name -> symbol).
     imports: HashMap<String, Symbol>,
     /// Imported type/alias names available to this module.
@@ -82,6 +88,8 @@ pub fn analyze_with(
         type_table: HashMap::new(),
         generics: Vec::new(),
         async_depth: 0,
+        component_depth: 0,
+        block_depth: 0,
         imports: imports.iter().map(|s| (s.name.clone(), s.clone())).collect(),
         imported_types: imported_types
             .iter()
@@ -246,6 +254,11 @@ impl Analyzer {
             }
             Statement::Import(import) => self.check_import(import),
             Statement::Export(export) => self.check_export(export),
+            Statement::State(state) => self.check_state(&state.binding),
+            Statement::Store(store) => self.check_store(store),
+            Statement::Effect(effect) => self.check_effect(effect),
+            Statement::Environment(env) => self.check_environment(env),
+            Statement::Component(component) => self.check_component(component),
         }
     }
 
@@ -293,7 +306,14 @@ impl Analyzer {
         if f.is_async {
             self.async_depth += 1;
         }
+        let is_component = self.is_component_type(&return_type);
+        if is_component {
+            self.component_depth += 1;
+        }
         let result = self.check_block_implicit(&f.body);
+        if is_component {
+            self.component_depth -= 1;
+        }
         if f.is_async {
             self.async_depth -= 1;
         }
@@ -368,6 +388,10 @@ impl Analyzer {
         match &import.spec {
             crate::ast::ImportSpec::Bare => Ok(()),
             crate::ast::ImportSpec::Namespace(ns) => {
+                if import.type_only {
+                    // `import type * as ns` is erased at runtime.
+                    return Ok(());
+                }
                 if !self.table.declare(Symbol {
                     name: ns.clone(),
                     type_: Type::Any,
@@ -535,7 +559,7 @@ impl Analyzer {
             (sym.type_.clone(), sym.kind.clone(), sym.is_const)
         };
         match &target.1 {
-            SymbolKind::Variable => {
+            SymbolKind::Variable | SymbolKind::State => {
                 if target.2 {
                     return Err(err(format!(
                         "cannot assign to `{}`: binding is immutable",
@@ -553,10 +577,223 @@ impl Analyzer {
                 }
                 Ok(())
             }
+            SymbolKind::Store => Err(err(format!(
+                "cannot assign to `{}`: store bindings are read-only",
+                assign.name
+            ))),
             SymbolKind::Function(_, _, _) => Err(err(format!(
                 "cannot assign to `{}`: it is a function",
                 assign.name
             ))),
+        }
+    }
+
+    /// `@State` / `@Store` / `@Effect` / `@Environment` are only valid at the
+    /// top level of a function whose return type is `Component` (docs §12).
+    fn require_component_top_level(&self, what: &str) -> SResult<()> {
+        if self.component_depth == 0 {
+            return Err(err(format!(
+                "`{what}` may only be used at the top level of a function returning `Component`"
+            )));
+        }
+        if self.block_depth > 0 {
+            return Err(err(format!(
+                "`{what}` may not be used inside a nested block"
+            )));
+        }
+        Ok(())
+    }
+
+    /// Is this type `Component` (optionally wrapped in `async`)?
+    fn is_component_type(&self, ty: &Type) -> bool {
+        match self.resolve_alias(ty, 0) {
+            Type::Named(n) => n == "Component",
+            Type::Async(inner) => matches!(inner.as_ref(), Type::Named(n) if n == "Component"),
+            _ => false,
+        }
+    }
+
+    fn check_state(&mut self, binding: &LetBinding) -> SResult<()> {
+        self.require_component_top_level("@State")?;
+        if let Some(annotation) = &binding.type_annotation {
+            self.check_type(annotation)?;
+        }
+        let value_type = match &binding.value {
+            Some(value) => self.check_expression(value)?,
+            None => binding.type_annotation.clone().unwrap_or(Type::Any),
+        };
+        if let Some(annotation) = &binding.type_annotation {
+            let literal_ok = match &binding.value {
+                Some(value) => self.literal_matches(value, annotation),
+                None => false,
+            };
+            if !self.assignable(&value_type, annotation) && !literal_ok {
+                return Err(err(format!(
+                    "cannot bind a value of type `{}` to `@State {}: {}`",
+                    value_type.name(),
+                    binding.name,
+                    annotation.name()
+                )));
+            }
+        }
+        let declared = self.table.declare(Symbol {
+            name: binding.name.clone(),
+            type_: binding.type_annotation.clone().unwrap_or(value_type),
+            kind: SymbolKind::State,
+            is_const: false,
+        });
+        if !declared {
+            return Err(err(format!(
+                "binding `{}` is already declared in this scope",
+                binding.name
+            )));
+        }
+        Ok(())
+    }
+
+    fn check_store(&mut self, store: &crate::ast::StoreStmt) -> SResult<()> {
+        self.require_component_top_level("@Store")?;
+        self.check_expression(&store.value)?;
+        match &store.pattern {
+            crate::ast::BindingPattern::Ident(name) => {
+                if !self.table.declare(Symbol {
+                    name: name.clone(),
+                    type_: Type::Any,
+                    kind: SymbolKind::Store,
+                    is_const: true,
+                }) {
+                    return Err(err(format!(
+                        "binding `{name}` is already declared in this scope"
+                    )));
+                }
+            }
+            crate::ast::BindingPattern::Destructure(fields) => {
+                for (name, alias) in fields {
+                    let local = alias.clone().unwrap_or_else(|| name.clone());
+                    if !self.table.declare(Symbol {
+                        name: local.clone(),
+                        type_: Type::Any,
+                        kind: SymbolKind::Store,
+                        is_const: true,
+                    }) {
+                        return Err(err(format!(
+                            "binding `{local}` is already declared in this scope"
+                        )));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn check_effect(&mut self, effect: &crate::ast::EffectStmt) -> SResult<()> {
+        self.require_component_top_level("@Effect")?;
+        self.check_fn_expr(&effect.closure)?;
+        if let Some(deps) = &effect.deps {
+            for dep in deps {
+                self.check_expression(dep)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn check_environment(&mut self, env: &crate::ast::EnvStmt) -> SResult<()> {
+        self.require_component_top_level("@Environment")?;
+        self.check_type(&env.type_)?;
+        if !self.table.declare(Symbol {
+            name: env.name.clone(),
+            type_: env.type_.clone(),
+            kind: SymbolKind::Store,
+            is_const: true,
+        }) {
+            return Err(err(format!(
+                "binding `{}` is already declared in this scope",
+                env.name
+            )));
+        }
+        Ok(())
+    }
+
+    fn check_component(&mut self, component: &crate::ast::ComponentStmt) -> SResult<()> {
+        for arg in &component.args {
+            self.check_expression(&arg.value)?;
+        }
+        self.block_depth += 1;
+        let mut result = Ok(());
+        for child in &component.children {
+            if let Err(e) = self.check_ui_element(child) {
+                result = Err(e);
+                break;
+            }
+        }
+        self.block_depth -= 1;
+        result
+    }
+
+    fn check_ui_element(&mut self, el: &crate::ast::UiElement) -> SResult<()> {
+        match el {
+            crate::ast::UiElement::Component(c) => self.check_component(c),
+            crate::ast::UiElement::Text(_) => Ok(()),
+            crate::ast::UiElement::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                let cond = self.check_expression(condition)?;
+                if !self.assignable(&cond, &Type::Boolean) {
+                    return Err(err(format!(
+                        "if condition must be a `boolean`, found `{}`",
+                        cond.name()
+                    )));
+                }
+                for e in then_branch {
+                    self.check_ui_element(e)?;
+                }
+                if let Some(els) = else_branch {
+                    for e in els {
+                        self.check_ui_element(e)?;
+                    }
+                }
+                Ok(())
+            }
+            crate::ast::UiElement::For {
+                iter_var,
+                iterable,
+                body,
+            } => {
+                let iterable_type = self.check_expression(iterable)?;
+                match iterable_type {
+                    Type::List(_) | Type::Any => {}
+                    other => {
+                        return Err(err(format!(
+                            "for loop must iterate over a `list`, found `{}`",
+                            other.name()
+                        )));
+                    }
+                }
+                self.table.push_scope();
+                self.table.declare(Symbol {
+                    name: iter_var.clone(),
+                    type_: Type::Any,
+                    kind: SymbolKind::Variable,
+                    is_const: false,
+                });
+                let mut result = Ok(());
+                for e in body {
+                    if let Err(err) = self.check_ui_element(e) {
+                        result = Err(err);
+                        break;
+                    }
+                }
+                self.table.pop_scope();
+                result
+            }
+            crate::ast::UiElement::Group(group) => {
+                for e in group {
+                    self.check_ui_element(e)?;
+                }
+                Ok(())
+            }
         }
     }
 
@@ -622,6 +859,7 @@ impl Analyzer {
     /// block's value), if any. Runs while the block scope is active.
     fn check_block_tail(&mut self, block: &Block) -> SResult<Option<Type>> {
         self.table.push_scope();
+        self.block_depth += 1;
         for statement in &block.statements {
             self.check_statement(statement)?;
         }
@@ -629,6 +867,7 @@ impl Analyzer {
             Some(Statement::Expr(e)) => Some(self.check_expression(e)?),
             _ => None,
         };
+        self.block_depth -= 1;
         self.table.pop_scope();
         Ok(tail)
     }
@@ -692,6 +931,17 @@ impl Analyzer {
             }
             Expression::Await(operand) => self.check_await(operand),
             Expression::FnExpr(f) => self.check_fn_expr(f),
+            Expression::Binding(name) => {
+                let Some(sym) = self.table.lookup(name) else {
+                    return Err(err(format!("undefined variable `{name}`")));
+                };
+                match sym.kind {
+                    SymbolKind::State | SymbolKind::Store => Ok(sym.type_.clone()),
+                    _ => Err(err(format!(
+                        "`$` binding requires a `@State` or `@Store` variable, but `{name}` is not"
+                    ))),
+                }
+            }
             Expression::Spread(_) => Err(err(
                 "`...` spread is only allowed inside list or object literals",
             )),
@@ -1244,6 +1494,9 @@ impl Analyzer {
                 };
                 self.check_fn_value_args(&params, ret, &call.arguments)
             }
+            SymbolKind::State | SymbolKind::Store => {
+                Err(err(format!("`{}` is not a function", call.callee)))
+            }
         }
     }
 
@@ -1395,7 +1648,8 @@ impl Analyzer {
     fn check_type(&self, ty: &Type) -> SResult<()> {
         match ty {
             Type::Named(name) => {
-                if self.generics.contains(name)
+                if name == "Component"
+                    || self.generics.contains(name)
                     || self.type_table.contains_key(name)
                     || self.imported_types.contains_key(name)
                 {

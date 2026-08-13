@@ -250,13 +250,18 @@ fn primary(input: &mut In<'_>) -> Pr<Expression> {
             literal_value(input)
         }
         Some(Token::LParen) => paren_expr(input),
+        Some(Token::Dollar) => {
+            tk(input, Token::Dollar)?;
+            let name = ident_name(input)?;
+            Ok(Expression::Binding(name))
+        }
         _ => Err(backtrack(input)),
     }
 }
 
 /// An anonymous function literal `fn(a: number): number { ... }` (an async
 /// variant is written `fn(): async { ... }`).
-fn fn_expr(input: &mut In<'_>) -> Pr<Expression> {
+pub fn fn_expr(input: &mut In<'_>) -> Pr<Expression> {
     tk(input, Token::Fn)?;
     let params = params_list(input)?;
     let (return_type, is_async) = if opt_tk(input, Token::Colon) {
@@ -303,7 +308,7 @@ fn ident_or_enum(input: &mut In<'_>) -> Pr<Expression> {
     }
 }
 
-fn call_args(input: &mut In<'_>) -> Pr<Vec<CallArg>> {
+pub fn call_args(input: &mut In<'_>) -> Pr<Vec<CallArg>> {
     tk(input, Token::LParen)?;
     let mut args = Vec::new();
     if !matches!(input.first().map(|t| t.kind), Some(Token::RParen)) {

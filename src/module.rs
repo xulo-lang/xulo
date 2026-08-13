@@ -443,7 +443,12 @@ fn bundle(loaded: &LoadedModules) -> Result<String, XuloError> {
         cg.emit_module_body(&module.program)?;
         out.push_str(&cg.finish());
         if idx == entry && module.has_main {
-            out.push_str("    main();\n");
+            if crate::codegen::javascript::main_returns_component(&module.program) {
+                out.push_str("    const __xulo_main = main();\n");
+                out.push_str("    if (typeof __xulo_mount === \"function\") __xulo_mount(__xulo_main);\n");
+            } else {
+                out.push_str("    main();\n");
+            }
         }
         let analysis = module.analysis.as_ref().expect("analyzed");
         let mut exports: Vec<String> = analysis

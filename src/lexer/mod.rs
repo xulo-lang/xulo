@@ -201,6 +201,8 @@ fn operator(input: &mut Input) -> Res<Token> {
         ('!', _, _) => (Token::Bang, 1),
         ('.', _, _) => (Token::Dot, 1),
         (':', _, _) => (Token::Colon, 1),
+        ('@', _, _) => (Token::At, 1),
+        ('$', _, _) => (Token::Dollar, 1),
         (';', _, _) => (Token::Semicolon, 1),
         (',', _, _) => (Token::Comma, 1),
         ('(', _, _) => (Token::LParen, 1),
@@ -296,6 +298,6 @@ mod tests {
 
     #[test]
     fn errors_on_garbage() {
-        assert!(tokenize("let @ = 1").is_err());
+        assert!(tokenize("let # = 1").is_err());
     }
 }

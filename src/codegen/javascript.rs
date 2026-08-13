@@ -1,9 +1,61 @@
 use crate::ast::{
-    AssignStmt, BinaryOperator, Block, BinaryOp, Call, CallValue, EnumDef, Expression, FnDef,
-    ForStmt, IfExpr, LetBinding, Literal, ObjectField, Program, Statement, WhileStmt,
+    AssignStmt, BindingPattern, BinaryOperator, Block, BinaryOp, Call, CallValue, ComponentStmt,
+    EnumDef, Expression, FnDef, ForStmt, IfExpr, LetBinding, Literal, ObjectField, Program,
+    Statement, Type, UiElement, WhileStmt,
 };
 use crate::error::XuloError;
 const INDENT: &str = "    ";
+
+/// The minimal reactive runtime, emitted once when any `@State`/`@Store`/
+/// `@Effect`/`@Environment`/`Component` feature is used. Provides signals
+/// (`__signal`), effects (`__effect`), a component render wrapper
+/// (`__component`), and environment lookup (`__env`).
+const REACTIVE_RUNTIME: &str = r#"const __runtime = (() => {
+    let current = null;
+    function signal(v) {
+        let value = v;
+        const subs = new Set();
+        return {
+            get() { if (current) current.add(subs); return value; },
+            set(nv) { value = nv; const s = [...subs]; s.forEach(f => f()); }
+        };
+    }
+    function effect(fn) {
+        let cleanup = null;
+        function run() {
+            if (cleanup) { const c = cleanup; cleanup = null; c(); }
+            const prev = current;
+            const track = new Set();
+            current = track;
+            let out;
+            try { out = fn(); } finally { current = prev; }
+            track.forEach(s => s.add(run));
+            if (typeof out === "function") cleanup = out;
+        }
+        run();
+    }
+    function component(render) {
+        let cleanup = null;
+        let last;
+        function run() {
+            if (cleanup) { const c = cleanup; cleanup = null; c(); }
+            const prev = current;
+            const track = new Set();
+            current = track;
+            try { last = render(); } finally { current = prev; }
+            track.forEach(s => s.add(run));
+        }
+        run();
+        return { get value() { return last; }, rerender: run };
+    }
+    function env(name) { return (globalThis.__xulo_env || {})[name]; }
+    return { signal, effect, component, env };
+})();
+const __signal = __runtime.signal;
+const __effect = __runtime.effect;
+const __component = __runtime.component;
+const __env = __runtime.env;
+"#;
 
 /// Emits modern JavaScript (ES Module) for a Xulo program.
 pub struct Javascript {
@@ -12,6 +64,11 @@ pub struct Javascript {
     /// `function name -> declared parameter order` (used to reorder named
     /// call arguments).
     fn_params: std::collections::HashMap<String, Vec<String>>,
+    /// Stack of scopes of `@State` signal names (used to rewrite reads into
+    /// `.get()` and writes into `.set()`).
+    signals: Vec<std::collections::HashSet<String>>,
+    /// Whether any reactive feature was used (triggers the runtime preamble).
+    used_reactive: bool,
 }
 
 impl Default for Javascript {
@@ -26,6 +83,42 @@ impl Javascript {
             out: String::new(),
             indent: 0,
             fn_params: std::collections::HashMap::new(),
+            signals: vec![std::collections::HashSet::new()],
+            used_reactive: false,
+        }
+    }
+
+    /// A fresh codegen sharing this one's parameter/signal context (used for
+    /// sub-expressions and closure bodies).
+    fn child(&self) -> Javascript {
+        Javascript {
+            out: String::new(),
+            indent: self.indent,
+            fn_params: self.fn_params.clone(),
+            signals: self.signals.clone(),
+            used_reactive: false,
+        }
+    }
+
+    fn mark_reactive(&mut self) {
+        self.used_reactive = true;
+    }
+
+    fn is_signal(&self, name: &str) -> bool {
+        self.signals.iter().rev().any(|s| s.contains(name))
+    }
+
+    fn register_signal(&mut self, name: String) {
+        self.signals.last_mut().expect("signal scope").insert(name);
+    }
+
+    fn push_signal_scope(&mut self) {
+        self.signals.push(std::collections::HashSet::new());
+    }
+
+    fn pop_signal_scope(&mut self) {
+        if self.signals.len() > 1 {
+            self.signals.pop();
         }
     }
 
@@ -36,7 +129,14 @@ impl Javascript {
     }
 
     pub fn finish(self) -> String {
-        self.out
+        if self.used_reactive {
+            let mut out = String::new();
+            out.push_str(REACTIVE_RUNTIME);
+            out.push_str(&self.out);
+            out
+        } else {
+            self.out
+        }
     }
 
     fn pad(&self) -> String {
@@ -74,7 +174,12 @@ impl Javascript {
         }
 
         if has_main {
-            self.line("main();");
+            if main_returns_component(program) {
+                self.line("const __xulo_main = main();");
+                self.line("if (typeof __xulo_mount === \"function\") __xulo_mount(__xulo_main);");
+            } else {
+                self.line("main();");
+            }
         }
         Ok(())
     }
@@ -150,6 +255,11 @@ impl Javascript {
             // bundler).
             Statement::Import(_) => {}
             Statement::Export(export) => self.export_item(&export.item)?,
+            Statement::State(state) => self.state_stmt(&state.binding)?,
+            Statement::Store(store) => self.store_stmt(store)?,
+            Statement::Effect(effect) => self.effect_stmt(effect)?,
+            Statement::Environment(env) => self.environment_stmt(env)?,
+            Statement::Component(component) => self.component_stmt(component)?,
         }
         Ok(())
     }
@@ -169,6 +279,9 @@ impl Javascript {
     }
 
     fn fn_def(&mut self, f: &FnDef) -> Result<(), XuloError> {
+        if matches!(&f.return_type, Some(Type::Named(n)) if n == "Component") {
+            return self.component_fn_def(f);
+        }
         let params = f
             .params
             .iter()
@@ -222,8 +335,140 @@ impl Javascript {
 
     fn assign_stmt(&mut self, a: &AssignStmt) -> Result<(), XuloError> {
         let value = self.expr(&a.value)?;
-        self.line(&format!("{} = {value};", a.name));
+        if self.is_signal(&a.name) {
+            self.line(&format!("{}.set({value});", a.name));
+        } else {
+            self.line(&format!("{} = {value};", a.name));
+        }
         Ok(())
+    }
+
+    /// `@State let x = v` -> `const x = __signal(v);` (reads/writes of `x` are
+    /// rewritten to `.get()`/`.set()` elsewhere).
+    fn state_stmt(&mut self, binding: &LetBinding) -> Result<(), XuloError> {
+        self.mark_reactive();
+        let init = match &binding.value {
+            Some(value) => self.expr(value)?,
+            None => "undefined".to_string(),
+        };
+        self.line(&format!("const {} = __signal({init});", binding.name));
+        self.register_signal(binding.name.clone());
+        Ok(())
+    }
+
+    /// `@Store const { a, b } = expr` -> `const { a, b } = expr;` (value binding).
+    fn store_stmt(&mut self, store: &crate::ast::StoreStmt) -> Result<(), XuloError> {
+        self.mark_reactive();
+        let value = self.expr(&store.value)?;
+        match &store.pattern {
+            BindingPattern::Ident(name) => {
+                self.line(&format!("const {name} = {value};"));
+            }
+            BindingPattern::Destructure(fields) => {
+                let names = fields
+                    .iter()
+                    .map(|(name, alias)| match alias {
+                        Some(a) => format!("{name}: {a}"),
+                        None => name.clone(),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                self.line(&format!("const {{ {names} }} = {value};"));
+            }
+        }
+        Ok(())
+    }
+
+    /// `@Effect fn() { ... } [, [deps]]` -> `__effect(function(){...}, deps);`.
+    fn effect_stmt(&mut self, effect: &crate::ast::EffectStmt) -> Result<(), XuloError> {
+        self.mark_reactive();
+        let closure = self.fn_expr(&effect.closure)?;
+        let deps = match &effect.deps {
+            Some(deps) => {
+                let parts = deps
+                    .iter()
+                    .map(|d| self.expr(d))
+                    .collect::<Result<Vec<_>, _>>()?
+                    .join(", ");
+                format!("[{parts}]")
+            }
+            None => "undefined".to_string(),
+        };
+        self.line(&format!("__effect({closure}, {deps});"));
+        Ok(())
+    }
+
+    /// `@Environment let router: Router` -> `const router = __env("Router");`.
+    fn environment_stmt(&mut self, env: &crate::ast::EnvStmt) -> Result<(), XuloError> {
+        self.mark_reactive();
+        let ty = env.type_.name();
+        self.line(&format!("const {} = __env({});", env.name, js_string(&ty)));
+        Ok(())
+    }
+
+    /// A UI component statement (`VStack { ... }`) compiles to a props-object
+    /// call with a `children` array (see README for the calling convention).
+    fn component_stmt(&mut self, component: &ComponentStmt) -> Result<(), XuloError> {
+        let expr = self.component_props_expr(component)?;
+        self.line(&format!("{expr};"));
+        Ok(())
+    }
+
+    fn component_props_expr(&mut self, component: &ComponentStmt) -> Result<String, XuloError> {
+        self.mark_reactive();
+        let mut props = Vec::new();
+        for (i, arg) in component.args.iter().enumerate() {
+            let value = self.expr(&arg.value)?;
+            match &arg.name {
+                Some(name) => props.push(format!("{}: {value}", js_string(name))),
+                None => props.push(format!("\"{i}\": {value}")),
+            }
+        }
+        let children = self.ui_children_expr(&component.children)?;
+        props.push(format!("children: {children}"));
+        Ok(format!("{}({{ {} }})", component.name, props.join(", ")))
+    }
+
+    /// Render a list of UI elements into a `[ ... ]` array expression; `if`,
+    /// `for`, and grouped blocks are spread with `...`.
+    fn ui_children_expr(&mut self, children: &[UiElement]) -> Result<String, XuloError> {
+        let mut parts = Vec::new();
+        for child in children {
+            match child {
+                UiElement::Component(c) => parts.push(self.component_props_expr(c)?),
+                UiElement::Text(s) => parts.push(js_string(s)),
+                UiElement::Group(group) => {
+                    parts.push(format!("...{}", self.ui_children_expr(group)?));
+                }
+                UiElement::If {
+                    condition,
+                    then_branch,
+                    else_branch,
+                } => {
+                    let cond = self.expr(condition)?;
+                    let then_js = self.ui_children_expr(then_branch)?;
+                    let else_js = match else_branch {
+                        Some(els) => self.ui_children_expr(els)?,
+                        None => "[]".to_string(),
+                    };
+                    parts.push(format!(
+                        "...(() => {{ if ({cond}) {{ return {then_js}; }} else {{ return {else_js}; }} }})()"
+                    ));
+                }
+                UiElement::For {
+                    iter_var,
+                    iterable,
+                    body,
+                } => {
+                    let iter = self.expr(iterable)?;
+                    let body_js = self.ui_children_expr(body)?;
+                    parts.push(format!(
+                        "...({iter}).map(({iter_var}) => {body_js}).flat()"
+                    ));
+                }
+            }
+        }
+        Ok(format!("[{}]", parts.join(", ")))
     }
 
     fn enum_def(&mut self, e: &EnumDef) -> Result<(), XuloError> {
@@ -272,6 +517,79 @@ impl Javascript {
         self.line(&format!("for (const {} of {iterable}) {{", f.iter_var));
         self.indent += 1;
         self.block_body(&f.body)?;
+        self.indent -= 1;
+        self.line("}");
+        Ok(())
+    }
+
+    /// A `fn ...(): Component` compiles to a function whose `@State`/`@Store`/
+    /// `@Effect`/`@Environment` declarations are hoisted into setup code, and
+    /// whose remaining body (the UI) runs inside `__component(function(){...})`
+    /// so signal changes trigger a re-render.
+    fn component_fn_def(&mut self, f: &FnDef) -> Result<(), XuloError> {
+        self.mark_reactive();
+        let params = f
+            .params
+            .iter()
+            .map(|p| {
+                let base = p.name.clone();
+                match &p.default {
+                    Some(d) => {
+                        let d = self.expr(d)?;
+                        Ok::<_, XuloError>(format!("{base} = {d}"))
+                    }
+                    None => Ok(base),
+                }
+            })
+            .collect::<Result<Vec<_>, XuloError>>()?
+            .join(", ");
+        self.line(&format!("function {}({params}) {{", f.name));
+        self.indent += 1;
+        self.push_signal_scope();
+        for statement in &f.body.statements {
+            match statement {
+                Statement::State(state) => self.state_stmt(&state.binding)?,
+                Statement::Store(store) => self.store_stmt(store)?,
+                Statement::Effect(effect) => self.effect_stmt(effect)?,
+                Statement::Environment(env) => self.environment_stmt(env)?,
+                _ => {}
+            }
+        }
+        let rest: Vec<&Statement> = f
+            .body
+            .statements
+            .iter()
+            .filter(|s| {
+                !matches!(
+                    s,
+                    Statement::State(_)
+                        | Statement::Store(_)
+                        | Statement::Effect(_)
+                        | Statement::Environment(_)
+                )
+            })
+            .collect();
+        self.line("return __component(function() {");
+        self.indent += 1;
+        if let Some((last, prefix)) = rest.split_last() {
+            for statement in prefix {
+                self.statement(statement)?;
+            }
+            match last {
+                Statement::Expr(expr) => {
+                    let value = self.expr(expr)?;
+                    self.line(&format!("return {value};"));
+                }
+                Statement::Component(component) => {
+                    let value = self.component_props_expr(component)?;
+                    self.line(&format!("return {value};"));
+                }
+                other => self.statement(other)?,
+            }
+        }
+        self.indent -= 1;
+        self.line("});");
+        self.pop_signal_scope();
         self.indent -= 1;
         self.line("}");
         Ok(())
@@ -366,7 +684,13 @@ impl Javascript {
     fn expr(&mut self, expr: &Expression) -> Result<String, XuloError> {
         Ok(match expr {
             Expression::Literal(lit) => self.literal(lit)?,
-            Expression::Identifier(name) => name.clone(),
+            Expression::Identifier(name) => {
+                if self.is_signal(name) {
+                    format!("{name}.get()")
+                } else {
+                    name.clone()
+                }
+            }
             Expression::BinaryOp(bin) => self.binary_op(bin)?,
             Expression::Unary(un) => format!("({}{})", un.operator.symbol(), self.expr(&un.operand)?),
             Expression::Call(call) => self.call(call)?,
@@ -398,6 +722,15 @@ impl Javascript {
             }
             Expression::Await(operand) => format!("(await {})", self.expr(operand)?),
             Expression::FnExpr(f) => self.fn_expr(f)?,
+            Expression::Binding(name) => {
+                if self.is_signal(name) {
+                    format!(
+                        "{{ value: {name}.get(), onChange: (__v) => {name}.set(__v) }}"
+                    )
+                } else {
+                    format!("{{ value: {name}, onChange: (__v) => {{}} }}")
+                }
+            }
             Expression::Spread(_) => unreachable!("spread handled inside list/object literals"),
             Expression::CallValue(cv) => self.call_value(cv)?,
         })
@@ -435,7 +768,7 @@ impl Javascript {
         if f.return_type.is_some()
             && let Some(Statement::Expr(last)) = stmts.last()
         {
-            let mut inline = Javascript::new();
+            let mut inline = self.child();
             inline.indent = 1;
             for s in &stmts[..stmts.len() - 1] {
                 inline.statement(s)?;
@@ -444,7 +777,7 @@ impl Javascript {
             body.push_str(&format!("    return {value};\n"));
         } else {
             for s in stmts {
-                let mut inline = Javascript::new();
+                let mut inline = self.child();
                 inline.indent = 1;
                 inline.statement(s)?;
                 body.push_str(&inline.finish());
@@ -577,7 +910,7 @@ impl Javascript {
     /// Render a block as the inline statements of an IIFE arm. A trailing
     /// expression statement (or `return`) becomes the arm's `return`.
     fn block_inline(&mut self, block: &Block) -> Result<String, XuloError> {
-        let mut js = Javascript::new();
+        let mut js = self.child();
         js.indent = self.indent + 1;
         match block.statements.last() {
             Some(Statement::Expr(e)) => {
@@ -602,7 +935,7 @@ impl Javascript {
     /// `match` in a value position compiles to an IIFE that compares the
     /// scrutinee against each arm and returns the first match.
     fn expr_match(&mut self, m: &crate::ast::MatchExpr) -> Result<String, XuloError> {
-        let mut js = Javascript::new();
+        let mut js = self.child();
         js.indent = self.indent + 1;
         let scrutinee = self.expr(&m.value)?;
         js.line(&format!("const __m = {scrutinee};"));
@@ -661,6 +994,27 @@ impl Javascript {
 /// A block consisting of exactly one `if` statement represents `else if`.
 fn is_else_if(block: &Block) -> bool {
     matches!(block.statements.as_slice(), [Statement::Expr(Expression::If(_))])
+}
+
+/// True when the program's `main` (plain, `export fn`, or `export default fn`)
+/// returns `Component`.
+pub fn main_returns_component(program: &Program) -> bool {
+    let main_fn = program.statements.iter().find_map(|s| match s {
+        Statement::Fn(f) if f.name == "main" => Some(f),
+        Statement::Export(export) => match &export.item {
+            crate::ast::ExportItem::Fn(f) if f.name == "main" => Some(f),
+            crate::ast::ExportItem::Default(inner) => match inner.as_ref() {
+                crate::ast::ExportItem::Fn(f) if f.name == "main" => Some(f),
+                _ => None,
+            },
+            _ => None,
+        },
+        _ => None,
+    });
+    matches!(
+        main_fn.and_then(|f| f.return_type.as_ref()),
+        Some(Type::Named(n)) if n == "Component"
+    )
 }
 
 fn fmt_number(n: f64) -> String {

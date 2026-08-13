@@ -63,6 +63,8 @@ pub enum Token {
     From,
     As,
     Default,
+    At,
+    Dollar,
     EOF,
 }
 
@@ -131,6 +133,8 @@ impl Token {
             Token::From => "`from`",
             Token::As => "`as`",
             Token::Default => "`default`",
+            Token::At => "`@`",
+            Token::Dollar => "`$`",
             Token::Number => "number",
             Token::String => "string",
             Token::Boolean => "boolean",

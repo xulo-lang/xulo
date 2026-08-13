@@ -19,6 +19,11 @@ pub enum Statement {
     Throw(Expression),
     Import(ImportStmt),
     Export(ExportStmt),
+    State(StateStmt),
+    Store(StoreStmt),
+    Effect(EffectStmt),
+    Environment(EnvStmt),
+    Component(ComponentStmt),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -45,6 +50,66 @@ pub struct LetBinding {
     pub type_annotation: Option<Type>,
     pub value: Option<Expression>,
     pub is_const: bool,
+}
+
+/// A `@State` declaration: reactive local state inside a `Component` function.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StateStmt {
+    pub binding: LetBinding,
+}
+
+/// A `@Store` declaration: destructure reactive store bindings.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StoreStmt {
+    pub pattern: BindingPattern,
+    pub value: Expression,
+}
+
+/// The left-hand side of a `@Store` binding: `name` or `{ a, b: c }`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum BindingPattern {
+    Ident(String),
+    Destructure(Vec<(String, Option<String>)>),
+}
+
+/// A `@Effect` declaration: a closure plus an optional dependency array.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EffectStmt {
+    pub closure: FnExpr,
+    pub deps: Option<Vec<Expression>>,
+}
+
+/// An `@Environment` declaration: reads an injected value of the given type.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EnvStmt {
+    pub name: String,
+    pub type_: Type,
+}
+
+/// A UI component invocation: `Component(args) { children }`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ComponentStmt {
+    pub name: String,
+    pub args: Vec<CallArg>,
+    pub children: Vec<UiElement>,
+}
+
+/// A single element in a UI block (component, text, if, for, or grouping).
+#[derive(Debug, Clone, PartialEq)]
+pub enum UiElement {
+    Component(ComponentStmt),
+    Text(String),
+    If {
+        condition: Expression,
+        then_branch: Vec<UiElement>,
+        else_branch: Option<Vec<UiElement>>,
+    },
+    For {
+        iter_var: String,
+        iterable: Expression,
+        body: Vec<UiElement>,
+    },
+    Group(Vec<UiElement>),
 }
 
 /// A reassignment statement: `name = expr`.
@@ -170,6 +235,8 @@ pub enum Expression {
     /// Calling a function value held in an arbitrary expression:
     /// `xs[0](10)`, `getHandler()(event)`, `(fn() {...})(5)`.
     CallValue(Box<CallValue>),
+    /// A `$name` binding reference to a `@State`/`@Store` variable.
+    Binding(String),
 }
 
 /// An anonymous function expression (`fn(a, b) { ... }`), usable wherever a

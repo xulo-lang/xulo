@@ -279,7 +279,7 @@ fn parses_default_params() {
 
 #[test]
 fn parses_named_args() {
-    let p = parse("Button(label: \"Submit\", variant: \"outline\")");
+    let p = parse("greet(label: \"Submit\", variant: \"outline\")");
     let Statement::Expr(Expression::Call(c)) = &p.statements[0] else {
         panic!("expected call");
     };
@@ -463,4 +463,95 @@ fn parses_bare_fn_expression_statement() {
         panic!("expected fn");
     };
     assert!(matches!(f.body.statements.last(), Some(Statement::Expr(Expression::FnExpr(_)))));
+}
+
+#[test]
+fn parses_state_declaration() {
+    use xulo::ast::StateStmt;
+    let p = parse("@State let count: number = 0");
+    let Statement::State(StateStmt { binding }) = &p.statements[0] else {
+        panic!("expected state");
+    };
+    assert_eq!(binding.name, "count");
+    assert!(matches!(binding.type_annotation, Some(xulo::ast::Type::Number)));
+}
+
+#[test]
+fn parses_store_destructure() {
+    use xulo::ast::{BindingPattern, StoreStmt};
+    let p = parse("@Store const { user, theme: t } = useAppStore()");
+    let Statement::Store(StoreStmt { pattern, .. }) = &p.statements[0] else {
+        panic!("expected store");
+    };
+    match pattern {
+        BindingPattern::Destructure(fields) => {
+            assert_eq!(fields[0].0, "user");
+            assert_eq!(fields[1].1.as_deref(), Some("t"));
+        }
+        _ => panic!("expected destructure"),
+    }
+}
+
+#[test]
+fn parses_effect_with_deps() {
+    use xulo::ast::EffectStmt;
+    let p = parse("@Effect fn() { fetchUser(id) }, [id]");
+    let Statement::Effect(EffectStmt { deps, .. }) = &p.statements[0] else {
+        panic!("expected effect");
+    };
+    assert!(deps.is_some());
+    assert_eq!(deps.as_ref().unwrap().len(), 1);
+}
+
+#[test]
+fn parses_environment_declaration() {
+    use xulo::ast::EnvStmt;
+    let p = parse("@Environment let router: Router");
+    let Statement::Environment(EnvStmt { name, .. }) = &p.statements[0] else {
+        panic!("expected environment");
+    };
+    assert_eq!(name, "router");
+}
+
+#[test]
+fn parses_component_block() {
+    use xulo::ast::{ComponentStmt, UiElement};
+    let p = parse("VStack(spacing: 16) { Text(\"Hello\") }");
+    let Statement::Component(ComponentStmt { name, args, children }) = &p.statements[0] else {
+        panic!("expected component");
+    };
+    assert_eq!(name, "VStack");
+    assert_eq!(args.len(), 1);
+    assert!(matches!(&children[0], UiElement::Component(c) if c.name == "Text"));
+}
+
+#[test]
+fn parses_component_without_args_or_children() {
+    let p = parse("Screen { }");
+    let Statement::Component(c) = &p.statements[0] else {
+        panic!("expected component");
+    };
+    assert_eq!(c.name, "Screen");
+    assert!(c.children.is_empty());
+}
+
+#[test]
+fn parses_ui_if_and_for() {
+    use xulo::ast::UiElement;
+    let p = parse("VStack { if ok { Text(\"a\") } else { Text(\"b\") } for x in xs { Text(x) } }");
+    let Statement::Component(c) = &p.statements[0] else {
+        panic!("expected component");
+    };
+    assert!(matches!(&c.children[0], UiElement::If { .. }));
+    assert!(matches!(&c.children[1], UiElement::For { .. }));
+}
+
+#[test]
+fn parses_dollar_binding_argument() {
+    use xulo::ast::Expression;
+    let p = parse("Input(value: $name)");
+    let Statement::Component(c) = &p.statements[0] else {
+        panic!("expected component");
+    };
+    assert!(matches!(&c.args[0].value, Expression::Binding(n) if n == "name"));
 }

@@ -1,10 +1,11 @@
 use crate::ast::{
-    AssignStmt, Block, EnumDef, EnumVariant, ExportItem, ExportStmt, Expression, FnDef, ForStmt,
-    ImportSpec, ImportStmt, LetBinding, Param, ReturnStmt, Statement, TryStmt, TypeAlias, WhileStmt,
+    AssignStmt, BindingPattern, Block, ComponentStmt, EffectStmt, EnumDef, EnumVariant, EnvStmt,
+    ExportItem, ExportStmt, Expression, FnDef, ForStmt, ImportSpec, ImportStmt, LetBinding, Param,
+    ReturnStmt, StateStmt, Statement, StoreStmt, TryStmt, TypeAlias, UiElement, WhileStmt,
 };
 use crate::lexer::token::Token;
 
-use super::expression::{expression, if_expr};
+use super::expression::{call_args, decode_string, expression, fn_expr, if_expr};
 use super::types::type_expr;
 use super::{at_eof, ident_name, opt_tk, peek_is, tk, verified_tk, In, PErr, Pr};
 use winnow::error::ErrMode;
@@ -36,6 +37,10 @@ pub fn statement(input: &mut In<'_>) -> Pr<Statement> {
         Some(Token::Throw) => throw_stmt(input).map(Statement::Throw),
         Some(Token::Import) => import_stmt(input).map(Statement::Import),
         Some(Token::Export) => export_stmt(input).map(Statement::Export),
+        Some(Token::At) => decorator_stmt(input),
+        Some(Token::Ident) if is_component(input) => {
+            component_stmt(input).map(Statement::Component)
+        }
         Some(Token::Ident) if is_assignment(input) => assign_stmt(input).map(Statement::Assign),
         _ => expression(input).map(Statement::Expr),
     }
@@ -44,6 +49,19 @@ pub fn statement(input: &mut In<'_>) -> Pr<Statement> {
 /// True when the statement at this position is `ident = expr`.
 fn is_assignment(input: &mut In<'_>) -> bool {
     matches!(input.get(1).map(|t| t.kind), Some(Token::Assign))
+}
+
+/// True when an uppercase-leading identifier followed by `(` or `{` begins a
+/// UI component statement (`VStack { ... }`, `Text("hi")`).
+fn is_component(input: &In<'_>) -> bool {
+    match (input.first(), input.get(1)) {
+        (Some(t), Some(n)) => {
+            t.kind == Token::Ident
+                && t.text.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+                && matches!(n.kind, Token::LParen | Token::LBrace)
+        }
+        _ => false,
+    }
 }
 
 fn fn_def(input: &mut In<'_>) -> Pr<FnDef> {
@@ -117,6 +135,11 @@ fn let_binding(input: &mut In<'_>, is_const: bool) -> Pr<LetBinding> {
     } else {
         tk(input, Token::Let)?;
     }
+    let_binding_body(input, is_const)
+}
+
+/// Parse a `let`/`const` binding after the keyword has been consumed.
+fn let_binding_body(input: &mut In<'_>, is_const: bool) -> Pr<LetBinding> {
     let name = ident_name(input)?;
     let type_annotation = if opt_tk(input, Token::Colon) {
         Some(type_expr(input)?)
@@ -367,4 +390,184 @@ fn export_decl(input: &mut In<'_>) -> Pr<ExportItem> {
         Some(Token::Enum) => enum_def(input).map(ExportItem::Enum),
         _ => Err(ErrMode::Cut(PErr::unexpected(input))),
     }
+}
+
+/// `@State` / `@Store` / `@Effect` / `@Environment` declarations.
+fn decorator_stmt(input: &mut In<'_>) -> Pr<Statement> {
+    tk(input, Token::At)?;
+    let kind = ident_name(input)?;
+    match kind.as_str() {
+        "State" => {
+            let is_const = if opt_tk(input, Token::Const) {
+                true
+            } else {
+                tk(input, Token::Let)?;
+                false
+            };
+            let binding = let_binding_body(input, is_const)?;
+            Ok(Statement::State(StateStmt { binding }))
+        }
+        "Store" => {
+            opt_tk(input, Token::Const);
+            let pattern = binding_pattern(input)?;
+            tk(input, Token::Assign)?;
+            let value = expression(input)?;
+            Ok(Statement::Store(StoreStmt { pattern, value }))
+        }
+        "Effect" => {
+            let closure = fn_expr(input)?;
+            let Expression::FnExpr(closure) = closure else {
+                return Err(ErrMode::Cut(PErr::unexpected(input)));
+            };
+            let deps = if opt_tk(input, Token::Comma) {
+                tk(input, Token::LBracket)?;
+                let mut deps = Vec::new();
+                if !peek_is(input, Token::RBracket) {
+                    loop {
+                        deps.push(expression(input)?);
+                        if !opt_tk(input, Token::Comma) {
+                            break;
+                        }
+                    }
+                }
+                tk(input, Token::RBracket)?;
+                Some(deps)
+            } else {
+                None
+            };
+            Ok(Statement::Effect(EffectStmt {
+                closure: *closure,
+                deps,
+            }))
+        }
+        "Environment" => {
+            tk(input, Token::Let)?;
+            let name = ident_name(input)?;
+            tk(input, Token::Colon)?;
+            let type_ = type_expr(input)?;
+            Ok(Statement::Environment(EnvStmt { name, type_ }))
+        }
+        _ => Err(ErrMode::Cut(PErr::unexpected(input))),
+    }
+}
+
+/// A `@Store` binding pattern: `name` or `{ a, b: c }`.
+fn binding_pattern(input: &mut In<'_>) -> Pr<BindingPattern> {
+    if opt_tk(input, Token::LBrace) {
+        let mut fields = Vec::new();
+        if !peek_is(input, Token::RBrace) {
+            loop {
+                let name = ident_name(input)?;
+                let alias = if opt_tk(input, Token::Colon) {
+                    Some(ident_name(input)?)
+                } else {
+                    None
+                };
+                fields.push((name, alias));
+                if !opt_tk(input, Token::Comma) {
+                    break;
+                }
+            }
+        }
+        tk(input, Token::RBrace)?;
+        Ok(BindingPattern::Destructure(fields))
+    } else {
+        ident_name(input).map(BindingPattern::Ident)
+    }
+}
+
+/// A UI component statement: `ComponentName(args)? { children }?`.
+fn component_stmt(input: &mut In<'_>) -> Pr<ComponentStmt> {
+    let name = ident_name(input)?;
+    let args = if peek_is(input, Token::LParen) {
+        call_args(input)?
+    } else {
+        Vec::new()
+    };
+    let children = if opt_tk(input, Token::LBrace) {
+        let elements = ui_elements(input)?;
+        tk(input, Token::RBrace)?;
+        elements
+    } else {
+        Vec::new()
+    };
+    Ok(ComponentStmt {
+        name,
+        args,
+        children,
+    })
+}
+
+/// Zero or more UI elements, terminated by a closing `}`.
+fn ui_elements(input: &mut In<'_>) -> Pr<Vec<UiElement>> {
+    let mut elements = Vec::new();
+    while !peek_is(input, Token::RBrace) {
+        if at_eof(input) {
+            return Err(ErrMode::Backtrack(PErr::unexpected(input)));
+        }
+        elements.push(ui_element(input)?);
+    }
+    Ok(elements)
+}
+
+/// A single UI element: component, naked string, `if`, `for`, or grouping.
+fn ui_element(input: &mut In<'_>) -> Pr<UiElement> {
+    match input.first().map(|t| t.kind) {
+        Some(Token::LBrace) => {
+            tk(input, Token::LBrace)?;
+            let group = ui_elements(input)?;
+            tk(input, Token::RBrace)?;
+            Ok(UiElement::Group(group))
+        }
+        Some(Token::If) => ui_if(input),
+        Some(Token::For) => ui_for(input),
+        Some(Token::String) => {
+            let t = verified_tk(input, Token::String)?;
+            Ok(UiElement::Text(decode_string(&t.text)))
+        }
+        Some(Token::Ident) if is_component(input) => component_stmt(input).map(UiElement::Component),
+        _ => Err(ErrMode::Backtrack(PErr::unexpected(input))),
+    }
+}
+
+/// A UI `if` / `else` (conditional rendering).
+fn ui_if(input: &mut In<'_>) -> Pr<UiElement> {
+    tk(input, Token::If)?;
+    let condition = expression(input)?;
+    tk(input, Token::LBrace)?;
+    let then_branch = ui_elements(input)?;
+    tk(input, Token::RBrace)?;
+    let else_branch = if opt_tk(input, Token::Else) {
+        if peek_is(input, Token::If) {
+            Some(vec![ui_if(input)?])
+        } else {
+            tk(input, Token::LBrace)?;
+            let els = ui_elements(input)?;
+            tk(input, Token::RBrace)?;
+            Some(els)
+        }
+    } else {
+        None
+    };
+    Ok(UiElement::If {
+        condition,
+        then_branch,
+        else_branch,
+    })
+}
+
+/// A UI `for` (list rendering).
+fn ui_for(input: &mut In<'_>) -> Pr<UiElement> {
+    tk(input, Token::For)?;
+    let iter_var = ident_name(input)?;
+    tk(input, Token::In)?;
+    let iterable = expression(input)?;
+    tk(input, Token::LBrace)?;
+    let body = ui_elements(input)?;
+    tk(input, Token::RBrace)?;
+    Ok(UiElement::For {
+        iter_var,
+        iterable,
+        body,
+    })
 }

@@ -1,0 +1,35 @@
+// UI 组件示例：@State / @Effect / 组件块 / $ 绑定
+import { Screen, VStack, HStack, Text, Button, Input } from "@xulo/ui"
+
+fn Counter(): Component {
+    @State let count: number = 0
+    @Effect fn() { print("mounted") }
+
+    VStack(spacing: 8) {
+        Text("Count: " + count)
+        HStack(spacing: 4) {
+            Button(onClick: fn() { count = count + 1 }) {
+                Text("+")
+            }
+            Button(onClick: fn() { count = count - 1 }) {
+                Text("-")
+            }
+        }
+    }
+}
+
+fn NameField(): Component {
+    @State let name: string = ""
+
+    VStack {
+        Input(value: $name)
+        Text("Hello, " + name)
+    }
+}
+
+fn main(): Component {
+    Screen {
+        Counter()
+        NameField()
+    }
+}

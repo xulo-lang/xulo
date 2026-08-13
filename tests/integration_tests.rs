@@ -626,3 +626,68 @@ fn run_optional_chaining_on_null() {
     assert_eq!(String::from_utf8_lossy(&out.stdout), "anonymous\nAnn\n");
     let _ = std::fs::remove_file(&file);
 }
+
+#[test]
+fn run_component_state_and_effect() {
+    let file = temp_file(
+        "comp.xulo",
+        r#"
+        fn main(): Component {
+            @State let count: number = 0
+            @Effect fn() { print("mounted") }
+            count = count + 1
+            print("count=" + count)
+        }
+        "#,
+    );
+    let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "mounted\ncount=1\n");
+    let _ = std::fs::remove_file(&file);
+}
+
+#[test]
+fn build_component_with_external_ui() {
+    let file = temp_file(
+        "ui.xulo",
+        r#"
+        import { Screen, VStack, Text } from "@xulo/ui"
+
+        fn main(): Component {
+            @State let name: string = "Xulo"
+            Screen {
+                VStack(spacing: 16) {
+                    Text("Name: " + name)
+                }
+            }
+        }
+        "#,
+    );
+    let out = temp_file("ui.mjs", "");
+    let result = Command::new(BIN)
+        .args(["build", file.to_str().unwrap(), "-o", out.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(result.status.success(), "stderr: {}", String::from_utf8_lossy(&result.stderr));
+
+    let js = std::fs::read_to_string(&out).unwrap();
+    assert!(js.contains("import { Screen, VStack, Text } from \"@xulo/ui\";"));
+    assert!(js.contains("__component"));
+    assert!(js.contains("children: ["));
+    assert!(js.contains("name.get()"));
+    assert!(js.contains("__xulo_mount"));
+    let _ = std::fs::remove_file(&file);
+    let _ = std::fs::remove_file(&out);
+}
+
+#[test]
+fn check_rejects_decorator_outside_component() {
+    let file = temp_file(
+        "bad.xulo",
+        "fn main() { @State let count: number = 0 }",
+    );
+    let out = Command::new(BIN).arg("check").arg(&file).output().unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("returning `Component`"));
+    let _ = std::fs::remove_file(&file);
+}

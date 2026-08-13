@@ -38,7 +38,7 @@ fn tracks_byte_spans() {
 
 #[test]
 fn rejects_garbage() {
-    assert!(tokenize("let @ = 1").is_err());
+    assert!(tokenize("let # = 1").is_err());
 }
 
 #[test]
@@ -147,5 +147,15 @@ fn tokenizes_phase3_keywords() {
             Export, Default, Fn, Ident, LParen, RParen, LBrace, RBrace,
             EOF
         ]
+    );
+}
+
+#[test]
+fn tokenizes_at_and_dollar() {
+    let tokens = tokenize("@State let x = 0 $name").unwrap();
+    let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
+    assert_eq!(
+        kinds,
+        vec![At, Ident, Let, Ident, Assign, Number, Dollar, Ident, EOF]
     );
 }

@@ -65,18 +65,29 @@ fn main() {
 ### 支持的特性
 
 - 字面量：数字 `123` `3.14`、字符串 `"..."` / `'...'`、布尔 `true`/`false`、列表 `[...]`、对象 `{ key: value, ... }`
-- 变量绑定：`let x = ...`，可选类型注解 `let x: number = ...`
-- 函数：`fn name(p: number): number { ... }`，支持递归
-- 控制流：`if` / `else` / `else if`，`for x in list { ... }`（编译为 `for (const x of ...)`）
-- 运算符：`+ - * / == != < > <= >=`
-- 类型：`string` `number` `boolean` `list` `object`；`print(...)` 为内置函数
-- 语义检查：未声明变量、重复声明、操作数类型兼容、if 条件须为布尔、返回值类型匹配、for 迭代须为列表
+- 变量绑定：`let` / `const`，可选类型注解；赋值语句
+- 函数：`fn name(p: number): number { ... }`，隐式/显式返回、递归、泛型（调用处推断）、可选/默认/命名参数、匿名函数（闭包）
+- 类型：`string` `number` `boolean` `list<T>` `object` `null` `T?` `T | U` `T & U`、字符串字面量联合、函数类型 `fn(...): T`、类型别名 `type`、枚举 `enum`（含关联数据、泛型）
+- 控制流：`if` / `else if` / `else`（表达式与语句）、`for x in list`、`for i in 0..<n`、`while`、`match`、`and`/`or`/`!`、三目、`throw`/`try`/`catch`
+- 表达式：成员访问、下标、`?.`、`??`、列表/对象展开 `...`、`$name` 双向绑定
+- 异步：`: async` 返回标注、`await`
+- 模块系统：`import` / `export`（named/default/namespace/type-only/bare），本地打包为 IIFE，外部包原样 ESM
+- UI：`Component` 返回类型、组件块语法（`VStack { Text(...) }`）、`@State` / `@Store` / `@Effect` / `@Environment`、UI 条件/循环渲染
+
+### UI 运行时约定
+
+- UI 组件来自外部包（`@xulo/ui`），原样保留为 ESM `import`；组件调用降级为 `Name({ key: value, children: [...] })`（props 对象 + `children` 数组，位置实参放入 `"0"`/`"1"` 键）。
+- `@State` 编译为响应式信号（`__signal`），读写分别变为 `.get()` / `.set()`；`@Effect` → `__effect`，`@Environment` → `__env`，组件函数体包裹在 `__component(function(){...})` 中。
+- 编译器按需内联一个最小响应式运行时；`fn main(): Component` 会生成 `if (typeof __xulo_mount === "function") __xulo_mount(main());` 挂载钩子，由外部运行时负责真正的渲染/更新。
+- `@State` / `@Store` / `@Effect` / `@Environment` 只能在返回类型为 `Component` 的函数顶层使用（嵌套块/普通函数内报语义错误）。
 
 ### 未实现 / 限制
 
 - `fmt` 与 `repl` 子命令为占位实现
 - 调用函数必须在调用点之前已声明（不支持前向引用）
-- 没有 `while` 循环、字符串拼接运算符 `+` 仅限数字、对象字段不支持成员访问表达式
+- `@Store` 的 `$` 绑定写方向为空操作；跨模块/`@xulo/store` 的订阅重渲染由外部运行时接管
+- 组件函数体在重渲染时会重新执行（`@State` 信号已提升到函数级，但 `@Effect` 依赖数组目前只校验不追踪变化）
+- `++`/`--` 自增运算符不在语言中
 
 ## 测试
 
@@ -96,13 +107,15 @@ src/
 ├── ast.rs              # 抽象语法树
 ├── diagnostics.rs      # 美化错误报告
 ├── error.rs            # 错误类型 (E0001-E0006)
+├── module.rs           # 多文件加载 + 打包（IIFE）
 ├── lexer/              # 词法分析
 │   ├── token.rs
 │   └── mod.rs
 ├── parser/             # 语法分析（winnow）
 │   ├── mod.rs
 │   ├── statement.rs
-│   └── expression.rs
+│   ├── expression.rs
+│   └── types.rs
 ├── semantic/           # 语义检查
 │   ├── mod.rs
 │   └── symbol_table.rs

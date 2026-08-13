@@ -250,3 +250,94 @@ fn call_value_emits_parenthesized_callee() {
     let js = generate_js("fn main() { let xs = [fn(x: number): number { x }] print(xs[0](1)) }");
     assert!(js.contains("(xs[0])(1)"));
 }
+
+#[test]
+fn state_emits_signal_and_get_set() {
+    let js = generate_js(
+        "fn main(): Component { @State let count: number = 0 count = count + 1 print(count) }",
+    );
+    assert!(js.contains("__signal"));
+    assert!(js.contains("const count = __signal(0);"));
+    assert!(js.contains("count.set((count.get() + 1));"));
+    assert!(js.contains("console.log(count.get());"));
+}
+
+#[test]
+fn component_emits_props_and_children() {
+    let js = generate_js(
+        "fn main(): Component { VStack(spacing: 16) { Text(\"Hi\") } }",
+    );
+    assert!(js.contains("__component"));
+    assert!(js.contains("VStack({"));
+    assert!(js.contains("children: [Text({"));
+}
+
+#[test]
+fn component_emits_runtime_preamble() {
+    let js = generate_js("fn main(): Component { }");
+    assert!(js.contains("__signal = __runtime.signal"));
+    assert!(js.contains("__component = __runtime.component"));
+}
+
+#[test]
+fn no_runtime_without_reactive_features() {
+    let js = generate_js("fn main() { print(1) }");
+    assert!(!js.contains("__runtime"));
+}
+
+#[test]
+fn store_emits_destructure() {
+    let js = generate_js(
+        "fn useAppStore(): object { return { user: null } }\n\
+         fn main(): Component { @Store const { user, theme } = useAppStore() }",
+    );
+    assert!(js.contains("const { user, theme } = useAppStore();"));
+}
+
+#[test]
+fn effect_emits_runtime_call() {
+    let js = generate_js(
+        "fn main(): Component { @State let id: number = 0 @Effect fn() { print(id) }, [id] }",
+    );
+    assert!(js.contains("__effect("));
+    assert!(js.contains("[id.get()]"));
+}
+
+#[test]
+fn environment_emits_env_lookup() {
+    let js = generate_js(
+        "type Router = object\nfn main(): Component { @Environment let router: Router }",
+    );
+    assert!(js.contains("const router = __env(\"Router\");"));
+}
+
+#[test]
+fn dollar_binding_emits_value_onchange() {
+    let js = generate_js(
+        "fn main(): Component { @State let name: string = \"\" Input(value: $name) }",
+    );
+    assert!(js.contains("{ value: name.get(), onChange: (__v) => name.set(__v) }"));
+}
+
+#[test]
+fn ui_if_and_for_emit_spread() {
+    let js = generate_js(
+        "fn main(): Component { let ok = true let xs = [1] VStack { if ok { Text(\"a\") } for x in xs { Text(x) } } }",
+    );
+    assert!(js.contains("...(() => { if (ok) {"));
+    assert!(js.contains(").map((x) =>"));
+}
+
+#[test]
+fn component_main_emits_mount_hook() {
+    let js = generate_js("fn main(): Component { }");
+    assert!(js.contains("const __xulo_main = main();"));
+    assert!(js.contains("__xulo_mount"));
+}
+
+#[test]
+fn script_main_does_not_emit_mount_hook() {
+    let js = generate_js("fn main() { print(1) }");
+    assert!(js.contains("main();"));
+    assert!(!js.contains("__xulo_mount"));
+}

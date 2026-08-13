@@ -664,3 +664,97 @@ fn optional_chaining_allows_null_base() {
     "#;
     assert!(analyze_src(src).is_ok());
 }
+
+#[test]
+fn component_type_is_recognized() {
+    let src = "fn main(): Component { }";
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn state_is_allowed_in_component_function() {
+    let src = r#"
+        fn main(): Component {
+            @State let count: number = 0
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn decorators_rejected_outside_component() {
+    let err = analyze_src("fn main() { @State let count: number = 0 }").unwrap_err();
+    assert!(err.message.contains("returning `Component`"));
+
+    let err = analyze_src("fn helper(): async { @State let count = 0 }").unwrap_err();
+    assert!(err.message.contains("returning `Component`"));
+}
+
+#[test]
+fn decorators_rejected_in_nested_block() {
+    let err = analyze_src(
+        "fn main(): Component { if true { @State let count: number = 0 } }",
+    )
+    .unwrap_err();
+    assert!(err.message.contains("nested block"));
+}
+
+#[test]
+fn effect_and_store_and_environment_in_component() {
+    let src = r#"
+        fn useAppStore(): object { return { user: null } }
+        fn main(): Component {
+            @State let editing: boolean = false
+            @Store const { user } = useAppStore()
+            @Environment let router: object
+            @Effect fn() { print(user) }
+            @Effect fn() { }, [editing]
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn dollar_binding_requires_state_or_store() {
+    let src = r#"
+        fn main(): Component {
+            @State let name: string = ""
+            Input(value: $name)
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+
+    let err = analyze_src(
+        "fn main(): Component { let name: string = \"\" Input(value: $name) }",
+    )
+    .unwrap_err();
+    assert!(err.message.contains("`$` binding"));
+}
+
+#[test]
+fn state_cannot_be_redeclared() {
+    let err = analyze_src(
+        "fn main(): Component { @State let x: number = 0 @State let x: number = 1 }",
+    )
+    .unwrap_err();
+    assert!(err.message.contains("already declared"));
+}
+
+#[test]
+fn component_children_are_type_checked() {
+    let src = r#"
+        fn main(): Component {
+            VStack {
+                if 1 > 0 { Text("ok") }
+                for x in [1, 2] { Text("x") }
+            }
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+
+    let err = analyze_src(
+        "fn main(): Component { VStack { for x in 5 { Text(\"x\") } } }",
+    )
+    .unwrap_err();
+    assert!(err.message.contains("must iterate over a `list`"));
+}
