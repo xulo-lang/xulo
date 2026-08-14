@@ -13,7 +13,7 @@ pub enum Statement {
     Assign(AssignStmt),
     TypeAlias(TypeAlias),
     Enum(EnumDef),
-    Expr(Expression),
+    Expr(ExprStmt),
     Block(Block),
     Try(TryStmt),
     Throw(Expression),
@@ -24,6 +24,16 @@ pub enum Statement {
     Effect(EffectStmt),
     Environment(EnvStmt),
     Component(ComponentStmt),
+}
+
+/// An expression used as a statement. `has_semicolon` records whether it ended
+/// with a `;`: a trailing expression *without* a semicolon is a function's
+/// implicit return; with one it is an ordinary (value-ignored) statement and
+/// triggers an "ignored return value" warning (docs §21.2).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExprStmt {
+    pub expr: Expression,
+    pub has_semicolon: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -112,10 +122,19 @@ pub enum UiElement {
     Group(Vec<UiElement>),
 }
 
-/// A reassignment statement: `name = expr`.
+/// The left-hand side of an assignment: a plain name, a member access, or an
+/// index into a list/object (`user.name = x`, `xs[0] = y`).
+#[derive(Debug, Clone, PartialEq)]
+pub enum AssignTarget {
+    Name(String),
+    Member(Box<Expression>, String),
+    Index(Box<Expression>, Box<Expression>),
+}
+
+/// A reassignment statement: `target = expr`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AssignStmt {
-    pub name: String,
+    pub target: AssignTarget,
     pub value: Expression,
 }
 
@@ -145,7 +164,7 @@ pub struct EnumVariant {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReturnStmt {
-    pub value: Expression,
+    pub value: Option<Expression>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

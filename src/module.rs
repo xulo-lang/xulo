@@ -47,11 +47,13 @@ pub struct LoadedModules {
 }
 
 /// Load, analyze in dependency order, and bundle the module graph reachable
-/// from `entry`.
-pub fn compile_file(entry: &Path) -> Result<String, XuloError> {
+/// from `entry`. Returns the bundle and any non-fatal warnings raised during
+/// analysis (each as `(file, message)`).
+pub fn compile_file(entry: &Path) -> Result<(String, Vec<(PathBuf, String)>), XuloError> {
     let mut loaded = load(entry)?;
-    analyze(&mut loaded)?;
-    bundle(&loaded)
+    let warnings = analyze(&mut loaded)?;
+    let js = bundle(&loaded)?;
+    Ok((js, warnings))
 }
 
 /// Resolve the transitive local imports of `entry`.
@@ -168,17 +170,23 @@ fn resolve_local(base: &Path, source: &str) -> Option<PathBuf> {
 
 /// Analyze every module in dependency order, seeding each one with the
 /// symbols and types its imports pull in. Rejects imports of names the target
-/// does not export.
-pub fn analyze(loaded: &mut LoadedModules) -> Result<(), XuloError> {
+/// does not export. Returns each module's warnings tagged with its file.
+pub fn analyze(loaded: &mut LoadedModules) -> Result<Vec<(PathBuf, String)>, XuloError> {
     let modules = &mut loaded.modules;
     let count = modules.len();
+    let mut warnings = Vec::new();
     for idx in 0..count {
         let (symbols, types) = collect_imports(modules, idx)?;
-        let result = analyze_with(&modules[idx].program, &symbols, &types)
-            .map_err(|e| e.with_message_prefix(format!("{}: ", modules[idx].file.display())))?;
+        let result = analyze_with(&modules[idx].program, &symbols, &types).map_err(|e| {
+            e.with_message_prefix(format!("{}: ", modules[idx].file.display()))
+                .with_file(modules[idx].file.clone())
+        })?;
+        for w in &result.warnings {
+            warnings.push((modules[idx].file.clone(), w.clone()));
+        }
         modules[idx].analysis = Some(result);
     }
-    Ok(())
+    Ok(warnings)
 }
 
 fn collect_imports(
@@ -210,7 +218,7 @@ fn collect_imports(
                 for (name, alias) in names {
                     let local = alias.clone().unwrap_or_else(|| name.clone());
                     if binding.type_only {
-                        types.push(exported_type(analysis, name, local));
+                        types.push(exported_type(analysis, name, local)?);
                         continue;
                     }
                     let exported = analysis
@@ -277,22 +285,27 @@ fn collect_imports(
     Ok((symbols, types))
 }
 
-fn exported_type(analysis: &AnalysisResult, name: &str, local: String) -> (String, TypeEntry) {
+fn exported_type(
+    analysis: &AnalysisResult,
+    name: &str,
+    local: String,
+) -> Result<(String, TypeEntry), XuloError> {
     match analysis
         .exported_types
         .iter()
         .find(|(n, _)| n == name)
         .cloned()
     {
-        Some((_, entry)) => (local, entry),
-        None => (
-            local,
-            TypeEntry {
-                type_params: Vec::new(),
-                kind: TypeEntryKind::Alias(Type::Any),
-            },
-        ),
+        Some((_, entry)) => Ok((local, entry)),
+        None => Err(no_export_type(name)),
     }
+}
+
+fn no_export_type(name: &str) -> XuloError {
+    XuloError::new(
+        ErrorKind::Semantic,
+        format!("imported type `{name}` does not exist in the target module"),
+    )
 }
 
 fn no_export(module: &dyn std::fmt::Display, name: &str) -> XuloError {
@@ -308,6 +321,10 @@ fn no_export(module: &dyn std::fmt::Display, name: &str) -> XuloError {
 fn bundle(loaded: &LoadedModules) -> Result<String, XuloError> {
     let mut out = String::new();
     for imp in &loaded.external_imports {
+        // `import type` is erased: it only feeds the type checker (docs §7).
+        if imp.type_only {
+            continue;
+        }
         match &imp.spec {
             ImportSpec::Bare => out.push_str(&format!("import {:?};\n", imp.source)),
             ImportSpec::Namespace(ns) => {
@@ -440,6 +457,8 @@ fn bundle(loaded: &LoadedModules) -> Result<String, XuloError> {
             if crate::codegen::javascript::main_returns_component(&module.program) {
                 out.push_str("    const __xulo_main = main();\n");
                 out.push_str("    if (typeof __xulo_mount === \"function\") __xulo_mount(__xulo_main);\n");
+            } else if crate::codegen::javascript::main_is_async(&module.program) {
+                out.push_str("    main().catch((e) => { console.error(e); if (typeof process !== \"undefined\") process.exitCode = 1; });\n");
             } else {
                 out.push_str("    main();\n");
             }

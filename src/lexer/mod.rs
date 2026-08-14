@@ -164,12 +164,50 @@ fn string(input: &mut Input) -> Res<()> {
             let Some(e) = input.chars().next() else {
                 return Err(backtrack(input));
             };
-            if !matches!(e, '"' | '\'' | '\\' | 'n' | 't' | 'r') {
+            if !matches!(e, '"' | '\'' | '\\' | 'n' | 't' | 'r' | 'u') {
                 return Err(backtrack(input));
             }
             bump(input);
+            if e == 'u' {
+                consume_unicode_escape(input)?;
+            }
         }
     }
+}
+
+/// Consume a `\uXXXX` or `\u{...}` escape (after the `\u` has been consumed).
+fn consume_unicode_escape(input: &mut Input) -> Res<()> {
+    if input.chars().next() == Some('{') {
+        bump(input);
+        let mut digits = 0;
+        loop {
+            let Some(h) = input.chars().next() else {
+                return Err(backtrack(input));
+            };
+            if h == '}' {
+                if digits == 0 {
+                    return Err(backtrack(input));
+                }
+                bump(input);
+                return Ok(());
+            }
+            if !h.is_ascii_hexdigit() || digits >= 6 {
+                return Err(backtrack(input));
+            }
+            bump(input);
+            digits += 1;
+        }
+    }
+    for _ in 0..4 {
+        let Some(h) = input.chars().next() else {
+            return Err(backtrack(input));
+        };
+        if !h.is_ascii_hexdigit() {
+            return Err(backtrack(input));
+        }
+        bump(input);
+    }
+    Ok(())
 }
 
 /// Manually match punctuation and operator symbols.

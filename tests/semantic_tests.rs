@@ -758,3 +758,82 @@ fn component_children_are_type_checked() {
     .unwrap_err();
     assert!(err.message.contains("must iterate over a `list`"));
 }
+
+#[test]
+fn await_rejected_inside_value_position_if() {
+    let err = analyze_src(
+        "fn work(): async { 42 }\nfn main(): async { let ok = true let x = if ok { await work() } else { 0 } }",
+    )
+    .unwrap_err();
+    assert!(err.message.contains("`if`/`match` expression"));
+}
+
+#[test]
+fn await_rejected_inside_value_position_match() {
+    let err = analyze_src(
+        "fn work(): async { 42 }\nfn main(): async { let x = match 1 { 1 => await work() _ => 0 } }",
+    )
+    .unwrap_err();
+    assert!(err.message.contains("`if`/`match` expression"));
+}
+
+#[test]
+fn await_rejected_inside_implicit_return_if() {
+    let err = analyze_src(
+        "fn work(): async { 42 }\nfn main(): async { let ok = true if ok { await work() } else { 0 } }",
+    )
+    .unwrap_err();
+    assert!(err.message.contains("`if`/`match` expression"));
+}
+
+#[test]
+fn await_allowed_in_statement_position_if() {
+    let src = r#"
+        fn work(): async { 42 }
+        fn main(): async {
+            let ok = true
+            if ok { let v = await work() print(v) }
+            print(7)
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn await_allowed_inside_ternary() {
+    let src = "fn work(): async { 42 }\nfn main(): async { let ok = true let x = ok ? await work() : 0 print(x) }";
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn await_rejected_in_non_async_closure_inside_async_fn() {
+    let err = analyze_src(
+        "fn work(): async { 42 }\nfn main(): async { let g = fn() { await work() } }",
+    )
+    .unwrap_err();
+    assert!(err.message.contains("inside an `async` function"));
+}
+
+#[test]
+fn await_allowed_in_async_closure() {
+    let src = "fn main(): async { let g = fn(): async { 42 } let v = await g() print(v) }";
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn decorators_rejected_in_closure_inside_component() {
+    let err = analyze_src(
+        "fn main(): Component { fn handle() { @State let count: number = 0 } print(\"x\") }",
+    )
+    .unwrap_err();
+    assert!(err.message.contains("returning `Component`"));
+}
+
+#[test]
+fn decorators_rejected_in_anonymous_closure_inside_component() {
+    let err = analyze_src(
+        "fn main(): Component { let handle = fn() { @State let count: number = 0 } }",
+    )
+    .unwrap_err();
+    assert!(err.message.contains("returning `Component`"));
+}

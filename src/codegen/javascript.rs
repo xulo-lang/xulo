@@ -20,19 +20,35 @@ const REACTIVE_RUNTIME: &str = r#"const __runtime = (() => {
             set(nv) { value = nv; const s = [...subs]; s.forEach(f => f()); }
         };
     }
-    function effect(fn) {
+    function effect(fn, getDeps) {
         let cleanup = null;
+        let lastDeps = null;
         function run() {
             if (cleanup) { const c = cleanup; cleanup = null; c(); }
             const prev = current;
             const track = new Set();
             current = track;
             let out;
-            try { out = fn(); } finally { current = prev; }
+            let changed = true;
+            try {
+                if (getDeps) {
+                    const next = getDeps();
+                    changed = !sameDeps(next, lastDeps);
+                    lastDeps = next;
+                }
+                if (changed) out = fn();
+            } finally { current = prev; }
             track.forEach(s => s.add(run));
             if (typeof out === "function") cleanup = out;
         }
         run();
+    }
+    function sameDeps(a, b) {
+        if (a === b) return true;
+        if (!a || !b) return false;
+        if (a.length !== b.length) return false;
+        for (let i = 0; i < a.length; i++) if (!Object.is(a[i], b[i])) return false;
+        return true;
     }
     function component(render) {
         let cleanup = null;
@@ -69,6 +85,9 @@ pub struct Javascript {
     signals: Vec<std::collections::HashSet<String>>,
     /// Whether any reactive feature was used (triggers the runtime preamble).
     used_reactive: bool,
+    /// Whether a `0..<n` range expression was generated (triggers a `range`
+    /// helper at the top of the output).
+    used_range: bool,
 }
 
 impl Default for Javascript {
@@ -85,6 +104,7 @@ impl Javascript {
             fn_params: std::collections::HashMap::new(),
             signals: vec![std::collections::HashSet::new()],
             used_reactive: false,
+            used_range: false,
         }
     }
 
@@ -97,6 +117,7 @@ impl Javascript {
             fn_params: self.fn_params.clone(),
             signals: self.signals.clone(),
             used_reactive: false,
+            used_range: false,
         }
     }
 
@@ -129,11 +150,18 @@ impl Javascript {
     }
 
     pub fn finish(self) -> String {
-        if self.used_reactive {
-            let mut out = String::new();
-            out.push_str(REACTIVE_RUNTIME);
-            out.push_str(&self.out);
-            out
+        let preamble = if self.used_reactive {
+            REACTIVE_RUNTIME.to_string()
+        } else {
+            String::new()
+        };
+        let preamble = if self.used_range {
+            format!("{preamble}function range(a, b) {{ const r = []; for (let i = a; i < b; i++) r.push(i); return r; }}\n")
+        } else {
+            preamble
+        };
+        if !preamble.is_empty() {
+            format!("{preamble}{}", self.out)
         } else {
             self.out
         }
@@ -177,6 +205,8 @@ impl Javascript {
             if main_returns_component(program) {
                 self.line("const __xulo_main = main();");
                 self.line("if (typeof __xulo_mount === \"function\") __xulo_mount(__xulo_main);");
+            } else if main_is_async(program) {
+                self.line("main().catch((e) => { console.error(e); if (typeof process !== \"undefined\") process.exitCode = 1; });");
             } else {
                 self.line("main();");
             }
@@ -224,8 +254,13 @@ impl Javascript {
             Statement::Fn(f) => self.fn_def(f)?,
             Statement::Let(b) => self.let_binding(b)?,
             Statement::Return(r) => {
-                let value = self.expr(&r.value)?;
-                self.line(&format!("return {value};"));
+                match &r.value {
+                    Some(value) => {
+                        let value = self.expr(value)?;
+                        self.line(&format!("return {value};"));
+                    }
+                    None => self.line("return;"),
+                }
             }
             Statement::For(f) => self.for_stmt(f)?,
             Statement::While(w) => self.while_stmt(w)?,
@@ -236,10 +271,13 @@ impl Javascript {
                 self.indent -= 1;
                 self.line("}");
             }
-            Statement::Expr(Expression::If(if_expr)) => self.if_stmt(if_expr)?,
-            Statement::Expr(expr) => {
-                let value = self.expr(expr)?;
-                self.line(&format!("{value};"));
+            Statement::Expr(es) => {
+                if let Expression::If(if_expr) = &es.expr {
+                    self.if_stmt(if_expr)?;
+                } else {
+                    let value = self.expr(&es.expr)?;
+                    self.line(&format!("{value};"));
+                }
             }
             Statement::Assign(a) => self.assign_stmt(a)?,
             // Type aliases are erased at codegen time.
@@ -292,7 +330,13 @@ impl Javascript {
                         let d = self.expr(d)?;
                         Ok::<_, XuloError>(format!("{base} = {d}"))
                     }
-                    None => Ok(base),
+                    None => {
+                        if is_optional_param(p) {
+                            Ok(format!("{base} = null"))
+                        } else {
+                            Ok(base)
+                        }
+                    }
                 }
             })
             .collect::<Result<Vec<_>, XuloError>>()?
@@ -302,11 +346,13 @@ impl Javascript {
         self.indent += 1;
         let stmts = &f.body.statements;
         // Implicit return (docs §6 / §21.2): for a function with a declared
-        // return type, a trailing expression statement is its value.
+        // return type, a trailing expression statement without a `;` is its
+        // value; with a `;` it stays an ordinary statement.
         if f.return_type.is_some()
             && let Some(Statement::Expr(last)) = stmts.last()
+            && !last.has_semicolon
         {
-            let value = self.expr(last)?;
+            let value = self.expr(&last.expr)?;
             for s in &stmts[..stmts.len() - 1] {
                 self.statement(s)?;
             }
@@ -335,11 +381,23 @@ impl Javascript {
 
     fn assign_stmt(&mut self, a: &AssignStmt) -> Result<(), XuloError> {
         let value = self.expr(&a.value)?;
-        if self.is_signal(&a.name) {
-            self.line(&format!("{}.set({value});", a.name));
-        } else {
-            self.line(&format!("{} = {value};", a.name));
-        }
+        let target = match &a.target {
+            crate::ast::AssignTarget::Name(name) => {
+                if self.is_signal(name) {
+                    // `@State` write: rewrite `count = v` into `count.set(v)`.
+                    self.line(&format!("{name}.set({value});"));
+                    return Ok(());
+                }
+                name.clone()
+            }
+            crate::ast::AssignTarget::Member(object, property) => {
+                format!("{}.{property}", self.expr(object)?)
+            }
+            crate::ast::AssignTarget::Index(object, index) => {
+                format!("{}[{}]", self.expr(object)?, self.expr(index)?)
+            }
+        };
+        self.line(&format!("{target} = {value};"));
         Ok(())
     }
 
@@ -379,7 +437,7 @@ impl Javascript {
         Ok(())
     }
 
-    /// `@Effect fn() { ... } [, [deps]]` -> `__effect(function(){...}, deps);`.
+    /// `@Effect fn() { ... } [, [deps]]` -> `__effect(function(){...}, () => [deps]);`.
     fn effect_stmt(&mut self, effect: &crate::ast::EffectStmt) -> Result<(), XuloError> {
         self.mark_reactive();
         let closure = self.fn_expr(&effect.closure)?;
@@ -390,7 +448,7 @@ impl Javascript {
                     .map(|d| self.expr(d))
                     .collect::<Result<Vec<_>, _>>()?
                     .join(", ");
-                format!("[{parts}]")
+                format!("() => [{parts}]")
             }
             None => "undefined".to_string(),
         };
@@ -576,8 +634,8 @@ impl Javascript {
                 self.statement(statement)?;
             }
             match last {
-                Statement::Expr(expr) => {
-                    let value = self.expr(expr)?;
+                Statement::Expr(es) if !es.has_semicolon => {
+                    let value = self.expr(&es.expr)?;
                     self.line(&format!("return {value};"));
                 }
                 Statement::Component(component) => {
@@ -628,7 +686,9 @@ impl Javascript {
             Some(else_block) if is_else_if(else_block) => {
                 // else if (c) { ... }
                 let inner = else_block.statements.first().unwrap();
-                if let Statement::Expr(Expression::If(nested)) = inner {
+                if let Statement::Expr(es) = inner
+                    && let Expression::If(nested) = &es.expr
+                {
                     let condition = self.expr(&nested.condition)?;
                     self.line(&format!("}} else if ({condition}) {{"));
                     self.indent += 1;
@@ -652,7 +712,9 @@ impl Javascript {
     fn emit_tail_else(&mut self, else_branch: &Option<Block>) -> Result<(), XuloError> {
         match else_branch {
             Some(b) if is_else_if(b) => {
-                if let Statement::Expr(Expression::If(nested)) = b.statements.first().unwrap() {
+                if let Statement::Expr(es) = b.statements.first().unwrap()
+                    && let Expression::If(nested) = &es.expr
+                {
                     let condition = self.expr(&nested.condition)?;
                     self.line(&format!("}} else if ({condition}) {{"));
                     self.indent += 1;
@@ -716,6 +778,7 @@ impl Javascript {
                 self.expr(&n.right)?
             ),
             Expression::Range(r) => {
+                self.used_range = true;
                 let start = self.expr(&r.start)?;
                 let end = self.expr(&r.end)?;
                 format!("range({start}, {end})")
@@ -757,7 +820,13 @@ impl Javascript {
                 let base = p.name.clone();
                 match &p.default {
                     Some(d) => Ok::<_, XuloError>(format!("{base} = {}", self.expr(d)?)),
-                    None => Ok(base),
+                    None => {
+                        if is_optional_param(p) {
+                            Ok(format!("{base} = null"))
+                        } else {
+                            Ok(base)
+                        }
+                    }
                 }
             })
             .collect::<Result<Vec<_>, _>>()?
@@ -767,14 +836,16 @@ impl Javascript {
         let stmts = &f.body.statements;
         if f.return_type.is_some()
             && let Some(Statement::Expr(last)) = stmts.last()
+            && !last.has_semicolon
         {
             let mut inline = self.child();
             inline.indent = 1;
             for s in &stmts[..stmts.len() - 1] {
                 inline.statement(s)?;
             }
-            let value = inline.expr(last)?;
-            body.push_str(&format!("    return {value};\n"));
+            let value = inline.expr(&last.expr)?;
+            inline.line(&format!("return {value};"));
+            body.push_str(&inline.finish());
         } else {
             for s in stmts {
                 let mut inline = self.child();
@@ -876,7 +947,10 @@ impl Javascript {
         let Some(params) = param_names else {
             return Err(XuloError::new(
                 crate::error::ErrorKind::Codegen,
-                format!("named arguments require parameter names for `{}`", call.callee),
+                format!(
+                    "named arguments require parameter names for `{}`: this function is imported from an external package or has no known signature, so positional arguments must be used",
+                    call.callee
+                ),
             ));
         };
         let mut by_name = std::collections::HashMap::new();
@@ -913,19 +987,24 @@ impl Javascript {
         let mut js = self.child();
         js.indent = self.indent + 1;
         match block.statements.last() {
-            Some(Statement::Expr(e)) => {
+            Some(Statement::Expr(e)) if !e.has_semicolon => {
                 for s in &block.statements[..block.statements.len() - 1] {
                     js.statement(s)?;
                 }
-                let value = js.expr(e)?;
+                let value = js.expr(&e.expr)?;
                 js.line(&format!("return {value};"));
             }
             Some(Statement::Return(r)) => {
                 for s in &block.statements[..block.statements.len() - 1] {
                     js.statement(s)?;
                 }
-                let value = js.expr(&r.value)?;
-                js.line(&format!("return {value};"));
+                match &r.value {
+                    Some(value) => {
+                        let value = js.expr(value)?;
+                        js.line(&format!("return {value};"));
+                    }
+                    None => js.line("return;"),
+                }
             }
             _ => js.block_body(block)?,
         }
@@ -993,13 +1072,21 @@ impl Javascript {
 
 /// A block consisting of exactly one `if` statement represents `else if`.
 fn is_else_if(block: &Block) -> bool {
-    matches!(block.statements.as_slice(), [Statement::Expr(Expression::If(_))])
+    matches!(block.statements.as_slice(), [Statement::Expr(es)] if matches!(es.expr, Expression::If(_)))
 }
 
 /// True when the program's `main` (plain, `export fn`, or `export default fn`)
-/// returns `Component`.
-pub fn main_returns_component(program: &Program) -> bool {
-    let main_fn = program.statements.iter().find_map(|s| match s {
+/// is declared async (its returned promise should be observed, not dropped).
+pub fn main_is_async(program: &Program) -> bool {
+    main_fn(program)
+        .map(|f| f.is_async)
+        .unwrap_or(false)
+}
+
+/// Find the program's `main` function definition, including `export fn main`
+/// and `export default fn main`.
+pub fn main_fn(program: &Program) -> Option<&crate::ast::FnDef> {
+    program.statements.iter().find_map(|s| match s {
         Statement::Fn(f) if f.name == "main" => Some(f),
         Statement::Export(export) => match &export.item {
             crate::ast::ExportItem::Fn(f) if f.name == "main" => Some(f),
@@ -1010,9 +1097,14 @@ pub fn main_returns_component(program: &Program) -> bool {
             _ => None,
         },
         _ => None,
-    });
+    })
+}
+
+/// True when the program's `main` (plain, `export fn`, or `export default fn`)
+/// returns `Component`.
+pub fn main_returns_component(program: &Program) -> bool {
     matches!(
-        main_fn.and_then(|f| f.return_type.as_ref()),
+        main_fn(program).and_then(|f| f.return_type.as_ref()),
         Some(Type::Named(n)) if n == "Component"
     )
 }
@@ -1023,6 +1115,12 @@ fn fmt_number(n: f64) -> String {
     } else {
         format!("{n}")
     }
+}
+
+/// True when a parameter is declared optional (`name: T?`) without an explicit
+/// default; callers may omit it and the emitted JS binds it to `null`.
+fn is_optional_param(p: &crate::ast::Param) -> bool {
+    matches!(p.type_annotation, Some(Type::Optional(_)))
 }
 
 /// JSON-style string escaping for JavaScript.

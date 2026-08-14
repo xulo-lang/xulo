@@ -29,10 +29,10 @@ xulo build examples/hello.xulo -o hello.js
 # 仅做词法/语法/语义检查
 xulo check examples/fibonacci.xulo
 
-# 格式化（尚未实现）
+# 格式化（就地改写；注意：注释会被丢弃）
 xulo fmt file.xulo
 
-# 交互式 REPL（尚未实现）
+# 交互式 REPL（空行执行当前输入，`exit` 退出）
 xulo repl
 ```
 
@@ -83,10 +83,11 @@ fn main() {
 
 ### 未实现 / 限制
 
-- `fmt` 与 `repl` 子命令为占位实现
+- `fmt` 为基于 token 流的格式化器：会丢弃注释，且匹配/对象字面量的换行风格以源码为基准（不做智能重排）
+- `repl` 为会话式 REPL：每轮重新编译并执行整个会话（无状态持久化到语言内部），支持 `exit` / `clear`
 - 调用函数必须在调用点之前已声明（不支持前向引用）
 - `@Store` 的 `$` 绑定写方向为空操作；跨模块/`@xulo/store` 的订阅重渲染由外部运行时接管
-- 组件函数体在重渲染时会重新执行（`@State` 信号已提升到函数级，但 `@Effect` 依赖数组目前只校验不追踪变化）
+- 组件函数体在重渲染时会重新执行（`@State` 信号已提升到函数级；`@Effect` 仅在依赖数组（若有）变化或挂载时重新执行）
 - `++`/`--` 自增运算符不在语言中
 
 ## 测试
@@ -106,7 +107,8 @@ src/
 ├── cli.rs              # run/build/check/fmt/repl 子命令
 ├── ast.rs              # 抽象语法树
 ├── diagnostics.rs      # 美化错误报告
-├── error.rs            # 错误类型 (E0001-E0006)
+├── error.rs            # 错误类型 (E0001-E0005)
+├── formatter.rs        # xulo fmt 格式化器
 ├── module.rs           # 多文件加载 + 打包（IIFE）
 ├── lexer/              # 词法分析
 │   ├── token.rs

@@ -333,6 +333,8 @@ let who = "Xulo"
 print("Hello, " + who + "!")     // `+` 拼接字符串，可混入 number/boolean/null
 ```
 
+字符串支持 `\"` `\'` `\\` `\n` `\t` `\r` 以及 Unicode 转义：`\uXXXX`（4 位十六进制）或 `\u{XXXXXX}`（花括号内 1-6 位十六进制），如 `"\u{1F600}"` 为 😀。
+
 ### while 循环
 
 ```
@@ -582,6 +584,9 @@ export fn fetchUser(id: string): async {
 | `@State` | 仅 `fn ...(): Component` 顶层 | 普通函数、异步函数、嵌套块 |
 | `@Store` | 仅 `fn ...(): Component` 顶层 | 普通函数、异步函数、嵌套块 |
 | `@Effect` | 仅 `fn ...(): Component` 顶层 | 普通函数、异步函数、嵌套块 |
+| `@Environment` | 仅 `fn ...(): Component` 顶层 | 普通函数、异步函数、嵌套块 |
+
+> 闭包（`fn() { ... }`）和嵌套 `fn` 属于独立函数：即使在 `Component` 函数内部，其体内也不允许使用上述装饰器。
 
 ---
 
@@ -599,6 +604,7 @@ fn fetchUser(id: string): async {
 
 - `: async` 返回标注声明异步函数（等价 JS `async function`）。
 - `await` 只能出现在异步函数内；对非 Promise（非 `async` 返回）值使用 `await` 是语义错误。
+- `if` / `match` 作为**表达式**（赋值给变量或作为返回值，如 `let x = if ok { await f() } else { 0 }`）时，其分支体编译为普通函数，因此分支内**不允许** `await`；请先用 `let` 取出结果。语句位置的 `if`（`if ok { let v = await f() }`）不受限制。非 `async` 闭包同理不允许 `await`。
 - `throw <expr>` 抛出异常。
 
 ### try / catch
@@ -788,7 +794,7 @@ Button(onClick: fn() {
 fn handleInput(value: string) {
   name = value
 }
-Input(onInput: fn(e) { handleInput(e.value) })
+Input(onChange: fn(e) { handleInput(e.value) })
 ```
 
 ---
@@ -801,7 +807,7 @@ Input(value: $name)
 Checkbox(checked: $isActive)
 
 // 等价于
-Input(value: name, onInput: fn(e) {
+Input(value: name, onChange: fn(e) {
   name = e.value
 })
 ```
@@ -810,6 +816,8 @@ Input(value: name, onInput: fn(e) {
 - `$` 前缀表示双向绑定
 - 只能用于 `@State` 或 `@Store` 变量
 - 自动生成读/写两个方向
+- `@State` 变量：`$name` 编译为 `{ value: name.get(), onChange: (v) => name.set(v) }`，读/写双向
+- `@Store` 变量：读方向生效（`value: name`），写方向为空操作（`onChange: () => {}`）——store 的状态只能通过其自身的更新方法（如 `setX`）修改
 
 ---
 

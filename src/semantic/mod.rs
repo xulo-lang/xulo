@@ -3,8 +3,8 @@ pub mod symbol_table;
 use std::collections::HashMap;
 
 use crate::ast::{
-    AssignStmt, Block, BinaryOperator, CallArg, EnumVariant, Expression, IfExpr, LetBinding,
-    Literal, ObjectField, Program, Statement, Type, TypeAlias,
+    AssignStmt, AssignTarget, Block, BinaryOperator, CallArg, EnumVariant, Expression, IfExpr,
+    LetBinding, Literal, ObjectField, Program, Statement, Type, TypeAlias,
 };
 use crate::error::{ErrorKind, XuloError};
 use symbol_table::{Symbol, SymbolKind, SymbolTable};
@@ -50,6 +50,10 @@ pub struct Analyzer {
     /// Depth of nested blocks below the current function body's top level;
     /// decorators are only allowed when this is 0 (docs §12).
     block_depth: usize,
+    /// Depth of `if`/`match` expressions checked in value position; their
+    /// arms compile to a plain (non-`async`) function, so `await` is
+    /// rejected there regardless of the enclosing `async_depth`.
+    no_await_depth: usize,
     /// Imported names available to this module (name -> symbol).
     imports: HashMap<String, Symbol>,
     /// Imported type/alias names available to this module.
@@ -59,6 +63,9 @@ pub struct Analyzer {
     exported_default: Option<String>,
     /// Exported symbols captured for cross-module type checking.
     exported_symbols: Vec<(String, Symbol)>,
+    /// Non-fatal diagnostics raised during analysis (e.g. ignored return
+    /// values); surfaced by the CLI after a successful compile.
+    warnings: Vec<String>,
 }
 
 /// The result of analyzing a module: the names/symbols/types it exports, so a
@@ -68,6 +75,8 @@ pub struct AnalysisResult {
     pub exported_symbols: Vec<(String, Symbol)>,
     pub exported_types: Vec<(String, TypeEntry)>,
     pub default: Option<String>,
+    /// Non-fatal diagnostics from this module.
+    pub warnings: Vec<String>,
 }
 
 /// Run all semantic checks over a parsed program.
@@ -90,6 +99,7 @@ pub fn analyze_with(
         async_depth: 0,
         component_depth: 0,
         block_depth: 0,
+        no_await_depth: 0,
         imports: imports.iter().map(|s| (s.name.clone(), s.clone())).collect(),
         imported_types: imported_types
             .iter()
@@ -98,6 +108,7 @@ pub fn analyze_with(
         exported: Vec::new(),
         exported_default: None,
         exported_symbols: Vec::new(),
+        warnings: Vec::new(),
     };
     for statement in &program.statements {
         analyzer.check_statement(statement)?;
@@ -106,6 +117,7 @@ pub fn analyze_with(
         exported_symbols: analyzer.exported_symbols,
         exported_types: Vec::new(),
         default: analyzer.exported_default.clone(),
+        warnings: analyzer.warnings.clone(),
     };
     for name in &analyzer.exported {
         if let Some(entry) = analyzer.type_table.get(name).cloned() {
@@ -117,6 +129,32 @@ pub fn analyze_with(
 
 fn err(message: impl Into<String>) -> XuloError {
     XuloError::new(ErrorKind::Semantic, message)
+}
+
+fn assign_target_name(target: &AssignTarget) -> String {
+    match target {
+        AssignTarget::Name(name) => name.clone(),
+        AssignTarget::Member(object, property) => {
+            format!("{}.{property}", target_base(object))
+        }
+        AssignTarget::Index(object, _) => format!("{}[...]", target_base(object)),
+    }
+}
+
+fn target_base(expr: &Expression) -> String {
+    match expr {
+        Expression::Identifier(name) => name.clone(),
+        Expression::Member(m) => format!("{}.{}", target_base(&m.object), m.property),
+        Expression::Index(i) => format!("{}[...]", target_base(&i.object)),
+        Expression::Call(c) => c.callee.clone(),
+        _ => "expr".into(),
+    }
+}
+
+impl Analyzer {
+    fn warn(&mut self, message: String) {
+        self.warnings.push(message);
+    }
 }
 
 impl Analyzer {
@@ -177,7 +215,11 @@ impl Analyzer {
             Statement::TypeAlias(alias) => self.check_type_alias(alias),
             Statement::Enum(e) => self.check_enum(e),
             Statement::Return(stmt) => {
-                let value_type = self.check_expression(&stmt.value)?;
+                let Some(value) = &stmt.value else {
+                    // Bare `return;` is valid in any function (docs EBNF §7).
+                    return Ok(());
+                };
+                let value_type = self.check_expression(value)?;
                 if let Some(expected) = &self.current_return {
                     let target = match expected {
                         Type::Async(inner) => inner.as_ref(),
@@ -227,8 +269,14 @@ impl Analyzer {
                 self.check_block(&stmt.body)?;
                 Ok(())
             }
-            Statement::Expr(expr) => {
-                self.check_expression(expr)?;
+            Statement::Expr(stmt) => {
+                if let Expression::If(if_expr) = &stmt.expr {
+                    // Statement-position `if` compiles to a direct `if`
+                    // statement, so `await` in its arms is fine.
+                    self.check_if(if_expr)?;
+                } else {
+                    self.check_expression(&stmt.expr)?;
+                }
                 Ok(())
             }
             Statement::Block(block) => {
@@ -303,20 +351,20 @@ impl Analyzer {
             });
         }
         let saved = self.current_return.replace(return_type.clone());
-        if f.is_async {
-            self.async_depth += 1;
-        }
+        let saved_async = self.async_depth;
+        self.async_depth = if f.is_async { saved_async + 1 } else { 0 };
+        // This function is its own scope: decorators are only legal at the top
+        // level of a `Component` function (itself), never inside a nested
+        // function, and `await` needs this function to be `async` (docs §12).
         let is_component = self.is_component_type(&return_type);
-        if is_component {
-            self.component_depth += 1;
-        }
+        let saved_component = self.component_depth;
+        let saved_block = self.block_depth;
+        self.component_depth = if is_component { 1 } else { 0 };
+        self.block_depth = 0;
         let result = self.check_block_implicit(&f.body);
-        if is_component {
-            self.component_depth -= 1;
-        }
-        if f.is_async {
-            self.async_depth -= 1;
-        }
+        self.block_depth = saved_block;
+        self.component_depth = saved_component;
+        self.async_depth = saved_async;
         self.current_return = saved;
         result?;
         self.table.pop_scope();
@@ -367,13 +415,19 @@ impl Analyzer {
             });
         }
         let saved = self.current_return.replace(return_type.clone());
-        if f.is_async {
-            self.async_depth += 1;
-        }
+        let saved_async = self.async_depth;
+        self.async_depth = if f.is_async { saved_async + 1 } else { 0 };
+        // A closure is its own (ordinary) function: `@State`/`@Store`/
+        // `@Effect`/`@Environment` are not allowed inside it, even when the
+        // closure appears at the top level of a `Component` function (docs §12).
+        let saved_component = self.component_depth;
+        let saved_block = self.block_depth;
+        self.component_depth = 0;
+        self.block_depth = 0;
         let result = self.check_block_implicit(&f.body);
-        if f.is_async {
-            self.async_depth -= 1;
-        }
+        self.component_depth = saved_component;
+        self.block_depth = saved_block;
+        self.async_depth = saved_async;
         self.current_return = saved;
         result?;
         self.table.pop_scope();
@@ -549,42 +603,75 @@ impl Analyzer {
     }
 
     fn check_assign(&mut self, assign: &AssignStmt) -> SResult<()> {
-        let target = {
-            let Some(sym) = self.table.lookup(&assign.name) else {
-                return Err(err(format!(
-                    "undefined variable `{}` cannot be assigned",
-                    assign.name
-                )));
-            };
-            (sym.type_.clone(), sym.kind.clone(), sym.is_const)
-        };
-        match &target.1 {
-            SymbolKind::Variable | SymbolKind::State => {
-                if target.2 {
+        let target_type = self.assign_target_type(&assign.target)?;
+        let value_type = self.check_expression(&assign.value)?;
+        if !self.assignable(&value_type, &target_type) {
+            return Err(err(format!(
+                "cannot assign a value of type `{}` to `{}: {}`",
+                value_type.name(),
+                assign_target_name(&assign.target),
+                target_type.name()
+            )));
+        }
+        Ok(())
+    }
+
+    /// Type-check the left-hand side of an assignment and return the type its
+    /// value must have.
+    fn assign_target_type(&mut self, target: &AssignTarget) -> SResult<Type> {
+        match target {
+            AssignTarget::Name(name) => {
+                let Some(sym) = self.table.lookup(name) else {
                     return Err(err(format!(
-                        "cannot assign to `{}`: binding is immutable",
-                        assign.name
+                        "undefined variable `{name}` cannot be assigned"
+                    )));
+                };
+                if sym.is_const {
+                    return Err(err(format!(
+                        "cannot assign to `{name}`: binding is immutable"
                     )));
                 }
-                let value_type = self.check_expression(&assign.value)?;
-                if !self.assignable(&value_type, &target.0) {
-                    return Err(err(format!(
-                        "cannot assign a value of type `{}` to `{}: {}`",
-                        value_type.name(),
-                        assign.name,
-                        target.0.name()
-                    )));
+                match &sym.kind {
+                    SymbolKind::Variable | SymbolKind::State => Ok(sym.type_.clone()),
+                    SymbolKind::Store => Err(err(format!(
+                        "cannot assign to `{name}`: store bindings are read-only"
+                    ))),
+                    SymbolKind::Function(_, _, _) => Err(err(format!(
+                        "cannot assign to `{name}`: it is a function"
+                    ))),
                 }
-                Ok(())
             }
-            SymbolKind::Store => Err(err(format!(
-                "cannot assign to `{}`: store bindings are read-only",
-                assign.name
-            ))),
-            SymbolKind::Function(_, _, _) => Err(err(format!(
-                "cannot assign to `{}`: it is a function",
-                assign.name
-            ))),
+            AssignTarget::Member(object, property) => {
+                let object_type = self.check_expression(object)?;
+                let resolved = self.resolve_alias(&object_type, 0);
+                match resolved {
+                    Type::Object | Type::Any | Type::Named(_) => Ok(Type::Any),
+                    Type::ObjectType(fields) => fields
+                        .iter()
+                        .find(|(n, _)| n == property)
+                        .map(|(_, t)| t.clone())
+                        .ok_or_else(|| {
+                            err(format!("type has no member `{property}`"))
+                        }),
+                    other => Err(err(format!(
+                        "cannot assign member `{property}` of `{}`",
+                        other.name()
+                    ))),
+                }
+            }
+            AssignTarget::Index(object, index) => {
+                let object_type = self.check_expression(object)?;
+                self.check_expression(index)?;
+                let resolved = self.resolve_alias(&object_type, 0);
+                match resolved {
+                    Type::List(inner) => Ok(*inner),
+                    Type::Object | Type::Any | Type::Named(_) => Ok(Type::Any),
+                    other => Err(err(format!(
+                        "cannot assign into `{}` by index",
+                        other.name()
+                    ))),
+                }
+            }
         }
     }
 
@@ -640,7 +727,7 @@ impl Analyzer {
             name: binding.name.clone(),
             type_: binding.type_annotation.clone().unwrap_or(value_type),
             kind: SymbolKind::State,
-            is_const: false,
+            is_const: binding.is_const,
         });
         if !declared {
             return Err(err(format!(
@@ -864,7 +951,7 @@ impl Analyzer {
             self.check_statement(statement)?;
         }
         let tail = match block.statements.last() {
-            Some(Statement::Expr(e)) => Some(self.check_expression(e)?),
+            Some(Statement::Expr(e)) => Some(self.check_expression(&e.expr)?),
             _ => None,
         };
         self.block_depth -= 1;
@@ -885,18 +972,27 @@ impl Analyzer {
         if self.current_return.is_some()
             && let Some(Statement::Expr(last)) = block.statements.last()
         {
-            let value_type = self.check_expression(last)?;
-            let expected = self.current_return.as_ref().unwrap();
-            let target = match expected {
+            let expected = self.current_return.clone().unwrap();
+            let target = match &expected {
                 Type::Async(inner) => inner.as_ref(),
                 other => other,
             };
-            if !self.assignable(&value_type, target) {
-                return Err(err(format!(
-                    "return type mismatch: expected `{}`, found `{}`",
-                    expected.name(),
-                    value_type.name()
-                )));
+            if last.has_semicolon {
+                // A trailing `expr;` is an ordinary statement, not an implicit
+                // return (docs §21.2) → warn that its value is discarded.
+                self.warn(format!(
+                    "ignored return value: trailing expression with `;` is not the function's return value (expected `{}`)",
+                    expected.name()
+                ));
+            } else {
+                let value_type = self.check_expression(&last.expr)?;
+                if !self.assignable(&value_type, target) {
+                    return Err(err(format!(
+                        "return type mismatch: expected `{}`, found `{}`",
+                        expected.name(),
+                        value_type.name()
+                    )));
+                }
             }
         }
         self.table.pop_scope();
@@ -918,9 +1014,9 @@ impl Analyzer {
             Expression::Unary(un) => self.check_unary(un),
             Expression::Call(call) => self.check_call(call),
             Expression::EnumRef(r) => self.check_enum_ref(r.enum_name.clone(), &r.variant),
-            Expression::If(if_expr) => self.check_if(if_expr),
+            Expression::If(if_expr) => self.no_await(|this| this.check_if(if_expr)),
             Expression::Ternary(tr) => self.check_ternary(tr),
-            Expression::Match(m) => self.check_match(m),
+            Expression::Match(m) => self.no_await(|this| this.check_match(m)),
             Expression::Member(m) => self.check_member(m),
             Expression::Index(idx) => self.check_index(idx),
             Expression::Nullish(n) => self.check_nullish(n),
@@ -1023,7 +1119,21 @@ impl Analyzer {
         }
     }
 
+    /// Run `f` with `no_await_depth` incremented, so `await` inside `if`/
+    /// `match` arms is rejected (their arms compile to a plain function).
+    fn no_await<T>(&mut self, f: impl FnOnce(&mut Self) -> SResult<T>) -> SResult<T> {
+        self.no_await_depth += 1;
+        let result = f(self);
+        self.no_await_depth -= 1;
+        result
+    }
+
     fn check_await(&mut self, operand: &Expression) -> SResult<Type> {
+        if self.no_await_depth > 0 {
+            return Err(err(
+                "`await` cannot be used inside an `if`/`match` expression; assign its value first with `let`",
+            ));
+        }
         if self.async_depth == 0 {
             return Err(err("`await` may only be used inside an `async` function"));
         }
@@ -1484,8 +1594,10 @@ impl Analyzer {
                 result
             }
             SymbolKind::Variable => {
-                // A function value: `let f = fn() {...}; f(x)`.
-                let sig = match &sym.type_ {
+                // A function value: `let f = fn() {...}; f(x)`. The type may be
+                // a `type Handler = fn(...)` alias, so resolve it first.
+                let resolved = self.resolve_alias(&sym.type_, 0);
+                let sig = match &resolved {
                     Type::FnSig { params, ret } => Some((params.clone(), ret.clone())),
                     _ => None,
                 };

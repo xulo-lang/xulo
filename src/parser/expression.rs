@@ -496,7 +496,10 @@ fn match_pattern(input: &mut In<'_>) -> Pr<MatchPattern> {
 fn else_tail(input: &mut In<'_>) -> Pr<Block> {
     if matches!(input.first().map(|t| t.kind), Some(Token::If)) {
         if_expr(input).map(|e| Block {
-            statements: vec![Statement::Expr(Expression::If(Box::new(e)))],
+            statements: vec![Statement::Expr(crate::ast::ExprStmt {
+                expr: Expression::If(Box::new(e)),
+                has_semicolon: false,
+            })],
         })
     } else {
         block(input)
@@ -517,6 +520,7 @@ pub fn decode_string(raw: &str) -> String {
                 Some('n') => out.push('\n'),
                 Some('t') => out.push('\t'),
                 Some('r') => out.push('\r'),
+                Some('u') => out.push(decode_unicode_escape(&mut chars)),
                 Some(other) => out.push(other),
                 None => break,
             }
@@ -525,4 +529,29 @@ pub fn decode_string(raw: &str) -> String {
         }
     }
     out
+}
+
+/// Decode a `\uXXXX` or `\u{...}` escape; the `u` has already been consumed.
+fn decode_unicode_escape(chars: &mut std::iter::Peekable<std::str::Chars>) -> char {
+    let mut hex = String::new();
+    if chars.peek() == Some(&'{') {
+        chars.next();
+        for c in chars.by_ref() {
+            if c == '}' {
+                break;
+            }
+            hex.push(c);
+        }
+    } else {
+        for _ in 0..4 {
+            match chars.next() {
+                Some(c) => hex.push(c),
+                None => break,
+            }
+        }
+    }
+    u32::from_str_radix(&hex, 16)
+        .ok()
+        .and_then(char::from_u32)
+        .unwrap_or('\u{fffd}')
 }

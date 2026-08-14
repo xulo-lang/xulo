@@ -1,6 +1,6 @@
 use std::io::Write;
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 const BIN: &str = env!("CARGO_BIN_EXE_xulo");
 
@@ -109,15 +109,28 @@ fn check_reports_errors() {
 }
 
 #[test]
-fn fmt_and_repl_are_stubbed() {
-    let file = temp_file("f.xulo", "fn main() { }");
+fn fmt_formats_and_repl_runs() {
+    let file = temp_file("f.xulo", "fn main(){print(1)}");
     let fmt = Command::new(BIN).arg("fmt").arg(&file).output().unwrap();
-    assert!(!fmt.status.success());
-    assert!(String::from_utf8_lossy(&fmt.stderr).contains("not implemented"));
+    assert!(fmt.status.success());
+    let formatted = std::fs::read_to_string(&file).unwrap();
+    assert!(formatted.contains("fn main() {"));
+    assert!(formatted.contains("print(1)"));
 
-    let repl = Command::new(BIN).arg("repl").output().unwrap();
-    assert!(!repl.status.success());
-    assert!(String::from_utf8_lossy(&repl.stderr).contains("not implemented"));
+    let repl = Command::new(BIN)
+        .arg("repl")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = repl.stdin.as_ref().unwrap();
+    stdin.write_all(b"print(21 + 21)\n\nexit\n").unwrap();
+    let out = repl.wait_with_output().unwrap();
+    assert!(out.status.success());
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("42"));
+
     let _ = std::fs::remove_file(&file);
 }
 
@@ -311,6 +324,56 @@ fn build_bundles_modules_into_one_file() {
 
     let node = Command::new("node").arg(&out_dir).output().unwrap();
     assert_eq!(String::from_utf8_lossy(&node.stdout), "8\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn external_type_only_import_is_erased_from_bundle() {
+    let (dir, entry) = temp_dir(
+        &[
+            (
+                "main.xulo",
+                r#"
+                import type { Config } from "lib-b"
+                fn makeConfig(): Config { return "production" }
+                "#,
+            ),
+        ],
+        "main.xulo",
+    );
+    let out_dir = dir.join("bundle.js");
+    let result = Command::new(BIN)
+        .args(["build", entry.to_str().unwrap(), "-o", out_dir.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(result.status.success(), "stderr: {}", String::from_utf8_lossy(&result.stderr));
+
+    let js = std::fs::read_to_string(&out_dir).unwrap();
+    assert!(!js.contains("lib-b"), "type-only external import leaked into the bundle:\n{js}");
+    assert!(!js.contains("import "), "bundle should have no ESM imports:\n{js}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn external_runtime_import_is_kept_in_bundle() {
+    let (dir, entry) = temp_dir(
+        &[
+            (
+                "main.xulo",
+                "import { helper } from \"lib-b\"\nfn main() { helper() }\n",
+            ),
+        ],
+        "main.xulo",
+    );
+    let out_dir = dir.join("bundle.js");
+    let result = Command::new(BIN)
+        .args(["build", entry.to_str().unwrap(), "-o", out_dir.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(result.status.success(), "stderr: {}", String::from_utf8_lossy(&result.stderr));
+
+    let js = std::fs::read_to_string(&out_dir).unwrap();
+    assert!(js.contains("import { helper } from \"lib-b\";"));
     let _ = std::fs::remove_dir_all(&dir);
 }
 

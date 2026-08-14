@@ -36,12 +36,15 @@ fn parses_precedence() {
 #[test]
 fn parses_if_else_if() {
     let p = parse("if a { 1 } else if b { 2 } else { 3 }");
-    let Statement::Expr(Expression::If(outer)) = &p.statements[0] else {
+    let Statement::Expr(es) = &p.statements[0] else {
+        panic!("expected if");
+    };
+    let Expression::If(outer) = &es.expr else {
         panic!("expected if");
     };
     assert!(outer.else_branch.is_some());
     let else_block = outer.else_branch.as_ref().unwrap();
-    assert!(matches!(else_block.statements.as_slice(), [Statement::Expr(Expression::If(_))]));
+    assert!(matches!(else_block.statements.as_slice(), [Statement::Expr(es)] if matches!(es.expr, Expression::If(_))));
 }
 
 #[test]
@@ -49,7 +52,7 @@ fn parses_list_and_call() {
     let p = parse(r#"let xs = [1, 2, 3] print("hi")"#);
     assert!(matches!(&p.statements[0], Statement::Let(b)
         if matches!(&b.value, Some(Expression::Literal(Literal::List(v))) if v.len() == 3)));
-    assert!(matches!(&p.statements[1], Statement::Expr(Expression::Call(c)) if c.callee == "print"));
+    assert!(matches!(&p.statements[1], Statement::Expr(es) if matches!(&es.expr, Expression::Call(c) if c.callee == "print")));
 }
 
 #[test]
@@ -89,7 +92,20 @@ fn parses_assignment() {
     let Statement::Assign(a) = &p.statements[0] else {
         panic!("expected assign");
     };
-    assert_eq!(a.name, "count");
+    assert_eq!(a.target, xulo::ast::AssignTarget::Name("count".into()));
+}
+
+#[test]
+fn parses_member_and_index_assignment() {
+    let p = parse("user.name = \"b\" xs[0] = 10");
+    let Statement::Assign(a) = &p.statements[0] else {
+        panic!("expected assign");
+    };
+    assert!(matches!(&a.target, xulo::ast::AssignTarget::Member(_, prop) if prop == "name"));
+    let Statement::Assign(b) = &p.statements[1] else {
+        panic!("expected assign");
+    };
+    assert!(matches!(b.target, xulo::ast::AssignTarget::Index(..)));
 }
 
 #[test]
@@ -186,7 +202,10 @@ fn parses_while_stmt() {
 #[test]
 fn parses_match_expr() {
     let p = parse("match v { 0 => \"zero\" _ => \"other\" }");
-    let Statement::Expr(Expression::Match(m)) = &p.statements[0] else {
+    let Statement::Expr(es) = &p.statements[0] else {
+        panic!("expected match");
+    };
+    let Expression::Match(m) = &es.expr else {
         panic!("expected match");
     };
     assert_eq!(m.arms.len(), 2);
@@ -197,7 +216,10 @@ fn parses_match_expr() {
 #[test]
 fn parses_match_enum_payload() {
     let p = parse("match r { Result::Success(v) => v Result::Error(msg) => 0 }");
-    let Statement::Expr(Expression::Match(m)) = &p.statements[0] else {
+    let Statement::Expr(es) = &p.statements[0] else {
+        panic!("expected match");
+    };
+    let Expression::Match(m) = &es.expr else {
         panic!("expected match");
     };
     assert!(matches!(&m.arms[0].pattern, xulo::ast::MatchPattern::EnumPayload {
@@ -240,7 +262,10 @@ fn parses_member_access_and_index() {
 #[test]
 fn parses_method_call() {
     let p = parse("store.actions.setLoading(true)");
-    let Statement::Expr(Expression::Call(c)) = &p.statements[0] else {
+    let Statement::Expr(es) = &p.statements[0] else {
+        panic!("expected call");
+    };
+    let Expression::Call(c) = &es.expr else {
         panic!("expected call");
     };
     assert!(c.object.is_some());
@@ -280,7 +305,10 @@ fn parses_default_params() {
 #[test]
 fn parses_named_args() {
     let p = parse("greet(label: \"Submit\", variant: \"outline\")");
-    let Statement::Expr(Expression::Call(c)) = &p.statements[0] else {
+    let Statement::Expr(es) = &p.statements[0] else {
+        panic!("expected call");
+    };
+    let Expression::Call(c) = &es.expr else {
         panic!("expected call");
     };
     assert_eq!(c.arguments[0].name.as_deref(), Some("label"));
@@ -416,7 +444,10 @@ fn parses_list_spread_leading() {
 #[test]
 fn parses_match_expr_with_commas() {
     let p = parse("match v { 0 => \"zero\", 1 => \"one\", _ => \"other\" }");
-    let Statement::Expr(Expression::Match(m)) = &p.statements[0] else {
+    let Statement::Expr(es) = &p.statements[0] else {
+        panic!("expected match");
+    };
+    let Expression::Match(m) = &es.expr else {
         panic!("expected match");
     };
     assert_eq!(m.arms.len(), 3);
@@ -427,7 +458,10 @@ fn parses_match_expr_with_commas() {
 #[test]
 fn parses_match_enum_payload_with_commas() {
     let p = parse("match r { Result::Success(v) => v, Result::Error(msg) => 0, _ => -1 }");
-    let Statement::Expr(Expression::Match(m)) = &p.statements[0] else {
+    let Statement::Expr(es) = &p.statements[0] else {
+        panic!("expected match");
+    };
+    let Expression::Match(m) = &es.expr else {
         panic!("expected match");
     };
     assert_eq!(m.arms.len(), 3);
@@ -462,7 +496,7 @@ fn parses_bare_fn_expression_statement() {
     let Statement::Fn(f) = &p.statements[0] else {
         panic!("expected fn");
     };
-    assert!(matches!(f.body.statements.last(), Some(Statement::Expr(Expression::FnExpr(_)))));
+    assert!(matches!(f.body.statements.last(), Some(Statement::Expr(es)) if matches!(es.expr, Expression::FnExpr(_))));
 }
 
 #[test]

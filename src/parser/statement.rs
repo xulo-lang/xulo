@@ -1,7 +1,8 @@
 use crate::ast::{
-    AssignStmt, BindingPattern, Block, ComponentStmt, EffectStmt, EnumDef, EnumVariant, EnvStmt,
-    ExportItem, ExportStmt, Expression, FnDef, ForStmt, ImportSpec, ImportStmt, LetBinding, Param,
-    ReturnStmt, StateStmt, Statement, StoreStmt, TryStmt, TypeAlias, UiElement, WhileStmt,
+    AssignStmt, AssignTarget, BindingPattern, Block, ComponentStmt, EffectStmt, EnumDef,
+    EnumVariant, EnvStmt, ExprStmt, ExportItem, ExportStmt, Expression, FnDef, ForStmt, ImportSpec,
+    ImportStmt, LetBinding, Param, ReturnStmt, StateStmt, Statement, StoreStmt, TryStmt, TypeAlias,
+    UiElement, WhileStmt,
 };
 use crate::lexer::token::Token;
 
@@ -19,7 +20,7 @@ pub fn statement(input: &mut In<'_>) -> Pr<Statement> {
             // `fn name(...)` is a definition; `fn(...)` in statement position is
             // an anonymous function expression (e.g. a trailing implicit return).
             if matches!(input.get(1).map(|t| t.kind), Some(Token::LParen)) {
-                expression(input).map(Statement::Expr)
+                expression(input).map(|e| Statement::Expr(ExprStmt { expr: e, has_semicolon: false }))
             } else {
                 fn_def(input).map(Statement::Fn)
             }
@@ -41,14 +42,8 @@ pub fn statement(input: &mut In<'_>) -> Pr<Statement> {
         Some(Token::Ident) if is_component(input) => {
             component_stmt(input).map(Statement::Component)
         }
-        Some(Token::Ident) if is_assignment(input) => assign_stmt(input).map(Statement::Assign),
-        _ => expression(input).map(Statement::Expr),
+        _ => expr_or_assign(input),
     }
-}
-
-/// True when the statement at this position is `ident = expr`.
-fn is_assignment(input: &mut In<'_>) -> bool {
-    matches!(input.get(1).map(|t| t.kind), Some(Token::Assign))
 }
 
 /// True when an uppercase-leading identifier followed by `(` or `{` begins a
@@ -162,11 +157,30 @@ fn let_binding_body(input: &mut In<'_>, is_const: bool) -> Pr<LetBinding> {
     })
 }
 
-fn assign_stmt(input: &mut In<'_>) -> Pr<AssignStmt> {
-    let name = ident_name(input)?;
-    tk(input, Token::Assign)?;
-    let value = expression(input)?;
-    Ok(AssignStmt { name, value })
+/// An expression statement, or an assignment when the expression is followed by
+/// `=`. Only identifiers, member accesses, and indexes are valid targets.
+fn expr_or_assign(input: &mut In<'_>) -> Pr<Statement> {
+    let expr = expression(input)?;
+    if matches!(input.first().map(|t| t.kind), Some(Token::Assign)) {
+        let target = match expr {
+            Expression::Identifier(name) => AssignTarget::Name(name),
+            Expression::Member(m) if !m.optional => {
+                AssignTarget::Member(Box::new(m.object), m.property)
+            }
+            Expression::Index(i) => AssignTarget::Index(i.object, i.index),
+            _ => {
+                return Err(ErrMode::Cut(PErr::unexpected(input)));
+            }
+        };
+        tk(input, Token::Assign)?;
+        let value = expression(input)?;
+        Ok(Statement::Assign(AssignStmt { target, value }))
+    } else {
+        Ok(Statement::Expr(ExprStmt {
+            expr,
+            has_semicolon: false,
+        }))
+    }
 }
 
 fn type_alias(input: &mut In<'_>) -> Pr<TypeAlias> {
@@ -244,7 +258,15 @@ fn opt_type_params(input: &mut In<'_>) -> Pr<Vec<String>> {
 
 fn return_stmt(input: &mut In<'_>) -> Pr<ReturnStmt> {
     tk(input, Token::Return)?;
-    let value = expression(input)?;
+    // A bare `return` (no value) is allowed (docs EBNF §7).
+    let value = if matches!(
+        input.first().map(|t| t.kind),
+        Some(Token::RBrace | Token::Semicolon | Token::EOF)
+    ) {
+        None
+    } else {
+        Some(expression(input)?)
+    };
     Ok(ReturnStmt { value })
 }
 
@@ -269,7 +291,7 @@ fn while_stmt(input: &mut In<'_>) -> Pr<WhileStmt> {
 }
 
 fn if_stmt(input: &mut In<'_>) -> Pr<Statement> {
-    if_expr(input).map(|e| Statement::Expr(Expression::If(Box::new(e))))
+    if_expr(input).map(|e| Statement::Expr(ExprStmt { expr: Expression::If(Box::new(e)), has_semicolon: false }))
 }
 
 /// `{ statement; statement; ... }`.

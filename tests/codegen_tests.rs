@@ -300,7 +300,17 @@ fn effect_emits_runtime_call() {
         "fn main(): Component { @State let id: number = 0 @Effect fn() { print(id) }, [id] }",
     );
     assert!(js.contains("__effect("));
-    assert!(js.contains("[id.get()]"));
+    assert!(js.contains("() => [id.get()]"));
+    assert!(js.contains("function sameDeps"));
+}
+
+#[test]
+fn effect_without_deps_emits_undefined_thunk() {
+    let js = generate_js(
+        "fn main(): Component { @State let id: number = 0 @Effect fn() { print(id) } }",
+    );
+    assert!(js.contains("__effect((function"));
+    assert!(js.contains(", undefined);"));
 }
 
 #[test]
@@ -340,4 +350,47 @@ fn script_main_does_not_emit_mount_hook() {
     let js = generate_js("fn main() { print(1) }");
     assert!(js.contains("main();"));
     assert!(!js.contains("__xulo_mount"));
+}
+
+#[test]
+fn closure_implicit_return_keeps_body_statements() {
+    let js = generate_js(r#"
+        fn apply(f: fn(x: number): number, v: number): number { return f(v) }
+        fn main() { let g = fn(x: number): number { let n = 2 x + n } print(apply(g, 1)) }
+    "#);
+    assert!(js.contains("let n = 2;"));
+    assert!(js.contains("return (x + n);"));
+}
+
+#[test]
+fn closure_implicit_return_with_range_helper() {
+    let js = generate_js(r#"
+        fn main() { let g = fn(): number { let n = 0 let r = 5..<10 r[0] } print(g()) }
+    "#);
+    assert!(js.contains("function range(a, b) {"));
+    assert!(js.contains("return r[0];"));
+}
+
+#[test]
+fn optional_param_without_default_emits_null() {
+    let js = generate_js(
+        "fn greet(name: string?): string { return name ?? \"world\" } fn main() { print(greet()) }",
+    );
+    assert!(js.contains("function greet(name = null) {"));
+}
+
+#[test]
+fn optional_param_with_default_keeps_default() {
+    let js = generate_js(
+        "fn greet(name: string? = \"xulo\"): string { return name } fn main() { print(greet()) }",
+    );
+    assert!(js.contains("function greet(name = \"xulo\") {"));
+}
+
+#[test]
+fn closure_optional_param_emits_null() {
+    let js = generate_js(
+        "fn main() { let g = fn(x: number?): number { return x ?? 0 } print(g(5)) }",
+    );
+    assert!(js.contains("(x = null)"));
 }

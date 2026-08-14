@@ -9,7 +9,6 @@ pub enum ErrorKind {
     Semantic,
     Io,
     Codegen,
-    Unsupported,
 }
 
 impl ErrorKind {
@@ -20,7 +19,6 @@ impl ErrorKind {
             ErrorKind::Semantic => "semantic",
             ErrorKind::Io => "io",
             ErrorKind::Codegen => "code generation",
-            ErrorKind::Unsupported => "unsupported feature",
         }
     }
 
@@ -31,7 +29,6 @@ impl ErrorKind {
             ErrorKind::Semantic => "E0003",
             ErrorKind::Io => "E0004",
             ErrorKind::Codegen => "E0005",
-            ErrorKind::Unsupported => "E0006",
         }
     }
 }

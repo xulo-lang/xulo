@@ -180,8 +180,14 @@ fn program(input: &mut In<'_>) -> Pr<Program> {
 /// Statement followed by an optional semicolon.
 pub fn terminated_statement(input: &mut In<'_>) -> Pr<crate::ast::Statement> {
     let s = statement::statement(input)?;
-    opt_tk(input, Token::Semicolon);
-    Ok(s)
+    let has_semicolon = opt_tk(input, Token::Semicolon);
+    match s {
+        crate::ast::Statement::Expr(es) => Ok(crate::ast::Statement::Expr(crate::ast::ExprStmt {
+            expr: es.expr,
+            has_semicolon: es.has_semicolon || has_semicolon,
+        })),
+        other => Ok(other),
+    }
 }
 
 #[cfg(test)]
@@ -236,7 +242,10 @@ mod tests {
     #[test]
     fn parse_if_else() {
         let p = parse("if 1 > 2 { print(\"a\") } else { print(\"b\") }");
-        let Statement::Expr(Expression::If(cond)) = &p.statements[0] else {
+        let Statement::Expr(es) = &p.statements[0] else {
+            panic!("expected if expr");
+        };
+        let Expression::If(cond) = &es.expr else {
             panic!("expected if expr");
         };
         assert!(matches!(cond.condition.clone(), Expression::BinaryOp(_)));
@@ -250,14 +259,17 @@ mod tests {
             panic!("expected let");
         };
         assert!(matches!(&b.value, Some(Expression::Literal(Literal::List(v))) if v.len() == 3));
-        assert!(matches!(&p.statements[1], Statement::Expr(Expression::Call(_))));
+        assert!(matches!(&p.statements[1], Statement::Expr(es) if matches!(es.expr, Expression::Call(_))));
     }
 
     #[test]
     fn parse_precedence() {
         // (10 - 2) * 3 vs 10 - (2 * 3): left tree for equal precedence
         let p = parse("10 - 2 - 3");
-        let Statement::Expr(Expression::BinaryOp(op)) = &p.statements[0] else {
+        let Statement::Expr(es) = &p.statements[0] else {
+            panic!();
+        };
+        let Expression::BinaryOp(op) = &es.expr else {
             panic!();
         };
         assert_eq!(op.operator, BinaryOperator::Sub);
