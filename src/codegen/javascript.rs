@@ -83,6 +83,10 @@ pub struct Javascript {
     /// Stack of scopes of `@State` signal names (used to rewrite reads into
     /// `.get()` and writes into `.set()`).
     signals: Vec<std::collections::HashSet<String>>,
+    /// Stack of parallel scopes tracking plain (non-signal) locals. A name
+    /// declared as a local shadows any signal of the same name from an outer
+    /// scope, matching the JavaScript scope rules the emit mirrors.
+    locals: Vec<std::collections::HashSet<String>>,
     /// Whether any reactive feature was used (triggers the runtime preamble).
     used_reactive: bool,
     /// Whether a `0..<n` range expression was generated (triggers a `range`
@@ -103,6 +107,7 @@ impl Javascript {
             indent: 0,
             fn_params: std::collections::HashMap::new(),
             signals: vec![std::collections::HashSet::new()],
+            locals: vec![std::collections::HashSet::new()],
             used_reactive: false,
             used_range: false,
         }
@@ -116,6 +121,7 @@ impl Javascript {
             indent: self.indent,
             fn_params: self.fn_params.clone(),
             signals: self.signals.clone(),
+            locals: self.locals.clone(),
             used_reactive: false,
             used_range: false,
         }
@@ -126,20 +132,42 @@ impl Javascript {
     }
 
     fn is_signal(&self, name: &str) -> bool {
-        self.signals.iter().rev().any(|s| s.contains(name))
+        for (signals, locals) in self.signals.iter().zip(self.locals.iter()).rev() {
+            // The nearest declaration wins: a locally-declared plain variable
+            // with this name turns it into a non-signal reference even when an
+            // outer scope registers the same name as a `@State` signal.
+            if locals.contains(name) {
+                return false;
+            }
+            if signals.contains(name) {
+                return true;
+            }
+        }
+        false
     }
 
     fn register_signal(&mut self, name: String) {
         self.signals.last_mut().expect("signal scope").insert(name);
     }
 
-    fn push_signal_scope(&mut self) {
-        self.signals.push(std::collections::HashSet::new());
+    fn register_local(&mut self, name: String) {
+        self.locals.last_mut().expect("local scope").insert(name);
     }
 
-    fn pop_signal_scope(&mut self) {
+    /// Push a new lexical scope (a `{ ... }` block, loop body, function body,
+    /// or argument list); both the signal and the local stack grow together so
+    /// `is_signal` walks them in lockstep.
+    fn push_scope(&mut self) {
+        self.signals.push(std::collections::HashSet::new());
+        self.locals.push(std::collections::HashSet::new());
+    }
+
+    fn pop_scope(&mut self) {
         if self.signals.len() > 1 {
             self.signals.pop();
+        }
+        if self.locals.len() > 1 {
+            self.locals.pop();
         }
     }
 
@@ -182,10 +210,8 @@ impl Javascript {
     }
 
     pub fn program(&mut self, program: &Program) -> Result<(), XuloError> {
-        let has_main = program
-            .statements
-            .iter()
-            .any(|s| matches!(s, Statement::Fn(f) if f.name == "main"));
+        // Also match `export fn main` / `export default fn main` (see `main_fn`).
+        let has_main = main_fn(program).is_some();
 
         for statement in &program.statements {
             if let Statement::Fn(f) = statement {
@@ -344,6 +370,10 @@ impl Javascript {
         let kw = if f.is_async { "async function" } else { "function" };
         self.line(&format!("{kw} {}({params}) {{", f.name));
         self.indent += 1;
+        self.push_scope();
+        for p in &f.params {
+            self.register_local(p.name.clone());
+        }
         let stmts = &f.body.statements;
         // Implicit return (docs §6 / §21.2): for a function with a declared
         // return type, a trailing expression statement without a `;` is its
@@ -358,16 +388,19 @@ impl Javascript {
             }
             self.line(&format!("return {value};"));
             self.indent -= 1;
+            self.pop_scope();
             self.line("}");
             return Ok(());
         }
         self.block_body(&f.body)?;
         self.indent -= 1;
+        self.pop_scope();
         self.line("}");
         Ok(())
     }
 
     fn let_binding(&mut self, b: &LetBinding) -> Result<(), XuloError> {
+        self.register_local(b.name.clone());
         let kw = if b.is_const { "const" } else { "let" };
         match &b.value {
             Some(value) => {
@@ -421,6 +454,7 @@ impl Javascript {
         match &store.pattern {
             BindingPattern::Ident(name) => {
                 self.line(&format!("const {name} = {value};"));
+                self.register_local(name.clone());
             }
             BindingPattern::Destructure(fields) => {
                 let names = fields
@@ -432,6 +466,9 @@ impl Javascript {
                     .collect::<Vec<_>>()
                     .join(", ");
                 self.line(&format!("const {{ {names} }} = {value};"));
+                for (name, alias) in fields {
+                    self.register_local(alias.clone().unwrap_or_else(|| name.clone()));
+                }
             }
         }
         Ok(())
@@ -461,6 +498,7 @@ impl Javascript {
         self.mark_reactive();
         let ty = env.type_.name();
         self.line(&format!("const {} = __env({});", env.name, js_string(&ty)));
+        self.register_local(env.name.clone());
         Ok(())
     }
 
@@ -519,7 +557,10 @@ impl Javascript {
                     body,
                 } => {
                     let iter = self.expr(iterable)?;
+                    self.push_scope();
+                    self.register_local(iter_var.clone());
                     let body_js = self.ui_children_expr(body)?;
+                    self.pop_scope();
                     parts.push(format!(
                         "...({iter}).map(({iter_var}) => {body_js}).flat()"
                     ));
@@ -558,6 +599,8 @@ impl Javascript {
     }
 
     fn for_stmt(&mut self, f: &ForStmt) -> Result<(), XuloError> {
+        self.push_scope();
+        self.register_local(f.iter_var.clone());
         if let Expression::Range(r) = &f.iterable {
             let start = self.expr(&r.start)?;
             let end = self.expr(&r.end)?;
@@ -565,18 +608,15 @@ impl Javascript {
                 "for (let {} = {start}; {} < {end}; {}++) {{",
                 f.iter_var, f.iter_var, f.iter_var
             ));
-            self.indent += 1;
-            self.block_body(&f.body)?;
-            self.indent -= 1;
-            self.line("}");
-            return Ok(());
+        } else {
+            let iterable = self.expr(&f.iterable)?;
+            self.line(&format!("for (const {} of {iterable}) {{", f.iter_var));
         }
-        let iterable = self.expr(&f.iterable)?;
-        self.line(&format!("for (const {} of {iterable}) {{", f.iter_var));
         self.indent += 1;
         self.block_body(&f.body)?;
         self.indent -= 1;
         self.line("}");
+        self.pop_scope();
         Ok(())
     }
 
@@ -603,7 +643,10 @@ impl Javascript {
             .join(", ");
         self.line(&format!("function {}({params}) {{", f.name));
         self.indent += 1;
-        self.push_signal_scope();
+        self.push_scope();
+        for p in &f.params {
+            self.register_local(p.name.clone());
+        }
         for statement in &f.body.statements {
             match statement {
                 Statement::State(state) => self.state_stmt(&state.binding)?,
@@ -647,7 +690,7 @@ impl Javascript {
         }
         self.indent -= 1;
         self.line("});");
-        self.pop_signal_scope();
+        self.pop_scope();
         self.indent -= 1;
         self.line("}");
         Ok(())
@@ -668,11 +711,14 @@ impl Javascript {
         self.indent += 1;
         self.block_body(&t.try_block)?;
         self.indent -= 1;
+        self.push_scope();
+        self.register_local(t.catch_var.clone());
         self.line(&format!("}} catch ({}) {{", t.catch_var));
         self.indent += 1;
         self.block_body(&t.catch_block)?;
         self.indent -= 1;
         self.line("}");
+        self.pop_scope();
         Ok(())
     }
 
@@ -736,9 +782,11 @@ impl Javascript {
     }
 
     fn block_body(&mut self, block: &Block) -> Result<(), XuloError> {
+        self.push_scope();
         for statement in &block.statements {
             self.statement(statement)?;
         }
+        self.pop_scope();
         Ok(())
     }
 
@@ -840,6 +888,10 @@ impl Javascript {
         {
             let mut inline = self.child();
             inline.indent = 1;
+            inline.push_scope();
+            for p in &f.params {
+                inline.register_local(p.name.clone());
+            }
             for s in &stmts[..stmts.len() - 1] {
                 inline.statement(s)?;
             }
@@ -850,6 +902,10 @@ impl Javascript {
             for s in stmts {
                 let mut inline = self.child();
                 inline.indent = 1;
+                inline.push_scope();
+                for p in &f.params {
+                    inline.register_local(p.name.clone());
+                }
                 inline.statement(s)?;
                 body.push_str(&inline.finish());
             }
@@ -1018,6 +1074,7 @@ impl Javascript {
         js.indent = self.indent + 1;
         let scrutinee = self.expr(&m.value)?;
         js.line(&format!("const __m = {scrutinee};"));
+        js.register_local("__m".to_string());
         for arm in &m.arms {
             let value = self.expr(&arm.value)?;
             match &arm.pattern {
@@ -1053,6 +1110,7 @@ impl Javascript {
                     js.line(&format!("if (__m && __m.tag === \"{variant}\") {{"));
                     js.indent += 1;
                     js.line(&format!("const {binding} = __m.value;"));
+                    js.register_local(binding.clone());
                     js.line(&format!("return {value};"));
                     js.indent -= 1;
                     js.line("}");

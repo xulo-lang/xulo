@@ -74,3 +74,32 @@ fn comments_are_dropped() {
     assert!(!out.contains("comment"));
     assert!(out.contains("print(1)"));
 }
+
+#[test]
+fn unary_minus_keeps_space_after_assign_return() {
+    let out = fmt("fn f(): number { return -5 }\nfn main(){let x=-5\nprint(x)}");
+    assert!(out.contains("return -5"));
+    assert!(out.contains("let x = -5"));
+}
+
+#[test]
+fn unary_minus_in_call_and_object_keeps_space() {
+    let out = fmt("fn main(){let y=[1,-2,-3]\nprint(f(1,-2))\nlet o={a:-1}}");
+    assert!(out.contains("[1, -2, -3]"));
+    assert!(out.contains("print(f(1, -2))"));
+    assert!(out.contains("a: -1"));
+}
+
+#[test]
+fn unary_minus_after_open_paren_has_no_space() {
+    let out = fmt("fn main(){print(-5)\nlet x=(-1)}");
+    assert!(out.contains("print(-5)"));
+    assert!(out.contains("let x = (-1)"));
+}
+
+#[test]
+fn unary_minus_is_idempotent() {
+    let src = "fn main(){let y=[1,-2,-3]\nprint(f(1,-2))}\n";
+    let once = fmt(src);
+    assert_eq!(fmt(&once), once);
+}

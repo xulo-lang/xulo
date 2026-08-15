@@ -837,3 +837,85 @@ fn decorators_rejected_in_anonymous_closure_inside_component() {
     .unwrap_err();
     assert!(err.message.contains("returning `Component`"));
 }
+
+#[test]
+fn effect_cannot_capture_render_local() {
+    let err = analyze_src(r#"
+        fn main(): Component {
+            let a = 5
+            @Effect fn() { print("a=" + a) }
+        }
+    "#)
+    .unwrap_err();
+    assert!(err.message.contains("`@Effect` closures cannot reference `a`"));
+}
+
+#[test]
+fn effect_cannot_capture_render_local_via_deps() {
+    let err = analyze_src(r#"
+        fn main(): Component {
+            let a = 5
+            @Effect fn() { print(1) }, [a]
+        }
+    "#)
+    .unwrap_err();
+    assert!(err.message.contains("`@Effect` closures cannot reference `a`"));
+}
+
+#[test]
+fn effect_cannot_call_render_local_function() {
+    let err = analyze_src(r#"
+        fn main(): Component {
+            fn helper() { print("h") }
+            @Effect fn() { helper() }
+        }
+    "#)
+    .unwrap_err();
+    assert!(err.message.contains("`@Effect` closures cannot reference `helper`"));
+}
+
+#[test]
+fn effect_can_capture_state_store_and_env() {
+    let src = r#"
+        fn useAppStore(): object { return { user: null } }
+        fn main(): Component {
+            @State let count: number = 0
+            @Store const { user } = useAppStore()
+            @Environment let router: object
+            @Effect fn() { print(count) print(user) print(router) }
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn effect_local_let_is_allowed() {
+    let src = r#"
+        fn main(): Component {
+            @State let count: number = 0
+            @Effect fn() { let x = count + 1 print(x) }
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn no_implicit_return_warning_without_declared_return_type() {
+    let tokens = tokenize("fn main() { print(1); }").unwrap();
+    let program = parse_program(&tokens).unwrap();
+    let result = xulo::semantic::analyze_with(&program, &[], &[]).unwrap();
+    assert!(
+        result.warnings.is_empty(),
+        "unexpected warnings: {:?}",
+        result.warnings
+    );
+}
+
+#[test]
+fn implicit_return_warning_only_with_declared_return_type() {
+    let tokens = tokenize("fn f(): number { 1; }").unwrap();
+    let program = parse_program(&tokens).unwrap();
+    let result = xulo::semantic::analyze_with(&program, &[], &[]).unwrap();
+    assert_eq!(result.warnings.len(), 1, "warnings: {:?}", result.warnings);
+    assert!(result.warnings[0].contains("ignored return value"));
+}

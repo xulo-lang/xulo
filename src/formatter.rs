@@ -180,10 +180,47 @@ fn needs_space(
                     | Some(Token::RBracket)
             );
     }
-    if (cur == Token::Minus || cur == Token::Plus) && is_unary_context(prev) {
+    if (cur == Token::Minus || cur == Token::Plus) && no_space_before_unary(prev) {
         return false;
     }
     true
+}
+
+/// Contexts where a `-`/`+` token is unary and the operator binds tightly to
+/// its operand, so no space precedes it (`(-5)`, `x * -1`). Compared with
+/// `is_unary_context`, `=`, `return`, `,`, and `:` are excluded: there the
+/// operator still reads as a binary/expression start and keeps its space
+/// (`x = -5`, `return -5`, `f(a, -5)`, `{ x: -1 }`).
+fn no_space_before_unary(prev: Option<Token>) -> bool {
+    match prev {
+        None => true,
+        Some(t) => matches!(
+            t,
+            Token::Plus
+                | Token::Minus
+                | Token::Star
+                | Token::Slash
+                | Token::Eq
+                | Token::Neq
+                | Token::Lt
+                | Token::Gt
+                | Token::Lte
+                | Token::Gte
+                | Token::Arrow
+                | Token::Pipe
+                | Token::Amp
+                | Token::Nullish
+                | Token::And
+                | Token::Or
+                | Token::Bang
+                | Token::LParen
+                | Token::LBracket
+                | Token::LBrace
+                | Token::Question
+                | Token::RangeOp
+                | Token::Ellipsis
+        ),
+    }
 }
 
 fn no_space_after(t: Token) -> bool {

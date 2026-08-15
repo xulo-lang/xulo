@@ -38,6 +38,9 @@ pub struct TypeEntry {
 pub struct Analyzer {
     table: SymbolTable,
     current_return: Option<Type>,
+    /// Whether the current function declared a return type (docs §21.2: only
+    /// then does a trailing expression count as its implicit return).
+    declared_return: bool,
     type_table: HashMap<String, TypeEntry>,
     /// Type-parameter names currently in scope (these are valid as `Named`)
     /// and are erased to `Any` for kind/arithmetic checks.
@@ -66,6 +69,16 @@ pub struct Analyzer {
     /// Non-fatal diagnostics raised during analysis (e.g. ignored return
     /// values); surfaced by the CLI after a successful compile.
     warnings: Vec<String>,
+    /// Per-component stack of names declared by the component's *render* code
+    /// (plain `let`s and nested function declarations in the function body).
+    /// These live inside the `__component(...)` render closure at runtime, so
+    /// `@Effect`/`@State`/`@Store` setup code (hoisted above it) may not
+    /// reference them.
+    render_locals: Vec<std::collections::HashSet<String>>,
+    /// Set while checking an `@Effect` closure (and its deps): identifiers that
+    /// resolve to render-scoped locals are rejected (they are out of scope when
+    /// the effect runs).
+    in_effect: bool,
 }
 
 /// The result of analyzing a module: the names/symbols/types it exports, so a
@@ -94,6 +107,7 @@ pub fn analyze_with(
     let mut analyzer = Analyzer {
         table: SymbolTable::new(),
         current_return: None,
+        declared_return: false,
         type_table: HashMap::new(),
         generics: Vec::new(),
         async_depth: 0,
@@ -109,6 +123,8 @@ pub fn analyze_with(
         exported_default: None,
         exported_symbols: Vec::new(),
         warnings: Vec::new(),
+        render_locals: Vec::new(),
+        in_effect: false,
     };
     for statement in &program.statements {
         analyzer.check_statement(statement)?;
@@ -154,6 +170,28 @@ fn target_base(expr: &Expression) -> String {
 impl Analyzer {
     fn warn(&mut self, message: String) {
         self.warnings.push(message);
+    }
+}
+
+impl Analyzer {
+    /// Resolve a name to its symbol, rejecting references from inside an
+    /// `@Effect` closure to bindings that live only in the component's render
+    /// code: those are hoisted above the render closure and are not in scope
+    /// when the effect runs.
+    fn lookup_symbol(&self, name: &str) -> SResult<Symbol> {
+        let render_scoped = self
+            .render_locals
+            .last()
+            .is_some_and(|locals| locals.contains(name));
+        if self.in_effect && render_scoped {
+            return Err(err(format!(
+                "`@Effect` closures cannot reference `{name}`: it is declared inside the component body and is out of scope when the effect runs"
+            )));
+        }
+        self.table
+            .lookup(name)
+            .cloned()
+            .ok_or_else(|| err(format!("undefined variable `{name}`")))
     }
 }
 
@@ -351,6 +389,8 @@ impl Analyzer {
             });
         }
         let saved = self.current_return.replace(return_type.clone());
+        let saved_declared = self.declared_return;
+        self.declared_return = f.return_type.is_some();
         let saved_async = self.async_depth;
         self.async_depth = if f.is_async { saved_async + 1 } else { 0 };
         // This function is its own scope: decorators are only legal at the top
@@ -361,11 +401,33 @@ impl Analyzer {
         let saved_block = self.block_depth;
         self.component_depth = if is_component { 1 } else { 0 };
         self.block_depth = 0;
+        if is_component {
+            // Top-level `let`s and nested `fn` declarations of a component body
+            // become part of the render closure at codegen time, so they are
+            // off-limits to hoisted setup code (`@Effect`/`@State`/`@Store`).
+            let mut render_locals = std::collections::HashSet::new();
+            for stmt in &f.body.statements {
+                match stmt {
+                    Statement::Let(b) => {
+                        render_locals.insert(b.name.clone());
+                    }
+                    Statement::Fn(nested) => {
+                        render_locals.insert(nested.name.clone());
+                    }
+                    _ => {}
+                }
+            }
+            self.render_locals.push(render_locals);
+        }
         let result = self.check_block_implicit(&f.body);
+        if is_component {
+            self.render_locals.pop();
+        }
         self.block_depth = saved_block;
         self.component_depth = saved_component;
         self.async_depth = saved_async;
         self.current_return = saved;
+        self.declared_return = saved_declared;
         result?;
         self.table.pop_scope();
         Ok(())
@@ -415,6 +477,8 @@ impl Analyzer {
             });
         }
         let saved = self.current_return.replace(return_type.clone());
+        let saved_declared = self.declared_return;
+        self.declared_return = f.return_type.is_some();
         let saved_async = self.async_depth;
         self.async_depth = if f.is_async { saved_async + 1 } else { 0 };
         // A closure is its own (ordinary) function: `@State`/`@Store`/
@@ -429,6 +493,7 @@ impl Analyzer {
         self.block_depth = saved_block;
         self.async_depth = saved_async;
         self.current_return = saved;
+        self.declared_return = saved_declared;
         result?;
         self.table.pop_scope();
 
@@ -775,13 +840,19 @@ impl Analyzer {
 
     fn check_effect(&mut self, effect: &crate::ast::EffectStmt) -> SResult<()> {
         self.require_component_top_level("@Effect")?;
-        self.check_fn_expr(&effect.closure)?;
-        if let Some(deps) = &effect.deps {
-            for dep in deps {
-                self.check_expression(dep)?;
+        let saved = self.in_effect;
+        self.in_effect = true;
+        let result = (|| {
+            self.check_fn_expr(&effect.closure)?;
+            if let Some(deps) = &effect.deps {
+                for dep in deps {
+                    self.check_expression(dep)?;
+                }
             }
-        }
-        Ok(())
+            Ok(())
+        })();
+        self.in_effect = saved;
+        result
     }
 
     fn check_environment(&mut self, env: &crate::ast::EnvStmt) -> SResult<()> {
@@ -969,7 +1040,7 @@ impl Analyzer {
         for statement in &block.statements {
             self.check_statement(statement)?;
         }
-        if self.current_return.is_some()
+        if self.declared_return
             && let Some(Statement::Expr(last)) = block.statements.last()
         {
             let expected = self.current_return.clone().unwrap();
@@ -1004,11 +1075,8 @@ impl Analyzer {
         match expr {
             Expression::Literal(lit) => self.check_literal(lit),
             Expression::Identifier(name) => {
-                if let Some(sym) = self.table.lookup(name) {
-                    Ok(sym.type_.clone())
-                } else {
-                    Err(err(format!("undefined variable `{name}`")))
-                }
+                let sym = self.lookup_symbol(name)?;
+                Ok(sym.type_.clone())
             }
             Expression::BinaryOp(bin) => self.check_binary(bin),
             Expression::Unary(un) => self.check_unary(un),
@@ -1028,9 +1096,7 @@ impl Analyzer {
             Expression::Await(operand) => self.check_await(operand),
             Expression::FnExpr(f) => self.check_fn_expr(f),
             Expression::Binding(name) => {
-                let Some(sym) = self.table.lookup(name) else {
-                    return Err(err(format!("undefined variable `{name}`")));
-                };
+                let sym = self.lookup_symbol(name)?;
                 match sym.kind {
                     SymbolKind::State | SymbolKind::Store => Ok(sym.type_.clone()),
                     _ => Err(err(format!(
@@ -1462,6 +1528,17 @@ impl Analyzer {
         let Some(sym) = self.table.lookup(&call.callee) else {
             return Err(err(format!("unknown function `{}`", call.callee)));
         };
+        if self.in_effect
+            && self
+                .render_locals
+                .last()
+                .is_some_and(|locals| locals.contains(&call.callee))
+        {
+            return Err(err(format!(
+                "`@Effect` closures cannot reference `{}`: it is declared inside the component body and is out of scope when the effect runs",
+                call.callee
+            )));
+        }
         match &sym.kind {
             SymbolKind::Function(type_params, params, return_type) => {
                 // An unseeded import (no module graph) is opaque: accept any

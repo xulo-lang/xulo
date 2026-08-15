@@ -394,3 +394,62 @@ fn closure_optional_param_emits_null() {
     );
     assert!(js.contains("(x = null)"));
 }
+
+#[test]
+fn for_var_shadows_signal() {
+    let js = generate_js(
+        "fn main(): Component { @State let x: number = 0 let ys = [1, 2, 3] for x in ys { print(x) } }",
+    );
+    assert!(js.contains("const x = __signal(0);"));
+    assert!(js.contains("for (const x of ys) {"));
+    assert!(js.contains("console.log(x);"));
+    assert!(!js.contains("x.get()"), "loop variable must shadow the signal:\n{js}");
+}
+
+#[test]
+fn block_local_shadows_signal() {
+    let js = generate_js(
+        "fn main(): Component { @State let x: number = 0 { let x = 42 print(x) } print(x) }",
+    );
+    assert!(js.contains("console.log(x);"), "inner block read is a plain local:\n{js}");
+    assert!(js.contains("console.log(x.get());"), "outer read is still the signal:\n{js}");
+}
+
+#[test]
+fn ui_for_var_shadows_signal() {
+    let js = generate_js(
+        "fn main(): Component { @State let item: object = { name: \"x\" } let items = [{ name: \"a\" }] VStack { for item in items { Card(title: item.name) } } }",
+    );
+    assert!(js.contains(".map((item) =>"));
+    assert!(js.contains("\"title\": item.name"), "UI for variable must shadow the signal:\n{js}");
+    assert!(!js.contains("item.get().name"));
+}
+
+#[test]
+fn signal_used_inside_plain_fn_body() {
+    let js = generate_js(
+        "fn main(): Component { @State let n: number = 0 let read = fn(): number { n } VStack { } }",
+    );
+    assert!(js.contains("return n.get();"), "closure still sees the signal through outer scope:\n{js}");
+}
+
+#[test]
+fn export_main_is_invoked() {
+    let js = generate_js("export fn main() { print(1) }");
+    assert!(js.contains("function main()"));
+    assert!(js.contains("main();"));
+}
+
+#[test]
+fn export_default_main_is_invoked() {
+    let js = generate_js("export default fn main() { print(1) }");
+    assert!(js.contains("function main()"));
+    assert!(js.contains("main();"));
+}
+
+#[test]
+fn export_default_component_main_emits_mount_hook() {
+    let js = generate_js("export default fn main(): Component { }");
+    assert!(js.contains("const __xulo_main = main();"));
+    assert!(js.contains("__xulo_mount"));
+}

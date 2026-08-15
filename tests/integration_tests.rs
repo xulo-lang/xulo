@@ -754,3 +754,38 @@ fn check_rejects_decorator_outside_component() {
     assert!(String::from_utf8_lossy(&out.stderr).contains("returning `Component`"));
     let _ = std::fs::remove_file(&file);
 }
+
+#[test]
+fn run_component_loop_var_shadowing() {
+    let file = temp_file(
+        "shadow.xulo",
+        r#"
+        fn main(): Component {
+            @State let x: number = 0
+            let ys = [1, 2, 3]
+            for x in ys { print(x) }
+        }
+        "#,
+    );
+    let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "1\n2\n3\n");
+    let _ = std::fs::remove_file(&file);
+}
+
+#[test]
+fn check_rejects_effect_capturing_render_local() {
+    let file = temp_file(
+        "bad.xulo",
+        r#"
+        fn main(): Component {
+            let a = 5
+            @Effect fn() { print(a) }
+        }
+        "#,
+    );
+    let out = Command::new(BIN).arg("check").arg(&file).output().unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("@Effect"));
+    let _ = std::fs::remove_file(&file);
+}
