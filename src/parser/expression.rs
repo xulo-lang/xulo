@@ -539,12 +539,22 @@ fn match_pattern(input: &mut In<'_>) -> Pr<MatchPattern> {
             if opt_tk(input, Token::DoubleColon) {
                 let variant = ident_name(input)?;
                 if opt_tk(input, Token::LParen) {
-                    let binding = ident_name(input)?;
+                    let original = *input;
+                    let mut bindings = Vec::new();
+                    loop {
+                        let binding = ident_name(input)?;
+                        bindings.push(binding);
+                        if !opt_tk(input, Token::Comma) {
+                            break;
+                        }
+                    }
                     tk(input, Token::RParen)?;
+                    let span = consumed_span(original, input, 0);
                     Ok(MatchPattern::EnumPayload {
                         enum_name: first,
                         variant,
-                        binding,
+                        bindings,
+                        span,
                     })
                 } else {
                     let span = consumed_span(original, input, 0);

@@ -1,8 +1,8 @@
 use crate::ast::{
     AssignStmt, AssignTarget, BindingPattern, Block, ComponentStmt, EffectStmt, EnumDef,
-    EnumVariant, EnvStmt, ExportItem, ExportStmt, ExprStmt, Expression, FnDef, ForStmt, ImportSpec,
-    ImportStmt, LetBinding, Param, ReturnStmt, StateStmt, Statement, StoreStmt, TryStmt, TypeAlias,
-    UiElement, WhileStmt,
+    EnumPayloadParam, EnumVariant, EnvStmt, ExportItem, ExportStmt, ExprStmt, Expression, FnDef,
+    ForStmt, ImportSpec, ImportStmt, LetBinding, Param, ReturnStmt, StateStmt, Statement,
+    StoreStmt, TryStmt, TypeAlias, UiElement, WhileStmt,
 };
 use crate::lexer::token::Token;
 
@@ -234,27 +234,33 @@ fn enum_def(input: &mut In<'_>) -> Pr<EnumDef> {
             return Err(ErrMode::Backtrack(PErr::unexpected(input)));
         }
         let vname = ident_name(input)?;
-        let (payload, payload_name) = if opt_tk(input, Token::LParen) {
-            let (ty, name) = if input.first().map(|t| t.kind) == Some(Token::Ident)
-                && input.get(1).map(|t| t.kind) == Some(Token::Colon)
-            {
-                let field = ident_name(input)?;
-                tk(input, Token::Colon)?;
-                let ty = type_expr(input)?;
-                (ty, Some(field))
-            } else {
-                let ty = type_expr(input)?;
-                (ty, None)
-            };
+        let payload = if opt_tk(input, Token::LParen) {
+            let mut params = Vec::new();
+            loop {
+                let (name, type_) = if input.first().map(|t| t.kind) == Some(Token::Ident)
+                    && input.get(1).map(|t| t.kind) == Some(Token::Colon)
+                {
+                    let field = ident_name(input)?;
+                    tk(input, Token::Colon)?;
+                    let ty = type_expr(input)?;
+                    (Some(field), ty)
+                } else {
+                    let ty = type_expr(input)?;
+                    (None, ty)
+                };
+                params.push(EnumPayloadParam { name, type_ });
+                if !opt_tk(input, Token::Comma) {
+                    break;
+                }
+            }
             tk(input, Token::RParen)?;
-            (Some(ty), name)
+            Some(params)
         } else {
-            (None, None)
+            None
         };
         variants.push(EnumVariant {
             name: vname,
             payload,
-            payload_name,
         });
         opt_tk(input, Token::Comma);
     }

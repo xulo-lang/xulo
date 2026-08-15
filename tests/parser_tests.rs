@@ -242,8 +242,8 @@ fn parses_match_enum_payload() {
     };
     assert!(
         matches!(&m.arms[0].pattern, xulo::ast::MatchPattern::EnumPayload {
-        enum_name, variant, binding
-    } if enum_name == "Result" && variant == "Success" && binding == "v")
+        enum_name, variant, bindings, ..
+    } if enum_name == "Result" && variant == "Success" && bindings == &["v".to_string()])
     );
 }
 
@@ -551,8 +551,8 @@ fn parses_match_enum_payload_with_commas() {
     assert_eq!(m.arms.len(), 3);
     assert!(
         matches!(&m.arms[1].pattern, xulo::ast::MatchPattern::EnumPayload {
-        variant, binding, ..
-    } if variant == "Error" && binding == "msg")
+        variant, bindings, ..
+    } if variant == "Error" && bindings == &["msg".to_string()])
     );
 }
 
@@ -563,8 +563,15 @@ fn parses_named_enum_payload() {
         panic!("expected enum");
     };
     assert_eq!(e.variants[1].name, "Submit");
-    assert_eq!(e.variants[1].payload_name.as_deref(), Some("data"));
-    assert_eq!(e.variants[0].payload_name, None);
+    assert_eq!(
+        e.variants[1]
+            .payload
+            .as_ref()
+            .and_then(|p| p.first())
+            .and_then(|p| p.name.as_deref()),
+        Some("data")
+    );
+    assert_eq!(e.variants[0].payload, None);
 }
 
 #[test]

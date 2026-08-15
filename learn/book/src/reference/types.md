@@ -73,9 +73,27 @@ enum Action {
   Submit(data: object)   // 具名关联数据（字段名）
   Cancel
 }
+
+enum Person {
+  Nobody
+  Named(string, number)  // 多参数 payload
+}
 ```
 
-payload 可以是位置形式 `Success(T)`，也可以是具名形式 `Submit(data: object)`；两种形式构造与匹配都是位置传参：`Action::Submit({...})`、`match a { Action::Submit(d) => d }`。
+payload 可以是位置形式 `Success(T)`、具名形式 `Submit(data: object)`，也支持多参数 `Named(string, number)`；构造按位置传参。匹配时每个参数对应一个绑定，用 `_` 丢弃不需要的槽位：
+
+```xulo
+Action::Submit({ message: "hi" })
+match a {
+  Action::Submit(data) => data
+}
+
+let p = Person::Named("Ada", 36)
+match p {
+  Person::Named(name, _) => name   // 丢弃 age
+  Person::Nobody => "anon"
+}
+```
 
 ### 使用
 

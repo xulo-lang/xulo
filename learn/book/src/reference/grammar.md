@@ -75,7 +75,8 @@ param_type_list     = type_expr { "," type_expr } ;
 type_def            = "type" identifier [ type_params ] "=" type_expr ;
 enum_def            = "enum" identifier [ type_params ] "{" enum_body "}" ;
 enum_body           = enum_member { "," enum_member } [ "," ] ;
-enum_member         = identifier [ "(" [ identifier ":" ] type_expr ")" ] ;
+ enum_member         = identifier [ "(" [ payload_param { "," payload_param } ] ")" ] ;
+ payload_param       = [ identifier ":" ] type_expr ;
 
 type_params         = "<" type_param { "," type_param } ">" ;
 type_param          = identifier ;
@@ -202,7 +203,7 @@ match_pattern       = "_"
                     | string_literal
                     | number_literal
                     | boolean_literal
-                    | type_identifier "::" identifier [ "(" identifier ")" ] ; (* enum [payload] *)
+                    | type_identifier "::" identifier [ "(" [ identifier { "," identifier } ] ")" ] ; (* enum payload *)
 
 (* ============================================================
    11. Call Arguments & Field Initializers

@@ -165,12 +165,21 @@ pub struct EnumDef {
     pub variants: Vec<EnumVariant>,
 }
 
+/// A single positional payload parameter of an enum variant:
+/// `Submit(data: object)` or `Point(number, number)`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EnumPayloadParam {
+    /// Optional field name for the parameter, e.g. `data` in `Submit(data: object)`.
+    pub name: Option<String>,
+    pub type_: Type,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnumVariant {
     pub name: String,
-    pub payload: Option<Type>,
-    /// Optional field name for the payload: `Submit(data: object)`.
-    pub payload_name: Option<String>,
+    /// Payload parameters, in declaration order. `None` when the variant
+    /// carries no payload.
+    pub payload: Option<Vec<EnumPayloadParam>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -388,7 +397,9 @@ pub enum MatchPattern {
     EnumPayload {
         enum_name: String,
         variant: String,
-        binding: String,
+        /// One binding per payload parameter, in order; `_` discards a slot.
+        bindings: Vec<String>,
+        span: Range<usize>,
     },
     Wildcard,
 }

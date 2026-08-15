@@ -166,6 +166,64 @@ fn rejects_enum_payload_type_mismatch() {
 }
 
 #[test]
+fn multi_payload_enum_construction_and_match() {
+    let src = r#"
+        enum Person { Nobody, Named(string, number) }
+        fn main() {
+            let p = Person::Named("Ada", 36)
+            match p {
+                Person::Named(name, age) => print(str(age) + ":" + name)
+                _ => print("anon")
+            }
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn multi_payload_enum_discards_with_underscore() {
+    let src = r#"
+        enum Person { Named(string, number) }
+        fn main() {
+            let p = Person::Named("Ada", 36)
+            match p {
+                Person::Named(name, _) => print(name)
+            }
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn rejects_wrong_multi_payload_argument_count() {
+    let err =
+        analyze_src(r#"enum P { Named(string, number) } fn main() { let p = P::Named("Ada") }"#)
+            .unwrap_err();
+    assert!(
+        err.message.contains("expects 2 argument(s), got 1"),
+        "message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn rejects_wrong_binding_count_in_match() {
+    let err = analyze_src(
+        r#"enum P { Named(string, number) }
+        fn main() {
+            let p = P::Named("Ada", 36)
+            match p { P::Named(name) => print(name) }
+        }"#,
+    )
+    .unwrap_err();
+    assert!(
+        err.message.contains("pattern binds 1 values"),
+        "message: {}",
+        err.message
+    );
+}
+
+#[test]
 fn rejects_wrong_payload_count() {
     let err = analyze_src("enum R { Ok(number) }\nfn main() { let x = R::Ok(1, 2) }").unwrap_err();
     assert!(err.message.contains("expects 1 argument"));

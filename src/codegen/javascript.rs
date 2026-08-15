@@ -579,9 +579,20 @@ impl Javascript {
                 .variants
                 .iter()
                 .map(|v| {
-                    if v.payload.is_some() {
+                    if let Some(params) = &v.payload {
+                        let (params_js, value_js) = if params.len() == 1 {
+                            ("value".to_string(), "value".to_string())
+                        } else {
+                            let ps = params
+                                .iter()
+                                .enumerate()
+                                .map(|(i, _)| format!("p{i}"))
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            (ps.clone(), format!("[{ps}]"))
+                        };
                         format!(
-                            "{}: (value) => ({{ tag: \"{}\", value: value }})",
+                            "{}: ({params_js}) => ({{ tag: \"{}\", value: {value_js} }})",
                             v.name, v.name
                         )
                     } else {
@@ -1116,12 +1127,26 @@ impl Javascript {
                 crate::ast::MatchPattern::EnumPayload {
                     enum_name: _,
                     variant,
-                    binding,
+                    bindings,
+                    ..
                 } => {
                     js.line(&format!("if (__m && __m.tag === \"{variant}\") {{"));
                     js.indent += 1;
-                    js.line(&format!("const {binding} = __m.value;"));
-                    js.register_local(binding.clone());
+                    let names: Vec<String> = bindings.clone();
+                    if names.len() == 1 {
+                        let b = names[0].clone();
+                        if b != "_" {
+                            js.line(&format!("const {b} = __m.value;"));
+                            js.register_local(b.clone());
+                        }
+                    } else if !names.is_empty() {
+                        for (i, b) in names.iter().enumerate() {
+                            if b != "_" {
+                                js.line(&format!("const {b} = __m.value[{i}];"));
+                                js.register_local(b.clone());
+                            }
+                        }
+                    }
                     js.line(&format!("return {value};"));
                     js.indent -= 1;
                     js.line("}");

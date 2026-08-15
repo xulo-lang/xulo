@@ -182,6 +182,39 @@ fn run_types_enums_const_null() {
 }
 
 #[test]
+fn run_multi_payload_enum() {
+    let file = temp_file(
+        "multipayload.xulo",
+        r#"
+        enum Person { Nobody, Named(string, number) }
+
+        fn greet(p: Person): string {
+            match p {
+                Person::Named(name, age) => "hi " + name + " (" + str(age) + ")"
+                Person::Nobody => "hi anon"
+            }
+        }
+
+        fn main() {
+            print(greet(Person::Named("Ada", 36)))
+            print(greet(Person::Nobody))
+        }
+        "#,
+    );
+    let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "hi Ada (36)\nhi anon\n"
+    );
+    let _ = std::fs::remove_file(&file);
+}
+
+#[test]
 fn run_phase2_control_flow_and_expressions() {
     let file = temp_file(
         "phase2.xulo",

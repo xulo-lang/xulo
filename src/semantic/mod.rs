@@ -997,8 +997,10 @@ impl Analyzer {
                     e.name, variant.name
                 )));
             }
-            if let Some(payload) = &variant.payload
-                && let Err(e2) = self.check_type(payload)
+            if let Some(params) = &variant.payload
+                && let Err(e2) = params
+                    .iter()
+                    .try_for_each(|p| self.check_type(&p.type_))
             {
                 self.generics
                     .truncate(self.generics.len().saturating_sub(e.type_params.len()));
@@ -1349,7 +1351,8 @@ impl Analyzer {
                 crate::ast::MatchPattern::EnumPayload {
                     enum_name,
                     variant,
-                    binding,
+                    bindings,
+                    span,
                 } => {
                     let entry = self
                         .type_table
@@ -1365,15 +1368,29 @@ impl Analyzer {
                         })?
                         .clone();
                     match &v.payload {
-                        Some(payload) => {
+                        Some(params) => {
+                            if params.len() != bindings.len() {
+                                return Err(self
+                                    .err(format!(
+                                        "pattern binds {} values but `{enum_name}::{variant}` carries {}",
+                                        bindings.len(),
+                                        params.len()
+                                    ))
+                                    .at(span.clone()));
+                            }
                             self.generics.extend(entry.type_params.iter().cloned());
                             self.table.push_scope();
-                            self.table.declare(Symbol {
-                                name: binding.clone(),
-                                type_: self.resolve_alias(payload, 0),
-                                kind: SymbolKind::Variable,
-                                is_const: true,
-                            });
+                            for (param, binding) in params.iter().zip(bindings.iter()) {
+                                if binding == "_" {
+                                    continue;
+                                }
+                                self.table.declare(Symbol {
+                                    name: binding.clone(),
+                                    type_: self.resolve_alias(&param.type_, 0),
+                                    kind: SymbolKind::Variable,
+                                    is_const: true,
+                                });
+                            }
                             let t = self.check_expression(&arm.value)?;
                             self.table.pop_scope();
                             self.generics.truncate(
@@ -1769,22 +1786,33 @@ impl Analyzer {
             return Err(self.err(format!("enum `{enum_name}` has no member `{variant}`")));
         };
         let payload = v.payload.clone();
-        self.generics.extend(type_params.iter().cloned());
+        self.generics.extend(type_params.clone());
         let result = match payload {
-            Some(payload) => {
-                if arguments.len() != 1 {
+            Some(params) => {
+                if arguments.len() != params.len() {
                     Err(self.err(format!(
-                        "enum member `{enum_name}::{variant}` expects 1 argument (payload of type `{}`)",
-                        payload.name()
+                        "enum member `{enum_name}::{variant}` expects {} argument(s), got {}",
+                        params.len(),
+                        arguments.len()
                     )))
                 } else {
-                    let arg_type = self.check_expression(arguments[0])?;
-                    if !self.assignable(&arg_type, &payload) {
-                        Err(self.err(format!(
-                            "argument to `{enum_name}::{variant}` must be `{}`, found `{}`",
-                            payload.name(),
-                            arg_type.name()
-                        )))
+                    let mut errs = Vec::new();
+                    for (arg, param) in arguments.iter().zip(params.iter()) {
+                        match self.check_expression(arg) {
+                            Ok(arg_type) => {
+                                if !self.assignable(&arg_type, &param.type_) {
+                                    errs.push(self.err(format!(
+                                        "argument to `{enum_name}::{variant}` must be `{}`, found `{}`",
+                                        param.type_.name(),
+                                        arg_type.name()
+                                    )));
+                                }
+                            }
+                            Err(e) => errs.push(e),
+                        }
+                    }
+                    if let Some(e) = errs.into_iter().next() {
+                        Err(e)
                     } else {
                         Ok(Type::Named(enum_name))
                     }
