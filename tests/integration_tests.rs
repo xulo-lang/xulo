@@ -452,6 +452,42 @@ fn run_pub_main_entry() {
 }
 
 #[test]
+fn rejects_reserved_word_programs() {
+    let file = temp_file("reserved.xulo", "fn main() { let struct = 1 }");
+    let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("reserved keyword `struct`"),
+        "stderr: {stderr}"
+    );
+    let _ = std::fs::remove_file(&file);
+}
+
+#[test]
+fn allows_stdlib_type_names_as_identifiers() {
+    // Standard-library type names are recommended against, but not reserved:
+    // code that uses them as identifiers must keep working.
+    let file = temp_file(
+        "typenames.xulo",
+        "fn main() {\n\
+             let string = \"s\"\n\
+             let number = 42\n\
+             let list = [1]\n\
+             print(string) print(number) print(list)\n\
+         }",
+    );
+    let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "s\n42\n[ 1 ]\n");
+    let _ = std::fs::remove_file(&file);
+}
+
+#[test]
 fn run_module_import_destructure() {
     let (dir, entry) = temp_dir(
         &[

@@ -26,7 +26,7 @@ module              = document ;
    2. Identifiers & Literals
    ============================================================ *)
 
-identifier          = (letter | "_") { letter | digit | "_" } ;
+identifier          = (letter | "_") { letter | digit | "_" } ;  (* 关键字与保留字不可用作标识符，见 §lexical *)
 type_identifier     = uppercase_letter { letter | digit | "_" } ;
 component_name      = uppercase_letter { letter | digit | "_" } ;
 

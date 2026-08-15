@@ -498,6 +498,54 @@ fn rejects_pub_combined_with_export() {
 }
 
 #[test]
+fn rejects_reserved_word_as_binding_name() {
+    let tokens = tokenize("let struct = 1").unwrap();
+    let err = parse_program(&tokens).unwrap_err();
+    assert!(
+        err.message.contains("reserved keyword `struct`"),
+        "got: {}",
+        err.message
+    );
+    assert!(err.span.is_some(), "error must carry a span");
+}
+
+#[test]
+fn rejects_reserved_word_as_function_name() {
+    let tokens = tokenize("fn new() {}").unwrap();
+    let err = parse_program(&tokens).unwrap_err();
+    assert!(
+        err.message.contains("reserved keyword `new`"),
+        "unexpected message: {}",
+        err.message
+    );
+    assert!(err.span.is_some(), "error must carry a span");
+}
+
+#[test]
+fn rejects_reserved_word_as_statement() {
+    let tokens = tokenize("yield").unwrap();
+    let err = parse_program(&tokens).unwrap_err();
+    assert!(
+        err.message.contains("reserved keyword `yield`"),
+        "unexpected message: {}",
+        err.message
+    );
+    assert!(err.span.is_some(), "error must carry a span");
+}
+
+#[test]
+fn rejects_reserved_word_in_type_position() {
+    let tokens = tokenize("let x: struct = 1").unwrap();
+    let err = parse_program(&tokens).unwrap_err();
+    assert!(
+        err.message.contains("reserved keyword `struct`"),
+        "unexpected message: {}",
+        err.message
+    );
+    assert!(err.span.is_some(), "error must carry a span");
+}
+
+#[test]
 fn parses_export_default_fn() {
     use xulo::ast::ExportItem;
     let p = parse("export default fn main() { print(\"hi\") }");
@@ -785,7 +833,7 @@ fn parses_nested_object_and_list_literals() {
 
 #[test]
 fn parses_method_chain_through_index_and_call() {
-    let p = parse("store.actions.select(0).items[0].label");
+    let p = parse("store.actions.pick(0).items[0].label");
     let Statement::Expr(es) = &p.statements[0] else {
         panic!();
     };

@@ -26,8 +26,9 @@ identifier     = (letter | "_") { letter | digit | "_" } ;
 - 普通标识符以字母或 `_` 开头，可含字母、数字、`_`。
 - 类型名 / 组件名约定以大写字母开头（`User`、`VStack`），但语法上仍是普通标识符。
 - 枚举成员与命名空间用 `::` 访问：`Theme::Dark`。
+- **关键字与保留字（本清单之外的均已确定，不再变更）** 不可用作标识符。
 
-关键字（不可用作标识符）：
+### 已使用的关键字
 
 | 关键字 | 用途 |
 |--------|------|
@@ -45,7 +46,33 @@ identifier     = (letter | "_") { letter | digit | "_" } ;
 | `print` | 内置输出函数 |
 | `str` | 内置转换 `str(x)`，返回字符串 |
 
-装饰器关键字（仅在 `@` 之后作为标记，其余位置仍可作标识符）：`State`、`Store`、`Effect`、`Environment`。
+`_` 是保留通配符：在 `match` 模式与 `enum` 载荷占位中匹配任意值，不作为普通标识符使用。
+
+### 已使用的符号
+
+| 符号 | 现状 |
+|------|------|
+| `@` `$` | 装饰器 / 插值（已使用） |
+| `?` `!` `..` `::` `\|` `&` | 运算符（已使用） |
+| `#` | 为未来的宏 / 元数据语法预留 |
+
+### 预留（未来可能的）关键字
+
+以下单词现在既不是关键字、也没有语法含义，但**已被保留**：任何把它们用作标识符（变量 / 函数 / 类型 / 成员名）的代码都会在解析时报 `unexpected reserved keyword X`。预留为未来语言特性留出演进空间：
+
+`abstract` `actor` `associatedtype` `bench` `break` `case` `cfg` `channel` `class` `continue` `defer` `deinit` `derive` `doc` `do` `extension` `fallthrough` `final` `generic` `generator` `global` `guard` `impl` `init` `interface` `isolated` `iterator` `lazy` `library` `local` `macro` `meta` `module` `move` `mut` `new` `open` `override` `package` `priv` `protocol` `receiver` `ref` `rethrows` `select` `self` `sender` `spawn` `static` `struct` `super` `switch` `task` `this` `trait` `typealias` `unowned` `unsafe` `use` `virtual` `weak` `where` `yield`
+
+> `priv` 已预留但**当前无私有语义**：现有模块系统中，未导出的声明本身即为模块私有。预留仅在词法层禁止其作标识符。
+
+### 上下文关键字
+
+仅在 `@` 之后作为装饰器标记、其余位置仍可作标识符：`State`、`Store`、`Effect`、`Environment`。
+
+### 建议避免的名称（非强制）
+
+以下标准库类型 / 组件名建议不要作为变量名使用（当前不报错，仅约定）：
+
+`string` `number` `boolean` `list` `object` `Component` `VStack` `HStack` `Text` `Button` `Screen`
 
 ## 字面量
 

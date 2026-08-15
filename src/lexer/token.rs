@@ -64,10 +64,82 @@ pub enum Token {
     From,
     As,
     Default,
+    /// A reserved-for-future-use word (see `RESERVED_WORDS`): it lexes as a
+    /// token instead of an identifier so it can never be used as a name.
+    Reserved,
     At,
     Dollar,
     EOF,
 }
+
+/// Words reserved for future language features. They are not keywords yet, but
+/// can never be used as identifiers (checked in `from_keyword`), keeping the
+/// door open for later syntax without breaking reserved-word code.
+pub const RESERVED_WORDS: &[&str] = &[
+    "abstract",
+    "actor",
+    "associatedtype",
+    "bench",
+    "break",
+    "case",
+    "cfg",
+    "channel",
+    "class",
+    "continue",
+    "defer",
+    "deinit",
+    "derive",
+    "doc",
+    "do",
+    "extension",
+    "fallthrough",
+    "final",
+    "generic",
+    "generator",
+    "global",
+    "guard",
+    "impl",
+    "init",
+    "interface",
+    "isolated",
+    "iterator",
+    "lazy",
+    "library",
+    "local",
+    "macro",
+    "meta",
+    "module",
+    "move",
+    "mut",
+    "new",
+    "open",
+    "override",
+    "package",
+    "priv",
+    "protocol",
+    "receiver",
+    "ref",
+    "rethrows",
+    "select",
+    "self",
+    "sender",
+    "spawn",
+    "static",
+    "struct",
+    "super",
+    "switch",
+    "task",
+    "this",
+    "trait",
+    "typealias",
+    "unowned",
+    "unsafe",
+    "use",
+    "virtual",
+    "weak",
+    "where",
+    "yield",
+];
 
 impl Token {
     /// Map a keyword / type-name string to its token. Returns `None` for
@@ -102,7 +174,16 @@ impl Token {
             "as" => Token::As,
             "default" => Token::Default,
             "true" | "false" => Token::Boolean,
-            _ => return None,
+            _ => {
+                // A reserved word is not a keyword yet, but it is already
+                // forbidden as an identifier (docs §lexical). The set is the
+                // union of the "future keywords" table and the alphabetical
+                // reserved list; `_` stays a wildcard identifier instead.
+                if RESERVED_WORDS.contains(&s) {
+                    return Some(Token::Reserved);
+                }
+                return None;
+            }
         })
     }
 
@@ -136,6 +217,7 @@ impl Token {
             Token::From => "`from`",
             Token::As => "`as`",
             Token::Default => "`default`",
+            Token::Reserved => "`<reserved keyword>`",
             Token::At => "`@`",
             Token::Dollar => "`$`",
             Token::Number => "number",

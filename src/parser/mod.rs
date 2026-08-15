@@ -77,13 +77,23 @@ impl PErr {
         match input.first() {
             Some(t) => PErr {
                 span: t.span.clone(),
-                message: format!("unexpected {}", t.kind.describe()),
+                message: format!("unexpected {}", describe_tok(t)),
             },
             None => PErr {
                 span: 0..0,
                 message: "unexpected end of input".into(),
             },
         }
+    }
+}
+
+/// Human-readable description of a token for error messages. Reserved words
+/// report their own text so `unexpected reserved keyword `struct`` is shown.
+pub fn describe_tok(t: &LexedToken) -> String {
+    if t.kind == Token::Reserved {
+        format!("reserved keyword `{}`", t.text)
+    } else {
+        t.kind.describe().to_string()
     }
 }
 
@@ -127,7 +137,7 @@ impl AddContext<In<'_>, &'static str> for PErr {
     ) -> Self {
         if let Some(t) = input.first() {
             self.span = t.span.clone();
-            self.message = format!("expected {context}, found {}", t.kind.describe());
+            self.message = format!("expected {context}, found {}", describe_tok(t));
         }
         self
     }

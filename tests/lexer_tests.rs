@@ -66,6 +66,22 @@ fn unterminated_block_comment_is_an_error() {
 }
 
 #[test]
+fn tokenizes_reserved_words() {
+    // A representative sample from both reserved lists: they must lex to
+    // `Reserved`, never to an identifier.
+    let tokens = tokenize("struct class impl trait switch case yield spawn _").unwrap();
+    let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
+    assert_eq!(
+        kinds,
+        vec![
+            Reserved, Reserved, Reserved, Reserved, Reserved, Reserved, Reserved, Reserved, Ident,
+            EOF
+        ]
+    );
+    assert_eq!(tokens[0].text, "struct");
+}
+
+#[test]
 fn tokenizes_new_keywords() {
     let tokens = tokenize("const a = null").unwrap();
     let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
