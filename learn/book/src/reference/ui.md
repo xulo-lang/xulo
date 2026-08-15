@@ -56,7 +56,7 @@ VStack({ "spacing": 16, children: [ Text({ "0": "Hello", children: [] }) ] })
 fn MyCard(title: string, children: list<Component>): Component {
   Card(radius: "md", shadow: "sm") {
     Text(title, weight: "bold")
-    children
+    children        // 转发调用方传入的子元素
   }
 }
 
@@ -65,6 +65,23 @@ MyCard(title: "Hello") {
   Text("Content goes here")
 }
 ```
+
+自定义组件（本地定义、返回 `Component` 的函数）按**位置实参**调用：具名实参按声明顺序重排，`children` 传给名为 `children` 的参数。外部 `@xulo/ui` 组件则走 props 对象约定（见上节）。
+
+## 表达式子元素
+
+组件块内除了组件、裸字符串、`if`/`for`/分组外，还接受**任意表达式**作为子元素：
+
+```xulo
+VStack {
+  children                                  // 转发 list<Component>
+  user.name                                 // string 值
+  renderRow(item)                           // 调用产出 Component 的表达式
+}
+```
+
+- 表达式的类型必须是 `string`、`Component`（或其可选形式）、`Any`，或元素类型为 `Component`/`string`/`Any` 的 `list`；其他类型（如 `number`、`list<number>`）报错：`component children must be strings, components, or lists of components`。
+- `list` 子元素渲染为嵌套数组，由运行时的渲染器展平（与 `if`/`for` 编译产物的约定一致）。
 
 ## 条件渲染
 

@@ -76,7 +76,7 @@ fn main() {
 
 ### UI 运行时约定
 
-- UI 组件来自外部包（`@xulo/ui`），原样保留为 ESM `import`；组件调用降级为 `Name({ key: value, children: [...] })`（props 对象 + `children` 数组，位置实参放入 `"0"`/`"1"` 键）。
+- UI 组件来自外部包（`@xulo/ui`），原样保留为 ESM `import`；外部组件调用降级为 `Name({ key: value, children: [...] })`（props 对象 + `children` 数组，位置实参放入 `"0"`/`"1"` 键）。本地自定义组件函数按**位置实参**调用（具名实参依声明顺序重排，`children` 路由到名为 `children` 的参数）。组件块内允许「表达式子元素」（`string` / `Component` / `list<Component>`，列表渲染为嵌套数组）。
 - `@State` 编译为响应式信号（`__signal`），读写分别变为 `.get()` / `.set()`；`@Effect` → `__effect`，`@Environment` → `__env`，组件函数体包裹在 `__component(function(){...})` 中。
 - 编译器按需内联一个最小响应式运行时；`fn main(): Component` 会生成 `if (typeof __xulo_mount === "function") __xulo_mount(main());` 挂载钩子，由外部运行时负责真正的渲染/更新。
 - `@State` / `@Store` / `@Effect` / `@Environment` 只能在返回类型为 `Component` 的函数顶层使用（嵌套块/普通函数内报语义错误）。

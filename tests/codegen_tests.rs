@@ -282,6 +282,35 @@ fn component_emits_runtime_preamble() {
 }
 
 #[test]
+fn expr_child_emits_direct_value() {
+    let js =
+        generate_js("fn main(): Component { @State let name: string = \"Xulo\" VStack { name } }");
+    assert!(js.contains("children: [name.get()]"), "js: {js}");
+}
+
+#[test]
+fn forwarded_children_emit_nested_array() {
+    let js = generate_js("fn MyCard(children: list<Component>): Component { VStack { children } }");
+    assert!(js.contains("children: [children]"), "js: {js}");
+}
+
+#[test]
+fn local_component_is_called_positionally() {
+    // A locally-defined component function is called with reordered positional
+    // arguments and the `children` array routed to its `children` parameter
+    // (external `@xulo/ui` components keep the props-object convention).
+    let js = generate_js(
+        r#"
+        fn MyCard(title: string, children: list<Component>): Component {
+            VStack { Text(title) }
+        }
+        fn main(): Component { MyCard(title: "Hello") { Text("Hi") } }
+        "#,
+    );
+    assert!(js.contains("return MyCard(\"Hello\", [Text({"), "js: {js}");
+}
+
+#[test]
 fn no_runtime_without_reactive_features() {
     let js = generate_js("fn main() { print(1) }");
     assert!(!js.contains("__runtime"));

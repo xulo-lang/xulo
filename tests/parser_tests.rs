@@ -887,6 +887,49 @@ fn parses_component_nested_ui_with_args() {
 }
 
 #[test]
+fn parses_expr_child_in_component_block() {
+    use xulo::ast::{Expression, UiElement};
+    let p = parse("VStack { children }");
+    let Statement::Component(comp) = &p.statements[0] else {
+        panic!("expected component");
+    };
+    assert_eq!(comp.children.len(), 1);
+    assert!(
+        matches!(&comp.children[0], UiElement::Expr(Expression::Identifier { name, .. })
+        if name == "children")
+    );
+}
+
+#[test]
+fn parses_mixed_component_and_expr_children() {
+    use xulo::ast::UiElement;
+    let p = parse("Card(title: \"x\") { Text(\"a\") children }");
+    let Statement::Component(comp) = &p.statements[0] else {
+        panic!("expected component");
+    };
+    assert_eq!(comp.children.len(), 2);
+    assert!(matches!(&comp.children[0], UiElement::Component(c) if c.name == "Text"));
+    assert!(matches!(&comp.children[1], UiElement::Expr(_)));
+}
+
+#[test]
+fn parses_member_and_index_expr_children() {
+    use xulo::ast::{Expression, UiElement};
+    let p = parse("VStack { user.name items[0] }");
+    let Statement::Component(comp) = &p.statements[0] else {
+        panic!("expected component");
+    };
+    assert!(matches!(
+        &comp.children[0],
+        UiElement::Expr(Expression::Member(_))
+    ));
+    assert!(matches!(
+        &comp.children[1],
+        UiElement::Expr(Expression::Index(_))
+    ));
+}
+
+#[test]
 fn syntax_error_carries_span() {
     let tokens = tokenize("fn main() { let x = }").unwrap();
     let err = parse_program(&tokens).unwrap_err();

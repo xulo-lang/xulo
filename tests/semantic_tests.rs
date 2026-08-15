@@ -851,6 +851,50 @@ fn component_children_are_type_checked() {
 }
 
 #[test]
+fn expr_child_accepts_string_and_component_lists() {
+    // A string variable as a bare child renders like a `Text`.
+    assert!(
+        analyze_src("fn main(): Component { @State let name: string = \"Xulo\" VStack { name } }")
+            .is_ok()
+    );
+
+    // A member access yielding a string is also a valid child.
+    assert!(analyze_src(
+        "type User = object\nfn main(): Component { @State let u: User = { name: \"a\" } VStack { u.name } }"
+    )
+    .is_ok());
+
+    // The documented custom-component pattern: a `children: list<Component>`
+    // parameter is forwarded as a bare element.
+    let src = r#"
+        fn MyCard(title: string, children: list<Component>): Component {
+            VStack {
+                Text(title, weight: "bold")
+                children
+            }
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn expr_child_rejects_non_renderable_types() {
+    for src in [
+        "fn main(): Component { @State let n: number = 0 VStack { n } }",
+        "fn main(): Component { @State let ok: boolean = true VStack { ok } }",
+        "fn main(): Component { @State let xs: list<number> = [1, 2] VStack { xs } }",
+    ] {
+        let err = analyze_src(src).unwrap_err();
+        assert!(
+            err.message
+                .contains("component children must be strings, components, or lists of components"),
+            "unexpected message: {}",
+            err.message
+        );
+    }
+}
+
+#[test]
 fn await_rejected_inside_value_position_if() {
     let err = analyze_src(
         "fn work(): async { 42 }\nfn main(): async { let ok = true let x = if ok { await work() } else { 0 } }",

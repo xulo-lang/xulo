@@ -954,6 +954,78 @@ fn build_component_with_external_ui() {
 }
 
 #[test]
+fn run_component_with_forwarded_children() {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static N: AtomicU64 = AtomicU64::new(0);
+    let dir = std::env::temp_dir().join(format!(
+        "xulo_ui_{}_{}",
+        std::process::id(),
+        N.fetch_add(1, Ordering::Relaxed)
+    ));
+    let pkg = dir.join("node_modules/@xulo/ui");
+    std::fs::create_dir_all(&pkg).unwrap();
+    let shim =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/node_modules/@xulo/ui");
+    std::fs::copy(shim.join("package.json"), pkg.join("package.json")).unwrap();
+    std::fs::copy(shim.join("index.js"), pkg.join("index.js")).unwrap();
+
+    let entry = dir.join("app.xulo");
+    std::fs::write(
+        &entry,
+        r#"
+        import { Screen, VStack, Text } from "@xulo/ui"
+
+        fn Card(title: string, children: list<Component>): Component {
+            VStack {
+                Text(title, weight: "bold")
+                children
+            }
+        }
+
+        fn main(): Component {
+            @State let name: string = "Xulo"
+            Screen {
+                Card(title: "Profile") {
+                    Text("Hello, " + name)
+                }
+            }
+        }
+        "#,
+    )
+    .unwrap();
+
+    let out = dir.join("app.mjs");
+    let result = Command::new(BIN)
+        .args([
+            "build",
+            entry.to_str().unwrap(),
+            "-o",
+            out.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+
+    let node = Command::new("node").arg(&out).output().unwrap();
+    assert!(
+        node.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&node.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&node.stdout).to_string();
+    // The forwarded slot renders both the custom component's own text title
+    // and the caller-supplied child (`children` is flattened).
+    assert!(stdout.contains("weight: bold"), "stdout: {stdout}");
+    assert!(stdout.contains("Hello, Xulo"), "stdout: {stdout}");
+    assert!(stdout.contains("<Screen>"), "stdout: {stdout}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn check_rejects_decorator_outside_component() {
     let file = temp_file("bad.xulo", "fn main() { @State let count: number = 0 }");
     let out = Command::new(BIN).arg("check").arg(&file).output().unwrap();

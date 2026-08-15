@@ -582,7 +582,8 @@ fn ui_elements(input: &mut In<'_>) -> Pr<Vec<UiElement>> {
     Ok(elements)
 }
 
-/// A single UI element: component, naked string, `if`, `for`, or grouping.
+/// A single UI element: component, naked string, expression, `if`, `for`, or
+/// grouping.
 fn ui_element(input: &mut In<'_>) -> Pr<UiElement> {
     match input.first().map(|t| t.kind) {
         Some(Token::LBrace) => {
@@ -600,7 +601,9 @@ fn ui_element(input: &mut In<'_>) -> Pr<UiElement> {
         Some(Token::Ident) if is_component(input) => {
             component_stmt(input).map(UiElement::Component)
         }
-        _ => Err(ErrMode::Backtrack(PErr::unexpected(input))),
+        _ => expression(input)
+            .map(UiElement::Expr)
+            .map_err(|_| ErrMode::Backtrack(PErr::unexpected(input))),
     }
 }
 

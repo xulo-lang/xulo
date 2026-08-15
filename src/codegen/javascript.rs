@@ -516,6 +516,9 @@ impl Javascript {
 
     fn component_props_expr(&mut self, component: &ComponentStmt) -> Result<String, XuloError> {
         self.mark_reactive();
+        if let Some(params) = self.fn_params.get(&component.name).cloned() {
+            return self.local_component_call(component, &params);
+        }
         let mut props = Vec::new();
         for (i, arg) in component.args.iter().enumerate() {
             let value = self.expr(&arg.value)?;
@@ -529,6 +532,45 @@ impl Javascript {
         Ok(format!("{}({{ {} }})", component.name, props.join(", ")))
     }
 
+    /// Call a *local* component function positionally: named arguments are
+    /// reordered into the declared parameter order (defaults omitted) and the
+    /// `children` array is routed to the parameter named `children` — or
+    /// dropped entirely when the function declares no such parameter. External
+    /// `@xulo/ui` components keep the props-object convention instead.
+    fn local_component_call(
+        &mut self,
+        component: &ComponentStmt,
+        params: &[String],
+    ) -> Result<String, XuloError> {
+        let mut slots: Vec<Option<String>> = vec![None; params.len()];
+        let mut extras = Vec::new();
+        for (i, arg) in component.args.iter().enumerate() {
+            let value = self.expr(&arg.value)?;
+            match &arg.name {
+                Some(name) => {
+                    if let Some(idx) = params.iter().position(|p| p == name) {
+                        slots[idx] = Some(value);
+                    } else {
+                        extras.push(value);
+                    }
+                }
+                None => {
+                    if i < slots.len() {
+                        slots[i] = Some(value);
+                    } else {
+                        extras.push(value);
+                    }
+                }
+            }
+        }
+        if let Some(idx) = params.iter().position(|p| p == "children") {
+            slots[idx] = Some(self.ui_children_expr(&component.children)?);
+        }
+        let mut args = slots.into_iter().flatten().collect::<Vec<_>>();
+        args.extend(extras);
+        Ok(format!("{}({})", component.name, args.join(", ")))
+    }
+
     /// Render a list of UI elements into a `[ ... ]` array expression; `if`,
     /// `for`, and grouped blocks are spread with `...`.
     fn ui_children_expr(&mut self, children: &[UiElement]) -> Result<String, XuloError> {
@@ -537,6 +579,7 @@ impl Javascript {
             match child {
                 UiElement::Component(c) => parts.push(self.component_props_expr(c)?),
                 UiElement::Text(s) => parts.push(js_string(s)),
+                UiElement::Expr(e) => parts.push(self.expr(e)?),
                 UiElement::Group(group) => {
                     parts.push(format!("...{}", self.ui_children_expr(group)?));
                 }

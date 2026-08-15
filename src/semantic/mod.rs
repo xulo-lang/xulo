@@ -894,6 +894,29 @@ impl Analyzer {
         match el {
             crate::ast::UiElement::Component(c) => self.check_component(c),
             crate::ast::UiElement::Text(_) => Ok(()),
+            crate::ast::UiElement::Expr(e) => {
+                let ty = self.check_expression(e)?;
+                let allowed = match &ty {
+                    Type::String | Type::Any => true,
+                    other if self.is_component_type(other) => true,
+                    // A list/optional child forwards ready-made children (e.g.
+                    // a `children: list<Component>` parameter); only element
+                    // types that can themselves be children make sense.
+                    Type::Optional(inner) => self.is_component_type(inner),
+                    Type::List(inner) => {
+                        self.is_component_type(inner)
+                            || matches!(inner.as_ref(), Type::String | Type::Any)
+                    }
+                    _ => false,
+                };
+                if !allowed {
+                    return Err(self.err(format!(
+                        "component children must be strings, components, or lists of components, found `{}`",
+                        ty.name()
+                    )));
+                }
+                Ok(())
+            }
             crate::ast::UiElement::If {
                 condition,
                 then_branch,

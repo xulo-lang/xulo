@@ -237,6 +237,7 @@ component_block     = "{" { ui_element } "}" ;
 (* UI Element: only UI-specific constructs *)
 ui_element          = component_stmt
                     | text_literal_expr
+                    | expression            (* string / Component / list<Component> *)
                     | if_stmt
                     | for_stmt
                     | "{" { ui_element } "}"

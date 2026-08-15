@@ -114,11 +114,17 @@ pub struct ComponentStmt {
     pub children: Vec<UiElement>,
 }
 
-/// A single element in a UI block (component, text, if, for, or grouping).
+/// A single element in a UI block (component, text, expression, if, for, or grouping).
 #[derive(Debug, Clone, PartialEq)]
 pub enum UiElement {
     Component(ComponentStmt),
     Text(String),
+    /// A bare expression child (e.g. a forwarded `children` variable, a member
+    /// access, or a call). The semantic phase constrains its type to a string,
+    /// a component, or a list of components; a list value renders as a nested
+    /// array that the consumer flattens (the same convention the compiled
+    /// `if`/`for` output uses).
+    Expr(Expression),
     If {
         condition: Expression,
         then_branch: Vec<UiElement>,
