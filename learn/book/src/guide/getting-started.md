@@ -21,10 +21,10 @@ xulo build examples/hello.xulo -o hello.js
 # 仅做词法/语法/语义检查
 xulo check examples/fibonacci.xulo
 
-# 格式化（尚未实现）
+# 格式化（基于 token 流重排空格；注意：注释会被丢弃）
 xulo fmt file.xulo
 
-# 交互式 REPL（尚未实现）
+# 交互式 REPL（空行执行当前输入，无分号表达式自动回显值，`exit` 退出）
 xulo repl
 ```
 

@@ -96,7 +96,11 @@ fn main() {
 cargo test
 ```
 
-覆盖词法、语法、语义、代码生成以及端到端（真实调用 `node`）测试。
+覆盖词法、语法、语义、代码生成以及端到端（真实调用 `node`）测试。另有 `tests/robustness.rs`：对抗语料 + 确定性 token-soup fuzz（3000 次）+ 深嵌套压力测试，断言编译器对任意输入都不 panic——解析嵌套深度超过 128 层返回 `"nesting is too deep"` 诊断而非崩溃。
+
+CI（GitHub Actions，见 `.github/workflows/ci.yml`）执行 `cargo fmt --check` → `cargo clippy --all-targets -- -D warnings` → `cargo test` → 遍历运行全部 examples。
+
+所有语义错误与警告均带源码定位（`--> file:line:col` + caret），诊断码见 `src/error.rs`（`E0001`-`E0005`、警告 `W0001`）。
 
 ## 项目结构
 
@@ -107,7 +111,7 @@ src/
 ├── cli.rs              # run/build/check/fmt/repl 子命令
 ├── ast.rs              # 抽象语法树
 ├── diagnostics.rs      # 美化错误报告
-├── error.rs            # 错误类型 (E0001-E0005)
+├── error.rs            # 错误类型 (E0001-E0005, W0001)
 ├── formatter.rs        # xulo fmt 格式化器
 ├── module.rs           # 多文件加载 + 打包（IIFE）
 ├── lexer/              # 词法分析

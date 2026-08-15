@@ -71,5 +71,28 @@ fn add(a: number, b: number): number {
 - **加载**：从入口文件开始 DFS，本地导入（相对路径或本地存在的裸名）先加载依赖（后序 → 拓扑序），循环导入报错。
 - **语义**：按依赖顺序逐个 `analyze_with`，把依赖导出的符号（真实签名）与类型种子化给导入方；导入不存在的导出名报错。
 - **代码生成**：每个模块编译为一个 `const __modN = (() => { ...; return { 导出 }; })();`，导入方用 `const { a } = __modN;` 解构；入口模块 IIFE 内最后调用 `main()`。
-- **外部依赖**：非本地说明符原样生成顶层 ESM `import`（要求输出为 `.mjs` 或在 `package.json` 中 `"type": "module"`）。
+- **外部依赖**：非本地说明符原样生成顶层 ESM `import`（要求输出为 `.mjs` 或在 `package.json` 中 `"type": "module"`）；`xulo run` 会把临时 JS 写到源文件同目录，借用 Node 的 `node_modules` 向上查找来解析外部包。
 - **跨模块调用**：导入的函数保留参数名，支持具名实参调用。
+
+## 诊断与定位（span）
+
+从词法到语义的所有节点都在 AST 上携带源码 `span`，因此错误与警告都能给出精确位置：
+
+```text
+error[E0003]: return type mismatch: expected `number`, found `string`
+  --> bad.xulo:3:17
+     |
+  3  |   fn f(): number { "hi" }
+     |                  ^^^^^^^^
+```
+
+- **诊断码**：`E0001` 词法 / `E0002` 语法 / `E0003` 语义 / `E0004` IO / `E0005` 代码生成 / `W0001` 警告。
+- **语义检查**维护 `current_span`，所有 `self.err(...)` 自动附加当前位置；警告（例如"忽略返回值"）也是带 span 的 `XuloError`（`Warning` kind），与错误走同一渲染路径。
+- **REPL 值回显**：无分号、非声明/定义/控制流的表达式会自动包一层 `print(...)` 回显其值；失败时自动回退为原样编译。
+
+## 健壮性（fuzz 与深度守卫）
+
+- **嵌套深度守卫**：解析器用 `thread_local` 计数 + RAII `enter_nest()`，超过 `MAX_NEST_DEPTH`（128）即返回 `Cut` 错误 `"nesting is too deep"`，拒绝超深嵌套而不再栈溢出。
+- **语义线性检查**：块尾部表达式不再被重复检查——`check_block_tail` / `check_block_implicit` 对每条语句只检查一次（尾部表达式若为块值仍走 `check_expression` 保持 `await` 的取值位置语义）。修复前嵌套 `if` 语句是 O(2^n)，深度 20 需 446ms；修复后约 38µs。
+- **词法 EOF 守卫**：未闭合字符串/输入中断时返回带定位的诊断，而不是对空切片 panic。
+- **测试**：`tests/robustness.rs` 包含 40+ 对抗语料、3000 次确定性 token-soup fuzz（xorshift64）、深嵌套压力（64MiB 栈线程）与超深嵌套拒绝断言，全部要求不 panic。CI（GitHub Actions）执行 `fmt --check` → `clippy -D warnings` → `cargo test` → 遍历运行全部 examples。
