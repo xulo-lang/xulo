@@ -2,6 +2,8 @@ pub mod expression;
 pub mod statement;
 pub mod types;
 
+use std::cell::Cell;
+use std::marker::PhantomData;
 use std::ops::Range;
 
 use winnow::error::{AddContext, ErrMode, ModalError, ParserError};
@@ -13,6 +15,50 @@ use crate::lexer::token::{LexedToken, Token};
 
 pub type In<'i> = &'i [LexedToken];
 pub type Pr<O> = winnow::ModalResult<O, PErr>;
+
+/// Maximum recursion depth of the `expression`/`statement` parsers. Guarding
+/// this keeps hostile nesting from exhausting the stack: input deeper than the
+/// limit is rejected with a diagnostic instead of overflowing.
+pub const MAX_NEST_DEPTH: usize = 128;
+
+thread_local! {
+    static NEST_DEPTH: Cell<usize> = const { Cell::new(0) };
+}
+
+/// RAII guard that tracks parser recursion depth. Constructing it returns an
+/// error once the nesting limit is reached, so the caller can bail out before
+/// the stack grows any further.
+pub struct NestGuard {
+    _marker: PhantomData<()>,
+}
+
+impl Drop for NestGuard {
+    fn drop(&mut self) {
+        NEST_DEPTH.with(|c| c.set(c.get().saturating_sub(1)));
+    }
+}
+
+/// Enter a recursive parse; returns a depth-limit error when too deep.
+pub fn enter_nest(input: &In<'_>) -> Result<NestGuard, ErrMode<PErr>> {
+    let depth = NEST_DEPTH.with(|c| {
+        let d = c.get();
+        c.set(d + 1);
+        d
+    });
+    if depth >= MAX_NEST_DEPTH {
+        NEST_DEPTH.with(|c| c.set(c.get().saturating_sub(1)));
+        return Err(ErrMode::Cut(PErr {
+            span: input
+                .first()
+                .map(|t| t.span.clone())
+                .unwrap_or_else(|| 0..0),
+            message: "nesting is too deep".into(),
+        }));
+    }
+    Ok(NestGuard {
+        _marker: PhantomData,
+    })
+}
 
 /// A recoverable parse error carrying a source span and message.
 #[derive(Debug, Clone)]

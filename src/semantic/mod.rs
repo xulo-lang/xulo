@@ -319,13 +319,7 @@ impl Analyzer {
                 Ok(())
             }
             Statement::Expr(stmt) => {
-                if let Expression::If(if_expr) = &stmt.expr {
-                    // Statement-position `if` compiles to a direct `if`
-                    // statement, so `await` in its arms is fine.
-                    self.check_if(if_expr)?;
-                } else {
-                    self.check_expression(&stmt.expr)?;
-                }
+                self.check_expr_stmt(stmt)?;
                 Ok(())
             }
             Statement::Block(block) => {
@@ -1021,17 +1015,39 @@ impl Analyzer {
         self.check_block_tail(block).map(|_| ())
     }
 
+    /// Check an expression statement and infer its value type. Statement-position
+    /// `if` compiles to a direct `if` statement, so `await` in its arms is fine
+    /// (unlike a value-position `if`, which `check_expression` wraps in
+    /// `no_await`).
+    fn check_expr_stmt(&mut self, stmt: &crate::ast::ExprStmt) -> SResult<Type> {
+        if let Expression::If(if_expr) = &stmt.expr {
+            self.check_if(if_expr)
+        } else {
+            self.check_expression(&stmt.expr)
+        }
+    }
+
     /// Check a block and return the type of its trailing expression (the
-    /// block's value), if any. Runs while the block scope is active.
+    /// block's value), if any. Runs while the block scope is active. A
+    /// trailing expression is the block's value, so it is checked via
+    /// `check_expression` (a trailing `if`/`match` is therefore value
+    /// position and `await` inside it is rejected).
     fn check_block_tail(&mut self, block: &Block) -> SResult<Option<Type>> {
         self.table.push_scope();
         self.block_depth += 1;
-        for statement in &block.statements {
-            self.check_statement(statement)?;
-        }
         let tail = match block.statements.last() {
-            Some(Statement::Expr(e)) => Some(self.check_expression(&e.expr)?),
-            _ => None,
+            Some(Statement::Expr(e)) => {
+                for statement in &block.statements[..block.statements.len() - 1] {
+                    self.check_statement(statement)?;
+                }
+                Some(self.check_expression(&e.expr)?)
+            }
+            _ => {
+                for statement in &block.statements {
+                    self.check_statement(statement)?;
+                }
+                None
+            }
         };
         self.block_depth -= 1;
         self.table.pop_scope();
@@ -1045,9 +1061,6 @@ impl Analyzer {
     /// scope is still active.
     fn check_block_implicit(&mut self, block: &Block) -> SResult<()> {
         self.table.push_scope();
-        for statement in &block.statements {
-            self.check_statement(statement)?;
-        }
         if self.declared_return
             && let Some(Statement::Expr(last)) = block.statements.last()
         {
@@ -1056,14 +1069,20 @@ impl Analyzer {
                 Type::Async(inner) => inner.as_ref(),
                 other => other,
             };
+            for statement in &block.statements[..block.statements.len() - 1] {
+                self.check_statement(statement)?;
+            }
             if last.has_semicolon {
                 // A trailing `expr;` is an ordinary statement, not an implicit
                 // return (docs §21.2) → warn that its value is discarded.
+                self.check_expr_stmt(last)?;
                 self.warn(format!(
                     "ignored return value: trailing expression with `;` is not the function's return value (expected `{}`)",
                     expected.name()
                 ));
             } else {
+                // A trailing `expr` is the function's implicit return → value
+                // position, so a trailing `if`/`match` rejects `await` inside.
                 let value_type = self.check_expression(&last.expr)?;
                 if !self.assignable(&value_type, target) {
                     return Err(self.err(format!(
@@ -1072,6 +1091,10 @@ impl Analyzer {
                         value_type.name()
                     )));
                 }
+            }
+        } else {
+            for statement in &block.statements {
+                self.check_statement(statement)?;
             }
         }
         self.table.pop_scope();

@@ -8,13 +8,16 @@ use crate::lexer::token::Token;
 
 use super::expression::{call_args, decode_string, expression, fn_expr, if_expr};
 use super::types::type_expr;
-use super::{In, PErr, Pr, at_eof, consumed_span, ident_name, opt_tk, peek_is, tk, verified_tk};
+use super::{
+    In, PErr, Pr, at_eof, consumed_span, enter_nest, ident_name, opt_tk, peek_is, tk, verified_tk,
+};
 use winnow::error::ErrMode;
 
 /// A statement: `fn`/`let`/`const`/`type`/`enum` definitions, `return`, `for`,
 /// `while`, assignment, `if`, block, or an expression statement — dispatched on
 /// the leading token.
 pub fn statement(input: &mut In<'_>) -> Pr<Statement> {
+    let _guard = enter_nest(input)?;
     match input.first().map(|t| t.kind) {
         Some(Token::Fn) => {
             // `fn name(...)` is a definition; `fn(...)` in statement position is

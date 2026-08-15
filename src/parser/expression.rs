@@ -7,7 +7,9 @@ use crate::lexer::token::Token;
 
 use super::statement::{block, params_list};
 use super::types::type_expr;
-use super::{In, PErr, Pr, consumed_span, ident_name, name, opt_tk, peek_is, tk, verified_tk};
+use super::{
+    In, PErr, Pr, consumed_span, enter_nest, ident_name, name, opt_tk, peek_is, tk, verified_tk,
+};
 use winnow::error::ErrMode;
 
 const ADD_OPS: &[(Token, BinaryOperator)] = &[
@@ -33,6 +35,7 @@ const CMP_OPS: &[(Token, BinaryOperator)] = &[
 /// `ternary < or < and < nullish < comparison < additive < multiplicative <
 /// unary < postfix < primary`.
 pub fn expression(input: &mut In<'_>) -> Pr<Expression> {
+    let _guard = enter_nest(input)?;
     ternary(input)
 }
 

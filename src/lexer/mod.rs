@@ -31,16 +31,25 @@ pub fn tokenize(source: &str) -> Result<Vec<LexedToken>, XuloError> {
             break;
         }
         let start = total - cursor.len();
+        let first = cursor.chars().next();
         match lex_token(&mut cursor, total) {
             Ok(tok) => tokens.push(tok),
             Err(_) => {
-                let c = cursor.chars().next().unwrap_or('\0');
-                let bad = &cursor[..c.len_utf8()];
-                return Err(XuloError::new(
-                    ErrorKind::Lex,
-                    format!("unexpected character `{bad}`"),
-                )
-                .at(start..start + bad.len()));
+                return Err(match first {
+                    None => {
+                        XuloError::new(ErrorKind::Lex, "unexpected end of input").at(start..total)
+                    }
+                    Some('"' | '\'') => {
+                        XuloError::new(ErrorKind::Lex, "unterminated string literal")
+                            .at(start..total)
+                    }
+                    Some(c) => {
+                        let len = c.len_utf8();
+                        let bad = &cursor[..len.min(cursor.len())];
+                        XuloError::new(ErrorKind::Lex, format!("unexpected character `{bad}`"))
+                            .at(start..start + bad.len())
+                    }
+                });
             }
         }
     }
