@@ -57,7 +57,7 @@ fn run_file(file: &Path) -> ExitCode {
         Ok(out) => out,
         Err(code) => return code,
     };
-    print_warnings(&warnings);
+    print_warnings(&warnings, None);
 
     let tmp = temp_js_path();
     if let Err(e) = write_js(&tmp, &js) {
@@ -88,7 +88,7 @@ fn build_file(file: &Path, out: Option<PathBuf>) -> ExitCode {
         Ok(out) => out,
         Err(code) => return code,
     };
-    print_warnings(&warnings);
+    print_warnings(&warnings, None);
     // An ESM `import` at the top of the bundle requires a `.mjs` extension
     // (or a `"type": "module"` package.json) to run under Node.
     let has_external_imports = js.lines().any(|l| l.starts_with("import "));
@@ -137,7 +137,7 @@ fn fmt_file(file: &Path) -> ExitCode {
 fn check_file(file: &Path) -> ExitCode {
     match crate::module::compile_file(file) {
         Ok((_, warnings)) => {
-            print_warnings(&warnings);
+            print_warnings(&warnings, None);
             println!("no errors");
             ExitCode::SUCCESS
         }
@@ -193,14 +193,30 @@ fn repl() -> ExitCode {
         let has_main = raw
             .split('\n')
             .any(|l| l.trim_start().starts_with("fn main"));
-        let result = if has_main {
-            compile_source(&session)
+        let echo = !has_main && looks_like_echo(&entry);
+        let compiled = if has_main {
+            session.clone()
         } else {
-            compile_source(&format!("fn main() {{\n{session}\n}}\n"))
+            format!("fn main() {{\n{session}\n}}\n")
+        };
+        let (result, rendered_source): (Result<(String, Vec<XuloError>), ()>, String) = if echo {
+            let prior = &session[..session.len().saturating_sub(entry.len())];
+            let echoed = format!("fn main() {{\n{}{}\n}}\n", prior, echo_wrap(&entry));
+            let echoed_out = compile_source(&echoed);
+            match echoed_out {
+                Ok(out) => (Ok(out), echoed),
+                Err(()) => {
+                    // The entry was not a standalone expression; fall back to
+                    // its literal form so errors match what was typed.
+                    (compile_source(&compiled), compiled)
+                }
+            }
+        } else {
+            (compile_source(&compiled), compiled)
         };
         match result {
             Ok((js, warnings)) => {
-                print_warnings(&warnings);
+                print_warnings(&warnings, Some(&rendered_source));
                 run_node(&js);
             }
             Err(()) => {
@@ -211,6 +227,45 @@ fn repl() -> ExitCode {
         entry.clear();
     }
     ExitCode::SUCCESS
+}
+
+/// Decide whether a REPL entry is a bare expression whose value should be
+/// echoed. Declarations, definitions, control flow, and anything ending in a
+/// semicolon or block brace are compiled as-is instead.
+fn looks_like_echo(entry: &str) -> bool {
+    let e = entry.trim();
+    if e.is_empty() || e.ends_with(';') || e.ends_with('}') || e.starts_with('{') {
+        return false;
+    }
+    for kw in [
+        "let ",
+        "const ",
+        "fn ",
+        "async fn ",
+        "if ",
+        "while ",
+        "for ",
+        "return ",
+        "enum ",
+        "import ",
+        "from ",
+        "export ",
+        "break",
+        "continue",
+        "@Effect ",
+        "@State ",
+        "Component ",
+    ] {
+        if e.starts_with(kw) {
+            return false;
+        }
+    }
+    !e.starts_with('=') && !e.contains('\n')
+}
+
+/// Wrap a single expression entry as `print(expr)` for value echo.
+fn echo_wrap(entry: &str) -> String {
+    format!("print({})", entry.trim())
 }
 
 fn unbalanced(src: &str) -> bool {
@@ -265,7 +320,7 @@ fn run_node(js: &str) {
     }
 }
 
-fn compile_source(buffer: &str) -> Result<(String, Vec<(std::path::PathBuf, String)>), ()> {
+fn compile_source(buffer: &str) -> Result<(String, Vec<XuloError>), ()> {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
@@ -289,7 +344,7 @@ fn compile_source(buffer: &str) -> Result<(String, Vec<(std::path::PathBuf, Stri
     }
 }
 
-fn compile_to_js(file: &Path) -> Result<(String, Vec<(std::path::PathBuf, String)>), ExitCode> {
+fn compile_to_js(file: &Path) -> Result<(String, Vec<XuloError>), ExitCode> {
     match crate::module::compile_file(file) {
         Ok((js, warnings)) => Ok((js, warnings)),
         Err(err) => {
@@ -301,9 +356,14 @@ fn compile_to_js(file: &Path) -> Result<(String, Vec<(std::path::PathBuf, String
     }
 }
 
-fn print_warnings(warnings: &[(std::path::PathBuf, String)]) {
-    for (file, message) in warnings {
-        eprintln!("warning: {}: {message}", file.display());
+fn print_warnings(warnings: &[XuloError], fallback_source: Option<&str>) {
+    for w in warnings {
+        let source = w
+            .file
+            .as_ref()
+            .and_then(|f| std::fs::read_to_string(f).ok())
+            .or_else(|| fallback_source.map(str::to_string));
+        eprintln!("{}", diagnostics::render(w, source.as_deref()));
     }
 }
 

@@ -936,5 +936,5 @@ fn implicit_return_warning_only_with_declared_return_type() {
     let program = parse_program(&tokens).unwrap();
     let result = xulo::semantic::analyze_with(&program, &[], &[]).unwrap();
     assert_eq!(result.warnings.len(), 1, "warnings: {:?}", result.warnings);
-    assert!(result.warnings[0].contains("ignored return value"));
+    assert!(result.warnings[0].message.contains("ignored return value"));
 }

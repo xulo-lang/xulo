@@ -69,7 +69,7 @@ pub struct Analyzer {
     exported_symbols: Vec<(String, Symbol)>,
     /// Non-fatal diagnostics raised during analysis (e.g. ignored return
     /// values); surfaced by the CLI after a successful compile.
-    warnings: Vec<String>,
+    warnings: Vec<XuloError>,
     /// Per-component stack of names declared by the component's *render* code
     /// (plain `let`s and nested function declarations in the function body).
     /// These live inside the `__component(...)` render closure at runtime, so
@@ -93,7 +93,7 @@ pub struct AnalysisResult {
     pub exported_types: Vec<(String, TypeEntry)>,
     pub default: Option<String>,
     /// Non-fatal diagnostics from this module.
-    pub warnings: Vec<String>,
+    pub warnings: Vec<XuloError>,
 }
 
 /// Run all semantic checks over a parsed program.
@@ -173,7 +173,8 @@ fn target_base(expr: &Expression) -> String {
 
 impl Analyzer {
     fn warn(&mut self, message: String) {
-        self.warnings.push(message);
+        self.warnings
+            .push(XuloError::new(ErrorKind::Warning, message).at(self.current_span.clone()));
     }
 
     /// Raise a semantic error attached to the most recently checked

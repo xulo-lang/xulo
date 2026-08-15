@@ -1,4 +1,4 @@
-use crate::error::XuloError;
+use crate::error::{ErrorKind, XuloError};
 
 const CYAN: &str = "\x1b[36m";
 const MAGENTA: &str = "\x1b[35m";
@@ -34,13 +34,19 @@ fn paint(code: &str, text: &str) -> String {
 /// ```
 pub fn render(err: &XuloError, source: Option<&str>) -> String {
     let mut out = String::new();
-    out.push_str(&format!(
-        "{}[{}] {}: {}\n",
-        paint(BOLD, "error"),
-        paint(CYAN, err.kind.code()),
-        err.kind.label(),
-        err.message
-    ));
+    let is_warning = err.kind == ErrorKind::Warning;
+    let severity = if is_warning { "warning" } else { "error" };
+    let mut header = format!(
+        "{}[{}]",
+        paint(BOLD, severity),
+        paint(CYAN, err.kind.code())
+    );
+    if !is_warning {
+        header.push_str(&format!(" {}", err.kind.label()));
+    }
+    header.push_str(&format!(": {}", err.message));
+    out.push_str(&header);
+    out.push('\n');
 
     let Some(span) = &err.span else {
         if let Some(f) = &err.file {

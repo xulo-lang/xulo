@@ -49,7 +49,7 @@ pub struct LoadedModules {
 /// Load, analyze in dependency order, and bundle the module graph reachable
 /// from `entry`. Returns the bundle and any non-fatal warnings raised during
 /// analysis (each as `(file, message)`).
-pub fn compile_file(entry: &Path) -> Result<(String, Vec<(PathBuf, String)>), XuloError> {
+pub fn compile_file(entry: &Path) -> Result<(String, Vec<XuloError>), XuloError> {
     let mut loaded = load(entry)?;
     let warnings = analyze(&mut loaded)?;
     let js = bundle(&loaded)?;
@@ -180,7 +180,7 @@ fn resolve_local(base: &Path, source: &str) -> Option<PathBuf> {
 /// Analyze every module in dependency order, seeding each one with the
 /// symbols and types its imports pull in. Rejects imports of names the target
 /// does not export. Returns each module's warnings tagged with its file.
-pub fn analyze(loaded: &mut LoadedModules) -> Result<Vec<(PathBuf, String)>, XuloError> {
+pub fn analyze(loaded: &mut LoadedModules) -> Result<Vec<XuloError>, XuloError> {
     let modules = &mut loaded.modules;
     let count = modules.len();
     let mut warnings = Vec::new();
@@ -189,7 +189,7 @@ pub fn analyze(loaded: &mut LoadedModules) -> Result<Vec<(PathBuf, String)>, Xul
         let result = analyze_with(&modules[idx].program, &symbols, &types)
             .map_err(|e| e.with_file(modules[idx].file.clone()))?;
         for w in &result.warnings {
-            warnings.push((modules[idx].file.clone(), w.clone()));
+            warnings.push(w.clone().with_file(modules[idx].file.clone()));
         }
         modules[idx].analysis = Some(result);
     }
