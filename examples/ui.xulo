@@ -6,7 +6,7 @@ fn Counter(): Component {
     @Effect fn() { print("mounted") }
 
     VStack(spacing: 8) {
-        Text("Count: " + count)
+        Text("Count: " + str(count))
         HStack(spacing: 4) {
             Button(onClick: fn() { count = count + 1 }) {
                 Text("+")

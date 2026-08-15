@@ -984,6 +984,9 @@ impl Javascript {
                 .collect::<Result<Vec<_>, _>>()?
                 .join(", ");
             Ok(format!("console.log({joined})"))
+        } else if call.callee == "str" {
+            let arg = self.expr(&call.arguments[0].value)?;
+            Ok(format!("String({arg})"))
         } else {
             let params = self.fn_params.get(&call.callee).cloned();
             let args = self.call_args_ordered(call, params.as_ref())?;

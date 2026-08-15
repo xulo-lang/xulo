@@ -43,6 +43,7 @@ identifier     = (letter | "_") { letter | digit | "_" } ;
 | `type` `enum` | 类型声明 |
 | `null` `true` `false` | 字面量关键字 |
 | `print` | 内置输出函数 |
+| `str` | 内置转换 `str(x)`，返回字符串 |
 
 装饰器关键字（仅在 `@` 之后作为标记，其余位置仍可作标识符）：`State`、`Store`、`Effect`、`Environment`。
 

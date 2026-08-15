@@ -31,8 +31,16 @@ print(!flag)                    // 逻辑非
 
 ```xulo
 let who = "Xulo"
-print("Hello, " + who + "!")    // `+` 拼接字符串，可混入 number/boolean/null
+print("Hello, " + who + "!")        // `+` 拼接字符串
+print("count=" + str(count))        // `str(x)` 将任意值转成字符串后拼接
 ```
+
+规则：
+
+- `number + number` → `number`
+- `string + string`（含字符串字面量类型）→ `string`
+- `list<T> + list<U>` → 拼接成 `list`
+- **禁止混用类型**：`"hi" + 1`、`"hi" + true` 等会报错；需要拼接时用内建 `str(x)` 显式转换后再 `+`。
 
 ## 成员访问 / 下标 / 可选链 / 空合并
 

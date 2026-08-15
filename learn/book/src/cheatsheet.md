@@ -69,7 +69,7 @@ match x { 0 => "zero" _ => "other" }
 fn Counter(): Component {
   @State let n: number = 0
   VStack {
-    Text("Count: " + n)
+    Text("Count: " + str(n))
     Button(onClick: fn() { n = n + 1 }) { Text("+") }
   }
 }

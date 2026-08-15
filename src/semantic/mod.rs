@@ -1422,7 +1422,7 @@ impl Analyzer {
                 let r = self.resolve_alias(&right, 0);
                 if matches!(l, Type::Number) && matches!(r, Type::Number) {
                     Ok(Type::Number)
-                } else if self.is_stringish(&l) || self.is_stringish(&r) {
+                } else if self.is_stringish(&l) && self.is_stringish(&r) {
                     Ok(Type::String)
                 } else if matches!(l, Type::List(_)) && matches!(r, Type::List(_)) {
                     Ok(Type::List(Box::new(self.join_list(&l, &r))))
@@ -1499,10 +1499,7 @@ impl Analyzer {
     }
 
     fn is_stringish(&self, ty: &Type) -> bool {
-        matches!(
-            ty,
-            Type::String | Type::Literal(_) | Type::Boolean | Type::Null
-        )
+        matches!(ty, Type::String | Type::Literal(_))
     }
 
     fn join_list(&self, l: &Type, r: &Type) -> Type {
@@ -1537,6 +1534,18 @@ impl Analyzer {
                 self.check_expression(&arg.value)?;
             }
             return Ok(Type::Any);
+        }
+        if call.callee == "str" {
+            if call.arguments.len() != 1 {
+                return Err(self
+                    .err(format!(
+                        "`str` expects exactly one argument, got {}",
+                        call.arguments.len()
+                    ))
+                    .at(call.span.clone()));
+            }
+            self.check_expression(&call.arguments[0].value)?;
+            return Ok(Type::String);
         }
         let Some(sym) = self.table.lookup(&call.callee) else {
             return Err(self.err(format!("unknown function `{}`", call.callee)));

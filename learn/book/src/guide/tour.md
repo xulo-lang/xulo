@@ -61,7 +61,7 @@ fn Counter(): Component {
   @State let count: number = 0
 
   VStack {
-    Text("Count: " + count)
+    Text("Count: " + str(count))
     Button(onClick: fn() { count = count + 1 }) {
       Text("+")
     }

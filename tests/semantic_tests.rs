@@ -239,8 +239,35 @@ fn fn_type_annotation_checks() {
 
 #[test]
 fn string_concat_is_allowed() {
-    let src = r#"fn main() { print("a" + "b" + 1) }"#;
+    let src = r#"fn main() { print("a" + "b") }"#;
     assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn number_string_concat_is_rejected() {
+    let err = analyze_src(r#"fn main() { print("a" + 1) }"#).unwrap_err();
+    assert!(
+        err.message.contains("cannot apply `+`"),
+        "message: {}",
+        err.message
+    );
+    let err = analyze_src(r#"fn main() { print(1 + "a") }"#).unwrap_err();
+    assert!(err.message.contains("cannot apply `+`"));
+}
+
+#[test]
+fn str_converts_any_value_to_string() {
+    assert!(analyze_src(r#"fn main() { print("got " + str(42)) }"#).is_ok());
+    assert!(analyze_src(r#"fn main() { print("v=" + str(true)) }"#).is_ok());
+    assert!(analyze_src(r#"fn main() { print("n=" + str(null)) }"#).is_ok());
+}
+
+#[test]
+fn str_requires_exactly_one_argument() {
+    let err = analyze_src("fn main() { str() }").unwrap_err();
+    assert!(err.message.contains("exactly one argument"));
+    let err = analyze_src("fn main() { str(1, 2) }").unwrap_err();
+    assert!(err.message.contains("exactly one argument"));
 }
 
 #[test]

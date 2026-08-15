@@ -773,7 +773,7 @@ fn run_optional_and_default_params() {
         r#"
         fn f(a: number, b: string?, c: boolean = true): string {
             let flag = if c { "yes" } else { "no" }
-            if b == null { a + ":" + flag } else { a + ":" + b + ":" + flag }
+            if b == null { str(a) + ":" + flag } else { str(a) + ":" + str(b) + ":" + flag }
         }
         fn main() {
             print(f(1))
@@ -827,7 +827,7 @@ fn run_component_state_and_effect() {
             @State let count: number = 0
             @Effect fn() { print("mounted") }
             count = count + 1
-            print("count=" + count)
+            print("count=" + str(count))
         }
         "#,
     );
