@@ -59,7 +59,9 @@ fn run_file(file: &Path) -> ExitCode {
     };
     print_warnings(&warnings, None);
 
-    let tmp = temp_js_path();
+    // Write the temporary module next to the source so ESM bare specifiers
+    // (e.g. `@xulo/ui`) resolve against node_modules walking up from there.
+    let tmp = temp_js_path(file.parent());
     if let Err(e) = write_js(&tmp, &js) {
         eprintln!("{e}");
         return ExitCode::from(1);
@@ -303,7 +305,7 @@ fn unbalanced(src: &str) -> bool {
 }
 
 fn run_node(js: &str) {
-    let tmp = temp_js_path();
+    let tmp = temp_js_path(None);
     if let Err(e) = write_js(&tmp, js) {
         eprintln!("{e}");
         return;
@@ -379,10 +381,17 @@ fn write_js(path: &Path, js: &str) -> Result<(), String> {
         .map_err(|e| format!("cannot write {}: {e}", path.display()))
 }
 
-fn temp_js_path() -> PathBuf {
+/// A unique `.mjs` path. For `run`, place it in `src_dir` (the source's
+/// directory) so node can resolve bare package specifiers from there; the
+/// REPL has no source directory and falls back to the system temp dir.
+fn temp_js_path(src_dir: Option<&Path>) -> PathBuf {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    std::env::temp_dir().join(format!("xulo_{}_{}.mjs", std::process::id(), nanos))
+    let name = format!("xulo_{}_{}.mjs", std::process::id(), nanos);
+    match src_dir {
+        Some(dir) => dir.join(name),
+        None => std::env::temp_dir().join(name),
+    }
 }

@@ -182,6 +182,47 @@ fn run_types_enums_const_null() {
 }
 
 #[test]
+fn run_file_with_external_import() {
+    let dir = std::env::temp_dir().join(format!(
+        "xulo_ext_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let pkg = dir.join("node_modules/@xulo/shapes");
+    std::fs::create_dir_all(&pkg).unwrap();
+    std::fs::write(
+        pkg.join("package.json"),
+        r#"{ "name": "@xulo/shapes", "version": "0.0.1", "type": "module", "main": "index.js" }"#,
+    )
+    .unwrap();
+    std::fs::write(
+        pkg.join("index.js"),
+        r#"export const box = (w, h) => ({ kind: "box", area: w * h });"#,
+    )
+    .unwrap();
+    let src = dir.join("main.xulo");
+    std::fs::write(
+        &src,
+        r#"
+        import { box } from "@xulo/shapes"
+        fn main() { let b = box(3, 4) print("area=" + str(b.area)) }
+        "#,
+    )
+    .unwrap();
+    let out = Command::new(BIN).arg("run").arg(&src).output().unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "area=12\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn run_multi_payload_enum() {
     let file = temp_file(
         "multipayload.xulo",

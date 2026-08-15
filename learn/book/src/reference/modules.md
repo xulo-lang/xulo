@@ -50,7 +50,7 @@ import "core"
 ## 导入解析规则（打包器）
 
 - 相对路径或本地存在的模块名（如 `./math`、`math`）→ 解析为本地 `.xulo` 文件，参与打包。
-- 其余说明符（如 `@xulo/ui`）→ 视为外部包，原样生成 ESM `import`。
+- 其余说明符（如 `@xulo/ui`）→ 视为外部包，原样生成 ESM `import`。通过 bare specifier 解析到 `node_modules`（`xulo run` 会把临时 JS 写到源文件同目录，Node 会从那里向上查找；`examples/node_modules/@xulo/ui` 提供一个无头 demo shim）。
 - `import type` 只供类型检查；运行时仅当导入名同时是运行时值（如 `enum`）时保留其值绑定，以便 `Kind::Admin` 可用，否则完全擦除；`export enum` 同时导出运行时值与类型。
 - **无运行时模块加载器**：每个文件编译为一个返回导出对象的 IIFE，依赖按拓扑序内联进同一个 JS 文件；入口文件加载时执行其 `main()`。
 - 循环导入（A → B → A）会被拒绝。

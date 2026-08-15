@@ -998,9 +998,7 @@ impl Analyzer {
                 )));
             }
             if let Some(params) = &variant.payload
-                && let Err(e2) = params
-                    .iter()
-                    .try_for_each(|p| self.check_type(&p.type_))
+                && let Err(e2) = params.iter().try_for_each(|p| self.check_type(&p.type_))
             {
                 self.generics
                     .truncate(self.generics.len().saturating_sub(e.type_params.len()));
