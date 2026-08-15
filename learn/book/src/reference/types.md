@@ -16,7 +16,7 @@ T | U          // 联合类型（TS 风格）
 T & U          // 交叉类型（TS 风格）
 ```
 
-`number` 统一表示整数与浮点；`print(...)` 与 `list<T>` 是内建能力。`Component` 是内建命名类型（见 [UI 组件](ui.md)）。
+`number` 统一表示整数与浮点；`print(...)` 与 `list<T>` 是内建能力。`Component` 是内建**标记类型**：编译器用它识别「返回该类型的函数即 UI 组件」，本身无运行时实现，具体组件由标准库 `@xulo/ui` 提供（见 [UI 组件](ui.md)）。
 
 ## 类型别名（统一使用 `type`，无 `interface`）
 
