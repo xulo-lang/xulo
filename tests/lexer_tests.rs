@@ -175,3 +175,110 @@ fn tokenizes_at_and_dollar() {
         vec![At, Ident, Let, Ident, Assign, Number, Dollar, Ident, EOF]
     );
 }
+
+#[test]
+fn number_literal_forms_preserve_text() {
+    let tokens = tokenize("3.14 42 0.5").unwrap();
+    let texts: Vec<_> = tokens
+        .iter()
+        .filter(|t| t.kind == Number)
+        .map(|t| t.text.to_string())
+        .collect();
+    assert_eq!(
+        texts,
+        vec!["3.14".to_string(), "42".to_string(), "0.5".to_string()]
+    );
+    // spans are raw byte offsets covering the full literal
+    let spans: Vec<_> = tokens
+        .iter()
+        .filter(|t| t.kind == Number)
+        .map(|t| t.span.clone())
+        .collect();
+    assert_eq!(spans, vec![0..4, 5..7, 8..11]);
+}
+
+#[test]
+fn unsupported_number_forms_are_diagnostics() {
+    // No hex/binary/exponent literals: these are located lex errors, not crashes.
+    for bad in ["0x1f", "0b101", "1e3", "1e999"] {
+        let err = tokenize(bad).unwrap_err();
+        assert_eq!(err.kind, xulo::error::ErrorKind::Lex, "input {bad:?}");
+        assert!(err.span.is_some(), "input {bad:?} must carry a span");
+    }
+}
+
+#[test]
+fn unterminated_string_is_a_located_lex_error() {
+    for bad in ["\"oops", "'nope", "\"a\\q\"", "'a\\z'", "\u{1f600}\""] {
+        let err = tokenize(bad).unwrap_err();
+        assert_eq!(err.kind, xulo::error::ErrorKind::Lex);
+        assert!(
+            err.message.contains("unterminated string literal")
+                || err.message.contains("unexpected character"),
+            "input {bad:?}: {}",
+            err.message
+        );
+        assert!(err.span.is_some(), "input {bad:?} must carry a span");
+    }
+}
+
+#[test]
+fn quotes_can_contain_the_opposite_quote() {
+    let tokens = tokenize(r#""it's" 'say "hi"'"#).unwrap();
+    let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
+    assert_eq!(kinds, vec![String, String, EOF]);
+}
+
+#[test]
+fn multibyte_bytes_precede_tokens_in_spans() {
+    // Multibyte chars in string literals are counted as raw byte offsets.
+    let tokens = tokenize(r#""世😀" + "x""#).unwrap();
+    // "世😀" = quote + 3 + 4 + quote = 9 bytes; '+' at 10; final string 12..15
+    assert_eq!(tokens[0].span, 0..9);
+    assert_eq!(tokens[1].span, 10..11);
+    assert_eq!(tokens[2].span, 12..15);
+}
+
+#[test]
+fn glued_operators_lex_with_correct_spans() {
+    // "a+b a==b a??b a?.b a..<b 1-2"
+    let tokens = tokenize("a+b a==b a??b a?.b a..<b 1-2").unwrap();
+    let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
+    assert_eq!(
+        kinds,
+        vec![
+            Ident,
+            Plus,
+            Ident,
+            Ident,
+            Eq,
+            Ident,
+            Ident,
+            Nullish,
+            Ident,
+            Ident,
+            QuestionDot,
+            Ident,
+            Ident,
+            RangeOp,
+            Ident,
+            Number,
+            Minus,
+            Number,
+            EOF
+        ]
+    );
+    assert_eq!(tokens[1].span, 1..2); // '+' in "a+b"
+    assert_eq!(tokens[4].span, 5..7); // '==' in "a==b"
+    assert_eq!(tokens[7].span, 10..12); // '??' in "a??b"
+    assert_eq!(tokens[10].span, 15..17); // '?.' in "a?.b"
+    assert_eq!(tokens[13].span, 20..23); // '..<' in "a..<b"
+}
+
+#[test]
+fn lone_operators_and_trailing_eof_are_diagnostics_not_panics() {
+    for bad in ["$", "@", "\\", "？", "...", "..", "\u{0}"] {
+        let _ = tokenize(bad); // must not panic; may error
+    }
+    assert!(tokenize("\\").is_err());
+}

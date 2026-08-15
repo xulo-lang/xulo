@@ -685,6 +685,215 @@ fn parses_ui_if_and_for() {
 }
 
 #[test]
+fn parses_unary_minus_and_double_not() {
+    let p = parse("let a = -5 let b = !!flag let c = -x");
+    let Statement::Let(a) = &p.statements[0] else {
+        panic!();
+    };
+    assert!(matches!(a.value, Some(Expression::Unary(ref u))
+        if u.operator == xulo::ast::UnaryOperator::Neg));
+    let Statement::Let(b) = &p.statements[1] else {
+        panic!();
+    };
+    let Some(Expression::Unary(outer)) = &b.value else {
+        panic!("expected unary");
+    };
+    assert!(matches!(&outer.operand, Expression::Unary(inner)
+        if inner.operator == xulo::ast::UnaryOperator::Not));
+    let Statement::Let(c) = &p.statements[2] else {
+        panic!();
+    };
+    assert!(matches!(c.value, Some(Expression::Unary(ref u))
+        if u.operator == xulo::ast::UnaryOperator::Neg));
+}
+
+#[test]
+fn parses_nested_object_and_list_literals() {
+    let p = parse("let o = { a: { b: [1, 2] }, c: \"x\" }");
+    let Statement::Let(b) = &p.statements[0] else {
+        panic!();
+    };
+    let Some(Expression::Literal {
+        value: Literal::Object(fields),
+        ..
+    }) = &b.value
+    else {
+        panic!("expected object literal");
+    };
+    assert_eq!(fields.len(), 2);
+    assert!(
+        matches!(&fields[0], xulo::ast::ObjectField::Field { name, value } if name == "a"
+        && matches!(value, Expression::Literal { value: Literal::Object(_), .. }))
+    );
+    assert!(
+        matches!(&fields[1], xulo::ast::ObjectField::Field { name, value } if name == "c"
+        && matches!(value, Expression::Literal { value: Literal::String(s), .. } if s == "x"))
+    );
+}
+
+#[test]
+fn parses_method_chain_through_index_and_call() {
+    let p = parse("store.actions.select(0).items[0].label");
+    let Statement::Expr(es) = &p.statements[0] else {
+        panic!();
+    };
+    let Expression::Member(m) = &es.expr else {
+        panic!("expected member");
+    };
+    assert_eq!(m.property, "label");
+    assert!(matches!(&m.object, Expression::Index(_)));
+}
+
+#[test]
+fn parses_nested_ternary_is_right_associative() {
+    let p = parse("let x = a ? b ? c : d : e");
+    let Statement::Let(b) = &p.statements[0] else {
+        panic!();
+    };
+    let Some(Expression::Ternary(outer)) = &b.value else {
+        panic!("expected ternary");
+    };
+    assert!(matches!(&outer.then_value, Expression::Ternary(inner)
+        if matches!(&inner.else_value, Expression::Identifier { name, .. } if name == "d")));
+}
+
+#[test]
+fn parses_ternary_inside_call_and_index() {
+    let p = parse("f(cond ? 1 : 2)[0]");
+    let Statement::Expr(es) = &p.statements[0] else {
+        panic!();
+    };
+    let Expression::Index(idx) = &es.expr else {
+        panic!("expected index");
+    };
+    let Expression::Call(c) = &*idx.object else {
+        panic!("expected call");
+    };
+    assert!(matches!(&c.arguments[0].value, Expression::Ternary(_)));
+    assert!(
+        matches!(&*idx.index, Expression::Literal { value: Literal::Number(n), .. } if *n == 0.0)
+    );
+}
+
+#[test]
+fn parses_match_scalar_and_enum_patterns() {
+    let p =
+        parse("match v { 1 => \"a\" \"s\" => \"b\" true => \"c\" E::V(x) => \"d\" _ => \"e\" }");
+    let Statement::Expr(es) = &p.statements[0] else {
+        panic!("expected match");
+    };
+    let Expression::Match(m) = &es.expr else {
+        panic!("expected match expr");
+    };
+    assert_eq!(m.arms.len(), 5);
+    assert!(matches!(
+        &m.arms[0].pattern,
+        xulo::ast::MatchPattern::Literal(Literal::Number(_))
+    ));
+    assert!(matches!(
+        &m.arms[1].pattern,
+        xulo::ast::MatchPattern::Literal(Literal::String(_))
+    ));
+    assert!(matches!(
+        &m.arms[2].pattern,
+        xulo::ast::MatchPattern::Literal(Literal::Boolean(_))
+    ));
+    if let xulo::ast::MatchPattern::EnumPayload { bindings, .. } = &m.arms[3].pattern {
+        assert_eq!(bindings, &vec!["x".to_string()]);
+    } else {
+        panic!("expected enum payload pattern");
+    }
+    assert!(matches!(
+        &m.arms[4].pattern,
+        xulo::ast::MatchPattern::Wildcard
+    ));
+}
+
+#[test]
+fn parses_optional_and_paren_union_types() {
+    let p = parse(
+        "let a: list<number>? = null let b: (number | string) = 1 let c: { name: string }? = null",
+    );
+    let Statement::Let(a) = &p.statements[0] else {
+        panic!()
+    };
+    assert!(matches!(
+        a.type_annotation,
+        Some(xulo::ast::Type::Optional(_))
+    ));
+    let Statement::Let(b) = &p.statements[1] else {
+        panic!()
+    };
+    assert!(matches!(b.type_annotation, Some(xulo::ast::Type::Union(_))));
+    let Statement::Let(c) = &p.statements[2] else {
+        panic!()
+    };
+    assert!(matches!(
+        c.type_annotation,
+        Some(xulo::ast::Type::Optional(_))
+    ));
+}
+
+#[test]
+fn parses_enum_payload_wildcard_and_named_construction() {
+    let p = parse("E::V(_, _) E::W(data: 1, label: \"x\")");
+    let Statement::Expr(es) = &p.statements[0] else {
+        panic!("expected enum call");
+    };
+    let Expression::Call(c) = &es.expr else {
+        panic!("expected call")
+    };
+    assert!(c.is_enum());
+    assert_eq!(c.enum_parts(), Some(("E", "V")));
+    assert_eq!(c.arguments.len(), 2);
+    assert!(matches!(&c.arguments[0].value, Expression::Identifier { name, .. } if name == "_"));
+
+    let Statement::Expr(es) = &p.statements[1] else {
+        panic!()
+    };
+    let Expression::Call(c) = &es.expr else {
+        panic!("expected call")
+    };
+    assert_eq!(c.arguments[0].name.as_deref(), Some("data"));
+    assert_eq!(c.arguments[1].name.as_deref(), Some("label"));
+}
+
+#[test]
+fn parses_await_on_indexed_value() {
+    let p = parse("let x = await xs[0]");
+    let Statement::Let(b) = &p.statements[0] else {
+        panic!()
+    };
+    let Some(Expression::Await { expr, .. }) = &b.value else {
+        panic!("expected await")
+    };
+    assert!(matches!(**expr, Expression::Index(_)));
+}
+
+#[test]
+fn parses_component_nested_ui_with_args() {
+    let p = parse(
+        "VStack { HStack(spacing: 4) { Text(\"a\") } Button(onClick: fn() {}) { Text(\"b\") } }",
+    );
+    let Statement::Component(comp) = &p.statements[0] else {
+        panic!("expected component");
+    };
+    assert_eq!(comp.name, "VStack");
+    assert_eq!(comp.children.len(), 2);
+    assert!(
+        matches!(&comp.children[0], xulo::ast::UiElement::Component(inner)
+        if inner.name == "HStack")
+    );
+}
+
+#[test]
+fn syntax_error_carries_span() {
+    let tokens = tokenize("fn main() { let x = }").unwrap();
+    let err = parse_program(&tokens).unwrap_err();
+    assert!(err.span.is_some(), "syntax error must carry a span");
+}
+
+#[test]
 fn parses_dollar_binding_argument() {
     use xulo::ast::Expression;
     let p = parse("Input(value: $name)");

@@ -472,3 +472,93 @@ fn export_default_component_main_emits_mount_hook() {
     assert!(js.contains("const __xulo_main = main();"));
     assert!(js.contains("__xulo_mount"));
 }
+
+#[test]
+fn unary_minus_emits_negated_literal() {
+    let js = generate_js("fn main() { let a = -5 print(a) }");
+    assert!(js.contains("let a = (-5);"));
+}
+
+#[test]
+fn double_negation_emits_nested_bang() {
+    let js = generate_js("fn main() { let flag = true let b = !!flag print(b) }");
+    assert!(js.contains("let b = (!(!flag));"));
+}
+
+#[test]
+fn index_assignment_emits_bracket_assignment() {
+    let js = generate_js("fn main() { let xs: list<number> = [1] xs[0] = 10 print(xs[0]) }");
+    assert!(js.contains("xs[0] = 10;"));
+    assert!(js.contains("console.log(xs[0]);"));
+}
+
+#[test]
+fn member_assignment_emits_dot_assignment() {
+    let js = generate_js(
+        "fn main() { let user: { age: number } = { age: 20 } user.age = 30 print(user.age) }",
+    );
+    assert!(js.contains("user.age = 30;"));
+    assert!(js.contains("console.log(user.age);"));
+}
+
+#[test]
+fn nested_object_literal_emits_js_object() {
+    let js = generate_js(r#"fn main() { let o = { a: { b: [1, 2] }, c: "x" } print(o) }"#);
+    assert!(js.contains(r#"let o = {"a": {"b": [1, 2]}, "c": "x"};"#));
+}
+
+#[test]
+fn nested_ternary_emits_nested_ternary() {
+    let js = generate_js("fn main() { let t = true ? false ? 3 : 4 : 5 print(t) }");
+    assert!(js.contains("(true ? (false ? 3 : 4) : 5)"));
+}
+
+#[test]
+fn string_relational_emits_js_comparison() {
+    let js = generate_js(r#"fn main() { let s = "a" < "b" print(s) }"#);
+    assert!(js.contains(r#"let s = ("a" < "b");"#));
+}
+
+#[test]
+fn match_enum_payload_destructures_each_slot() {
+    let js = generate_js(
+        r#"enum Pair { A(number, string) B }
+        fn main() { let p = Pair::A(1, "x") let m = match p { Pair::A(a, b) => "ok" Pair::B => "no" } print(m) }"#,
+    );
+    assert!(js.contains("tag === \"A\""));
+    assert!(js.contains("const a = __m.value[0];"));
+    assert!(js.contains("const b = __m.value[1];"));
+}
+
+#[test]
+fn enum_multi_payload_constructor_emits_array_value() {
+    let js = generate_js(
+        r#"enum Pair<T> { A(T, string) B }
+        fn main() { let p = Pair::A(7, "x") print(1) }"#,
+    );
+    assert!(js.contains("A: (p0, p1) => ({ tag: \"A\", value: [p0, p1] })"));
+}
+
+#[test]
+fn state_reassignment_emits_setter() {
+    let js = generate_js(
+        r#"fn main(): Component { @State let n: number = 0 n = 4 VStack { Text(str(n)) } }"#,
+    );
+    assert!(js.contains("n.set(4);"));
+    assert!(js.contains("const n = __signal(0);"));
+}
+
+#[test]
+fn str_builtin_maps_to_string() {
+    let js =
+        generate_js(r#"fn main() { let s = str(3.5 + 1) let b = str(true) print(s) print(b) }"#);
+    assert!(js.contains("String((3.5 + 1))"));
+    assert!(js.contains("String(true)"));
+}
+
+#[test]
+fn optional_member_emits_question_dot() {
+    let js =
+        generate_js(r#"fn main() { let u: { name: string }? = null let n = u?.name print(n) }"#);
+    assert!(js.contains("let n = u?.name;"));
+}

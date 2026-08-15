@@ -62,6 +62,21 @@ fn adversarial_corpus_does_not_panic() {
         "foo.bar.baz(1)(2)(3)",
         "fn main() { print(1 == == 2) }",
         "fn main() { let a = { b: {} -> } }",
+        "fn main() { print(\"\\u{\") }",
+        "fn main() { let x = 1 ??? 2 }",
+        "fn main() { match 1 { 1 => 2, } }",
+        "fn main() { if true { while true { for i in 0..<5 { match 1 { _ => 1 } } } } }",
+        "@Store const { } = f()",
+        "enum E { A( ) }",
+        "fn main() { let f: fn( = x }",
+        "a?.?.b",
+        "0..<..<1",
+        "/* outer /* inner */ still",
+        "fn main() { let a = [1, 2, _] }",
+        "? : ? : ?",
+        "fn main() { print(''' ') }",
+        "$ $ $ $ $ $ $ $",
+        "enum E<T,U> { A(T, U) B(list<T>) }",
     ];
     for src in corpus {
         compile_quiet(src);
@@ -110,9 +125,14 @@ fn token_soup_fuzz_does_not_panic() {
         "Component",
         "Screen",
         "@State",
+        "@Store",
+        "@Effect",
+        "@Environment",
+        "$name",
         "xulomain",
         "_",
         "$",
+        "str",
         "{",
         "}",
         "(",
@@ -127,6 +147,9 @@ fn token_soup_fuzz_does_not_panic() {
         "42",
         "3.14",
         "0..<5",
+        "::",
+        "?.",
+        "??",
         "=>",
         "->",
         "==",
@@ -140,9 +163,7 @@ fn token_soup_fuzz_does_not_panic() {
         "-",
         "*",
         "/",
-        "??",
         "?:",
-        "::",
         "=",
         "foo",
         "bar",
@@ -151,23 +172,28 @@ fn token_soup_fuzz_does_not_panic() {
         "U",
         "string",
         "number",
+        "boolean",
+        "list",
+        "object",
         "\\n",
         "\\t",
         " ",
         "  ",
+        "世",
+        "😀",
     ];
 
-    let mut seed = 0xC0FFEE_u64;
-    let tries = 3000;
-    for _ in 0..tries {
-        let len = (next(&mut seed) % 24) as usize;
-        let mut src = String::new();
-        for _ in 0..len {
-            let idx = (next(&mut seed) as usize) % atoms.len();
-            src.push_str(atoms[idx]);
-            src.push(' ');
+    for (tries, mut seed) in [(3000, 0xC0FFEE_u64), (2000, 0xFEEDFACE_u64)] {
+        for _ in 0..tries {
+            let len = (next(&mut seed) % 24) as usize;
+            let mut src = String::new();
+            for _ in 0..len {
+                let idx = (next(&mut seed) as usize) % atoms.len();
+                src.push_str(atoms[idx]);
+                src.push(' ');
+            }
+            compile_quiet(&src);
         }
-        compile_quiet(&src);
     }
 }
 

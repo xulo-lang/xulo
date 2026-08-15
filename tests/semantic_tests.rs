@@ -1023,3 +1023,227 @@ fn implicit_return_warning_only_with_declared_return_type() {
     assert_eq!(result.warnings.len(), 1, "warnings: {:?}", result.warnings);
     assert!(result.warnings[0].message.contains("ignored return value"));
 }
+
+#[test]
+fn rejects_unary_not_on_non_boolean() {
+    let err = analyze_src("fn main() { print(!5) }").unwrap_err();
+    assert!(err.message.contains("unary `!` requires a `boolean`"));
+    assert!(analyze_src("fn main() { print(!true) }").is_ok());
+}
+
+#[test]
+fn rejects_unary_minus_on_string() {
+    let err = analyze_src("fn main() { print(-\"a\") }").unwrap_err();
+    assert!(err.message.contains("unary `-` requires a `number`"));
+    assert!(analyze_src("fn main() { let a = 5 print(-a) }").is_ok());
+}
+
+#[test]
+fn rejects_equality_between_number_and_string() {
+    let err = analyze_src("fn main() { print(1 == \"1\") }").unwrap_err();
+    assert!(
+        err.message
+            .contains("cannot compare `number` with `string`")
+    );
+    assert!(analyze_src("fn main() { print(1 == 1) print(\"a\" != \"b\") }").is_ok());
+}
+
+#[test]
+fn string_relational_comparison_is_allowed() {
+    assert!(analyze_src("fn main() { print(\"a\" < \"b\") }").is_ok());
+    let err = analyze_src("fn main() { print(1 < \"a\") }").unwrap_err();
+    assert!(
+        err.message
+            .contains("cannot compare `number` with `string`")
+    );
+}
+
+#[test]
+fn list_concat_is_allowed_but_mixed_concat_is_not() {
+    assert!(analyze_src("fn main() { print([1] + [2]) }").is_ok());
+    let err = analyze_src("fn main() { print([1] + 2) }").unwrap_err();
+    assert!(err.message.contains("cannot apply `+`"));
+    let err = analyze_src("fn main() { print(1 + [2]) }").unwrap_err();
+    assert!(err.message.contains("cannot apply `+`"));
+}
+
+#[test]
+fn member_assignment_is_type_checked_on_typed_object() {
+    assert!(
+        analyze_src("fn main() { let u: { age: number } = { age: 1 } u.age = 2 print(u.age) }")
+            .is_ok()
+    );
+    let err =
+        analyze_src("fn main() { let u: { age: number } = { age: 1 } u.age = \"x\" print(u.age) }")
+            .unwrap_err();
+    assert!(
+        err.message
+            .contains("cannot assign a value of type `string` to `u.age")
+    );
+}
+
+#[test]
+fn unknown_member_assignment_is_rejected() {
+    let err =
+        analyze_src("fn main() { let u: { age: number } = { age: 1 } u.missing = 2 }").unwrap_err();
+    assert!(err.message.contains("no member `missing`"));
+}
+
+#[test]
+fn index_assignment_is_type_checked_on_typed_list() {
+    assert!(analyze_src("fn main() { let xs: list<number> = [1] xs[0] = 5 print(xs) }").is_ok());
+    let err = analyze_src("fn main() { let xs: list<number> = [1] xs[0] = \"s\" print(xs) }")
+        .unwrap_err();
+    assert!(
+        err.message
+            .contains("cannot assign a value of type `string` to `xs[...]: number`")
+    );
+}
+
+#[test]
+fn non_list_index_assignment_is_rejected() {
+    let err = analyze_src("fn main() { print(5) let n: number = 1 n[0] = 2 }").unwrap_err();
+    assert!(err.message.contains("cannot assign into `number` by index"));
+}
+
+#[test]
+fn default_param_type_mismatch_is_rejected() {
+    let err = analyze_src("fn f(a: number = \"s\"): number { a }").unwrap_err();
+    assert!(
+        err.message
+            .contains("default value for parameter `a` must be `number`")
+    );
+    assert!(analyze_src("fn f(a: number = 0): number { a }").is_ok());
+}
+
+#[test]
+fn optional_list_type_accepts_null_and_values() {
+    let ok = r#"
+        type Status = "active" | "inactive"
+        fn same(a: list<number>?, b: list<number>?): boolean { a == b }
+        fn main() { print(same(null, null)) print(same([1], [1])) }
+    "#;
+    assert!(analyze_src(ok).is_ok());
+    // An optional list cannot be indexed directly (no narrowing).
+    let err = analyze_src("fn g(xs: list<number>?): number { xs[0] }").unwrap_err();
+    assert!(err.message.contains("cannot index into `list<number>?`"));
+}
+
+#[test]
+fn nested_generic_list_indexing_types_check() {
+    let src =
+        "fn main() { let m: list<list<number>> = [[1, 2], [3]] let n: number = m[0][1] print(n) }";
+    assert!(analyze_src(src).is_ok());
+    let err = "fn main() { let m: list<list<number>> = [[1, 2], [3]] let s: string = m[0][1] }";
+    assert!(analyze_src(err).is_err());
+}
+
+#[test]
+fn nested_typed_object_member_access() {
+    let src = "fn main() { let u: { a: { b: string } } = { a: { b: \"hi\" } } print(u.a.b) }";
+    assert!(analyze_src(src).is_ok());
+    let err = "fn main() { let u: { a: { b: string } } = { a: { b: \"hi\" } } print(u.a.c) }";
+    assert!(
+        analyze_src(err)
+            .unwrap_err()
+            .message
+            .contains("no member `c`")
+    );
+}
+
+#[test]
+fn state_assignment_is_type_checked_inside_component() {
+    let ok = r#"
+        fn main(): Component { @State let n: number = 0 n = 1 VStack { Text(str(n)) } }
+    "#;
+    assert!(analyze_src(ok).is_ok());
+    let bad = r#"
+        fn main(): Component { @State let n: number = 0 n = "x" VStack { Text(str(n)) } }
+    "#;
+    let err = analyze_src(bad).unwrap_err();
+    assert!(
+        err.message
+            .contains("cannot assign a value of type `string` to `n")
+    );
+}
+
+#[test]
+fn store_destructure_is_immutable() {
+    let src = r#"
+        fn makeStore(): object { let o = { theme: { x: 1 } } o }
+        fn main(): Component { @Store const { theme } = makeStore() theme = { x: 2 } VStack { Text("x") } }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(err.message.contains("cannot assign to `theme`"));
+}
+
+#[test]
+fn for_loop_variable_is_scoped_to_the_loop() {
+    let src = "fn main() { for i in 0..<3 { print(i) } print(i) }";
+    let err = analyze_src(src).unwrap_err();
+    assert!(err.message.contains("undefined variable `i`"));
+    assert!(analyze_src("fn main() { for i in 0..<3 { print(i) } }").is_ok());
+}
+
+#[test]
+fn catch_binding_is_scoped_to_catch_block() {
+    let src = "fn main() { try { throw 1 } catch (e) { print(e) } print(e) }";
+    let err = analyze_src(src).unwrap_err();
+    assert!(err.message.contains("undefined variable `e`"));
+    assert!(analyze_src("fn main() { try { throw 1 } catch (e) { print(e) } }").is_ok());
+}
+
+#[test]
+fn component_call_props_are_loosely_typed() {
+    // Uppercase calls lower to external UI components (`Name({ key: value })`);
+    // props are not validated against the function signature.
+    let ok = r#"
+        fn Counter(x: number): string { str(x) }
+        fn main(): string { Counter(x: "a") }
+    "#;
+    assert!(analyze_src(ok).is_ok());
+}
+
+#[test]
+fn nested_generic_call_inference() {
+    let src = r#"
+        fn id<T>(x: T): T { x }
+        fn main() { let a: number = id(id(5)) let b: string = id(id("s")) print(a + 1) print(b) }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn generic_list_argument_inference() {
+    let src = r#"
+        fn first<T>(xs: list<T>): T { xs[0] }
+        fn main() { let n: number = first([1, 2]) print(n) }
+    "#;
+    assert!(analyze_src(src).is_ok());
+    let err = r#"
+        fn first<T>(xs: list<T>): T { xs[0] }
+        fn main() { first("not a list") }
+    "#;
+    assert!(analyze_src(err).is_err());
+}
+
+#[test]
+fn string_union_type_members_and_null() {
+    let ok = r#"
+        type Status = "active" | "inactive"
+        fn set(s: Status): Status { s }
+        fn main() { print(set("inactive")) }
+    "#;
+    assert!(analyze_src(ok).is_ok());
+    let err = r#"
+        type Status = "active" | "inactive"
+        fn set(s: Status): Status { s }
+        fn main() { print(set("pending")) }
+    "#;
+    assert!(
+        analyze_src(err)
+            .unwrap_err()
+            .message
+            .contains("argument to `set` must be `Status`")
+    );
+}

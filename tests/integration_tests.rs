@@ -1000,3 +1000,268 @@ fn check_rejects_effect_capturing_render_local() {
     assert!(String::from_utf8_lossy(&out.stderr).contains("@Effect"));
     let _ = std::fs::remove_file(&file);
 }
+
+#[test]
+fn run_negative_and_float_arithmetic() {
+    let file = temp_file(
+        "neg.xulo",
+        r#"
+        fn main() {
+            print(-5 * 3.5)
+            print(10 / 4)
+            print(-10 - -3)
+        }
+        "#,
+    );
+    let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "-17.5\n2.5\n-7\n");
+    let _ = std::fs::remove_file(&file);
+}
+
+#[test]
+fn run_string_escapes_output() {
+    let file = temp_file(
+        "esc.xulo",
+        r#"
+        fn main() {
+            print("a\nb")
+            print("tab\there")
+            print("\u{1F600}")
+            print('single\'quote')
+        }
+        "#,
+    );
+    let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "a\nb\ntab\there\n😀\nsingle'quote\n"
+    );
+    let _ = std::fs::remove_file(&file);
+}
+
+#[test]
+fn run_member_and_index_assignment() {
+    let file = temp_file(
+        "mut.xulo",
+        r#"
+        fn main() {
+            let xs: list<number> = [1, 2, 3]
+            xs[0] = 10
+            xs[2] = 30
+            let user: { age: number } = { age: 20 }
+            user.age = user.age + 5
+            print(xs[0] + xs[1] + user.age)
+        }
+        "#,
+    );
+    let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "37\n");
+    let _ = std::fs::remove_file(&file);
+}
+
+#[test]
+fn run_str_builtin_conversions() {
+    let file = temp_file(
+        "strb.xulo",
+        r#"
+        fn main() {
+            print("v=" + str(3.5))
+            print(str(true))
+            print(str(null))
+        }
+        "#,
+    );
+    let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "v=3.5\ntrue\nnull\n");
+    let _ = std::fs::remove_file(&file);
+}
+
+#[test]
+fn run_nested_loops_and_ranges() {
+    let file = temp_file(
+        "loops.xulo",
+        r#"
+        fn main() {
+            let total = 0
+            for i in 0..<3 {
+                for j in 0..<2 {
+                    total = total + (i + j)
+                }
+            }
+            print(total)
+        }
+        "#,
+    );
+    let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "9\n");
+    let _ = std::fs::remove_file(&file);
+}
+
+#[test]
+fn run_else_if_chain_and_while() {
+    let file = temp_file(
+        "elseif.xulo",
+        r#"
+        fn classify(n: number): string {
+            if n < 0 { "neg" }
+            else if n == 0 { "zero" }
+            else if n < 10 { "small" }
+            else { "big" }
+        }
+        fn main() {
+            let n = 0
+            while n < 3 { print(classify(n - 1)) n = n + 1 }
+        }
+        "#,
+    );
+    let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "neg\nzero\nsmall\n");
+    let _ = std::fs::remove_file(&file);
+}
+
+#[test]
+fn run_nullish_ternary_and_match_on_strings() {
+    let file = temp_file(
+        "mix.xulo",
+        r#"
+        fn grade(s: string): string { match s { "A" => "excellent" _ => "ok" } }
+        fn main() {
+            let name = null ?? "anon"
+            let g = 5 > 3 ? grade("A") : "?"
+            print(name)
+            print(g)
+        }
+        "#,
+    );
+    let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "anon\nexcellent\n");
+    let _ = std::fs::remove_file(&file);
+}
+
+#[test]
+fn run_generic_enum_and_payload_match() {
+    let file = temp_file(
+        "gen.xulo",
+        r#"
+        enum Box<T> { Put(T) Empty }
+        enum Shape { Circle(number) Rect(number, number) }
+        fn id<T>(x: T): T { x }
+        fn unbox(b: Box<number>): number {
+            match b { Box::Put(v) => v * 2 Box::Empty => 0 }
+        }
+        fn area(s: Shape): number {
+            match s {
+                Shape::Circle(r) => 3 * r * r
+                Shape::Rect(w, h) => w * h
+            }
+        }
+        fn main() {
+            let boxed = Box::Put(id(7))
+            let s = area(Shape::Rect(3, 4))
+            let c = area(Shape::Circle(2))
+            print(unbox(boxed))
+            print(s)
+            print(c)
+        }
+        "#,
+    );
+    let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "14\n12\n12\n");
+    let _ = std::fs::remove_file(&file);
+}
+
+#[test]
+fn run_typed_object_read_and_assign() {
+    let file = temp_file(
+        "typed.xulo",
+        r#"
+        fn main() {
+            let people: list<{ name: string, age: number }> = [{ name: "a", age: 1 }, { name: "b", age: 2 }]
+            people[1].age = people[1].age + 1
+            print(people[0].name)
+            print(people[1].age)
+        }
+        "#,
+    );
+    let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "a\n3\n");
+    let _ = std::fs::remove_file(&file);
+}
+
+#[test]
+fn run_optional_chaining_deep_on_null() {
+    let file = temp_file(
+        "opt.xulo",
+        r#"
+        fn main() {
+            let u: { a: { b: number } }? = null
+            print(u?.a?.b)
+            print(u == null)
+        }
+        "#,
+    );
+    let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "undefined\ntrue\n");
+    let _ = std::fs::remove_file(&file);
+}
+
+#[test]
+fn run_multi_payload_enum_value_shape() {
+    let file = temp_file(
+        "multi.xulo",
+        r#"
+        enum Pair { A(number, string) B }
+        fn main() {
+            let p = Pair::A(1, "x")
+            let m = match p { Pair::A(a, b) => "a" + str(a) + b Pair::B => "z" }
+            print(p)
+            print(m)
+        }
+        "#,
+    );
+    let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "{ tag: 'A', value: [ 1, 'x' ] }\na1x\n"
+    );
+    let _ = std::fs::remove_file(&file);
+}
