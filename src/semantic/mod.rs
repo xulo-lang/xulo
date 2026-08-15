@@ -1,6 +1,7 @@
 pub mod symbol_table;
 
 use std::collections::HashMap;
+use std::ops::Range;
 
 use crate::ast::{
     AssignStmt, AssignTarget, BinaryOperator, Block, CallArg, EnumVariant, Expression, IfExpr,
@@ -79,6 +80,9 @@ pub struct Analyzer {
     /// resolve to render-scoped locals are rejected (they are out of scope when
     /// the effect runs).
     in_effect: bool,
+    /// Span of the expression most recently entered by `check_expression`;
+    /// semantic errors are attached to it (they cannot name their own span).
+    current_span: Range<usize>,
 }
 
 /// The result of analyzing a module: the names/symbols/types it exports, so a
@@ -128,6 +132,7 @@ pub fn analyze_with(
         warnings: Vec::new(),
         render_locals: Vec::new(),
         in_effect: false,
+        current_span: 0..0,
     };
     for statement in &program.statements {
         analyzer.check_statement(statement)?;
@@ -146,10 +151,6 @@ pub fn analyze_with(
     Ok(result)
 }
 
-fn err(message: impl Into<String>) -> XuloError {
-    XuloError::new(ErrorKind::Semantic, message)
-}
-
 fn assign_target_name(target: &AssignTarget) -> String {
     match target {
         AssignTarget::Name(name) => name.clone(),
@@ -162,7 +163,7 @@ fn assign_target_name(target: &AssignTarget) -> String {
 
 fn target_base(expr: &Expression) -> String {
     match expr {
-        Expression::Identifier(name) => name.clone(),
+        Expression::Identifier { name, .. } => name.clone(),
         Expression::Member(m) => format!("{}.{}", target_base(&m.object), m.property),
         Expression::Index(i) => format!("{}[...]", target_base(&i.object)),
         Expression::Call(c) => c.callee.clone(),
@@ -173,6 +174,12 @@ fn target_base(expr: &Expression) -> String {
 impl Analyzer {
     fn warn(&mut self, message: String) {
         self.warnings.push(message);
+    }
+
+    /// Raise a semantic error attached to the most recently checked
+    /// expression's span (see [`Analyzer::current_span`]).
+    fn err(&self, message: impl Into<String>) -> XuloError {
+        XuloError::new(ErrorKind::Semantic, message).at(self.current_span.clone())
     }
 }
 
@@ -187,14 +194,14 @@ impl Analyzer {
             .last()
             .is_some_and(|locals| locals.contains(name));
         if self.in_effect && render_scoped {
-            return Err(err(format!(
+            return Err(self.err(format!(
                 "`@Effect` closures cannot reference `{name}`: it is declared inside the component body and is out of scope when the effect runs"
             )));
         }
         self.table
             .lookup(name)
             .cloned()
-            .ok_or_else(|| err(format!("undefined variable `{name}`")))
+            .ok_or_else(|| self.err(format!("undefined variable `{name}`")))
     }
 }
 
@@ -218,19 +225,20 @@ impl Analyzer {
                 };
                 let mut ok = true;
                 if let Some(annotation) = &binding.type_annotation
-                    && !self.assignable(&value_type, annotation) {
-                        // Value-aware fallback for string-literal types
-                        // (`"active" | "inactive"`): a direct literal may match.
-                        let literal_ok = match &binding.value {
-                            Some(value) => self.literal_matches(value, annotation),
-                            None => false,
-                        };
-                        if !literal_ok {
-                            ok = false;
-                        }
+                    && !self.assignable(&value_type, annotation)
+                {
+                    // Value-aware fallback for string-literal types
+                    // (`"active" | "inactive"`): a direct literal may match.
+                    let literal_ok = match &binding.value {
+                        Some(value) => self.literal_matches(value, annotation),
+                        None => false,
+                    };
+                    if !literal_ok {
+                        ok = false;
                     }
+                }
                 if !ok {
-                    return Err(err(format!(
+                    return Err(self.err(format!(
                         "cannot bind a value of type `{}` to `let {}: {}`",
                         value_type.name(),
                         binding.name,
@@ -244,7 +252,7 @@ impl Analyzer {
                     is_const: binding.is_const,
                 });
                 if !declared {
-                    return Err(err(format!(
+                    return Err(self.err(format!(
                         "binding `{}` is already declared in this scope",
                         binding.name
                     )));
@@ -266,7 +274,7 @@ impl Analyzer {
                         other => other,
                     };
                     if !self.assignable(&value_type, target) {
-                        return Err(err(format!(
+                        return Err(self.err(format!(
                             "return type mismatch: expected `{}`, found `{}`",
                             expected.name(),
                             value_type.name()
@@ -280,7 +288,7 @@ impl Analyzer {
                 match iterable_type {
                     Type::List(_) | Type::Any => {}
                     other => {
-                        return Err(err(format!(
+                        return Err(self.err(format!(
                             "for loop must iterate over a `list`, found `{}`",
                             other.name()
                         )));
@@ -301,7 +309,7 @@ impl Analyzer {
             Statement::While(stmt) => {
                 let condition = self.check_expression(&stmt.condition)?;
                 if !self.assignable(&condition, &Type::Boolean) {
-                    return Err(err(format!(
+                    return Err(self.err(format!(
                         "while condition must be a `boolean`, found `{}`",
                         condition.name()
                     )));
@@ -359,7 +367,7 @@ impl Analyzer {
                 let default_type = self.check_expression(default)?;
                 let param_type = p.type_annotation.clone().unwrap_or(Type::Any);
                 if !self.assignable(&default_type, &param_type) {
-                    return Err(err(format!(
+                    return Err(self.err(format!(
                         "default value for parameter `{}` must be `{}`, found `{}`",
                         p.name,
                         param_type.name(),
@@ -381,7 +389,7 @@ impl Analyzer {
             is_const: true,
         };
         if !self.table.declare(symbol) {
-            return Err(err(format!("function `{}` is already defined", f.name)));
+            return Err(self.err(format!("function `{}` is already defined", f.name)));
         }
 
         self.table.push_scope();
@@ -451,7 +459,7 @@ impl Analyzer {
                 let default_type = self.check_expression(default)?;
                 let param_type = p.type_annotation.clone().unwrap_or(Type::Any);
                 if !self.assignable(&default_type, &param_type) {
-                    return Err(err(format!(
+                    return Err(self.err(format!(
                         "default value for parameter `{}` must be `{}`, found `{}`",
                         p.name,
                         param_type.name(),
@@ -523,7 +531,7 @@ impl Analyzer {
                     kind: SymbolKind::Variable,
                     is_const: true,
                 }) {
-                    return Err(err(format!("`{ns}` is already declared",)));
+                    return Err(self.err(format!("`{ns}` is already declared",)));
                 }
                 Ok(())
             }
@@ -559,7 +567,7 @@ impl Analyzer {
                         },
                     };
                     if !self.table.declare(sym) {
-                        return Err(err(format!("`{local}` is already declared",)));
+                        return Err(self.err(format!("`{local}` is already declared",)));
                     }
                 }
                 Ok(())
@@ -592,7 +600,7 @@ impl Analyzer {
                     },
                 };
                 if !self.table.declare(sym) {
-                    return Err(err(format!("`{name}` is already declared",)));
+                    return Err(self.err(format!("`{name}` is already declared",)));
                 }
                 Ok(())
             }
@@ -642,7 +650,7 @@ impl Analyzer {
                 if let crate::ast::ExportItem::Fn(f) = item.as_ref() {
                     self.check_fn(f)?;
                     if self.exported_default.is_some() {
-                        return Err(err("only one `export default` is allowed per module"));
+                        return Err(self.err("only one `export default` is allowed per module"));
                     }
                     self.exported_default = Some(f.name.clone());
                     self.exported.push(f.name.clone());
@@ -651,13 +659,13 @@ impl Analyzer {
                     }
                     Ok(())
                 } else {
-                    Err(err("`export default` requires a function declaration"))
+                    Err(self.err("`export default` requires a function declaration"))
                 }
             }
             crate::ast::ExportItem::Names(names) => {
                 for name in names {
                     if self.table.lookup(name).is_none() {
-                        return Err(err(format!(
+                        return Err(self.err(format!(
                             "cannot export `{name}`: it is not declared in this module"
                         )));
                     }
@@ -677,7 +685,7 @@ impl Analyzer {
         let target_type = self.assign_target_type(&assign.target)?;
         let value_type = self.check_expression(&assign.value)?;
         if !self.assignable(&value_type, &target_type) {
-            return Err(err(format!(
+            return Err(self.err(format!(
                 "cannot assign a value of type `{}` to `{}: {}`",
                 value_type.name(),
                 assign_target_name(&assign.target),
@@ -693,22 +701,20 @@ impl Analyzer {
         match target {
             AssignTarget::Name(name) => {
                 let Some(sym) = self.table.lookup(name) else {
-                    return Err(err(format!(
-                        "undefined variable `{name}` cannot be assigned"
-                    )));
+                    return Err(self.err(format!("undefined variable `{name}` cannot be assigned")));
                 };
                 if sym.is_const {
-                    return Err(err(format!(
-                        "cannot assign to `{name}`: binding is immutable"
-                    )));
+                    return Err(
+                        self.err(format!("cannot assign to `{name}`: binding is immutable"))
+                    );
                 }
                 match &sym.kind {
                     SymbolKind::Variable | SymbolKind::State => Ok(sym.type_.clone()),
-                    SymbolKind::Store => Err(err(format!(
+                    SymbolKind::Store => Err(self.err(format!(
                         "cannot assign to `{name}`: store bindings are read-only"
                     ))),
                     SymbolKind::Function(_, _, _) => {
-                        Err(err(format!("cannot assign to `{name}`: it is a function")))
+                        Err(self.err(format!("cannot assign to `{name}`: it is a function")))
                     }
                 }
             }
@@ -721,8 +727,8 @@ impl Analyzer {
                         .iter()
                         .find(|(n, _)| n == property)
                         .map(|(_, t)| t.clone())
-                        .ok_or_else(|| err(format!("type has no member `{property}`"))),
-                    other => Err(err(format!(
+                        .ok_or_else(|| self.err(format!("type has no member `{property}`"))),
+                    other => Err(self.err(format!(
                         "cannot assign member `{property}` of `{}`",
                         other.name()
                     ))),
@@ -735,10 +741,9 @@ impl Analyzer {
                 match resolved {
                     Type::List(inner) => Ok(*inner),
                     Type::Object | Type::Any | Type::Named(_) => Ok(Type::Any),
-                    other => Err(err(format!(
-                        "cannot assign into `{}` by index",
-                        other.name()
-                    ))),
+                    other => {
+                        Err(self.err(format!("cannot assign into `{}` by index", other.name())))
+                    }
                 }
             }
         }
@@ -748,14 +753,12 @@ impl Analyzer {
     /// top level of a function whose return type is `Component` (docs §12).
     fn require_component_top_level(&self, what: &str) -> SResult<()> {
         if self.component_depth == 0 {
-            return Err(err(format!(
+            return Err(self.err(format!(
                 "`{what}` may only be used at the top level of a function returning `Component`"
             )));
         }
         if self.block_depth > 0 {
-            return Err(err(format!(
-                "`{what}` may not be used inside a nested block"
-            )));
+            return Err(self.err(format!("`{what}` may not be used inside a nested block")));
         }
         Ok(())
     }
@@ -784,7 +787,7 @@ impl Analyzer {
                 None => false,
             };
             if !self.assignable(&value_type, annotation) && !literal_ok {
-                return Err(err(format!(
+                return Err(self.err(format!(
                     "cannot bind a value of type `{}` to `@State {}: {}`",
                     value_type.name(),
                     binding.name,
@@ -799,7 +802,7 @@ impl Analyzer {
             is_const: binding.is_const,
         });
         if !declared {
-            return Err(err(format!(
+            return Err(self.err(format!(
                 "binding `{}` is already declared in this scope",
                 binding.name
             )));
@@ -818,7 +821,7 @@ impl Analyzer {
                     kind: SymbolKind::Store,
                     is_const: true,
                 }) {
-                    return Err(err(format!(
+                    return Err(self.err(format!(
                         "binding `{name}` is already declared in this scope"
                     )));
                 }
@@ -832,7 +835,7 @@ impl Analyzer {
                         kind: SymbolKind::Store,
                         is_const: true,
                     }) {
-                        return Err(err(format!(
+                        return Err(self.err(format!(
                             "binding `{local}` is already declared in this scope"
                         )));
                     }
@@ -868,7 +871,7 @@ impl Analyzer {
             kind: SymbolKind::Store,
             is_const: true,
         }) {
-            return Err(err(format!(
+            return Err(self.err(format!(
                 "binding `{}` is already declared in this scope",
                 env.name
             )));
@@ -903,7 +906,7 @@ impl Analyzer {
             } => {
                 let cond = self.check_expression(condition)?;
                 if !self.assignable(&cond, &Type::Boolean) {
-                    return Err(err(format!(
+                    return Err(self.err(format!(
                         "if condition must be a `boolean`, found `{}`",
                         cond.name()
                     )));
@@ -927,7 +930,7 @@ impl Analyzer {
                 match iterable_type {
                     Type::List(_) | Type::Any => {}
                     other => {
-                        return Err(err(format!(
+                        return Err(self.err(format!(
                             "for loop must iterate over a `list`, found `{}`",
                             other.name()
                         )));
@@ -966,7 +969,7 @@ impl Analyzer {
             .truncate(self.generics.len().saturating_sub(alias.type_params.len()));
         result?;
         if self.type_table.contains_key(&alias.name) {
-            return Err(err(format!("type `{}` is already defined", alias.name)));
+            return Err(self.err(format!("type `{}` is already defined", alias.name)));
         }
         self.type_table.insert(
             alias.name.clone(),
@@ -980,7 +983,7 @@ impl Analyzer {
 
     fn check_enum(&mut self, e: &crate::ast::EnumDef) -> SResult<()> {
         if self.type_table.contains_key(&e.name) {
-            return Err(err(format!("type `{}` is already defined", e.name)));
+            return Err(self.err(format!("type `{}` is already defined", e.name)));
         }
         let mut seen = std::collections::HashSet::new();
         self.generics.extend(e.type_params.iter().cloned());
@@ -988,17 +991,18 @@ impl Analyzer {
             if !seen.insert(variant.name.clone()) {
                 self.generics
                     .truncate(self.generics.len().saturating_sub(e.type_params.len()));
-                return Err(err(format!(
+                return Err(self.err(format!(
                     "enum `{}` has a duplicate member `{}`",
                     e.name, variant.name
                 )));
             }
             if let Some(payload) = &variant.payload
-                && let Err(e2) = self.check_type(payload) {
-                    self.generics
-                        .truncate(self.generics.len().saturating_sub(e.type_params.len()));
-                    return Err(e2);
-                }
+                && let Err(e2) = self.check_type(payload)
+            {
+                self.generics
+                    .truncate(self.generics.len().saturating_sub(e.type_params.len()));
+                return Err(e2);
+            }
         }
         self.generics
             .truncate(self.generics.len().saturating_sub(e.type_params.len()));
@@ -1061,7 +1065,7 @@ impl Analyzer {
             } else {
                 let value_type = self.check_expression(&last.expr)?;
                 if !self.assignable(&value_type, target) {
-                    return Err(err(format!(
+                    return Err(self.err(format!(
                         "return type mismatch: expected `{}`, found `{}`",
                         expected.name(),
                         value_type.name()
@@ -1075,9 +1079,10 @@ impl Analyzer {
 
     /// Check an expression and infer its type.
     fn check_expression(&mut self, expr: &Expression) -> SResult<Type> {
+        self.current_span = expr.span().clone();
         match expr {
-            Expression::Literal(lit) => self.check_literal(lit),
-            Expression::Identifier(name) => {
+            Expression::Literal { value: lit, .. } => self.check_literal(lit),
+            Expression::Identifier { name, .. } => {
                 let sym = self.lookup_symbol(name)?;
                 Ok(sym.type_.clone())
             }
@@ -1096,20 +1101,20 @@ impl Analyzer {
                 self.check_expression(&r.end)?;
                 Ok(Type::List(Box::new(Type::Number)))
             }
-            Expression::Await(operand) => self.check_await(operand),
+            Expression::Await { expr: operand, .. } => self.check_await(operand),
             Expression::FnExpr(f) => self.check_fn_expr(f),
-            Expression::Binding(name) => {
+            Expression::Binding { name, .. } => {
                 let sym = self.lookup_symbol(name)?;
                 match sym.kind {
                     SymbolKind::State | SymbolKind::Store => Ok(sym.type_.clone()),
-                    _ => Err(err(format!(
+                    _ => Err(self.err(format!(
                         "`$` binding requires a `@State` or `@Store` variable, but `{name}` is not"
                     ))),
                 }
             }
-            Expression::Spread(_) => Err(err(
-                "`...` spread is only allowed inside list or object literals",
-            )),
+            Expression::Spread { .. } => {
+                Err(self.err("`...` spread is only allowed inside list or object literals"))
+            }
             Expression::CallValue(cv) => {
                 let callee_type = self.check_expression(&cv.callee)?;
                 match callee_type {
@@ -1122,7 +1127,7 @@ impl Analyzer {
                         }
                         Ok(Type::Any)
                     }
-                    other => Err(err(format!(
+                    other => Err(self.err(format!(
                         "expression of type `{}` is not callable",
                         other.name()
                     ))),
@@ -1143,13 +1148,13 @@ impl Analyzer {
                 let mut first = true;
                 for item in items {
                     let item_type = match item {
-                        Expression::Spread(spread) => {
+                        Expression::Spread { expr: spread, .. } => {
                             let spread_type = self.check_expression(spread)?;
                             match spread_type {
                                 Type::List(inner) => *inner,
                                 Type::Any => Type::Any,
                                 other => {
-                                    return Err(err(format!(
+                                    return Err(self.err(format!(
                                         "spread operand must be a list, got `{}`",
                                         other.name()
                                     )));
@@ -1174,7 +1179,7 @@ impl Analyzer {
                         ObjectField::Spread { value } => {
                             let spread_type = self.check_expression(value)?;
                             if !matches!(spread_type, Type::Object | Type::Any) {
-                                return Err(err(format!(
+                                return Err(self.err(format!(
                                     "spread operand must be an object, got `{}`",
                                     spread_type.name()
                                 )));
@@ -1199,18 +1204,18 @@ impl Analyzer {
 
     fn check_await(&mut self, operand: &Expression) -> SResult<Type> {
         if self.no_await_depth > 0 {
-            return Err(err(
+            return Err(self.err(
                 "`await` cannot be used inside an `if`/`match` expression; assign its value first with `let`",
             ));
         }
         if self.async_depth == 0 {
-            return Err(err("`await` may only be used inside an `async` function"));
+            return Err(self.err("`await` may only be used inside an `async` function"));
         }
         let inner = self.check_expression(operand)?;
         match inner {
             Type::Async(inner) => Ok(*inner),
             Type::Any => Ok(Type::Any),
-            other => Err(err(format!(
+            other => Err(self.err(format!(
                 "cannot await a non-promise value of type `{}`",
                 other.name()
             ))),
@@ -1224,7 +1229,7 @@ impl Analyzer {
                 if self.assignable(&operand, &Type::Boolean) {
                     Ok(Type::Boolean)
                 } else {
-                    Err(err(format!(
+                    Err(self.err(format!(
                         "unary `!` requires a `boolean` operand, found `{}`",
                         operand.name()
                     )))
@@ -1234,7 +1239,7 @@ impl Analyzer {
                 if self.assignable(&operand, &Type::Number) {
                     Ok(Type::Number)
                 } else {
-                    Err(err(format!(
+                    Err(self.err(format!(
                         "unary `-` requires a `number` operand, found `{}`",
                         operand.name()
                     )))
@@ -1246,7 +1251,7 @@ impl Analyzer {
     fn check_ternary(&mut self, tr: &crate::ast::TernaryExpr) -> SResult<Type> {
         let condition = self.check_expression(&tr.condition)?;
         if !self.assignable(&condition, &Type::Boolean) {
-            return Err(err(format!(
+            return Err(self.err(format!(
                 "ternary condition must be a `boolean`, found `{}`",
                 condition.name()
             )));
@@ -1269,7 +1274,7 @@ impl Analyzer {
             Type::Optional(inner) if m.optional => *inner,
             Type::Null if m.optional => return Ok(Type::Any),
             Type::Optional(_) => {
-                return Err(err(format!(
+                return Err(self.err(format!(
                     "cannot access member of optional type `{}` without `?.`",
                     object.name()
                 )));
@@ -1287,9 +1292,9 @@ impl Analyzer {
                 .iter()
                 .find(|(n, _)| n == property)
                 .map(|(_, t)| t.clone())
-                .ok_or_else(|| err(format!("type has no member `{property}`"))),
+                .ok_or_else(|| self.err(format!("type has no member `{property}`"))),
             Type::Object | Type::Any | Type::Named(_) => Ok(Type::Any),
-            other => Err(err(format!(
+            other => Err(self.err(format!(
                 "cannot access member of `{}` (type `{}`)",
                 property,
                 other.name()
@@ -1305,7 +1310,7 @@ impl Analyzer {
             Type::List(inner) => Ok(*inner),
             Type::Object | Type::Any | Type::String | Type::Null => Ok(Type::Any),
             Type::Named(_) => Ok(Type::Any),
-            other => Err(err(format!("cannot index into `{}`", other.name()))),
+            other => Err(self.err(format!("cannot index into `{}`", other.name()))),
         }
     }
 
@@ -1330,7 +1335,7 @@ impl Analyzer {
                 crate::ast::MatchPattern::Literal(lit) => {
                     let lit_type = literal_type(lit);
                     if !self.assignable(&lit_type, &value_type) {
-                        return Err(err(format!(
+                        return Err(self.err(format!(
                             "match arm pattern `{}` does not match value of type `{}`",
                             pattern_name(arm),
                             value_type.name()
@@ -1348,14 +1353,14 @@ impl Analyzer {
                     let entry = self
                         .type_table
                         .get(enum_name)
-                        .ok_or_else(|| err(format!("unknown enum `{enum_name}`")))?
+                        .ok_or_else(|| self.err(format!("unknown enum `{enum_name}`")))?
                         .clone();
                     let v = entry
                         .kind
                         .variants()
                         .and_then(|vs| vs.iter().find(|v| v.name == *variant))
                         .ok_or_else(|| {
-                            err(format!("enum `{enum_name}` has no member `{variant}`"))
+                            self.err(format!("enum `{enum_name}` has no member `{variant}`"))
                         })?
                         .clone();
                     match &v.payload {
@@ -1377,7 +1382,7 @@ impl Analyzer {
                             continue;
                         }
                         None => {
-                            return Err(err(format!(
+                            return Err(self.err(format!(
                                 "enum member `{enum_name}::{variant}` has no payload to bind"
                             )));
                         }
@@ -1397,7 +1402,7 @@ impl Analyzer {
         // type (mirrors `check_if`'s branch typing).
         for t in &arm_types[1..] {
             if !self.assignable(t, first) && !self.assignable(first, t) {
-                return Err(err(format!(
+                return Err(self.err(format!(
                     "match arms have incompatible types `{}` and `{}`",
                     first.name(),
                     t.name()
@@ -1423,23 +1428,27 @@ impl Analyzer {
                 } else if matches!(l, Type::Any) || matches!(r, Type::Any) {
                     Ok(Type::Any)
                 } else {
-                    Err(err(format!(
-                        "cannot apply `+` to `{}` and `{}`",
-                        left.name(),
-                        right.name()
-                    )))
+                    Err(self
+                        .err(format!(
+                            "cannot apply `+` to `{}` and `{}`",
+                            left.name(),
+                            right.name()
+                        ))
+                        .at(bin.span.clone()))
                 }
             }
             BinaryOperator::Sub | BinaryOperator::Mul | BinaryOperator::Div => {
                 if self.assignable(&left, &Type::Number) && self.assignable(&right, &Type::Number) {
                     Ok(Type::Number)
                 } else {
-                    Err(err(format!(
-                        "cannot apply `{}` to `{}` and `{}`",
-                        bin.operator.symbol(),
-                        left.name(),
-                        right.name()
-                    )))
+                    Err(self
+                        .err(format!(
+                            "cannot apply `{}` to `{}` and `{}`",
+                            bin.operator.symbol(),
+                            left.name(),
+                            right.name()
+                        ))
+                        .at(bin.span.clone()))
                 }
             }
             BinaryOperator::Eq | BinaryOperator::Neq => {
@@ -1447,11 +1456,13 @@ impl Analyzer {
                 if comparable {
                     Ok(Type::Boolean)
                 } else {
-                    Err(err(format!(
-                        "cannot compare `{}` with `{}`",
-                        left.name(),
-                        right.name()
-                    )))
+                    Err(self
+                        .err(format!(
+                            "cannot compare `{}` with `{}`",
+                            left.name(),
+                            right.name()
+                        ))
+                        .at(bin.span.clone()))
                 }
             }
             BinaryOperator::Lt | BinaryOperator::Gt | BinaryOperator::Lte | BinaryOperator::Gte => {
@@ -1459,11 +1470,13 @@ impl Analyzer {
                 if comparable {
                     Ok(Type::Boolean)
                 } else {
-                    Err(err(format!(
-                        "cannot compare `{}` with `{}`",
-                        left.name(),
-                        right.name()
-                    )))
+                    Err(self
+                        .err(format!(
+                            "cannot compare `{}` with `{}`",
+                            left.name(),
+                            right.name()
+                        ))
+                        .at(bin.span.clone()))
                 }
             }
             BinaryOperator::And | BinaryOperator::Or => {
@@ -1471,12 +1484,14 @@ impl Analyzer {
                 {
                     Ok(Type::Boolean)
                 } else {
-                    Err(err(format!(
-                        "cannot apply `{}` to `{}` and `{}`",
-                        bin.operator.symbol(),
-                        left.name(),
-                        right.name()
-                    )))
+                    Err(self
+                        .err(format!(
+                            "cannot apply `{}` to `{}` and `{}`",
+                            bin.operator.symbol(),
+                            left.name(),
+                            right.name()
+                        ))
+                        .at(bin.span.clone()))
                 }
             }
         }
@@ -1523,7 +1538,7 @@ impl Analyzer {
             return Ok(Type::Any);
         }
         let Some(sym) = self.table.lookup(&call.callee) else {
-            return Err(err(format!("unknown function `{}`", call.callee)));
+            return Err(self.err(format!("unknown function `{}`", call.callee)));
         };
         if self.in_effect
             && self
@@ -1531,7 +1546,7 @@ impl Analyzer {
                 .last()
                 .is_some_and(|locals| locals.contains(&call.callee))
         {
-            return Err(err(format!(
+            return Err(self.err(format!(
                 "`@Effect` closures cannot reference `{}`: it is declared inside the component body and is out of scope when the effect runs",
                 call.callee
             )));
@@ -1572,13 +1587,13 @@ impl Analyzer {
                         for arg in &named {
                             let name = arg.name.as_ref().unwrap();
                             let Some(param) = params.iter().find(|p| &p.name == name) else {
-                                return Err(err(format!(
+                                return Err(self.err(format!(
                                     "function `{}` has no parameter `{name}`",
                                     call.callee
                                 )));
                             };
                             if !seen.insert(name.clone()) {
-                                return Err(err(format!(
+                                return Err(self.err(format!(
                                     "argument `{name}` to `{}` is provided twice",
                                     call.callee
                                 )));
@@ -1588,7 +1603,7 @@ impl Analyzer {
                             if !self.assignable(&arg_type, expected)
                                 && !self.literal_matches(&arg.value, expected)
                             {
-                                return Err(err(format!(
+                                return Err(self.err(format!(
                                     "argument to `{}` must be `{}`, found `{}`",
                                     call.callee,
                                     expected.name(),
@@ -1603,7 +1618,7 @@ impl Analyzer {
                             .collect::<Vec<_>>();
                         let missing = required.iter().find(|name| !seen.contains(*name)).cloned();
                         if let Some(name) = missing {
-                            return Err(err(format!(
+                            return Err(self.err(format!(
                                 "function `{}` is missing required argument `{name}`",
                                 call.callee
                             )));
@@ -1622,7 +1637,7 @@ impl Analyzer {
                             } else {
                                 format!("{required} to {expected}")
                             };
-                            return Err(err(format!(
+                            return Err(self.err(format!(
                                 "function `{}` expects {range} argument(s), but {actual} were provided",
                                 call.callee
                             )));
@@ -1635,7 +1650,7 @@ impl Analyzer {
                             if !self.assignable(&arg_type, expected)
                                 && !self.literal_matches(&arg.value, expected)
                             {
-                                return Err(err(format!(
+                                return Err(self.err(format!(
                                     "argument to `{}` must be `{}`, found `{}`",
                                     call.callee,
                                     expected.name(),
@@ -1671,12 +1686,12 @@ impl Analyzer {
                     _ => None,
                 };
                 let Some((params, ret)) = sig else {
-                    return Err(err(format!("`{}` is not a function", call.callee)));
+                    return Err(self.err(format!("`{}` is not a function", call.callee)));
                 };
                 self.check_fn_value_args(&params, ret, &call.arguments)
             }
             SymbolKind::State | SymbolKind::Store => {
-                Err(err(format!("`{}` is not a function", call.callee)))
+                Err(self.err(format!("`{}` is not a function", call.callee)))
             }
         }
     }
@@ -1690,21 +1705,19 @@ impl Analyzer {
         arguments: &[CallArg],
     ) -> SResult<Type> {
         if arguments.iter().any(|a| a.name.is_some()) {
-            return Err(err(
-                "named arguments are not supported when calling a function value",
-            ));
+            return Err(self.err("named arguments are not supported when calling a function value"));
         }
         let expected = params.len();
         let actual = arguments.len();
         if actual != expected {
-            return Err(err(format!(
+            return Err(self.err(format!(
                 "function values expect exactly {expected} argument(s), but {actual} were provided",
             )));
         }
         for (arg, param) in arguments.iter().zip(params.iter()) {
             let arg_type = self.check_expression(&arg.value)?;
             if !self.assignable(&arg_type, param) {
-                return Err(err(format!(
+                return Err(self.err(format!(
                     "argument to function value must be `{}`, found `{}`",
                     param.name(),
                     arg_type.name()
@@ -1716,16 +1729,16 @@ impl Analyzer {
 
     fn check_enum_ref(&self, enum_name: String, variant: &str) -> SResult<Type> {
         let Some(entry) = self.type_entry(&enum_name) else {
-            return Err(err(format!("unknown enum `{enum_name}`")));
+            return Err(self.err(format!("unknown enum `{enum_name}`")));
         };
         match &entry.kind {
             TypeEntryKind::Enum(variants) => {
                 if !variants.iter().any(|v| v.name == variant) {
-                    return Err(err(format!("enum `{enum_name}` has no member `{variant}`")));
+                    return Err(self.err(format!("enum `{enum_name}` has no member `{variant}`")));
                 }
                 Ok(Type::Named(enum_name))
             }
-            TypeEntryKind::Alias(_) => Err(err(format!("`{enum_name}` is not an enum"))),
+            TypeEntryKind::Alias(_) => Err(self.err(format!("`{enum_name}` is not an enum"))),
         }
     }
 
@@ -1736,28 +1749,28 @@ impl Analyzer {
         arguments: &[&Expression],
     ) -> SResult<Type> {
         let Some(entry) = self.type_entry(&enum_name) else {
-            return Err(err(format!("unknown enum `{enum_name}`")));
+            return Err(self.err(format!("unknown enum `{enum_name}`")));
         };
         let type_params = entry.type_params.clone();
         let TypeEntryKind::Enum(variants) = &entry.kind else {
-            return Err(err(format!("`{enum_name}` is not an enum")));
+            return Err(self.err(format!("`{enum_name}` is not an enum")));
         };
         let Some(v) = variants.iter().find(|v| v.name == variant) else {
-            return Err(err(format!("enum `{enum_name}` has no member `{variant}`")));
+            return Err(self.err(format!("enum `{enum_name}` has no member `{variant}`")));
         };
         let payload = v.payload.clone();
         self.generics.extend(type_params.iter().cloned());
         let result = match payload {
             Some(payload) => {
                 if arguments.len() != 1 {
-                    Err(err(format!(
+                    Err(self.err(format!(
                         "enum member `{enum_name}::{variant}` expects 1 argument (payload of type `{}`)",
                         payload.name()
                     )))
                 } else {
                     let arg_type = self.check_expression(arguments[0])?;
                     if !self.assignable(&arg_type, &payload) {
-                        Err(err(format!(
+                        Err(self.err(format!(
                             "argument to `{enum_name}::{variant}` must be `{}`, found `{}`",
                             payload.name(),
                             arg_type.name()
@@ -1769,7 +1782,7 @@ impl Analyzer {
             }
             None => {
                 if !arguments.is_empty() {
-                    Err(err(format!(
+                    Err(self.err(format!(
                         "enum member `{enum_name}::{variant}` takes no payload"
                     )))
                 } else {
@@ -1794,7 +1807,7 @@ impl Analyzer {
     fn check_if(&mut self, if_expr: &IfExpr) -> SResult<Type> {
         let condition = self.check_expression(&if_expr.condition)?;
         if !self.assignable(&condition, &Type::Boolean) {
-            return Err(err(format!(
+            return Err(self.err(format!(
                 "if condition must be a `boolean`, found `{}`",
                 condition.name()
             )));
@@ -1810,7 +1823,7 @@ impl Analyzer {
             (Some(then_t), Some(else_t))
                 if !self.assignable(&else_t, &then_t) && !self.assignable(&then_t, &else_t) =>
             {
-                Err(err(format!(
+                Err(self.err(format!(
                     "if branches have incompatible types `{}` and `{}`",
                     then_t.name(),
                     else_t.name()
@@ -1832,7 +1845,7 @@ impl Analyzer {
                 {
                     Ok(())
                 } else {
-                    Err(err(format!("unknown type `{name}`")))
+                    Err(self.err(format!("unknown type `{name}`")))
                 }
             }
             Type::List(inner) | Type::Optional(inner) => self.check_type(inner),
@@ -1954,7 +1967,10 @@ impl Analyzer {
     fn literal_matches(&self, value: &Expression, annotation: &Type) -> bool {
         match annotation {
             Type::Optional(inner) => match value {
-                Expression::Literal(Literal::Null) => true,
+                Expression::Literal {
+                    value: Literal::Null,
+                    ..
+                } => true,
                 _ => self.literal_matches(value, inner),
             },
             Type::Union(parts) => parts.iter().any(|p| self.literal_matches(value, p)),
@@ -1967,7 +1983,10 @@ impl Analyzer {
                 }
             }
             Type::Literal(expected) => match value {
-                Expression::Literal(Literal::String(s)) => s == expected,
+                Expression::Literal {
+                    value: Literal::String(s),
+                    ..
+                } => s == expected,
                 _ => false,
             },
             _ => false,
@@ -2090,7 +2109,7 @@ fn literal_type(lit: &Literal) -> Type {
         Literal::List(items) => {
             let element = items
                 .iter()
-                .find(|e| !matches!(e, Expression::Spread(_)))
+                .find(|e| !matches!(e, Expression::Spread { .. }))
                 .map(expr_type_hint)
                 .unwrap_or(Type::Any);
             Type::List(Box::new(element))
@@ -2103,7 +2122,7 @@ fn literal_type(lit: &Literal) -> Type {
 /// list element types from literal syntax).
 fn expr_type_hint(expr: &Expression) -> Type {
     match expr {
-        Expression::Literal(lit) => literal_type(lit),
+        Expression::Literal { value: lit, .. } => literal_type(lit),
         _ => Type::Any,
     }
 }

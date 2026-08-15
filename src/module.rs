@@ -186,10 +186,8 @@ pub fn analyze(loaded: &mut LoadedModules) -> Result<Vec<(PathBuf, String)>, Xul
     let mut warnings = Vec::new();
     for idx in 0..count {
         let (symbols, types) = collect_imports(modules, idx)?;
-        let result = analyze_with(&modules[idx].program, &symbols, &types).map_err(|e| {
-            e.with_message_prefix(format!("{}: ", modules[idx].file.display()))
-                .with_file(modules[idx].file.clone())
-        })?;
+        let result = analyze_with(&modules[idx].program, &symbols, &types)
+            .map_err(|e| e.with_file(modules[idx].file.clone()))?;
         for w in &result.warnings {
             warnings.push((modules[idx].file.clone(), w.clone()));
         }
@@ -373,12 +371,13 @@ fn bundle(loaded: &LoadedModules) -> Result<String, XuloError> {
                         let local = alias.clone().unwrap_or_else(|| name.clone());
                         if let Some((_, sym)) =
                             analysis.exported_symbols.iter().find(|(n, _)| n == name)
-                            && let SymbolKind::Function(_, params, _) = &sym.kind {
-                                cg.register_fn_params(
-                                    local.clone(),
-                                    params.iter().map(|p| p.name.clone()).collect(),
-                                );
-                            }
+                            && let SymbolKind::Function(_, params, _) = &sym.kind
+                        {
+                            cg.register_fn_params(
+                                local.clone(),
+                                params.iter().map(|p| p.name.clone()).collect(),
+                            );
+                        }
                     }
                 }
                 ImportSpec::Default(name) => {

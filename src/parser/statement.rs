@@ -8,7 +8,7 @@ use crate::lexer::token::Token;
 
 use super::expression::{call_args, decode_string, expression, fn_expr, if_expr};
 use super::types::type_expr;
-use super::{In, PErr, Pr, at_eof, ident_name, opt_tk, peek_is, tk, verified_tk};
+use super::{In, PErr, Pr, at_eof, consumed_span, ident_name, opt_tk, peek_is, tk, verified_tk};
 use winnow::error::ErrMode;
 
 /// A statement: `fn`/`let`/`const`/`type`/`enum` definitions, `return`, `for`,
@@ -20,12 +20,14 @@ pub fn statement(input: &mut In<'_>) -> Pr<Statement> {
             // `fn name(...)` is a definition; `fn(...)` in statement position is
             // an anonymous function expression (e.g. a trailing implicit return).
             if matches!(input.get(1).map(|t| t.kind), Some(Token::LParen)) {
-                expression(input).map(|e| {
-                    Statement::Expr(ExprStmt {
-                        expr: e,
-                        has_semicolon: false,
-                    })
-                })
+                let original = *input;
+                let e = expression(input)?;
+                let span = consumed_span(original, input, 0);
+                Ok(Statement::Expr(ExprStmt {
+                    expr: e,
+                    has_semicolon: false,
+                    span,
+                }))
             } else {
                 fn_def(input).map(Statement::Fn)
             }
@@ -69,7 +71,9 @@ fn is_component(input: &In<'_>) -> bool {
 
 fn fn_def(input: &mut In<'_>) -> Pr<FnDef> {
     tk(input, Token::Fn)?;
+    let name_original = *input;
     let name = ident_name(input)?;
+    let name_span = consumed_span(name_original, input, 0);
     let type_params = opt_type_params(input)?;
     let params = params_list(input)?;
     let (return_type, is_async) = if opt_tk(input, Token::Colon) {
@@ -90,6 +94,7 @@ fn fn_def(input: &mut In<'_>) -> Pr<FnDef> {
     let body = block(input)?;
     Ok(FnDef {
         name,
+        name_span,
         type_params,
         params,
         return_type,
@@ -114,6 +119,7 @@ pub(super) fn params_list(input: &mut In<'_>) -> Pr<Vec<Param>> {
 }
 
 fn param(input: &mut In<'_>) -> Pr<Param> {
+    let original = *input;
     let name = ident_name(input)?;
     let type_annotation = if opt_tk(input, Token::Colon) {
         Some(type_expr(input)?)
@@ -125,10 +131,12 @@ fn param(input: &mut In<'_>) -> Pr<Param> {
     } else {
         None
     };
+    let span = consumed_span(original, input, 0);
     Ok(Param {
         name,
         type_annotation,
         default,
+        span,
     })
 }
 
@@ -143,7 +151,9 @@ fn let_binding(input: &mut In<'_>, is_const: bool) -> Pr<LetBinding> {
 
 /// Parse a `let`/`const` binding after the keyword has been consumed.
 fn let_binding_body(input: &mut In<'_>, is_const: bool) -> Pr<LetBinding> {
+    let name_original = *input;
     let name = ident_name(input)?;
+    let name_span = consumed_span(name_original, input, 0);
     let type_annotation = if opt_tk(input, Token::Colon) {
         Some(type_expr(input)?)
     } else {
@@ -159,6 +169,7 @@ fn let_binding_body(input: &mut In<'_>, is_const: bool) -> Pr<LetBinding> {
     }
     Ok(LetBinding {
         name,
+        name_span,
         type_annotation,
         value,
         is_const,
@@ -168,10 +179,11 @@ fn let_binding_body(input: &mut In<'_>, is_const: bool) -> Pr<LetBinding> {
 /// An expression statement, or an assignment when the expression is followed by
 /// `=`. Only identifiers, member accesses, and indexes are valid targets.
 fn expr_or_assign(input: &mut In<'_>) -> Pr<Statement> {
+    let original = *input;
     let expr = expression(input)?;
     if matches!(input.first().map(|t| t.kind), Some(Token::Assign)) {
         let target = match expr {
-            Expression::Identifier(name) => AssignTarget::Name(name),
+            Expression::Identifier { name, .. } => AssignTarget::Name(name),
             Expression::Member(m) if !m.optional => {
                 AssignTarget::Member(Box::new(m.object), m.property)
             }
@@ -182,11 +194,18 @@ fn expr_or_assign(input: &mut In<'_>) -> Pr<Statement> {
         };
         tk(input, Token::Assign)?;
         let value = expression(input)?;
-        Ok(Statement::Assign(AssignStmt { target, value }))
+        let span = consumed_span(original, input, 0);
+        Ok(Statement::Assign(AssignStmt {
+            target,
+            value,
+            span,
+        }))
     } else {
+        let span = consumed_span(original, input, 0);
         Ok(Statement::Expr(ExprStmt {
             expr,
             has_semicolon: false,
+            span,
         }))
     }
 }
@@ -265,6 +284,7 @@ fn opt_type_params(input: &mut In<'_>) -> Pr<Vec<String>> {
 }
 
 fn return_stmt(input: &mut In<'_>) -> Pr<ReturnStmt> {
+    let original = *input;
     tk(input, Token::Return)?;
     // A bare `return` (no value) is allowed (docs EBNF §7).
     let value = if matches!(
@@ -275,7 +295,8 @@ fn return_stmt(input: &mut In<'_>) -> Pr<ReturnStmt> {
     } else {
         Some(expression(input)?)
     };
-    Ok(ReturnStmt { value })
+    let span = consumed_span(original, input, 0);
+    Ok(ReturnStmt { value, span })
 }
 
 fn for_stmt(input: &mut In<'_>) -> Pr<ForStmt> {
@@ -299,12 +320,13 @@ fn while_stmt(input: &mut In<'_>) -> Pr<WhileStmt> {
 }
 
 fn if_stmt(input: &mut In<'_>) -> Pr<Statement> {
-    if_expr(input).map(|e| {
-        Statement::Expr(ExprStmt {
-            expr: Expression::If(Box::new(e)),
-            has_semicolon: false,
-        })
-    })
+    let e = if_expr(input)?;
+    let span = e.span.clone();
+    Ok(Statement::Expr(ExprStmt {
+        expr: Expression::If(Box::new(e)),
+        has_semicolon: false,
+        span,
+    }))
 }
 
 /// `{ statement; statement; ... }`.
@@ -477,10 +499,16 @@ fn decorator_stmt(input: &mut In<'_>) -> Pr<Statement> {
         }
         "Environment" => {
             tk(input, Token::Let)?;
+            let name_original = *input;
             let name = ident_name(input)?;
+            let name_span = consumed_span(name_original, input, 0);
             tk(input, Token::Colon)?;
             let type_ = type_expr(input)?;
-            Ok(Statement::Environment(EnvStmt { name, type_ }))
+            Ok(Statement::Environment(EnvStmt {
+                name,
+                name_span,
+                type_,
+            }))
         }
         _ => Err(ErrMode::Cut(PErr::unexpected(input))),
     }

@@ -25,9 +25,7 @@ pub fn tokenize(source: &str) -> Result<Vec<LexedToken>, XuloError> {
     loop {
         let at = total - cursor.len();
         if let Err(ErrMode::Cut(_)) = ws_or_comment(&mut cursor) {
-            return Err(
-                XuloError::new(ErrorKind::Lex, "unterminated block comment").at(at..total)
-            );
+            return Err(XuloError::new(ErrorKind::Lex, "unterminated block comment").at(at..total));
         }
         if cursor.is_empty() {
             break;

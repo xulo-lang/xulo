@@ -801,8 +801,8 @@ impl Javascript {
     /// Render an expression.
     fn expr(&mut self, expr: &Expression) -> Result<String, XuloError> {
         Ok(match expr {
-            Expression::Literal(lit) => self.literal(lit)?,
-            Expression::Identifier(name) => {
+            Expression::Literal { value: lit, .. } => self.literal(lit)?,
+            Expression::Identifier { name, .. } => {
                 if self.is_signal(name) {
                     format!("{name}.get()")
                 } else {
@@ -839,16 +839,16 @@ impl Javascript {
                 let end = self.expr(&r.end)?;
                 format!("range({start}, {end})")
             }
-            Expression::Await(operand) => format!("(await {})", self.expr(operand)?),
+            Expression::Await { expr: operand, .. } => format!("(await {})", self.expr(operand)?),
             Expression::FnExpr(f) => self.fn_expr(f)?,
-            Expression::Binding(name) => {
+            Expression::Binding { name, .. } => {
                 if self.is_signal(name) {
                     format!("{{ value: {name}.get(), onChange: (__v) => {name}.set(__v) }}")
                 } else {
                     format!("{{ value: {name}, onChange: (__v) => {{}} }}")
                 }
             }
-            Expression::Spread(_) => unreachable!("spread handled inside list/object literals"),
+            Expression::Spread { .. } => unreachable!("spread handled inside list/object literals"),
             Expression::CallValue(cv) => self.call_value(cv)?,
         })
     }
@@ -933,7 +933,9 @@ impl Javascript {
                 let elems = items
                     .iter()
                     .map(|e| match e {
-                        Expression::Spread(spread) => Ok(format!("...{}", self.expr(spread)?)),
+                        Expression::Spread { expr: spread, .. } => {
+                            Ok(format!("...{}", self.expr(spread)?))
+                        }
                         other => self.expr(other),
                     })
                     .collect::<Result<Vec<_>, XuloError>>()?;

@@ -55,7 +55,7 @@ fn parses_if_else_if() {
 fn parses_list_and_call() {
     let p = parse(r#"let xs = [1, 2, 3] print("hi")"#);
     assert!(matches!(&p.statements[0], Statement::Let(b)
-        if matches!(&b.value, Some(Expression::Literal(Literal::List(v))) if v.len() == 3)));
+        if matches!(&b.value, Some(Expression::Literal { value: Literal::List(v), .. }) if v.len() == 3)));
     assert!(
         matches!(&p.statements[1], Statement::Expr(es) if matches!(&es.expr, Expression::Call(c) if c.callee == "print"))
     );
@@ -89,7 +89,13 @@ fn parses_null_literal() {
     let Statement::Let(b) = &p.statements[0] else {
         panic!();
     };
-    assert!(matches!(&b.value, Some(Expression::Literal(Literal::Null))));
+    assert!(matches!(
+        &b.value,
+        Some(Expression::Literal {
+            value: Literal::Null,
+            ..
+        })
+    ));
 }
 
 #[test]
@@ -301,7 +307,11 @@ fn parses_object_spread() {
     let Statement::Let(b) = &p.statements[0] else {
         panic!();
     };
-    let Some(Expression::Literal(Literal::Object(fields))) = &b.value else {
+    let Some(Expression::Literal {
+        value: Literal::Object(fields),
+        ..
+    }) = &b.value
+    else {
         panic!("expected object literal");
     };
     assert!(matches!(fields[0], xulo::ast::ObjectField::Spread { .. }));
@@ -361,7 +371,7 @@ fn parses_async_fn_and_await() {
     let Statement::Let(b) = &f.body.statements[0] else {
         panic!("expected let");
     };
-    assert!(matches!(b.value, Some(Expression::Await(_))));
+    assert!(matches!(b.value, Some(Expression::Await { .. })));
 }
 
 #[test]
@@ -459,6 +469,7 @@ fn parses_anonymous_function_expression() {
                 return_type,
                 body,
                 is_async,
+                ..
             } = f.as_ref();
             assert_eq!(params.len(), 2);
             assert_eq!(return_type, &Some(xulo::ast::Type::Number));
@@ -485,11 +496,15 @@ fn parses_list_spread() {
     let Statement::Let(b) = &p.statements[0] else {
         panic!();
     };
-    let Some(Expression::Literal(Literal::List(items))) = &b.value else {
+    let Some(Expression::Literal {
+        value: Literal::List(items),
+        ..
+    }) = &b.value
+    else {
         panic!("expected list literal");
     };
     assert_eq!(items.len(), 3);
-    assert!(matches!(items[1], Expression::Spread(_)));
+    assert!(matches!(items[1], Expression::Spread { .. }));
 }
 
 #[test]
@@ -499,8 +514,8 @@ fn parses_list_spread_leading() {
         panic!();
     };
     assert!(
-        matches!(b.value, Some(Expression::Literal(Literal::List(ref items)))
-        if matches!(items[0], Expression::Spread(_)))
+        matches!(b.value, Some(Expression::Literal { value: Literal::List(ref items), .. })
+        if matches!(items[0], Expression::Spread { .. }))
     );
 }
 
@@ -669,5 +684,5 @@ fn parses_dollar_binding_argument() {
     let Statement::Component(c) = &p.statements[0] else {
         panic!("expected component");
     };
-    assert!(matches!(&c.args[0].value, Expression::Binding(n) if n == "name"));
+    assert!(matches!(&c.args[0].value, Expression::Binding { name: n, .. } if n == "name"));
 }

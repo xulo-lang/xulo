@@ -127,6 +127,16 @@ pub fn opt_tk(input: &mut In<'_>, kind: Token) -> bool {
     }
 }
 
+/// Byte span covered by the tokens consumed between `original` (input at the
+/// start of a node) and `input` (input after that node). Falls back to `start`
+/// when nothing was consumed.
+pub fn consumed_span(original: In<'_>, input: In<'_>, start: usize) -> Range<usize> {
+    let consumed = original.len().saturating_sub(input.len());
+    let s = original.first().map(|t| t.span.start).unwrap_or(start);
+    let e = original[..consumed].last().map(|t| t.span.end).unwrap_or(s);
+    s..e
+}
+
 /// Matches a single token of the given kind, discarding its payload.
 pub fn tk(input: &mut In<'_>, kind: Token) -> Pr<()> {
     match input.first() {
@@ -181,12 +191,18 @@ fn program(input: &mut In<'_>) -> Pr<Program> {
 
 /// Statement followed by an optional semicolon.
 pub fn terminated_statement(input: &mut In<'_>) -> Pr<crate::ast::Statement> {
+    let original = *input;
     let s = statement::statement(input)?;
     let has_semicolon = opt_tk(input, Token::Semicolon);
     match s {
         crate::ast::Statement::Expr(es) => Ok(crate::ast::Statement::Expr(crate::ast::ExprStmt {
             expr: es.expr,
             has_semicolon: es.has_semicolon || has_semicolon,
+            span: if has_semicolon {
+                consumed_span(original, input, es.span.start)
+            } else {
+                es.span
+            },
         })),
         other => Ok(other),
     }
@@ -231,7 +247,10 @@ mod tests {
                 assert_eq!(op.operator, BinaryOperator::Add);
                 assert!(matches!(
                     op.left.clone(),
-                    Expression::Literal(Literal::Number(1.0))
+                    Expression::Literal {
+                        value: Literal::Number(1.0),
+                        ..
+                    }
                 ));
                 match &op.right {
                     Expression::BinaryOp(mul) => {
@@ -263,7 +282,13 @@ mod tests {
         let Statement::Let(b) = &p.statements[0] else {
             panic!("expected let");
         };
-        assert!(matches!(&b.value, Some(Expression::Literal(Literal::List(v))) if v.len() == 3));
+        assert!(matches!(
+            &b.value,
+            Some(Expression::Literal {
+                value: Literal::List(v),
+                ..
+            }) if v.len() == 3
+        ));
         assert!(
             matches!(&p.statements[1], Statement::Expr(es) if matches!(es.expr, Expression::Call(_)))
         );

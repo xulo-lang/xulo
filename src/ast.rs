@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
     pub statements: Vec<Statement>,
@@ -34,11 +36,14 @@ pub enum Statement {
 pub struct ExprStmt {
     pub expr: Expression,
     pub has_semicolon: bool,
+    pub span: Range<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FnDef {
     pub name: String,
+    /// Source span of the function name (for name-related diagnostics).
+    pub name_span: Range<usize>,
     pub type_params: Vec<String>,
     pub params: Vec<Param>,
     pub return_type: Option<Type>,
@@ -51,12 +56,15 @@ pub struct Param {
     pub name: String,
     pub type_annotation: Option<Type>,
     pub default: Option<Expression>,
+    pub span: Range<usize>,
 }
 
 /// A `let` or `const` binding. `const` bindings may not be reassigned.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LetBinding {
     pub name: String,
+    /// Source span of the binding name (for name-related diagnostics).
+    pub name_span: Range<usize>,
     pub type_annotation: Option<Type>,
     pub value: Option<Expression>,
     pub is_const: bool,
@@ -93,6 +101,8 @@ pub struct EffectStmt {
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnvStmt {
     pub name: String,
+    /// Source span of the binding name (for name-related diagnostics).
+    pub name_span: Range<usize>,
     pub type_: Type,
 }
 
@@ -136,6 +146,7 @@ pub enum AssignTarget {
 pub struct AssignStmt {
     pub target: AssignTarget,
     pub value: Expression,
+    pub span: Range<usize>,
 }
 
 /// A `type` alias declaration. Type parameters are parsed and erased.
@@ -165,6 +176,7 @@ pub struct EnumVariant {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReturnStmt {
     pub value: Option<Expression>,
+    pub span: Range<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -233,8 +245,14 @@ pub enum ExportItem {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expression {
-    Literal(Literal),
-    Identifier(String),
+    Literal {
+        value: Literal,
+        span: Range<usize>,
+    },
+    Identifier {
+        name: String,
+        span: Range<usize>,
+    },
     BinaryOp(Box<BinaryOp>),
     Unary(Box<UnaryOp>),
     Call(Call),
@@ -246,16 +264,51 @@ pub enum Expression {
     Index(Box<IndexExpr>),
     Nullish(Box<NullishExpr>),
     Range(Box<RangeExpr>),
-    Await(Box<Expression>),
+    Await {
+        expr: Box<Expression>,
+        span: Range<usize>,
+    },
     /// An anonymous function literal: `fn(a: number): number { ... }`.
     FnExpr(Box<FnExpr>),
     /// A spread element in a list literal: `[1, ...rest, 3]`.
-    Spread(Box<Expression>),
+    Spread {
+        expr: Box<Expression>,
+        span: Range<usize>,
+    },
     /// Calling a function value held in an arbitrary expression:
     /// `xs[0](10)`, `getHandler()(event)`, `(fn() {...})(5)`.
     CallValue(Box<CallValue>),
     /// A `$name` binding reference to a `@State`/`@Store` variable.
-    Binding(String),
+    Binding {
+        name: String,
+        span: Range<usize>,
+    },
+}
+
+impl Expression {
+    /// Source span of this expression (its first to last token).
+    pub fn span(&self) -> &Range<usize> {
+        match self {
+            Expression::Literal { span, .. }
+            | Expression::Identifier { span, .. }
+            | Expression::Binding { span, .. }
+            | Expression::Await { span, .. }
+            | Expression::Spread { span, .. } => span,
+            Expression::BinaryOp(b) => &b.span,
+            Expression::Unary(u) => &u.span,
+            Expression::Call(c) => &c.span,
+            Expression::EnumRef(r) => &r.span,
+            Expression::If(e) => &e.span,
+            Expression::Ternary(t) => &t.span,
+            Expression::Match(m) => &m.span,
+            Expression::Member(m) => &m.span,
+            Expression::Index(i) => &i.span,
+            Expression::Nullish(n) => &n.span,
+            Expression::Range(r) => &r.span,
+            Expression::FnExpr(f) => &f.span,
+            Expression::CallValue(c) => &c.span,
+        }
+    }
 }
 
 /// An anonymous function expression (`fn(a, b) { ... }`), usable wherever a
@@ -267,12 +320,14 @@ pub struct FnExpr {
     pub return_type: Option<Type>,
     pub body: Block,
     pub is_async: bool,
+    pub span: Range<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct NullishExpr {
     pub left: Box<Expression>,
     pub right: Box<Expression>,
+    pub span: Range<usize>,
 }
 
 /// A member access `object.prop` or optional access `object?.prop`.
@@ -281,6 +336,7 @@ pub struct MemberAccess {
     pub object: Expression,
     pub property: String,
     pub optional: bool,
+    pub span: Range<usize>,
 }
 
 /// An indexing expression `object[index]`.
@@ -288,6 +344,7 @@ pub struct MemberAccess {
 pub struct IndexExpr {
     pub object: Box<Expression>,
     pub index: Box<Expression>,
+    pub span: Range<usize>,
 }
 
 /// A range literal `start..<end` (exclusive upper bound).
@@ -295,6 +352,7 @@ pub struct IndexExpr {
 pub struct RangeExpr {
     pub start: Box<Expression>,
     pub end: Box<Expression>,
+    pub span: Range<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -302,6 +360,7 @@ pub struct TernaryExpr {
     pub condition: Expression,
     pub then_value: Expression,
     pub else_value: Expression,
+    pub span: Range<usize>,
 }
 
 /// A `match` expression with a wildcard-capable arm list.
@@ -309,12 +368,15 @@ pub struct TernaryExpr {
 pub struct MatchExpr {
     pub value: Expression,
     pub arms: Vec<MatchArm>,
+    pub span: Range<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MatchArm {
     pub pattern: MatchPattern,
     pub value: Expression,
+    /// Source span of the whole arm (pattern through value).
+    pub span: Range<usize>,
 }
 
 /// A `match` arm pattern: literal, enum member, enum member with a payload
@@ -335,6 +397,7 @@ pub enum MatchPattern {
 pub struct UnaryOp {
     pub operator: UnaryOperator,
     pub operand: Expression,
+    pub span: Range<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -359,6 +422,7 @@ pub struct BinaryOp {
     pub left: Expression,
     pub operator: BinaryOperator,
     pub right: Expression,
+    pub span: Range<usize>,
 }
 
 /// A plain function call (`foo(args)`), an enum payload construction
@@ -373,6 +437,7 @@ pub struct Call {
     /// Method name when `object` is present.
     pub method: Option<String>,
     pub arguments: Vec<CallArg>,
+    pub span: Range<usize>,
 }
 
 /// A single call argument, optionally labeled (`name: expr`).
@@ -388,6 +453,7 @@ pub struct CallArg {
 pub struct CallValue {
     pub callee: Box<Expression>,
     pub arguments: Vec<CallArg>,
+    pub span: Range<usize>,
 }
 
 impl Call {
@@ -409,6 +475,7 @@ impl Call {
 pub struct EnumRef {
     pub enum_name: String,
     pub variant: String,
+    pub span: Range<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -416,6 +483,7 @@ pub struct IfExpr {
     pub condition: Expression,
     pub then_branch: Block,
     pub else_branch: Option<Block>,
+    pub span: Range<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
