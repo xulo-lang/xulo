@@ -12,7 +12,9 @@ fn generate_js(src: &str) -> String {
 
 #[test]
 fn function_and_call() {
-    let js = generate_js(r#"fn add(a: number, b: number): number { return a + b } fn main() { print(add(1, 2)) }"#);
+    let js = generate_js(
+        r#"fn add(a: number, b: number): number { return a + b } fn main() { print(add(1, 2)) }"#,
+    );
     assert!(js.contains("function add(a, b) {"));
     assert!(js.contains("return (a + b);"));
     assert!(js.contains("console.log(add(1, 2));"));
@@ -170,7 +172,8 @@ fn method_call_emits_receiver() {
 
 #[test]
 fn nullish_and_optional_chain_emit_js() {
-    let js = generate_js("fn main() { let u: { name: string }? = null print(u?.name ?? \"anon\") }");
+    let js =
+        generate_js("fn main() { let u: { name: string }? = null print(u?.name ?? \"anon\") }");
     assert!(js.contains("u?.name"));
     assert!(js.contains("?? \"anon\""));
 }
@@ -228,7 +231,8 @@ fn export_decl_emits_underlying_decl() {
 
 #[test]
 fn closure_emits_function_expression() {
-    let js = generate_js("fn main() { let double = fn(x: number): number { x * 2 } print(double(3)) }");
+    let js =
+        generate_js("fn main() { let double = fn(x: number): number { x * 2 } print(double(3)) }");
     assert!(js.contains("(function (x) {"));
     assert!(js.contains("return (x * 2);"));
 }
@@ -264,9 +268,7 @@ fn state_emits_signal_and_get_set() {
 
 #[test]
 fn component_emits_props_and_children() {
-    let js = generate_js(
-        "fn main(): Component { VStack(spacing: 16) { Text(\"Hi\") } }",
-    );
+    let js = generate_js("fn main(): Component { VStack(spacing: 16) { Text(\"Hi\") } }");
     assert!(js.contains("__component"));
     assert!(js.contains("VStack({"));
     assert!(js.contains("children: [Text({"));
@@ -323,9 +325,8 @@ fn environment_emits_env_lookup() {
 
 #[test]
 fn dollar_binding_emits_value_onchange() {
-    let js = generate_js(
-        "fn main(): Component { @State let name: string = \"\" Input(value: $name) }",
-    );
+    let js =
+        generate_js("fn main(): Component { @State let name: string = \"\" Input(value: $name) }");
     assert!(js.contains("{ value: name.get(), onChange: (__v) => name.set(__v) }"));
 }
 
@@ -354,19 +355,23 @@ fn script_main_does_not_emit_mount_hook() {
 
 #[test]
 fn closure_implicit_return_keeps_body_statements() {
-    let js = generate_js(r#"
+    let js = generate_js(
+        r#"
         fn apply(f: fn(x: number): number, v: number): number { return f(v) }
         fn main() { let g = fn(x: number): number { let n = 2 x + n } print(apply(g, 1)) }
-    "#);
+    "#,
+    );
     assert!(js.contains("let n = 2;"));
     assert!(js.contains("return (x + n);"));
 }
 
 #[test]
 fn closure_implicit_return_with_range_helper() {
-    let js = generate_js(r#"
+    let js = generate_js(
+        r#"
         fn main() { let g = fn(): number { let n = 0 let r = 5..<10 r[0] } print(g()) }
-    "#);
+    "#,
+    );
     assert!(js.contains("function range(a, b) {"));
     assert!(js.contains("return r[0];"));
 }
@@ -389,9 +394,8 @@ fn optional_param_with_default_keeps_default() {
 
 #[test]
 fn closure_optional_param_emits_null() {
-    let js = generate_js(
-        "fn main() { let g = fn(x: number?): number { return x ?? 0 } print(g(5)) }",
-    );
+    let js =
+        generate_js("fn main() { let g = fn(x: number?): number { return x ?? 0 } print(g(5)) }");
     assert!(js.contains("(x = null)"));
 }
 
@@ -403,7 +407,10 @@ fn for_var_shadows_signal() {
     assert!(js.contains("const x = __signal(0);"));
     assert!(js.contains("for (const x of ys) {"));
     assert!(js.contains("console.log(x);"));
-    assert!(!js.contains("x.get()"), "loop variable must shadow the signal:\n{js}");
+    assert!(
+        !js.contains("x.get()"),
+        "loop variable must shadow the signal:\n{js}"
+    );
 }
 
 #[test]
@@ -411,8 +418,14 @@ fn block_local_shadows_signal() {
     let js = generate_js(
         "fn main(): Component { @State let x: number = 0 { let x = 42 print(x) } print(x) }",
     );
-    assert!(js.contains("console.log(x);"), "inner block read is a plain local:\n{js}");
-    assert!(js.contains("console.log(x.get());"), "outer read is still the signal:\n{js}");
+    assert!(
+        js.contains("console.log(x);"),
+        "inner block read is a plain local:\n{js}"
+    );
+    assert!(
+        js.contains("console.log(x.get());"),
+        "outer read is still the signal:\n{js}"
+    );
 }
 
 #[test]
@@ -421,7 +434,10 @@ fn ui_for_var_shadows_signal() {
         "fn main(): Component { @State let item: object = { name: \"x\" } let items = [{ name: \"a\" }] VStack { for item in items { Card(title: item.name) } } }",
     );
     assert!(js.contains(".map((item) =>"));
-    assert!(js.contains("\"title\": item.name"), "UI for variable must shadow the signal:\n{js}");
+    assert!(
+        js.contains("\"title\": item.name"),
+        "UI for variable must shadow the signal:\n{js}"
+    );
     assert!(!js.contains("item.get().name"));
 }
 
@@ -430,7 +446,10 @@ fn signal_used_inside_plain_fn_body() {
     let js = generate_js(
         "fn main(): Component { @State let n: number = 0 let read = fn(): number { n } VStack { } }",
     );
-    assert!(js.contains("return n.get();"), "closure still sees the signal through outer scope:\n{js}");
+    assert!(
+        js.contains("return n.get();"),
+        "closure still sees the signal through outer scope:\n{js}"
+    );
 }
 
 #[test]

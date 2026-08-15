@@ -24,15 +24,10 @@ pub fn tokenize(source: &str) -> Result<Vec<LexedToken>, XuloError> {
 
     loop {
         let at = total - cursor.len();
-        match ws_or_comment(&mut cursor) {
-            Err(ErrMode::Cut(_)) => {
-                return Err(XuloError::new(
-                    ErrorKind::Lex,
-                    "unterminated block comment",
-                )
-                .at(at..total));
-            }
-            _ => {}
+        if let Err(ErrMode::Cut(_)) = ws_or_comment(&mut cursor) {
+            return Err(
+                XuloError::new(ErrorKind::Lex, "unterminated block comment").at(at..total)
+            );
         }
         if cursor.is_empty() {
             break;
@@ -86,7 +81,8 @@ fn ws_or_comment(input: &mut Input) -> Res<()> {
     loop {
         let before = *input;
         let _: Res<&str> = multispace1(input);
-        let _: Res<&str> = preceded(literal("//"), take_while(0.., |c: char| c != '\n')).parse_next(input);
+        let _: Res<&str> =
+            preceded(literal("//"), take_while(0.., |c: char| c != '\n')).parse_next(input);
         if input.starts_with("/*") {
             block_comment(input)?;
         }
@@ -134,7 +130,11 @@ fn number(input: &mut Input) -> Res<()> {
             *input = rest;
         }
     }
-    if input.chars().next().is_some_and(|c| c.is_ascii_alphanumeric() || c == '_') {
+    if input
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
         return Err(backtrack(input));
     }
     Ok(())
@@ -177,7 +177,7 @@ fn string(input: &mut Input) -> Res<()> {
 
 /// Consume a `\uXXXX` or `\u{...}` escape (after the `\u` has been consumed).
 fn consume_unicode_escape(input: &mut Input) -> Res<()> {
-    if input.chars().next() == Some('{') {
+    if input.starts_with('{') {
         bump(input);
         let mut digits = 0;
         loop {

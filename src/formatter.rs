@@ -33,7 +33,10 @@ pub fn format(source: &str) -> Result<String, XuloError> {
         // A `{` starts an inline group (import spec / destructure) when it
         // directly follows `import`/`const`/`let`, e.g. `import { a } from ...`.
         let is_inline_open = cur == Token::LBrace
-            && matches!(prev, Some(Token::Import) | Some(Token::Const) | Some(Token::Let));
+            && matches!(
+                prev,
+                Some(Token::Import) | Some(Token::Const) | Some(Token::Let)
+            );
 
         // A `}` closes a block: drop the indent level before laying out its line.
         let closes_block = cur == Token::RBrace && prev != Some(Token::LBrace);
@@ -152,7 +155,10 @@ fn needs_space(
         return false;
     }
     if cur == Token::LParen
-        && matches!(prev, Some(Token::Ident) | Some(Token::Print) | Some(Token::Fn))
+        && matches!(
+            prev,
+            Some(Token::Ident) | Some(Token::Print) | Some(Token::Fn)
+        )
     {
         return false;
     }

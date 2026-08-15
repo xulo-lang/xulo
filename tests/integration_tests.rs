@@ -41,7 +41,11 @@ fn temp_dir(files: &[(&str, &str)], entry: &str) -> (PathBuf, PathBuf) {
 fn run_hello_world() {
     let file = temp_file("hello.xulo", r#"fn main() { print("Hello, world!") }"#);
     let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert_eq!(String::from_utf8_lossy(&out.stdout), "Hello, world!\n");
     let _ = std::fs::remove_file(&file);
 }
@@ -165,7 +169,11 @@ fn run_types_enums_const_null() {
         "#,
     );
     let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
         "true\n{ tag: 'Success', value: 42 }\nXulo\n1\n2\ntrue\n"
@@ -220,7 +228,11 @@ fn run_phase2_control_flow_and_expressions() {
         "#,
     );
     let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
         "10\n3\nanon\nXulo\n2\ntrue\ntrue\nyes\nother\ngot 7\nerr: boom\n"
@@ -255,7 +267,11 @@ fn run_multi_file_imports() {
         "main.xulo",
     );
     let out = Command::new(BIN).arg("run").arg(&entry).output().unwrap();
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert_eq!(String::from_utf8_lossy(&out.stdout), "5\n3.14\n11\n");
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -295,7 +311,11 @@ fn run_multi_file_default_and_async() {
         "main.xulo",
     );
     let out = Command::new(BIN).arg("run").arg(&entry).output().unwrap();
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert_eq!(String::from_utf8_lossy(&out.stdout), "hi bob\n42\n");
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -304,17 +324,32 @@ fn run_multi_file_default_and_async() {
 fn build_bundles_modules_into_one_file() {
     let (dir, entry) = temp_dir(
         &[
-            ("util.xulo", "export fn double(x: number): number { return x * 2 }\n"),
-            ("main.xulo", "import { double } from \"./util\"\nfn main() { print(double(4)) }\n"),
+            (
+                "util.xulo",
+                "export fn double(x: number): number { return x * 2 }\n",
+            ),
+            (
+                "main.xulo",
+                "import { double } from \"./util\"\nfn main() { print(double(4)) }\n",
+            ),
         ],
         "main.xulo",
     );
     let out_dir = dir.join("bundle.js");
     let result = Command::new(BIN)
-        .args(["build", entry.to_str().unwrap(), "-o", out_dir.to_str().unwrap()])
+        .args([
+            "build",
+            entry.to_str().unwrap(),
+            "-o",
+            out_dir.to_str().unwrap(),
+        ])
         .output()
         .unwrap();
-    assert!(result.status.success(), "stderr: {}", String::from_utf8_lossy(&result.stderr));
+    assert!(
+        result.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
 
     let js = std::fs::read_to_string(&out_dir).unwrap();
     assert!(js.contains("function double(x)"));
@@ -330,47 +365,67 @@ fn build_bundles_modules_into_one_file() {
 #[test]
 fn external_type_only_import_is_erased_from_bundle() {
     let (dir, entry) = temp_dir(
-        &[
-            (
-                "main.xulo",
-                r#"
+        &[(
+            "main.xulo",
+            r#"
                 import type { Config } from "lib-b"
                 fn makeConfig(): Config { return "production" }
                 "#,
-            ),
-        ],
+        )],
         "main.xulo",
     );
     let out_dir = dir.join("bundle.js");
     let result = Command::new(BIN)
-        .args(["build", entry.to_str().unwrap(), "-o", out_dir.to_str().unwrap()])
+        .args([
+            "build",
+            entry.to_str().unwrap(),
+            "-o",
+            out_dir.to_str().unwrap(),
+        ])
         .output()
         .unwrap();
-    assert!(result.status.success(), "stderr: {}", String::from_utf8_lossy(&result.stderr));
+    assert!(
+        result.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
 
     let js = std::fs::read_to_string(&out_dir).unwrap();
-    assert!(!js.contains("lib-b"), "type-only external import leaked into the bundle:\n{js}");
-    assert!(!js.contains("import "), "bundle should have no ESM imports:\n{js}");
+    assert!(
+        !js.contains("lib-b"),
+        "type-only external import leaked into the bundle:\n{js}"
+    );
+    assert!(
+        !js.contains("import "),
+        "bundle should have no ESM imports:\n{js}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn external_runtime_import_is_kept_in_bundle() {
     let (dir, entry) = temp_dir(
-        &[
-            (
-                "main.xulo",
-                "import { helper } from \"lib-b\"\nfn main() { helper() }\n",
-            ),
-        ],
+        &[(
+            "main.xulo",
+            "import { helper } from \"lib-b\"\nfn main() { helper() }\n",
+        )],
         "main.xulo",
     );
     let out_dir = dir.join("bundle.js");
     let result = Command::new(BIN)
-        .args(["build", entry.to_str().unwrap(), "-o", out_dir.to_str().unwrap()])
+        .args([
+            "build",
+            entry.to_str().unwrap(),
+            "-o",
+            out_dir.to_str().unwrap(),
+        ])
         .output()
         .unwrap();
-    assert!(result.status.success(), "stderr: {}", String::from_utf8_lossy(&result.stderr));
+    assert!(
+        result.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
 
     let js = std::fs::read_to_string(&out_dir).unwrap();
     assert!(js.contains("import { helper } from \"lib-b\";"));
@@ -381,8 +436,14 @@ fn external_runtime_import_is_kept_in_bundle() {
 fn check_reports_missing_export() {
     let (dir, entry) = temp_dir(
         &[
-            ("util.xulo", "export fn double(x: number): number { return x * 2 }\n"),
-            ("main.xulo", "import { triple } from \"./util\"\nfn main() { print(triple(1)) }\n"),
+            (
+                "util.xulo",
+                "export fn double(x: number): number { return x * 2 }\n",
+            ),
+            (
+                "main.xulo",
+                "import { triple } from \"./util\"\nfn main() { print(triple(1)) }\n",
+            ),
         ],
         "main.xulo",
     );
@@ -396,9 +457,18 @@ fn check_reports_missing_export() {
 fn check_reports_circular_import() {
     let (dir, entry) = temp_dir(
         &[
-            ("a.xulo", "import { b } from \"./b\"\nexport fn a() { return 1 }\n"),
-            ("b.xulo", "import { a } from \"./a\"\nexport fn b() { return 2 }\n"),
-            ("main.xulo", "import { a } from \"./a\"\nfn main() { print(a()) }\n"),
+            (
+                "a.xulo",
+                "import { b } from \"./b\"\nexport fn a() { return 1 }\n",
+            ),
+            (
+                "b.xulo",
+                "import { a } from \"./a\"\nexport fn b() { return 2 }\n",
+            ),
+            (
+                "main.xulo",
+                "import { a } from \"./a\"\nfn main() { print(a()) }\n",
+            ),
         ],
         "main.xulo",
     );
@@ -419,7 +489,11 @@ fn run_try_catch_and_throw() {
         "#,
     );
     let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert_eq!(String::from_utf8_lossy(&out.stdout), "caught boom\n");
     let _ = std::fs::remove_file(&file);
 }
@@ -440,7 +514,11 @@ fn type_only_enum_import_still_binds_the_value() {
         "main.xulo",
     );
     let out = Command::new(BIN).arg("run").arg(&entry).output().unwrap();
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert_eq!(String::from_utf8_lossy(&out.stdout), "Kind.Admin\n");
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -449,7 +527,10 @@ fn type_only_enum_import_still_binds_the_value() {
 fn imported_function_supports_named_arguments() {
     let (dir, entry) = temp_dir(
         &[
-            ("util.xulo", "export fn greet(name: string, times: number): string { name }\n"),
+            (
+                "util.xulo",
+                "export fn greet(name: string, times: number): string { name }\n",
+            ),
             (
                 "main.xulo",
                 "import { greet } from \"./util\"\nfn main() { print(greet(times: 2, name: \"hi\")) }\n",
@@ -458,7 +539,11 @@ fn imported_function_supports_named_arguments() {
         "main.xulo",
     );
     let out = Command::new(BIN).arg("run").arg(&entry).output().unwrap();
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert_eq!(String::from_utf8_lossy(&out.stdout), "hi\n");
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -486,7 +571,11 @@ fn run_closures_and_higher_order_functions() {
         "#,
     );
     let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert_eq!(String::from_utf8_lossy(&out.stdout), "8\n15\n2\n");
     let _ = std::fs::remove_file(&file);
 }
@@ -503,7 +592,11 @@ fn run_async_closure() {
         "#,
     );
     let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert_eq!(String::from_utf8_lossy(&out.stdout), "42\n");
     let _ = std::fs::remove_file(&file);
 }
@@ -526,7 +619,11 @@ fn run_list_spread() {
         "#,
     );
     let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert_eq!(String::from_utf8_lossy(&out.stdout), "10\n3\n");
     let _ = std::fs::remove_file(&file);
 }
@@ -546,7 +643,11 @@ fn run_list_spread_with_computed_values() {
         "#,
     );
     let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert_eq!(String::from_utf8_lossy(&out.stdout), "9\n");
     let _ = std::fs::remove_file(&file);
 }
@@ -570,7 +671,11 @@ fn run_comma_separated_match() {
         "#,
     );
     let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert_eq!(String::from_utf8_lossy(&out.stdout), "green\n");
     let _ = std::fs::remove_file(&file);
 }
@@ -594,7 +699,11 @@ fn run_comma_separated_match_with_enum_payload() {
         "#,
     );
     let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert_eq!(String::from_utf8_lossy(&out.stdout), "99\n0\n");
     let _ = std::fs::remove_file(&file);
 }
@@ -619,7 +728,11 @@ fn run_function_values_from_expressions() {
         "#,
     );
     let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert_eq!(String::from_utf8_lossy(&out.stdout), "7\n12\n101\n15\n");
     let _ = std::fs::remove_file(&file);
 }
@@ -644,7 +757,11 @@ fn run_named_enum_payload() {
         "#,
     );
     let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert_eq!(String::from_utf8_lossy(&out.stdout), "submit\nclick\n");
     let _ = std::fs::remove_file(&file);
 }
@@ -666,8 +783,15 @@ fn run_optional_and_default_params() {
         "#,
     );
     let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
-    assert_eq!(String::from_utf8_lossy(&out.stdout), "1:yes\n2:x:yes\n3:y:no\n");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "1:yes\n2:x:yes\n3:y:no\n"
+    );
     let _ = std::fs::remove_file(&file);
 }
 
@@ -685,7 +809,11 @@ fn run_optional_chaining_on_null() {
         "#,
     );
     let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert_eq!(String::from_utf8_lossy(&out.stdout), "anonymous\nAnn\n");
     let _ = std::fs::remove_file(&file);
 }
@@ -704,7 +832,11 @@ fn run_component_state_and_effect() {
         "#,
     );
     let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert_eq!(String::from_utf8_lossy(&out.stdout), "mounted\ncount=1\n");
     let _ = std::fs::remove_file(&file);
 }
@@ -731,7 +863,11 @@ fn build_component_with_external_ui() {
         .args(["build", file.to_str().unwrap(), "-o", out.to_str().unwrap()])
         .output()
         .unwrap();
-    assert!(result.status.success(), "stderr: {}", String::from_utf8_lossy(&result.stderr));
+    assert!(
+        result.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
 
     let js = std::fs::read_to_string(&out).unwrap();
     assert!(js.contains("import { Screen, VStack, Text } from \"@xulo/ui\";"));
@@ -745,10 +881,7 @@ fn build_component_with_external_ui() {
 
 #[test]
 fn check_rejects_decorator_outside_component() {
-    let file = temp_file(
-        "bad.xulo",
-        "fn main() { @State let count: number = 0 }",
-    );
+    let file = temp_file("bad.xulo", "fn main() { @State let count: number = 0 }");
     let out = Command::new(BIN).arg("check").arg(&file).output().unwrap();
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("returning `Component`"));
@@ -768,7 +901,11 @@ fn run_component_loop_var_shadowing() {
         "#,
     );
     let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert_eq!(String::from_utf8_lossy(&out.stdout), "1\n2\n3\n");
     let _ = std::fs::remove_file(&file);
 }

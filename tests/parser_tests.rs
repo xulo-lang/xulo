@@ -27,7 +27,9 @@ fn parses_precedence() {
     match &b.value {
         Some(Expression::BinaryOp(op)) => {
             assert_eq!(op.operator, BinaryOperator::Add);
-            assert!(matches!(op.right, Expression::BinaryOp(ref m) if m.operator == BinaryOperator::Mul));
+            assert!(
+                matches!(op.right, Expression::BinaryOp(ref m) if m.operator == BinaryOperator::Mul)
+            );
         }
         _ => panic!("expected binary op"),
     }
@@ -44,7 +46,9 @@ fn parses_if_else_if() {
     };
     assert!(outer.else_branch.is_some());
     let else_block = outer.else_branch.as_ref().unwrap();
-    assert!(matches!(else_block.statements.as_slice(), [Statement::Expr(es)] if matches!(es.expr, Expression::If(_))));
+    assert!(
+        matches!(else_block.statements.as_slice(), [Statement::Expr(es)] if matches!(es.expr, Expression::If(_)))
+    );
 }
 
 #[test]
@@ -52,7 +56,9 @@ fn parses_list_and_call() {
     let p = parse(r#"let xs = [1, 2, 3] print("hi")"#);
     assert!(matches!(&p.statements[0], Statement::Let(b)
         if matches!(&b.value, Some(Expression::Literal(Literal::List(v))) if v.len() == 3)));
-    assert!(matches!(&p.statements[1], Statement::Expr(es) if matches!(&es.expr, Expression::Call(c) if c.callee == "print")));
+    assert!(
+        matches!(&p.statements[1], Statement::Expr(es) if matches!(&es.expr, Expression::Call(c) if c.callee == "print"))
+    );
 }
 
 #[test]
@@ -209,8 +215,14 @@ fn parses_match_expr() {
         panic!("expected match");
     };
     assert_eq!(m.arms.len(), 2);
-    assert!(matches!(m.arms[0].pattern, xulo::ast::MatchPattern::Literal(Literal::Number(0.0))));
-    assert!(matches!(m.arms[1].pattern, xulo::ast::MatchPattern::Wildcard));
+    assert!(matches!(
+        m.arms[0].pattern,
+        xulo::ast::MatchPattern::Literal(Literal::Number(0.0))
+    ));
+    assert!(matches!(
+        m.arms[1].pattern,
+        xulo::ast::MatchPattern::Wildcard
+    ));
 }
 
 #[test]
@@ -222,9 +234,11 @@ fn parses_match_enum_payload() {
     let Expression::Match(m) = &es.expr else {
         panic!("expected match");
     };
-    assert!(matches!(&m.arms[0].pattern, xulo::ast::MatchPattern::EnumPayload {
+    assert!(
+        matches!(&m.arms[0].pattern, xulo::ast::MatchPattern::EnumPayload {
         enum_name, variant, binding
-    } if enum_name == "Result" && variant == "Success" && binding == "v"));
+    } if enum_name == "Result" && variant == "Success" && binding == "v")
+    );
 }
 
 #[test]
@@ -340,7 +354,10 @@ fn parses_async_fn_and_await() {
         panic!("expected fn");
     };
     assert!(f.is_async);
-    assert_eq!(f.return_type, Some(xulo::ast::Type::Async(Box::new(xulo::ast::Type::Number))));
+    assert_eq!(
+        f.return_type,
+        Some(xulo::ast::Type::Async(Box::new(xulo::ast::Type::Number)))
+    );
     let Statement::Let(b) = &f.body.statements[0] else {
         panic!("expected let");
     };
@@ -354,9 +371,16 @@ fn parses_try_catch_throw() {
     let Statement::Try(t) = &p.statements[0] else {
         panic!("expected try");
     };
-    let TryStmt { catch_var, try_block, .. } = t;
+    let TryStmt {
+        catch_var,
+        try_block,
+        ..
+    } = t;
     assert_eq!(catch_var, "e");
-    assert!(matches!(try_block.statements.as_slice(), [Statement::Throw(_)]));
+    assert!(matches!(
+        try_block.statements.as_slice(),
+        [Statement::Throw(_)]
+    ));
 }
 
 #[test]
@@ -366,17 +390,49 @@ fn parses_import_and_export_forms() {
     let p = parse(r#"import { a as b } from "./m" import * as ns from "./n" import t from "./d""#);
     assert!(matches!(p.statements[0],
         Statement::Import(ImportStmt { spec: ImportSpec::Named(_), ref source, type_only: false }) if source == "./m"));
-    assert!(matches!(p.statements[1],
-        Statement::Import(ImportStmt { spec: ImportSpec::Namespace(_), .. })));
-    assert!(matches!(p.statements[2],
-        Statement::Import(ImportStmt { spec: ImportSpec::Default(_), .. })));
+    assert!(matches!(
+        p.statements[1],
+        Statement::Import(ImportStmt {
+            spec: ImportSpec::Namespace(_),
+            ..
+        })
+    ));
+    assert!(matches!(
+        p.statements[2],
+        Statement::Import(ImportStmt {
+            spec: ImportSpec::Default(_),
+            ..
+        })
+    ));
 
-    let p = parse(r#"import type { User } from "./u" export { a, b } export const X = 1 export type Y = string"#);
-    assert!(matches!(p.statements[0],
-        Statement::Import(ImportStmt { type_only: true, .. })));
-    assert!(matches!(p.statements[1], Statement::Export(ExportStmt { item: ExportItem::Names(_) })));
-    assert!(matches!(p.statements[2], Statement::Export(ExportStmt { item: ExportItem::Let(_) })));
-    assert!(matches!(p.statements[3], Statement::Export(ExportStmt { item: ExportItem::Type(_) })));
+    let p = parse(
+        r#"import type { User } from "./u" export { a, b } export const X = 1 export type Y = string"#,
+    );
+    assert!(matches!(
+        p.statements[0],
+        Statement::Import(ImportStmt {
+            type_only: true,
+            ..
+        })
+    ));
+    assert!(matches!(
+        p.statements[1],
+        Statement::Export(ExportStmt {
+            item: ExportItem::Names(_)
+        })
+    ));
+    assert!(matches!(
+        p.statements[2],
+        Statement::Export(ExportStmt {
+            item: ExportItem::Let(_)
+        })
+    ));
+    assert!(matches!(
+        p.statements[3],
+        Statement::Export(ExportStmt {
+            item: ExportItem::Type(_)
+        })
+    ));
 }
 
 #[test]
@@ -398,7 +454,12 @@ fn parses_anonymous_function_expression() {
     };
     match &b.value {
         Some(Expression::FnExpr(f)) => {
-            let FnExpr { params, return_type, body, is_async } = f.as_ref();
+            let FnExpr {
+                params,
+                return_type,
+                body,
+                is_async,
+            } = f.as_ref();
             assert_eq!(params.len(), 2);
             assert_eq!(return_type, &Some(xulo::ast::Type::Number));
             assert!(!body.statements.is_empty());
@@ -437,8 +498,10 @@ fn parses_list_spread_leading() {
     let Statement::Let(b) = &p.statements[0] else {
         panic!();
     };
-    assert!(matches!(b.value, Some(Expression::Literal(Literal::List(ref items)))
-        if matches!(items[0], Expression::Spread(_))));
+    assert!(
+        matches!(b.value, Some(Expression::Literal(Literal::List(ref items)))
+        if matches!(items[0], Expression::Spread(_)))
+    );
 }
 
 #[test]
@@ -451,8 +514,14 @@ fn parses_match_expr_with_commas() {
         panic!("expected match");
     };
     assert_eq!(m.arms.len(), 3);
-    assert!(matches!(m.arms[0].pattern, xulo::ast::MatchPattern::Literal(Literal::Number(0.0))));
-    assert!(matches!(m.arms[2].pattern, xulo::ast::MatchPattern::Wildcard));
+    assert!(matches!(
+        m.arms[0].pattern,
+        xulo::ast::MatchPattern::Literal(Literal::Number(0.0))
+    ));
+    assert!(matches!(
+        m.arms[2].pattern,
+        xulo::ast::MatchPattern::Wildcard
+    ));
 }
 
 #[test]
@@ -465,9 +534,11 @@ fn parses_match_enum_payload_with_commas() {
         panic!("expected match");
     };
     assert_eq!(m.arms.len(), 3);
-    assert!(matches!(&m.arms[1].pattern, xulo::ast::MatchPattern::EnumPayload {
+    assert!(
+        matches!(&m.arms[1].pattern, xulo::ast::MatchPattern::EnumPayload {
         variant, binding, ..
-    } if variant == "Error" && binding == "msg"));
+    } if variant == "Error" && binding == "msg")
+    );
 }
 
 #[test]
@@ -492,11 +563,14 @@ fn parses_call_on_indexed_function_value() {
 
 #[test]
 fn parses_bare_fn_expression_statement() {
-    let p = parse("fn makeAdder(n: number): fn(number): number { fn(v: number): number { v + n } }");
+    let p =
+        parse("fn makeAdder(n: number): fn(number): number { fn(v: number): number { v + n } }");
     let Statement::Fn(f) = &p.statements[0] else {
         panic!("expected fn");
     };
-    assert!(matches!(f.body.statements.last(), Some(Statement::Expr(es)) if matches!(es.expr, Expression::FnExpr(_))));
+    assert!(
+        matches!(f.body.statements.last(), Some(Statement::Expr(es)) if matches!(es.expr, Expression::FnExpr(_)))
+    );
 }
 
 #[test]
@@ -507,7 +581,10 @@ fn parses_state_declaration() {
         panic!("expected state");
     };
     assert_eq!(binding.name, "count");
-    assert!(matches!(binding.type_annotation, Some(xulo::ast::Type::Number)));
+    assert!(matches!(
+        binding.type_annotation,
+        Some(xulo::ast::Type::Number)
+    ));
 }
 
 #[test]
@@ -551,7 +628,12 @@ fn parses_environment_declaration() {
 fn parses_component_block() {
     use xulo::ast::{ComponentStmt, UiElement};
     let p = parse("VStack(spacing: 16) { Text(\"Hello\") }");
-    let Statement::Component(ComponentStmt { name, args, children }) = &p.statements[0] else {
+    let Statement::Component(ComponentStmt {
+        name,
+        args,
+        children,
+    }) = &p.statements[0]
+    else {
         panic!("expected component");
     };
     assert_eq!(name, "VStack");

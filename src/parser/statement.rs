@@ -1,6 +1,6 @@
 use crate::ast::{
     AssignStmt, AssignTarget, BindingPattern, Block, ComponentStmt, EffectStmt, EnumDef,
-    EnumVariant, EnvStmt, ExprStmt, ExportItem, ExportStmt, Expression, FnDef, ForStmt, ImportSpec,
+    EnumVariant, EnvStmt, ExportItem, ExportStmt, ExprStmt, Expression, FnDef, ForStmt, ImportSpec,
     ImportStmt, LetBinding, Param, ReturnStmt, StateStmt, Statement, StoreStmt, TryStmt, TypeAlias,
     UiElement, WhileStmt,
 };
@@ -8,7 +8,7 @@ use crate::lexer::token::Token;
 
 use super::expression::{call_args, decode_string, expression, fn_expr, if_expr};
 use super::types::type_expr;
-use super::{at_eof, ident_name, opt_tk, peek_is, tk, verified_tk, In, PErr, Pr};
+use super::{In, PErr, Pr, at_eof, ident_name, opt_tk, peek_is, tk, verified_tk};
 use winnow::error::ErrMode;
 
 /// A statement: `fn`/`let`/`const`/`type`/`enum` definitions, `return`, `for`,
@@ -20,7 +20,12 @@ pub fn statement(input: &mut In<'_>) -> Pr<Statement> {
             // `fn name(...)` is a definition; `fn(...)` in statement position is
             // an anonymous function expression (e.g. a trailing implicit return).
             if matches!(input.get(1).map(|t| t.kind), Some(Token::LParen)) {
-                expression(input).map(|e| Statement::Expr(ExprStmt { expr: e, has_semicolon: false }))
+                expression(input).map(|e| {
+                    Statement::Expr(ExprStmt {
+                        expr: e,
+                        has_semicolon: false,
+                    })
+                })
             } else {
                 fn_def(input).map(Statement::Fn)
             }
@@ -52,7 +57,10 @@ fn is_component(input: &In<'_>) -> bool {
     match (input.first(), input.get(1)) {
         (Some(t), Some(n)) => {
             t.kind == Token::Ident
-                && t.text.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+                && t.text
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_uppercase())
                 && matches!(n.kind, Token::LParen | Token::LBrace)
         }
         _ => false,
@@ -291,7 +299,12 @@ fn while_stmt(input: &mut In<'_>) -> Pr<WhileStmt> {
 }
 
 fn if_stmt(input: &mut In<'_>) -> Pr<Statement> {
-    if_expr(input).map(|e| Statement::Expr(ExprStmt { expr: Expression::If(Box::new(e)), has_semicolon: false }))
+    if_expr(input).map(|e| {
+        Statement::Expr(ExprStmt {
+            expr: Expression::If(Box::new(e)),
+            has_semicolon: false,
+        })
+    })
 }
 
 /// `{ statement; statement; ... }`.
@@ -547,7 +560,9 @@ fn ui_element(input: &mut In<'_>) -> Pr<UiElement> {
             let t = verified_tk(input, Token::String)?;
             Ok(UiElement::Text(decode_string(&t.text)))
         }
-        Some(Token::Ident) if is_component(input) => component_stmt(input).map(UiElement::Component),
+        Some(Token::Ident) if is_component(input) => {
+            component_stmt(input).map(UiElement::Component)
+        }
         _ => Err(ErrMode::Backtrack(PErr::unexpected(input))),
     }
 }

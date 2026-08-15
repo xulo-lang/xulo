@@ -14,8 +14,8 @@ use std::path::{Path, PathBuf};
 
 use crate::ast::{ExportItem, ImportSpec, ImportStmt, Program, Statement, Type};
 use crate::error::{ErrorKind, XuloError};
-use crate::semantic::{analyze_with, AnalysisResult, TypeEntry, TypeEntryKind};
 use crate::semantic::symbol_table::{Symbol, SymbolKind};
+use crate::semantic::{AnalysisResult, TypeEntry, TypeEntryKind, analyze_with};
 
 /// One loaded module, in dependency (topological) order.
 pub struct Module {
@@ -58,9 +58,12 @@ pub fn compile_file(entry: &Path) -> Result<(String, Vec<(PathBuf, String)>), Xu
 
 /// Resolve the transitive local imports of `entry`.
 pub fn load(entry: &Path) -> Result<LoadedModules, XuloError> {
-    let entry = entry
-        .canonicalize()
-        .map_err(|e| XuloError::new(ErrorKind::Io, format!("cannot resolve {}: {e}", entry.display())))?;
+    let entry = entry.canonicalize().map_err(|e| {
+        XuloError::new(
+            ErrorKind::Io,
+            format!("cannot resolve {}: {e}", entry.display()),
+        )
+    })?;
     let mut loader = Loader {
         index: HashMap::new(),
         loading: HashSet::new(),
@@ -87,7 +90,10 @@ struct Loader {
 impl Loader {
     fn load_file(&mut self, file: &Path) -> Result<usize, XuloError> {
         let file = file.canonicalize().map_err(|e| {
-            XuloError::new(ErrorKind::Io, format!("cannot resolve {}: {e}", file.display()))
+            XuloError::new(
+                ErrorKind::Io,
+                format!("cannot resolve {}: {e}", file.display()),
+            )
         })?;
         if let Some(&idx) = self.index.get(&file) {
             return Ok(idx);
@@ -99,7 +105,10 @@ impl Loader {
             ));
         }
         let source = std::fs::read_to_string(&file).map_err(|e| {
-            XuloError::new(ErrorKind::Io, format!("cannot read {}: {e}", file.display()))
+            XuloError::new(
+                ErrorKind::Io,
+                format!("cannot read {}: {e}", file.display()),
+            )
         })?;
         let tokens = crate::lexer::tokenize(&source).map_err(|e| e.with_file(file.clone()))?;
         let program =
@@ -148,7 +157,9 @@ fn program_has_main(program: &Program) -> bool {
         Statement::Fn(f) => fn_named(f),
         Statement::Export(export) => match &export.item {
             ExportItem::Fn(f) => fn_named(f),
-            ExportItem::Default(inner) => matches!(inner.as_ref(), ExportItem::Fn(f) if fn_named(f)),
+            ExportItem::Default(inner) => {
+                matches!(inner.as_ref(), ExportItem::Fn(f) if fn_named(f))
+            }
             _ => false,
         },
         _ => false,
@@ -163,9 +174,7 @@ fn resolve_local(base: &Path, source: &str) -> Option<PathBuf> {
     candidates.push(joined.clone());
     candidates.push(PathBuf::from(format!("{}.xulo", joined.display())));
     candidates.push(joined.join("index.xulo"));
-    candidates
-        .into_iter()
-        .find(|p| p.is_file())
+    candidates.into_iter().find(|p| p.is_file())
 }
 
 /// Analyze every module in dependency order, seeding each one with the
@@ -189,10 +198,10 @@ pub fn analyze(loaded: &mut LoadedModules) -> Result<Vec<(PathBuf, String)>, Xul
     Ok(warnings)
 }
 
-fn collect_imports(
-    modules: &[Module],
-    idx: usize,
-) -> Result<(Vec<Symbol>, Vec<(String, TypeEntry)>), XuloError> {
+/// Imports' symbols and type entries gathered from a module's dependencies.
+type ImportSeed = (Vec<Symbol>, Vec<(String, TypeEntry)>);
+
+fn collect_imports(modules: &[Module], idx: usize) -> Result<ImportSeed, XuloError> {
     let mut symbols: Vec<Symbol> = Vec::new();
     let mut types: Vec<(String, TypeEntry)> = Vec::new();
     for binding in &modules[idx].imports {
@@ -237,10 +246,8 @@ fn collect_imports(
                     });
                     // Importing an enum gives both a value and a type.
                     if let Type::Named(named) = &sym.type_
-                        && let Some((_, entry)) = analysis
-                            .exported_types
-                            .iter()
-                            .find(|(n, _)| n == named)
+                        && let Some((_, entry)) =
+                            analysis.exported_types.iter().find(|(n, _)| n == named)
                         && matches!(entry.kind, TypeEntryKind::Enum(_))
                     {
                         types.push((local, entry.clone()));
@@ -250,10 +257,13 @@ fn collect_imports(
             ImportSpec::Default(name) => {
                 if binding.type_only {
                     // No default *type* exports exist; treat as opaque.
-                    types.push((name.clone(), TypeEntry {
-                        type_params: Vec::new(),
-                        kind: TypeEntryKind::Alias(Type::Any),
-                    }));
+                    types.push((
+                        name.clone(),
+                        TypeEntry {
+                            type_params: Vec::new(),
+                            kind: TypeEntryKind::Alias(Type::Any),
+                        },
+                    ));
                     continue;
                 }
                 let Some(default_name) = &analysis.default else {
@@ -361,18 +371,14 @@ fn bundle(loaded: &LoadedModules) -> Result<String, XuloError> {
                 ImportSpec::Named(names) => {
                     for (name, alias) in names {
                         let local = alias.clone().unwrap_or_else(|| name.clone());
-                        if let Some((_, sym)) = analysis
-                            .exported_symbols
-                            .iter()
-                            .find(|(n, _)| n == name)
-                        {
-                            if let SymbolKind::Function(_, params, _) = &sym.kind {
+                        if let Some((_, sym)) =
+                            analysis.exported_symbols.iter().find(|(n, _)| n == name)
+                            && let SymbolKind::Function(_, params, _) = &sym.kind {
                                 cg.register_fn_params(
                                     local.clone(),
                                     params.iter().map(|p| p.name.clone()).collect(),
                                 );
                             }
-                        }
                     }
                 }
                 ImportSpec::Default(name) => {
@@ -404,9 +410,8 @@ fn bundle(loaded: &LoadedModules) -> Result<String, XuloError> {
         for binding in &module.imports {
             let target = &loaded.modules[binding.target];
             let analysis = target.analysis.as_ref().expect("analyzed");
-            let is_runtime_value = |name: &str| {
-                analysis.exported_symbols.iter().any(|(n, _)| n == name)
-            };
+            let is_runtime_value =
+                |name: &str| analysis.exported_symbols.iter().any(|(n, _)| n == name);
             match &binding.spec {
                 ImportSpec::Bare => {}
                 ImportSpec::Namespace(ns) => {
@@ -456,7 +461,9 @@ fn bundle(loaded: &LoadedModules) -> Result<String, XuloError> {
         if idx == entry && module.has_main {
             if crate::codegen::javascript::main_returns_component(&module.program) {
                 out.push_str("    const __xulo_main = main();\n");
-                out.push_str("    if (typeof __xulo_mount === \"function\") __xulo_mount(__xulo_main);\n");
+                out.push_str(
+                    "    if (typeof __xulo_mount === \"function\") __xulo_mount(__xulo_main);\n",
+                );
             } else if crate::codegen::javascript::main_is_async(&module.program) {
                 out.push_str("    main().catch((e) => { console.error(e); if (typeof process !== \"undefined\") process.exitCode = 1; });\n");
             } else {

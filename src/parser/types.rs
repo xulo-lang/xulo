@@ -2,7 +2,7 @@ use crate::ast::Type;
 use crate::lexer::token::Token;
 
 use super::expression::decode_string;
-use super::{backtrack_p, ident_name, opt_tk, tk, verified_tk, In, Pr};
+use super::{In, Pr, backtrack_p, ident_name, opt_tk, tk, verified_tk};
 
 /// A full type expression:
 ///

@@ -76,10 +76,7 @@ fn tokenizes_new_keywords() {
 fn tokenizes_type_keywords_as_idents() {
     let tokens = tokenize("string number boolean object list").unwrap();
     let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
-    assert_eq!(
-        kinds,
-        vec![Ident, Ident, Ident, Ident, Ident, EOF]
-    );
+    assert_eq!(kinds, vec![Ident, Ident, Ident, Ident, Ident, EOF]);
 }
 
 #[test]
@@ -88,7 +85,20 @@ fn tokenizes_new_symbols() {
     let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
     assert_eq!(
         kinds,
-        vec![Ident, Pipe, Ident, Amp, Ident, Question, Ident, Bang, Ident, DoubleColon, Ident, EOF]
+        vec![
+            Ident,
+            Pipe,
+            Ident,
+            Amp,
+            Ident,
+            Question,
+            Ident,
+            Bang,
+            Ident,
+            DoubleColon,
+            Ident,
+            EOF
+        ]
     );
 }
 
@@ -106,11 +116,20 @@ fn tokenizes_phase2_symbols() {
     assert_eq!(
         kinds,
         vec![
-            Ident, Dot, Ident,
-            Ident, QuestionDot, Ident,
-            Ident, Nullish, Ident,
-            Ident, RangeOp, Ident,
-            Ellipsis, Ident,
+            Ident,
+            Dot,
+            Ident,
+            Ident,
+            QuestionDot,
+            Ident,
+            Ident,
+            Nullish,
+            Ident,
+            Ident,
+            RangeOp,
+            Ident,
+            Ellipsis,
+            Ident,
             EOF
         ]
     );
@@ -139,13 +158,10 @@ fn tokenizes_phase3_keywords() {
         kinds,
         vec![
             Async, Fn, Ident, LParen, RParen, Colon, Async, LBrace, Await, Ident, LParen, RParen,
-            RBrace,
-            Try, LBrace, Throw, Number, RBrace, Catch, LParen, Ident, RParen, LBrace, RBrace,
-            Import, LBrace, Ident, As, Ident, RBrace, From, String,
-            Import, Star, As, Ident, From, String,
-            Import, Type, LBrace, Ident, RBrace, From, String,
-            Export, Default, Fn, Ident, LParen, RParen, LBrace, RBrace,
-            EOF
+            RBrace, Try, LBrace, Throw, Number, RBrace, Catch, LParen, Ident, RParen, LBrace,
+            RBrace, Import, LBrace, Ident, As, Ident, RBrace, From, String, Import, Star, As,
+            Ident, From, String, Import, Type, LBrace, Ident, RBrace, From, String, Export,
+            Default, Fn, Ident, LParen, RParen, LBrace, RBrace, EOF
         ]
     );
 }

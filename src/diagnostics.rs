@@ -61,7 +61,13 @@ pub fn render(err: &XuloError, source: Option<&str>) -> String {
         .as_ref()
         .map(|f| f.display().to_string())
         .unwrap_or_else(|| "<input>".to_string());
-    out.push_str(&format!(" {} {}:{}:{}\n\n", paint(CYAN, "-->"), path, line_no, column));
+    out.push_str(&format!(
+        " {} {}:{}:{}\n\n",
+        paint(CYAN, "-->"),
+        path,
+        line_no,
+        column
+    ));
 
     let width = line_no.to_string().len();
     let gutter = |s: &str| {

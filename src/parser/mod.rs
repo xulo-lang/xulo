@@ -98,10 +98,9 @@ pub fn parse_program(tokens: &[LexedToken]) -> Result<Program, XuloError> {
             span: Some(e.span),
             file: None,
         }),
-        Err(ErrMode::Incomplete(_)) => Err(XuloError::new(
-            ErrorKind::Parse,
-            "unexpected end of input",
-        )),
+        Err(ErrMode::Incomplete(_)) => {
+            Err(XuloError::new(ErrorKind::Parse, "unexpected end of input"))
+        }
     }
 }
 
@@ -158,7 +157,10 @@ pub fn ident_name(input: &mut In<'_>) -> Pr<String> {
 
 /// Reads either an `Ident` or the `print` keyword as a name.
 pub fn name(input: &mut In<'_>) -> Pr<String> {
-    let t = input.first().cloned().ok_or_else(|| ErrMode::Backtrack(PErr::unexpected(input)))?;
+    let t = input
+        .first()
+        .cloned()
+        .ok_or_else(|| ErrMode::Backtrack(PErr::unexpected(input)))?;
     match t.kind {
         Token::Ident | Token::Print => {
             *input = &input[1..];
@@ -227,7 +229,10 @@ mod tests {
         match &b.value {
             Some(Expression::BinaryOp(op)) => {
                 assert_eq!(op.operator, BinaryOperator::Add);
-                assert!(matches!(op.left.clone(), Expression::Literal(Literal::Number(1.0))));
+                assert!(matches!(
+                    op.left.clone(),
+                    Expression::Literal(Literal::Number(1.0))
+                ));
                 match &op.right {
                     Expression::BinaryOp(mul) => {
                         assert_eq!(mul.operator, BinaryOperator::Mul);
@@ -259,7 +264,9 @@ mod tests {
             panic!("expected let");
         };
         assert!(matches!(&b.value, Some(Expression::Literal(Literal::List(v))) if v.len() == 3));
-        assert!(matches!(&p.statements[1], Statement::Expr(es) if matches!(es.expr, Expression::Call(_))));
+        assert!(
+            matches!(&p.statements[1], Statement::Expr(es) if matches!(es.expr, Expression::Call(_)))
+        );
     }
 
     #[test]
@@ -273,7 +280,9 @@ mod tests {
             panic!();
         };
         assert_eq!(op.operator, BinaryOperator::Sub);
-        assert!(matches!(op.left.clone(), Expression::BinaryOp(inner) if inner.operator == BinaryOperator::Sub));
+        assert!(
+            matches!(op.left.clone(), Expression::BinaryOp(inner) if inner.operator == BinaryOperator::Sub)
+        );
     }
 
     #[test]

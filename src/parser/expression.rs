@@ -7,7 +7,7 @@ use crate::lexer::token::Token;
 
 use super::statement::{block, params_list};
 use super::types::type_expr;
-use super::{ident_name, name, opt_tk, peek_is, tk, verified_tk, In, PErr, Pr};
+use super::{In, PErr, Pr, ident_name, name, opt_tk, peek_is, tk, verified_tk};
 use winnow::error::ErrMode;
 
 const ADD_OPS: &[(Token, BinaryOperator)] = &[

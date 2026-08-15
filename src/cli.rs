@@ -105,7 +105,8 @@ fn build_file(file: &Path, out: Option<PathBuf>) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn fmt_file(file: &Path) -> ExitCode {    let source = match std::fs::read_to_string(file) {
+fn fmt_file(file: &Path) -> ExitCode {
+    let source = match std::fs::read_to_string(file) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("cannot read {}: {e}", file.display());
@@ -133,7 +134,8 @@ fn fmt_file(file: &Path) -> ExitCode {    let source = match std::fs::read_to_st
     ExitCode::SUCCESS
 }
 
-fn check_file(file: &Path) -> ExitCode {    match crate::module::compile_file(file) {
+fn check_file(file: &Path) -> ExitCode {
+    match crate::module::compile_file(file) {
         Ok((_, warnings)) => {
             print_warnings(&warnings);
             println!("no errors");
@@ -182,8 +184,7 @@ fn repl() -> ExitCode {
         if unbalanced(&entry) {
             continue;
         }
-        let run_now =
-            trimmed.is_empty() || trimmed == "run" || entry.trim_end().ends_with('}');
+        let run_now = trimmed.is_empty() || trimmed == "run" || entry.trim_end().ends_with('}');
         if !run_now {
             continue;
         }
@@ -269,7 +270,8 @@ fn compile_source(buffer: &str) -> Result<(String, Vec<(std::path::PathBuf, Stri
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let path = std::env::temp_dir().join(format!("xulo_repl_{}_{}.xulo", std::process::id(), nanos));
+    let path =
+        std::env::temp_dir().join(format!("xulo_repl_{}_{}.xulo", std::process::id(), nanos));
     if let Err(e) = write_js(&path, buffer) {
         eprintln!("{e}");
         return Err(());
@@ -287,7 +289,8 @@ fn compile_source(buffer: &str) -> Result<(String, Vec<(std::path::PathBuf, Stri
     }
 }
 
-fn compile_to_js(file: &Path) -> Result<(String, Vec<(std::path::PathBuf, String)>), ExitCode> {    match crate::module::compile_file(file) {
+fn compile_to_js(file: &Path) -> Result<(String, Vec<(std::path::PathBuf, String)>), ExitCode> {
+    match crate::module::compile_file(file) {
         Ok((js, warnings)) => Ok((js, warnings)),
         Err(err) => {
             let src_file = err.file.clone().unwrap_or_else(|| file.to_path_buf());
@@ -310,8 +313,8 @@ fn print_compile_error(err: &XuloError, source: &str, file: &Path) {
 }
 
 fn write_js(path: &Path, js: &str) -> Result<(), String> {
-    let mut f = std::fs::File::create(path)
-        .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    let mut f =
+        std::fs::File::create(path).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
     f.write_all(js.as_bytes())
         .map_err(|e| format!("cannot write {}: {e}", path.display()))
 }

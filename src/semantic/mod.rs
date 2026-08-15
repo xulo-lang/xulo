@@ -3,7 +3,7 @@ pub mod symbol_table;
 use std::collections::HashMap;
 
 use crate::ast::{
-    AssignStmt, AssignTarget, Block, BinaryOperator, CallArg, EnumVariant, Expression, IfExpr,
+    AssignStmt, AssignTarget, BinaryOperator, Block, CallArg, EnumVariant, Expression, IfExpr,
     LetBinding, Literal, ObjectField, Program, Statement, Type, TypeAlias,
 };
 use crate::error::{ErrorKind, XuloError};
@@ -114,7 +114,10 @@ pub fn analyze_with(
         component_depth: 0,
         block_depth: 0,
         no_await_depth: 0,
-        imports: imports.iter().map(|s| (s.name.clone(), s.clone())).collect(),
+        imports: imports
+            .iter()
+            .map(|s| (s.name.clone(), s.clone()))
+            .collect(),
         imported_types: imported_types
             .iter()
             .map(|(n, t)| (n.clone(), t.clone()))
@@ -214,8 +217,8 @@ impl Analyzer {
                     None => binding.type_annotation.clone().unwrap_or(Type::Any),
                 };
                 let mut ok = true;
-                if let Some(annotation) = &binding.type_annotation {
-                    if !self.assignable(&value_type, annotation) {
+                if let Some(annotation) = &binding.type_annotation
+                    && !self.assignable(&value_type, annotation) {
                         // Value-aware fallback for string-literal types
                         // (`"active" | "inactive"`): a direct literal may match.
                         let literal_ok = match &binding.value {
@@ -226,7 +229,6 @@ impl Analyzer {
                             ok = false;
                         }
                     }
-                }
                 if !ok {
                     return Err(err(format!(
                         "cannot bind a value of type `{}` to `let {}: {}`",
@@ -371,7 +373,11 @@ impl Analyzer {
         let symbol = Symbol {
             name: f.name.clone(),
             type_: return_type.clone(),
-            kind: SymbolKind::Function(f.type_params.clone(), f.params.clone(), return_type.clone()),
+            kind: SymbolKind::Function(
+                f.type_params.clone(),
+                f.params.clone(),
+                return_type.clone(),
+            ),
             is_const: true,
         };
         if !self.table.declare(symbol) {
@@ -701,9 +707,9 @@ impl Analyzer {
                     SymbolKind::Store => Err(err(format!(
                         "cannot assign to `{name}`: store bindings are read-only"
                     ))),
-                    SymbolKind::Function(_, _, _) => Err(err(format!(
-                        "cannot assign to `{name}`: it is a function"
-                    ))),
+                    SymbolKind::Function(_, _, _) => {
+                        Err(err(format!("cannot assign to `{name}`: it is a function")))
+                    }
                 }
             }
             AssignTarget::Member(object, property) => {
@@ -715,9 +721,7 @@ impl Analyzer {
                         .iter()
                         .find(|(n, _)| n == property)
                         .map(|(_, t)| t.clone())
-                        .ok_or_else(|| {
-                            err(format!("type has no member `{property}`"))
-                        }),
+                        .ok_or_else(|| err(format!("type has no member `{property}`"))),
                     other => Err(err(format!(
                         "cannot assign member `{property}` of `{}`",
                         other.name()
@@ -989,13 +993,12 @@ impl Analyzer {
                     e.name, variant.name
                 )));
             }
-            if let Some(payload) = &variant.payload {
-                if let Err(e2) = self.check_type(payload) {
+            if let Some(payload) = &variant.payload
+                && let Err(e2) = self.check_type(payload) {
                     self.generics
                         .truncate(self.generics.len().saturating_sub(e.type_params.len()));
                     return Err(e2);
                 }
-            }
         }
         self.generics
             .truncate(self.generics.len().saturating_sub(e.type_params.len()));
@@ -1149,7 +1152,7 @@ impl Analyzer {
                                     return Err(err(format!(
                                         "spread operand must be a list, got `{}`",
                                         other.name()
-                                    )))
+                                    )));
                                 }
                             }
                         }
@@ -1302,10 +1305,7 @@ impl Analyzer {
             Type::List(inner) => Ok(*inner),
             Type::Object | Type::Any | Type::String | Type::Null => Ok(Type::Any),
             Type::Named(_) => Ok(Type::Any),
-            other => Err(err(format!(
-                "cannot index into `{}`",
-                other.name()
-            ))),
+            other => Err(err(format!("cannot index into `{}`", other.name()))),
         }
     }
 
@@ -1370,8 +1370,9 @@ impl Analyzer {
                             });
                             let t = self.check_expression(&arm.value)?;
                             self.table.pop_scope();
-                            self.generics
-                                .truncate(self.generics.len().saturating_sub(entry.type_params.len()));
+                            self.generics.truncate(
+                                self.generics.len().saturating_sub(entry.type_params.len()),
+                            );
                             arm_types.push(t);
                             continue;
                         }
@@ -1429,11 +1430,8 @@ impl Analyzer {
                     )))
                 }
             }
-            BinaryOperator::Sub
-            | BinaryOperator::Mul
-            | BinaryOperator::Div => {
-                if self.assignable(&left, &Type::Number) && self.assignable(&right, &Type::Number)
-                {
+            BinaryOperator::Sub | BinaryOperator::Mul | BinaryOperator::Div => {
+                if self.assignable(&left, &Type::Number) && self.assignable(&right, &Type::Number) {
                     Ok(Type::Number)
                 } else {
                     Err(err(format!(
@@ -1456,12 +1454,8 @@ impl Analyzer {
                     )))
                 }
             }
-            BinaryOperator::Lt
-            | BinaryOperator::Gt
-            | BinaryOperator::Lte
-            | BinaryOperator::Gte => {
-                let comparable =
-                    self.assignable(&left, &right) && self.assignable(&right, &left);
+            BinaryOperator::Lt | BinaryOperator::Gt | BinaryOperator::Lte | BinaryOperator::Gte => {
+                let comparable = self.assignable(&left, &right) && self.assignable(&right, &left);
                 if comparable {
                     Ok(Type::Boolean)
                 } else {
@@ -1489,7 +1483,10 @@ impl Analyzer {
     }
 
     fn is_stringish(&self, ty: &Type) -> bool {
-        matches!(ty, Type::String | Type::Literal(_) | Type::Boolean | Type::Null)
+        matches!(
+            ty,
+            Type::String | Type::Literal(_) | Type::Boolean | Type::Null
+        )
     }
 
     fn join_list(&self, l: &Type, r: &Type) -> Type {
@@ -1604,10 +1601,7 @@ impl Analyzer {
                             .filter(|p| p.default.is_none() && !param_optional(p))
                             .map(|p| p.name.clone())
                             .collect::<Vec<_>>();
-                        let missing = required
-                            .iter()
-                            .find(|name| !seen.contains(*name))
-                            .cloned();
+                        let missing = required.iter().find(|name| !seen.contains(*name)).cloned();
                         if let Some(name) = missing {
                             return Err(err(format!(
                                 "function `{}` is missing required argument `{name}`",
@@ -1657,17 +1651,15 @@ impl Analyzer {
                                 .iter()
                                 .map(|p| p.type_annotation.clone().unwrap_or(Type::Any))
                                 .collect::<Vec<_>>();
-                            let bindings = infer_type_bindings(
-                                &type_params,
-                                &param_types,
-                                &positional_types,
-                            );
+                            let bindings =
+                                infer_type_bindings(&type_params, &param_types, &positional_types);
                             resolved = substitute_type(&resolved, &bindings);
                         }
                         Ok(resolved)
                     }
                 })();
-                self.generics.truncate(self.generics.len().saturating_sub(type_params.len()));
+                self.generics
+                    .truncate(self.generics.len().saturating_sub(type_params.len()));
                 result
             }
             SymbolKind::Variable => {
@@ -1729,9 +1721,7 @@ impl Analyzer {
         match &entry.kind {
             TypeEntryKind::Enum(variants) => {
                 if !variants.iter().any(|v| v.name == variant) {
-                    return Err(err(format!(
-                        "enum `{enum_name}` has no member `{variant}`"
-                    )));
+                    return Err(err(format!("enum `{enum_name}` has no member `{variant}`")));
                 }
                 Ok(Type::Named(enum_name))
             }
@@ -1753,9 +1743,7 @@ impl Analyzer {
             return Err(err(format!("`{enum_name}` is not an enum")));
         };
         let Some(v) = variants.iter().find(|v| v.name == variant) else {
-            return Err(err(
-                format!("enum `{enum_name}` has no member `{variant}`"),
-            ));
+            return Err(err(format!("enum `{enum_name}` has no member `{variant}`")));
         };
         let payload = v.payload.clone();
         self.generics.extend(type_params.iter().cloned());
@@ -1767,7 +1755,7 @@ impl Analyzer {
                         payload.name()
                     )))
                 } else {
-                    let arg_type = self.check_expression(&arguments[0])?;
+                    let arg_type = self.check_expression(arguments[0])?;
                     if !self.assignable(&arg_type, &payload) {
                         Err(err(format!(
                             "argument to `{enum_name}::{variant}` must be `{}`, found `{}`",
@@ -1939,8 +1927,14 @@ impl Analyzer {
                 matches!(b.as_ref(), Type::Any) || self.assignable(actual, b)
             }
             (
-                Type::FnSig { params: ap, ret: ar },
-                Type::FnSig { params: bp, ret: br },
+                Type::FnSig {
+                    params: ap,
+                    ret: ar,
+                },
+                Type::FnSig {
+                    params: bp,
+                    ret: br,
+                },
             ) => {
                 ap.len() == bp.len()
                     && ap.iter().zip(bp).all(|(a, b)| self.assignable(a, b))
@@ -2010,7 +2004,9 @@ fn unify_param(
 ) {
     match expected {
         Type::Named(name) if type_params.contains(name) => {
-            bindings.entry(name.clone()).or_insert_with(|| actual.clone());
+            bindings
+                .entry(name.clone())
+                .or_insert_with(|| actual.clone());
         }
         Type::List(inner) => {
             if let Type::List(element) = actual {
@@ -2067,18 +2063,12 @@ fn substitute_type(ty: &Type, bindings: &std::collections::HashMap<String, Type>
         }
         Type::List(inner) => Type::List(Box::new(substitute_type(inner, bindings))),
         Type::Optional(inner) => Type::Optional(Box::new(substitute_type(inner, bindings))),
-        Type::Union(parts) => Type::Union(
-            parts
-                .iter()
-                .map(|p| substitute_type(p, bindings))
-                .collect(),
-        ),
-        Type::Intersection(parts) => Type::Intersection(
-            parts
-                .iter()
-                .map(|p| substitute_type(p, bindings))
-                .collect(),
-        ),
+        Type::Union(parts) => {
+            Type::Union(parts.iter().map(|p| substitute_type(p, bindings)).collect())
+        }
+        Type::Intersection(parts) => {
+            Type::Intersection(parts.iter().map(|p| substitute_type(p, bindings)).collect())
+        }
         Type::Async(inner) => Type::Async(Box::new(substitute_type(inner, bindings))),
         Type::FnSig { params, ret } => Type::FnSig {
             params: params
@@ -2129,9 +2119,7 @@ fn pattern_name(arm: &crate::ast::MatchArm) -> String {
         crate::ast::MatchPattern::Literal(Literal::Object(_)) => "{...}".into(),
         crate::ast::MatchPattern::Enum(r) => format!("{}::{}", r.enum_name, r.variant),
         crate::ast::MatchPattern::EnumPayload {
-            enum_name,
-            variant,
-            ..
+            enum_name, variant, ..
         } => format!("{enum_name}::{variant}"),
         crate::ast::MatchPattern::Wildcard => "_".into(),
     }

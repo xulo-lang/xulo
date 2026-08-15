@@ -437,7 +437,10 @@ pub enum Type {
     /// A structural object type: `{ width: number }`.
     ObjectType(Vec<(String, Type)>),
     /// A function *type*: `fn(a: string): boolean`.
-    FnSig { params: Vec<Type>, ret: Option<Box<Type>> },
+    FnSig {
+        params: Vec<Type>,
+        ret: Option<Box<Type>>,
+    },
     /// An async (promise) result: the return type annotation `async`.
     Async(Box<Type>),
     Any,

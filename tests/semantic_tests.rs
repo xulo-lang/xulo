@@ -65,8 +65,9 @@ fn rejects_return_type_mismatch() {
 
 #[test]
 fn rejects_wrong_argument_count() {
-    let err = analyze_src("fn add(a: number, b: number): number { return a + b } fn main() { add(1) }")
-        .unwrap_err();
+    let err =
+        analyze_src("fn add(a: number, b: number): number { return a + b } fn main() { add(1) }")
+            .unwrap_err();
     assert!(err.message.contains("expects 2 argument(s)"));
 }
 
@@ -97,7 +98,10 @@ fn rejects_const_reassignment() {
 #[test]
 fn rejects_let_type_mismatch_on_assignment() {
     let err = analyze_src(r#"fn main() { let x: number = 1 x = "s" }"#).unwrap_err();
-    assert!(err.message.contains("cannot assign a value of type `string`"));
+    assert!(
+        err.message
+            .contains("cannot assign a value of type `string`")
+    );
 }
 
 #[test]
@@ -156,10 +160,8 @@ fn rejects_unknown_enum_member() {
 
 #[test]
 fn rejects_enum_payload_type_mismatch() {
-    let err = analyze_src(
-        r#"enum R { Ok(number) } fn main() { let x = R::Ok("no") }"#,
-    )
-    .unwrap_err();
+    let err =
+        analyze_src(r#"enum R { Ok(number) } fn main() { let x = R::Ok("no") }"#).unwrap_err();
     assert!(err.message.contains("argument to `R::Ok`"));
 }
 
@@ -204,10 +206,12 @@ fn string_literal_types_in_union() {
 
 #[test]
 fn rejects_value_not_in_string_union() {
-    let err = analyze_src(r#"
+    let err = analyze_src(
+        r#"
         type Status = "active" | "inactive"
         fn main() { let s: Status = "bogus" }
-    "#)
+    "#,
+    )
     .unwrap_err();
     assert!(err.message.contains("cannot bind"));
 }
@@ -269,7 +273,8 @@ fn match_arms_are_checked() {
         }
     "#;
     assert!(analyze_src(src).is_ok());
-    let err = analyze_src("fn main() { let x = match true { 0 => 1 _ => 2 } print(x) }").unwrap_err();
+    let err =
+        analyze_src("fn main() { let x = match true { 0 => 1 _ => 2 } print(x) }").unwrap_err();
     assert!(err.message.contains("does not match"));
 }
 
@@ -328,8 +333,13 @@ fn generic_call_site_infers_type_argument() {
 
 #[test]
 fn member_access_fields() {
-    assert!(analyze_src("fn main() { let user: { name: string } = { name: \"a\" } print(user.name) }").is_ok());
-    let err = analyze_src("fn main() { let user: { name: string } = { name: \"a\" } print(user.age) }").unwrap_err();
+    assert!(
+        analyze_src("fn main() { let user: { name: string } = { name: \"a\" } print(user.name) }")
+            .is_ok()
+    );
+    let err =
+        analyze_src("fn main() { let user: { name: string } = { name: \"a\" } print(user.age) }")
+            .unwrap_err();
     assert!(err.message.contains("no member `age`"));
 }
 
@@ -337,7 +347,8 @@ fn member_access_fields() {
 fn optional_member_needs_safe_access() {
     let src = "fn main() { let u: { name: string }? = null print(u?.name) }";
     assert!(analyze_src(src).is_ok());
-    let err = analyze_src("fn main() { let u: { name: string }? = null print(u.name) }").unwrap_err();
+    let err =
+        analyze_src("fn main() { let u: { name: string }? = null print(u.name) }").unwrap_err();
     assert!(err.message.contains("without `?.`"));
 }
 
@@ -372,25 +383,34 @@ fn named_args_are_validated() {
         fn main() { print(greet(count: 2)) }
     "#;
     assert!(analyze_src(src).is_ok());
-    let err = analyze_src(r#"
+    let err = analyze_src(
+        r#"
         fn greet(name: string): string { name }
         fn main() { print(greet(nope: "x")) }
-    "#).unwrap_err();
+    "#,
+    )
+    .unwrap_err();
     assert!(err.message.contains("no parameter `nope`"));
 }
 
 #[test]
 fn named_args_duplicate_or_missing_are_errors() {
-    let err = analyze_src(r#"
+    let err = analyze_src(
+        r#"
         fn greet(a: number, b: number): number { a + b }
         fn main() { print(greet(a: 1, a: 2)) }
-    "#).unwrap_err();
+    "#,
+    )
+    .unwrap_err();
     assert!(err.message.contains("provided twice"));
 
-    let err = analyze_src(r#"
+    let err = analyze_src(
+        r#"
         fn greet(a: number, b: number): number { a + b }
         fn main() { print(greet(a: 1)) }
-    "#).unwrap_err();
+    "#,
+    )
+    .unwrap_err();
     assert!(err.message.contains("missing required argument"));
 }
 
@@ -425,10 +445,8 @@ fn rejects_await_outside_async() {
 fn awaits_sync_call_is_ok_but_non_promise_is_an_error() {
     let ok = analyze_src("fn main(): async { await work() }").is_ok();
     // `work` is unknown; importing seeds it, but a non-promise await is caught:
-    let err = analyze_src(
-        "fn n(): number { return 1 }\nfn main(): async { let v = await n() }",
-    )
-    .unwrap_err();
+    let err = analyze_src("fn n(): number { return 1 }\nfn main(): async { let v = await n() }")
+        .unwrap_err();
     assert!(err.message.contains("non-promise"));
     let _ = ok;
 }
@@ -486,19 +504,15 @@ fn async_closure_can_be_awaited() {
 
 #[test]
 fn rejects_wrong_arity_for_function_values() {
-    let err = analyze_src(
-        "fn main() { let f = fn(x: number): number { x } print(f(1, 2)) }",
-    )
-    .unwrap_err();
+    let err = analyze_src("fn main() { let f = fn(x: number): number { x } print(f(1, 2)) }")
+        .unwrap_err();
     assert!(err.message.contains("exactly 1 argument"));
 }
 
 #[test]
 fn rejects_wrong_arg_type_for_function_values() {
-    let err = analyze_src(
-        r#"fn main() { let f = fn(x: number): number { x } f("hi") }"#,
-    )
-    .unwrap_err();
+    let err =
+        analyze_src(r#"fn main() { let f = fn(x: number): number { x } f("hi") }"#).unwrap_err();
     assert!(err.message.contains("must be `number`"));
 }
 
@@ -557,10 +571,9 @@ fn rejects_calling_non_function_expression() {
 
 #[test]
 fn rejects_wrong_arity_on_indexed_function_value() {
-    let err = analyze_src(
-        "fn main() { let xs = [fn(a: number): number { a }] print(xs[0](1, 2)) }",
-    )
-    .unwrap_err();
+    let err =
+        analyze_src("fn main() { let xs = [fn(a: number): number { a }] print(xs[0](1, 2)) }")
+            .unwrap_err();
     assert!(err.message.contains("exactly 1 argument"));
 }
 
@@ -692,10 +705,8 @@ fn decorators_rejected_outside_component() {
 
 #[test]
 fn decorators_rejected_in_nested_block() {
-    let err = analyze_src(
-        "fn main(): Component { if true { @State let count: number = 0 } }",
-    )
-    .unwrap_err();
+    let err = analyze_src("fn main(): Component { if true { @State let count: number = 0 } }")
+        .unwrap_err();
     assert!(err.message.contains("nested block"));
 }
 
@@ -724,19 +735,16 @@ fn dollar_binding_requires_state_or_store() {
     "#;
     assert!(analyze_src(src).is_ok());
 
-    let err = analyze_src(
-        "fn main(): Component { let name: string = \"\" Input(value: $name) }",
-    )
-    .unwrap_err();
+    let err = analyze_src("fn main(): Component { let name: string = \"\" Input(value: $name) }")
+        .unwrap_err();
     assert!(err.message.contains("`$` binding"));
 }
 
 #[test]
 fn state_cannot_be_redeclared() {
-    let err = analyze_src(
-        "fn main(): Component { @State let x: number = 0 @State let x: number = 1 }",
-    )
-    .unwrap_err();
+    let err =
+        analyze_src("fn main(): Component { @State let x: number = 0 @State let x: number = 1 }")
+            .unwrap_err();
     assert!(err.message.contains("already declared"));
 }
 
@@ -752,10 +760,8 @@ fn component_children_are_type_checked() {
     "#;
     assert!(analyze_src(src).is_ok());
 
-    let err = analyze_src(
-        "fn main(): Component { VStack { for x in 5 { Text(\"x\") } } }",
-    )
-    .unwrap_err();
+    let err =
+        analyze_src("fn main(): Component { VStack { for x in 5 { Text(\"x\") } } }").unwrap_err();
     assert!(err.message.contains("must iterate over a `list`"));
 }
 
@@ -807,10 +813,9 @@ fn await_allowed_inside_ternary() {
 
 #[test]
 fn await_rejected_in_non_async_closure_inside_async_fn() {
-    let err = analyze_src(
-        "fn work(): async { 42 }\nfn main(): async { let g = fn() { await work() } }",
-    )
-    .unwrap_err();
+    let err =
+        analyze_src("fn work(): async { 42 }\nfn main(): async { let g = fn() { await work() } }")
+            .unwrap_err();
     assert!(err.message.contains("inside an `async` function"));
 }
 
@@ -831,47 +836,61 @@ fn decorators_rejected_in_closure_inside_component() {
 
 #[test]
 fn decorators_rejected_in_anonymous_closure_inside_component() {
-    let err = analyze_src(
-        "fn main(): Component { let handle = fn() { @State let count: number = 0 } }",
-    )
-    .unwrap_err();
+    let err =
+        analyze_src("fn main(): Component { let handle = fn() { @State let count: number = 0 } }")
+            .unwrap_err();
     assert!(err.message.contains("returning `Component`"));
 }
 
 #[test]
 fn effect_cannot_capture_render_local() {
-    let err = analyze_src(r#"
+    let err = analyze_src(
+        r#"
         fn main(): Component {
             let a = 5
             @Effect fn() { print("a=" + a) }
         }
-    "#)
+    "#,
+    )
     .unwrap_err();
-    assert!(err.message.contains("`@Effect` closures cannot reference `a`"));
+    assert!(
+        err.message
+            .contains("`@Effect` closures cannot reference `a`")
+    );
 }
 
 #[test]
 fn effect_cannot_capture_render_local_via_deps() {
-    let err = analyze_src(r#"
+    let err = analyze_src(
+        r#"
         fn main(): Component {
             let a = 5
             @Effect fn() { print(1) }, [a]
         }
-    "#)
+    "#,
+    )
     .unwrap_err();
-    assert!(err.message.contains("`@Effect` closures cannot reference `a`"));
+    assert!(
+        err.message
+            .contains("`@Effect` closures cannot reference `a`")
+    );
 }
 
 #[test]
 fn effect_cannot_call_render_local_function() {
-    let err = analyze_src(r#"
+    let err = analyze_src(
+        r#"
         fn main(): Component {
             fn helper() { print("h") }
             @Effect fn() { helper() }
         }
-    "#)
+    "#,
+    )
     .unwrap_err();
-    assert!(err.message.contains("`@Effect` closures cannot reference `helper`"));
+    assert!(
+        err.message
+            .contains("`@Effect` closures cannot reference `helper`")
+    );
 }
 
 #[test]

@@ -1,5 +1,5 @@
 use crate::ast::{
-    AssignStmt, BindingPattern, BinaryOperator, Block, BinaryOp, Call, CallValue, ComponentStmt,
+    AssignStmt, BinaryOp, BinaryOperator, BindingPattern, Block, Call, CallValue, ComponentStmt,
     EnumDef, Expression, FnDef, ForStmt, IfExpr, LetBinding, Literal, ObjectField, Program,
     Statement, Type, UiElement, WhileStmt,
 };
@@ -184,7 +184,9 @@ impl Javascript {
             String::new()
         };
         let preamble = if self.used_range {
-            format!("{preamble}function range(a, b) {{ const r = []; for (let i = a; i < b; i++) r.push(i); return r; }}\n")
+            format!(
+                "{preamble}function range(a, b) {{ const r = []; for (let i = a; i < b; i++) r.push(i); return r; }}\n"
+            )
         } else {
             preamble
         };
@@ -279,15 +281,13 @@ impl Javascript {
         match statement {
             Statement::Fn(f) => self.fn_def(f)?,
             Statement::Let(b) => self.let_binding(b)?,
-            Statement::Return(r) => {
-                match &r.value {
-                    Some(value) => {
-                        let value = self.expr(value)?;
-                        self.line(&format!("return {value};"));
-                    }
-                    None => self.line("return;"),
+            Statement::Return(r) => match &r.value {
+                Some(value) => {
+                    let value = self.expr(value)?;
+                    self.line(&format!("return {value};"));
                 }
-            }
+                None => self.line("return;"),
+            },
             Statement::For(f) => self.for_stmt(f)?,
             Statement::While(w) => self.while_stmt(w)?,
             Statement::Block(b) => {
@@ -367,7 +367,11 @@ impl Javascript {
             })
             .collect::<Result<Vec<_>, XuloError>>()?
             .join(", ");
-        let kw = if f.is_async { "async function" } else { "function" };
+        let kw = if f.is_async {
+            "async function"
+        } else {
+            "function"
+        };
         self.line(&format!("{kw} {}({params}) {{", f.name));
         self.indent += 1;
         self.push_scope();
@@ -561,9 +565,7 @@ impl Javascript {
                     self.register_local(iter_var.clone());
                     let body_js = self.ui_children_expr(body)?;
                     self.pop_scope();
-                    parts.push(format!(
-                        "...({iter}).map(({iter_var}) => {body_js}).flat()"
-                    ));
+                    parts.push(format!("...({iter}).map(({iter_var}) => {body_js}).flat()"));
                 }
             }
         }
@@ -578,7 +580,10 @@ impl Javascript {
                 .iter()
                 .map(|v| {
                     if v.payload.is_some() {
-                        format!("{}: (value) => ({{ tag: \"{}\", value: value }})", v.name, v.name)
+                        format!(
+                            "{}: (value) => ({{ tag: \"{}\", value: value }})",
+                            v.name, v.name
+                        )
                     } else {
                         format!("{}: Object.freeze({{ tag: \"{}\" }})", v.name, v.name)
                     }
@@ -593,7 +598,10 @@ impl Javascript {
                 .map(|v| format!("{}: \"{}.{}\"", v.name, e.name, v.name))
                 .collect::<Vec<_>>()
                 .join(", ");
-            self.line(&format!("const {} = Object.freeze({{ {members} }});", e.name));
+            self.line(&format!(
+                "const {} = Object.freeze({{ {members} }});",
+                e.name
+            ));
         }
         Ok(())
     }
@@ -802,7 +810,9 @@ impl Javascript {
                 }
             }
             Expression::BinaryOp(bin) => self.binary_op(bin)?,
-            Expression::Unary(un) => format!("({}{})", un.operator.symbol(), self.expr(&un.operand)?),
+            Expression::Unary(un) => {
+                format!("({}{})", un.operator.symbol(), self.expr(&un.operand)?)
+            }
             Expression::Call(call) => self.call(call)?,
             Expression::EnumRef(r) => format!("{}.{}", r.enum_name, r.variant),
             Expression::If(if_expr) => self.expr_if(if_expr)?,
@@ -820,11 +830,9 @@ impl Javascript {
             Expression::Index(idx) => {
                 format!("{}[{}]", self.expr(&idx.object)?, self.expr(&idx.index)?)
             }
-            Expression::Nullish(n) => format!(
-                "({} ?? {})",
-                self.expr(&n.left)?,
-                self.expr(&n.right)?
-            ),
+            Expression::Nullish(n) => {
+                format!("({} ?? {})", self.expr(&n.left)?, self.expr(&n.right)?)
+            }
             Expression::Range(r) => {
                 self.used_range = true;
                 let start = self.expr(&r.start)?;
@@ -835,9 +843,7 @@ impl Javascript {
             Expression::FnExpr(f) => self.fn_expr(f)?,
             Expression::Binding(name) => {
                 if self.is_signal(name) {
-                    format!(
-                        "{{ value: {name}.get(), onChange: (__v) => {name}.set(__v) }}"
-                    )
+                    format!("{{ value: {name}.get(), onChange: (__v) => {name}.set(__v) }}")
                 } else {
                     format!("{{ value: {name}, onChange: (__v) => {{}} }}")
                 }
@@ -879,7 +885,11 @@ impl Javascript {
             })
             .collect::<Result<Vec<_>, _>>()?
             .join(", ");
-        let kw = if f.is_async { "async function" } else { "function" };
+        let kw = if f.is_async {
+            "async function"
+        } else {
+            "function"
+        };
         let mut body = String::new();
         let stmts = &f.body.statements;
         if f.return_type.is_some()
@@ -923,9 +933,7 @@ impl Javascript {
                 let elems = items
                     .iter()
                     .map(|e| match e {
-                        Expression::Spread(spread) => {
-                            Ok(format!("...{}", self.expr(spread)?))
-                        }
+                        Expression::Spread(spread) => Ok(format!("...{}", self.expr(spread)?)),
                         other => self.expr(other),
                     })
                     .collect::<Result<Vec<_>, XuloError>>()?;
@@ -938,9 +946,7 @@ impl Javascript {
                         ObjectField::Field { name, value } => {
                             Ok(format!("{}: {}", js_string(name), self.expr(value)?))
                         }
-                        ObjectField::Spread { value } => {
-                            Ok(format!("...{}", self.expr(value)?))
-                        }
+                        ObjectField::Spread { value } => Ok(format!("...{}", self.expr(value)?)),
                     })
                     .collect::<Result<Vec<_>, XuloError>>()?;
                 format!("{{{}}}", parts.join(", "))
@@ -990,8 +996,8 @@ impl Javascript {
         call: &Call,
         param_names: Option<&Vec<String>>,
     ) -> Result<String, XuloError> {
-        let all_named = !call.arguments.is_empty()
-            && call.arguments.iter().all(|a| a.name.is_some());
+        let all_named =
+            !call.arguments.is_empty() && call.arguments.iter().all(|a| a.name.is_some());
         if !all_named {
             return call
                 .arguments
@@ -1024,7 +1030,7 @@ impl Javascript {
     }
 
     /// `if` in a value position is emitted as an IIFE whose arms render their
-/// blocks inline (so `return`, assignments, etc. inside the arms work).
+    /// blocks inline (so `return`, assignments, etc. inside the arms work).
     fn expr_if(&mut self, if_expr: &IfExpr) -> Result<String, XuloError> {
         let condition = self.expr(&if_expr.condition)?;
         let then = self.block_inline(&if_expr.then_branch)?;
@@ -1136,9 +1142,7 @@ fn is_else_if(block: &Block) -> bool {
 /// True when the program's `main` (plain, `export fn`, or `export default fn`)
 /// is declared async (its returned promise should be observed, not dropped).
 pub fn main_is_async(program: &Program) -> bool {
-    main_fn(program)
-        .map(|f| f.is_async)
-        .unwrap_or(false)
+    main_fn(program).map(|f| f.is_async).unwrap_or(false)
 }
 
 /// Find the program's `main` function definition, including `export fn main`
