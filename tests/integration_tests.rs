@@ -395,7 +395,64 @@ fn run_multi_file_default_and_async() {
 }
 
 #[test]
-fn build_bundles_modules_into_one_file() {
+fn run_pub_module_exports() {
+    let (dir, entry) = temp_dir(
+        &[
+            (
+                "math.xulo",
+                "pub fn add(a: number, b: number): number { return a + b }\n\
+                 pub const PI = 3.14\n\
+                 pub enum Role { Admin Guest }\n\
+                 fn secret() { print(\"no\") }\n",
+            ),
+            (
+                "main.xulo",
+                "import { add, PI, Role } from \"./math\"\n\
+                 fn main() { print(add(2, 3)) print(PI) print(Role::Admin) }\n",
+            ),
+        ],
+        "main.xulo",
+    );
+    let out_dir = dir.join("bundle.js");
+    let result = Command::new(BIN)
+        .args([
+            "build",
+            entry.to_str().unwrap(),
+            "-o",
+            out_dir.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+
+    let node = Command::new("node").arg(&out_dir).output().unwrap();
+    let stdout = String::from_utf8_lossy(&node.stdout);
+    assert_eq!(stdout.trim(), "5\n3.14\nRole.Admin");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn run_pub_main_entry() {
+    let file = temp_file(
+        "pubmain.xulo",
+        "pub fn main() { print(\"hi from pub main\") }",
+    );
+    let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "hi from pub main\n");
+    let _ = std::fs::remove_file(&file);
+}
+
+#[test]
+fn run_module_import_destructure() {
     let (dir, entry) = temp_dir(
         &[
             (

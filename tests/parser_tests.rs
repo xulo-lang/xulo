@@ -446,6 +446,58 @@ fn parses_import_and_export_forms() {
 }
 
 #[test]
+fn parses_pub_declarations_as_exports() {
+    use xulo::ast::{ExportItem, ExportStmt};
+    let p = parse(
+        "pub fn add(a: number): number { return a } pub const PI = 3.14 \
+         pub let x = 1 pub type User = { name: string } pub enum Status { Active }",
+    );
+    assert_eq!(p.statements.len(), 5);
+    assert!(matches!(
+        &p.statements[0],
+        Statement::Export(ExportStmt {
+            item: ExportItem::Fn(_)
+        })
+    ));
+    assert!(matches!(
+        &p.statements[1],
+        Statement::Export(ExportStmt {
+            item: ExportItem::Let(_)
+        })
+    ));
+    assert!(matches!(
+        &p.statements[2],
+        Statement::Export(ExportStmt {
+            item: ExportItem::Let(_)
+        })
+    ));
+    assert!(matches!(
+        &p.statements[3],
+        Statement::Export(ExportStmt {
+            item: ExportItem::Type(_)
+        })
+    ));
+    assert!(matches!(
+        &p.statements[4],
+        Statement::Export(ExportStmt {
+            item: ExportItem::Enum(_)
+        })
+    ));
+}
+
+#[test]
+fn rejects_pub_combined_with_export() {
+    let tokens = tokenize("pub export fn foo() {}").unwrap();
+    let err = parse_program(&tokens).unwrap_err();
+    assert!(
+        err.message.contains("cannot be combined"),
+        "unexpected message: {}",
+        err.message
+    );
+    assert!(err.span.is_some(), "error must carry a span");
+}
+
+#[test]
 fn parses_export_default_fn() {
     use xulo::ast::ExportItem;
     let p = parse("export default fn main() { print(\"hi\") }");

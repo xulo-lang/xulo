@@ -39,7 +39,7 @@ identifier     = (letter | "_") { letter | digit | "_" } ;
 | `match` `and` `or` | 模式匹配 / 逻辑与或 |
 | `async` `await` | 异步 |
 | `try` `catch` `throw` | 异常 |
-| `import` `export` `from` `as` `default` | 模块 |
+| `import` `export` `pub` `from` `as` `default` | 模块 |
 | `type` `enum` | 类型声明 |
 | `null` `true` `false` | 字面量关键字 |
 | `print` | 内置输出函数 |

@@ -43,7 +43,23 @@ import "core"
 | `import default from "..."` | 默认导入 |
 | `import "..."` | 副作用导入 |
 
-**导出形式：** `export fn/const/let/type/enum`、`export default fn`、`export { a, b }`。
+**导出形式：** `pub fn/const/let/type/enum`（等价 `export`）、`export fn/const/let/type/enum`、`export default fn`、`export { a, b }`。
+
+## `pub` 关键字（公开可见性）
+
+`pub` 是声明级修饰符，把声明标记为公开（对其他模块可见），与对应的 `export` 声明完全等价：
+
+```xulo
+pub fn add(a: number, b: number): number { a + b }
+pub const PI = 3.14
+pub enum Status { Active Inactive }
+pub type User = { name: string }
+```
+
+- `pub fn/let/const/type/enum` ≡ `export fn/let/const/type/enum`，只影响跨模块可见性，模块内照常使用。
+- `pub` 不能与 `export` 组合（`pub export fn` 报错）。
+- `export default`（入口）与 `export { a, b }`（名称列表）没有 `pub` 形式，继续用 `export`。
+- `pub fn main` 与 `export fn main` 一样被识别为程序入口。
 
 > 注意：`import type` 写在 `import` 之后（`import type { ... }`），而非花括号内（`import { type ... }` 暂不支持）。
 

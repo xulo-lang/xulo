@@ -167,6 +167,19 @@ fn tokenizes_phase3_keywords() {
 }
 
 #[test]
+fn tokenizes_pub_keyword() {
+    let tokens = tokenize("pub fn add(a: number): number { return a }").unwrap();
+    let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
+    assert_eq!(
+        kinds,
+        vec![
+            Pub, Fn, Ident, LParen, Ident, Colon, Ident, RParen, Colon, Ident, LBrace, Return,
+            Ident, RBrace, EOF
+        ]
+    );
+}
+
+#[test]
 fn tokenizes_at_and_dollar() {
     let tokens = tokenize("@State let x = 0 $name").unwrap();
     let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();

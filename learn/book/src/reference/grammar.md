@@ -9,7 +9,7 @@
    0. Document Root
    ============================================================ *)
 
-document            = { import_stmt | export_stmt | type_def | enum_def | fn_def | const_stmt | let_stmt } ;
+document            = { import_stmt | export_stmt | pub_stmt | type_def | enum_def | fn_def | const_stmt | let_stmt } ;
 module              = document ;
 
 (* ============================================================
@@ -268,6 +268,10 @@ export_stmt         = "export" export_spec ;
 export_spec         = ( "const" | "let" | "fn" | "type" | "enum" ) identifier
                     | "default" ( "const" | "let" | "fn" ) identifier
                     | "{" export_name_list "}" ;
+
+(* `pub` ≡ `export` for declarations (public visibility); cannot combine *)
+pub_stmt            = "pub" ( "const" | "let" | "fn" | "type" | "enum" ) identifier
+                      /* declaration body as the matching *_def */ ;
 
 export_name_list    = identifier { "," identifier } [ "," ] ;
 

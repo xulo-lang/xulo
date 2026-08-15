@@ -9,6 +9,37 @@ fn analyze_src(src: &str) -> Result<(), xulo::error::XuloError> {
 }
 
 #[test]
+fn pub_declarations_registered_as_exports() {
+    use xulo::semantic::analyze_with;
+    let src = r#"
+        pub fn add(a: number): number { return a }
+        pub const PI = 3.14
+        pub enum Status { Active Inactive }
+        pub type User = { name: string }
+    "#;
+    let tokens = tokenize(src).unwrap();
+    let program = parse_program(&tokens).unwrap();
+    let result = analyze_with(&program, &[], &[]).unwrap_or_else(|err| panic!("{}", err.message));
+
+    let runtime: Vec<String> = result
+        .exported_symbols
+        .iter()
+        .map(|(n, _)| n.clone())
+        .collect();
+    assert!(runtime.contains(&"add".into()));
+    assert!(runtime.contains(&"PI".into()));
+    assert!(runtime.contains(&"Status".into()));
+    assert!(!runtime.contains(&"User".into()), "types are type-only");
+
+    let types: Vec<String> = result
+        .exported_types
+        .iter()
+        .map(|(n, _)| n.clone())
+        .collect();
+    assert!(types.contains(&"User".into()));
+}
+
+#[test]
 fn accepts_valid_program() {
     let src = r#"
         fn fib(n: number): number {

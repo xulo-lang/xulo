@@ -48,6 +48,7 @@ pub fn statement(input: &mut In<'_>) -> Pr<Statement> {
         Some(Token::Throw) => throw_stmt(input).map(Statement::Throw),
         Some(Token::Import) => import_stmt(input).map(Statement::Import),
         Some(Token::Export) => export_stmt(input).map(Statement::Export),
+        Some(Token::Pub) => pub_stmt(input),
         Some(Token::At) => decorator_stmt(input),
         Some(Token::Ident) if is_component(input) => {
             component_stmt(input).map(Statement::Component)
@@ -456,6 +457,24 @@ fn export_decl(input: &mut In<'_>) -> Pr<ExportItem> {
         Some(Token::Enum) => enum_def(input).map(ExportItem::Enum),
         _ => Err(ErrMode::Cut(PErr::unexpected(input))),
     }
+}
+
+/// `pub fn/let/const/type/enum` — public-visibility modifier that lowers to
+/// the same `Statement::Export` mechanism as `export`, so the declaration is
+/// visible to other modules. `pub` cannot combine with `export`.
+fn pub_stmt(input: &mut In<'_>) -> Pr<Statement> {
+    let original = *input;
+    tk(input, Token::Pub)?;
+    if matches!(input.first().map(|t| t.kind), Some(Token::Export)) {
+        let span = consumed_span(original, input, 0);
+        return Err(ErrMode::Cut(PErr {
+            span,
+            message: "`pub` and `export` cannot be combined: use either `pub fn` or `export fn`"
+                .into(),
+        }));
+    }
+    let item = export_decl(input)?;
+    Ok(Statement::Export(crate::ast::ExportStmt { item }))
 }
 
 /// `@State` / `@Store` / `@Effect` / `@Environment` declarations.

@@ -71,7 +71,7 @@ fn main() {
 - 控制流：`if` / `else if` / `else`（表达式与语句）、`for x in list`、`for i in 0..<n`、`while`、`match`、`and`/`or`/`!`、三目、`throw`/`try`/`catch`
 - 表达式：成员访问、下标、`?.`、`??`、列表/对象展开 `...`、`$name` 双向绑定
 - 异步：`: async` 返回标注、`await`
-- 模块系统：`import` / `export`（named/default/namespace/type-only/bare），本地打包为 IIFE，外部包原样 ESM
+- 模块系统：`import` / `export` / `pub`（named/default/namespace/type-only/bare；`pub` 声明等价对应 `export` 声明），本地打包为 IIFE，外部包原样 ESM
 - UI：`Component` 返回类型、组件块语法（`VStack { Text(...) }`）、`@State` / `@Store` / `@Effect` / `@Environment`、UI 条件/循环渲染
 
 ### UI 运行时约定
