@@ -453,6 +453,9 @@ pub struct Call {
     pub object: Option<Box<Expression>>,
     /// Method name when `object` is present.
     pub method: Option<String>,
+    /// When the callee was written as `obj?.method(...)`: emit `obj?.method()`
+    /// so a null receiver short-circuits instead of throwing.
+    pub optional: bool,
     pub arguments: Vec<CallArg>,
     pub span: Range<usize>,
 }

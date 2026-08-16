@@ -109,7 +109,12 @@ pub fn format(source: &str) -> Result<String, XuloError> {
         prev_unary = (cur == Token::Minus || cur == Token::Plus) && is_unary_context(prev);
 
         if cur == Token::LBrace {
-            depth += 1;
+            // An empty `{ }` pair is a unit: it must not change the indent
+            // depth (the `{` would otherwise leak +1 because the matching `}`
+            // is skipped by `closes_block`'s empty-pair check).
+            if next != Some(Token::RBrace) {
+                depth += 1;
+            }
             inline_braces.push(is_inline_open);
         } else if cur == Token::RBrace && !inline_braces.is_empty() {
             inline_braces.pop();

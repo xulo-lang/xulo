@@ -328,34 +328,74 @@ fn no_export(module: &dyn std::fmt::Display, name: &str) -> XuloError {
 /// module's `main()` runs when the file is loaded.
 fn bundle(loaded: &LoadedModules) -> Result<String, XuloError> {
     let mut out = String::new();
+    // Deduplicate external imports: multiple modules importing the same
+    // package must produce a single ESM `import` statement, merging named
+    // specifiers and dropping exact duplicates (otherwise the emitted JS
+    // re-declares the same binding and node rejects the file).
+    let mut by_source: std::collections::BTreeMap<&str, Vec<&ImportStmt>> =
+        std::collections::BTreeMap::new();
     for imp in &loaded.external_imports {
-        // `import type` is erased: it only feeds the type checker (docs §7).
         if imp.type_only {
             continue;
         }
-        match &imp.spec {
-            ImportSpec::Bare => out.push_str(&format!("import {:?};\n", imp.source)),
-            ImportSpec::Namespace(ns) => {
-                out.push_str(&format!("import * as {ns} from {:?};\n", imp.source))
-            }
-            ImportSpec::Named(names) => {
-                let parts = names
-                    .iter()
-                    .map(|(name, alias)| match alias {
-                        Some(a) => format!("{name} as {a}"),
-                        None => name.clone(),
-                    })
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                out.push_str(&format!("import {{ {parts} }} from {:?};\n", imp.source));
-            }
-            ImportSpec::Default(name) => {
-                out.push_str(&format!("import {name} from {:?};\n", imp.source))
+        by_source.entry(&imp.source).or_default().push(imp);
+    }
+    for (source, imports) in by_source {
+        let mut names: Vec<(&str, &str)> = Vec::new();
+        for imp in &imports {
+            if let ImportSpec::Named(named) = &imp.spec {
+                for (name, alias) in named {
+                    let alias = alias.as_deref().unwrap_or(name);
+                    let name = name.as_str();
+                    if !names.iter().any(|(n, _)| *n == name) {
+                        names.push((name, alias));
+                    }
+                }
             }
         }
+        let has_bare = imports
+            .iter()
+            .any(|imp| matches!(imp.spec, ImportSpec::Bare));
+        let default_name = imports.iter().find_map(|imp| match &imp.spec {
+            ImportSpec::Default(name) => Some(name.as_str()),
+            _ => None,
+        });
+        let namespace_name = imports.iter().find_map(|imp| match &imp.spec {
+            ImportSpec::Namespace(ns) => Some(ns.as_str()),
+            _ => None,
+        });
+        // Emit a default import (`import d from "pkg"`) first, then a
+        // namespace or named import (`import * as ns` / `import { a, b }`).
+        if let Some(default) = default_name {
+            out.push_str(&format!("import {default} from {:?};\n", source));
+        }
+        if has_bare {
+            out.push_str(&format!("import {:?};\n", source));
+        }
+        if let Some(ns) = namespace_name {
+            out.push_str(&format!("import * as {ns} from {:?};\n", source));
+        } else if !names.is_empty() {
+            let parts = names
+                .iter()
+                .map(|(name, alias)| {
+                    if *name == *alias {
+                        (*name).to_string()
+                    } else {
+                        format!("{name} as {alias}")
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            out.push_str(&format!("import {{ {parts} }} from {:?};\n", source));
+        }
     }
+    out.push('\n');
 
     let entry = loaded.entry;
+    // Shared runtime preambles: the reactive runtime and `range()` must be
+    // declared once at the top of the bundle, not inside every module IIFE.
+    let mut used_reactive = false;
+    let mut used_range = false;
     for (idx, module) in loaded.modules.iter().enumerate() {
         let mut cg = crate::codegen::javascript::Javascript::new();
         // Imported functions may be called with named arguments.
@@ -456,7 +496,10 @@ fn bundle(loaded: &LoadedModules) -> Result<String, XuloError> {
             out.push_str(&format!("    const {{ {names} }} = __mod{target};\n"));
         }
         cg.emit_module_body(&module.program)?;
-        out.push_str(&cg.finish());
+        let (reactive, range) = cg.runtime_needs();
+        used_reactive |= reactive;
+        used_range |= range;
+        out.push_str(&cg.finish_without_runtime());
         if idx == entry && module.has_main {
             if crate::codegen::javascript::main_returns_component(&module.program) {
                 out.push_str("    const __xulo_main = main();\n");
@@ -484,6 +527,12 @@ fn bundle(loaded: &LoadedModules) -> Result<String, XuloError> {
             format!("{{ {} }}", exports.join(", "))
         };
         out.push_str(&format!("    return {exports};\n}})();\n"));
+    }
+    if used_reactive || used_range {
+        out.insert_str(
+            0,
+            &crate::codegen::javascript::shared_preamble((used_reactive, used_range)),
+        );
     }
     Ok(out)
 }

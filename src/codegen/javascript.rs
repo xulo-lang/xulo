@@ -73,6 +73,24 @@ const __component = __runtime.component;
 const __env = __runtime.env;
 "#;
 
+/// The `range()` helper emitted alongside the reactive runtime.
+const RANGE_RUNTIME: &str =
+    "function range(a, b) { const r = []; for (let i = a; i < b; i++) r.push(i); return r; }\n";
+
+/// Runtime preambles to emit once at the top of a multi-module bundle. `needs`
+/// is the OR of every module's `runtime_needs()`.
+pub fn shared_preamble(needs: (bool, bool)) -> String {
+    let (reactive, range) = needs;
+    let mut out = String::new();
+    if reactive {
+        out.push_str(REACTIVE_RUNTIME);
+    }
+    if range {
+        out.push_str(RANGE_RUNTIME);
+    }
+    out
+}
+
 /// Emits modern JavaScript (ES Module) for a Xulo program.
 pub struct Javascript {
     out: String,
@@ -178,23 +196,28 @@ impl Javascript {
     }
 
     pub fn finish(self) -> String {
-        let preamble = if self.used_reactive {
-            REACTIVE_RUNTIME.to_string()
-        } else {
-            String::new()
-        };
-        let preamble = if self.used_range {
+        if self.used_reactive || self.used_range {
             format!(
-                "{preamble}function range(a, b) {{ const r = []; for (let i = a; i < b; i++) r.push(i); return r; }}\n"
+                "{}{}",
+                shared_preamble((self.used_reactive, self.used_range)),
+                self.out
             )
-        } else {
-            preamble
-        };
-        if !preamble.is_empty() {
-            format!("{preamble}{}", self.out)
         } else {
             self.out
         }
+    }
+
+    /// Which runtime preambles this module needs (reactive runtime, `range`).
+    /// Used by the module bundler to emit shared runtimes once at the top of
+    /// the bundle instead of once per module IIFE.
+    pub fn runtime_needs(&self) -> (bool, bool) {
+        (self.used_reactive, self.used_range)
+    }
+
+    /// Emit just the module body, without runtime preambles (the bundler emits
+    /// shared runtimes at the top of the bundle).
+    pub fn finish_without_runtime(self) -> String {
+        self.out
     }
 
     fn pad(&self) -> String {
@@ -216,11 +239,15 @@ impl Javascript {
         let has_main = main_fn(program).is_some();
 
         for statement in &program.statements {
-            if let Statement::Fn(f) = statement {
-                self.fn_params.insert(
-                    f.name.clone(),
-                    f.params.iter().map(|p| p.name.clone()).collect(),
-                );
+            match statement {
+                Statement::Fn(f) => {
+                    self.fn_params.insert(
+                        f.name.clone(),
+                        f.params.iter().map(|p| p.name.clone()).collect(),
+                    );
+                }
+                Statement::Export(export) => self.register_export_fn_params(&export.item),
+                _ => {}
             }
         }
 
@@ -879,7 +906,16 @@ impl Javascript {
             Expression::Match(m) => self.expr_match(m)?,
             Expression::Member(m) => {
                 let dot = if m.optional { "?." } else { "." };
-                format!("{}{}{}", self.expr(&m.object)?, dot, m.property)
+                let receiver = self.expr(&m.object)?;
+                // Object/number literals as a receiver must be parenthesized
+                // (`({...}).x`, `(5).toString()`), otherwise JS parses the dot
+                // into the literal.
+                let receiver = if needs_receiver_parens(&m.object) {
+                    format!("({receiver})")
+                } else {
+                    receiver
+                };
+                format!("{receiver}{dot}{}", m.property)
             }
             Expression::Index(idx) => {
                 format!("{}[{}]", self.expr(&idx.object)?, self.expr(&idx.index)?)
@@ -963,16 +999,20 @@ impl Javascript {
             inline.line(&format!("return {value};"));
             body.push_str(&inline.finish());
         } else {
-            for s in stmts {
-                let mut inline = self.child();
-                inline.indent = 1;
-                inline.push_scope();
-                for p in &f.params {
-                    inline.register_local(p.name.clone());
-                }
-                inline.statement(s)?;
-                body.push_str(&inline.finish());
+            // All statements share one scope: locals declared in an earlier
+            // statement must shadow an outer `@State` of the same name in later
+            // ones, so they are emitted through a single child rather than a
+            // fresh scope per statement.
+            let mut inline = self.child();
+            inline.indent = 1;
+            inline.push_scope();
+            for p in &f.params {
+                inline.register_local(p.name.clone());
             }
+            for s in stmts {
+                inline.statement(s)?;
+            }
+            body.push_str(&inline.finish());
         }
         Ok(format!("({kw} ({params}) {{\n{body}}})"))
     }
@@ -1027,10 +1067,19 @@ impl Javascript {
             Ok(format!("{enum_name}.{variant}({args})"))
         } else if let Some(object) = &call.object {
             let receiver = self.expr(object)?;
+            let receiver = if needs_receiver_parens(object) {
+                format!("({receiver})")
+            } else {
+                receiver
+            };
             let method = call.method.as_deref().unwrap_or("");
             let args = self.call_args_ordered(call, None)?;
-            Ok(format!("{receiver}.{method}({args})"))
-        } else if call.callee == "print" {
+            if call.optional {
+                Ok(format!("{receiver}?.{method}({args})"))
+            } else {
+                Ok(format!("{receiver}.{method}({args})"))
+            }
+        } else if call.callee == "print" && !self.fn_params.contains_key(&call.callee) {
             let joined = call
                 .arguments
                 .iter()
@@ -1038,7 +1087,7 @@ impl Javascript {
                 .collect::<Result<Vec<_>, _>>()?
                 .join(", ");
             Ok(format!("console.log({joined})"))
-        } else if call.callee == "str" {
+        } else if call.callee == "str" && !self.fn_params.contains_key(&call.callee) {
             let arg = self.expr(&call.arguments[0].value)?;
             Ok(format!("String({arg})"))
         } else {
@@ -1080,9 +1129,18 @@ impl Javascript {
                 by_name.insert(name.clone(), self.expr(&a.value)?);
             }
         }
+        // Reorder to the callee's declared parameter order. Omitted parameters
+        // are emitted as `undefined` (not dropped) so the JS default value
+        // still applies — dropping them would shift later args into the wrong
+        // slot (docs §11 named arguments).
         let ordered = params
             .iter()
-            .filter_map(|name| by_name.get(name).cloned())
+            .map(|name| {
+                by_name
+                    .get(name)
+                    .cloned()
+                    .unwrap_or_else(|| "undefined".to_string())
+            })
             .collect::<Vec<_>>()
             .join(", ");
         Ok(ordered)
@@ -1141,12 +1199,13 @@ impl Javascript {
         js.line(&format!("const __m = {scrutinee};"));
         js.register_local("__m".to_string());
         for arm in &m.arms {
-            let value = self.expr(&arm.value)?;
             match &arm.pattern {
                 crate::ast::MatchPattern::Wildcard => {
+                    let value = js.expr(&arm.value)?;
                     js.line(&format!("return {value};"));
                 }
                 crate::ast::MatchPattern::Literal(lit) => {
+                    let value = js.expr(&arm.value)?;
                     let ljs = self.literal(lit)?;
                     js.line(&format!("if (__m === {ljs}) {{"));
                     js.indent += 1;
@@ -1155,6 +1214,7 @@ impl Javascript {
                     js.line("}");
                 }
                 crate::ast::MatchPattern::Enum(r) => {
+                    let value = js.expr(&arm.value)?;
                     // Payload-capable enums use `{tag}` objects; payload-less
                     // enums use `"Enum.Variant"` strings. Accept either
                     // representation so one code path matches both.
@@ -1190,6 +1250,10 @@ impl Javascript {
                             }
                         }
                     }
+                    // The arm value is emitted through the match scope: its
+                    // payload bindings must shadow outer `@State` signals of the
+                    // same name, so it cannot use the enclosing generator.
+                    let value = js.expr(&arm.value)?;
                     js.line(&format!("return {value};"));
                     js.indent -= 1;
                     js.line("}");
@@ -1210,6 +1274,19 @@ impl Javascript {
 /// A block consisting of exactly one `if` statement represents `else if`.
 fn is_else_if(block: &Block) -> bool {
     matches!(block.statements.as_slice(), [Statement::Expr(es)] if matches!(es.expr, Expression::If(_)))
+}
+
+/// True when a receiver expression needs parentheses before a member access:
+/// object and number literals (`{...}.x`, `5.toString()`) parse incorrectly
+/// without them.
+fn needs_receiver_parens(expr: &Expression) -> bool {
+    matches!(
+        expr,
+        Expression::Literal {
+            value: Literal::Number(_) | Literal::Object(_),
+            ..
+        }
+    )
 }
 
 /// True when the program's `main` (plain, `export fn`, or `export default fn`)

@@ -38,6 +38,10 @@ pub enum Commands {
 }
 
 pub fn run() -> ExitCode {
+    // ANSI color only when the stream is a terminal and `NO_COLOR` is unset
+    // (diagnostics::use_color also honors `NO_COLOR`).
+    let stderr_is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
+    crate::diagnostics::use_color(stderr_is_tty);
     let cli = Cli::parse();
     run_command(cli.command)
 }
@@ -182,53 +186,75 @@ fn repl() -> ExitCode {
             session.clear();
             continue;
         }
+        // `run` forces the pending entry to execute immediately (it is never
+        // part of the code itself).
+        if trimmed == "run" {
+            if entry.trim().is_empty() {
+                if session.is_empty() {
+                    continue;
+                }
+                repl_run(&mut session, "");
+            } else {
+                let pending = entry.clone();
+                entry.clear();
+                repl_run(&mut session, &pending);
+            }
+            continue;
+        }
         entry.push_str(&line);
         if unbalanced(&entry) {
             continue;
         }
-        let run_now = trimmed.is_empty() || trimmed == "run" || entry.trim_end().ends_with('}');
-        if !run_now {
+        if !trimmed.is_empty() && trimmed != "run" && !entry.trim_end().ends_with('}') {
             continue;
         }
-        session.push_str(&entry);
-        let raw = session.trim_start();
-        let has_main = raw
-            .split('\n')
-            .any(|l| l.trim_start().starts_with("fn main"));
-        let echo = !has_main && looks_like_echo(&entry);
-        let compiled = if has_main {
-            session.clone()
-        } else {
-            format!("fn main() {{\n{session}\n}}\n")
-        };
-        let (result, rendered_source): (Result<(String, Vec<XuloError>), ()>, String) = if echo {
-            let prior = &session[..session.len().saturating_sub(entry.len())];
-            let echoed = format!("fn main() {{\n{}{}\n}}\n", prior, echo_wrap(&entry));
-            let echoed_out = compile_source(&echoed);
-            match echoed_out {
-                Ok(out) => (Ok(out), echoed),
-                Err(()) => {
-                    // The entry was not a standalone expression; fall back to
-                    // its literal form so errors match what was typed.
-                    (compile_source(&compiled), compiled)
-                }
-            }
-        } else {
-            (compile_source(&compiled), compiled)
-        };
-        match result {
-            Ok((js, warnings)) => {
-                print_warnings(&warnings, Some(&rendered_source));
-                run_node(&js);
-            }
-            Err(()) => {
-                // Roll back the failed entry so it is not re-run later.
-                session.truncate(session.len().saturating_sub(entry.len()));
-            }
-        }
+        let pending = entry.clone();
         entry.clear();
+        repl_run(&mut session, &pending);
     }
     ExitCode::SUCCESS
+}
+
+/// Compile and run the REPL buffer. `pending` is the freshly-typed entry to
+/// add this round; on a compile failure it is rolled back so it can be edited
+/// and re-run later.
+fn repl_run(session: &mut String, pending: &str) {
+    session.push_str(pending);
+    let raw = session.trim_start();
+    let has_main = raw
+        .split('\n')
+        .any(|l| l.trim_start().starts_with("fn main"));
+    let echo = !has_main && looks_like_echo(pending);
+    let compiled = if has_main {
+        session.clone()
+    } else {
+        format!("fn main() {{\n{session}\n}}\n")
+    };
+    let (result, rendered_source): (Result<(String, Vec<XuloError>), ()>, String) = if echo {
+        let prior = &session[..session.len().saturating_sub(pending.len())];
+        let echoed = format!("fn main() {{\n{}{}\n}}\n", prior, echo_wrap(pending));
+        let echoed_out = compile_source(&echoed);
+        match echoed_out {
+            Ok(out) => (Ok(out), echoed),
+            Err(()) => {
+                // The entry was not a standalone expression; fall back to its
+                // literal form so errors match what was typed.
+                (compile_source(&compiled), compiled)
+            }
+        }
+    } else {
+        (compile_source(&compiled), compiled)
+    };
+    match result {
+        Ok((js, warnings)) => {
+            print_warnings(&warnings, Some(&rendered_source));
+            run_node(&js);
+        }
+        Err(()) => {
+            // Roll back the failed entry so it is not re-run later.
+            session.truncate(session.len().saturating_sub(pending.len()));
+        }
+    }
 }
 
 /// Decide whether a REPL entry is a bare expression whose value should be
@@ -262,7 +288,98 @@ fn looks_like_echo(entry: &str) -> bool {
             return false;
         }
     }
+    // An assignment (`x = 10`) must compile as a statement, not be echoed as
+    // `print(x = 10)` (which is a parse error in expression position).
+    if is_assignment(e) {
+        return false;
+    }
     !e.starts_with('=') && !e.contains('\n')
+}
+
+/// Does the entry have the shape `name = value` (a plain assignment)? Compound
+/// operators (`+=`, `==`, `>=`, `=>`, `!=`) are not assignments.
+fn is_assignment(entry: &str) -> bool {
+    let chars: Vec<char> = entry.chars().collect();
+    for (i, &c) in chars.iter().enumerate() {
+        if c != '=' {
+            continue;
+        }
+        // Skip `==`, `!=`, `<=`, `>=`, `=>`, `+=`, `-=`, `*=`, `/=`, `%=`.
+        let left_adj = chars.get(i.wrapping_sub(1)).copied();
+        let right_adj = chars.get(i + 1).copied();
+        if matches!(right_adj, Some('=') | Some('>'))
+            || matches!(
+                left_adj,
+                Some('=')
+                    | Some('!')
+                    | Some('<')
+                    | Some('>')
+                    | Some('+')
+                    | Some('-')
+                    | Some('*')
+                    | Some('/')
+                    | Some('%')
+            )
+        {
+            continue;
+        }
+        return valid_assign_target(&chars[..i]);
+    }
+    false
+}
+
+/// Everything before `=` must be an identifier/`$` rest, optionally with
+/// `.field` / `[index]` access chains (whitespace-insensitive).
+fn valid_assign_target(chars: &[char]) -> bool {
+    let stripped: String = chars.iter().filter(|c| !c.is_whitespace()).collect();
+    let b = stripped.as_bytes();
+    let mut i = 0;
+    let is_ident_char = |c: u8, first: bool| {
+        c == b'_' || c == b'$' || c.is_ascii_alphabetic() || (!first && c.is_ascii_digit())
+    };
+    if !b.first().is_some_and(|c| is_ident_char(*c, true)) {
+        return false;
+    }
+    i += 1;
+    while i < b.len() && is_ident_char(b[i], false) {
+        i += 1;
+    }
+    loop {
+        if i == b.len() {
+            return true;
+        }
+        match b[i] {
+            b'.' => {
+                if i + 1 >= b.len() || !b[i + 1].is_ascii_alphabetic() && b[i + 1] != b'_' {
+                    return false;
+                }
+                i += 2;
+                while i < b.len() && is_ident_char(b[i], false) {
+                    i += 1;
+                }
+                if i < b.len() && b[i] == b'(' {
+                    return false;
+                }
+            }
+            b'[' => {
+                if i + 1 >= b.len() || b[i + 1] == b']' {
+                    return false;
+                }
+                // `[index]`/`["key"]`: accept a matching bracket with balanced
+                // non-bracket content (no nested brackets, no `(`).
+                if let Some(close) = b[i + 1..].iter().position(|&c| c == b']') {
+                    let inner = &b[i + 1..i + 1 + close];
+                    if inner.iter().any(|&c| c == b'[' || c == b'(') {
+                        return false;
+                    }
+                    i = i + 1 + close + 1;
+                } else {
+                    return false;
+                }
+            }
+            _ => return false,
+        }
+    }
 }
 
 /// Wrap a single expression entry as `print(expr)` for value echo.
@@ -275,6 +392,16 @@ fn unbalanced(src: &str) -> bool {
     let mut in_str: Option<char> = None;
     let mut chars = src.chars().peekable();
     while let Some(c) = chars.next() {
+        // A `//` line comment runs to the end of the line: brackets inside it
+        // must not count as unterminated code.
+        if in_str.is_none() && c == '/' && chars.peek() == Some(&'/') {
+            for rest in chars.by_ref() {
+                if rest == '\n' {
+                    break;
+                }
+            }
+            continue;
+        }
         if let Some(q) = in_str {
             if c == '\\' {
                 chars.next();

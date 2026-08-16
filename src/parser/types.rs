@@ -2,7 +2,7 @@ use crate::ast::Type;
 use crate::lexer::token::Token;
 
 use super::expression::decode_string;
-use super::{In, Pr, backtrack_p, ident_name, opt_tk, tk, verified_tk};
+use super::{In, Pr, backtrack_p, enter_nest, ident_name, opt_tk, tk, verified_tk};
 
 /// A full type expression:
 ///
@@ -22,6 +22,7 @@ use super::{In, Pr, backtrack_p, ident_name, opt_tk, tk, verified_tk};
 /// fn_param        = [ identifier ":" ] type_expr
 /// ```
 pub fn type_expr(input: &mut In<'_>) -> Pr<Type> {
+    let _guard = enter_nest(input)?;
     union(input)
 }
 

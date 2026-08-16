@@ -171,6 +171,7 @@ fn multiplicative(input: &mut In<'_>) -> Pr<Expression> {
 }
 
 fn unary(input: &mut In<'_>) -> Pr<Expression> {
+    let _guard = enter_nest(input)?;
     let original = *input;
     let op = if peek_kind(input, Token::Minus) {
         Some(UnaryOperator::Neg)
@@ -244,6 +245,7 @@ fn postfix(input: &mut In<'_>) -> Pr<Expression> {
                     callee: name,
                     object: None,
                     method: None,
+                    optional: false,
                     arguments,
                     span,
                 }),
@@ -251,17 +253,19 @@ fn postfix(input: &mut In<'_>) -> Pr<Expression> {
                     callee: format!("{}::{}", r.enum_name, r.variant),
                     object: None,
                     method: None,
+                    optional: false,
                     arguments,
                     span,
                 }),
                 Expression::Member(m) => {
                     let object = m.object;
                     let property = m.property.clone();
-                    let _ = m.optional;
+                    let optional = m.optional;
                     Expression::Call(Call {
                         callee: property.clone(),
                         object: Some(Box::new(object)),
                         method: Some(property),
+                        optional,
                         arguments,
                         span,
                     })
@@ -488,6 +492,7 @@ fn string_value(input: &mut In<'_>) -> Pr<String> {
 
 /// `if <cond> { ... } else { ... }` — usable as an expression or a statement.
 pub fn if_expr(input: &mut In<'_>) -> Pr<IfExpr> {
+    let _guard = enter_nest(input)?;
     let original = *input;
     tk(input, Token::If)?;
     let condition = expression(input)?;

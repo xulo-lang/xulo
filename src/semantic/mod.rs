@@ -4,8 +4,8 @@ use std::collections::HashMap;
 use std::ops::Range;
 
 use crate::ast::{
-    AssignStmt, AssignTarget, BinaryOperator, Block, CallArg, EnumVariant, Expression, IfExpr,
-    LetBinding, Literal, ObjectField, Program, Statement, Type, TypeAlias,
+    AssignStmt, AssignTarget, BinaryOperator, Block, Call, CallArg, EnumVariant, Expression,
+    IfExpr, LetBinding, Literal, ObjectField, Program, Statement, Type, TypeAlias,
 };
 use crate::error::{ErrorKind, XuloError};
 use symbol_table::{Symbol, SymbolKind, SymbolTable};
@@ -60,6 +60,9 @@ pub struct Analyzer {
     no_await_depth: usize,
     /// Imported names available to this module (name -> symbol).
     imports: HashMap<String, Symbol>,
+    /// Names imported from an unseeded external package (no module graph): the
+    /// loader provides no signature, so calls to these are checked opaquely.
+    opaque: std::collections::HashSet<String>,
     /// Imported type/alias names available to this module.
     imported_types: HashMap<String, TypeEntry>,
     /// Names exported from this module for codegen / module resolution.
@@ -122,6 +125,7 @@ pub fn analyze_with(
             .iter()
             .map(|s| (s.name.clone(), s.clone()))
             .collect(),
+        opaque: std::collections::HashSet::new(),
         imported_types: imported_types
             .iter()
             .map(|(n, t)| (n.clone(), t.clone()))
@@ -265,7 +269,12 @@ impl Analyzer {
             Statement::Enum(e) => self.check_enum(e),
             Statement::Return(stmt) => {
                 let Some(value) = &stmt.value else {
-                    // Bare `return;` is valid in any function (docs EBNF §7).
+                    // Bare `return;` is valid in any function (docs EBNF §7),
+                    // but only inside a function body.
+                    if self.current_return.is_none() {
+                        return Err(self
+                            .err("`return` may only be used at the top level of a function body"));
+                    }
                     return Ok(());
                 };
                 let value_type = self.check_expression(value)?;
@@ -281,6 +290,13 @@ impl Analyzer {
                             value_type.name()
                         )));
                     }
+                } else {
+                    return Err(self.err(
+                        format!(
+                            "`return` may only be used at the top level of a function body (found a value of type `{}`)",
+                            value_type.name()
+                        ),
+                    ));
                 }
                 Ok(())
             }
@@ -354,7 +370,14 @@ impl Analyzer {
     }
 
     fn check_fn(&mut self, f: &crate::ast::FnDef) -> SResult<()> {
+        let mut param_names = std::collections::HashSet::new();
         for p in &f.params {
+            if !param_names.insert(p.name.clone()) {
+                return Err(self.err(format!(
+                    "parameter `{}` shadows an earlier parameter of `{}`",
+                    p.name, f.name
+                )));
+            }
             if let Some(ty) = &p.type_annotation {
                 self.check_type(ty)?;
             }
@@ -554,12 +577,15 @@ impl Analyzer {
                             kind: symbol.kind.clone(),
                             is_const: true,
                         },
-                        None => Symbol {
-                            name: local.clone(),
-                            type_: Type::Any,
-                            kind: SymbolKind::Function(Vec::new(), Vec::new(), Type::Any),
-                            is_const: true,
-                        },
+                        None => {
+                            self.opaque.insert(local.clone());
+                            Symbol {
+                                name: local.clone(),
+                                type_: Type::Any,
+                                kind: SymbolKind::Function(Vec::new(), Vec::new(), Type::Any),
+                                is_const: true,
+                            }
+                        }
                     };
                     if !self.table.declare(sym) {
                         return Err(self.err(format!("`{local}` is already declared",)));
@@ -587,12 +613,15 @@ impl Analyzer {
                         kind: symbol.kind.clone(),
                         is_const: true,
                     },
-                    None => Symbol {
-                        name: name.clone(),
-                        type_: Type::Any,
-                        kind: SymbolKind::Function(Vec::new(), Vec::new(), Type::Any),
-                        is_const: true,
-                    },
+                    None => {
+                        self.opaque.insert(name.clone());
+                        Symbol {
+                            name: name.clone(),
+                            type_: Type::Any,
+                            kind: SymbolKind::Function(Vec::new(), Vec::new(), Type::Any),
+                            is_const: true,
+                        }
+                    }
                 };
                 if !self.table.declare(sym) {
                     return Err(self.err(format!("`{name}` is already declared",)));
@@ -875,6 +904,9 @@ impl Analyzer {
     }
 
     fn check_component(&mut self, component: &crate::ast::ComponentStmt) -> SResult<()> {
+        // Uppercase calls lower to UI components (`Name({ key: value })`);
+        // props are not validated against a function signature (see
+        // `component_call_props_are_loosely_typed`).
         for arg in &component.args {
             self.check_expression(&arg.value)?;
         }
@@ -1063,7 +1095,11 @@ impl Analyzer {
                 for statement in &block.statements[..block.statements.len() - 1] {
                     self.check_statement(statement)?;
                 }
-                Some(self.check_expression(&e.expr)?)
+                // A trailing `if`/`match` here is still statement position
+                // (codegen emits it via `if_stmt`, whose `await` is fine). Only
+                // an enclosing value-position context (`check_expression` for
+                // `If`/`Match`) wraps arms in `no_await`.
+                Some(self.check_expr_stmt(e)?)
             }
             _ => {
                 for statement in &block.statements {
@@ -1164,6 +1200,7 @@ impl Analyzer {
             }
             Expression::CallValue(cv) => {
                 let callee_type = self.check_expression(&cv.callee)?;
+                let callee_type = self.resolve_alias(&callee_type, 0);
                 match callee_type {
                     Type::FnSig { params, ret } => {
                         self.check_fn_value_args(&params, ret, &cv.arguments)
@@ -1390,7 +1427,15 @@ impl Analyzer {
                     }
                 }
                 crate::ast::MatchPattern::Enum(r) => {
-                    self.check_enum_ref(r.enum_name.clone(), &r.variant)?;
+                    let enum_type = self.check_enum_ref(r.enum_name.clone(), &r.variant)?;
+                    if !self.assignable(&value_type, &enum_type) {
+                        return Err(self.err(format!(
+                            "match arm pattern `{}` does not match value of type `{}` (expected `{}`)",
+                            pattern_name(arm),
+                            value_type.name(),
+                            enum_type.name()
+                        )));
+                    }
                 }
                 crate::ast::MatchPattern::EnumPayload {
                     enum_name,
@@ -1399,10 +1444,18 @@ impl Analyzer {
                     span,
                 } => {
                     let entry = self
-                        .type_table
-                        .get(enum_name)
+                        .type_entry(enum_name)
                         .ok_or_else(|| self.err(format!("unknown enum `{enum_name}`")))?
                         .clone();
+                    let enum_type = Type::Named(enum_name.clone());
+                    if !self.assignable(&value_type, &enum_type) {
+                        return Err(self.err(format!(
+                            "match arm pattern `{}` does not match value of type `{}` (expected `{}`)",
+                            pattern_name(arm),
+                            value_type.name(),
+                            enum_type.name()
+                        )));
+                    }
                     let v = entry
                         .kind
                         .variants()
@@ -1590,6 +1643,11 @@ impl Analyzer {
             }
             return Ok(Type::Any);
         }
+        // A user-declared `str`/`print` shadows the builtin of the same name
+        // (the builtins only apply when no user symbol matches).
+        if let Some(sym) = self.table.lookup(&call.callee).cloned() {
+            return self.check_call_symbol(call, &sym);
+        }
         if call.callee == "print" {
             for arg in &call.arguments {
                 self.check_expression(&arg.value)?;
@@ -1608,9 +1666,15 @@ impl Analyzer {
             self.check_expression(&call.arguments[0].value)?;
             return Ok(Type::String);
         }
-        let Some(sym) = self.table.lookup(&call.callee) else {
+        let Some(sym) = self.table.lookup(&call.callee).cloned() else {
             return Err(self.err(format!("unknown function `{}`", call.callee)));
         };
+        self.check_call_symbol(call, &sym)
+    }
+
+    /// Shared call validation against a resolved symbol: effect-scope guard,
+    /// then per-symbol-kind argument/arity/type checks.
+    fn check_call_symbol(&mut self, call: &Call, sym: &Symbol) -> SResult<Type> {
         if self.in_effect
             && self
                 .render_locals
@@ -1625,11 +1689,9 @@ impl Analyzer {
         match &sym.kind {
             SymbolKind::Function(type_params, params, return_type) => {
                 // An unseeded import (no module graph) is opaque: accept any
-                // argument list and return `any`.
-                if matches!(sym.type_, Type::Any)
-                    && params.is_empty()
-                    && matches!(return_type, Type::Any)
-                {
+                // argument list and return `any`. Local functions never reach
+                // here, even when un-annotated (zero params, no return type).
+                if self.opaque.contains(&call.callee) {
                     for arg in &call.arguments {
                         self.check_expression(&arg.value)?;
                     }
@@ -1694,8 +1756,56 @@ impl Analyzer {
                                 call.callee
                             )));
                         }
-                        Ok(return_type)
+                        // Call-site inference for generic functions, mirroring
+                        // the positional path: bind `T` from the named args
+                        // (in parameter order, using defaults when omitted).
+                        let mut resolved = return_type;
+                        if !type_params.is_empty() && !params.is_empty() {
+                            let mut positional_types = Vec::with_capacity(params.len());
+                            let mut unbounded = false;
+                            for param in &params {
+                                let arg = call
+                                    .arguments
+                                    .iter()
+                                    .find(|a| a.name.as_ref() == Some(&param.name));
+                                if let Some(arg) = arg {
+                                    let arg_type = self.check_expression(&arg.value)?;
+                                    positional_types.push(arg_type);
+                                } else if let Some(default) = &param.default {
+                                    let default_type = self.check_expression(default)?;
+                                    positional_types.push(default_type);
+                                } else {
+                                    // A required parameter is absent; the call
+                                    // is already rejected by the arity check
+                                    // that ran above, so skip inference.
+                                    unbounded = true;
+                                    break;
+                                }
+                            }
+                            if !unbounded {
+                                let param_types = params
+                                    .iter()
+                                    .map(|p| p.type_annotation.clone().unwrap_or(Type::Any))
+                                    .collect::<Vec<_>>();
+                                let bindings = infer_type_bindings(
+                                    &type_params,
+                                    &param_types,
+                                    &positional_types,
+                                );
+                                resolved = substitute_type(&resolved, &bindings);
+                            }
+                        }
+                        Ok(resolved)
                     } else {
+                        if !named.is_empty() {
+                            // Codegen emits argument lists in source order for
+                            // non-all-named calls, so a positional/named mix
+                            // would silently land in the wrong parameter slot.
+                            return Err(self.err(format!(
+                                "call to `{}` cannot mix positional and named arguments",
+                                call.callee
+                            )));
+                        }
                         let expected = params.len();
                         let required = params
                             .iter()
@@ -2002,6 +2112,8 @@ impl Analyzer {
             (inner, Type::Optional(expected)) => {
                 self.assignable(inner, expected) || matches!(inner, Type::Null)
             }
+            // Loose typing (docs §10): an optional cascades to its inner type,
+            // mirroring how `T?` is a shorthand the checker treats permissively.
             (Type::Optional(inner), expected) => self.assignable(inner, expected),
             (Type::Union(parts), expected) => parts.iter().all(|p| self.assignable(p, expected)),
             (actual, Type::Union(parts)) => parts.iter().any(|p| self.assignable(actual, p)),
@@ -2012,7 +2124,17 @@ impl Analyzer {
             (Type::List(a), Type::List(b)) => self.assignable(a, b),
             (Type::Object, Type::ObjectType(_)) => true,
             (Type::ObjectType(_), Type::Object) => true,
-            (Type::ObjectType(_), Type::ObjectType(_)) => true,
+            (Type::ObjectType(from_fields), Type::ObjectType(to_fields)) => {
+                // Structural typing: every field the target requires must be
+                // present in the source with a compatible type. Extra source
+                // fields are allowed (`{ a, b }` is assignable to `{ a }`).
+                to_fields.iter().all(|(to_name, to_ty)| {
+                    from_fields
+                        .iter()
+                        .find(|(from_name, _)| from_name == to_name)
+                        .is_some_and(|(_, from_ty)| self.assignable(from_ty, to_ty))
+                })
+            }
             (Type::Literal(_), Type::String) => true,
             (Type::Async(a), Type::Async(b)) => self.assignable(a, b),
             (Type::Async(a), expected) => {

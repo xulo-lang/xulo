@@ -187,6 +187,7 @@ fn consume_unicode_escape(input: &mut Input) -> Res<()> {
     if input.starts_with('{') {
         bump(input);
         let mut digits = 0;
+        let mut value: u32 = 0;
         loop {
             let Some(h) = input.chars().next() else {
                 return Err(backtrack(input));
@@ -195,16 +196,23 @@ fn consume_unicode_escape(input: &mut Input) -> Res<()> {
                 if digits == 0 {
                     return Err(backtrack(input));
                 }
+                // A `\u{...}` escape must name a valid Unicode scalar value
+                // (≤ U+10FFFF); surrogates are likewise invalid in isolation.
+                if value > 0x10_FFFF || (0xD800..=0xDFFF).contains(&value) {
+                    return Err(backtrack(input));
+                }
                 bump(input);
                 return Ok(());
             }
             if !h.is_ascii_hexdigit() || digits >= 6 {
                 return Err(backtrack(input));
             }
+            value = value * 16 + h.to_digit(16).unwrap_or(0);
             bump(input);
             digits += 1;
         }
     }
+    let mut value: u32 = 0;
     for _ in 0..4 {
         let Some(h) = input.chars().next() else {
             return Err(backtrack(input));
@@ -212,7 +220,12 @@ fn consume_unicode_escape(input: &mut Input) -> Res<()> {
         if !h.is_ascii_hexdigit() {
             return Err(backtrack(input));
         }
+        value = value * 16 + h.to_digit(16).unwrap_or(0);
         bump(input);
+    }
+    // `\uD800`-`\uDFFF` are surrogate code points, not valid scalar values.
+    if (0xD800..=0xDFFF).contains(&value) {
+        return Err(backtrack(input));
     }
     Ok(())
 }
