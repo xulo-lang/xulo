@@ -49,6 +49,34 @@ fn string_escapes() {
 }
 
 #[test]
+fn unicode_escape_accepts_scalar_values() {
+    let tokens = tokenize(r#" "\u{1F600}" "\u0041}" "#).unwrap();
+    let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
+    assert_eq!(kinds, vec![String, String, EOF]);
+}
+
+#[test]
+fn unicode_escape_rejects_out_of_range_and_surrogates() {
+    for bad in [
+        "\\u{110000}",
+        "\\u{FFFFFFFF}",
+        "\\uD800",
+        "\\u{DFFF}",
+        "\\uDC00",
+    ] {
+        let src = format!("\"{bad}\"");
+        let err = tokenize(&src).unwrap_err();
+        assert!(
+            err.kind == xulo::error::ErrorKind::Lex,
+            "{bad}: unexpected {}",
+            err.message
+        );
+    }
+    assert!(tokenize(r#" "\u{10FFFF}" "#).is_ok());
+    assert!(tokenize(r#" "\u{1F600}" "#).is_ok());
+}
+
+#[test]
 fn block_comments_are_skipped() {
     let tokens = tokenize("let x = 1 /* ignored */ let y = 2").unwrap();
     let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();

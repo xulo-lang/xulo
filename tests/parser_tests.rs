@@ -1037,6 +1037,63 @@ fn syntax_error_carries_span() {
 }
 
 #[test]
+fn deep_unary_chain_is_nesting_error_not_overflow() {
+    // A deep prefix-operator chain must produce a controlled nesting error
+    // instead of exhausting the stack (regression: `unary` without a guard).
+    let src = format!("fn main() {{ let x = {}1 }}", "!".repeat(200));
+    let tokens = tokenize(&src).unwrap();
+    let err = parse_program(&tokens).unwrap_err();
+    assert!(
+        err.message.contains("nesting is too deep"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn deep_unary_chain_within_limits_parses() {
+    // A reasonable chain (well under the nest budget) still parses.
+    let src = format!("fn main() {{ let x = {}1 }}", "!".repeat(50));
+    assert!(parse(&src).statements.len() == 1);
+}
+
+#[test]
+fn deeply_nested_type_is_nesting_error_not_overflow() {
+    // `type_expr` recursion must be guarded as well (regression).
+    let deep: String = "User<".repeat(200);
+    let src = format!(
+        "fn main() {{ let x: {}number > {} = 1 }}",
+        deep,
+        ">".repeat(200)
+    );
+    let tokens = tokenize(&src).unwrap();
+    let err = parse_program(&tokens).unwrap_err();
+    assert!(
+        err.message.contains("nesting is too deep"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn deep_else_if_chain_is_nesting_error_not_overflow() {
+    // `if ... else if ...` chains recurse via a nested `if_expr`; the
+    // `ElseIf` arm must be guarded (regression).
+    let mut src = String::from("fn main() { let v = 0 if false { 1 }");
+    for _ in 0..200 {
+        src.push_str(" else if false { 1 }");
+    }
+    src.push_str(" print(v) }");
+    let tokens = tokenize(&src).unwrap();
+    let err = parse_program(&tokens).unwrap_err();
+    assert!(
+        err.message.contains("nesting is too deep"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
 fn parses_dollar_binding_argument() {
     use xulo::ast::Expression;
     let p = parse("Input(value: $name)");

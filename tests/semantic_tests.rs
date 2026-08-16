@@ -1322,3 +1322,152 @@ fn string_union_type_members_and_null() {
             .contains("argument to `set` must be `Status`")
     );
 }
+
+#[test]
+fn top_level_return_is_rejected() {
+    let err = analyze_src("return 1").unwrap_err();
+    assert!(err.message.contains("top level of a function body"));
+    let err = analyze_src("return").unwrap_err();
+    assert!(err.message.contains("top level of a function body"));
+    // Bare `return;` inside a function is still fine.
+    assert!(analyze_src("fn f() { if true { return } }").is_ok());
+}
+
+#[test]
+fn structural_objects_require_fields() {
+    // A source object that lacks a required field is not assignable.
+    let err = r#"
+        fn take(p: { name: string }): string { p.name }
+        fn main() { let x: { age: number } = { age: 3 } take(x) }
+    "#;
+    let err = analyze_src(err).unwrap_err();
+    assert!(
+        err.message.contains("argument to `take`"),
+        "unexpected {}",
+        err.message
+    );
+
+    // Extra source fields are allowed (structural widening).
+    let ok = r#"
+        fn take(p: { name: string }): string { p.name }
+        fn main() { let x: { name: string, age: number } = { name: "a", age: 3 } take(x) }
+    "#;
+    assert!(analyze_src(ok).is_ok());
+}
+
+#[test]
+fn local_function_params_are_checked_even_when_empty() {
+    // A local `fn foo()` with no params/return is not "opaque": arguments
+    // must still match its (empty) signature.
+    let err = analyze_src("fn foo() { } fn main() { foo(1) }").unwrap_err();
+    assert!(
+        err.message.contains("expects"),
+        "unexpected {}",
+        err.message
+    );
+    assert!(analyze_src("fn foo() { } fn main() { foo() }").is_ok());
+}
+
+#[test]
+fn mixed_positional_and_named_arguments_rejected() {
+    let err = analyze_src("fn greet(name: string) { } fn main() { greet(\"a\", punct: \"!\") }")
+        .unwrap_err();
+    assert!(err.message.contains("cannot mix positional and named"));
+    assert!(
+        analyze_src("fn greet(name: string, punct: string): string { name + punct } fn main() { greet(name: \"a\", punct: \"!\") }")
+            .is_ok()
+    );
+}
+
+#[test]
+fn named_generic_call_infers_return_type() {
+    let ok = r#"
+        fn id<T>(x: T): T { return x }
+        fn main() { let s: string = id(x: "hi") print(s) let n: number = id(x: 5) print(n) }
+    "#;
+    assert!(analyze_src(ok).is_ok());
+}
+
+#[test]
+fn match_pattern_must_match_enum_being_matched() {
+    // Pattern type must be the same enum as the matched value.
+    let err = r#"
+        enum A { X }
+        enum B { Y }
+        fn main() { let v = A::X match v { B::Y => 1 } }
+    "#;
+    let err = analyze_src(err).unwrap_err();
+    assert!(
+        err.message.contains("does not match value of type"),
+        "unexpected {}",
+        err.message
+    );
+    // With-payload patterns work when the enum carries payloads.
+    let ok = r#"
+        enum R<T> { A(T) B }
+        fn main() { let v = R::A(1) match v { R::A(x) => x R::B => 0 } }
+    "#;
+    assert!(analyze_src(ok).is_ok());
+}
+
+#[test]
+fn duplicate_parameter_names_rejected() {
+    let err = analyze_src("fn f(a: number, a: number) { }").unwrap_err();
+    assert!(err.message.contains("shadows an earlier parameter"));
+}
+
+#[test]
+fn tail_await_rule_uses_statement_position() {
+    // A trailing `if` at the end of a `for`/`while` body is a statement:
+    // awaits inside its arms are fine (value-position `if`/`match` in a
+    // function tail is still rejected by `await_rejected_inside_implicit_return_if`).
+    let ok = r#"
+        fn work(): async { 42 }
+        fn main(): async {
+            for i in [1, 2] {
+                if i > 0 { await work() }
+            }
+        }
+    "#;
+    assert!(
+        analyze_src(ok).is_ok(),
+        "statement-position await should pass"
+    );
+}
+
+#[test]
+fn call_value_alias_aliases_callable() {
+    // An alias to a function type makes an indirect call type-checkable.
+    let ok = r#"
+        type Handler = fn(a: number): number
+        fn apply(h: Handler, x: number): number { h(x) }
+        fn main() { print(apply(fn(n: number): number { n + 1 }, 1)) }
+    "#;
+    assert!(analyze_src(ok).is_ok());
+}
+
+#[test]
+fn user_str_shadows_builtin() {
+    let ok = r#"
+        fn str(prefix: string): string { "[[" + prefix + "]]" }
+        fn main() { print(str("hi")) }
+    "#;
+    assert!(analyze_src(ok).is_ok());
+
+    // The builtin still works when no user `str` shadows it.
+    let ok2 = r#"
+        fn main() { let s = str(42) print(s) }
+    "#;
+    assert!(analyze_src(ok2).is_ok());
+    // And the user `str` no longer accepts the builtin's single numeric arg.
+    let err = r#"
+        fn str(prefix: string): string { prefix }
+        fn main() { str(42) }
+    "#;
+    let err = analyze_src(err).unwrap_err();
+    assert!(
+        err.message.contains("must be `string`"),
+        "unexpected {}",
+        err.message
+    );
+}

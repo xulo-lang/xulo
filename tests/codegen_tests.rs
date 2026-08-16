@@ -591,3 +591,75 @@ fn optional_member_emits_question_dot() {
         generate_js(r#"fn main() { let u: { name: string }? = null let n = u?.name print(n) }"#);
     assert!(js.contains("let n = u?.name;"));
 }
+
+#[test]
+fn optional_method_call_emits_question_dot() {
+    let js =
+        generate_js(r#"fn main() { let u: { name: string }? = null let n = u?.trim() print(n) }"#);
+    assert!(js.contains("u?.trim()"));
+}
+
+#[test]
+fn named_arguments_fill_defaulted_slots() {
+    let js = generate_js(
+        r#"fn greet(name: string, punct: string = "!"): string { name + punct }
+        fn main() { print(greet(name: "world")) print(greet(name: "hi", punct: "?")) }"#,
+    );
+    assert!(js.contains("greet(\"world\", undefined)"), "js: {js}");
+    assert!(js.contains("greet(\"hi\", \"?\")"), "js: {js}");
+}
+
+#[test]
+fn objet_and_number_receivers_are_parenthesized() {
+    let js = generate_js(r#"fn main() { let r = {}.a let n = 5.toString() print(r) print(n) }"#);
+    assert!(js.contains("({}).a"), "js: {js}");
+    assert!(js.contains("(5).toString()"), "js: {js}");
+}
+
+#[test]
+fn user_str_shadow_emits_plain_call() {
+    // A user-declared `str` compiles to a normal call, not `String(...)`.
+    let js = generate_js(
+        r#"fn str(s: string): string { "[[" + s + "]]" }
+        fn main() { print(str("hi")) print(str("bye")) }"#,
+    );
+    assert!(js.contains("console.log(str(\"hi\"));"), "js: {js}");
+    assert!(!js.contains("String(str"), "js: {js}");
+}
+
+#[test]
+fn exported_function_parameter_names_registered() {
+    // `export fn` params are registered so the built module can reorder named
+    // arguments via the bundler.
+    let js = generate_js(
+        r#"export fn greet(name: string, punct: string): string { name + punct }
+        fn main() { greet(punct: "!", name: "hi") }"#,
+    );
+    assert!(js.contains("greet(\"hi\", \"!\")"), "js: {js}");
+}
+
+#[test]
+fn multi_statement_closure_keeps_shadowing_scope() {
+    // A closure with several statement-local bindings must shadow an outer
+    // `@State` inside its body (single child, not one per statement).
+    let js = generate_js(
+        r#"fn main(): Component {
+            @State let name: string = "outer"
+            @Effect fn() { let name: string = "inner" print(name) }
+        }"#,
+    );
+    assert!(js.contains("let name = \"inner\""), "js: {js}");
+}
+
+#[test]
+fn match_payload_binding_scopes_under_match() {
+    let js = generate_js(
+        r#"enum R<T> { A(T) B }
+        fn main(): Component {
+            let other = 1
+            let v = R::A(9)
+            match v { R::A(b) => print(b) R::B => print(0) }
+        }"#,
+    );
+    assert!(js.contains("const b = __m.value"), "js: {js}");
+}

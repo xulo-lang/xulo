@@ -62,6 +62,14 @@ fn empty_block_stays_inline() {
 }
 
 #[test]
+fn empty_block_does_not_shift_sibling_indent() {
+    // The `{ }` pair must not change depth, so a sibling statement after an
+    // empty block keeps its indentation level.
+    let out = fmt("fn main() { if true { } print(1) }");
+    assert!(out.contains("if true { }\n  print(1)"), "got:\n{out}");
+}
+
+#[test]
 fn is_idempotent() {
     let src = "fn fib(n:number):number{if n<=1{return n}else{return fib(n-1)+fib(n-2)}}\n";
     let once = fmt(src);

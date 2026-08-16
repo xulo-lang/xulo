@@ -139,6 +139,32 @@ fn fmt_formats_and_repl_runs() {
 }
 
 #[test]
+fn repl_assignment_and_run() {
+    // Assignments must compile as statements (not be mis-echoed as an
+    // expression, which previously produced a spurious error); `run` forces
+    // the buffered session to execute.
+    let repl = Command::new(BIN)
+        .arg("repl")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = repl.stdin.as_ref().unwrap();
+    stdin
+        .write_all(b"let x = 5\n\nx = x + 2\n\nprint(x)\n\nrun\nexit\n")
+        .unwrap();
+    let out = repl.wait_with_output().unwrap();
+    assert!(out.status.success());
+    let text = String::from_utf8_lossy(&out.stdout);
+    // `print(x)` evaluates x to 7; re-running the session prints it again.
+    assert!(
+        text.matches('7').count() >= 2,
+        "missing assignment result in:\n{text}"
+    );
+}
+
+#[test]
 fn run_types_enums_const_null() {
     let file = temp_file(
         "types.xulo",
@@ -596,6 +622,95 @@ fn external_runtime_import_is_kept_in_bundle() {
 
     let js = std::fs::read_to_string(&out_dir).unwrap();
     assert!(js.contains("import { helper } from \"lib-b\";"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn external_import_is_deduplicated_across_modules() {
+    // Two modules importing the same external package must emit a single
+    // `import` statement with the merged specifiers (regression).
+    let (dir, entry) = temp_dir(
+        &[
+            (
+                "util.xulo",
+                "import { double, triple } from \"lib-m\"\nexport fn f(x: number): number { return double(x) + triple(x) }\n",
+            ),
+            (
+                "main.xulo",
+                "import { square } from \"lib-m\"\nimport { f } from \"./util\"\nfn main() { print(f(square(2))) }\n",
+            ),
+        ],
+        "main.xulo",
+    );
+    let out_dir = dir.join("bundle.js");
+    let result = Command::new(BIN)
+        .args([
+            "build",
+            entry.to_str().unwrap(),
+            "-o",
+            out_dir.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+
+    let js = std::fs::read_to_string(&out_dir).unwrap();
+    let import_lines = js.lines().filter(|l| l.starts_with("import ")).count();
+    assert_eq!(import_lines, 1, "expected a single import statement:\n{js}");
+    assert!(
+        js.contains("from \"lib-m\"")
+            && js.contains("double")
+            && js.contains("triple")
+            && js.contains("square"),
+        "js:\n{js}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn shared_runtime_emitted_once_across_modules() {
+    // Several modules using reactive/range features still yield a single
+    // `__runtime` declaration at the top of the bundle (regression).
+    let (dir, entry) = temp_dir(
+        &[
+            (
+                "a.xulo",
+                "export fn comp(): Component { @State let n: number = 0 print(str(n)) }\n",
+            ),
+            (
+                "util.xulo",
+                "export fn sum(): number { let t = 0 for i in 0..<4 { t = t + i } return t }\n",
+            ),
+            (
+                "main.xulo",
+                "import { comp } from \"./a\"\nimport { sum } from \"./util\"\nfn main(): Component { comp() print(sum()) }\n",
+            ),
+        ],
+        "main.xulo",
+    );
+    let out_dir = dir.join("bundle.js");
+    let result = Command::new(BIN)
+        .args([
+            "build",
+            entry.to_str().unwrap(),
+            "-o",
+            out_dir.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+
+    let js = std::fs::read_to_string(&out_dir).unwrap();
+    let runtime_count = js.matches("const __runtime =").count();
+    assert_eq!(runtime_count, 1, "expected a single __runtime:\n{js}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
