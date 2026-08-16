@@ -1,10 +1,18 @@
-[package]
-name = "xulo"
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
 
-[dependencies]
-anyhow = "1.0.104"
-clap = { version = "4.6.6", features = ["derive"] }
-thiserror = "2.0.20"
+[workspace.dependencies]
 winnow = "1.0.4"
+clap = { version = "4.6.6", features = ["derive"] }
+xulo-core = { path = "crates/xulo-core" }
+xulo-lexer = { path = "crates/xulo-lexer" }
+xulo-parser = { path = "crates/xulo-parser" }
+xulo-semantic = { path = "crates/xulo-semantic" }
+xulo-codegen = { path = "crates/xulo-codegen" }
+xulo-compiler = { path = "crates/xulo-compiler" }
+xulo-cli = { path = "crates/xulo-cli" }

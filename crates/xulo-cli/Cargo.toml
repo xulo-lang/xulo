@@ -1,0 +1,16 @@
+[package]
+name = "xulo-cli"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "xulo"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+xulo-core = { workspace = true }
+xulo-lexer = { workspace = true }
+xulo-compiler = { workspace = true }
+
+[dev-dependencies]

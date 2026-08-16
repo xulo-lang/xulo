@@ -1,0 +1,13 @@
+[package]
+name = "xulo-compiler"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+xulo-core = { workspace = true }
+xulo-lexer = { workspace = true }
+xulo-parser = { workspace = true }
+xulo-semantic = { workspace = true }
+xulo-codegen = { workspace = true }
+
+[dev-dependencies]

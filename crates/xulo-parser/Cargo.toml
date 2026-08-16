@@ -1,0 +1,11 @@
+[package]
+name = "xulo-parser"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+winnow = { workspace = true }
+xulo-core = { workspace = true }
+xulo-lexer = { workspace = true }
+
+[dev-dependencies]

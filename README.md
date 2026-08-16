@@ -105,29 +105,19 @@ CI（GitHub Actions，见 `.github/workflows/ci.yml`）执行 `cargo fmt --check
 ## 项目结构
 
 ```
-src/
-├── main.rs             # 入口，调用 cli
-├── lib.rs              # 导出模块 + compile() 管线
-├── cli.rs              # run/build/check/fmt/repl 子命令
-├── ast.rs              # 抽象语法树
-├── diagnostics.rs      # 美化错误报告
-├── error.rs            # 错误类型 (E0001-E0005, W0001)
-├── formatter.rs        # xulo fmt 格式化器
-├── module.rs           # 多文件加载 + 打包（IIFE）
-├── lexer/              # 词法分析
-│   ├── token.rs
-│   └── mod.rs
-├── parser/             # 语法分析（winnow）
-│   ├── mod.rs
-│   ├── statement.rs
-│   ├── expression.rs
-│   └── types.rs
-├── semantic/           # 语义检查
-│   ├── mod.rs
-│   └── symbol_table.rs
-└── codegen/            # 生成 JavaScript
-    ├── mod.rs
-    └── javascript.rs
-tests/                  # 集成测试
-examples/               # 示例 .xulo 文件
+├── Cargo.toml                  # 根 workspace + 共享依赖版本
+├── crates/
+│   ├── xulo-core/              # AST + 错误类型 + 诊断渲染（零依赖基础）
+│   ├── xulo-lexer/             # 词法分析
+│   ├── xulo-parser/            # 语法分析（winnow）
+│   ├── xulo-semantic/          # 语义检查 + 符号表
+│   ├── xulo-codegen/           # 生成 JavaScript
+│   ├── xulo-compiler/          # 编译管线 compile() + 多文件加载/打包
+│   └── xulo-cli/               # CLI（run/build/check/fmt/repl，二进制名为 xulo）
+├── stdlib/                     # 未来标准库源码占位（.xulo）
+├── docs/                       # 语言规范（EBNF / 语法）
+├── examples/                   # 示例 .xulo 文件
+└── tests/                      # （各 crate 的 tests/ 目录承载测试）
 ```
+
+`xulo run` 通过本机 Node.js 执行生成的 JS。

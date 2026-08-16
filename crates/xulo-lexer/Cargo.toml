@@ -1,0 +1,8 @@
+[package]
+name = "xulo-lexer"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+winnow = { workspace = true }
+xulo-core = { workspace = true }
