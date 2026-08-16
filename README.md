@@ -1,6 +1,6 @@
 # Xulo
 
-Xulo 是一种玩具编程语言：解析 `.xulo` 文件 → 生成 JavaScript → 通过 Node.js 运行。
+Xulo 是一门 UI First 编程语言：解析 `.xulo` 文件 → 生成 JavaScript → 通过 Node.js 运行。
 
 本仓库实现 Xulo 的 MVP（Rust + [winnow](https://github.com/winnow-rs/winnow)）：
 

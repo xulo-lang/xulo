@@ -1,6 +1,6 @@
 # 前言
 
-Xulo 是一门 **UI 优先**的玩具编程语言，语法吸收 Rust、Swift、TypeScript 的设计精华。
+Xulo 是一门 UI First 编程语言，语法吸收 Rust、Swift、TypeScript 的设计精华。
 
 编译管线：
 
