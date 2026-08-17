@@ -5,8 +5,9 @@ use std::ops::Range;
 
 use symbol_table::{Symbol, SymbolKind, SymbolTable};
 use xulo_core::ast::{
-    AssignStmt, AssignTarget, BinaryOperator, Block, Call, CallArg, EnumVariant, Expression,
-    IfExpr, LetBinding, Literal, ObjectField, Program, Statement, Type, TypeAlias,
+    AssignStmt, AssignTarget, BinaryOperator, Block, Call, CallArg, EnumVariant, ExportItem,
+    Expression, FnBound, IfExpr, ImplDecl, LetBinding, Literal, ObjectField, Program, Statement,
+    TraitDecl, Type, TypeAlias, UiElement, impl_fn_name,
 };
 use xulo_core::error::{ErrorKind, XuloError};
 
@@ -14,20 +15,40 @@ use xulo_core::error::{ErrorKind, XuloError};
 /// attached by the lexer/parser; semantic checks target names).
 type SResult<T> = Result<T, XuloError>;
 
-/// A named type known to the program: either a user `type` alias or an `enum`.
+/// A named type known to the program: a user `type` alias, an `enum`, or a
+/// `trait`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeEntryKind {
     Alias(Type),
     Enum(Vec<EnumVariant>),
+    Trait(TraitDef),
 }
 
 impl TypeEntryKind {
     pub fn variants(&self) -> Option<&Vec<EnumVariant>> {
         match self {
             TypeEntryKind::Enum(variants) => Some(variants),
-            TypeEntryKind::Alias(_) => None,
+            TypeEntryKind::Alias(_) | TypeEntryKind::Trait(_) => None,
         }
     }
+}
+
+/// The method contract of a `trait`: method name, parameter types (the `self`
+/// receiver excluded), and return type.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TraitDef {
+    pub methods: Vec<TraitMethodSig>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TraitMethodSig {
+    pub name: String,
+    pub params: Vec<Type>,
+    pub return_type: Type,
+    /// Whether the trait method declares a `self` receiver.
+    pub has_self: bool,
+    /// Whether the trait method is declared `async`.
+    pub is_async: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -46,6 +67,18 @@ pub struct Analyzer {
     /// Type-parameter names currently in scope (these are valid as `Named`)
     /// and are erased to `Any` for kind/arithmetic checks.
     generics: Vec<String>,
+    /// Stack of bound maps for in-scope generic type parameters: parameter name
+    /// -> the trait's structural `ObjectType` shape. Enables `member_field_type`
+    /// refinement and call-site `assignable` checks for `T: Trait` bounds.
+    bound_shapes: Vec<HashMap<String, Type>>,
+    /// Registered `impl Trait for Type` blocks: `(trait, type)` -> method names
+    /// provided. The receiver type's concrete name must be known statically.
+    impls: std::collections::HashSet<(String, String, String)>,
+    /// Trait-dispatch call sites found during checking: `(span, method name)`.
+    /// These are applied back onto the AST (`Call.trait_impl`) by
+    /// [`apply_trait_dispatch`] after analysis, keeping the checker call-site
+    /// signatures shareable.
+    trait_dispatch: Vec<(Range<usize>, String)>,
     /// Depth of enclosing async functions; `await` is only valid when > 0.
     async_depth: usize,
     /// Depth of enclosing `Component`-returning functions; `@State`/`@Store`/
@@ -97,6 +130,9 @@ pub struct AnalysisResult {
     pub default: Option<String>,
     /// Non-fatal diagnostics from this module.
     pub warnings: Vec<XuloError>,
+    /// Trait-dispatch call sites: `(call span, mangled impl function name)`.
+    /// The loader applies these to the module's AST before codegen/runtime.
+    pub trait_dispatch: Vec<(Range<usize>, String)>,
 }
 
 /// Run all semantic checks over a parsed program.
@@ -117,6 +153,9 @@ pub fn analyze_with(
         declared_return: false,
         type_table: HashMap::new(),
         generics: Vec::new(),
+        bound_shapes: Vec::new(),
+        impls: std::collections::HashSet::new(),
+        trait_dispatch: Vec::new(),
         async_depth: 0,
         component_depth: 0,
         block_depth: 0,
@@ -146,6 +185,7 @@ pub fn analyze_with(
         exported_types: Vec::new(),
         default: analyzer.exported_default.clone(),
         warnings: analyzer.warnings.clone(),
+        trait_dispatch: analyzer.trait_dispatch.clone(),
     };
     for name in &analyzer.exported {
         if let Some(entry) = analyzer.type_table.get(name).cloned() {
@@ -153,6 +193,220 @@ pub fn analyze_with(
         }
     }
     Ok(result)
+}
+
+/// Apply the trait-dispatch annotations found during analysis back onto the
+/// AST, setting `Call.trait_impl` for each `Trait::method(recv, ...)` call.
+/// The checker never holds `&mut Expression`, so annotations travel out-of-band
+/// and are applied here in a single pass after checking.
+pub fn apply_trait_dispatch(program: &mut Program, dispatch: &[(Range<usize>, String)]) {
+    for statement in &mut program.statements {
+        apply_stmt(statement, dispatch);
+    }
+}
+
+fn apply_stmt(stmt: &mut Statement, dispatch: &[(Range<usize>, String)]) {
+    match stmt {
+        Statement::Fn(f) => apply_block(&mut f.body, dispatch),
+        Statement::Let(l) => {
+            if let Some(value) = &mut l.value {
+                apply_expr(value, dispatch);
+            }
+        }
+        Statement::Return(r) => {
+            if let Some(value) = &mut r.value {
+                apply_expr(value, dispatch);
+            }
+        }
+        Statement::For(f) => {
+            apply_expr(&mut f.iterable, dispatch);
+            apply_block(&mut f.body, dispatch);
+        }
+        Statement::While(w) => {
+            apply_expr(&mut w.condition, dispatch);
+            apply_block(&mut w.body, dispatch);
+        }
+        Statement::Assign(a) => {
+            match &mut a.target {
+                AssignTarget::Member(object, _) => apply_expr(object, dispatch),
+                AssignTarget::Index(object, index) => {
+                    apply_expr(object, dispatch);
+                    apply_expr(index, dispatch);
+                }
+                AssignTarget::Name(_) => {}
+            }
+            apply_expr(&mut a.value, dispatch);
+        }
+        Statement::Expr(e) => apply_expr(&mut e.expr, dispatch),
+        Statement::Block(b) => apply_block(b, dispatch),
+        Statement::Try(t) => {
+            apply_block(&mut t.try_block, dispatch);
+            apply_block(&mut t.catch_block, dispatch);
+        }
+        Statement::Throw(e) => apply_expr(e, dispatch),
+        Statement::Export(e) => apply_export(&mut e.item, dispatch),
+        Statement::State(s) => {
+            if let Some(value) = &mut s.binding.value {
+                apply_expr(value, dispatch);
+            }
+        }
+        Statement::Store(s) => apply_expr(&mut s.value, dispatch),
+        Statement::Effect(e) => {
+            apply_block(&mut e.closure.body, dispatch);
+            if let Some(deps) = &mut e.deps {
+                for dep in deps {
+                    apply_expr(dep, dispatch);
+                }
+            }
+        }
+        Statement::Environment(env) => {
+            let _ = env;
+        }
+        Statement::Component(c) => {
+            for arg in &mut c.args {
+                apply_expr(&mut arg.value, dispatch);
+            }
+            apply_ui_elements(&mut c.children, dispatch);
+        }
+        Statement::Impl(imp) => {
+            for method in &mut imp.methods {
+                apply_block(&mut method.body, dispatch);
+            }
+        }
+        Statement::TypeAlias(_)
+        | Statement::Enum(_)
+        | Statement::Import(_)
+        | Statement::Trait(_) => {}
+    }
+}
+
+fn apply_export(item: &mut ExportItem, dispatch: &[(Range<usize>, String)]) {
+    match item {
+        ExportItem::Fn(f) => apply_block(&mut f.body, dispatch),
+        ExportItem::Let(l) => {
+            if let Some(value) = &mut l.value {
+                apply_expr(value, dispatch);
+            }
+        }
+        ExportItem::Default(inner) => apply_export(inner, dispatch),
+        ExportItem::Names(_) | ExportItem::Type(_) | ExportItem::Enum(_) | ExportItem::Trait(_) => {
+        }
+    }
+}
+
+fn apply_ui_elements(elements: &mut [UiElement], dispatch: &[(Range<usize>, String)]) {
+    for element in elements {
+        match element {
+            UiElement::Component(c) => {
+                for arg in &mut c.args {
+                    apply_expr(&mut arg.value, dispatch);
+                }
+                apply_ui_elements(&mut c.children, dispatch);
+            }
+            UiElement::Expr(e) => apply_expr(e, dispatch),
+            UiElement::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                apply_expr(condition, dispatch);
+                apply_ui_elements(then_branch, dispatch);
+                if let Some(els) = else_branch {
+                    apply_ui_elements(els, dispatch);
+                }
+            }
+            UiElement::For { iterable, body, .. } => {
+                apply_expr(iterable, dispatch);
+                apply_ui_elements(body, dispatch);
+            }
+            UiElement::Group(g) => apply_ui_elements(g, dispatch),
+            UiElement::Text(_) => {}
+        }
+    }
+}
+
+fn apply_block(block: &mut Block, dispatch: &[(Range<usize>, String)]) {
+    for statement in &mut block.statements {
+        apply_stmt(statement, dispatch);
+    }
+}
+
+fn apply_expr(expr: &mut Expression, dispatch: &[(Range<usize>, String)]) {
+    match expr {
+        Expression::Literal { value, .. } => match value {
+            Literal::List(items) => {
+                for item in items {
+                    apply_expr(item, dispatch);
+                }
+            }
+            Literal::Object(fields) => {
+                for field in fields {
+                    match field {
+                        ObjectField::Field { value, .. } => apply_expr(value, dispatch),
+                        ObjectField::Spread { value } => apply_expr(value, dispatch),
+                    }
+                }
+            }
+            _ => {}
+        },
+        Expression::Call(call) => {
+            if let Some((_, mangled)) = dispatch.iter().find(|(span, _)| *span == call.span) {
+                call.trait_impl = Some(mangled.clone());
+            }
+            if let Some(object) = &mut call.object {
+                apply_expr(object, dispatch);
+            }
+            for arg in &mut call.arguments {
+                apply_expr(&mut arg.value, dispatch);
+            }
+        }
+        Expression::BinaryOp(b) => {
+            apply_expr(&mut b.left, dispatch);
+            apply_expr(&mut b.right, dispatch);
+        }
+        Expression::Unary(u) => apply_expr(&mut u.operand, dispatch),
+        Expression::If(e) => {
+            apply_expr(&mut e.condition, dispatch);
+            apply_block(&mut e.then_branch, dispatch);
+            if let Some(els) = &mut e.else_branch {
+                apply_block(els, dispatch);
+            }
+        }
+        Expression::Ternary(t) => {
+            apply_expr(&mut t.condition, dispatch);
+            apply_expr(&mut t.then_value, dispatch);
+            apply_expr(&mut t.else_value, dispatch);
+        }
+        Expression::Match(m) => {
+            apply_expr(&mut m.value, dispatch);
+            for arm in &mut m.arms {
+                apply_expr(&mut arm.value, dispatch);
+            }
+        }
+        Expression::Member(m) => apply_expr(&mut m.object, dispatch),
+        Expression::Index(i) => {
+            apply_expr(&mut i.object, dispatch);
+            apply_expr(&mut i.index, dispatch);
+        }
+        Expression::Nullish(n) => {
+            apply_expr(&mut n.left, dispatch);
+            apply_expr(&mut n.right, dispatch);
+        }
+        Expression::Range(r) => {
+            apply_expr(&mut r.start, dispatch);
+            apply_expr(&mut r.end, dispatch);
+        }
+        Expression::Await { expr: inner, .. } => apply_expr(inner, dispatch),
+        Expression::FnExpr(f) => apply_block(&mut f.body, dispatch),
+        Expression::Spread { expr: inner, .. } => apply_expr(inner, dispatch),
+        Expression::CallValue(c) => {
+            apply_expr(&mut c.callee, dispatch);
+            for arg in &mut c.arguments {
+                apply_expr(&mut arg.value, dispatch);
+            }
+        }
+        Expression::Identifier { .. } | Expression::EnumRef(_) | Expression::Binding { .. } => {}
+    }
 }
 
 fn assign_target_name(target: &AssignTarget) -> String {
@@ -267,6 +521,8 @@ impl Analyzer {
             Statement::Assign(assign) => self.check_assign(assign),
             Statement::TypeAlias(alias) => self.check_type_alias(alias),
             Statement::Enum(e) => self.check_enum(e),
+            Statement::Trait(t) => self.check_trait(t),
+            Statement::Impl(imp) => self.check_impl(imp),
             Statement::Return(stmt) => {
                 let Some(value) = &stmt.value else {
                     // Bare `return;` is valid in any function (docs EBNF §7),
@@ -403,12 +659,22 @@ impl Analyzer {
                 f.type_params.clone(),
                 f.params.clone(),
                 return_type.clone(),
+                f.bounds.clone(),
             ),
             is_const: true,
         };
         if !self.table.declare(symbol) {
             return Err(self.err(format!("function `{}` is already defined", f.name)));
         }
+
+        // `T: Trait` bounds: validate the trait exists and make the bound shape
+        // visible to `member_field_type` / `assignable` while checking the body.
+        let mut bound_map = HashMap::new();
+        for bound in &f.bounds {
+            let shape = self.bound_shape(bound)?;
+            bound_map.insert(bound.param.clone(), shape);
+        }
+        self.bound_shapes.push(bound_map);
 
         self.table.push_scope();
         for param in &f.params {
@@ -462,6 +728,7 @@ impl Analyzer {
         self.declared_return = saved_declared;
         result?;
         self.table.pop_scope();
+        self.bound_shapes.pop();
         Ok(())
     }
 
@@ -582,7 +849,12 @@ impl Analyzer {
                             Symbol {
                                 name: local.clone(),
                                 type_: Type::Any,
-                                kind: SymbolKind::Function(Vec::new(), Vec::new(), Type::Any),
+                                kind: SymbolKind::Function(
+                                    Vec::new(),
+                                    Vec::new(),
+                                    Type::Any,
+                                    Vec::new(),
+                                ),
                                 is_const: true,
                             }
                         }
@@ -618,7 +890,12 @@ impl Analyzer {
                         Symbol {
                             name: name.clone(),
                             type_: Type::Any,
-                            kind: SymbolKind::Function(Vec::new(), Vec::new(), Type::Any),
+                            kind: SymbolKind::Function(
+                                Vec::new(),
+                                Vec::new(),
+                                Type::Any,
+                                Vec::new(),
+                            ),
                             is_const: true,
                         }
                     }
@@ -652,6 +929,11 @@ impl Analyzer {
             xulo_core::ast::ExportItem::Type(alias) => {
                 self.check_type_alias(alias)?;
                 self.exported.push(alias.name.clone());
+                Ok(())
+            }
+            xulo_core::ast::ExportItem::Trait(t) => {
+                self.check_trait(t)?;
+                self.exported.push(t.name.clone());
                 Ok(())
             }
             xulo_core::ast::ExportItem::Enum(e) => {
@@ -737,7 +1019,7 @@ impl Analyzer {
                     SymbolKind::Store => Err(self.err(format!(
                         "cannot assign to `{name}`: store bindings are read-only"
                     ))),
-                    SymbolKind::Function(_, _, _) => {
+                    SymbolKind::Function(_, _, _, _) => {
                         Err(self.err(format!("cannot assign to `{name}`: it is a function")))
                     }
                 }
@@ -1066,6 +1348,227 @@ impl Analyzer {
         Ok(())
     }
 
+    fn check_trait(&mut self, t: &TraitDecl) -> SResult<()> {
+        if self.type_table.contains_key(&t.name) {
+            return Err(self.err(format!("type `{}` is already defined", t.name)));
+        }
+        // Register the trait before checking its methods so a method may
+        // reference the trait itself as a return type (`fn scale(self): Shape`).
+        self.type_table.insert(
+            t.name.clone(),
+            TypeEntry {
+                type_params: t.type_params.clone(),
+                kind: TypeEntryKind::Trait(TraitDef {
+                    methods: Vec::new(),
+                }),
+            },
+        );
+        let mut seen = std::collections::HashSet::new();
+        self.generics.extend(t.type_params.iter().cloned());
+        let mut check_all = |this: &Self| {
+            for m in &t.methods {
+                if !seen.insert(m.name.clone()) {
+                    return Err(this.err(format!(
+                        "trait `{}` has a duplicate method `{}`",
+                        t.name, m.name
+                    )));
+                }
+                for p in &m.params {
+                    if let Some(ty) = &p.type_annotation {
+                        this.check_type(ty)?;
+                    }
+                }
+                if let Some(rt) = &m.return_type {
+                    this.check_type(rt)?;
+                }
+            }
+            Ok(())
+        };
+        let result = check_all(self);
+        self.generics
+            .truncate(self.generics.len().saturating_sub(t.type_params.len()));
+        result?;
+        let methods = t
+            .methods
+            .iter()
+            .map(|m| TraitMethodSig {
+                name: m.name.clone(),
+                params: m
+                    .params
+                    .iter()
+                    .map(|p| p.type_annotation.clone().unwrap_or(Type::Any))
+                    .collect(),
+                return_type: m.return_type.clone().unwrap_or(Type::Any),
+                has_self: m.has_self,
+                is_async: m.is_async,
+            })
+            .collect();
+        if let Some(entry) = self.type_table.get_mut(&t.name) {
+            entry.kind = TypeEntryKind::Trait(TraitDef { methods });
+        }
+        Ok(())
+    }
+
+    /// `impl Trait for Type { ... }`: every method must have a signature
+    /// compatible with the trait's, and its body is checked as a normal
+    /// function (where `self` binds to the implemented type).
+    fn check_impl(&mut self, imp: &ImplDecl) -> SResult<()> {
+        let entry = self
+            .type_entry(&imp.trait_name)
+            .cloned()
+            .ok_or_else(|| self.err(format!("unknown trait `{}`", imp.trait_name)))?;
+        let TypeEntryKind::Trait(trait_def) = &entry.kind else {
+            return Err(self.err(format!("`{}` is not a trait", imp.trait_name)));
+        };
+        let ty_entry = self
+            .type_entry(&imp.type_name)
+            .ok_or_else(|| self.err(format!("unknown type `{}`", imp.type_name)))?;
+        if matches!(ty_entry.kind, TypeEntryKind::Trait(_)) {
+            return Err(self.err(format!(
+                "`{}` is a trait and cannot be the receiver type of an `impl`",
+                imp.type_name
+            )));
+        }
+        for m in &imp.methods {
+            let Some(sig) = trait_def.methods.iter().find(|s| s.name == m.name) else {
+                return Err(self.err(format!(
+                    "`impl {0} for {1}` defines `{2}`, which `{0}` does not declare",
+                    imp.trait_name, imp.type_name, m.name
+                )));
+            };
+            // Signature compatibility: the impl method's non-`self` parameters
+            // and return must match the trait binding.
+            let impl_params = m
+                .params
+                .iter()
+                .filter(|p| p.name != "self")
+                .collect::<Vec<_>>();
+            let sig_params = sig.params.clone();
+            if impl_params.len() != sig_params.len() {
+                return Err(self.err(format!(
+                    "`impl {0} for {1}` method `{2}` has the wrong arity (trait declares {3})",
+                    imp.trait_name,
+                    imp.type_name,
+                    m.name,
+                    sig_params.len()
+                )));
+            }
+            for (impl_p, sig_t) in impl_params.iter().zip(sig_params.iter()) {
+                let impl_t = impl_p.type_annotation.clone().unwrap_or(Type::Any);
+                let compatible = self.assignable(sig_t, &impl_t) && self.assignable(&impl_t, sig_t);
+                if !compatible {
+                    return Err(self.err(format!(
+                        "`impl {0} for {1}` method `{2}` parameter `{3}` must be `{4}`, found `{5}`",
+                        imp.trait_name,
+                        imp.type_name,
+                        m.name,
+                        impl_p.name,
+                        sig_t.name(),
+                        impl_t.name()
+                    )));
+                }
+            }
+            let impl_ret = m.return_type.clone().unwrap_or(Type::Any);
+            if !self.assignable(&sig.return_type, &impl_ret)
+                && !self.assignable(&impl_ret, &sig.return_type)
+            {
+                return Err(self.err(format!(
+                    "`impl {0} for {1}` method `{2}` must return `{3}`, found `{4}`",
+                    imp.trait_name,
+                    imp.type_name,
+                    m.name,
+                    sig.return_type.name(),
+                    impl_ret.name()
+                )));
+            }
+            // Register the dispatch target so `Trait::method` can resolve it.
+            if !self.impls.insert((
+                imp.trait_name.clone(),
+                imp.type_name.clone(),
+                m.name.clone(),
+            )) {
+                return Err(self.err(format!(
+                    "`{0}` is already implemented for `{1}` (method `{2}`)",
+                    imp.trait_name, imp.type_name, m.name
+                )));
+            }
+            // Check the method body with the receiver bound to the type.
+            self.table.push_scope();
+            for param in &m.params {
+                if param.name == "self" {
+                    self.table.declare(Symbol {
+                        name: "self".to_string(),
+                        type_: Type::Named(imp.type_name.clone()),
+                        kind: SymbolKind::Variable,
+                        is_const: true,
+                    });
+                } else {
+                    let ty = param.type_annotation.clone().unwrap_or(Type::Any);
+                    self.table.declare(Symbol {
+                        name: param.name.clone(),
+                        type_: ty,
+                        kind: SymbolKind::Variable,
+                        is_const: true,
+                    });
+                }
+            }
+            let saved = self.current_return.replace(impl_ret.clone());
+            let saved_declared = self.declared_return;
+            self.declared_return = m.return_type.is_some();
+            let saved_async = self.async_depth;
+            self.async_depth = if m.is_async { saved_async + 1 } else { 0 };
+            let result = self.check_block_implicit(&m.body);
+            self.async_depth = saved_async;
+            self.declared_return = saved_declared;
+            self.current_return = saved;
+            result?;
+            self.table.pop_scope();
+        }
+        Ok(())
+    }
+
+    /// Build the structural `ObjectType` shape of a trait: one field per method,
+    /// typed as its `fn(...)` signature with `self` erased. Used for bound
+    /// refinement and structural satisfaction checks.
+    fn trait_shape(&self, def: &TraitDef) -> Type {
+        let fields = def
+            .methods
+            .iter()
+            .map(|m| {
+                let params = m.params.clone();
+                let ret: Option<Box<Type>> = match &m.return_type {
+                    Type::Async(inner) => Some(inner.clone()),
+                    other => Some(Box::new(other.clone())),
+                };
+                (m.name.clone(), Type::FnSig { params, ret })
+            })
+            .collect();
+        Type::ObjectType(fields)
+    }
+
+    /// Resolve a bound clause's trait names (verifying each is a known trait)
+    /// into the synthetic `ObjectType` combining their method fields.
+    fn bound_shape(&self, bound: &FnBound) -> SResult<Type> {
+        let mut fields = Vec::new();
+        for trait_name in &bound.traits {
+            let entry = self
+                .type_entry(trait_name)
+                .ok_or_else(|| self.err(format!("unknown trait `{trait_name}`")))?;
+            let TypeEntryKind::Trait(def) = &entry.kind else {
+                return Err(self.err(format!("`{trait_name}` is not a trait")));
+            };
+            for (name, ty) in match self.trait_shape(def) {
+                Type::ObjectType(f) => f,
+                _ => unreachable!(),
+            } {
+                if !fields.iter().any(|(n, _)| *n == name) {
+                    fields.push((name, ty));
+                }
+            }
+        }
+        Ok(Type::ObjectType(fields))
+    }
+
     fn check_block(&mut self, block: &Block) -> SResult<()> {
         self.check_block_tail(block).map(|_| ())
     }
@@ -1370,6 +1873,15 @@ impl Analyzer {
 
     /// Look up a field type on an object-like type (`ObjectType`, the loose
     /// `object`, or `Any`).
+    /// Structural shape for an in-scope bounded generic parameter (`T: Area`),
+    /// searched from the innermost enclosing bound map outward.
+    fn bound_shape_of(&self, name: &str) -> Option<Type> {
+        self.bound_shapes
+            .iter()
+            .rev()
+            .find_map(|map| map.get(name).cloned())
+    }
+
     fn member_field_type(&self, ty: &Type, property: &str) -> SResult<Type> {
         match ty {
             Type::ObjectType(fields) => fields
@@ -1377,7 +1889,19 @@ impl Analyzer {
                 .find(|(n, _)| n == property)
                 .map(|(_, t)| t.clone())
                 .ok_or_else(|| self.err(format!("type has no member `{property}`"))),
-            Type::Object | Type::Any | Type::Named(_) => Ok(Type::Any),
+            Type::Object | Type::Any => Ok(Type::Any),
+            Type::Named(name) => {
+                // A bounded generic parameter (`T: Area`) exposes its bound's
+                // members, so `t.area()` type-checks against the trait shape.
+                match self.bound_shape_of(name) {
+                    Some(Type::ObjectType(fields)) => fields
+                        .iter()
+                        .find(|(n, _)| n == property)
+                        .map(|(_, t)| t.clone())
+                        .ok_or_else(|| self.err(format!("type has no member `{property}`"))),
+                    _ => Ok(Type::Any),
+                }
+            }
             other => Err(self.err(format!(
                 "cannot access member of `{}` (type `{}`)",
                 property,
@@ -1632,6 +2156,17 @@ impl Analyzer {
     fn check_call(&mut self, call: &xulo_core::ast::Call) -> SResult<Type> {
         if call.is_enum() {
             let (enum_name, variant) = call.enum_parts().unwrap();
+            // `Area::area(recv)` is a trait dispatch call when `Area` is a
+            // registered trait; otherwise it is an enum construction.
+            if let Some(entry) = self.type_entry(enum_name)
+                && matches!(entry.kind, TypeEntryKind::Trait(_))
+            {
+                let args: Vec<&Expression> = call.arguments.iter().map(|a| &a.value).collect();
+                let (ret, mangled) =
+                    self.check_trait_call(enum_name.to_string(), variant, &args)?;
+                self.trait_dispatch.push((call.span.clone(), mangled));
+                return Ok(ret);
+            }
             let args: Vec<&Expression> = call.arguments.iter().map(|a| &a.value).collect();
             return self.check_enum_call(enum_name.to_string(), variant.to_string(), &args);
         }
@@ -1687,7 +2222,7 @@ impl Analyzer {
             )));
         }
         match &sym.kind {
-            SymbolKind::Function(type_params, params, return_type) => {
+            SymbolKind::Function(type_params, params, return_type, callee_bounds) => {
                 // An unseeded import (no module graph) is opaque: accept any
                 // argument list and return `any`. Local functions never reach
                 // here, even when un-annotated (zero params, no return type).
@@ -1711,7 +2246,26 @@ impl Analyzer {
                 let type_params = type_params.clone();
                 let params = params.clone();
                 let return_type = return_type.clone();
+                let callee_bounds = callee_bounds.clone();
                 self.generics.extend(type_params.iter().cloned());
+                // Call-site bounds: the callee's `T: Trait` clauses constrain
+                // its argument checks the same way they do inside its body.
+                let bound_map = match callee_bounds.iter().try_fold(
+                    HashMap::new(),
+                    |mut map, bound| -> SResult<HashMap<String, Type>> {
+                        let shape = self.bound_shape(bound)?;
+                        map.insert(bound.param.clone(), shape);
+                        Ok(map)
+                    },
+                ) {
+                    Ok(map) => map,
+                    Err(e) => {
+                        self.generics
+                            .truncate(self.generics.len().saturating_sub(type_params.len()));
+                        return Err(e);
+                    }
+                };
+                self.bound_shapes.push(bound_map);
                 let result = (|| {
                     if all_named {
                         // Named arguments must cover every parameter (defaults
@@ -1854,6 +2408,7 @@ impl Analyzer {
                         Ok(resolved)
                     }
                 })();
+                self.bound_shapes.pop();
                 self.generics
                     .truncate(self.generics.len().saturating_sub(type_params.len()));
                 result
@@ -1919,7 +2474,9 @@ impl Analyzer {
                 }
                 Ok(Type::Named(enum_name))
             }
-            TypeEntryKind::Alias(_) => Err(self.err(format!("`{enum_name}` is not an enum"))),
+            TypeEntryKind::Alias(_) | TypeEntryKind::Trait(_) => {
+                Err(self.err(format!("`{enum_name}` is not an enum")))
+            }
         }
     }
 
@@ -1993,6 +2550,76 @@ impl Analyzer {
                     .truncate(self.generics.len().saturating_sub(type_params.len()));
                 Err(e)
             }
+        }
+    }
+
+    /// `Trait::method(receiver, ...)` explicit dispatch (design B1): the method
+    /// is resolved to the registered `impl Trait for Type` whose receiver type
+    /// matches the first argument's static type, and the call's arguments are
+    /// checked against the trait binding's parameter list.
+    fn check_trait_call(
+        &mut self,
+        trait_name: String,
+        method: &str,
+        arguments: &[&Expression],
+    ) -> SResult<(Type, String)> {
+        let entry = self
+            .type_entry(&trait_name)
+            .cloned()
+            .ok_or_else(|| self.err(format!("unknown trait `{trait_name}`")))?;
+        let TypeEntryKind::Trait(trait_def) = &entry.kind else {
+            unreachable!("check_trait_call is only entered for trait entries")
+        };
+        let Some(sig) = trait_def.methods.iter().find(|s| s.name == method) else {
+            return Err(self.err(format!("trait `{trait_name}` has no method `{method}`")));
+        };
+        // The receiver is the first argument; it must be statically typed by a
+        // named type with a registered `impl`, so dispatch is fully static.
+        let Some(receiver) = arguments.first() else {
+            return Err(self.err(format!(
+                "trait method `{trait_name}::{method}` requires a receiver argument"
+            )));
+        };
+        let receiver_type = self.check_expression(receiver)?;
+        // Dispatch always receives the receiver first, followed by the trait
+        // method's declared parameters.
+        let expected_slots = 1 + sig.params.len();
+        if arguments.len() != expected_slots {
+            return Err(self.err(format!(
+                "trait method `{trait_name}::{method}` expects {expected_slots} argument(s), got {}",
+                arguments.len()
+            )));
+        }
+        for (arg, expected) in arguments[1..].iter().zip(sig.params.iter()) {
+            let arg_type = self.check_expression(arg)?;
+            if !self.assignable(&arg_type, expected) {
+                return Err(self.err(format!(
+                    "argument to `{trait_name}::{method}` must be `{}`, found `{}`",
+                    expected.name(),
+                    arg_type.name()
+                )));
+            }
+        }
+        // Resolve the receiver type to its concrete name for impl lookup.
+        let concrete = match &receiver_type {
+            Type::Named(name) => Some(name.clone()),
+            Type::Optional(inner) => match inner.as_ref() {
+                Type::Named(name) => Some(name.clone()),
+                _ => None,
+            },
+            _ => None,
+        };
+        match concrete {
+            Some(name) if self.impls.contains(&(trait_name.clone(), name.clone(), method.to_string())) => {
+                Ok((sig.return_type.clone(), impl_fn_name(&trait_name, &name, method)))
+            }
+            Some(name) => Err(self.err(format!(
+                "type `{name}` does not implement trait `{trait_name}` (add `impl {trait_name} for {name}`)"
+            ))),
+            None => Err(self.err(format!(
+                "cannot dispatch `{trait_name}::{method}` on type `{}`: provide a named type with `impl {trait_name} for Type`",
+                receiver_type.name()
+            ))),
         }
     }
 
@@ -2077,7 +2704,10 @@ impl Analyzer {
         match ty {
             Type::Named(name) => {
                 if self.generics.contains(name) {
-                    Type::Any
+                    // A bounded generic erases to its bound's structural shape
+                    // (`T: Area` behaves like `{ area: fn(): number }`); an
+                    // unbounded generic erases to `Any`.
+                    self.bound_shape_of(name).unwrap_or(Type::Any)
                 } else {
                     match self.type_entry(name).map(|e| &e.kind) {
                         Some(TypeEntryKind::Alias(inner)) => self.resolve_alias(inner, depth + 1),

@@ -806,6 +806,46 @@ fn type_only_enum_import_still_binds_the_value() {
 }
 
 #[test]
+fn run_trait_dispatch_js_and_native() {
+    let src = r#"
+        trait Area { fn area(self): number; fn perimeter(self): number }
+        type Rectangle = object
+        impl Area for Rectangle {
+            fn area(self): number { return self.w * self.h }
+            fn perimeter(self): number { return 2 * (self.w + self.h) }
+        }
+        fn rect(w: number, h: number): Rectangle {
+            let r = { w: w, h: h }
+            r
+        }
+        fn main() {
+            print("area=" + str(Area::area(rect(3, 4))))
+            print("perimeter=" + str(Area::perimeter(rect(3, 4))))
+        }
+    "#;
+    for native in [false, true] {
+        let file = temp_file("trait.xulo", src);
+        let mut cmd = Command::new(BIN);
+        cmd.arg("run");
+        if native {
+            cmd.arg("--native");
+        }
+        let out = cmd.arg(&file).output().unwrap();
+        assert!(
+            out.status.success(),
+            "native={native} stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            "area=12\nperimeter=14\n",
+            "native={native}"
+        );
+        let _ = std::fs::remove_file(&file);
+    }
+}
+
+#[test]
 fn imported_function_supports_named_arguments() {
     let (dir, entry) = temp_dir(
         &[
@@ -1544,4 +1584,259 @@ fn run_multi_payload_enum_value_shape() {
         "{ tag: 'A', value: [ 1, 'x' ] }\na1x\n"
     );
     let _ = std::fs::remove_file(&file);
+}
+
+// ---------------------------------------------------------------------------
+// Native runtime (`xulo run --native`): module imports, external rejection,
+// and async/await orchestration at the CLI level.
+// ---------------------------------------------------------------------------
+
+/// Run `xulo run --native <entry>` in a throwaway dir and return its output.
+fn native_run(files: &[(&str, &str)], entry: &str) -> (bool, String, String) {
+    let (dir, entry_path) = temp_dir(files, entry);
+    let out = Command::new(BIN)
+        .args(["run", "--native", entry_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let result = (
+        out.status.success(),
+        String::from_utf8_lossy(&out.stdout).to_string(),
+        String::from_utf8_lossy(&out.stderr).to_string(),
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    result
+}
+
+#[test]
+fn native_run_local_module_named_imports() {
+    let (ok, stdout, stderr) = native_run(
+        &[
+            (
+                "math.xulo",
+                "export fn add(a: number, b: number): number { a + b }\n\
+                 export const PI = 3.14\n",
+            ),
+            (
+                "main.xulo",
+                "import { add, PI } from \"./math\"\n\
+                 fn main() { print(add(2, 3)) print(PI) }\n",
+            ),
+        ],
+        "main.xulo",
+    );
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout, "5\n3.14\n");
+}
+
+#[test]
+fn native_run_local_module_import_alias() {
+    let (ok, stdout, stderr) = native_run(
+        &[
+            (
+                "math.xulo",
+                "export fn add(a: number, b: number): number { a + b }\n",
+            ),
+            (
+                "main.xulo",
+                "import { add as plus } from \"./math\"\n\
+                 fn main() { print(plus(1, 1)) }\n",
+            ),
+        ],
+        "main.xulo",
+    );
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout, "2\n");
+}
+
+#[test]
+fn native_run_local_module_dependency_chain() {
+    let (ok, stdout, stderr) = native_run(
+        &[
+            ("base.xulo", "export fn base(): number { 10 }\n"),
+            (
+                "mid.xulo",
+                "import { base } from \"./base\"\n\
+                 export fn mid(): number { base() + 5 }\n",
+            ),
+            (
+                "main.xulo",
+                "import { mid } from \"./mid\"\n\
+                 fn main() { print(mid()) }\n",
+            ),
+        ],
+        "main.xulo",
+    );
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout, "15\n");
+}
+
+#[test]
+fn native_run_local_module_namespace_import() {
+    let (ok, stdout, stderr) = native_run(
+        &[
+            (
+                "cal.xulo",
+                "export const HOURS = 24\n\
+                 export fn hours(): number { HOURS }\n",
+            ),
+            (
+                "main.xulo",
+                "import * as c from \"./cal\"\n\
+                 fn main() { print(c.HOURS) print(c.hours()) }\n",
+            ),
+        ],
+        "main.xulo",
+    );
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout, "24\n24\n");
+}
+
+#[test]
+fn native_run_local_module_default_import() {
+    let (ok, stdout, stderr) = native_run(
+        &[
+            ("lib.xulo", "export default fn greet(): string { \"hi\" }\n"),
+            (
+                "main.xulo",
+                "import g from \"./lib\"\n\
+                 fn main() { print(g()) }\n",
+            ),
+        ],
+        "main.xulo",
+    );
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout, "hi\n");
+}
+
+#[test]
+fn native_run_library_side_effects_run_before_entry() {
+    let (ok, stdout, stderr) = native_run(
+        &[
+            (
+                "lib.xulo",
+                "print(\"lib-init\")\n\
+                 export fn tag(): string { \"lib\" }\n",
+            ),
+            (
+                "main.xulo",
+                "import { tag } from \"./lib\"\n\
+                 fn main() { print(tag()) }\n",
+            ),
+        ],
+        "main.xulo",
+    );
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout, "lib-init\nlib\n");
+}
+
+#[test]
+fn native_run_semantic_rejects_missing_export() {
+    let (ok, stdout, stderr) = native_run(
+        &[
+            (
+                "lib.xulo",
+                "export fn add(a: number, b: number): number { a + b }\n",
+            ),
+            (
+                "main.xulo",
+                "import { nope } from \"./lib\"\n\
+                 fn main() { print(nope(1)) }\n",
+            ),
+        ],
+        "main.xulo",
+    );
+    assert!(!ok, "stdout: {stdout}");
+    assert!(
+        stderr.contains("has no export named `nope`"),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
+fn native_run_rejects_missing_default() {
+    let (ok, _stdout, stderr) = native_run(
+        &[
+            (
+                "lib.xulo",
+                "export fn add(a: number, b: number): number { a + b }\n",
+            ),
+            (
+                "main.xulo",
+                "import g from \"./lib\"\n\
+                 fn main() { print(g(1, 1)) }\n",
+            ),
+        ],
+        "main.xulo",
+    );
+    assert!(!ok);
+    assert!(stderr.contains("no default export"), "stderr: {stderr}");
+}
+
+#[test]
+fn native_run_rejects_external_import() {
+    let (ok, _stdout, stderr) = native_run(
+        &[(
+            "main.xulo",
+            "import { useSignal } from \"@xulo/ui\"\n\
+                 fn main() { print(1) }\n",
+        )],
+        "main.xulo",
+    );
+    assert!(!ok);
+    assert!(
+        stderr.contains("external imports are not supported in the native runtime"),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
+fn native_run_async_coroutines_interleave() {
+    let (ok, stdout, stderr) = native_run(
+        &[(
+            "main.xulo",
+            "fn pause(): async { }\n\
+                 fn fetch(id: number): async number {\n\
+                     await pause()\n\
+                     return id * 10\n\
+                 }\n\
+                 fn main(): async {\n\
+                     let a = fetch(1)\n\
+                     let b = fetch(2)\n\
+                     print(await a)\n\
+                     print(await b)\n\
+                 }\n",
+        )],
+        "main.xulo",
+    );
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout, "10\n20\n");
+}
+
+#[test]
+fn native_run_async_rejected_main_is_uncaught() {
+    let (ok, _stdout, stderr) = native_run(
+        &[("main.xulo", "fn main(): async { throw \"kaboom\" }\n")],
+        "main.xulo",
+    );
+    assert!(!ok);
+    assert!(
+        stderr.contains("uncaught exception: kaboom"),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
+fn native_run_rejects_ui_components() {
+    let (ok, _stdout, stderr) = native_run(
+        &[(
+            "main.xulo",
+            "fn main(): Component { VStack { Text(\"hi\") } }\n",
+        )],
+        "main.xulo",
+    );
+    assert!(!ok);
+    assert!(
+        stderr.contains("UI components are not supported in the native runtime"),
+        "stderr: {stderr}"
+    );
 }

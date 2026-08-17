@@ -26,6 +26,8 @@ pub enum Statement {
     Effect(EffectStmt),
     Environment(EnvStmt),
     Component(ComponentStmt),
+    Trait(TraitDecl),
+    Impl(ImplDecl),
 }
 
 /// An expression used as a statement. `has_semicolon` records whether it ended
@@ -42,13 +44,14 @@ pub struct ExprStmt {
 #[derive(Debug, Clone, PartialEq)]
 pub struct FnDef {
     pub name: String,
-    /// Source span of the function name (for name-related diagnostics).
-    pub name_span: Range<usize>,
-    pub type_params: Vec<String>,
     pub params: Vec<Param>,
     pub return_type: Option<Type>,
-    pub body: Block,
+    pub type_params: Vec<String>,
+    /// Generic bounds on `type_params`: `T: Area` constrains the parameter.
+    pub bounds: Vec<FnBound>,
     pub is_async: bool,
+    pub body: Block,
+    pub span: Range<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -163,6 +166,58 @@ pub struct TypeAlias {
     pub type_: Type,
 }
 
+/// A generic bound on one type parameter: `T: Area & Comparable` becomes
+/// `FnBound { param: "T", traits: ["Area", "Comparable"] }`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FnBound {
+    pub param: String,
+    pub traits: Vec<String>,
+}
+
+/// A `trait` declaration: a named, structural contract of method signatures.
+/// The receiver `self` marks a member as an instance method; trait members are
+/// satisfied structurally (a type whose object literal carries the matching
+/// function field) or by an `impl` block.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TraitDecl {
+    pub name: String,
+    /// Source span of the trait name (for name-related diagnostics).
+    pub name_span: Range<usize>,
+    pub type_params: Vec<String>,
+    pub methods: Vec<TraitMethod>,
+    pub span: Range<usize>,
+}
+
+/// One method signature in a `trait` declaration. `self` is the receiver and
+/// never appears in `params`; remaining parameters are positional.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TraitMethod {
+    pub name: String,
+    pub name_span: Range<usize>,
+    pub has_self: bool,
+    pub params: Vec<Param>,
+    pub return_type: Option<Type>,
+    pub is_async: bool,
+    pub span: Range<usize>,
+}
+
+/// An `impl Trait for Type` block: provides method bodies for a concrete named
+/// type. `self` may be the first parameter of each method and is bound to the
+/// receiver's type during checking.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImplDecl {
+    pub trait_name: String,
+    pub type_name: String,
+    pub methods: Vec<FnDef>,
+    pub span: Range<usize>,
+}
+
+/// Mangle an `impl` method into the module-level function name that codegen
+/// and the native runtime both define and dispatch to.
+pub fn impl_fn_name(trait_name: &str, type_name: &str, method: &str) -> String {
+    format!("impl_{trait_name}_{type_name}_{method}")
+}
+
 /// An `enum` declaration with optional per-variant payload types.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnumDef {
@@ -247,7 +302,7 @@ pub struct ExportStmt {
 }
 
 /// What `export` exposes: a declaration (`export fn/let/const`), a default
-/// export, a bare name list (`export { a, b }`), or a type/enum/alias.
+/// export, a bare name list (`export { a, b }`), or a type/enum/alias/trait.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExportItem {
     Fn(FnDef),
@@ -256,6 +311,7 @@ pub enum ExportItem {
     Names(Vec<String>),
     Type(TypeAlias),
     Enum(EnumDef),
+    Trait(TraitDecl),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -443,7 +499,8 @@ pub struct BinaryOp {
 }
 
 /// A plain function call (`foo(args)`), an enum payload construction
-/// (`Result::Success(args)`, where `callee` is `"Result::Success"`), or a
+/// (`Result::Success(args)`, where `callee` is `"Result::Success"`), a trait
+/// dispatch call (`Area::area(recv)`, where `callee` is `"Area::area"`), or a
 /// method call (`obj.method(args)` where `object` is the receiver).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Call {
@@ -458,6 +515,10 @@ pub struct Call {
     pub optional: bool,
     pub arguments: Vec<CallArg>,
     pub span: Range<usize>,
+    /// When the call is `Trait::method(receiver, ...)` dispatch, the semantic
+    /// phase annotates the mangled impl name (`impl_Area_Rectangle_area`) here.
+    /// `None` for plain/enum/method calls.
+    pub trait_impl: Option<String>,
 }
 
 /// A single call argument, optionally labeled (`name: expr`).

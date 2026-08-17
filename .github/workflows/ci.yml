@@ -43,3 +43,16 @@ jobs:
             echo "== Running $f =="
             target/release/xulo run "$f" > /dev/null
           done
+
+      - name: Run all core examples natively
+        run: |
+          set -e
+          for f in examples/hello.xulo examples/arithmetic.xulo examples/if_else.xulo examples/fibonacci.xulo examples/async_tasks.xulo examples/trait_shapes.xulo; do
+            echo "== Native run $f =="
+            target/release/xulo run --native "$f" > /dev/null
+          done
+
+      - name: Run module example natively
+        run: |
+          set -e
+          target/release/xulo run --native examples/modules/main.xulo > /dev/null

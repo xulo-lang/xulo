@@ -75,3 +75,4 @@ pub type User = { name: string }
 
 - 导入的函数保留参数名，支持具名实参调用。
 - 导入不存在的导出名报语义错误。
+- `trait` 是可导出的类型成员（`export trait` / `pub trait`），用 `import type { Trait } from "./mod"` 引入；`impl` 块不跨模块移植，需在引用该特征的模块内本地声明。

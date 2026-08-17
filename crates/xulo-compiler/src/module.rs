@@ -52,6 +52,7 @@ pub struct LoadedModules {
 pub fn compile_file(entry: &Path) -> Result<(String, Vec<XuloError>), XuloError> {
     let mut loaded = load(entry)?;
     let warnings = analyze(&mut loaded)?;
+    apply_trait_dispatch(&mut loaded);
     let js = bundle(&loaded)?;
     Ok((js, warnings))
 }
@@ -193,6 +194,19 @@ pub fn analyze(loaded: &mut LoadedModules) -> Result<Vec<XuloError>, XuloError> 
         modules[idx].analysis = Some(result);
     }
     Ok(warnings)
+}
+
+/// Populate `Call.trait_impl` on every module's AST from its analysis'
+/// trait-dispatch annotations. Codegen and the native interpreter read this
+/// field to emit the mangled `impl_{Trait}_{Type}_{method}` call. Run after
+/// [`analyze`].
+pub fn apply_trait_dispatch(loaded: &mut LoadedModules) {
+    for module in &mut loaded.modules {
+        if let Some(analysis) = &module.analysis {
+            let dispatch = analysis.trait_dispatch.clone();
+            xulo_semantic::apply_trait_dispatch(&mut module.program, &dispatch);
+        }
+    }
 }
 
 /// Imports' symbols and type entries gathered from a module's dependencies.
@@ -410,7 +424,7 @@ fn bundle(loaded: &LoadedModules) -> Result<String, XuloError> {
                         let local = alias.clone().unwrap_or_else(|| name.clone());
                         if let Some((_, sym)) =
                             analysis.exported_symbols.iter().find(|(n, _)| n == name)
-                            && let SymbolKind::Function(_, params, _) = &sym.kind
+                            && let SymbolKind::Function(_, params, _, _) = &sym.kind
                         {
                             cg.register_fn_params(
                                 local.clone(),
@@ -425,7 +439,7 @@ fn bundle(loaded: &LoadedModules) -> Result<String, XuloError> {
                             .exported_symbols
                             .iter()
                             .find(|(n, _)| n == default_name)
-                        && let SymbolKind::Function(_, params, _) = &sym.kind
+                        && let SymbolKind::Function(_, params, _, _) = &sym.kind
                     {
                         cg.register_fn_params(
                             name.clone(),

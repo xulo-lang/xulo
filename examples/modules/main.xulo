@@ -1,0 +1,12 @@
+import { add, PI, square } from "math"
+import * as m from "math"
+import greet from "greet"
+
+fn main() {
+    print(add(2, 3))
+    print(PI)
+    print(square(square(3)))
+    print(m.add(1, 1))
+    print(m.PI)
+    print(greet("you"))
+}

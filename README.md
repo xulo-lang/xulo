@@ -23,6 +23,9 @@ cargo build --release
 # 编译并运行
 xulo run examples/hello.xulo
 
+# 用 Rust 原生解释器运行（不经过 Node.js；仅支持核心语言）
+xulo run --native examples/fibonacci.xulo
+
 # 生成 JS 文件
 xulo build examples/hello.xulo -o hello.js
 
@@ -89,6 +92,7 @@ fn main() {
 - `@Store` 的 `$` 绑定写方向为空操作；跨模块/`@xulo/store` 的订阅重渲染由外部运行时接管
 - 组件函数体在重渲染时会重新执行（`@State` 信号已提升到函数级；`@Effect` 仅在依赖数组（若有）变化或挂载时重新执行）
 - `++`/`--` 自增运算符不在语言中
+- 原生运行时（`xulo run --native`）为 MVP：支持核心语言（字面量、变量、函数/闭包/递归、if/else、for/while、match、枚举、列表/对象、try/catch、`?.`/`??`/`...`、`print`/`str`）、`async`/`await`（协同调度，交错顺序与 JS 微任务语义一致）以及本地 `import`/`export`（named/default/namespace）。UI（`Component`/`@State` 等）、外部包 `import`、`$` 绑定仍报「不支持」的运行时错误。原生 `print` 对列表/对象的输出格式为 `[1, 2]` / `{ k: v }`（与 node `console.log` 的带空格/引号形式不同）。
 
 ## 测试
 
@@ -113,6 +117,7 @@ CI（GitHub Actions，见 `.github/workflows/ci.yml`）执行 `cargo fmt --check
 │   ├── xulo-semantic/          # 语义检查 + 符号表
 │   ├── xulo-codegen/           # 生成 JavaScript
 │   ├── xulo-compiler/          # 编译管线 compile() + 多文件加载/打包
+│   ├── xulo-runtime/           # 原生树遍历解释器（xulo run --native）
 │   └── xulo-cli/               # CLI（run/build/check/fmt/repl，二进制名为 xulo）
 ├── stdlib/                     # 未来标准库源码占位（.xulo）
 ├── docs/                       # 语言规范（EBNF / 语法）
@@ -120,4 +125,4 @@ CI（GitHub Actions，见 `.github/workflows/ci.yml`）执行 `cargo fmt --check
 └── tests/                      # （各 crate 的 tests/ 目录承载测试）
 ```
 
-`xulo run` 通过本机 Node.js 执行生成的 JS。
+`xulo run` 通过本机 Node.js 执行生成的 JS；`xulo run --native` 改用 `xulo-runtime` crate 的 Rust 解释器直接执行（不经 JS/Node）。

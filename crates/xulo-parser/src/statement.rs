@@ -1,10 +1,10 @@
 use xulo_core::ast::{
     AssignStmt, AssignTarget, BindingPattern, Block, ComponentStmt, EffectStmt, EnumDef,
-    EnumPayloadParam, EnumVariant, EnvStmt, ExportItem, ExportStmt, ExprStmt, Expression, FnDef,
-    ForStmt, ImportSpec, ImportStmt, LetBinding, Param, ReturnStmt, StateStmt, Statement,
-    StoreStmt, TryStmt, TypeAlias, UiElement, WhileStmt,
+    EnumPayloadParam, EnumVariant, EnvStmt, ExportItem, ExportStmt, ExprStmt, Expression, FnBound,
+    FnDef, ForStmt, ImplDecl, ImportSpec, ImportStmt, LetBinding, Param, ReturnStmt, StateStmt,
+    Statement, StoreStmt, TraitDecl, TraitMethod, TryStmt, TypeAlias, UiElement, WhileStmt,
 };
-use xulo_lexer::token::Token;
+use xulo_lexer::token::{LexedToken, Token};
 
 use super::expression::{call_args, decode_string, expression, fn_expr, if_expr};
 use super::types::type_expr;
@@ -39,6 +39,8 @@ pub fn statement(input: &mut In<'_>) -> Pr<Statement> {
         Some(Token::Const) => let_binding(input, true).map(Statement::Let),
         Some(Token::Type) => type_alias(input).map(Statement::TypeAlias),
         Some(Token::Enum) => enum_def(input).map(Statement::Enum),
+        Some(Token::Trait) => trait_def(input).map(Statement::Trait),
+        Some(Token::Impl) => impl_def(input).map(Statement::Impl),
         Some(Token::Return) => return_stmt(input).map(Statement::Return),
         Some(Token::For) => for_stmt(input).map(Statement::For),
         Some(Token::While) => while_stmt(input).map(Statement::While),
@@ -74,12 +76,17 @@ fn is_component(input: &In<'_>) -> bool {
 }
 
 fn fn_def(input: &mut In<'_>) -> Pr<FnDef> {
+    fn_def_opt(input, false)
+}
+
+/// Shared `fn` definition parser; `allow_self` is set inside `impl` bodies so a
+/// leading `self` receiver parameter is accepted.
+fn fn_def_opt(input: &mut In<'_>, allow_self: bool) -> Pr<FnDef> {
+    let original = *input;
     tk(input, Token::Fn)?;
-    let name_original = *input;
     let name = ident_name(input)?;
-    let name_span = consumed_span(name_original, input, 0);
-    let type_params = opt_type_params(input)?;
-    let params = params_list(input)?;
+    let (type_params, mut bounds) = opt_type_params(input)?;
+    let params = params_list_opt(input, allow_self)?;
     let (return_type, is_async) = if opt_tk(input, Token::Colon) {
         if peek_is(input, Token::Async) {
             tk(input, Token::Async)?;
@@ -95,24 +102,35 @@ fn fn_def(input: &mut In<'_>) -> Pr<FnDef> {
     } else {
         (None, false)
     };
+    // A trailing `where T: Trait` clause follows the return type.
+    let where_bounds = where_clause(input)?;
+    bounds.extend(where_bounds);
     let body = block(input)?;
+    let span = consumed_span(original, input, 0);
     Ok(FnDef {
         name,
-        name_span,
-        type_params,
         params,
         return_type,
-        body,
+        type_params,
+        bounds,
         is_async,
+        body,
+        span,
     })
 }
 
 pub(super) fn params_list(input: &mut In<'_>) -> Pr<Vec<Param>> {
+    params_list_opt(input, false)
+}
+
+/// `params_list`, but when `allow_self` a leading `self` parameter is accepted
+/// as the receiver of a trait `impl` method.
+fn params_list_opt(input: &mut In<'_>, allow_self: bool) -> Pr<Vec<Param>> {
     tk(input, Token::LParen)?;
     let mut params = Vec::new();
     if !matches!(input.first().map(|t| t.kind), Some(Token::RParen)) {
         loop {
-            params.push(param(input)?);
+            params.push(param(input, allow_self)?);
             if !opt_tk(input, Token::Comma) {
                 break;
             }
@@ -122,9 +140,14 @@ pub(super) fn params_list(input: &mut In<'_>) -> Pr<Vec<Param>> {
     Ok(params)
 }
 
-fn param(input: &mut In<'_>) -> Pr<Param> {
+fn param(input: &mut In<'_>, allow_self: bool) -> Pr<Param> {
     let original = *input;
-    let name = ident_name(input)?;
+    let name = if allow_self && is_self_tk(input.first()) {
+        *input = &input[1..];
+        "self".to_string()
+    } else {
+        ident_name(input)?
+    };
     let type_annotation = if opt_tk(input, Token::Colon) {
         Some(type_expr(input)?)
     } else {
@@ -142,6 +165,12 @@ fn param(input: &mut In<'_>) -> Pr<Param> {
         default,
         span,
     })
+}
+
+/// True when the token is the `self` receiver keyword. `self` stays a reserved
+/// word; it is only accepted as a parameter name inside `impl` bodies.
+fn is_self_tk(tok: Option<&LexedToken>) -> bool {
+    matches!(tok, Some(t) if t.kind == Token::Reserved && t.text == "self")
 }
 
 fn let_binding(input: &mut In<'_>, is_const: bool) -> Pr<LetBinding> {
@@ -217,7 +246,7 @@ fn expr_or_assign(input: &mut In<'_>) -> Pr<Statement> {
 fn type_alias(input: &mut In<'_>) -> Pr<TypeAlias> {
     tk(input, Token::Type)?;
     let name = ident_name(input)?;
-    let type_params = opt_type_params(input)?;
+    let (type_params, _) = opt_type_params(input)?;
     tk(input, Token::Assign)?;
     let type_ = type_expr(input)?;
     Ok(TypeAlias {
@@ -230,7 +259,7 @@ fn type_alias(input: &mut In<'_>) -> Pr<TypeAlias> {
 fn enum_def(input: &mut In<'_>) -> Pr<EnumDef> {
     tk(input, Token::Enum)?;
     let name = ident_name(input)?;
-    let type_params = opt_type_params(input)?;
+    let (type_params, _) = opt_type_params(input)?;
     tk(input, Token::LBrace)?;
     let mut variants = Vec::new();
     while !matches!(input.first().map(|t| t.kind), Some(Token::RBrace)) {
@@ -276,21 +305,153 @@ fn enum_def(input: &mut In<'_>) -> Pr<EnumDef> {
     })
 }
 
-/// Optional `<T, U>` type parameters (parsed, then erased at codegen time).
-fn opt_type_params(input: &mut In<'_>) -> Pr<Vec<String>> {
+/// Optional `<T, U>` type parameters with optional inline bounds (`<T: Area>`).
+/// Returns the parameters and any bounds written inline. Parsed, then erased at
+/// codegen time.
+fn opt_type_params(input: &mut In<'_>) -> Pr<(Vec<String>, Vec<FnBound>)> {
     if !peek_is(input, Token::Lt) {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), Vec::new()));
     }
     tk(input, Token::Lt)?;
     let mut params = Vec::new();
+    let mut bounds = Vec::new();
     loop {
-        params.push(ident_name(input)?);
+        let param = ident_name(input)?;
+        if opt_tk(input, Token::Colon) {
+            let traits = trait_refs(input)?;
+            bounds.push(FnBound {
+                param: param.clone(),
+                traits,
+            });
+        }
+        params.push(param);
         if !opt_tk(input, Token::Comma) {
             break;
         }
     }
     tk(input, Token::Gt)?;
-    Ok(params)
+    Ok((params, bounds))
+}
+
+/// `Trait & Trait` bound list, as identifiers (resolved by the semantic phase).
+fn trait_refs(input: &mut In<'_>) -> Pr<Vec<String>> {
+    let mut traits = vec![ident_name(input)?];
+    while opt_tk(input, Token::Amp) {
+        traits.push(ident_name(input)?);
+    }
+    Ok(traits)
+}
+
+/// Optional trailing `where T: Area, U: Comparable` clause on a function.
+fn where_clause(input: &mut In<'_>) -> Pr<Vec<FnBound>> {
+    let mut bounds = Vec::new();
+    while opt_tk(input, Token::Where) {
+        loop {
+            let param = ident_name(input)?;
+            tk(input, Token::Colon)?;
+            let traits = trait_refs(input)?;
+            bounds.push(FnBound {
+                param: param.clone(),
+                traits,
+            });
+            if !opt_tk(input, Token::Comma) {
+                break;
+            }
+        }
+    }
+    Ok(bounds)
+}
+
+/// `trait Name { fn method(self, ...): ReturnType; ... }` — a set of method
+/// signatures forming a named structural contract.
+fn trait_def(input: &mut In<'_>) -> Pr<TraitDecl> {
+    let original = *input;
+    tk(input, Token::Trait)?;
+    let name_original = *input;
+    let name = ident_name(input)?;
+    let name_span = consumed_span(name_original, input, 0);
+    let (type_params, _) = opt_type_params(input)?;
+    tk(input, Token::LBrace)?;
+    let mut methods = Vec::new();
+    while !matches!(input.first().map(|t| t.kind), Some(Token::RBrace)) {
+        if at_eof(input) {
+            return Err(ErrMode::Backtrack(PErr::unexpected(input)));
+        }
+        methods.push(trait_method(input)?);
+    }
+    tk(input, Token::RBrace)?;
+    let span = consumed_span(original, input, 0);
+    Ok(TraitDecl {
+        name,
+        name_span,
+        type_params,
+        methods,
+        span,
+    })
+}
+
+/// One method signature inside a `trait` block.
+fn trait_method(input: &mut In<'_>) -> Pr<TraitMethod> {
+    let original = *input;
+    tk(input, Token::Fn)?;
+    let name_original = *input;
+    let name = ident_name(input)?;
+    let name_span = consumed_span(name_original, input, 0);
+    let params = params_list_opt(input, true)?;
+    let has_self = params.first().is_some_and(|p| p.name == "self");
+    let rest = params.into_iter().filter(|p| p.name != "self").collect();
+    let (return_type, is_async) = if opt_tk(input, Token::Colon) {
+        if peek_is(input, Token::Async) {
+            tk(input, Token::Async)?;
+            let inner = if matches!(input.first().map(|t| t.kind), Some(Token::LBrace)) {
+                xulo_core::ast::Type::Any
+            } else {
+                type_expr(input)?
+            };
+            (Some(xulo_core::ast::Type::Async(Box::new(inner))), true)
+        } else {
+            (Some(type_expr(input)?), false)
+        }
+    } else {
+        (None, false)
+    };
+    opt_tk(input, Token::Semicolon);
+    let span = consumed_span(original, input, 0);
+    Ok(TraitMethod {
+        name,
+        name_span,
+        has_self,
+        params: rest,
+        return_type,
+        is_async,
+        span,
+    })
+}
+
+/// `impl Area for Rectangle { fn area(self): number { ... } }` — bodies for the
+/// named trait's methods on a concrete type.
+fn impl_def(input: &mut In<'_>) -> Pr<ImplDecl> {
+    let original = *input;
+    tk(input, Token::Impl)?;
+    let trait_name = ident_name(input)?;
+    tk(input, Token::For)?;
+    let type_name = ident_name(input)?;
+    tk(input, Token::LBrace)?;
+    let mut methods = Vec::new();
+    while !matches!(input.first().map(|t| t.kind), Some(Token::RBrace)) {
+        if at_eof(input) {
+            return Err(ErrMode::Backtrack(PErr::unexpected(input)));
+        }
+        methods.push(fn_def_opt(input, true)?);
+    }
+    tk(input, Token::RBrace)?;
+    let span = consumed_span(original, input, 0);
+    Ok(ImplDecl {
+        trait_name,
+        type_name,
+        methods,
+        span,
+    })
 }
 
 fn return_stmt(input: &mut In<'_>) -> Pr<ReturnStmt> {
@@ -455,6 +616,7 @@ fn export_decl(input: &mut In<'_>) -> Pr<ExportItem> {
         Some(Token::Const) => let_binding(input, true).map(ExportItem::Let),
         Some(Token::Type) => type_alias(input).map(ExportItem::Type),
         Some(Token::Enum) => enum_def(input).map(ExportItem::Enum),
+        Some(Token::Trait) => trait_def(input).map(ExportItem::Trait),
         _ => Err(ErrMode::Cut(PErr::unexpected(input))),
     }
 }

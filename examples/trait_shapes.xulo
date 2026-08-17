@@ -1,0 +1,35 @@
+// Trait 显式派发：`Trait::method(recv)` 静态解析到 `impl` 方法。
+trait Area {
+    fn area(self): number
+    fn perimeter(self): number
+}
+
+type Rectangle = { w: number, h: number }
+type Circle = { r: number }
+
+impl Area for Rectangle {
+    fn area(self): number { self.w * self.h }
+    fn perimeter(self): number { 2 * (self.w + self.h) }
+}
+
+impl Area for Circle {
+    fn area(self): number { 3.14159 * self.r * self.r }
+    fn perimeter(self): number { 2 * 3.14159 * self.r }
+}
+
+fn rect(w: number, h: number): Rectangle {
+    let r = { w: w, h: h }
+    r
+}
+
+fn circle(r: number): Circle {
+    let c = { r: r }
+    c
+}
+
+fn main() {
+    print("rect area=" + str(Area::area(rect(3, 4))))
+    print("rect perimeter=" + str(Area::perimeter(rect(3, 4))))
+    print("circle area=" + str(Area::area(circle(2))))
+    print("circle perimeter=" + str(Area::perimeter(circle(2))))
+}

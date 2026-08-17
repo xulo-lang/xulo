@@ -351,6 +351,22 @@ impl Javascript {
             Statement::Effect(effect) => self.effect_stmt(effect)?,
             Statement::Environment(env) => self.environment_stmt(env)?,
             Statement::Component(component) => self.component_stmt(component)?,
+            // Traits are compile-time contracts erased at codegen; `impl`
+            // blocks emit each method as a mangled module-level function that
+            // `Trait::method` calls are annotated to dispatch through.
+            Statement::Trait(_) => {}
+            Statement::Impl(imp) => {
+                for method in &imp.methods {
+                    self.fn_def_named(
+                        method,
+                        &xulo_core::ast::impl_fn_name(
+                            &imp.trait_name,
+                            &imp.type_name,
+                            &method.name,
+                        ),
+                    )?;
+                }
+            }
         }
         Ok(())
     }
@@ -363,13 +379,21 @@ impl Javascript {
             xulo_core::ast::ExportItem::Fn(f) => self.fn_def(f)?,
             xulo_core::ast::ExportItem::Let(b) => self.let_binding(b)?,
             xulo_core::ast::ExportItem::Enum(e) => self.enum_def(e)?,
-            xulo_core::ast::ExportItem::Type(_) | xulo_core::ast::ExportItem::Names(_) => {}
+            xulo_core::ast::ExportItem::Type(_)
+            | xulo_core::ast::ExportItem::Names(_)
+            | xulo_core::ast::ExportItem::Trait(_) => {}
             xulo_core::ast::ExportItem::Default(inner) => self.export_item(inner)?,
         }
         Ok(())
     }
 
     fn fn_def(&mut self, f: &FnDef) -> Result<(), XuloError> {
+        self.fn_def_named(f, &f.name)
+    }
+
+    /// Emit a function under a specific (possibly mangled) name; `fn_def`
+    /// passes the declared name through.
+    fn fn_def_named(&mut self, f: &FnDef, name: &str) -> Result<(), XuloError> {
         if matches!(&f.return_type, Some(Type::Named(n)) if n == "Component") {
             return self.component_fn_def(f);
         }
@@ -399,7 +423,7 @@ impl Javascript {
         } else {
             "function"
         };
-        self.line(&format!("{kw} {}({params}) {{", f.name));
+        self.line(&format!("{kw} {name}({params}) {{"));
         self.indent += 1;
         self.push_scope();
         for p in &f.params {
@@ -1062,6 +1086,12 @@ impl Javascript {
     }
 
     fn call(&mut self, call: &Call) -> Result<String, XuloError> {
+        // Trait dispatch: the semantic phase annotated the mangled impl name,
+        // so emit a direct call to `impl_{Trait}_{Type}_{method}(recv, ...)`.
+        if let Some(impl_name) = &call.trait_impl {
+            let args = self.call_args_ordered(call, None)?;
+            return Ok(format!("{impl_name}({args})"));
+        }
         if let Some((enum_name, variant)) = call.enum_parts() {
             let args = self.call_args_ordered(call, None)?;
             Ok(format!("{enum_name}.{variant}({args})"))

@@ -1,0 +1,14 @@
+fn pause(): async { }
+
+fn fetch(id: number): async number {
+    await pause()
+    id * 10
+}
+
+fn main(): async {
+    let a = fetch(1)
+    let b = fetch(2)
+    print(await a)
+    print(await b)
+    print(await a + await b)
+}

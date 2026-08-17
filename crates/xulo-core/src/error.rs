@@ -9,6 +9,7 @@ pub enum ErrorKind {
     Semantic,
     Io,
     Codegen,
+    Runtime,
     Warning,
 }
 
@@ -20,6 +21,7 @@ impl ErrorKind {
             ErrorKind::Semantic => "semantic",
             ErrorKind::Io => "io",
             ErrorKind::Codegen => "code generation",
+            ErrorKind::Runtime => "runtime",
             ErrorKind::Warning => "warning",
         }
     }
@@ -31,6 +33,7 @@ impl ErrorKind {
             ErrorKind::Semantic => "E0003",
             ErrorKind::Io => "E0004",
             ErrorKind::Codegen => "E0005",
+            ErrorKind::Runtime => "E0006",
             ErrorKind::Warning => "W0001",
         }
     }

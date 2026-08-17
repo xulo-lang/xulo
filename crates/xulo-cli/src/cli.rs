@@ -1,11 +1,15 @@
+use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 
 use clap::{Parser, Subcommand};
 
+use xulo_core::ast::ImportSpec;
 use xulo_core::diagnostics;
 use xulo_core::error::XuloError;
+use xulo_runtime::interpreter::{Interpreter, RunError};
+use xulo_runtime::value::Value;
 
 #[derive(Parser)]
 #[command(
@@ -20,8 +24,13 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Compile and run a .xulo file with node
-    Run { file: PathBuf },
+    /// Compile and run a .xulo file with node (--native runs it in the Rust interpreter)
+    Run {
+        file: PathBuf,
+        /// Run in the native Rust interpreter instead of compiling to JavaScript and running node
+        #[arg(long)]
+        native: bool,
+    },
     /// Compile a .xulo file to a JavaScript file
     Build {
         file: PathBuf,
@@ -48,7 +57,7 @@ pub fn run() -> ExitCode {
 
 fn run_command(command: Commands) -> ExitCode {
     match command {
-        Commands::Run { file } => run_file(&file),
+        Commands::Run { file, native } => run_file(&file, native),
         Commands::Build { file, out } => build_file(&file, out),
         Commands::Check { file } => check_file(&file),
         Commands::Fmt { file } => fmt_file(&file),
@@ -56,7 +65,10 @@ fn run_command(command: Commands) -> ExitCode {
     }
 }
 
-fn run_file(file: &Path) -> ExitCode {
+fn run_file(file: &Path, native: bool) -> ExitCode {
+    if native {
+        return native_run(file);
+    }
     let (js, warnings) = match compile_to_js(file) {
         Ok(out) => out,
         Err(code) => return code,
@@ -87,6 +99,141 @@ fn run_file(file: &Path) -> ExitCode {
             ExitCode::from(1)
         }
     }
+}
+
+/// Run a `.xulo` file natively: lex -> parse -> semantic check -> the Rust
+/// tree-walking interpreter (no Node.js). Local imports are loaded, analyzed in
+/// dependency order, and executed module by module; external (non-`type`-only)
+/// imports are rejected.
+fn native_run(file: &Path) -> ExitCode {
+    let mut loaded = match xulo_compiler::module::load(file) {
+        Ok(l) => l,
+        Err(err) => {
+            let src_file = err.file.clone().unwrap_or_else(|| file.to_path_buf());
+            let source = std::fs::read_to_string(&src_file).unwrap_or_default();
+            print_compile_error(&err, &source, &src_file);
+            return ExitCode::from(1);
+        }
+    };
+    let warnings = match xulo_compiler::module::analyze(&mut loaded) {
+        Ok(w) => w,
+        Err(err) => {
+            let src_file = err.file.clone().unwrap_or_else(|| file.to_path_buf());
+            let source = std::fs::read_to_string(&src_file).unwrap_or_default();
+            print_compile_error(&err, &source, &src_file);
+            return ExitCode::from(1);
+        }
+    };
+    xulo_compiler::module::apply_trait_dispatch(&mut loaded);
+    print_warnings(&warnings, None);
+
+    if let Some(external) = loaded.external_imports.iter().find(|i| !i.type_only) {
+        eprintln!(
+            "error: external imports are not supported in the native runtime (`import` from {:?})",
+            external.source
+        );
+        return ExitCode::from(1);
+    }
+
+    let interp = Interpreter::new();
+    let mut export_maps: Vec<HashMap<String, Value>> = Vec::with_capacity(loaded.modules.len());
+    let mut default_map: Vec<Option<Value>> = Vec::with_capacity(loaded.modules.len());
+
+    for (idx, module) in loaded.modules.iter().enumerate() {
+        let mut imports: Vec<(String, Value)> = Vec::new();
+        let mut resolve_err: Option<String> = None;
+        for binding in &module.imports {
+            if binding.type_only {
+                continue;
+            }
+            match resolve_import(binding, &export_maps, &default_map, &loaded) {
+                Ok(mut pairs) => imports.append(&mut pairs),
+                Err(msg) => {
+                    resolve_err = Some(msg);
+                    break;
+                }
+            }
+        }
+        if let Some(msg) = resolve_err {
+            eprintln!("error: {msg}");
+            return ExitCode::from(1);
+        }
+        let run_main = idx == loaded.entry && module.has_main;
+        match interp.exec_module(&module.program, &imports, run_main) {
+            Ok(exports) => {
+                let mut map = HashMap::new();
+                for (name, value) in exports.bindings {
+                    map.insert(name, value);
+                }
+                export_maps.push(map);
+                default_map.push(exports.default);
+            }
+            Err(RunError::Err(err)) => {
+                let src_file = err.file.clone().unwrap_or_else(|| module.file.clone());
+                let source = std::fs::read_to_string(&src_file).unwrap_or_default();
+                print_compile_error(&err, &source, &src_file);
+                return ExitCode::from(1);
+            }
+            Err(RunError::Throw(v)) => {
+                eprintln!("runtime error: uncaught exception: {}", v.format());
+                return ExitCode::from(1);
+            }
+        }
+    }
+    let out = interp.take_output();
+    if !out.is_empty() {
+        println!("{}", out.join("\n"));
+    }
+    ExitCode::SUCCESS
+}
+
+/// Resolve one import binding against the exports of its already-executed
+/// target module, returning the `(local name, value)` pairs to bind.
+fn resolve_import(
+    binding: &xulo_compiler::module::ImportBinding,
+    export_maps: &[HashMap<String, Value>],
+    default_map: &[Option<Value>],
+    loaded: &xulo_compiler::module::LoadedModules,
+) -> Result<Vec<(String, Value)>, String> {
+    let target = &loaded.modules[binding.target];
+    let readable = target.file.display();
+    let mut out = Vec::new();
+    match &binding.spec {
+        ImportSpec::Bare => {}
+        ImportSpec::Namespace(ns) => {
+            let mut fields: Vec<(String, Value)> = export_maps[binding.target]
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            if let Some(default) = &default_map[binding.target] {
+                fields.push(("default".to_string(), default.clone()));
+            }
+            out.push((
+                ns.clone(),
+                Value::Object(std::rc::Rc::new(std::cell::RefCell::new(fields))),
+            ));
+        }
+        ImportSpec::Named(names) => {
+            for (name, alias) in names {
+                let local = alias.clone().unwrap_or_else(|| name.clone());
+                match export_maps[binding.target].get(name) {
+                    Some(value) => out.push((local, value.clone())),
+                    None => {
+                        return Err(format!(
+                            "module `{readable}` has no runtime export named `{name}`"
+                        ));
+                    }
+                }
+            }
+        }
+        ImportSpec::Default(name) => match &default_map[binding.target] {
+            Some(value) => out.push((name.clone(), value.clone())),
+            None => {
+                return Err(format!("module `{readable}` has no default export"));
+            }
+        },
+    }
+    Ok(out)
 }
 
 fn build_file(file: &Path, out: Option<PathBuf>) -> ExitCode {

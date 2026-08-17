@@ -1471,3 +1471,307 @@ fn user_str_shadows_builtin() {
         err.message
     );
 }
+
+#[test]
+fn trait_and_impl_check_cleanly() {
+    let src = r#"
+        trait Shape {
+            fn area(self): number
+        }
+        type Circle = object
+        impl Shape for Circle {
+            fn area(self): number { return 100 }
+        }
+        fn main() {
+            let c: Circle = { radius: 1 }
+            print(Shape::area(c))
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn trait_dispatch_wrong_receiver_type_is_rejected() {
+    let src = r#"
+        trait Shape {
+            fn area(self): number
+        }
+        type Circle = object
+        type Square = object
+        impl Shape for Circle {
+            fn area(self): number { return 100 }
+        }
+        fn main() {
+            let s: Square = { side: 1 }
+            print(Shape::area(s))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(
+        err.message.contains("does not implement trait `Shape`"),
+        "unexpected: {}",
+        err.message
+    );
+}
+
+#[test]
+fn trait_dispatch_unknown_method_is_rejected() {
+    let src = r#"
+        trait Shape {
+            fn area(self): number
+        }
+        type Circle = object
+        impl Shape for Circle {
+            fn area(self): number { return 100 }
+        }
+        fn main() {
+            let c: Circle = { radius: 1 }
+            print(Shape::volume(c))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(
+        err.message.contains("has no method `volume`"),
+        "unexpected: {}",
+        err.message
+    );
+}
+
+#[test]
+fn unbounded_generic_stays_any_zero_regression() {
+    let src = r#"
+        fn id<T>(x: T): T { return x }
+        fn main() { print(id(42)) }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn bounded_generic_refines_member_access() {
+    let src = r#"
+        trait Shape {
+            fn area(self): number
+        }
+        fn apply<T: Shape>(t: T): number {
+            let area = t.area
+            return area()
+        }
+        fn main() {
+            let c: object = { area: fn(): number { return 5 } }
+            print(apply(c))
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn bounded_generic_missing_bound_member_is_rejected() {
+    let src = r#"
+        trait Shape {
+            fn area(self): number
+        }
+        fn apply<T: Shape>(t: T): number {
+            let volume = t.volume
+            return volume()
+        }
+        fn main() { print(1) }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(
+        err.message.contains("has no member `volume`"),
+        "unexpected: {}",
+        err.message
+    );
+}
+
+#[test]
+fn impl_method_signature_mismatch_is_rejected() {
+    let src = r#"
+        trait Shape {
+            fn area(self): number
+        }
+        type Circle = object
+        impl Shape for Circle {
+            fn area(self): string { return "x" }
+        }
+        fn main() { print(1) }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(
+        err.message.contains("must return `number`"),
+        "unexpected: {}",
+        err.message
+    );
+}
+
+#[test]
+fn impl_undeclared_method_is_rejected() {
+    let src = r#"
+        trait Shape {
+            fn area(self): number
+        }
+        type Circle = object
+        impl Shape for Circle {
+            fn volume(self): number { return 1 }
+        }
+        fn main() { print(1) }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(
+        err.message
+            .contains("`volume`, which `Shape` does not declare"),
+        "unexpected: {}",
+        err.message
+    );
+}
+
+#[test]
+fn impl_for_unknown_type_is_rejected() {
+    let src = r#"
+        trait Shape {
+            fn area(self): number
+        }
+        impl Shape for Nope {
+            fn area(self): number { return 1 }
+        }
+        fn main() { print(1) }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(
+        err.message.contains("unknown type `Nope`"),
+        "unexpected: {}",
+        err.message
+    );
+}
+
+#[test]
+fn exported_trait_is_registered() {
+    use xulo_semantic::analyze_with;
+    let src = r#"
+        export trait Area {
+            fn area(self): number
+        }
+        pub fn main() { print(1) }
+    "#;
+    let tokens = tokenize(src).unwrap();
+    let program = parse_program(&tokens).unwrap();
+    let result = analyze_with(&program, &[], &[]).unwrap_or_else(|e| panic!("{}", e.message));
+    assert!(
+        result.exported_types.iter().any(|(n, _)| n == "Area"),
+        "trait `Area` should be exported"
+    );
+}
+
+#[test]
+fn duplicate_trait_registration_is_rejected() {
+    let src = r#"
+        trait Shape { fn area(self): number }
+        type Shape = object
+        fn main() { print(1) }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(
+        err.message.contains("already defined"),
+        "unexpected: {}",
+        err.message
+    );
+}
+
+#[test]
+fn where_clause_bound_is_validated() {
+    let src = r#"
+        trait Shape { fn area(self): number }
+        fn f<T>(t: T): number where T: Shape { return t.area() }
+        fn main() { print(1) }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn unknown_trait_in_bound_is_rejected() {
+    let src = r#"
+        fn f<T: Mystery>(t: T): number { return 1 }
+        fn main() { print(1) }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(
+        err.message.contains("unknown trait `Mystery`"),
+        "unexpected: {}",
+        err.message
+    );
+}
+
+#[test]
+fn trait_method_arity_mismatch_is_rejected() {
+    let src = r#"
+        trait Shape { fn scale(self, by: number): Shape }
+        type Circle = object
+        impl Shape for Circle {
+            fn scale(self): Circle { return 1 }
+        }
+        fn main() { print(1) }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(
+        err.message.contains("wrong arity"),
+        "unexpected: {}",
+        err.message
+    );
+}
+
+#[test]
+fn self_resolves_only_inside_impl_methods() {
+    let ok = r#"
+        trait Shape { fn area(self): number }
+        type Circle = object
+        impl Shape for Circle {
+            fn area(self): number { return self.radius }
+        }
+        fn main() { print(1) }
+    "#;
+    assert!(analyze_src(ok).is_ok());
+
+    let bad = r#"
+        fn f(): number { return self }
+    "#;
+    let err = analyze_src(bad).unwrap_err();
+    assert!(
+        err.message.contains("undefined variable `self`"),
+        "unexpected: {}",
+        err.message
+    );
+}
+
+#[test]
+fn dispatch_annotations_are_applied_to_the_ast() {
+    let src = r#"
+        trait Shape { fn area(self): number }
+        type Circle = object
+        impl Shape for Circle {
+            fn area(self): number { return self.radius }
+        }
+        fn main() {
+            let c: Circle = { radius: 5 }
+            Shape::area(c)
+        }
+    "#;
+    let tokens = tokenize(src).unwrap();
+    let mut program = parse_program(&tokens).unwrap();
+    let result = xulo_semantic::analyze_with(&program, &[], &[]).unwrap();
+    xulo_semantic::apply_trait_dispatch(&mut program, &result.trait_dispatch);
+    let mut names = Vec::new();
+    for stmt in &program.statements {
+        if let xulo_core::ast::Statement::Fn(f) = stmt {
+            for s in &f.body.statements {
+                if let xulo_core::ast::Statement::Expr(e) = s
+                    && let xulo_core::ast::Expression::Call(c) = &e.expr
+                    && let Some(name) = &c.trait_impl
+                {
+                    names.push(name.clone());
+                }
+            }
+        }
+    }
+    assert_eq!(names, vec!["impl_Shape_Circle_area"]);
+}
+

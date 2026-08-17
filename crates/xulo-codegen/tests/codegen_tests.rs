@@ -10,6 +10,16 @@ fn generate_js(src: &str) -> String {
     generate(&program).unwrap()
 }
 
+/// Like [`generate_js`], but also applies trait-dispatch annotations so
+/// `Trait::method` calls are emitted through their mangled impl function.
+fn generate_js_annotated(src: &str) -> String {
+    let tokens = tokenize(src).unwrap();
+    let mut program = parse_program(&tokens).unwrap();
+    let result = xulo_semantic::analyze_with(&program, &[], &[]).unwrap();
+    xulo_semantic::apply_trait_dispatch(&mut program, &result.trait_dispatch);
+    generate(&program).unwrap()
+}
+
 #[test]
 fn function_and_call() {
     let js = generate_js(
@@ -18,6 +28,23 @@ fn function_and_call() {
     assert!(js.contains("function add(a, b) {"));
     assert!(js.contains("return (a + b);"));
     assert!(js.contains("console.log(add(1, 2));"));
+}
+
+#[test]
+fn trait_dispatch_emits_mangled_impl_call() {
+    let js = generate_js_annotated(
+        r#"
+        trait Area { fn area(self): number }
+        type Rectangle = object
+        impl Area for Rectangle {
+            fn area(self): number { return self.w * self.h }
+        }
+        fn rect(): Rectangle { let r = { w: 3, h: 4 } r }
+        fn main() { print(Area::area(rect())) }
+        "#,
+    );
+    assert!(js.contains("function impl_Area_Rectangle_area(self) {"));
+    assert!(js.contains("impl_Area_Rectangle_area(rect())"));
 }
 
 #[test]

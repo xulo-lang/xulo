@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use xulo_core::ast::{Param, Type};
+use xulo_core::ast::{FnBound, Param, Type};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SymbolKind {
@@ -9,7 +9,7 @@ pub enum SymbolKind {
     State,
     /// A `@Store` binding (reactive store-derived value).
     Store,
-    Function(Vec<String>, Vec<Param>, Type),
+    Function(Vec<String>, Vec<Param>, Type, Vec<FnBound>),
 }
 
 #[derive(Debug, Clone, PartialEq)]

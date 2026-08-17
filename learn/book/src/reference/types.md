@@ -119,3 +119,48 @@ match result {
 - 成员首字母大写
 - 关联数据类型放在 `(type)` 中
 - 支持泛型（类型参数在类型检查时擦除）
+
+## 特征（trait）
+
+`trait` 声明一组方法签名，作为「能力」契约；`impl Trait for Type` 为某个具名类型提供这些方法的实现。`self`（保留字）作为接收者，标记该方法为「实例方法」。
+
+```xulo
+trait Area {
+    fn area(self): number
+    fn perimeter(self): number
+}
+
+type Rectangle = { w: number, h: number }
+
+impl Area for Rectangle {
+    fn area(self): number { self.w * self.h }
+    fn perimeter(self): number { 2 * (self.w + self.h) }
+}
+```
+
+调用通过**显式派发** `Trait::method(接收者, ...)` 进行——编译器把它解析成对 `impl` 方法（mangled 为 `impl_{Trait}_{Type}_{method}`）的静态调用，零运行时开销：
+
+```xulo
+fn main() {
+    let r: Rectangle = { w: 3, h: 4 }
+    print(str(Area::area(r)))        // 12
+    print(str(Area::perimeter(r)))   // 14
+}
+```
+
+### 泛型约束
+
+类型参数可以用 `T: Trait`（行内）或 `where T: Trait` 约束。有界类型参数在类型检查时被精化为特征的结构形状，可对其成员访问；多个特征用 `&` 连接：
+
+```xulo
+fn describe<T: Area>(t: T): number {
+    Area::area(t)
+}
+```
+
+### 规则
+
+- 派发接收者必须是**静态具名类型**：`Trait::method(recv)` 的 `recv` 需要在调用点能解析出具体的具名类型，且该类型已注册 `impl`，否则报「does not implement trait」。
+- `impl` 方法必须实现 trait 声明的全部方法，且签名（含 `self`）与声明的参数/返回类型双向可赋值。
+- 泛型参数的值在运行时被擦除，因此 `T: Trait` 约束下无法做派发调用——只有具名类型的实例可以。
+- `trait` 是可导出的模块成员（`export trait` / `pub trait`），可被其他模块 `import type` 引入后再本地实现。

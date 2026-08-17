@@ -3,7 +3,7 @@ use xulo_core::ast::{
     IndexExpr, Literal, MatchArm, MatchExpr, MatchPattern, MemberAccess, NullishExpr, ObjectField,
     RangeExpr, Statement, TernaryExpr, UnaryOp, UnaryOperator,
 };
-use xulo_lexer::token::Token;
+use xulo_lexer::token::{LexedToken, Token};
 
 use super::statement::{block, params_list};
 use super::types::type_expr;
@@ -248,6 +248,7 @@ fn postfix(input: &mut In<'_>) -> Pr<Expression> {
                     optional: false,
                     arguments,
                     span,
+                    trait_impl: None,
                 }),
                 Expression::EnumRef(r) => Expression::Call(Call {
                     callee: format!("{}::{}", r.enum_name, r.variant),
@@ -256,6 +257,7 @@ fn postfix(input: &mut In<'_>) -> Pr<Expression> {
                     optional: false,
                     arguments,
                     span,
+                    trait_impl: None,
                 }),
                 Expression::Member(m) => {
                     let object = m.object;
@@ -268,6 +270,7 @@ fn postfix(input: &mut In<'_>) -> Pr<Expression> {
                         optional,
                         arguments,
                         span,
+                        trait_impl: None,
                     })
                 }
                 other => {
@@ -287,12 +290,28 @@ fn postfix(input: &mut In<'_>) -> Pr<Expression> {
     Ok(expr)
 }
 
+fn is_self_tk(tok: Option<&LexedToken>) -> bool {
+    matches!(tok, Some(t) if t.kind == Token::Reserved && t.text == "self")
+}
+
 fn primary(input: &mut In<'_>) -> Pr<Expression> {
     match input.first().map(|t| t.kind) {
         Some(Token::If) => if_expr(input).map(|e| Expression::If(Box::new(e))),
         Some(Token::Match) => match_expr(input).map(|e| Expression::Match(Box::new(e))),
         Some(Token::Fn) => fn_expr(input),
         Some(Token::Ident) | Some(Token::Print) => ident_or_enum(input),
+        // `self` (a reserved word everywhere else) is allowed as an expression
+        // so `impl` method bodies can reference the receiver. Semantic scoping
+        // restricts it to `impl` methods that declare a `self` parameter.
+        Some(Token::Reserved) if is_self_tk(input.first()) => {
+            let original = *input;
+            *input = &input[1..];
+            let span = consumed_span(original, input, 0);
+            Ok(Expression::Identifier {
+                name: "self".to_string(),
+                span,
+            })
+        }
         Some(Token::LBracket) => list_literal(input),
         Some(Token::LBrace) => object_literal(input),
         Some(Token::String) | Some(Token::Number) | Some(Token::Boolean) | Some(Token::Null) => {

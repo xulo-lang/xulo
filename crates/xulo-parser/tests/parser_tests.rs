@@ -1112,3 +1112,127 @@ fn parses_dollar_binding_argument() {
     };
     assert!(matches!(&c.args[0].value, Expression::Binding { name: n, .. } if n == "name"));
 }
+
+#[test]
+fn parses_trait_declaration() {
+    use xulo_core::ast::Type;
+    let p = parse(
+        r#"
+        trait Shape {
+            fn area(self): number
+            fn scale(self, by: number): Shape;
+        }
+        "#,
+    );
+    let Statement::Trait(t) = &p.statements[0] else {
+        panic!("expected trait statement");
+    };
+    assert_eq!(t.name, "Shape");
+    assert_eq!(t.methods.len(), 2);
+    let area = &t.methods[0];
+    assert_eq!(area.name, "area");
+    assert!(area.has_self);
+    assert_eq!(area.params.len(), 0);
+    assert_eq!(area.return_type, Some(Type::Number));
+    let scale = &t.methods[1];
+    assert_eq!(scale.name, "scale");
+    assert!(scale.has_self);
+    assert_eq!(scale.params.len(), 1);
+    assert_eq!(scale.params[0].name, "by");
+    assert_eq!(scale.params[0].type_annotation, Some(Type::Number));
+    assert_eq!(scale.return_type, Some(Type::Named("Shape".into())));
+}
+
+#[test]
+fn parses_trait_method_without_self() {
+    let p = parse("trait Describable { fn describe(): string }");
+    let Statement::Trait(t) = &p.statements[0] else {
+        panic!("expected trait statement");
+    };
+    assert!(!t.methods[0].has_self);
+    assert_eq!(t.methods[0].params.len(), 0);
+}
+
+#[test]
+fn parses_impl_block() {
+    use xulo_core::ast::Type;
+    let p = parse(
+        r#"
+        impl Shape for Circle {
+            fn area(self): number { return 1 }
+            fn scale(self, by: number): Shape { return 1 }
+        }
+        "#,
+    );
+    let Statement::Impl(imp) = &p.statements[0] else {
+        panic!("expected impl statement");
+    };
+    assert_eq!(imp.trait_name, "Shape");
+    assert_eq!(imp.type_name, "Circle");
+    assert_eq!(imp.methods.len(), 2);
+    let area = &imp.methods[0];
+    assert_eq!(area.name, "area");
+    assert_eq!(area.params[0].name, "self");
+    assert_eq!(area.params.len(), 1);
+    assert_eq!(area.return_type, Some(Type::Number));
+    let scale = &imp.methods[1];
+    assert_eq!(scale.params[0].name, "self");
+    assert_eq!(scale.params[1].name, "by");
+}
+
+#[test]
+fn parses_generic_bounds_inline_and_where() {
+    let p = parse("fn paint<T: Shape>(t: T): T where T: Drawable { return t }");
+    let Statement::Fn(f) = &p.statements[0] else {
+        panic!("expected fn statement");
+    };
+    assert_eq!(f.type_params, vec!["T"]);
+    // Inline bound `<T: Shape>` plus trailing `where T: Drawable`.
+    assert_eq!(f.bounds.len(), 2);
+    assert_eq!(f.bounds[0].param, "T");
+    assert_eq!(f.bounds[0].traits, vec!["Shape"]);
+    assert_eq!(f.bounds[1].param, "T");
+    assert_eq!(f.bounds[1].traits, vec!["Drawable"]);
+}
+
+#[test]
+fn parses_multi_trait_bound() {
+    let p = parse("fn f<U: One & Two>(u: U) { print(u) }");
+    let Statement::Fn(f) = &p.statements[0] else {
+        panic!("expected fn statement");
+    };
+    assert_eq!(f.bounds.len(), 1);
+    assert_eq!(f.bounds[0].traits, vec!["One", "Two"]);
+}
+
+#[test]
+fn parses_exported_trait() {
+    let p = parse("export trait Area { fn area(self): number }");
+    let Statement::Export(e) = &p.statements[0] else {
+        panic!("expected export statement");
+    };
+    assert!(matches!(e.item, xulo_core::ast::ExportItem::Trait(_)));
+}
+
+#[test]
+fn rejects_self_in_plain_function() {
+    // `self` is a reserved word; only `impl` method params may use it.
+    let tokens = tokenize("fn f(self) { print(1) }").unwrap();
+    let err = parse_program(&tokens).unwrap_err();
+    assert!(
+        err.message.contains("`self`"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn trait_is_a_keyword_not_identifier() {
+    let tokens = tokenize("let trait = 1").unwrap();
+    let err = parse_program(&tokens).unwrap_err();
+    assert!(
+        err.message.contains("`trait`"),
+        "unexpected message: {}",
+        err.message
+    );
+}
