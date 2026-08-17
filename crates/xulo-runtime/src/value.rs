@@ -79,22 +79,43 @@ impl Value {
 
     /// Render the value the way `print`/`str` show it.
     pub fn format(&self) -> String {
+        self.format_seen(&mut std::collections::HashSet::new())
+    }
+
+    /// Render a value, tracking already-visited list/object identities so a
+    /// cyclic structure (`o.x = o`) renders a cycle marker instead of
+    /// recursing forever. A handle is removed after its subtree is rendered,
+    /// so a shared (non-cyclic) reference like `[a, a]` still prints twice.
+    fn format_seen(&self, seen: &mut std::collections::HashSet<usize>) -> String {
         match self {
             Value::Number(n) => format_number(*n),
             Value::String(s) => s.clone(),
             Value::Boolean(b) => b.to_string(),
             Value::Null => "null".to_string(),
             Value::List(list) => {
-                let list = list.borrow();
-                let parts = list.iter().map(|v| v.format()).collect::<Vec<_>>();
+                let id = Rc::as_ptr(list) as usize;
+                if !seen.insert(id) {
+                    return "[<cycle>]".into();
+                }
+                let parts = list
+                    .borrow()
+                    .iter()
+                    .map(|v| v.format_seen(seen))
+                    .collect::<Vec<_>>();
+                seen.remove(&id);
                 format!("[{}]", parts.join(", "))
             }
             Value::Object(fields) => {
-                let fields = fields.borrow();
+                let id = Rc::as_ptr(fields) as usize;
+                if !seen.insert(id) {
+                    return "{ <cycle> }".into();
+                }
                 let parts = fields
+                    .borrow()
                     .iter()
-                    .map(|(k, v)| format!("{k}: {}", v.format()))
+                    .map(|(k, v)| format!("{k}: {}", v.format_seen(seen)))
                     .collect::<Vec<_>>();
+                seen.remove(&id);
                 format!("{{ {} }}", parts.join(", "))
             }
             Value::Function(_) | Value::Native(_) => "<function>".into(),
@@ -104,7 +125,7 @@ impl Value {
                 payload,
             } => match payload {
                 None => format!("{enum_name}.{tag}"),
-                Some(p) => format!("{enum_name}.{tag}({})", p.format()),
+                Some(p) => format!("{enum_name}.{tag}({})", p.format_seen(seen)),
             },
             Value::Promise(_) => "Promise".into(),
         }

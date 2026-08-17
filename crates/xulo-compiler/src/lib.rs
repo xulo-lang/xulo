@@ -10,5 +10,6 @@ pub fn compile(source: &str, _file: &Path) -> Result<String, XuloError> {
     let mut ast = xulo_parser::parse_program(&tokens)?;
     let result = xulo_semantic::analyze_with(&ast, &[], &[], &[])?;
     xulo_semantic::apply_trait_dispatch(&mut ast, &result.trait_dispatch);
+    xulo_semantic::apply_list_concat(&mut ast, &result.list_concat);
     xulo_codegen::generate(&ast)
 }

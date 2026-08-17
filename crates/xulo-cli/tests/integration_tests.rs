@@ -672,6 +672,58 @@ fn external_import_is_deduplicated_across_modules() {
 }
 
 #[test]
+fn external_import_keeps_every_alias_and_kind() {
+    // Two modules importing the same external package with *different aliases*
+    // of the same name must both keep their local binding (regression: the
+    // bundle used to dedup by source name, emitting only the first alias and
+    // leaving the other module's reference undefined at runtime). Default,
+    // namespace, and named forms must all survive.
+    let (dir, entry) = temp_dir(
+        &[
+            (
+                "a.xulo",
+                "import { Text as T } from \"pkg-x\"\nexport fn header(): Component { Screen { T(\"aliased\") } }\n",
+            ),
+            (
+                "main.xulo",
+                "import { header } from \"./a\"\nimport { Text } from \"pkg-x\"\nimport * as ui from \"pkg-x\"\nimport Def from \"pkg-x\"\nfn main(): Component { Screen { header() Text(\"plain\") } }\n",
+            ),
+        ],
+        "main.xulo",
+    );
+    let out_dir = dir.join("bundle.mjs");
+    let result = Command::new(BIN)
+        .args([
+            "build",
+            entry.to_str().unwrap(),
+            "-o",
+            out_dir.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+
+    let js = std::fs::read_to_string(&out_dir).unwrap();
+    assert!(
+        js.contains("import { Text as T, Text } from \"pkg-x\";"),
+        "both aliases must be bound:\n{js}"
+    );
+    assert!(
+        js.contains("import * as ui from \"pkg-x\";"),
+        "namespace import must survive:\n{js}"
+    );
+    assert!(
+        js.contains("import Def from \"pkg-x\";"),
+        "default import must survive:\n{js}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn shared_runtime_emitted_once_across_modules() {
     // Several modules using reactive/range features still yield a single
     // `__runtime` declaration at the top of the bundle (regression).
@@ -839,6 +891,121 @@ fn run_trait_dispatch_js_and_native() {
         assert_eq!(
             String::from_utf8_lossy(&out.stdout),
             "area=12\nperimeter=14\n",
+            "native={native}"
+        );
+        let _ = std::fs::remove_file(&file);
+    }
+}
+
+#[test]
+fn run_list_concat_js_and_native() {
+    // `list + list` must concatenate on both execution paths (a bare JS `+`
+    // would coerce the arrays into a string).
+    let src = r#"
+        fn main() {
+            let a = [1, 2]
+            let b = [3, 4]
+            print(a + b)
+            print(str([0] + [7]))
+        }
+    "#;
+    for native in [false, true] {
+        let file = temp_file("listcat.xulo", src);
+        let mut cmd = Command::new(BIN);
+        cmd.arg("run");
+        if native {
+            cmd.arg("--native");
+        }
+        let out = cmd.arg(&file).output().unwrap();
+        assert!(
+            out.status.success(),
+            "native={native} stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        // Native renders lists as `[1, 2, 3, 4]`; the JS path prints through
+        // node's console.log (`[ 1, 2, 3, 4 ]`). `str()` on a list likewise
+        // differs by design (native `[0, 7]` vs JS `String()` -> `0,7`), so
+        // compare per-path.
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        if native {
+            assert_eq!(stdout, "[1, 2, 3, 4]\n[0, 7]\n", "native={native}");
+        } else {
+            assert_eq!(stdout, "[ 1, 2, 3, 4 ]\n0,7\n", "native={native}");
+        }
+        let _ = std::fs::remove_file(&file);
+    }
+}
+
+#[test]
+fn run_for_loop_var_reassignment_js_and_native() {
+    // `x = x + 1` inside `for x in xs` is legal (the loop variable is
+    // mutable); it must not throw a JS "Assignment to constant variable"
+    // (codegen used to emit `for (const x of ...)`), and must behave the same
+    // on both execution paths: the source list is untouched.
+    let src = r#"
+        fn main() {
+            let xs = [1, 2, 3]
+            for x in xs {
+                x = x + 1
+            }
+            print(xs)
+        }
+    "#;
+    for native in [false, true] {
+        let file = temp_file("forvar.xulo", src);
+        let mut cmd = Command::new(BIN);
+        cmd.arg("run");
+        if native {
+            cmd.arg("--native");
+        }
+        let out = cmd.arg(&file).output().unwrap();
+        assert!(
+            out.status.success(),
+            "native={native} stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        if native {
+            assert_eq!(stdout, "[1, 2, 3]\n", "native={native}");
+        } else {
+            assert_eq!(stdout, "[ 1, 2, 3 ]\n", "native={native}");
+        }
+        let _ = std::fs::remove_file(&file);
+    }
+}
+
+#[test]
+fn run_enum_equality_js_and_native() {
+    // Payload enums compare structurally on both paths: separately-constructed
+    // `Result::Ok(1)` values are equal (the JS path used to compare the
+    // compiled `{ tag, value }` objects by reference and report `false`).
+    let src = r#"
+        enum Result { Ok(number) Err(string) }
+        fn main() {
+            let a = Result::Ok(1)
+            let b = Result::Ok(1)
+            let c = Result::Ok(2)
+            print(str(a == b))
+            print(str(a == c))
+            print(str(a != c))
+        }
+    "#;
+    for native in [false, true] {
+        let file = temp_file("enumeq.xulo", src);
+        let mut cmd = Command::new(BIN);
+        cmd.arg("run");
+        if native {
+            cmd.arg("--native");
+        }
+        let out = cmd.arg(&file).output().unwrap();
+        assert!(
+            out.status.success(),
+            "native={native} stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            "true\nfalse\ntrue\n",
             "native={native}"
         );
         let _ = std::fs::remove_file(&file);
@@ -1327,6 +1494,87 @@ fn run_component_with_forwarded_children() {
     assert!(stdout.contains("weight: bold"), "stdout: {stdout}");
     assert!(stdout.contains("Hello, Xulo"), "stdout: {stdout}");
     assert!(stdout.contains("<Screen>"), "stdout: {stdout}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn run_component_missing_positional_arg_keeps_children() {
+    // Omitting a positional arg must not shift the routed `children` into the
+    // missing slot (regression: `Panel { Text("child") }` used to compile to
+    // `Panel([Text(...)])`, binding the children array to `title` and losing
+    // the whole subtree). Missing slots become `undefined`, so a JS default
+    // parameter fills in and `children` keeps its slot.
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static N: AtomicU64 = AtomicU64::new(0);
+    // Distinct prefix from `run_component_with_forwarded_children` so parallel
+    // test runs never collide on the same temp directory.
+    let dir = std::env::temp_dir().join(format!(
+        "xulo_ui_missing_{}_{}",
+        std::process::id(),
+        N.fetch_add(1, Ordering::Relaxed)
+    ));
+    let pkg = dir.join("node_modules/@xulo/ui");
+    std::fs::create_dir_all(&pkg).unwrap();
+    let shim = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../examples/node_modules/@xulo/ui");
+    std::fs::copy(shim.join("package.json"), pkg.join("package.json")).unwrap();
+    std::fs::copy(shim.join("index.js"), pkg.join("index.js")).unwrap();
+
+    let entry = dir.join("app.xulo");
+    std::fs::write(
+        &entry,
+        r#"
+        import { Screen, VStack, Text } from "@xulo/ui"
+
+        fn Panel(title: string = "default", children: list<Component>): Component {
+            VStack {
+                Text(title)
+                children
+            }
+        }
+
+        fn main(): Component {
+            Screen {
+                Panel { Text("child") }
+            }
+        }
+        "#,
+    )
+    .unwrap();
+
+    let out = dir.join("app.mjs");
+    let result = Command::new(BIN)
+        .args([
+            "build",
+            entry.to_str().unwrap(),
+            "-o",
+            out.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+
+    // The emitted call keeps the slot structure: `undefined` for the omitted
+    // `title`, the children array in the `children` slot.
+    let js = std::fs::read_to_string(&out).unwrap();
+    assert!(
+        js.contains("Panel(undefined, [Text({ \"0\": \"child\", children: [] })])"),
+        "js:\n{js}"
+    );
+
+    let node = Command::new("node").arg(&out).output().unwrap();
+    assert!(
+        node.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&node.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&node.stdout).to_string();
+    assert!(stdout.contains("0: default"), "stdout: {stdout}");
+    assert!(stdout.contains("0: child"), "stdout: {stdout}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

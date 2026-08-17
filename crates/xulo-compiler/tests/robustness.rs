@@ -228,6 +228,20 @@ fn deep_nesting_does_not_panic() {
         " }".repeat(40)
     );
     on_big_stack(move || compile_quiet(&ifs));
+
+    let ui = format!(
+        "fn main(): Component {{ {} Text(\"x\") {} }}",
+        "Screen { ".repeat(40),
+        " }".repeat(40)
+    );
+    on_big_stack(move || compile_quiet(&ui));
+
+    let ui_else_if = format!(
+        "fn main(): Component {{ Screen {{ {} Text(\"x\") {} }} }}",
+        "if true { ".repeat(40),
+        " } else { ".repeat(39) + " }"
+    );
+    on_big_stack(move || compile_quiet(&ui_else_if));
 }
 
 /// Beyond the parser's nesting budget the compiler must reject with a clean
@@ -251,6 +265,36 @@ fn extreme_nesting_returns_error_not_crash() {
         .join()
         .unwrap()
         .expect("extreme nesting must not panic");
+    let err = outcome.unwrap_err();
+    assert!(
+        err.message.contains("nesting is too deep"),
+        "expected nesting error, got: {}",
+        err.message
+    );
+}
+
+/// UI component nesting must hit the same depth budget as statements and
+/// expressions: hostile `VStack { VStack { ... } }` input (which recurses
+/// through `ui_elements`, historically unguarded) must be rejected with a
+/// diagnostic, never overflow the stack.
+#[test]
+fn extreme_ui_nesting_returns_error_not_crash() {
+    let src = format!(
+        "fn main(): Component {{ {} Text(\"x\") {} }}",
+        "Screen { ".repeat(10_000),
+        " }".repeat(10_000)
+    );
+    let outcome = std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(move || {
+            panic::catch_unwind(AssertUnwindSafe(move || {
+                xulo_compiler::compile(&src, Path::new("fuzz.xulo"))
+            }))
+        })
+        .unwrap()
+        .join()
+        .unwrap()
+        .expect("extreme UI nesting must not panic");
     let err = outcome.unwrap_err();
     assert!(
         err.message.contains("nesting is too deep"),

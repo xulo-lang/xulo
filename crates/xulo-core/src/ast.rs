@@ -496,6 +496,11 @@ pub struct BinaryOp {
     pub operator: BinaryOperator,
     pub right: Expression,
     pub span: Range<usize>,
+    /// Set by the semantic phase's list-concat annotation pass when both sides
+    /// are statically `list` types: the JS codegen then emits an array
+    /// concatenation instead of the bare `+` (which would stringify). Mirrors
+    /// how `Call.trait_impl` carries a codegen hint back from checking.
+    pub list_concat: bool,
 }
 
 /// A plain function call (`foo(args)`), an enum payload construction

@@ -77,11 +77,28 @@ const __env = __runtime.env;
 const RANGE_RUNTIME: &str =
     "function range(a, b) { const r = []; for (let i = a; i < b; i++) r.push(i); return r; }\n";
 
+/// Structural equality helper for `==`/`!=`. Xulo compares enum values
+/// structurally (tag + payload, like the native interpreter), but a bare JS
+/// `==` on the compiled `{ tag, value }` objects is reference equality, so
+/// `Result::Ok(1) == Result::Ok(1)` used to be `false`. Everything without a
+/// `tag` keeps JS identity/loose semantics, matching both runtimes.
+const EQ_RUNTIME: &str = r#"function __eq(a, b) {
+    if (a === b) return true;
+    if (a && b && typeof a === "object" && typeof b === "object" && a.tag !== undefined && b.tag !== undefined) {
+        return a.tag === b.tag && __eq(a.value, b.value);
+    }
+    return a == b;
+}
+"#;
+
 /// Runtime preambles to emit once at the top of a multi-module bundle. `needs`
-/// is the OR of every module's `runtime_needs()`.
-pub fn shared_preamble(needs: (bool, bool)) -> String {
-    let (reactive, range) = needs;
+/// is the OR of every module's `runtime_needs()`: (reactive, range, eq).
+pub fn shared_preamble(needs: (bool, bool, bool)) -> String {
+    let (reactive, range, eq) = needs;
     let mut out = String::new();
+    if eq {
+        out.push_str(EQ_RUNTIME);
+    }
     if reactive {
         out.push_str(REACTIVE_RUNTIME);
     }
@@ -113,6 +130,8 @@ pub struct Javascript {
     /// Whether this module registered or dispatched trait impls (triggers the
     /// shared `__impls` registry declaration).
     used_impls: bool,
+    /// Whether any `==`/`!=` was generated (triggers the `__eq` helper).
+    used_eq: bool,
 }
 
 impl Default for Javascript {
@@ -132,6 +151,7 @@ impl Javascript {
             used_reactive: false,
             used_range: false,
             used_impls: false,
+            used_eq: false,
         }
     }
 
@@ -147,6 +167,7 @@ impl Javascript {
             used_reactive: false,
             used_range: false,
             used_impls: false,
+            used_eq: false,
         }
     }
 
@@ -208,17 +229,21 @@ impl Javascript {
             // a mangled impl function declared in another module's IIFE.
             start.push_str("const __impls = {};\n\n");
         }
-        if self.used_reactive || self.used_range {
-            start.push_str(&shared_preamble((self.used_reactive, self.used_range)));
+        if self.used_eq || self.used_reactive || self.used_range {
+            start.push_str(&shared_preamble((
+                self.used_reactive,
+                self.used_range,
+                self.used_eq,
+            )));
         }
         format!("{start}{}", self.out)
     }
 
-    /// Which runtime preambles this module needs (reactive runtime, `range`).
-    /// Used by the module bundler to emit shared runtimes once at the top of
-    /// the bundle instead of once per module IIFE.
-    pub fn runtime_needs(&self) -> (bool, bool) {
-        (self.used_reactive, self.used_range)
+    /// Which runtime preambles this module needs (reactive runtime, `range`,
+    /// `__eq`). Used by the module bundler to emit shared runtimes once at the
+    /// top of the bundle instead of once per module IIFE.
+    pub fn runtime_needs(&self) -> (bool, bool, bool) {
+        (self.used_reactive, self.used_range, self.used_eq)
     }
 
     /// Whether this module emits or calls dispatch impls, so the bundler can
@@ -652,7 +677,14 @@ impl Javascript {
         if let Some(idx) = params.iter().position(|p| p == "children") {
             slots[idx] = Some(self.ui_children_expr(&component.children)?);
         }
-        let mut args = slots.into_iter().flatten().collect::<Vec<_>>();
+        // Omitted slots are emitted as `undefined`, never dropped: dropping
+        // them would shift later arguments (including the routed `children`)
+        // into earlier parameters, silently misbinding the whole call. `undefined`
+        // also lets a JS default parameter fill in, exactly like `call_args_ordered`.
+        let mut args = slots
+            .into_iter()
+            .map(|slot| slot.unwrap_or_else(|| "undefined".to_string()))
+            .collect::<Vec<_>>();
         args.extend(extras);
         Ok(format!("{}({})", component.name, args.join(", ")))
     }
@@ -758,7 +790,11 @@ impl Javascript {
             ));
         } else {
             let iterable = self.expr(&f.iterable)?;
-            self.line(&format!("for (const {} of {iterable}) {{", f.iter_var));
+            // The loop variable is mutable (the semantic phase declares it
+            // reassignable, and the native interpreter allows it); `let`
+            // matches both. `const` would throw "Assignment to constant
+            // variable" for `for x in xs { x = x + 1 }`.
+            self.line(&format!("for (let {} of {iterable}) {{", f.iter_var));
         }
         self.indent += 1;
         self.block_body(&f.body)?;
@@ -1112,6 +1148,24 @@ impl Javascript {
     fn binary_op(&mut self, bin: &BinaryOp) -> Result<String, XuloError> {
         let left = self.expr(&bin.left)?;
         let right = self.expr(&bin.right)?;
+        // A `+` whose operands the semantic phase typed as `list` must
+        // concatenate arrays — a bare JS `+` would coerce them into a string
+        // (`[1,2] + [3,4]` -> `"1,23,4"`). The annotation is applied to the
+        // AST after checking, exactly like trait dispatch.
+        if bin.list_concat {
+            return Ok(format!("({left}).concat({right})"));
+        }
+        // Enum values compile to `{ tag, value }` objects, so a bare JS `==`
+        // compares by reference while the language (and the native runtime)
+        // compares structurally. `__eq` keeps reference semantics for
+        // everything without a `tag` and compares tag+payload for enums.
+        if matches!(bin.operator, BinaryOperator::Eq | BinaryOperator::Neq) {
+            self.used_eq = true;
+            if bin.operator == BinaryOperator::Eq {
+                return Ok(format!("__eq({left}, {right})"));
+            }
+            return Ok(format!("(!__eq({left}, {right}))"));
+        }
         let symbol = match bin.operator {
             BinaryOperator::And => "&&",
             BinaryOperator::Or => "||",

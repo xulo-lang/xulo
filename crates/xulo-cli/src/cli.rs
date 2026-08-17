@@ -344,7 +344,9 @@ fn repl() -> ExitCode {
             } else {
                 let pending = entry.clone();
                 entry.clear();
-                repl_run(&mut session, &pending);
+                if !repl_run(&mut session, &pending) {
+                    entry.push_str(&pending);
+                }
             }
             continue;
         }
@@ -357,15 +359,19 @@ fn repl() -> ExitCode {
         }
         let pending = entry.clone();
         entry.clear();
-        repl_run(&mut session, &pending);
+        if !repl_run(&mut session, &pending) {
+            // Compile failed: put the entry back so it can be edited and
+            // re-run (the session was rolled back inside `repl_run`).
+            entry.push_str(&pending);
+        }
     }
     ExitCode::SUCCESS
 }
 
 /// Compile and run the REPL buffer. `pending` is the freshly-typed entry to
-/// add this round; on a compile failure it is rolled back so it can be edited
-/// and re-run later.
-fn repl_run(session: &mut String, pending: &str) {
+/// add this round. Returns `false` when the entry failed to compile — the
+/// session has been rolled back and the caller restores the entry for editing.
+fn repl_run(session: &mut String, pending: &str) -> bool {
     session.push_str(pending);
     let raw = session.trim_start();
     let has_main = raw
@@ -396,10 +402,13 @@ fn repl_run(session: &mut String, pending: &str) {
         Ok((js, warnings)) => {
             print_warnings(&warnings, Some(&rendered_source));
             run_node(&js);
+            true
         }
         Err(()) => {
-            // Roll back the failed entry so it is not re-run later.
+            // Roll back the failed entry so it is not re-run later; the caller
+            // restores it into the edit buffer.
             session.truncate(session.len().saturating_sub(pending.len()));
+            false
         }
     }
 }
@@ -549,6 +558,18 @@ fn unbalanced(src: &str) -> bool {
             }
             continue;
         }
+        // A `/* ... */` block comment may span lines and contain brackets;
+        // skip to the closing `*/`.
+        if in_str.is_none() && c == '/' && chars.peek() == Some(&'*') {
+            let mut prev = '\0';
+            for rest in chars.by_ref() {
+                if prev == '*' && rest == '/' {
+                    break;
+                }
+                prev = rest;
+            }
+            continue;
+        }
         if let Some(q) = in_str {
             if c == '\\' {
                 chars.next();
@@ -608,12 +629,15 @@ fn compile_source(buffer: &str) -> Result<(String, Vec<XuloError>), ()> {
         return Err(());
     }
     let result = xulo_compiler::module::compile_file(&path);
+    // Read the source back *before* deleting the temp file: error rendering
+    // needs it (removing first used to leave the diagnostic with an empty
+    // source snippet).
+    let source = std::fs::read_to_string(&path).unwrap_or_default();
     let _ = std::fs::remove_file(&path);
     match result {
         Ok(out) => Ok(out),
         Err(err) => {
             let src_file = err.file.clone().unwrap_or(path);
-            let source = std::fs::read_to_string(&src_file).unwrap_or_default();
             print_compile_error(&err, &source, &src_file);
             Err(())
         }

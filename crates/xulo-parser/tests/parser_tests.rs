@@ -36,6 +36,36 @@ fn parses_precedence() {
 }
 
 #[test]
+fn range_and_comparison_share_one_precedence_level() {
+    // Both sides of the range operator accept a comparison operand: the
+    // grammar is symmetric (`a ..< b == c` used to be a parse error while
+    // `a == b ..< c` parsed — the range operator bound to whichever side had
+    // already been consumed).
+    let p = parse("let x = a == b ..< c");
+    let Statement::Let(b) = &p.statements[0] else {
+        panic!();
+    };
+    assert!(
+        matches!(b.value, Some(Expression::Range(_))),
+        "`(a == b) ..< c` must parse as a range"
+    );
+
+    let p = parse("let y = a ..< b == c");
+    let Statement::Let(b) = &p.statements[0] else {
+        panic!();
+    };
+    match &b.value {
+        Some(Expression::BinaryOp(op)) if op.operator == BinaryOperator::Eq => {
+            assert!(
+                matches!(op.left, Expression::Range(_)),
+                "`(a ..< b) == c` must parse as a comparison"
+            );
+        }
+        other => panic!("expected `(a ..< b) == c`, got {other:?}"),
+    }
+}
+
+#[test]
 fn parses_if_else_if() {
     let p = parse("if a { 1 } else if b { 2 } else { 3 }");
     let Statement::Expr(es) = &p.statements[0] else {

@@ -408,6 +408,147 @@ fn list_concat_with_plus() {
 }
 
 #[test]
+fn list_index_validates_integer_indices() {
+    // Fractional / negative / NaN indices must error, not silently read the
+    // wrong element (Rust's `f64 as usize` truncates and saturates).
+    let err = run(r#"fn main() { let xs = [10, 20, 30] print(xs[1.5]) }"#).unwrap_err();
+    assert!(
+        err.message.contains("non-negative integer"),
+        "got: {}",
+        err.message
+    );
+
+    let err = run(r#"fn main() { let xs = [10, 20, 30] print(xs[-1]) }"#).unwrap_err();
+    assert!(
+        err.message.contains("non-negative integer"),
+        "got: {}",
+        err.message
+    );
+
+    // Assignments go through the same validation.
+    let err = run(r#"fn main() { let xs = [10, 20, 30] xs[0.5] = 1 print(xs) }"#).unwrap_err();
+    assert!(
+        err.message.contains("non-negative integer"),
+        "got: {}",
+        err.message
+    );
+
+    // Valid indices still work.
+    let out = run_ok(r#"fn main() { let xs = [10, 20, 30] print(xs[2]) }"#);
+    assert_eq!(out, vec!["30"]);
+}
+
+#[test]
+fn string_index_reads_characters() {
+    let out = run_ok(r#"fn main() { let s = "abc" print(s[1]) }"#);
+    assert_eq!(out, vec!["b"]);
+    let err = run(r#"fn main() { let s = "abc" print(s[3]) }"#).unwrap_err();
+    assert!(
+        err.message.contains("out of bounds"),
+        "got: {}",
+        err.message
+    );
+}
+
+#[test]
+fn string_length_counts_utf16_units() {
+    // JS `.length` counts UTF-16 code units: "😀" is a surrogate pair.
+    // (`run_raw`: the semantic phase currently types `string.length` away, so
+    // the interpreter-level behavior is exercised directly.)
+    let out = run_raw(r#"fn main() { let s = "😀" print(str(s.length)) }"#).unwrap();
+    assert_eq!(out, vec!["2"]);
+    let out = run_raw(r#"fn main() { let s = "abc" print(str(s.length)) }"#).unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn default_parameter_evaluates_in_callee_scope_across_modules() {
+    // A default expression referencing a module-level name must resolve in the
+    // *defining* module's scope (like the JS closure), not the caller's — a
+    // caller-local `rate` must not leak in (and must not be required).
+    let out = exec_module_pair(
+        r#"
+        let rate = 100
+        export fn make(x: number, y: number = rate): number { y }
+        "#,
+        r#"
+        import { make } from "./lib"
+        fn main() {
+            let rate = 999
+            print(str(make(5)))
+            print(str(make(5, 7)))
+        }
+        "#,
+        |exports| pick(exports, &["make"]),
+    )
+    .unwrap();
+    assert_eq!(out, vec!["100", "7"]);
+}
+
+#[test]
+fn top_level_async_without_main_is_driven_to_completion() {
+    // A script with no `main` that spawns async work must still drain the task
+    // queue (the JS path drains microtasks); used to park forever.
+    let out = run_ok(
+        r#"
+        fn pause(): async { }
+        fn work(): async number {
+            await pause()
+            42
+        }
+        fn done(): async {
+            let v = await work()
+            print(str(v))
+        }
+        let d = done()
+        "#,
+    );
+    assert_eq!(out, vec!["42"]);
+}
+
+#[test]
+fn cyclic_values_print_without_overflowing() {
+    // A self-referencing object must render a cycle marker instead of
+    // recursing forever (this used to overflow the stack and abort).
+    let out = run_ok(
+        r#"
+        fn main() {
+            let o: object = {}
+            o.x = o
+            print(o)
+        }
+        "#,
+    );
+    assert_eq!(out, vec!["{ x: { <cycle> } }"]);
+
+    // A self-referencing list (`run_raw`: the type checker rejects storing a
+    // list into a `number` slot, so the interpreter-level cycle handling is
+    // exercised directly).
+    let out = run_raw(
+        r#"
+        fn main() {
+            let xs = [1]
+            xs[0] = xs
+            print(xs)
+        }
+        "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["[[<cycle>]]"]);
+
+    // A shared (non-cyclic) reference is still rendered twice.
+    let out = run_ok(
+        r#"
+        fn main() {
+            let a = [1]
+            print([a, a])
+        }
+        "#,
+    );
+    assert_eq!(out, vec!["[[1], [1]]"]);
+}
+
+#[test]
 fn object_literal_member_access_and_assign() {
     let out = run_ok(
         r#"

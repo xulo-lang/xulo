@@ -623,7 +623,7 @@ fn async_closure_can_be_awaited() {
 fn rejects_wrong_arity_for_function_values() {
     let err = analyze_src("fn main() { let f = fn(x: number): number { x } print(f(1, 2)) }")
         .unwrap_err();
-    assert!(err.message.contains("exactly 1 argument"));
+    assert!(err.message.contains("at most 1 argument"));
 }
 
 #[test]
@@ -691,7 +691,7 @@ fn rejects_wrong_arity_on_indexed_function_value() {
     let err =
         analyze_src("fn main() { let xs = [fn(a: number): number { a }] print(xs[0](1, 2)) }")
             .unwrap_err();
-    assert!(err.message.contains("exactly 1 argument"));
+    assert!(err.message.contains("at most 1 argument"));
 }
 
 #[test]
@@ -1141,6 +1141,169 @@ fn list_concat_is_allowed_but_mixed_concat_is_not() {
     assert!(err.message.contains("cannot apply `+`"));
     let err = analyze_src("fn main() { print(1 + [2]) }").unwrap_err();
     assert!(err.message.contains("cannot apply `+`"));
+}
+
+#[test]
+fn list_literal_rejects_heterogeneous_elements() {
+    assert!(analyze_src("fn main() { let xs = [1, 2] print(xs) }").is_ok());
+    assert!(analyze_src(r#"fn main() { let xs = ["a", "b"] print(xs) }"#).is_ok());
+    // A string in a numeric list must be rejected instead of silently
+    // producing a `list<number>` whose runtime value is corrupted.
+    let err =
+        analyze_src(r#"fn main() { let xs: list<number> = [1, "a"] print(xs) }"#).unwrap_err();
+    assert!(
+        err.message.contains("list literal mixes"),
+        "got: {}",
+        err.message
+    );
+    let err = analyze_src("fn main() { let xs = [1, \"a\"] print(xs) }").unwrap_err();
+    assert!(
+        err.message.contains("list literal mixes"),
+        "got: {}",
+        err.message
+    );
+    // Spread elements participate: `list<string>` inside a numeric list.
+    let err = analyze_src(
+        r#"fn main() { let strs: list<string> = ["x"] let xs = [1, ...strs] print(xs) }"#,
+    )
+    .unwrap_err();
+    assert!(
+        err.message.contains("list literal mixes"),
+        "got: {}",
+        err.message
+    );
+}
+
+#[test]
+fn default_value_can_reference_earlier_parameter() {
+    // `fn f(a, b = a)` is legal: the default runs in the callee scope where
+    // `a` is already bound (matching the emitted JS `function f(a, b = a)`).
+    assert!(
+        analyze_src("fn f(a: number, b: number = a): number { b } fn main() { print(str(f(5))) }")
+            .is_ok()
+    );
+    // A default cannot reference a *later* parameter (JS TDZ semantics) or
+    // itself.
+    let err = analyze_src("fn f(a: number = b, b: number): number { a }").unwrap_err();
+    assert!(
+        err.message.contains("undefined variable `b`"),
+        "got: {}",
+        err.message
+    );
+    let err = analyze_src("fn f(x: number = x): number { x }").unwrap_err();
+    assert!(
+        err.message.contains("undefined variable `x`"),
+        "got: {}",
+        err.message
+    );
+    // Closures get the same treatment.
+    assert!(
+        analyze_src(
+            "fn main() { let g = fn(a: number, b: number = a): number { b } print(str(g(1))) }"
+        )
+        .is_ok()
+    );
+}
+
+#[test]
+fn string_literal_union_accepted_in_return_positions() {
+    // `let`/call-argument positions accepted literal unions; return and
+    // implicit-return positions used to reject the same direct literal.
+    let src = r#"
+        type Status = "active" | "inactive"
+        fn get(): Status { return "active" }
+        fn implicit(): Status { "inactive" }
+        fn main() { print(get()) print(implicit()) }
+    "#;
+    assert!(
+        analyze_src(src).is_ok(),
+        "return positions must accept literals"
+    );
+
+    // A literal outside the union is still rejected.
+    let err = analyze_src(
+        r#"
+        type Status = "active" | "inactive"
+        fn get(): Status { return "bogus" }
+        fn main() { print(get()) }
+        "#,
+    )
+    .unwrap_err();
+    assert!(
+        err.message.contains("return type mismatch"),
+        "got: {}",
+        err.message
+    );
+}
+
+#[test]
+fn enum_payload_accepts_string_literal_union_member() {
+    let src = r#"
+        type Mode = "a" | "b"
+        enum E { V(Mode) }
+        fn main() { let e = E::V("a") print(e) }
+    "#;
+    assert!(
+        analyze_src(src).is_ok(),
+        "enum payload must accept union literals"
+    );
+}
+
+#[test]
+fn trait_dispatch_resolves_type_aliases() {
+    // A value typed by an alias of an impl'd type dispatches to the same impl.
+    let src = r#"
+        trait Area { fn area(self): number }
+        type Rect = object
+        impl Area for Rect { fn area(self): number { return self.w * self.h } }
+        type RectAlias = Rect
+        fn mk(): RectAlias { let r = { w: 3, h: 4 } r }
+        fn main() { print(str(Area::area(mk()))) }
+    "#;
+    assert!(analyze_src(src).is_ok(), "alias receiver must dispatch");
+}
+
+#[test]
+fn nested_async_fn_inside_if_arm_can_await() {
+    // `no_await_depth` is per-function: an `async` function declared inside an
+    // `if` expression's arm is its own await context and must not inherit the
+    // arm's no-await restriction.
+    let src = r#"
+        fn pause(): async { }
+        fn g(): async number { await pause() 1 }
+        fn main(): async {
+            let x = if true {
+                fn inner(): async number { await g() }
+                inner()
+            } else {
+                0
+            }
+            print(str(await x))
+        }
+    "#;
+    assert!(
+        analyze_src(src).is_ok(),
+        "nested async fn must be able to await"
+    );
+}
+
+#[test]
+fn effect_closure_rejects_parameters() {
+    let err = analyze_src(
+        r#"
+        fn main(): Component {
+            @Effect fn(x: number) { print(str(x)) }
+            Screen { }
+        }
+        "#,
+    )
+    .unwrap_err();
+    assert!(
+        err.message
+            .contains("`@Effect` closures take no parameters"),
+        "got: {}",
+        err.message
+    );
 }
 
 #[test]

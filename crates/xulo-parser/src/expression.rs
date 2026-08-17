@@ -70,6 +70,7 @@ fn bin(
         operator,
         right: rhs,
         span,
+        list_concat: false,
     }))
 }
 
@@ -130,13 +131,22 @@ fn nullish(input: &mut In<'_>) -> Pr<Expression> {
 fn comparison(input: &mut In<'_>) -> Pr<Expression> {
     let original = *input;
     let mut lhs = additive(input)?;
-    while let Ok(op) = take_op(input, CMP_OPS) {
-        let rhs = additive(input)?;
-        lhs = bin(original, lhs, op, rhs, input);
-    }
-    if opt_tk(input, Token::RangeOp) {
-        let end = additive(input)?;
-        return Ok(range(original, lhs, end, input));
+    // Comparison operators and the range operator share one flat precedence
+    // level, so `a == b ..< c` and `a ..< b == c` parse symmetrically
+    // (as `(a == b) ..< c` and `(a ..< b) == c`); both then fail the range
+    // endpoint / comparison type checks rather than one being a parse error.
+    loop {
+        if let Ok(op) = take_op(input, CMP_OPS) {
+            let rhs = additive(input)?;
+            lhs = bin(original, lhs, op, rhs, input);
+            continue;
+        }
+        if opt_tk(input, Token::RangeOp) {
+            let end = additive(input)?;
+            lhs = range(original, lhs, end, input);
+            continue;
+        }
+        break;
     }
     Ok(lhs)
 }

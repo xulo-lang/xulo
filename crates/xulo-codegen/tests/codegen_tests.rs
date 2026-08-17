@@ -1,22 +1,16 @@
 use xulo_codegen::generate;
 use xulo_lexer::tokenize;
 use xulo_parser::parse_program;
-use xulo_semantic::analyze;
 
+/// Full pipeline through codegen, applying the semantic phase's out-of-band
+/// annotations (trait dispatch, list concat) so generated JS matches what the
+/// real compiler emits.
 fn generate_js(src: &str) -> String {
-    let tokens = tokenize(src).unwrap();
-    let program = parse_program(&tokens).unwrap();
-    analyze(&program).unwrap();
-    generate(&program).unwrap()
-}
-
-/// Like [`generate_js`], but also applies trait-dispatch annotations so
-/// `Trait::method` calls are emitted through their mangled impl function.
-fn generate_js_annotated(src: &str) -> String {
     let tokens = tokenize(src).unwrap();
     let mut program = parse_program(&tokens).unwrap();
     let result = xulo_semantic::analyze_with(&program, &[], &[], &[]).unwrap();
     xulo_semantic::apply_trait_dispatch(&mut program, &result.trait_dispatch);
+    xulo_semantic::apply_list_concat(&mut program, &result.list_concat);
     generate(&program).unwrap()
 }
 
@@ -32,7 +26,7 @@ fn function_and_call() {
 
 #[test]
 fn trait_dispatch_emits_mangled_impl_call() {
-    let js = generate_js_annotated(
+    let js = generate_js(
         r#"
         trait Area { fn area(self): number }
         type Rectangle = object
@@ -46,6 +40,39 @@ fn trait_dispatch_emits_mangled_impl_call() {
     assert!(js.contains("__impls[\"impl_Area_Rectangle_area\"] = function (self) {"));
     assert!(js.contains("__impls[\"impl_Area_Rectangle_area\"](rect())"));
     assert!(js.contains("const __impls = {};"));
+}
+
+#[test]
+fn list_plus_list_emits_concat() {
+    let js = generate_js(r#"fn main() { print([1, 2] + [3, 4]) }"#);
+    assert!(js.contains("([1, 2]).concat([3, 4])"), "js:\n{js}");
+    // Numeric addition keeps the plain `+`.
+    let js = generate_js(r#"fn main() { print(1 + 2) }"#);
+    assert!(js.contains("(1 + 2)"), "js:\n{js}");
+}
+
+#[test]
+fn equality_emits_structural_eq_helper() {
+    let js = generate_js(
+        r#"
+        enum Result { Ok(number) Err(string) }
+        fn main() {
+            let a = Result::Ok(1)
+            let b = Result::Ok(1)
+            print(str(a == b))
+            print(str(a != b))
+        }
+        "#,
+    );
+    // Enum values compile to `{ tag, value }` objects; comparison must go
+    // through the structural `__eq` helper (a bare `==` would be reference
+    // equality and always false for separately-constructed values).
+    assert!(js.contains("__eq(a, b)"), "js:\n{js}");
+    assert!(js.contains("(!__eq(a, b))"), "js:\n{js}");
+    assert!(js.contains("function __eq"), "js:\n{js}");
+    // Plain numeric comparisons stay native.
+    let js = generate_js(r#"fn main() { print(1 == 2) }"#);
+    assert!(js.contains("__eq(1, 2)"), "js:\n{js}");
 }
 
 #[test]
@@ -63,7 +90,9 @@ fn main_is_invoked() {
 #[test]
 fn for_loop_uses_for_of() {
     let js = generate_js(r#"fn main() { for item in [1, 2] { print(item) } }"#);
-    assert!(js.contains("for (const item of [1, 2]) {"));
+    // The loop variable is mutable (reassignable, like `let`), so codegen
+    // must not emit `const` (which would throw on `item = ...` in the body).
+    assert!(js.contains("for (let item of [1, 2]) {"));
 }
 
 #[test]
@@ -462,7 +491,7 @@ fn for_var_shadows_signal() {
         "fn main(): Component { @State let x: number = 0 let ys = [1, 2, 3] for x in ys { print(x) } }",
     );
     assert!(js.contains("const x = __signal(0);"));
-    assert!(js.contains("for (const x of ys) {"));
+    assert!(js.contains("for (let x of ys) {"));
     assert!(js.contains("console.log(x);"));
     assert!(
         !js.contains("x.get()"),

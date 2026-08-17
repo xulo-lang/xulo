@@ -762,7 +762,14 @@ fn component_stmt(input: &mut In<'_>) -> Pr<ComponentStmt> {
 }
 
 /// Zero or more UI elements, terminated by a closing `}`.
+///
+/// Every UI nesting path (`component_stmt` children, groups, `if`/`else`/`for`
+/// bodies, `else if` chains) recurses through here, so the depth guard placed
+/// here protects the whole UI subtree the same way `statement`/`expression`
+/// guard theirs — without it, hostile `VStack { VStack { ... } }` nesting
+/// bypasses `MAX_NEST_DEPTH` and overflows the stack.
 fn ui_elements(input: &mut In<'_>) -> Pr<Vec<UiElement>> {
+    let _guard = enter_nest(input)?;
     let mut elements = Vec::new();
     while !peek_is(input, Token::RBrace) {
         if at_eof(input) {

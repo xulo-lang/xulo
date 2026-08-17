@@ -85,6 +85,11 @@ pub struct Analyzer {
     /// [`apply_trait_dispatch`] after analysis, keeping the checker call-site
     /// signatures shareable.
     trait_dispatch: Vec<(Range<usize>, String)>,
+    /// `+` expressions whose operands both checked out as `list` types; applied
+    /// back onto the AST (`BinaryOp.list_concat`) by [`apply_list_concat`] so
+    /// the JS codegen emits an array concatenation instead of a stringifying
+    /// bare `+`.
+    list_concat: Vec<Range<usize>>,
     /// Depth of enclosing async functions; `await` is only valid when > 0.
     async_depth: usize,
     /// Depth of enclosing `Component`-returning functions; `@State`/`@Store`/
@@ -139,6 +144,9 @@ pub struct AnalysisResult {
     /// Trait-dispatch call sites: `(call span, mangled impl function name)`.
     /// The loader applies these to the module's AST before codegen/runtime.
     pub trait_dispatch: Vec<(Range<usize>, String)>,
+    /// List-concat `+` sites (spans of `BinaryOp`s whose operands are both
+    /// `list`); applied to the AST by [`apply_list_concat`] before codegen.
+    pub list_concat: Vec<Range<usize>>,
     /// `impl Trait for Type { method }` registrations declared directly in this
     /// module. Exported so dependent modules that import `Type` (unaliased) can
     /// also dispatch `Trait::method(recv)`: the receiver's concrete type carries
@@ -172,6 +180,7 @@ pub fn analyze_with(
         impls: imported_impls.iter().cloned().collect(),
         impl_mangled: std::collections::HashSet::new(),
         trait_dispatch: Vec::new(),
+        list_concat: Vec::new(),
         async_depth: 0,
         component_depth: 0,
         block_depth: 0,
@@ -202,6 +211,7 @@ pub fn analyze_with(
         default: analyzer.exported_default.clone(),
         warnings: analyzer.warnings.clone(),
         trait_dispatch: analyzer.trait_dispatch.clone(),
+        list_concat: analyzer.list_concat.clone(),
         impls: analyzer.impls.iter().cloned().collect(),
     };
     for name in &analyzer.exported {
@@ -217,77 +227,100 @@ pub fn analyze_with(
 /// The checker never holds `&mut Expression`, so annotations travel out-of-band
 /// and are applied here in a single pass after checking.
 pub fn apply_trait_dispatch(program: &mut Program, dispatch: &[(Range<usize>, String)]) {
+    walk_program(program, &mut |expr| {
+        if let Expression::Call(call) = expr
+            && let Some((_, mangled)) = dispatch.iter().find(|(span, _)| *span == call.span)
+        {
+            call.trait_impl = Some(mangled.clone());
+        }
+    });
+}
+
+/// Apply the list-concat annotations found during analysis: every `a + b`
+/// whose operands checked out as `list` types gets `BinaryOp.list_concat` set,
+/// so the JS codegen emits an array concatenation instead of the bare `+`.
+pub fn apply_list_concat(program: &mut Program, spans: &[Range<usize>]) {
+    walk_program(program, &mut |expr| {
+        if let Expression::BinaryOp(bin) = expr
+            && spans.contains(&bin.span)
+        {
+            bin.list_concat = true;
+        }
+    });
+}
+
+/// Visit every expression in a program (statement bodies, exports, UI
+/// elements, and nested expressions) with `f`.
+fn walk_program(program: &mut Program, f: &mut dyn FnMut(&mut Expression)) {
     for statement in &mut program.statements {
-        apply_stmt(statement, dispatch);
+        walk_stmt(statement, f);
     }
 }
 
-fn apply_stmt(stmt: &mut Statement, dispatch: &[(Range<usize>, String)]) {
+fn walk_stmt(stmt: &mut Statement, f: &mut dyn FnMut(&mut Expression)) {
     match stmt {
-        Statement::Fn(f) => apply_block(&mut f.body, dispatch),
+        Statement::Fn(fd) => walk_block(&mut fd.body, f),
         Statement::Let(l) => {
             if let Some(value) = &mut l.value {
-                apply_expr(value, dispatch);
+                walk_expr(value, f);
             }
         }
         Statement::Return(r) => {
             if let Some(value) = &mut r.value {
-                apply_expr(value, dispatch);
+                walk_expr(value, f);
             }
         }
-        Statement::For(f) => {
-            apply_expr(&mut f.iterable, dispatch);
-            apply_block(&mut f.body, dispatch);
+        Statement::For(fr) => {
+            walk_expr(&mut fr.iterable, f);
+            walk_block(&mut fr.body, f);
         }
         Statement::While(w) => {
-            apply_expr(&mut w.condition, dispatch);
-            apply_block(&mut w.body, dispatch);
+            walk_expr(&mut w.condition, f);
+            walk_block(&mut w.body, f);
         }
         Statement::Assign(a) => {
             match &mut a.target {
-                AssignTarget::Member(object, _) => apply_expr(object, dispatch),
+                AssignTarget::Member(object, _) => walk_expr(object, f),
                 AssignTarget::Index(object, index) => {
-                    apply_expr(object, dispatch);
-                    apply_expr(index, dispatch);
+                    walk_expr(object, f);
+                    walk_expr(index, f);
                 }
                 AssignTarget::Name(_) => {}
             }
-            apply_expr(&mut a.value, dispatch);
+            walk_expr(&mut a.value, f);
         }
-        Statement::Expr(e) => apply_expr(&mut e.expr, dispatch),
-        Statement::Block(b) => apply_block(b, dispatch),
+        Statement::Expr(e) => walk_expr(&mut e.expr, f),
+        Statement::Block(b) => walk_block(b, f),
         Statement::Try(t) => {
-            apply_block(&mut t.try_block, dispatch);
-            apply_block(&mut t.catch_block, dispatch);
+            walk_block(&mut t.try_block, f);
+            walk_block(&mut t.catch_block, f);
         }
-        Statement::Throw(e) => apply_expr(e, dispatch),
-        Statement::Export(e) => apply_export(&mut e.item, dispatch),
+        Statement::Throw(e) => walk_expr(e, f),
+        Statement::Export(e) => walk_export(&mut e.item, f),
         Statement::State(s) => {
             if let Some(value) = &mut s.binding.value {
-                apply_expr(value, dispatch);
+                walk_expr(value, f);
             }
         }
-        Statement::Store(s) => apply_expr(&mut s.value, dispatch),
+        Statement::Store(s) => walk_expr(&mut s.value, f),
         Statement::Effect(e) => {
-            apply_block(&mut e.closure.body, dispatch);
+            walk_block(&mut e.closure.body, f);
             if let Some(deps) = &mut e.deps {
                 for dep in deps {
-                    apply_expr(dep, dispatch);
+                    walk_expr(dep, f);
                 }
             }
         }
-        Statement::Environment(env) => {
-            let _ = env;
-        }
+        Statement::Environment(_) => {}
         Statement::Component(c) => {
             for arg in &mut c.args {
-                apply_expr(&mut arg.value, dispatch);
+                walk_expr(&mut arg.value, f);
             }
-            apply_ui_elements(&mut c.children, dispatch);
+            walk_ui_elements(&mut c.children, f);
         }
         Statement::Impl(imp) => {
             for method in &mut imp.methods {
-                apply_block(&mut method.body, dispatch);
+                walk_block(&mut method.body, f);
             }
         }
         Statement::TypeAlias(_)
@@ -297,129 +330,127 @@ fn apply_stmt(stmt: &mut Statement, dispatch: &[(Range<usize>, String)]) {
     }
 }
 
-fn apply_export(item: &mut ExportItem, dispatch: &[(Range<usize>, String)]) {
+fn walk_export(item: &mut ExportItem, f: &mut dyn FnMut(&mut Expression)) {
     match item {
-        ExportItem::Fn(f) => apply_block(&mut f.body, dispatch),
+        ExportItem::Fn(fd) => walk_block(&mut fd.body, f),
         ExportItem::Let(l) => {
             if let Some(value) = &mut l.value {
-                apply_expr(value, dispatch);
+                walk_expr(value, f);
             }
         }
-        ExportItem::Default(inner) => apply_export(inner, dispatch),
+        ExportItem::Default(inner) => walk_export(inner, f),
         ExportItem::Names(_) | ExportItem::Type(_) | ExportItem::Enum(_) | ExportItem::Trait(_) => {
         }
     }
 }
 
-fn apply_ui_elements(elements: &mut [UiElement], dispatch: &[(Range<usize>, String)]) {
+fn walk_ui_elements(elements: &mut [UiElement], f: &mut dyn FnMut(&mut Expression)) {
     for element in elements {
         match element {
             UiElement::Component(c) => {
                 for arg in &mut c.args {
-                    apply_expr(&mut arg.value, dispatch);
+                    walk_expr(&mut arg.value, f);
                 }
-                apply_ui_elements(&mut c.children, dispatch);
+                walk_ui_elements(&mut c.children, f);
             }
-            UiElement::Expr(e) => apply_expr(e, dispatch),
+            UiElement::Expr(e) => walk_expr(e, f),
             UiElement::If {
                 condition,
                 then_branch,
                 else_branch,
             } => {
-                apply_expr(condition, dispatch);
-                apply_ui_elements(then_branch, dispatch);
+                walk_expr(condition, f);
+                walk_ui_elements(then_branch, f);
                 if let Some(els) = else_branch {
-                    apply_ui_elements(els, dispatch);
+                    walk_ui_elements(els, f);
                 }
             }
             UiElement::For { iterable, body, .. } => {
-                apply_expr(iterable, dispatch);
-                apply_ui_elements(body, dispatch);
+                walk_expr(iterable, f);
+                walk_ui_elements(body, f);
             }
-            UiElement::Group(g) => apply_ui_elements(g, dispatch),
+            UiElement::Group(g) => walk_ui_elements(g, f),
             UiElement::Text(_) => {}
         }
     }
 }
 
-fn apply_block(block: &mut Block, dispatch: &[(Range<usize>, String)]) {
+fn walk_block(block: &mut Block, f: &mut dyn FnMut(&mut Expression)) {
     for statement in &mut block.statements {
-        apply_stmt(statement, dispatch);
+        walk_stmt(statement, f);
     }
 }
 
-fn apply_expr(expr: &mut Expression, dispatch: &[(Range<usize>, String)]) {
+fn walk_expr(expr: &mut Expression, f: &mut dyn FnMut(&mut Expression)) {
+    f(expr);
     match expr {
         Expression::Literal { value, .. } => match value {
             Literal::List(items) => {
                 for item in items {
-                    apply_expr(item, dispatch);
+                    walk_expr(item, f);
                 }
             }
             Literal::Object(fields) => {
                 for field in fields {
                     match field {
-                        ObjectField::Field { value, .. } => apply_expr(value, dispatch),
-                        ObjectField::Spread { value } => apply_expr(value, dispatch),
+                        ObjectField::Field { value, .. } => walk_expr(value, f),
+                        ObjectField::Spread { value } => walk_expr(value, f),
                     }
                 }
             }
             _ => {}
         },
         Expression::Call(call) => {
-            if let Some((_, mangled)) = dispatch.iter().find(|(span, _)| *span == call.span) {
-                call.trait_impl = Some(mangled.clone());
-            }
             if let Some(object) = &mut call.object {
-                apply_expr(object, dispatch);
+                walk_expr(object, f);
             }
             for arg in &mut call.arguments {
-                apply_expr(&mut arg.value, dispatch);
+                walk_expr(&mut arg.value, f);
             }
         }
         Expression::BinaryOp(b) => {
-            apply_expr(&mut b.left, dispatch);
-            apply_expr(&mut b.right, dispatch);
+            walk_expr(&mut b.left, f);
+            walk_expr(&mut b.right, f);
         }
-        Expression::Unary(u) => apply_expr(&mut u.operand, dispatch),
+        Expression::Unary(u) => walk_expr(&mut u.operand, f),
         Expression::If(e) => {
-            apply_expr(&mut e.condition, dispatch);
-            apply_block(&mut e.then_branch, dispatch);
+            walk_expr(&mut e.condition, f);
+            walk_block(&mut e.then_branch, f);
             if let Some(els) = &mut e.else_branch {
-                apply_block(els, dispatch);
+                walk_block(els, f);
             }
         }
         Expression::Ternary(t) => {
-            apply_expr(&mut t.condition, dispatch);
-            apply_expr(&mut t.then_value, dispatch);
-            apply_expr(&mut t.else_value, dispatch);
+            walk_expr(&mut t.condition, f);
+            walk_expr(&mut t.then_value, f);
+            walk_expr(&mut t.else_value, f);
         }
         Expression::Match(m) => {
-            apply_expr(&mut m.value, dispatch);
+            walk_expr(&mut m.value, f);
             for arm in &mut m.arms {
-                apply_expr(&mut arm.value, dispatch);
+                walk_expr(&mut arm.value, f);
             }
         }
-        Expression::Member(m) => apply_expr(&mut m.object, dispatch),
+        Expression::Member(m) => walk_expr(&mut m.object, f),
         Expression::Index(i) => {
-            apply_expr(&mut i.object, dispatch);
-            apply_expr(&mut i.index, dispatch);
+            walk_expr(&mut i.object, f);
+            walk_expr(&mut i.index, f);
         }
         Expression::Nullish(n) => {
-            apply_expr(&mut n.left, dispatch);
-            apply_expr(&mut n.right, dispatch);
+            walk_expr(&mut n.left, f);
+            walk_expr(&mut n.right, f);
         }
         Expression::Range(r) => {
-            apply_expr(&mut r.start, dispatch);
-            apply_expr(&mut r.end, dispatch);
+            walk_expr(&mut r.start, f);
+            walk_expr(&mut r.end, f);
         }
-        Expression::Await { expr: inner, .. } => apply_expr(inner, dispatch),
-        Expression::FnExpr(f) => apply_block(&mut f.body, dispatch),
-        Expression::Spread { expr: inner, .. } => apply_expr(inner, dispatch),
+        Expression::Await { expr: inner, .. } => walk_expr(inner, f),
+        Expression::FnExpr(fd) => walk_block(&mut fd.body, f),
+        Expression::Spread { expr: inner, .. } => walk_expr(inner, f),
         Expression::CallValue(c) => {
-            apply_expr(&mut c.callee, dispatch);
+            walk_expr(&mut c.callee, f);
             for arg in &mut c.arguments {
-                apply_expr(&mut arg.value, dispatch);
+                walk_expr(&mut arg.value, f);
             }
         }
         Expression::Identifier { .. } | Expression::EnumRef(_) | Expression::Binding { .. } => {}
@@ -556,7 +587,8 @@ impl Analyzer {
                         Type::Async(inner) => inner.as_ref(),
                         other => other,
                     };
-                    if !self.assignable(&value_type, target) {
+                    if !self.assignable(&value_type, target) && !self.literal_matches(value, target)
+                    {
                         return Err(self.err(format!(
                             "return type mismatch: expected `{}`, found `{}`",
                             expected.name(),
@@ -651,21 +683,9 @@ impl Analyzer {
                     p.name, f.name
                 )));
             }
-            if let Some(ty) = &p.type_annotation {
-                self.check_type(ty)?;
-            }
-            if let Some(default) = &p.default {
-                let default_type = self.check_expression(default)?;
-                let param_type = p.type_annotation.clone().unwrap_or(Type::Any);
-                if !self.assignable(&default_type, &param_type) {
-                    return Err(self.err(format!(
-                        "default value for parameter `{}` must be `{}`, found `{}`",
-                        p.name,
-                        param_type.name(),
-                        default_type.name()
-                    )));
-                }
-            }
+            // Annotations and defaults are validated once the parameters are in
+            // scope (`declare_params_with_defaults`), so a default can
+            // reference an earlier parameter (`fn f(a, b = a)`).
         }
         let return_type = f.return_type.clone().unwrap_or(Type::Any);
         self.check_type(&return_type)?;
@@ -694,15 +714,7 @@ impl Analyzer {
         self.bound_shapes.push(bound_map);
 
         self.table.push_scope();
-        for param in &f.params {
-            let ty = param.type_annotation.clone().unwrap_or(Type::Any);
-            self.table.declare(Symbol {
-                name: param.name.clone(),
-                type_: ty,
-                kind: SymbolKind::Variable,
-                is_const: true,
-            });
-        }
+        self.declare_params_with_defaults(&f.params)?;
         let saved = self.current_return.replace(return_type.clone());
         let saved_declared = self.declared_return;
         self.declared_return = f.return_type.is_some();
@@ -711,6 +723,10 @@ impl Analyzer {
         // This function is its own scope: decorators are only legal at the top
         // level of a `Component` function (itself), never inside a nested
         // function, and `await` needs this function to be `async` (docs §12).
+        // `no_await_depth` is a property of the *current* function's if/match
+        // arms, so a nested function body must not inherit it.
+        let saved_no_await = self.no_await_depth;
+        self.no_await_depth = 0;
         let is_component = self.is_component_type(&return_type);
         let saved_component = self.component_depth;
         let saved_block = self.block_depth;
@@ -741,6 +757,7 @@ impl Analyzer {
         self.block_depth = saved_block;
         self.component_depth = saved_component;
         self.async_depth = saved_async;
+        self.no_await_depth = saved_no_await;
         self.current_return = saved;
         self.declared_return = saved_declared;
         result?;
@@ -749,9 +766,16 @@ impl Analyzer {
         Ok(())
     }
 
-    /// Validate a parameter list and collect each parameter's type (defaults are
-    /// checked against the annotation).
-    fn check_params_types(&mut self, params: &[xulo_core::ast::Param]) -> SResult<Vec<Type>> {
+    /// Validate a parameter list and declare each parameter in scope, one at a
+    /// time. A parameter's default value is checked *before* the parameter
+    /// itself enters scope but *after* every earlier one, so `fn f(a, b = a)`
+    /// is legal while `fn f(x = x)` is not — mirroring JS default-parameter
+    /// temporal-dead-zone semantics, and matching the JS the codegen emits
+    /// (`function f(a, b = a)`). Returns each parameter's type.
+    fn declare_params_with_defaults(
+        &mut self,
+        params: &[xulo_core::ast::Param],
+    ) -> SResult<Vec<Type>> {
         let mut types = Vec::with_capacity(params.len());
         for p in params {
             if let Some(ty) = &p.type_annotation {
@@ -769,7 +793,14 @@ impl Analyzer {
                     )));
                 }
             }
-            types.push(p.type_annotation.clone().unwrap_or(Type::Any));
+            let ty = p.type_annotation.clone().unwrap_or(Type::Any);
+            self.table.declare(Symbol {
+                name: p.name.clone(),
+                type_: ty.clone(),
+                kind: SymbolKind::Variable,
+                is_const: true,
+            });
+            types.push(ty);
         }
         Ok(types)
     }
@@ -778,20 +809,11 @@ impl Analyzer {
     /// enclosing scope (closures); the literal's type is a `fn(...) -> ...`
     /// signature.
     fn check_fn_expr(&mut self, f: &xulo_core::ast::FnExpr) -> SResult<Type> {
-        let param_types = self.check_params_types(&f.params)?;
         let return_type = f.return_type.clone().unwrap_or(Type::Any);
         self.check_type(&return_type)?;
 
         self.table.push_scope();
-        for param in &f.params {
-            let ty = param.type_annotation.clone().unwrap_or(Type::Any);
-            self.table.declare(Symbol {
-                name: param.name.clone(),
-                type_: ty,
-                kind: SymbolKind::Variable,
-                is_const: true,
-            });
-        }
+        let param_types = self.declare_params_with_defaults(&f.params)?;
         let saved = self.current_return.replace(return_type.clone());
         let saved_declared = self.declared_return;
         self.declared_return = f.return_type.is_some();
@@ -802,9 +824,12 @@ impl Analyzer {
         // closure appears at the top level of a `Component` function (docs §12).
         let saved_component = self.component_depth;
         let saved_block = self.block_depth;
+        let saved_no_await = self.no_await_depth;
         self.component_depth = 0;
         self.block_depth = 0;
+        self.no_await_depth = 0;
         let result = self.check_block_implicit(&f.body);
+        self.no_await_depth = saved_no_await;
         self.component_depth = saved_component;
         self.block_depth = saved_block;
         self.async_depth = saved_async;
@@ -1170,6 +1195,14 @@ impl Analyzer {
 
     fn check_effect(&mut self, effect: &xulo_core::ast::EffectStmt) -> SResult<()> {
         self.require_component_top_level("@Effect")?;
+        // The runtime calls the closure with no arguments (`__effect(fn)`), so
+        // parameters would silently bind `undefined`; reject them up front.
+        if let Some(first) = effect.closure.params.first() {
+            return Err(self.err(format!(
+                "`@Effect` closures take no parameters (found `{}`): the runtime calls them without arguments",
+                first.name
+            )));
+        }
         let saved = self.in_effect;
         self.in_effect = true;
         let result = (|| {
@@ -1731,7 +1764,9 @@ impl Analyzer {
                 // A trailing `expr` is the function's implicit return → value
                 // position, so a trailing `if`/`match` rejects `await` inside.
                 let value_type = self.check_expression(&last.expr)?;
-                if !self.assignable(&value_type, target) {
+                if !self.assignable(&value_type, target)
+                    && !self.literal_matches(&last.expr, target)
+                {
                     return Err(self.err(format!(
                         "return type mismatch: expected `{}`, found `{}`",
                         expected.name(),
@@ -1768,8 +1803,16 @@ impl Analyzer {
             Expression::Index(idx) => self.check_index(idx),
             Expression::Nullish(n) => self.check_nullish(n),
             Expression::Range(r) => {
-                self.check_expression(&r.start)?;
-                self.check_expression(&r.end)?;
+                let start = self.check_expression(&r.start)?;
+                let end = self.check_expression(&r.end)?;
+                if !self.assignable(&start, &Type::Number) || !self.assignable(&end, &Type::Number)
+                {
+                    return Err(self.err(format!(
+                        "range endpoints must be `number`, found `{}` and `{}`",
+                        start.name(),
+                        end.name()
+                    )));
+                }
                 Ok(Type::List(Box::new(Type::Number)))
             }
             Expression::Await { expr: operand, .. } => self.check_await(operand),
@@ -1838,6 +1881,15 @@ impl Analyzer {
                     if first {
                         element = item_type;
                         first = false;
+                    } else if !self.assignable(&item_type, &element) {
+                        // A list literal's elements must be mutually
+                        // assignable: `[1, "a"]` would otherwise slip through
+                        // as `list<number>` and corrupt the runtime value.
+                        return Err(self.err(format!(
+                            "list literal mixes `{}` and `{}` elements; use an explicit `list<...>` annotation",
+                            element.name(),
+                            item_type.name()
+                        )));
                     }
                 }
                 Ok(Type::List(Box::new(element)))
@@ -2148,6 +2200,10 @@ impl Analyzer {
                 } else if self.is_stringish(&l) && self.is_stringish(&r) {
                     Ok(Type::String)
                 } else if matches!(l, Type::List(_)) && matches!(r, Type::List(_)) {
+                    // Record the site so codegen emits an array concatenation
+                    // (`a.concat(b)`) instead of a JS `+`, which would coerce
+                    // the lists into a string.
+                    self.list_concat.push(bin.span.clone());
                     Ok(Type::List(Box::new(self.join_list(&l, &r))))
                 } else if matches!(l, Type::Any) || matches!(r, Type::Any) {
                     Ok(Type::Any)
@@ -2532,7 +2588,12 @@ impl Analyzer {
     }
 
     /// Validate a call against a function-value signature (`Type::FnSig`):
-    /// positional arguments only, exact arity, per-parameter type checks.
+    /// positional arguments only, at most the declared arity, per-parameter
+    /// type checks. Fewer arguments than declared are allowed because a
+    /// signature erases default parameters (`fn(a, b = a)` types as
+    /// `fn(number, number)`) and both runtimes bind missing trailing
+    /// parameters to their default (`undefined` in JS, `null`/default in the
+    /// native runtime) — exactly like a plain call.
     fn check_fn_value_args(
         &mut self,
         params: &[Type],
@@ -2544,9 +2605,9 @@ impl Analyzer {
         }
         let expected = params.len();
         let actual = arguments.len();
-        if actual != expected {
+        if actual > expected {
             return Err(self.err(format!(
-                "function values expect exactly {expected} argument(s), but {actual} were provided",
+                "function values expect at most {expected} argument(s), but {actual} were provided",
             )));
         }
         for (arg, param) in arguments.iter().zip(params.iter()) {
@@ -2610,7 +2671,9 @@ impl Analyzer {
                     for (arg, param) in arguments.iter().zip(params.iter()) {
                         match self.check_expression(arg) {
                             Ok(arg_type) => {
-                                if !self.assignable(&arg_type, &param.type_) {
+                                if !self.assignable(&arg_type, &param.type_)
+                                    && !self.literal_matches(arg, &param.type_)
+                                {
                                     errs.push(self.err(format!(
                                         "argument to `{enum_name}::{variant}` must be `{}`, found `{}`",
                                         param.type_.name(),
@@ -2717,6 +2780,11 @@ impl Analyzer {
             }
             _ => None,
         };
+        // Aliases are followed one level at a time to their target before
+        // concluding "no impl": `type RectAlias = Rect` (where `Rect` itself
+        // may alias `object`) dispatches to `impl Area for Rect`. The original
+        // name is checked first, and a generic parameter is never erased
+        // (dispatch on generics is rejected with its own message).
         match concrete {
             Some(name) if self.impls.contains(&(trait_name.clone(), name.clone(), method.to_string())) => {
                 Ok((sig.return_type.clone(), impl_fn_name(&trait_name, &name, method)))
@@ -2724,13 +2792,41 @@ impl Analyzer {
             Some(name) if self.generics.contains(&name) => Err(self.err(format!(
                 "cannot dispatch `{trait_name}::{method}` on generic parameter `{name}`: dispatch requires a concrete receiver type with a registered `impl {trait_name} for Type`, and generic parameters resolve only at run time"
             ))),
-            Some(name) => Err(self.err(format!(
-                "type `{name}` does not implement trait `{trait_name}` (add `impl {trait_name} for {name}`)"
-            ))),
+            Some(name) => {
+                let mut target = self.alias_target(&receiver_type);
+                while let Some(t) = &target {
+                    if self
+                        .impls
+                        .contains(&(trait_name.clone(), t.clone(), method.to_string()))
+                    {
+                        return Ok((
+                            sig.return_type.clone(),
+                            impl_fn_name(&trait_name, t, method),
+                        ));
+                    }
+                    target = self.alias_target(&Type::Named(t.clone()));
+                }
+                Err(self.err(format!(
+                    "type `{name}` does not implement trait `{trait_name}` (add `impl {trait_name} for {name}`)"
+                )))
+            }
             None => Err(self.err(format!(
                 "cannot dispatch `{trait_name}::{method}` on type `{}`: provide a named type with `impl {trait_name} for Type`",
                 receiver_type.name()
             ))),
+        }
+    }
+
+    /// One step of alias resolution: if `ty` names a type alias whose
+    /// underlying type is itself a named type, that name. `None` when `ty` is
+    /// not a named alias or its target is not named (e.g. `type X = object`).
+    fn alias_target(&self, ty: &Type) -> Option<String> {
+        match ty {
+            Type::Named(name) => match self.type_entry(name).map(|e| &e.kind) {
+                Some(TypeEntryKind::Alias(Type::Named(target))) => Some(target.clone()),
+                _ => None,
+            },
+            _ => None,
         }
     }
 

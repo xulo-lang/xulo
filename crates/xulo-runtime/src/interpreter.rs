@@ -157,6 +157,11 @@ impl Interpreter {
         }
         if let Some(main) = main_fn(program) {
             self.run_main(main, &global)?;
+        } else {
+            // No `main` (e.g. a script of top-level statements): still drain the
+            // async task queue, or fire-and-forget `work()` calls would park
+            // forever on their first `await` (the JS path drains microtasks).
+            self.drive();
         }
         Ok(self.out.take())
     }
@@ -230,6 +235,11 @@ impl Interpreter {
         }
         if run_main && let Some(main) = main_fn(program) {
             self.run_main(main, &global).map_err(RunError::Err)?;
+        } else {
+            // A module without `main` (any dependency module, or a no-main
+            // entry) still drains its async tasks, matching JS module
+            // semantics where fire-and-forget async work completes.
+            self.drive();
         }
         let mut bindings = Vec::new();
         let mut default = None;
@@ -585,8 +595,8 @@ impl Interpreter {
                 let idx = self.eval(index, env)?;
                 match (obj, &idx) {
                     (Value::List(list), Value::Number(n)) => {
+                        let i = list_index(*n, &a.span)?;
                         let mut list = list.borrow_mut();
-                        let i = *n as usize;
                         if i < list.len() {
                             list[i] = value;
                         } else {
@@ -681,8 +691,8 @@ impl Interpreter {
                 let index = self.eval(&idx.index, env)?;
                 match (obj, &index) {
                     (Value::List(list), Value::Number(n)) => {
+                        let i = list_index(*n, &idx.span)?;
                         let list = list.borrow();
-                        let i = *n as usize;
                         if i < list.len() {
                             Ok(list[i].clone())
                         } else {
@@ -693,6 +703,21 @@ impl Interpreter {
                                 ),
                                 idx.span.clone(),
                             ))
+                        }
+                    }
+                    (Value::String(s), Value::Number(n)) => {
+                        // `"abc"[1]` reads a character, matching the JS path
+                        // (which returns the string's element).
+                        let i = list_index(*n, &idx.span)?;
+                        match s.chars().nth(i) {
+                            Some(c) => Ok(Value::String(c.to_string())),
+                            None => Err(RunError::err(
+                                format!(
+                                    "index {n} out of bounds for a string of length {}",
+                                    s.chars().count()
+                                ),
+                                idx.span.clone(),
+                            )),
                         }
                     }
                     (Value::Object(fields), Value::String(key)) => {
@@ -1072,7 +1097,9 @@ impl Interpreter {
                 Ok(Value::Number(list.borrow().len() as f64))
             }
             Value::String(s) if m.property == "length" => {
-                Ok(Value::Number(s.chars().count() as f64))
+                // JS `.length` counts UTF-16 code units, not Unicode scalars
+                // (`"😀".length` is 2 there); mirror it.
+                Ok(Value::Number(s.encode_utf16().count() as f64))
             }
             other => Err(RunError::err(
                 format!(
@@ -1249,15 +1276,18 @@ impl Interpreter {
         Ok(values)
     }
 
-    /// Evaluate call arguments and bind them to the callee's declared parameter
-    /// order. All-named argument lists are reordered by name; omitted
-    /// parameters fall back to their default value (or `null`).
+    /// Evaluate call arguments and reorder them into the callee's declared
+    /// parameter order. All-named argument lists are reordered by name.
+    /// Omitted parameters come back as `None` — the caller binds what it has
+    /// into the callee's scope and evaluates defaults there
+    /// ([`bind_callee_args`]), so a default expression sees the callee's own
+    /// environment (`fn f(a, b = a)`), never the caller's.
     fn bind_args(
         &self,
         params: &[Param],
         args: &[CallArg],
         call_env: &Rc<RefCell<Env>>,
-    ) -> Result<Vec<Value>, RunError> {
+    ) -> Result<Vec<Option<Value>>, RunError> {
         let all_named = !args.is_empty() && args.iter().all(|a| a.name.is_some());
         if all_named {
             let mut by_name: std::collections::HashMap<String, Value> =
@@ -1268,19 +1298,16 @@ impl Interpreter {
             }
             let mut values = Vec::with_capacity(params.len());
             for param in params {
-                match by_name.remove(&param.name) {
-                    Some(v) => values.push(v),
-                    None => values.push(self.default_param(param, call_env)?),
-                }
+                values.push(by_name.remove(&param.name));
             }
             return Ok(values);
         }
-        let mut values = self.eval_args(args, call_env)?;
-        while values.len() < params.len() {
-            let param = &params[values.len()];
-            values.push(self.default_param(param, call_env)?);
+        let values = self.eval_args(args, call_env)?;
+        let mut out = Vec::with_capacity(params.len());
+        for i in 0..params.len() {
+            out.push(values.get(i).cloned());
         }
-        Ok(values)
+        Ok(out)
     }
 
     fn default_param(&self, param: &Param, env: &Rc<RefCell<Env>>) -> Result<Value, RunError> {
@@ -1290,27 +1317,43 @@ impl Interpreter {
         }
     }
 
-    fn run_function(&self, func: &Rc<FunctionValue>, args: Vec<Value>) -> Result<Value, RunError> {
+    /// Bind `args` (in parameter order, `None` for omitted) into the callee
+    /// scope, evaluating omitted parameters' default expressions *inside that
+    /// scope* — earlier parameters are already defined when a later default
+    /// runs, matching the JS codegen (`function f(a, b = a)`).
+    fn bind_callee_args(
+        &self,
+        env: &Rc<RefCell<Env>>,
+        params: &[Param],
+        args: Vec<Option<Value>>,
+    ) -> Result<(), RunError> {
+        for (param, given) in params.iter().zip(args) {
+            let value = match given {
+                Some(v) => v,
+                None => self.default_param(param, env)?,
+            };
+            env.borrow_mut().define(&param.name, value);
+        }
+        Ok(())
+    }
+
+    fn run_function(
+        &self,
+        func: &Rc<FunctionValue>,
+        args: Vec<Option<Value>>,
+    ) -> Result<Value, RunError> {
         if func.is_async {
             let func = func.clone();
             return Ok(self.spawn_async(move |_yielder| {
                 let env = Env::child(&func.closure);
-                {
-                    let mut env = env.borrow_mut();
-                    for (param, value) in func.params.iter().zip(args) {
-                        env.define(&param.name, value);
-                    }
-                }
-                with_interp(|interp| interp.run_body(&func.body, &env, func.return_type.is_some()))
+                with_interp(|interp| {
+                    interp.bind_callee_args(&env, &func.params, args)?;
+                    interp.run_body(&func.body, &env, func.return_type.is_some())
+                })
             }));
         }
         let env = Env::child(&func.closure);
-        {
-            let mut env = env.borrow_mut();
-            for (param, value) in func.params.iter().zip(args) {
-                env.define(&param.name, value);
-            }
-        }
+        self.bind_callee_args(&env, &func.params, args)?;
         self.run_body(&func.body, &env, func.return_type.is_some())
     }
 
@@ -1328,22 +1371,14 @@ impl Interpreter {
             let call_env = call_env.clone();
             return Ok(self.spawn_async(move |_yielder| {
                 let env = Env::child(&call_env);
-                {
-                    let mut env = env.borrow_mut();
-                    for (param, value) in params.iter().zip(bound) {
-                        env.define(&param.name, value);
-                    }
-                }
-                with_interp(|interp| interp.run_body(&body, &env, return_type.is_some()))
+                with_interp(|interp| {
+                    interp.bind_callee_args(&env, &params, bound)?;
+                    interp.run_body(&body, &env, return_type.is_some())
+                })
             }));
         }
         let env = Env::child(call_env);
-        {
-            let mut env = env.borrow_mut();
-            for (param, value) in f.params.iter().zip(bound) {
-                env.define(&param.name, value);
-            }
-        }
+        self.bind_callee_args(&env, &f.params, bound)?;
         self.run_body(&f.body, &env, f.return_type.is_some())
     }
 
@@ -1411,6 +1446,20 @@ fn literal_matches(lit: &Literal, value: &Value) -> bool {
         Literal::Null => matches!(value, Value::Null),
         Literal::List(_) | Literal::Object(_) => false,
     }
+}
+
+/// Convert a list/string index value into a `usize`, rejecting fractional,
+/// negative, and NaN indices. Silently truncating (`-1.0 as usize` is 0 in
+/// Rust) used to read the wrong element — the JS path yields `undefined` for
+/// those, so the native runtime must not guess either.
+fn list_index(n: f64, span: &std::ops::Range<usize>) -> Result<usize, RunError> {
+    if n.is_nan() || n < 0.0 || n.fract() != 0.0 {
+        return Err(RunError::err(
+            format!("index must be a non-negative integer, found {n}"),
+            span.clone(),
+        ));
+    }
+    Ok(n as usize)
 }
 
 /// Whether an enum-pattern matches: the JS codegen accepts both a
