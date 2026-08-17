@@ -15,7 +15,7 @@ fn generate_js(src: &str) -> String {
 fn generate_js_annotated(src: &str) -> String {
     let tokens = tokenize(src).unwrap();
     let mut program = parse_program(&tokens).unwrap();
-    let result = xulo_semantic::analyze_with(&program, &[], &[]).unwrap();
+    let result = xulo_semantic::analyze_with(&program, &[], &[], &[]).unwrap();
     xulo_semantic::apply_trait_dispatch(&mut program, &result.trait_dispatch);
     generate(&program).unwrap()
 }
@@ -43,8 +43,9 @@ fn trait_dispatch_emits_mangled_impl_call() {
         fn main() { print(Area::area(rect())) }
         "#,
     );
-    assert!(js.contains("function impl_Area_Rectangle_area(self) {"));
-    assert!(js.contains("impl_Area_Rectangle_area(rect())"));
+    assert!(js.contains("__impls[\"impl_Area_Rectangle_area\"] = function (self) {"));
+    assert!(js.contains("__impls[\"impl_Area_Rectangle_area\"](rect())"));
+    assert!(js.contains("const __impls = {};"));
 }
 
 #[test]

@@ -185,8 +185,8 @@ pub fn analyze(loaded: &mut LoadedModules) -> Result<Vec<XuloError>, XuloError> 
     let count = modules.len();
     let mut warnings = Vec::new();
     for idx in 0..count {
-        let (symbols, types) = collect_imports(modules, idx)?;
-        let result = analyze_with(&modules[idx].program, &symbols, &types)
+        let (symbols, types, impls) = collect_imports(modules, idx)?;
+        let result = analyze_with(&modules[idx].program, &symbols, &types, &impls)
             .map_err(|e| e.with_file(modules[idx].file.clone()))?;
         for w in &result.warnings {
             warnings.push(w.clone().with_file(modules[idx].file.clone()));
@@ -209,12 +209,19 @@ pub fn apply_trait_dispatch(loaded: &mut LoadedModules) {
     }
 }
 
-/// Imports' symbols and type entries gathered from a module's dependencies.
-type ImportSeed = (Vec<Symbol>, Vec<(String, TypeEntry)>);
+/// Imports' symbols and type entries gathered from a module's dependencies,
+/// plus `impl` registrations (`(trait, type, method)`) for the imported
+/// receiver types, so dispatch calls on them resolve in the importing module.
+type ImportSeed = (
+    Vec<Symbol>,
+    Vec<(String, TypeEntry)>,
+    Vec<(String, String, String)>,
+);
 
 fn collect_imports(modules: &[Module], idx: usize) -> Result<ImportSeed, XuloError> {
     let mut symbols: Vec<Symbol> = Vec::new();
     let mut types: Vec<(String, TypeEntry)> = Vec::new();
+    let mut impls: Vec<(String, String, String)> = Vec::new();
     for binding in &modules[idx].imports {
         let target = &modules[binding.target];
         let analysis = target
@@ -222,6 +229,21 @@ fn collect_imports(modules: &[Module], idx: usize) -> Result<ImportSeed, XuloErr
             .as_ref()
             .expect("dependencies are analyzed before dependents");
         let target_readable = target.file.display();
+        // Impls travel with the imported receiver type only when the name is
+        // imported unaliased: dispatch mangles `impl_{Trait}_{Type}_{method}`
+        // from the local names, which must match the declaring module's to
+        // hit the registered function.
+        let mut seed_impls_for = |local: &str, exported: &str| {
+            if local == exported {
+                impls.extend(
+                    analysis
+                        .impls
+                        .iter()
+                        .filter(|(_, ty, _)| ty == exported)
+                        .cloned(),
+                );
+            }
+        };
         match &binding.spec {
             ImportSpec::Bare => {}
             ImportSpec::Namespace(ns) => {
@@ -238,6 +260,7 @@ fn collect_imports(modules: &[Module], idx: usize) -> Result<ImportSeed, XuloErr
                 for (name, alias) in names {
                     let local = alias.clone().unwrap_or_else(|| name.clone());
                     if binding.type_only {
+                        seed_impls_for(&local, name);
                         types.push(exported_type(analysis, name, local)?);
                         continue;
                     }
@@ -261,6 +284,7 @@ fn collect_imports(modules: &[Module], idx: usize) -> Result<ImportSeed, XuloErr
                             analysis.exported_types.iter().find(|(n, _)| n == named)
                         && matches!(entry.kind, TypeEntryKind::Enum(_))
                     {
+                        seed_impls_for(&local, named);
                         types.push((local, entry.clone()));
                     }
                 }
@@ -303,7 +327,7 @@ fn collect_imports(modules: &[Module], idx: usize) -> Result<ImportSeed, XuloErr
             }
         }
     }
-    Ok((symbols, types))
+    Ok((symbols, types, impls))
 }
 
 fn exported_type(
@@ -409,6 +433,7 @@ fn bundle(loaded: &LoadedModules) -> Result<String, XuloError> {
     // declared once at the top of the bundle, not inside every module IIFE.
     let mut used_reactive = false;
     let mut used_range = false;
+    let mut used_impls = false;
     for (idx, module) in loaded.modules.iter().enumerate() {
         let mut cg = xulo_codegen::javascript::Javascript::new();
         // Imported functions may be called with named arguments.
@@ -512,6 +537,7 @@ fn bundle(loaded: &LoadedModules) -> Result<String, XuloError> {
         let (reactive, range) = cg.runtime_needs();
         used_reactive |= reactive;
         used_range |= range;
+        used_impls |= cg.needs_impls();
         out.push_str(&cg.finish_without_runtime());
         if idx == entry && module.has_main {
             if xulo_codegen::javascript::main_returns_component(&module.program) {
@@ -541,11 +567,18 @@ fn bundle(loaded: &LoadedModules) -> Result<String, XuloError> {
         };
         out.push_str(&format!("    return {exports};\n}})();\n"));
     }
-    if used_reactive || used_range {
-        out.insert_str(
-            0,
-            &xulo_codegen::javascript::shared_preamble((used_reactive, used_range)),
-        );
+    if used_reactive || used_range || used_impls {
+        let mut preamble = String::new();
+        if used_impls {
+            preamble.push_str("const __impls = {};\n\n");
+        }
+        if used_reactive || used_range {
+            preamble.push_str(&xulo_codegen::javascript::shared_preamble((
+                used_reactive,
+                used_range,
+            )));
+        }
+        out.insert_str(0, &preamble);
     }
     Ok(out)
 }

@@ -22,7 +22,7 @@ fn run(src: &str) -> Result<Vec<String>, XuloError> {
 fn run_annotated(src: &str) -> Result<Vec<String>, XuloError> {
     let tokens = tokenize(src).unwrap();
     let mut program = parse_program(&tokens).unwrap();
-    let result = xulo_semantic::analyze_with(&program, &[], &[])?;
+    let result = xulo_semantic::analyze_with(&program, &[], &[], &[])?;
     xulo_semantic::apply_trait_dispatch(&mut program, &result.trait_dispatch);
     let interp = Interpreter::new();
     interp.run(&program)

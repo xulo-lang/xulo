@@ -360,17 +360,21 @@ impl Interpreter {
     /// Register every method of an `impl` block under its mangled name
     /// (`impl_{Trait}_{Type}_{method}`), the same name `Trait::method` calls
     /// are annotated with. Registered up front like `fn` declarations, so
-    /// dispatch calls are defined regardless of statement order.
-    fn register_impl(&self, imp: &ImplDecl, env: &Rc<RefCell<Env>>) {
+    /// dispatch calls are defined regardless of statement order. The name is
+    /// defined on the shared root env — not the caller's module env — so a
+    /// dependent module can dispatch to an `impl` declared in another module;
+    /// the function value keeps `closure` as its own module's env so its body
+    /// still resolves that module's locals.
+    fn register_impl(&self, imp: &ImplDecl, closure: &Rc<RefCell<Env>>) {
         for method in &imp.methods {
             let func = Value::Function(Rc::new(FunctionValue {
                 params: method.params.clone(),
                 body: method.body.clone(),
                 return_type: method.return_type.clone(),
                 is_async: method.is_async,
-                closure: env.clone(),
+                closure: closure.clone(),
             }));
-            env.borrow_mut().define(
+            self.global.borrow_mut().define(
                 &impl_fn_name(&imp.trait_name, &imp.type_name, &method.name),
                 func,
             );

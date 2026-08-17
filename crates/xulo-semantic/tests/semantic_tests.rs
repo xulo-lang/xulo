@@ -19,7 +19,8 @@ fn pub_declarations_registered_as_exports() {
     "#;
     let tokens = tokenize(src).unwrap();
     let program = parse_program(&tokens).unwrap();
-    let result = analyze_with(&program, &[], &[]).unwrap_or_else(|err| panic!("{}", err.message));
+    let result =
+        analyze_with(&program, &[], &[], &[]).unwrap_or_else(|err| panic!("{}", err.message));
 
     let runtime: Vec<String> = result
         .exported_symbols
@@ -1082,7 +1083,7 @@ fn effect_local_let_is_allowed() {
 fn no_implicit_return_warning_without_declared_return_type() {
     let tokens = tokenize("fn main() { print(1); }").unwrap();
     let program = parse_program(&tokens).unwrap();
-    let result = xulo_semantic::analyze_with(&program, &[], &[]).unwrap();
+    let result = xulo_semantic::analyze_with(&program, &[], &[], &[]).unwrap();
     assert!(
         result.warnings.is_empty(),
         "unexpected warnings: {:?}",
@@ -1094,7 +1095,7 @@ fn no_implicit_return_warning_without_declared_return_type() {
 fn implicit_return_warning_only_with_declared_return_type() {
     let tokens = tokenize("fn f(): number { 1; }").unwrap();
     let program = parse_program(&tokens).unwrap();
-    let result = xulo_semantic::analyze_with(&program, &[], &[]).unwrap();
+    let result = xulo_semantic::analyze_with(&program, &[], &[], &[]).unwrap();
     assert_eq!(result.warnings.len(), 1, "warnings: {:?}", result.warnings);
     assert!(result.warnings[0].message.contains("ignored return value"));
 }
@@ -1724,6 +1725,7 @@ fn impl_undeclared_method_is_rejected() {
         }
         type Circle = object
         impl Shape for Circle {
+            fn area(self): number { return 1 }
             fn volume(self): number { return 1 }
         }
         fn main() { print(1) }
@@ -1732,6 +1734,194 @@ fn impl_undeclared_method_is_rejected() {
     assert!(
         err.message
             .contains("`volume`, which `Shape` does not declare"),
+        "unexpected: {}",
+        err.message
+    );
+}
+
+#[test]
+fn impl_self_receiver_mismatch_is_rejected() {
+    // Trait declares `self`, impl omits it (and vice versa): dispatch always
+    // passes the receiver as the impl function's first argument, so a mismatch
+    // would silently drop or mis-bind it.
+    let src = r#"
+        trait Shape {
+            fn area(self): number
+        }
+        type Circle = object
+        impl Shape for Circle {
+            fn area(): number { return 1 }
+        }
+        fn main() { print(1) }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(
+        err.message
+            .contains("must declare `self` as its first parameter"),
+        "unexpected: {}",
+        err.message
+    );
+
+    let src = r#"
+        trait Shape {
+            fn area(): number
+        }
+        type Circle = object
+        impl Shape for Circle {
+            fn area(self): number { return 1 }
+        }
+        fn main() { print(1) }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(
+        err.message.contains("but the trait method has no receiver"),
+        "unexpected: {}",
+        err.message
+    );
+}
+
+#[test]
+fn impl_asyncness_mismatch_is_rejected() {
+    let src = r#"
+        trait Shape {
+            fn area(self): number
+        }
+        type Circle = object
+        impl Shape for Circle {
+            fn area(self): async number { return 1 }
+        }
+        fn main() { print(1) }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(
+        err.message
+            .contains("must be synchronous to match the trait"),
+        "unexpected: {}",
+        err.message
+    );
+
+    let src = r#"
+        trait Shape {
+            fn area(self): async number
+        }
+        type Circle = object
+        impl Shape for Circle {
+            fn area(self): number { return 1 }
+        }
+        fn main() { print(1) }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(
+        err.message.contains("must be async to match the trait"),
+        "unexpected: {}",
+        err.message
+    );
+}
+
+#[test]
+fn selfless_trait_method_cannot_be_dispatched() {
+    // Dispatch binds the receiver positionally to the impl's first argument;
+    // a trait method without `self` would mis-bind the receiver into its first
+    // real parameter at run time.
+    let src = r#"
+        trait Calc {
+            fn add(x: number, y: number): number
+        }
+        type C = object
+        impl Calc for C {
+            fn add(x: number, y: number): number { return x + y }
+        }
+        fn main() {
+            let c: C = {}
+            print(Calc::add(c, 1, 2))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(
+        err.message
+            .contains("has no `self` receiver, so it cannot be dispatched"),
+        "unexpected: {}",
+        err.message
+    );
+}
+
+#[test]
+fn dispatch_on_optional_receiver_is_rejected() {
+    let src = r#"
+        trait Shape {
+            fn area(self): number
+        }
+        type Circle = object
+        impl Shape for Circle {
+            fn area(self): number { return self.r }
+        }
+        fn main() {
+            let c: Circle? = null
+            print(Shape::area(c))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(
+        err.message
+            .contains("cannot dispatch `Shape::area` on an optional receiver"),
+        "unexpected: {}",
+        err.message
+    );
+}
+
+#[test]
+fn impl_missing_trait_method_is_rejected() {
+    // An `impl` must provide every trait method; the missing one is reported
+    // at the `impl` site instead of surfacing later at a dispatch call site.
+    let src = r#"
+        trait Shape {
+            fn area(self): number
+            fn perimeter(self): number
+        }
+        type Rect = object
+        impl Shape for Rect {
+            fn area(self): number { return self.w * self.h }
+        }
+        fn main() { print(1) }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(
+        err.message
+            .contains("does not implement all of `Shape`'s methods"),
+        "unexpected: {}",
+        err.message
+    );
+    assert!(
+        err.message.contains("missing perimeter"),
+        "unexpected: {}",
+        err.message
+    );
+}
+
+#[test]
+fn generic_trait_bound_method_call_is_rejected() {
+    // `s.area()` inside `T: Shape` would be a trait dispatch, but impl
+    // selection needs a concrete receiver type, so it is rejected at compile
+    // time instead of crashing at run time.
+    let src = r#"
+        trait Shape {
+            fn area(self): number
+        }
+        fn area_of<T: Shape>(s: T): number {
+            return s.area()
+        }
+        type Circle = object
+        impl Shape for Circle {
+            fn area(self): number { return 5 }
+        }
+        fn main() {
+            let c = {}
+            print(area_of(c))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(
+        err.message.contains("cannot call `T`'s method `area`"),
         "unexpected: {}",
         err.message
     );
@@ -1767,7 +1957,7 @@ fn exported_trait_is_registered() {
     "#;
     let tokens = tokenize(src).unwrap();
     let program = parse_program(&tokens).unwrap();
-    let result = analyze_with(&program, &[], &[]).unwrap_or_else(|e| panic!("{}", e.message));
+    let result = analyze_with(&program, &[], &[], &[]).unwrap_or_else(|e| panic!("{}", e.message));
     assert!(
         result.exported_types.iter().any(|(n, _)| n == "Area"),
         "trait `Area` should be exported"
@@ -1793,7 +1983,7 @@ fn duplicate_trait_registration_is_rejected() {
 fn where_clause_bound_is_validated() {
     let src = r#"
         trait Shape { fn area(self): number }
-        fn f<T>(t: T): number where T: Shape { return t.area() }
+        fn f<T>(t: T): number where T: Shape { let area = t.area; return 1 }
         fn main() { print(1) }
     "#;
     assert!(analyze_src(src).is_ok());
@@ -1869,7 +2059,7 @@ fn dispatch_annotations_are_applied_to_the_ast() {
     "#;
     let tokens = tokenize(src).unwrap();
     let mut program = parse_program(&tokens).unwrap();
-    let result = xulo_semantic::analyze_with(&program, &[], &[]).unwrap();
+    let result = xulo_semantic::analyze_with(&program, &[], &[], &[]).unwrap();
     xulo_semantic::apply_trait_dispatch(&mut program, &result.trait_dispatch);
     let mut names = Vec::new();
     for stmt in &program.statements {

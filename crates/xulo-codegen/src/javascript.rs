@@ -110,6 +110,9 @@ pub struct Javascript {
     /// Whether a `0..<n` range expression was generated (triggers a `range`
     /// helper at the top of the output).
     used_range: bool,
+    /// Whether this module registered or dispatched trait impls (triggers the
+    /// shared `__impls` registry declaration).
+    used_impls: bool,
 }
 
 impl Default for Javascript {
@@ -128,6 +131,7 @@ impl Javascript {
             locals: vec![std::collections::HashSet::new()],
             used_reactive: false,
             used_range: false,
+            used_impls: false,
         }
     }
 
@@ -142,6 +146,7 @@ impl Javascript {
             locals: self.locals.clone(),
             used_reactive: false,
             used_range: false,
+            used_impls: false,
         }
     }
 
@@ -196,15 +201,17 @@ impl Javascript {
     }
 
     pub fn finish(self) -> String {
-        if self.used_reactive || self.used_range {
-            format!(
-                "{}{}",
-                shared_preamble((self.used_reactive, self.used_range)),
-                self.out
-            )
-        } else {
-            self.out
+        let mut start = String::new();
+        if self.used_impls {
+            // Shared impl registry: every module registers its `impl` methods
+            // here (and dispatches through it), so a dependent module can call
+            // a mangled impl function declared in another module's IIFE.
+            start.push_str("const __impls = {};\n\n");
         }
+        if self.used_reactive || self.used_range {
+            start.push_str(&shared_preamble((self.used_reactive, self.used_range)));
+        }
+        format!("{start}{}", self.out)
     }
 
     /// Which runtime preambles this module needs (reactive runtime, `range`).
@@ -212,6 +219,12 @@ impl Javascript {
     /// the bundle instead of once per module IIFE.
     pub fn runtime_needs(&self) -> (bool, bool) {
         (self.used_reactive, self.used_range)
+    }
+
+    /// Whether this module emits or calls dispatch impls, so the bundler can
+    /// declare the shared `__impls` registry once at the top of the bundle.
+    pub fn needs_impls(&self) -> bool {
+        self.used_impls
     }
 
     /// Emit just the module body, without runtime preambles (the bundler emits
@@ -352,12 +365,14 @@ impl Javascript {
             Statement::Environment(env) => self.environment_stmt(env)?,
             Statement::Component(component) => self.component_stmt(component)?,
             // Traits are compile-time contracts erased at codegen; `impl`
-            // blocks emit each method as a mangled module-level function that
-            // `Trait::method` calls are annotated to dispatch through.
+            // blocks register each method as a mangled function in the shared
+            // `__impls` registry that `Trait::method` calls dispatch through.
+            // The registry is module-agnostic, so a dependent module can call
+            // an impl function declared in another module's IIFE.
             Statement::Trait(_) => {}
             Statement::Impl(imp) => {
                 for method in &imp.methods {
-                    self.fn_def_named(
+                    self.fn_def_registered(
                         method,
                         &xulo_core::ast::impl_fn_name(
                             &imp.trait_name,
@@ -394,6 +409,18 @@ impl Javascript {
     /// Emit a function under a specific (possibly mangled) name; `fn_def`
     /// passes the declared name through.
     fn fn_def_named(&mut self, f: &FnDef, name: &str) -> Result<(), XuloError> {
+        self.fn_def_emitted(f, name, false)
+    }
+
+    /// Emit a function as a member of the shared `__impls` registry under its
+    /// mangled dispatch name.
+    fn fn_def_registered(&mut self, f: &FnDef, key: &str) -> Result<(), XuloError> {
+        self.fn_def_emitted(f, key, true)
+    }
+
+    /// Shared function-emission body: `fn_def_named` declares `function name`,
+    /// `fn_def_registered` assigns `__impls["key"] = function`.
+    fn fn_def_emitted(&mut self, f: &FnDef, name: &str, registered: bool) -> Result<(), XuloError> {
         if matches!(&f.return_type, Some(Type::Named(n)) if n == "Component") {
             return self.component_fn_def(f);
         }
@@ -423,7 +450,15 @@ impl Javascript {
         } else {
             "function"
         };
-        self.line(&format!("{kw} {name}({params}) {{"));
+        if registered {
+            self.used_impls = true;
+            self.line(&format!(
+                "__impls[{}] = {kw} ({params}) {{",
+                js_string(name)
+            ));
+        } else {
+            self.line(&format!("{kw} {name}({params}) {{"));
+        }
         self.indent += 1;
         self.push_scope();
         for p in &f.params {
@@ -1087,10 +1122,12 @@ impl Javascript {
 
     fn call(&mut self, call: &Call) -> Result<String, XuloError> {
         // Trait dispatch: the semantic phase annotated the mangled impl name,
-        // so emit a direct call to `impl_{Trait}_{Type}_{method}(recv, ...)`.
+        // so emit a call through the shared registry
+        // `__impls["impl_{Trait}_{Type}_{method}"](recv, ...)`.
         if let Some(impl_name) = &call.trait_impl {
+            self.used_impls = true;
             let args = self.call_args_ordered(call, None)?;
-            return Ok(format!("{impl_name}({args})"));
+            return Ok(format!("__impls[{}]({args})", js_string(impl_name)));
         }
         if let Some((enum_name, variant)) = call.enum_parts() {
             let args = self.call_args_ordered(call, None)?;

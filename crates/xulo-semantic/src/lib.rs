@@ -139,19 +139,28 @@ pub struct AnalysisResult {
     /// Trait-dispatch call sites: `(call span, mangled impl function name)`.
     /// The loader applies these to the module's AST before codegen/runtime.
     pub trait_dispatch: Vec<(Range<usize>, String)>,
+    /// `impl Trait for Type { method }` registrations declared directly in this
+    /// module. Exported so dependent modules that import `Type` (unaliased) can
+    /// also dispatch `Trait::method(recv)`: the receiver's concrete type carries
+    /// its impls, and the mangled impl function is registered module-wide.
+    pub impls: Vec<(String, String, String)>,
 }
 
 /// Run all semantic checks over a parsed program.
 pub fn analyze(program: &Program) -> Result<(), XuloError> {
-    analyze_with(program, &[], &[]).map(|_: AnalysisResult| ())
+    analyze_with(program, &[], &[], &[]).map(|_: AnalysisResult| ())
 }
 
 /// Semantic checks with imported module symbols/types registered before the
 /// module's own declarations. Returns the names/symbols the module exports.
+/// `imported_impls` are `impl Trait for Type` registrations gathered from the
+/// modules that defined the imported receiver types, so dispatch calls on those
+/// types resolve here just as they do in the declaring module.
 pub fn analyze_with(
     program: &Program,
     imports: &[Symbol],
     imported_types: &[(String, TypeEntry)],
+    imported_impls: &[(String, String, String)],
 ) -> Result<AnalysisResult, XuloError> {
     let mut analyzer = Analyzer {
         table: SymbolTable::new(),
@@ -160,7 +169,7 @@ pub fn analyze_with(
         type_table: HashMap::new(),
         generics: Vec::new(),
         bound_shapes: Vec::new(),
-        impls: std::collections::HashSet::new(),
+        impls: imported_impls.iter().cloned().collect(),
         impl_mangled: std::collections::HashSet::new(),
         trait_dispatch: Vec::new(),
         async_depth: 0,
@@ -193,6 +202,7 @@ pub fn analyze_with(
         default: analyzer.exported_default.clone(),
         warnings: analyzer.warnings.clone(),
         trait_dispatch: analyzer.trait_dispatch.clone(),
+        impls: analyzer.impls.iter().cloned().collect(),
     };
     for name in &analyzer.exported {
         if let Some(entry) = analyzer.type_table.get(name).cloned() {
@@ -1436,6 +1446,30 @@ impl Analyzer {
                 imp.type_name
             )));
         }
+        // The `impl` must provide every method the trait declares; otherwise a
+        // later `Trait::method` dispatch of the missing one would only fail at
+        // the call site with a misleading "does not implement" error.
+        {
+            let implemented = imp
+                .methods
+                .iter()
+                .map(|m| m.name.as_str())
+                .collect::<std::collections::HashSet<_>>();
+            let missing = trait_def
+                .methods
+                .iter()
+                .filter(|m| !implemented.contains(m.name.as_str()))
+                .map(|m| m.name.as_str())
+                .collect::<Vec<_>>();
+            if !missing.is_empty() {
+                return Err(self.err(format!(
+                    "`impl {0} for {1}` does not implement all of `{0}`'s methods: missing {2}",
+                    imp.trait_name,
+                    imp.type_name,
+                    missing.join(", ")
+                )));
+            }
+        }
         for m in &imp.methods {
             let Some(sig) = trait_def.methods.iter().find(|s| s.name == m.name) else {
                 return Err(self.err(format!(
@@ -1443,6 +1477,35 @@ impl Analyzer {
                     imp.trait_name, imp.type_name, m.name
                 )));
             };
+            // The `self` receiver must match the trait declaration: dispatch
+            // always passes the receiver as the impl function's first argument,
+            // so a mismatch would silently drop it or mis-bind the parameters.
+            let impl_has_self = m.params.iter().any(|p| p.name == "self");
+            if impl_has_self != sig.has_self {
+                return Err(self.err(format!(
+                    "`impl {0} for {1}` method `{2}` {3}",
+                    imp.trait_name,
+                    imp.type_name,
+                    m.name,
+                    if sig.has_self {
+                        "must declare `self` as its first parameter, as the trait does"
+                    } else {
+                        "declares `self`, but the trait method has no receiver"
+                    }
+                )));
+            }
+            // Async-ness must match too: dispatching is typed by the trait
+            // signature, so a promise/value mismatch would break `await` at the
+            // call site.
+            if m.is_async != sig.is_async {
+                return Err(self.err(format!(
+                    "`impl {0} for {1}` method `{2}` must be {3} to match the trait",
+                    imp.trait_name,
+                    imp.type_name,
+                    m.name,
+                    if sig.is_async { "async" } else { "synchronous" }
+                )));
+            }
             // Signature compatibility: the impl method's non-`self` parameters
             // and return must match the trait binding.
             let impl_params = m
@@ -2199,7 +2262,16 @@ impl Analyzer {
         }
         if let Some(object) = &call.object {
             // Method call `obj.method(args)`.
-            self.check_expression(object)?;
+            let receiver = self.check_expression(object)?;
+            if let Type::Named(name) = &receiver
+                && self.generics.contains(name)
+            {
+                return Err(self.err(format!(
+                    "cannot call `{}`'s method `{}`: trait dispatch needs a concrete receiver type with a registered `impl Trait for Type`, and generic parameters resolve only at run time",
+                    name,
+                    call.method.as_deref().unwrap_or(&call.callee)
+                )));
+            }
             for arg in &call.arguments {
                 self.check_expression(&arg.value)?;
             }
@@ -2600,6 +2672,14 @@ impl Analyzer {
         let Some(sig) = trait_def.methods.iter().find(|s| s.name == method) else {
             return Err(self.err(format!("trait `{trait_name}` has no method `{method}`")));
         };
+        // Dispatch always passes the receiver as the impl function's first
+        // argument and binds it to `self`; a trait method without `self` would
+        // mis-bind the receiver into its first real parameter at run time.
+        if !sig.has_self {
+            return Err(self.err(format!(
+                "trait method `{trait_name}::{method}` has no `self` receiver, so it cannot be dispatched: add `self` as the first parameter to use `{trait_name}::{method}(receiver, ...)`"
+            )));
+        }
         // The receiver is the first argument; it must be statically typed by a
         // named type with a registered `impl`, so dispatch is fully static.
         let Some(receiver) = arguments.first() else {
@@ -2630,10 +2710,11 @@ impl Analyzer {
         // Resolve the receiver type to its concrete name for impl lookup.
         let concrete = match &receiver_type {
             Type::Named(name) => Some(name.clone()),
-            Type::Optional(inner) => match inner.as_ref() {
-                Type::Named(name) => Some(name.clone()),
-                _ => None,
-            },
+            Type::Optional(_) => {
+                return Err(self.err(format!(
+                    "cannot dispatch `{trait_name}::{method}` on an optional receiver: it may be `null` at run time, and dispatch has no null-safe form; pass a concrete, non-nullable receiver"
+                )));
+            }
             _ => None,
         };
         match concrete {

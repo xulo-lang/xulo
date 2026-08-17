@@ -258,3 +258,63 @@ fn extreme_nesting_returns_error_not_crash() {
         err.message
     );
 }
+
+/// A dependent module dispatching `Trait::method` on an impl declared in an
+/// imported module must produce a bundle where impls register into (and
+/// dispatch through) a single shared `__impls` registry declared once at the
+/// top, before any module IIFE runs.
+#[test]
+fn cross_module_trait_dispatch_bundle_emits_shared_registry() {
+    let dir = std::env::temp_dir().join(format!(
+        "xulo_cg_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("shapes.xulo"),
+        r#"
+        export trait Shape { fn area(self): number }
+        export type Rect = object
+        impl Shape for Rect {
+            fn area(self): number { return self.w * self.h }
+        }
+        export fn rect(w: number, h: number): Rect {
+            let r = { w: w, h: h }
+            r
+        }
+        "#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("main.xulo"),
+        r#"
+        import type { Shape } from "./shapes"
+        import type { Rect } from "./shapes"
+        import { rect } from "./shapes"
+        fn main() { print(Shape::area(rect(3, 4))) }
+        "#,
+    )
+    .unwrap();
+
+    let (js, _) = xulo_compiler::module::compile_file(&dir.join("main.xulo")).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        js.starts_with("const __impls = {};\n"),
+        "registry must precede every module IIFE:\n{js}"
+    );
+    assert!(
+        js.contains("__impls[\"impl_Shape_Rect_area\"] = function (self) {"),
+        "impl must register into the shared registry:\n{js}"
+    );
+    // One declaration, two references (registration + dispatch).
+    assert_eq!(js.matches("const __impls").count(), 1, "js:\n{js}");
+    assert_eq!(
+        js.matches("__impls[\"impl_Shape_Rect_area\"]").count(),
+        2,
+        "js:\n{js}"
+    );
+}

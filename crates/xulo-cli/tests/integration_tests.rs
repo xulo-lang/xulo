@@ -846,6 +846,63 @@ fn run_trait_dispatch_js_and_native() {
 }
 
 #[test]
+fn cross_module_trait_dispatch() {
+    // The `impl` is declared in a library module; the dependent entry module
+    // imports the receiver type and dispatches `Shape::area` on it. Both the
+    // JS bundler and the native runtime must resolve the mangled impl function
+    // across module boundaries.
+    let (dir, entry) = temp_dir(
+        &[
+            (
+                "shapes.xulo",
+                r#"
+                export trait Shape { fn area(self): number }
+                export type Rect = object
+                impl Shape for Rect {
+                    fn area(self): number { return self.w * self.h }
+                }
+                export fn rect(w: number, h: number): Rect {
+                    let r = { w: w, h: h }
+                    r
+                }
+                "#,
+            ),
+            (
+                "main.xulo",
+                r#"
+                import type { Shape } from "./shapes"
+                import type { Rect } from "./shapes"
+                import { rect } from "./shapes"
+                fn main() {
+                    print("area=" + str(Shape::area(rect(3, 4))))
+                }
+                "#,
+            ),
+        ],
+        "main.xulo",
+    );
+    for native in [false, true] {
+        let mut cmd = Command::new(BIN);
+        cmd.arg("run");
+        if native {
+            cmd.arg("--native");
+        }
+        let out = cmd.arg(&entry).output().unwrap();
+        assert!(
+            out.status.success(),
+            "native={native} stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            "area=12\n",
+            "native={native}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn imported_function_supports_named_arguments() {
     let (dir, entry) = temp_dir(
         &[
