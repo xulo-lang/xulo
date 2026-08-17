@@ -1538,6 +1538,118 @@ fn trait_dispatch_unknown_method_is_rejected() {
 }
 
 #[test]
+fn trait_dispatch_generic_receiver_is_rejected() {
+    let src = r#"
+        trait Shape {
+            fn area(self): number
+        }
+        type Circle = object
+        impl Shape for Circle {
+            fn area(self): number { return 100 }
+        }
+        fn apply<T: Shape>(t: T): number {
+            // `Shape::area(t)` cannot dispatch: `T` is a generic parameter and
+            // resolves only at run time; the receiver must be a concrete type.
+            return Shape::area(t)
+        }
+        fn main() { print(apply(5)) }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(
+        err.message.contains("generic parameter `T`"),
+        "unexpected: {}",
+        err.message
+    );
+    assert!(
+        err.message.contains("cannot dispatch `Shape::area`"),
+        "unexpected: {}",
+        err.message
+    );
+}
+
+#[test]
+fn trait_dispatch_rejects_named_arguments() {
+    // Dispatch binds the receiver positionally (first slot), so labeled
+    // arguments would silently mis-bind in the runtimes; reject them.
+    let src = r#"
+        trait Shape {
+            fn area(self): number
+        }
+        type Circle = object
+        impl Shape for Circle {
+            fn area(self): number { return 100 }
+        }
+        fn main() {
+            let c: Circle = { radius: 1 }
+            print(Shape::area(r: c))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(
+        err.message.contains("takes positional arguments"),
+        "unexpected: {}",
+        err.message
+    );
+}
+
+#[test]
+fn impl_underscore_mangle_collision_is_rejected() {
+    // `impl_fn_name("a_b", "c", "m")` and `impl_fn_name("a", "b_c", "m")` both
+    // mangle to `impl_a_b_c_m`; the second `impl` must be rejected instead of
+    // silently overwriting the first in the JS/native runtimes.
+    let src = r#"
+        trait a_b {
+            fn m(self): number
+        }
+        trait a {
+            fn m(self): number
+        }
+        type c = object
+        type b_c = object
+        impl a_b for c {
+            fn m(self): number { return 1 }
+        }
+        impl a for b_c {
+            fn m(self): number { return 2 }
+        }
+        fn main() { print(1) }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(
+        err.message.contains("trait dispatch name `impl_a_b_c_m`"),
+        "unexpected: {}",
+        err.message
+    );
+    assert!(
+        err.message.contains("claimed by more than one `impl`"),
+        "unexpected: {}",
+        err.message
+    );
+}
+
+#[test]
+fn impl_mangled_name_collides_with_user_function_is_rejected() {
+    let src = r#"
+        fn impl_Shape_Circle_area(): number { return 1 }
+        trait Shape {
+            fn area(self): number
+        }
+        type Circle = object
+        impl Shape for Circle {
+            fn area(self): number { return 100 }
+        }
+        fn main() { print(1) }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(
+        err.message
+            .contains("trait dispatch name `impl_Shape_Circle_area` collides"),
+        "unexpected: {}",
+        err.message
+    );
+}
+
+#[test]
 fn unbounded_generic_stays_any_zero_regression() {
     let src = r#"
         fn id<T>(x: T): T { return x }
@@ -1774,4 +1886,3 @@ fn dispatch_annotations_are_applied_to_the_ast() {
     }
     assert_eq!(names, vec!["impl_Shape_Circle_area"]);
 }
-

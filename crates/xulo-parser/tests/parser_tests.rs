@@ -1227,6 +1227,31 @@ fn rejects_self_in_plain_function() {
 }
 
 #[test]
+fn rejects_self_not_first_in_impl_method() {
+    // `self` binds the receiver positionally, so it is only legal as the
+    // first parameter; mid/trailing positions would mis-bind arguments.
+    let tokens =
+        tokenize("impl Shape for Circle { fn area(x, self): number { return 1 } }").unwrap();
+    let err = parse_program(&tokens).unwrap_err();
+    assert!(
+        err.message.contains("`self` must be the first parameter"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn rejects_self_not_first_in_trait_method() {
+    let tokens = tokenize("trait Shape { fn area(x, self): number }").unwrap();
+    let err = parse_program(&tokens).unwrap_err();
+    assert!(
+        err.message.contains("`self` must be the first parameter"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
 fn trait_is_a_keyword_not_identifier() {
     let tokens = tokenize("let trait = 1").unwrap();
     let err = parse_program(&tokens).unwrap_err();

@@ -74,6 +74,12 @@ pub struct Analyzer {
     /// Registered `impl Trait for Type` blocks: `(trait, type)` -> method names
     /// provided. The receiver type's concrete name must be known statically.
     impls: std::collections::HashSet<(String, String, String)>,
+    /// Mangled dispatch function names already claimed by `impl` methods, plus
+    /// user functions present in the symbol table. Mangles join `trait`, `type`
+    /// and `method` with `_`, so distinct `impl`s can collapse onto the same
+    /// function name (e.g. `a_b`+`c` vs `a`+`b_c`), which would silently
+    /// overwrite in both the JS and native runtimes; duplicates are an error.
+    impl_mangled: std::collections::HashSet<String>,
     /// Trait-dispatch call sites found during checking: `(span, method name)`.
     /// These are applied back onto the AST (`Call.trait_impl`) by
     /// [`apply_trait_dispatch`] after analysis, keeping the checker call-site
@@ -155,6 +161,7 @@ pub fn analyze_with(
         generics: Vec::new(),
         bound_shapes: Vec::new(),
         impls: std::collections::HashSet::new(),
+        impl_mangled: std::collections::HashSet::new(),
         trait_dispatch: Vec::new(),
         async_depth: 0,
         component_depth: 0,
@@ -1492,6 +1499,21 @@ impl Analyzer {
                     imp.trait_name, imp.type_name, m.name
                 )));
             }
+            // Guard the mangled dispatch name: it joins `trait`/`type`/`method`
+            // with `_`, so an `impl` whose names differ only by underscores (or
+            // a user `fn` with the same name) would silently overwrite in the
+            // JS and native runtimes.
+            let mangled = impl_fn_name(&imp.trait_name, &imp.type_name, &m.name);
+            if !self.impl_mangled.insert(mangled.clone()) {
+                return Err(self.err(format!(
+                    "trait dispatch name `{mangled}` is claimed by more than one `impl` (trait/type/method names that mangle to the same string collide, e.g. `a_b`/`c` vs `a`/`b_c`)"
+                )));
+            }
+            if self.table.lookup(&mangled).is_some() {
+                return Err(self.err(format!(
+                    "trait dispatch name `{mangled}` collides with a function of the same name"
+                )));
+            }
             // Check the method body with the receiver bound to the type.
             self.table.push_scope();
             for param in &m.params {
@@ -2161,6 +2183,11 @@ impl Analyzer {
             if let Some(entry) = self.type_entry(enum_name)
                 && matches!(entry.kind, TypeEntryKind::Trait(_))
             {
+                if call.arguments.iter().any(|a| a.name.is_some()) {
+                    return Err(self.err(format!(
+                        "trait dispatch `{enum_name}::{variant}` takes positional arguments: the receiver is the first argument, and the method's parameters follow in the trait declaration's order"
+                    )));
+                }
                 let args: Vec<&Expression> = call.arguments.iter().map(|a| &a.value).collect();
                 let (ret, mangled) =
                     self.check_trait_call(enum_name.to_string(), variant, &args)?;
@@ -2613,6 +2640,9 @@ impl Analyzer {
             Some(name) if self.impls.contains(&(trait_name.clone(), name.clone(), method.to_string())) => {
                 Ok((sig.return_type.clone(), impl_fn_name(&trait_name, &name, method)))
             }
+            Some(name) if self.generics.contains(&name) => Err(self.err(format!(
+                "cannot dispatch `{trait_name}::{method}` on generic parameter `{name}`: dispatch requires a concrete receiver type with a registered `impl {trait_name} for Type`, and generic parameters resolve only at run time"
+            ))),
             Some(name) => Err(self.err(format!(
                 "type `{name}` does not implement trait `{trait_name}` (add `impl {trait_name} for {name}`)"
             ))),

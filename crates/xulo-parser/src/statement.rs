@@ -124,12 +124,22 @@ pub(super) fn params_list(input: &mut In<'_>) -> Pr<Vec<Param>> {
 }
 
 /// `params_list`, but when `allow_self` a leading `self` parameter is accepted
-/// as the receiver of a trait `impl` method.
+/// as the receiver of a trait `impl` method. `self` is only legal as the
+/// *first* parameter; anywhere else it is a reserved keyword and rejected,
+/// since dispatch binds the receiver positionally before the listed params.
 fn params_list_opt(input: &mut In<'_>, allow_self: bool) -> Pr<Vec<Param>> {
     tk(input, Token::LParen)?;
     let mut params = Vec::new();
     if !matches!(input.first().map(|t| t.kind), Some(Token::RParen)) {
         loop {
+            if !params.is_empty() && is_self_tk(input.first()) {
+                let original = *input;
+                let span = consumed_span(original, input, 0);
+                return Err(ErrMode::Cut(PErr {
+                    span,
+                    message: "`self` must be the first parameter: it binds the receiver before the remaining arguments".into(),
+                }));
+            }
             params.push(param(input, allow_self)?);
             if !opt_tk(input, Token::Comma) {
                 break;
