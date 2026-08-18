@@ -13,7 +13,11 @@ use crate::interpreter::{NativeFn, RunError};
 #[derive(Clone)]
 pub enum Value {
     Number(f64),
-    String(String),
+    /// An immutable string backed by a refcounted buffer: cloning a `Value`
+    /// (env reads, argument passing, indexing) is then a cheap refcount bump
+    /// instead of a full heap copy, and the buffer can never be mutated in
+    /// place (strings are immutable, matching the JS path).
+    String(Rc<str>),
     Boolean(bool),
     Null,
     List(Rc<RefCell<Vec<Value>>>),
@@ -89,7 +93,7 @@ impl Value {
     fn format_seen(&self, seen: &mut std::collections::HashSet<usize>) -> String {
         match self {
             Value::Number(n) => format_number(*n),
-            Value::String(s) => s.clone(),
+            Value::String(s) => s.to_string(),
             Value::Boolean(b) => b.to_string(),
             Value::Null => "null".to_string(),
             Value::List(list) => {

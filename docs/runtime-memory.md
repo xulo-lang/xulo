@@ -167,7 +167,7 @@ ready: VecDeque<(id, Control)>
 | P2 | `tasks` 槽位从不缩容 | **已修复**：空闲列表复用 + 尾部 `truncate`，槽位有界 |
 | P3 | `for` 每轮新建 `Env` | **已修复**：循环体无闭包时复用单层 `Env`（`reset` 逐轮清空重绑、内联执行体），纯循环提速约 2 成；含 `fn`/`FnExpr` 仍每轮新建（按轮捕获语义锁定） |
 | P4 | 异步协程栈 1 MiB/个 | **已修复**：栈大小按编译档位取值——debug 保持 1 MiB（未优化解释器帧 ~25 KiB），release 降到 256 KiB（帧 ~0.3 KiB），最长 async 链 128 MiB → 32 MiB；深递归量纲实测见下 |
-| — | `String` 深拷贝 | 未计划：`Env::get` 与格式化输出可能复制字符串 |
+| — | `String` 深拷贝 | **已修复**：`Value::String` 改为 `Rc<str>`，克隆 O(1)（refcount bump），字符串不可就地变更是正确性保证；构造处 `Rc::from`/`into` 复用既有分配 |
 | — | `CURRENT_INTERP` 裸指针不变式 | 结构上安全，已加 `debug_assert` 固化（未改架构） |
 
 各项展开：
@@ -212,7 +212,13 @@ Interpreter 生命周期边界，语义零变化，代价仅是 drop 时的一�
 顺带发现既有 1 MiB 在 debug 下也盖不住 async 体内 60+ 层同步递归（~1.5 MiB），
 属既有边界而非本次引入。
 
-**`String` 深拷贝**：`Env::get` 返回借用或 Cow 可减少复制，暂无计划。
+**`String` 深拷贝（已修复）**：`Value::String` 由 `String` 改为 `Rc<str>`。
+`Env::get`、函数实参、列表/对象索引都会按值克隆 `Value`——字符串从完整堆复制
+变为 refcount bump（`Rc<str>` 无二次间接，`From<String>`/`From<&str>` 复用既有
+分配）。字符串不可变（拼接/索引都产生新值），共享缓冲永不就地改写，恰好把
+「别名会否破坏语义」变成不可能。释放路径上改动的是 `Object` 字段键等少数比较
+点（`k.as_str() == key.as_ref()`）。微基准（release 5M 次字符串变量读取）1.82s →
+1.71s，且省去同量堆分配。
 
 **`CURRENT_INTERP` 不变式**：协程只在 `resume_task`（`self` 方法）内运行且由
 `self.tasks` 持有，`drop(Interpreter)` 会连带销毁全部协程，悬挂不会发生——是

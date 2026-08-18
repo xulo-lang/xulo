@@ -152,8 +152,8 @@ fn native_print(interp: &Interpreter, args: &[Value]) -> Result<Value, RunError>
 
 fn native_str(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     Ok(match args.first() {
-        Some(v) => Value::String(v.format()),
-        None => Value::String(String::new()),
+        Some(v) => Value::String(v.format().into()),
+        None => Value::String(String::new().into()),
     })
 }
 
@@ -908,10 +908,10 @@ impl Interpreter {
                     }
                     (Value::Object(fields), Value::String(key)) => {
                         let mut fields = fields.borrow_mut();
-                        if let Some((_, slot)) = fields.iter_mut().find(|(k, _)| k == key) {
+                        if let Some((_, slot)) = fields.iter_mut().find(|(k, _)| k.as_str() == key.as_ref()) {
                             *slot = value;
                         } else {
-                            fields.push((key.clone(), value));
+                            fields.push((key.to_string(), value));
                         }
                     }
                     (other, i) => {
@@ -1007,7 +1007,7 @@ impl Interpreter {
                         // (which returns the string's element).
                         let i = list_index(*n, &idx.span)?;
                         match s.chars().nth(i) {
-                            Some(c) => Ok(Value::String(c.to_string())),
+                            Some(c) => Ok(Value::String(c.to_string().into())),
                             None => Err(RunError::err(
                                 format!(
                                     "index {n} out of bounds for a string of length {}",
@@ -1019,7 +1019,7 @@ impl Interpreter {
                     }
                     (Value::Object(fields), Value::String(key)) => {
                         let fields = fields.borrow();
-                        match fields.iter().find(|(k, _)| k == key) {
+                        match fields.iter().find(|(k, _)| k.as_str() == key.as_ref()) {
                             Some((_, v)) => Ok(v.clone()),
                             None => Ok(Value::Null),
                         }
@@ -1114,7 +1114,7 @@ impl Interpreter {
 
     fn eval_literal(&self, lit: &Literal, env: &Rc<RefCell<Env>>) -> Result<Value, RunError> {
         Ok(match lit {
-            Literal::String(s) => Value::String(s.clone()),
+            Literal::String(s) => Value::String(Rc::from(s.as_str())),
             Literal::Number(n) => Value::Number(*n),
             Literal::Boolean(b) => Value::Boolean(*b),
             Literal::Null => Value::Null,
@@ -1212,7 +1212,7 @@ impl Interpreter {
     fn add(&self, left: Value, right: Value, bin: &BinaryOp) -> Result<Value, RunError> {
         match (left, right) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a + b)),
-            (Value::String(a), Value::String(b)) => Ok(Value::String(format!("{a}{b}"))),
+            (Value::String(a), Value::String(b)) => Ok(Value::String(format!("{a}{b}").into())),
             (Value::List(a), Value::List(b)) => {
                 let mut out = a.borrow().clone();
                 out.extend(b.borrow().iter().cloned());
@@ -1221,11 +1221,13 @@ impl Interpreter {
             (Value::String(a), Value::Number(b)) => Ok(Value::String(format!(
                 "{a}{}",
                 crate::value::format_number(b)
-            ))),
+            )
+            .into())),
             (Value::Number(a), Value::String(b)) => Ok(Value::String(format!(
                 "{}{b}",
                 crate::value::format_number(a)
-            ))),
+            )
+            .into())),
             (a, b) => Err(RunError::err(
                 format!(
                     "cannot apply `+` to {} and {}",
@@ -1765,7 +1767,7 @@ fn literal_matches(lit: &Literal, value: &Value) -> bool {
     match lit {
         Literal::String(s) => match value {
             Value::Enum { enum_name, tag, .. } => format!("{enum_name}.{tag}") == *s || *tag == *s,
-            Value::String(v) => v == s,
+            Value::String(v) => v.as_ref() == s.as_str(),
             _ => false,
         },
         Literal::Number(n) => matches!(value, Value::Number(v) if v == n),
@@ -1794,7 +1796,10 @@ fn list_index(n: f64, span: &std::ops::Range<usize>) -> Result<usize, RunError> 
 fn enum_ref_matches(enum_name: &str, variant: &str, value: &Value) -> bool {
     match value {
         Value::Enum { tag, .. } => tag == variant,
-        Value::String(s) => s == &format!("{enum_name}.{variant}") || s == variant,
+        Value::String(s) => {
+            let full = format!("{enum_name}.{variant}");
+            s.as_ref() == full.as_str() || s.as_ref() == variant
+        }
         _ => false,
     }
 }
@@ -1890,7 +1895,7 @@ fn enum_value(e: &xulo_core::ast::EnumDef) -> Value {
         .map(|v| {
             (
                 v.name.clone(),
-                Value::String(format!("{}.{}", e.name, v.name)),
+                Value::String(format!("{}.{}", e.name, v.name).into()),
             )
         })
         .collect();
