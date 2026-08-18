@@ -9,6 +9,7 @@ edition = "2024"
 [workspace.dependencies]
 winnow = "1.0.4"
 clap = { version = "4.6.6", features = ["derive"] }
+rustyline = "18.0.1"
 xulo-core = { path = "crates/xulo-core" }
 xulo-lexer = { path = "crates/xulo-lexer" }
 xulo-parser = { path = "crates/xulo-parser" }

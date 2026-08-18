@@ -1,11 +1,11 @@
 # Xulo
 
-Xulo 是一门 UI First 编程语言：解析 `.xulo` 文件 → 生成 JavaScript → 通过 Node.js 运行。
+Xulo 是一门 UI First 编程语言：解析 `.xulo` 文件 → 语义检查 → 由 Rust 原生解释器执行（默认路径）；也可生成 JavaScript 通过 Node.js 运行（`xulo run --js` / `xulo build`）。
 
 本仓库实现 Xulo 的 MVP（Rust + [winnow](https://github.com/winnow-rs/winnow)）：
 
 ```
-.xulo 文件 → 词法分析 (Token) → 语法分析 (AST) → 语义检查 → 代码生成 (JS) → node 运行
+.xulo 文件 → 词法分析 (Token) → 语法分析 (AST) → 语义检查 → 原生 Rust 解释器（默认）/ 代码生成 (JS) → node 运行
 ```
 
 ## 构建
@@ -15,7 +15,7 @@ cargo build --release
 # 二进制位于 target/release/xulo
 ```
 
-需要本机安装 Node.js（`xulo run` 通过 `node` 执行生成的 JS）。
+默认原生解释器与 `xulo repl` 不依赖 Node.js；仅 JS 路径（`xulo run --js` / `xulo build` 产物）需要本机安装 Node.js。
 
 ## 使用
 
@@ -35,7 +35,7 @@ xulo check examples/fibonacci.xulo
 # 格式化（就地改写；注意：注释会被丢弃）
 xulo fmt file.xulo
 
-# 交互式 REPL（空行执行当前输入，`exit` 退出）
+# 交互式 REPL（原生解释器；空行或 `run` 执行，`exit` 退出，Tab 补全，历史持久化到 ~/.xulo_history 或 $XULO_HISTORY）
 xulo repl
 ```
 
@@ -87,7 +87,7 @@ fn main() {
 ### 未实现 / 限制
 
 - `fmt` 为基于 token 流的格式化器：会丢弃注释，且匹配/对象字面量的换行风格以源码为基准（不做智能重排）
-- `repl` 为会话式 REPL：每轮重新编译并执行整个会话（无状态持久化到语言内部），支持 `exit` / `clear`
+- `repl` 为会话式 REPL：每轮用原生解释器重新编译并执行整个会话（无状态持久化到语言内部，靠重放保持跨条目变量），支持 `exit` / `clear`；行编辑走 rustyline（方向键历史、Tab 补全）
 - 调用函数必须在调用点之前已声明（不支持前向引用）
 - `@Store` 的 `$` 绑定写方向为空操作；跨模块/`@xulo/store` 的订阅重渲染由外部运行时接管
 - 组件函数体在重渲染时会重新执行（`@State` 信号已提升到函数级；`@Effect` 仅在依赖数组（若有）变化或挂载时重新执行）

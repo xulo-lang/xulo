@@ -303,69 +303,195 @@ fn check_file(file: &Path) -> ExitCode {
     }
 }
 
+/// Keywords, type names, and REPL commands offered by `Tab` completion.
+const REPL_CANDIDATES: &[&str] = &[
+    "exit",
+    "clear",
+    "run",
+    "fn",
+    "let",
+    "const",
+    "return",
+    "if",
+    "else",
+    "for",
+    "in",
+    "while",
+    "match",
+    "print",
+    "type",
+    "enum",
+    "null",
+    "true",
+    "false",
+    "and",
+    "or",
+    "await",
+    "async",
+    "try",
+    "catch",
+    "throw",
+    "import",
+    "pub",
+    "use",
+    "from",
+    "as",
+];
+
+/// Completion/history helper for the REPL line editor.
+#[derive(Default)]
+struct ReplHelper;
+
+impl rustyline::Helper for ReplHelper {}
+
+impl rustyline::hint::Hinter for ReplHelper {
+    type Hint = String;
+
+    fn hint(&self, _line: &str, _pos: usize, _ctx: &rustyline::Context<'_>) -> Option<String> {
+        None
+    }
+}
+
+impl rustyline::highlight::Highlighter for ReplHelper {}
+
+impl rustyline::validate::Validator for ReplHelper {}
+
+impl rustyline::completion::Completer for ReplHelper {
+    type Candidate = rustyline::completion::Pair;
+
+    fn complete(
+        &self,
+        line: &str,
+        pos: usize,
+        _ctx: &rustyline::Context<'_>,
+    ) -> rustyline::Result<(usize, Vec<rustyline::completion::Pair>)> {
+        let word_start = line[..pos]
+            .rfind(char::is_whitespace)
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        let prefix = &line[word_start..pos];
+        let candidates = REPL_CANDIDATES
+            .iter()
+            .filter(|c| c.starts_with(prefix))
+            .map(|c| rustyline::completion::Pair {
+                display: c.to_string(),
+                replacement: c.to_string(),
+            })
+            .collect();
+        Ok((word_start, candidates))
+    }
+}
+
+/// Where command history is persisted. `XULO_HISTORY` overrides the default
+/// `~/.xulo_history` when set.
+fn history_path() -> Option<std::path::PathBuf> {
+    if let Ok(p) = std::env::var("XULO_HISTORY") {
+        return Some(std::path::PathBuf::from(p));
+    }
+    std::env::var("HOME")
+        .ok()
+        .map(|home| std::path::Path::new(&home).join(".xulo_history"))
+}
+
 fn repl() -> ExitCode {
-    use std::io::{BufRead, Write};
-    let stdin = std::io::stdin();
-    let mut stdout = std::io::stdout();
-    println!("xulo REPL — enter code; run with an empty line or `run`, `exit` to quit");
+    let mut rl = match rustyline::Editor::<ReplHelper, rustyline::history::DefaultHistory>::new()
+    {
+        Ok(rl) => rl,
+        Err(err) => {
+            eprintln!("cannot start line editor: {err}");
+            return ExitCode::from(1);
+        }
+    };
+    // History is only for interactive use; skip it when stdin is piped so
+    // tests and scripts do not touch (or write) the user's history file.
+    let history = if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        history_path()
+    } else {
+        None
+    };
+    if let Some(path) = &history {
+        let _ = rl.load_history(path);
+    }
+    println!("xulo REPL — native interpreter, no Node; an empty line or `run` executes, `exit` quits");
     let mut entry = String::new();
     let mut session = String::new();
     loop {
-        print!("{}", if entry.is_empty() { "xulo> " } else { "...> " });
-        let _ = stdout.flush();
-        let mut line = String::new();
-        match stdin.lock().read_line(&mut line) {
-            Ok(0) => break,
-            Ok(_) => {}
-            Err(e) => {
-                eprintln!("read error: {e}");
+        let prompt = if entry.is_empty() { "xulo> " } else { "...> " };
+        match rl.readline(prompt) {
+            Ok(line) => {
+                // Keep the previously-accumulated lines alive until the entry
+                // executes so history holds whole commands, not fragments.
+                let cmd = entry.is_empty();
+                if cmd && !line.trim().is_empty() {
+                    let _ = rl.add_history_entry(line.as_str());
+                }
+                if !repl_step(&mut session, &mut entry, &line) {
+                    break;
+                }
+            }
+            Err(rustyline::error::ReadlineError::Interrupted) => {
+                // Ctrl-C cancels the pending partial entry, like a shell.
+                entry.clear();
+            }
+            Err(rustyline::error::ReadlineError::Eof) => break,
+            Err(err) => {
+                eprintln!("read error: {err}");
                 break;
             }
         }
-        let trimmed = line.trim();
-        if entry.is_empty() && trimmed.is_empty() {
-            break;
-        }
-        if entry.is_empty() && matches!(trimmed, "exit" | ":quit" | ".exit" | ":q") {
-            break;
-        }
-        if entry.is_empty() && matches!(trimmed, "clear" | ":reset") {
-            session.clear();
-            continue;
-        }
-        // `run` forces the pending entry to execute immediately (it is never
-        // part of the code itself).
-        if trimmed == "run" {
-            if entry.trim().is_empty() {
-                if session.is_empty() {
-                    continue;
-                }
-                repl_run(&mut session, "");
-            } else {
-                let pending = entry.clone();
-                entry.clear();
-                if !repl_run(&mut session, &pending) {
-                    entry.push_str(&pending);
-                }
-            }
-            continue;
-        }
-        entry.push_str(&line);
-        if unbalanced(&entry) {
-            continue;
-        }
-        if !trimmed.is_empty() && trimmed != "run" && !entry.trim_end().ends_with('}') {
-            continue;
-        }
-        let pending = entry.clone();
-        entry.clear();
-        if !repl_run(&mut session, &pending) {
-            // Compile failed: put the entry back so it can be edited and
-            // re-run (the session was rolled back inside `repl_run`).
-            entry.push_str(&pending);
-        }
+    }
+    if let Some(path) = &history {
+        let _ = rl.save_history(path);
     }
     ExitCode::SUCCESS
+}
+
+/// Handle one REPL input line. Returns `false` when the REPL should exit.
+fn repl_step(session: &mut String, entry: &mut String, line: &str) -> bool {
+    let trimmed = line.trim();
+    if entry.is_empty() && trimmed.is_empty() {
+        return false;
+    }
+    if entry.is_empty() && matches!(trimmed, "exit" | ":quit" | ".exit" | ":q") {
+        return false;
+    }
+    if entry.is_empty() && matches!(trimmed, "clear" | ":reset") {
+        session.clear();
+        return true;
+    }
+    // `run` forces the pending entry to execute immediately (it is never
+    // part of the code itself).
+    if trimmed == "run" {
+        if entry.trim().is_empty() {
+            if session.is_empty() {
+                return true;
+            }
+            repl_run(session, "");
+        } else {
+            let pending = entry.clone();
+            entry.clear();
+            if !repl_run(session, &pending) {
+                entry.push_str(&pending);
+            }
+        }
+        return true;
+    }
+    entry.push_str(line);
+    entry.push('\n');
+    if unbalanced(entry) {
+        return true;
+    }
+    if !trimmed.is_empty() && trimmed != "run" && !entry.trim_end().ends_with('}') {
+        return true;
+    }
+    let pending = entry.clone();
+    entry.clear();
+    if !repl_run(session, &pending) {
+        // Compile failed: put the entry back so it can be edited and
+        // re-run (the session was rolled back inside `repl_run`).
+        entry.push_str(&pending);
+    }
+    true
 }
 
 /// Compile and run the REPL buffer natively (in-process interpreter, no Node).
