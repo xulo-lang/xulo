@@ -2056,7 +2056,7 @@ impl Analyzer {
                 }
             }
             other => Err(self.err(format!(
-                "cannot access member of `{}` (type `{}`)",
+                "cannot access member `{}` of a `{}`",
                 property,
                 other.name()
             ))),

@@ -42,9 +42,21 @@ pub fn tokenize(source: &str) -> Result<Vec<LexedToken>, XuloError> {
                     None => {
                         XuloError::new(ErrorKind::Lex, "unexpected end of input").at(start..total)
                     }
-                    Some('"' | '\'') => {
-                        XuloError::new(ErrorKind::Lex, "unterminated string literal")
-                            .at(start..total)
+                    Some('"' | '\'') => string_diagnostic(source, start),
+                    Some(c) if c.is_ascii_digit() => {
+                        // `1e5`, `1a`, `0x1f`: the lexer consumed the leading
+                        // digits before failing; report the whole run with an
+                        // honest message instead of blaming the first digit.
+                        let run: String = cursor
+                            .chars()
+                            .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '.' || *ch == '_')
+                            .collect();
+                        let literal = format!("{c}{run}");
+                        XuloError::new(
+                            ErrorKind::Lex,
+                            format!("invalid number literal `{literal}`"),
+                        )
+                        .at(start..start + literal.len())
                     }
                     Some(c) => {
                         let len = c.len_utf8();
@@ -59,6 +71,36 @@ pub fn tokenize(source: &str) -> Result<Vec<LexedToken>, XuloError> {
 
     tokens.push(LexedToken::new(Token::EOF, "", total..total));
     Ok(tokens)
+}
+
+/// Classify a failed string literal so the diagnostic says *why* it failed:
+/// an invalid escape sequence, or an unterminated literal. The string parser
+/// returns a bare backtrack, so this rescan distinguishes the common cases.
+fn string_diagnostic(source: &str, start: usize) -> XuloError {
+    let mut chars = source[start..].chars().peekable();
+    let quote = chars.next().unwrap_or('"');
+    let mut escaped = false;
+    let mut pos = start + quote.len_utf8();
+    for c in chars {
+        if escaped {
+            if !matches!(c, '"' | '\'' | '\\' | 'n' | 't' | 'r' | 'u') {
+                let span = start..pos + c.len_utf8();
+                return XuloError::new(ErrorKind::Lex, format!("invalid escape sequence `\\{c}`"))
+                    .at(span);
+            }
+            escaped = false;
+        } else if c == '\\' {
+            escaped = true;
+        } else if c == quote {
+            let span = start..pos + c.len_utf8();
+            return XuloError::new(ErrorKind::Lex, "invalid string literal").at(span);
+        } else if c == '\n' {
+            let span = start..pos;
+            return XuloError::new(ErrorKind::Lex, "unterminated string literal").at(span);
+        }
+        pos += c.len_utf8();
+    }
+    XuloError::new(ErrorKind::Lex, "unterminated string literal").at(start..source.len())
 }
 
 fn lex_token(input: &mut Input<'_>, total: usize) -> Res<LexedToken> {

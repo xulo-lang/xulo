@@ -2097,6 +2097,34 @@ fn native_run_local_module_default_import() {
 }
 
 #[test]
+fn native_run_imports_exported_enum_value() {
+    // A runtime `import { Theme }` of an exported enum must resolve in the
+    // native runtime too (it used to fail with "no runtime export named
+    // Theme" because enums registered no runtime value), and the imported
+    // value's member access must match the JS shape.
+    for (name, entry_src) in [
+        (
+            "construct",
+            "import { Theme } from \"./lib\"\nfn main() { print(str(Theme::Dark)) }\n",
+        ),
+        (
+            "member",
+            "import { Theme } from \"./lib\"\nfn main() { print(Theme.Dark) }\n",
+        ),
+    ] {
+        let (ok, stdout, stderr) = native_run(
+            &[
+                ("lib.xulo", "export enum Theme { Dark Light }\n"),
+                ("main.xulo", entry_src),
+            ],
+            "main.xulo",
+        );
+        assert!(ok, "{name}: stderr: {stderr}");
+        assert_eq!(stdout, "Theme.Dark\n", "{name}");
+    }
+}
+
+#[test]
 fn native_run_library_side_effects_run_before_entry() {
     let (ok, stdout, stderr) = native_run(
         &[

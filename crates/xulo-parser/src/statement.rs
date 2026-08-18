@@ -292,7 +292,9 @@ fn enum_def(input: &mut In<'_>) -> Pr<EnumDef> {
                     (None, ty)
                 };
                 params.push(EnumPayloadParam { name, type_ });
-                if !opt_tk(input, Token::Comma) {
+                if !opt_tk(input, Token::Comma)
+                    || matches!(input.first().map(|t| t.kind), Some(Token::RParen))
+                {
                     break;
                 }
             }

@@ -92,6 +92,29 @@ fn parses_list_and_call() {
 }
 
 #[test]
+fn trailing_commas_are_accepted() {
+    // `f(a, b,)`, `[1, 2,]`, `{ a: 1, }`, and enum payloads `A(number,)` all
+    // accept a trailing comma, consistent with `match` arms and enum variants.
+    let p = parse(r#"let xs = [1, 2,] print(f(1, 2,)) let o = { a: 1, }"#);
+    assert!(matches!(&p.statements[0], Statement::Let(b)
+        if matches!(&b.value, Some(Expression::Literal { value: Literal::List(v), .. }) if v.len() == 2)));
+    assert!(
+        matches!(&p.statements[1], Statement::Expr(es) if matches!(&es.expr, Expression::Call(c) if c.arguments.len() == 1 && matches!(&c.arguments[0].value, Expression::Call(inner) if inner.arguments.len() == 2)))
+    );
+    assert!(matches!(&p.statements[2], Statement::Let(b)
+        if matches!(&b.value, Some(Expression::Literal { value: Literal::Object(f), .. }) if f.len() == 1)));
+
+    let p = parse("enum E { A(number, string,) B }");
+    let Statement::Enum(e) = &p.statements[0] else {
+        panic!("expected enum");
+    };
+    let Some(payload) = &e.variants[0].payload else {
+        panic!("expected payload");
+    };
+    assert_eq!(payload.len(), 2);
+}
+
+#[test]
 fn optional_semicolons() {
     assert_eq!(parse("let x = 1").statements.len(), 1);
     assert_eq!(parse("let x = 1;").statements.len(), 1);

@@ -1615,9 +1615,26 @@ fn collect_exports(
                 }
             }
         }
-        xulo_core::ast::ExportItem::Type(_)
-        | xulo_core::ast::ExportItem::Enum(_)
-        | xulo_core::ast::ExportItem::Trait(_) => {}
+        xulo_core::ast::ExportItem::Type(_) | xulo_core::ast::ExportItem::Trait(_) => {}
+        xulo_core::ast::ExportItem::Enum(e) => {
+            // An enum has runtime value (`import { Theme }` from another
+            // module must resolve). Mirror the JS shape — a frozen object of
+            // `"Enum.Variant"` strings — so member access on the imported
+            // value (`Theme.Dark`) and printing behave alike. Enum
+            // *construction* (`Theme::Dark`) is name-based and does not look
+            // this value up.
+            let fields = e
+                .variants
+                .iter()
+                .map(|v| {
+                    (
+                        v.name.clone(),
+                        Value::String(format!("{}.{}", e.name, v.name)),
+                    )
+                })
+                .collect();
+            bindings.push((e.name.clone(), Value::Object(Rc::new(RefCell::new(fields)))));
+        }
         xulo_core::ast::ExportItem::Default(inner) => {
             *default = export_value(inner, env);
         }

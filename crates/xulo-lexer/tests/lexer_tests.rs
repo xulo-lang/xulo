@@ -265,7 +265,7 @@ fn unsupported_number_forms_are_diagnostics() {
 
 #[test]
 fn unterminated_string_is_a_located_lex_error() {
-    for bad in ["\"oops", "'nope", "\"a\\q\"", "'a\\z'", "\u{1f600}\""] {
+    for bad in ["\"oops", "'nope", "\u{1f600}\""] {
         let err = tokenize(bad).unwrap_err();
         assert_eq!(err.kind, xulo_core::error::ErrorKind::Lex);
         assert!(
@@ -276,6 +276,29 @@ fn unterminated_string_is_a_located_lex_error() {
         );
         assert!(err.span.is_some(), "input {bad:?} must carry a span");
     }
+}
+
+#[test]
+fn string_and_number_diagnostics_name_the_real_cause() {
+    // An invalid escape is reported as such, not as "unterminated".
+    let err = tokenize(r#""a\q""#).unwrap_err();
+    assert!(
+        err.message.contains("invalid escape sequence `\\q`"),
+        "got: {}",
+        err.message
+    );
+    // A number followed by junk reports the whole literal, with the span
+    // covering it (`1e5` used to blame the leading `1`).
+    let err = tokenize("1e5").unwrap_err();
+    assert!(
+        err.message.contains("invalid number literal `1e5`"),
+        "got: {}",
+        err.message
+    );
+    let src = "let x = 1e5";
+    let err = tokenize(src).unwrap_err();
+    let literal = &src[err.span.clone().expect("span")];
+    assert_eq!(literal, "1e5", "span must cover the whole literal");
 }
 
 #[test]

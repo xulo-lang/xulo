@@ -401,7 +401,10 @@ pub fn call_args(input: &mut In<'_>) -> Pr<Vec<CallArg>> {
     if !matches!(input.first().map(|t| t.kind), Some(Token::RParen)) {
         loop {
             args.push(call_arg(input)?);
-            if !opt_tk(input, Token::Comma) {
+            // A trailing comma is allowed: `f(a, b,)` (mirrors `match` arms).
+            if !opt_tk(input, Token::Comma)
+                || matches!(input.first().map(|t| t.kind), Some(Token::RParen))
+            {
                 break;
             }
         }
@@ -446,7 +449,9 @@ fn list_literal(input: &mut In<'_>) -> Pr<Expression> {
             } else {
                 items.push(expression(input)?);
             }
-            if !opt_tk(input, Token::Comma) {
+            if !opt_tk(input, Token::Comma)
+                || matches!(input.first().map(|t| t.kind), Some(Token::RBracket))
+            {
                 break;
             }
         }
@@ -476,7 +481,9 @@ fn object_literal(input: &mut In<'_>) -> Pr<Expression> {
                 let value = expression(input)?;
                 fields.push(ObjectField::Field { name: key, value });
             }
-            if !opt_tk(input, Token::Comma) {
+            if !opt_tk(input, Token::Comma)
+                || matches!(input.first().map(|t| t.kind), Some(Token::RBrace))
+            {
                 break;
             }
         }
