@@ -443,7 +443,13 @@ impl Interpreter {
             }
             Statement::Assign(assign) => self.exec_assign(assign, env),
             Statement::TypeAlias(_) => Ok(Flow::Continue),
-            Statement::Enum(_) => Ok(Flow::Continue),
+            Statement::Enum(e) => {
+                // Register the enum's runtime value so `export { Color }` and
+                // `export enum` both resolve it for importers (construction
+                // `Color::Red` is name-based and unaffected).
+                env.borrow_mut().define(&e.name, enum_value(e));
+                Ok(Flow::Continue)
+            }
             Statement::Expr(es) => {
                 // `if` in statement position runs its branches as statements so
                 // a `return` inside a branch returns from the enclosing
@@ -1078,7 +1084,11 @@ impl Interpreter {
                 };
             }
         };
-        self.exec_prefix(prefix, &child)?;
+        if let Some(v) = self.exec_prefix(prefix, &child)? {
+            // An explicit `return` before the trailing expression short-circuits
+            // the block's value (the JS IIFE does the same).
+            return Ok(v);
+        }
         match tail {
             Tail::Expr(expr) => self.eval(expr, &child),
             Tail::Return(r) => match &r.value {
@@ -1089,20 +1099,22 @@ impl Interpreter {
     }
 
     /// Execute every statement before a block's trailing expression, unwinding
-    /// on an explicit `return` (which must short-circuit the block's value).
-    fn exec_prefix(&self, stmts: &[Statement], env: &Rc<RefCell<Env>>) -> Result<(), RunError> {
+    /// on an explicit `return`: the returned value short-circuits the block's
+    /// value (matching the JS codegen, whose value-position `if`/`match` arms
+    /// are IIFEs where `return` exits the arm). Returns `Some(value)` when a
+    /// statement returned early.
+    fn exec_prefix(
+        &self,
+        stmts: &[Statement],
+        env: &Rc<RefCell<Env>>,
+    ) -> Result<Option<Value>, RunError> {
         for stmt in stmts {
             match self.exec_stmt(stmt, env)? {
                 Flow::Continue => {}
-                Flow::Return(v) => {
-                    return Err(RunError::err(
-                        format!("unexpected return of {}", v.format()),
-                        0..0,
-                    ));
-                }
+                Flow::Return(v) => return Ok(Some(v)),
             }
         }
-        Ok(())
+        Ok(None)
     }
 
     fn eval_member(
@@ -1617,26 +1629,28 @@ fn collect_exports(
         }
         xulo_core::ast::ExportItem::Type(_) | xulo_core::ast::ExportItem::Trait(_) => {}
         xulo_core::ast::ExportItem::Enum(e) => {
-            // An enum has runtime value (`import { Theme }` from another
-            // module must resolve). Mirror the JS shape — a frozen object of
-            // `"Enum.Variant"` strings — so member access on the imported
-            // value (`Theme.Dark`) and printing behave alike. Enum
-            // *construction* (`Theme::Dark`) is name-based and does not look
-            // this value up.
-            let fields = e
-                .variants
-                .iter()
-                .map(|v| {
-                    (
-                        v.name.clone(),
-                        Value::String(format!("{}.{}", e.name, v.name)),
-                    )
-                })
-                .collect();
-            bindings.push((e.name.clone(), Value::Object(Rc::new(RefCell::new(fields)))));
+            bindings.push((e.name.clone(), enum_value(e)));
         }
         xulo_core::ast::ExportItem::Default(inner) => {
             *default = export_value(inner, env);
         }
     }
+}
+
+/// The runtime value of an enum, mirroring the JS shape — an object of
+/// `"Enum.Variant"` strings — so member access on the value (`Theme.Dark`)
+/// and printing behave alike. Enum *construction* (`Theme::Dark`) is
+/// name-based and does not look this value up.
+fn enum_value(e: &xulo_core::ast::EnumDef) -> Value {
+    let fields = e
+        .variants
+        .iter()
+        .map(|v| {
+            (
+                v.name.clone(),
+                Value::String(format!("{}.{}", e.name, v.name)),
+            )
+        })
+        .collect();
+    Value::Object(Rc::new(RefCell::new(fields)))
 }

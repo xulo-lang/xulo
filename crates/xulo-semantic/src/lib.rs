@@ -675,6 +675,20 @@ impl Analyzer {
     }
 
     fn check_fn(&mut self, f: &xulo_core::ast::FnDef) -> SResult<()> {
+        // `main` is invoked with no arguments by both runtimes (`main()` /
+        // `call_fn(main, &[])`); a required parameter would silently bind
+        // `undefined`/`null` and diverge, so reject it up front.
+        if f.name == "main" && f.params.iter().any(|p| p.default.is_none()) {
+            return Err(self.err(format!(
+                "`main` must not require arguments (found `{}`): both runtimes call it with none",
+                f.params
+                    .iter()
+                    .filter(|p| p.default.is_none())
+                    .map(|p| p.name.clone())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )));
+        }
         let mut param_names = std::collections::HashSet::new();
         for p in &f.params {
             if !param_names.insert(p.name.clone()) {
@@ -1024,10 +1038,35 @@ impl Analyzer {
             }
             xulo_core::ast::ExportItem::Names(names) => {
                 for name in names {
-                    if self.table.lookup(name).is_none() {
-                        return Err(self.err(format!(
-                            "cannot export `{name}`: it is not declared in this module"
-                        )));
+                    let is_enum = matches!(
+                        self.type_table.get(name).map(|e| &e.kind),
+                        Some(TypeEntryKind::Enum(_))
+                    );
+                    if self.table.lookup(name).is_none() && !is_enum {
+                        return Err(if self.type_table.contains_key(name) {
+                            // A type alias has no runtime value: it cannot be
+                            // re-exported by bare name.
+                            self.err(format!(
+                                "cannot export `{name}`: it is a type with no runtime value; use `export type` or `export enum`"
+                            ))
+                        } else {
+                            self.err(format!(
+                                "cannot export `{name}`: it is not declared in this module"
+                            ))
+                        });
+                    }
+                    if is_enum {
+                        // Enums have runtime value: re-export the name so
+                        // importers can construct/match its variants.
+                        self.exported_symbols.push((
+                            name.clone(),
+                            Symbol {
+                                name: name.clone(),
+                                type_: Type::Named(name.clone()),
+                                kind: symbol_table::SymbolKind::Variable,
+                                is_const: true,
+                            },
+                        ));
                     }
                 }
                 for name in names {
@@ -1172,12 +1211,15 @@ impl Analyzer {
 
     fn check_store(&mut self, store: &xulo_core::ast::StoreStmt) -> SResult<()> {
         self.require_component_top_level("@Store")?;
-        self.check_expression(&store.value)?;
+        let value_type = self.check_expression(&store.value)?;
         match &store.pattern {
             xulo_core::ast::BindingPattern::Ident(name) => {
+                // A plain binding keeps the value's inferred type (like
+                // `@State`); only destructured store fields stay `Any`, since
+                // their shape is not statically known.
                 if !self.table.declare(Symbol {
                     name: name.clone(),
-                    type_: Type::Any,
+                    type_: value_type.clone(),
                     kind: SymbolKind::Store,
                     is_const: true,
                 }) {

@@ -1838,6 +1838,53 @@ fn user_function_after_impl_collision_is_rejected() {
 }
 
 #[test]
+fn main_rejects_required_parameters() {
+    let err = analyze_src("fn main(x: number) { print(str(x)) }").unwrap_err();
+    assert!(
+        err.message.contains("`main` must not require arguments"),
+        "got: {}",
+        err.message
+    );
+    // Defaulted parameters are fine: both runtimes fall back to the default.
+    assert!(analyze_src("fn main(x: number = 5) { print(str(x)) }").is_ok());
+    assert!(analyze_src("fn main() { print(1) }").is_ok());
+}
+
+#[test]
+fn store_binding_keeps_inferred_type() {
+    // `@Store const n = 5` binds `n` as `number` (not `Any`), so type errors
+    // on it are caught like they are for `@State`.
+    assert!(
+        analyze_src("fn main(): Component { @Store const n = 5 VStack { Text(str(n + 1)) } }")
+            .is_ok()
+    );
+    let err =
+        analyze_src("fn main(): Component { @Store const n = \"x\" VStack { Text(str(n + 1)) } }")
+            .unwrap_err();
+    assert!(
+        err.message.contains("cannot apply `+`"),
+        "got: {}",
+        err.message
+    );
+}
+
+#[test]
+fn enum_name_can_be_reexported() {
+    // `export { Color }` re-exports an enum (which has runtime value); a type
+    // alias cannot be re-exported by bare name and gets an honest message.
+    assert!(
+        analyze_src("enum Color { Red Blue }\nexport { Color }\nfn main() { print(1) }").is_ok()
+    );
+    let err =
+        analyze_src("type Rect = object\nexport { Rect }\nfn main() { print(1) }").unwrap_err();
+    assert!(
+        err.message.contains("no runtime value"),
+        "got: {}",
+        err.message
+    );
+}
+
+#[test]
 fn unbounded_generic_stays_any_zero_regression() {
     let src = r#"
         fn id<T>(x: T): T { return x }

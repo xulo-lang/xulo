@@ -2125,6 +2125,41 @@ fn native_run_imports_exported_enum_value() {
 }
 
 #[test]
+fn export_bare_enum_name_imports_on_both_paths() {
+    // `export { Color }` (the bare-names form) must make the enum importable
+    // on both runtimes, like `export enum Color` does.
+    for native in [false, true] {
+        let (dir, entry) = temp_dir(
+            &[
+                ("lib.xulo", "enum Color { Red Blue }\nexport { Color }\n"),
+                (
+                    "main.xulo",
+                    "import { Color } from \"./lib\"\nfn main() { print(str(Color::Red)) print(Color.Blue) }\n",
+                ),
+            ],
+            "main.xulo",
+        );
+        let mut cmd = Command::new(BIN);
+        cmd.arg("run");
+        if native {
+            cmd.arg("--native");
+        }
+        let out = cmd.arg(&entry).output().unwrap();
+        assert!(
+            out.status.success(),
+            "native={native} stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            "Color.Red\nColor.Blue\n",
+            "native={native}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[test]
 fn native_run_library_side_effects_run_before_entry() {
     let (ok, stdout, stderr) = native_run(
         &[

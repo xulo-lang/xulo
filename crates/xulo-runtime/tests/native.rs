@@ -176,6 +176,24 @@ fn recursion_with_if_expression() {
 }
 
 #[test]
+fn if_expression_prefix_return_short_circuits_like_js() {
+    // A `return` before a value-position `if` arm's trailing expression is the
+    // arm's value (the JS codegen's IIFE exits on it); the native runtime used
+    // to report "unexpected return" and diverge.
+    let out = run_ok(
+        r#"
+        fn main(): number {
+            let x = if true { return 5
+                3 } else { 2 }
+            print(str(x))
+            x
+        }
+        "#,
+    );
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
 fn unbounded_recursion_errors_instead_of_crashing() {
     // Unbounded recursion used to overflow the stack and abort the process;
     // it must surface as a clean runtime error past the depth limit. Runs on
