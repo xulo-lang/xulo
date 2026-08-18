@@ -15,7 +15,7 @@ use xulo_runtime::value::Value;
 #[command(
     name = "xulo",
     version,
-    about = "Xulo compiler: .xulo files -> JavaScript, run via Node.js"
+    about = "Xulo: compile and run .xulo files via the native Rust interpreter (default) or through JavaScript + Node"
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -24,11 +24,16 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Compile and run a .xulo file with node (--native runs it in the Rust interpreter)
+    /// Compile and run a .xulo file in the native Rust interpreter (the
+    /// default); --js compiles to JavaScript and runs it with node
     Run {
         file: PathBuf,
-        /// Run in the native Rust interpreter instead of compiling to JavaScript and running node
-        #[arg(long)]
+        /// Compile to JavaScript and run via node instead of the native interpreter
+        #[arg(long, conflicts_with = "native")]
+        js: bool,
+        /// Run in the native Rust interpreter (the default) — kept for backward
+        /// compatibility with scripts and tests written before the default flipped
+        #[arg(long, hide = true, conflicts_with = "js")]
         native: bool,
     },
     /// Compile a .xulo file to a JavaScript file
@@ -57,7 +62,7 @@ pub fn run() -> ExitCode {
 
 fn run_command(command: Commands) -> ExitCode {
     match command {
-        Commands::Run { file, native } => run_file(&file, native),
+        Commands::Run { file, native, js } => run_file(&file, js, native),
         Commands::Build { file, out } => build_file(&file, out),
         Commands::Check { file } => check_file(&file),
         Commands::Fmt { file } => fmt_file(&file),
@@ -65,10 +70,17 @@ fn run_command(command: Commands) -> ExitCode {
     }
 }
 
-fn run_file(file: &Path, native: bool) -> ExitCode {
-    if native {
-        return native_run(file);
+/// Execute a `.xulo` file. The native Rust interpreter is the default; only
+/// `--js` (and not the deprecated `--native`) routes through the node path.
+fn run_file(file: &Path, js: bool, native: bool) -> ExitCode {
+    if js && !native {
+        return node_run(file);
     }
+    native_run(file)
+}
+
+/// Compile a `.xulo` file to JavaScript and run the result under node.
+fn node_run(file: &Path) -> ExitCode {
     let (js, warnings) = match compile_to_js(file) {
         Ok(out) => out,
         Err(code) => return code,
@@ -137,7 +149,6 @@ fn native_run(file: &Path) -> ExitCode {
 
     let interp = Interpreter::new();
     let mut export_maps: Vec<HashMap<String, Value>> = Vec::with_capacity(loaded.modules.len());
-    let mut default_map: Vec<Option<Value>> = Vec::with_capacity(loaded.modules.len());
 
     for (idx, module) in loaded.modules.iter().enumerate() {
         let mut imports: Vec<(String, Value)> = Vec::new();
@@ -146,7 +157,7 @@ fn native_run(file: &Path) -> ExitCode {
             if binding.type_only {
                 continue;
             }
-            match resolve_import(binding, &export_maps, &default_map, &loaded) {
+            match resolve_import(binding, &export_maps, &loaded) {
                 Ok(mut pairs) => imports.append(&mut pairs),
                 Err(msg) => {
                     resolve_err = Some(msg);
@@ -166,7 +177,6 @@ fn native_run(file: &Path) -> ExitCode {
                     map.insert(name, value);
                 }
                 export_maps.push(map);
-                default_map.push(exports.default);
             }
             Err(RunError::Err(err)) => {
                 let src_file = err.file.clone().unwrap_or_else(|| module.file.clone());
@@ -192,7 +202,6 @@ fn native_run(file: &Path) -> ExitCode {
 fn resolve_import(
     binding: &xulo_compiler::module::ImportBinding,
     export_maps: &[HashMap<String, Value>],
-    default_map: &[Option<Value>],
     loaded: &xulo_compiler::module::LoadedModules,
 ) -> Result<Vec<(String, Value)>, String> {
     let target = &loaded.modules[binding.target];
@@ -201,13 +210,10 @@ fn resolve_import(
     match &binding.spec {
         ImportSpec::Bare => {}
         ImportSpec::Namespace(ns) => {
-            let mut fields: Vec<(String, Value)> = export_maps[binding.target]
+            let fields: Vec<(String, Value)> = export_maps[binding.target]
                 .iter()
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect();
-            if let Some(default) = &default_map[binding.target] {
-                fields.push(("default".to_string(), default.clone()));
-            }
             out.push((
                 ns.clone(),
                 Value::Object(std::rc::Rc::new(std::cell::RefCell::new(fields))),
@@ -226,12 +232,6 @@ fn resolve_import(
                 }
             }
         }
-        ImportSpec::Default(name) => match &default_map[binding.target] {
-            Some(value) => out.push((name.clone(), value.clone())),
-            None => {
-                return Err(format!("module `{readable}` has no default export"));
-            }
-        },
     }
     Ok(out)
 }
@@ -376,7 +376,7 @@ fn repl_run(session: &mut String, pending: &str) -> bool {
     let raw = session.trim_start();
     let has_main = raw
         .split('\n')
-        .any(|l| l.trim_start().starts_with("fn main"));
+        .any(|l| has_main_decl(l.trim_start()));
     let echo = !has_main && looks_like_echo(pending);
     let compiled = if has_main {
         session.clone()
@@ -413,6 +413,12 @@ fn repl_run(session: &mut String, pending: &str) -> bool {
     }
 }
 
+/// Does a statement line declare the `main` function? Recognizes the plain
+/// and `pub` forms so the REPL does not double-wrap the session.
+fn has_main_decl(line: &str) -> bool {
+    line.starts_with("fn main") || line.starts_with("pub fn main")
+}
+
 /// Decide whether a REPL entry is a bare expression whose value should be
 /// echoed. Declarations, definitions, control flow, and anything ending in a
 /// semicolon or block brace are compiled as-is instead.
@@ -433,7 +439,7 @@ fn looks_like_echo(entry: &str) -> bool {
         "enum ",
         "import ",
         "from ",
-        "export ",
+        "pub ",
         "break",
         "continue",
         "@Effect ",

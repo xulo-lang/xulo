@@ -454,10 +454,10 @@ fn parses_try_catch_throw() {
 }
 
 #[test]
-fn parses_import_and_export_forms() {
+fn parses_import_and_pub_forms() {
     use xulo_core::ast::{ExportItem, ExportStmt, ImportSpec, ImportStmt, Statement};
 
-    let p = parse(r#"import { a as b } from "./m" import * as ns from "./n" import t from "./d""#);
+    let p = parse(r#"import { a as b } from "./m" import * as ns from "./n" import t as d from "./d""#);
     assert!(matches!(p.statements[0],
         Statement::Import(ImportStmt { spec: ImportSpec::Named(_), ref source, type_only: false }) if source == "./m"));
     assert!(matches!(
@@ -470,13 +470,13 @@ fn parses_import_and_export_forms() {
     assert!(matches!(
         p.statements[2],
         Statement::Import(ImportStmt {
-            spec: ImportSpec::Default(_),
+            spec: ImportSpec::Named(_),
             ..
         })
     ));
 
     let p = parse(
-        r#"import type { User } from "./u" export { a, b } export const X = 1 export type Y = string"#,
+        r#"import type { User } from "./u" pub use { a, b } pub const X = 1 pub type Y = string"#,
     );
     assert!(matches!(
         p.statements[0],
@@ -546,11 +546,23 @@ fn parses_pub_declarations_as_exports() {
 }
 
 #[test]
-fn rejects_pub_combined_with_export() {
-    let tokens = tokenize("pub export fn foo() {}").unwrap();
+fn parses_pub_use_names() {
+    use xulo_core::ast::{ExportItem, ExportStmt};
+    let p = parse("pub use { a, b }");
+    assert!(matches!(
+        &p.statements[0],
+        Statement::Export(ExportStmt {
+            item: ExportItem::Names(names)
+        }) if names == &vec!["a".to_string(), "b".to_string()]
+    ));
+}
+
+#[test]
+fn rejects_removed_export_keyword() {
+    let tokens = tokenize("export fn foo() {}").unwrap();
     let err = parse_program(&tokens).unwrap_err();
     assert!(
-        err.message.contains("cannot be combined"),
+        err.message.contains("removed") && err.message.contains("`pub fn`"),
         "unexpected message: {}",
         err.message
     );
@@ -606,13 +618,14 @@ fn rejects_reserved_word_in_type_position() {
 }
 
 #[test]
-fn parses_export_default_fn() {
-    use xulo_core::ast::ExportItem;
-    let p = parse("export default fn main() { print(\"hi\") }");
-    let Statement::Export(export) = &p.statements[0] else {
-        panic!("expected export");
-    };
-    assert!(matches!(export.item, ExportItem::Default(_)));
+fn removed_default_gets_targeted_error() {
+    let tokens = tokenize("default fn main() { print(\"hi\") }").unwrap();
+    let err = parse_program(&tokens).expect_err("default is reserved");
+    assert!(
+        err.message.contains("the `default` keyword was removed"),
+        "message: {}",
+        err.message
+    );
 }
 
 #[test]
@@ -1259,8 +1272,8 @@ fn parses_multi_trait_bound() {
 }
 
 #[test]
-fn parses_exported_trait() {
-    let p = parse("export trait Area { fn area(self): number }");
+fn parses_pub_trait() {
+    let p = parse("pub trait Area { fn area(self): number }");
     let Statement::Export(e) = &p.statements[0] else {
         panic!("expected export statement");
     };

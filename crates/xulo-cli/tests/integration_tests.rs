@@ -232,7 +232,11 @@ fn run_types_enums_const_null() {
         }
         "#,
     );
-    let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
+    let out = Command::new(BIN)
+        .args(["run", "--js"])
+        .arg(&file)
+        .output()
+        .unwrap();
     assert!(
         out.status.success(),
         "stderr: {}",
@@ -276,7 +280,11 @@ fn run_file_with_external_import() {
         "#,
     )
     .unwrap();
-    let out = Command::new(BIN).arg("run").arg(&src).output().unwrap();
+    let out = Command::new(BIN)
+        .args(["run", "--js"])
+        .arg(&src)
+        .output()
+        .unwrap();
     assert!(
         out.status.success(),
         "stderr: {}",
@@ -385,8 +393,8 @@ fn run_multi_file_imports() {
             (
                 "math.xulo",
                 r#"
-                export fn add(a: number, b: number): number { return a + b }
-                export const PI = 3.14
+                pub fn add(a: number, b: number): number { return a + b }
+                pub const PI = 3.14
                 "#,
             ),
             (
@@ -415,19 +423,19 @@ fn run_multi_file_imports() {
 }
 
 #[test]
-fn run_multi_file_default_and_async() {
+fn run_multi_file_named_and_async() {
     let (dir, entry) = temp_dir(
         &[
             (
                 "greet.xulo",
                 r#"
-                export default fn greet(name: string): string { return "hi " + name }
+                pub fn greet(name: string): string { return "hi " + name }
                 "#,
             ),
             (
                 "load.xulo",
                 r#"
-                export fn load(n: number): async number {
+                pub fn load(n: number): async number {
                     let x = n * 2
                     return x
                 }
@@ -436,7 +444,7 @@ fn run_multi_file_default_and_async() {
             (
                 "main.xulo",
                 r#"
-                import greet from "./greet"
+                import { greet } from "./greet"
                 import { load } from "./load"
                 fn main(): async {
                     print(greet("bob"))
@@ -541,7 +549,11 @@ fn allows_stdlib_type_names_as_identifiers() {
              print(string) print(number) print(list)\n\
          }",
     );
-    let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
+    let out = Command::new(BIN)
+        .args(["run", "--js"])
+        .arg(&file)
+        .output()
+        .unwrap();
     assert!(
         out.status.success(),
         "stderr: {}",
@@ -557,7 +569,7 @@ fn run_module_import_destructure() {
         &[
             (
                 "util.xulo",
-                "export fn double(x: number): number { return x * 2 }\n",
+                "pub fn double(x: number): number { return x * 2 }\n",
             ),
             (
                 "main.xulo",
@@ -671,7 +683,7 @@ fn external_import_is_deduplicated_across_modules() {
         &[
             (
                 "util.xulo",
-                "import { double, triple } from \"lib-m\"\nexport fn f(x: number): number { return double(x) + triple(x) }\n",
+                "import { double, triple } from \"lib-m\"\npub fn f(x: number): number { return double(x) + triple(x) }\n",
             ),
             (
                 "main.xulo",
@@ -714,17 +726,17 @@ fn external_import_keeps_every_alias_and_kind() {
     // Two modules importing the same external package with *different aliases*
     // of the same name must both keep their local binding (regression: the
     // bundle used to dedup by source name, emitting only the first alias and
-    // leaving the other module's reference undefined at runtime). Default,
-    // namespace, and named forms must all survive.
+    // leaving the other module's reference undefined at runtime). Namespace
+    // and named forms must all survive.
     let (dir, entry) = temp_dir(
         &[
             (
                 "a.xulo",
-                "import { Text as T } from \"pkg-x\"\nexport fn header(): Component { Screen { T(\"aliased\") } }\n",
+                "import { Text as T } from \"pkg-x\"\npub fn header(): Component { Screen { T(\"aliased\") } }\n",
             ),
             (
                 "main.xulo",
-                "import { header } from \"./a\"\nimport { Text } from \"pkg-x\"\nimport * as ui from \"pkg-x\"\nimport Def from \"pkg-x\"\nfn main(): Component { Screen { header() Text(\"plain\") } }\n",
+                "import { header } from \"./a\"\nimport { Text } from \"pkg-x\"\nimport * as ui from \"pkg-x\"\nfn main(): Component { Screen { header() Text(\"plain\") } }\n",
             ),
         ],
         "main.xulo",
@@ -754,10 +766,6 @@ fn external_import_keeps_every_alias_and_kind() {
         js.contains("import * as ui from \"pkg-x\";"),
         "namespace import must survive:\n{js}"
     );
-    assert!(
-        js.contains("import Def from \"pkg-x\";"),
-        "default import must survive:\n{js}"
-    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -772,7 +780,7 @@ fn external_import_local_name_conflict_is_rejected() {
         &[
             (
                 "a.xulo",
-                "import { a as x } from \"pkg-c\"\nexport fn fa(): number { x }\n",
+                "import { a as x } from \"pkg-c\"\npub fn fa(): number { x }\n",
             ),
             (
                 "main.xulo",
@@ -812,11 +820,11 @@ fn shared_runtime_emitted_once_across_modules() {
         &[
             (
                 "a.xulo",
-                "export fn comp(): Component { @State let n: number = 0 print(str(n)) }\n",
+                "pub fn comp(): Component { @State let n: number = 0 print(str(n)) }\n",
             ),
             (
                 "util.xulo",
-                "export fn sum(): number { let t = 0 for i in 0..<4 { t = t + i } return t }\n",
+                "pub fn sum(): number { let t = 0 for i in 0..<4 { t = t + i } return t }\n",
             ),
             (
                 "main.xulo",
@@ -853,7 +861,7 @@ fn check_reports_missing_export() {
         &[
             (
                 "util.xulo",
-                "export fn double(x: number): number { return x * 2 }\n",
+                "pub fn double(x: number): number { return x * 2 }\n",
             ),
             (
                 "main.xulo",
@@ -874,11 +882,11 @@ fn check_reports_circular_import() {
         &[
             (
                 "a.xulo",
-                "import { b } from \"./b\"\nexport fn a() { return 1 }\n",
+                "import { b } from \"./b\"\npub fn a() { return 1 }\n",
             ),
             (
                 "b.xulo",
-                "import { a } from \"./a\"\nexport fn b() { return 2 }\n",
+                "import { a } from \"./a\"\npub fn b() { return 2 }\n",
             ),
             (
                 "main.xulo",
@@ -917,7 +925,7 @@ fn run_try_catch_and_throw() {
 fn type_only_enum_import_still_binds_the_value() {
     let (dir, entry) = temp_dir(
         &[
-            ("colors.xulo", "export enum Kind { User Admin }\n"),
+            ("colors.xulo", "pub enum Kind { User Admin }\n"),
             (
                 "main.xulo",
                 r#"
@@ -960,8 +968,8 @@ fn run_trait_dispatch_js_and_native() {
         let file = temp_file("trait.xulo", src);
         let mut cmd = Command::new(BIN);
         cmd.arg("run");
-        if native {
-            cmd.arg("--native");
+        if !native {
+            cmd.arg("--js");
         }
         let out = cmd.arg(&file).output().unwrap();
         assert!(
@@ -994,8 +1002,8 @@ fn run_list_concat_js_and_native() {
         let file = temp_file("listcat.xulo", src);
         let mut cmd = Command::new(BIN);
         cmd.arg("run");
-        if native {
-            cmd.arg("--native");
+        if !native {
+            cmd.arg("--js");
         }
         let out = cmd.arg(&file).output().unwrap();
         assert!(
@@ -1035,8 +1043,8 @@ fn run_builtin_named_arguments_js_and_native() {
         let file = temp_file("builtin_named.xulo", src);
         let mut cmd = Command::new(BIN);
         cmd.arg("run");
-        if native {
-            cmd.arg("--native");
+        if !native {
+            cmd.arg("--js");
         }
         let out = cmd.arg(&file).output().unwrap();
         assert!(
@@ -1048,6 +1056,47 @@ fn run_builtin_named_arguments_js_and_native() {
             String::from_utf8_lossy(&out.stdout),
             "hi\n1 2 3\n42\n",
             "native={native}"
+        );
+        let _ = std::fs::remove_file(&file);
+    }
+}
+
+#[test]
+fn run_loop_closure_capture_js_and_native() {
+    // An `fn` declared in a loop body must capture *its own iteration* of the
+    // loop variable (JS `let` semantics), not a shared binding that reads the
+    // final value from every closure. Pins both execution paths to the same
+    // per-iteration capture (native `exec_for` re-creates the iteration Env;
+    // the codegen emits `for (let ...)`).
+    let src = r#"
+        let funcs = []
+        for i in 0..<3 {
+            fn get(): number { i }
+            funcs = [...funcs, get]
+        }
+        fn main() {
+            for j in 0..<3 {
+                print(funcs[j]())
+            }
+        }
+    "#;
+    for native in [false, true] {
+        let file = temp_file("loopcap.xulo", src);
+        let mut cmd = Command::new(BIN);
+        cmd.arg("run");
+        if !native {
+            cmd.arg("--js");
+        }
+        let out = cmd.arg(&file).output().unwrap();
+        assert!(
+            out.status.success(),
+            "native={native} stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            "0\n1\n2\n",
+            "native={native}: each closure reads its own iteration of `i`"
         );
         let _ = std::fs::remove_file(&file);
     }
@@ -1072,8 +1121,8 @@ fn run_for_loop_var_reassignment_js_and_native() {
         let file = temp_file("forvar.xulo", src);
         let mut cmd = Command::new(BIN);
         cmd.arg("run");
-        if native {
-            cmd.arg("--native");
+        if !native {
+            cmd.arg("--js");
         }
         let out = cmd.arg(&file).output().unwrap();
         assert!(
@@ -1111,8 +1160,8 @@ fn run_enum_equality_js_and_native() {
         let file = temp_file("enumeq.xulo", src);
         let mut cmd = Command::new(BIN);
         cmd.arg("run");
-        if native {
-            cmd.arg("--native");
+        if !native {
+            cmd.arg("--js");
         }
         let out = cmd.arg(&file).output().unwrap();
         assert!(
@@ -1151,8 +1200,8 @@ fn run_plain_tagged_objects_keep_identity_equality() {
         let file = temp_file("tagobj.xulo", src);
         let mut cmd = Command::new(BIN);
         cmd.arg("run");
-        if native {
-            cmd.arg("--native");
+        if !native {
+            cmd.arg("--js");
         }
         let out = cmd.arg(&file).output().unwrap();
         assert!(
@@ -1180,12 +1229,12 @@ fn cross_module_trait_dispatch() {
             (
                 "shapes.xulo",
                 r#"
-                export trait Shape { fn area(self): number }
-                export type Rect = object
+                pub trait Shape { fn area(self): number }
+                pub type Rect = object
                 impl Shape for Rect {
                     fn area(self): number { return self.w * self.h }
                 }
-                export fn rect(w: number, h: number): Rect {
+                pub fn rect(w: number, h: number): Rect {
                     let r = { w: w, h: h }
                     r
                 }
@@ -1208,8 +1257,8 @@ fn cross_module_trait_dispatch() {
     for native in [false, true] {
         let mut cmd = Command::new(BIN);
         cmd.arg("run");
-        if native {
-            cmd.arg("--native");
+        if !native {
+            cmd.arg("--js");
         }
         let out = cmd.arg(&entry).output().unwrap();
         assert!(
@@ -1232,7 +1281,7 @@ fn imported_function_supports_named_arguments() {
         &[
             (
                 "util.xulo",
-                "export fn greet(name: string, times: number): string { name }\n",
+                "pub fn greet(name: string, times: number): string { name }\n",
             ),
             (
                 "main.xulo",
@@ -1534,7 +1583,11 @@ fn run_component_state_and_effect() {
         }
         "#,
     );
-    let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
+    let out = Command::new(BIN)
+        .args(["run", "--js"])
+        .arg(&file)
+        .output()
+        .unwrap();
     assert!(
         out.status.success(),
         "stderr: {}",
@@ -1756,7 +1809,11 @@ fn run_component_loop_var_shadowing() {
         }
         "#,
     );
-    let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
+    let out = Command::new(BIN)
+        .args(["run", "--js"])
+        .arg(&file)
+        .output()
+        .unwrap();
     assert!(
         out.status.success(),
         "stderr: {}",
@@ -2011,7 +2068,11 @@ fn run_optional_chaining_deep_on_null() {
         }
         "#,
     );
-    let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
+    let out = Command::new(BIN)
+        .args(["run", "--js"])
+        .arg(&file)
+        .output()
+        .unwrap();
     assert!(
         out.status.success(),
         "stderr: {}",
@@ -2035,7 +2096,11 @@ fn run_multi_payload_enum_value_shape() {
         }
         "#,
     );
-    let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
+    let out = Command::new(BIN)
+        .args(["run", "--js"])
+        .arg(&file)
+        .output()
+        .unwrap();
     assert!(
         out.status.success(),
         "stderr: {}",
@@ -2075,8 +2140,8 @@ fn native_run_local_module_named_imports() {
         &[
             (
                 "math.xulo",
-                "export fn add(a: number, b: number): number { a + b }\n\
-                 export const PI = 3.14\n",
+                "pub fn add(a: number, b: number): number { a + b }\n\
+                 pub const PI = 3.14\n",
             ),
             (
                 "main.xulo",
@@ -2096,7 +2161,7 @@ fn native_run_local_module_import_alias() {
         &[
             (
                 "math.xulo",
-                "export fn add(a: number, b: number): number { a + b }\n",
+                "pub fn add(a: number, b: number): number { a + b }\n",
             ),
             (
                 "main.xulo",
@@ -2114,11 +2179,11 @@ fn native_run_local_module_import_alias() {
 fn native_run_local_module_dependency_chain() {
     let (ok, stdout, stderr) = native_run(
         &[
-            ("base.xulo", "export fn base(): number { 10 }\n"),
+            ("base.xulo", "pub fn base(): number { 10 }\n"),
             (
                 "mid.xulo",
                 "import { base } from \"./base\"\n\
-                 export fn mid(): number { base() + 5 }\n",
+                 pub fn mid(): number { base() + 5 }\n",
             ),
             (
                 "main.xulo",
@@ -2138,8 +2203,8 @@ fn native_run_local_module_namespace_import() {
         &[
             (
                 "cal.xulo",
-                "export const HOURS = 24\n\
-                 export fn hours(): number { HOURS }\n",
+                "pub const HOURS = 24\n\
+                 pub fn hours(): number { HOURS }\n",
             ),
             (
                 "main.xulo",
@@ -2154,14 +2219,14 @@ fn native_run_local_module_namespace_import() {
 }
 
 #[test]
-fn native_run_local_module_default_import() {
+fn native_run_local_module_named_import() {
     let (ok, stdout, stderr) = native_run(
         &[
-            ("lib.xulo", "export default fn greet(): string { \"hi\" }\n"),
+            ("lib.xulo", "pub fn greet(): string { \"hi\" }\n"),
             (
                 "main.xulo",
-                "import g from \"./lib\"\n\
-                 fn main() { print(g()) }\n",
+                "import { greet } from \"./lib\"\n\
+                 fn main() { print(greet()) }\n",
             ),
         ],
         "main.xulo",
@@ -2188,7 +2253,7 @@ fn native_run_imports_exported_enum_value() {
     ] {
         let (ok, stdout, stderr) = native_run(
             &[
-                ("lib.xulo", "export enum Theme { Dark Light }\n"),
+                ("lib.xulo", "pub enum Theme { Dark Light }\n"),
                 ("main.xulo", entry_src),
             ],
             "main.xulo",
@@ -2199,13 +2264,13 @@ fn native_run_imports_exported_enum_value() {
 }
 
 #[test]
-fn export_bare_enum_name_imports_on_both_paths() {
-    // `export { Color }` (the bare-names form) must make the enum importable
-    // on both runtimes, like `export enum Color` does.
+fn pub_bare_enum_name_imports_on_both_paths() {
+    // `pub use { Color }` (the bare-names form) must make the enum importable
+    // on both runtimes, like `pub enum Color` does.
     for native in [false, true] {
         let (dir, entry) = temp_dir(
             &[
-                ("lib.xulo", "enum Color { Red Blue }\nexport { Color }\n"),
+                ("lib.xulo", "enum Color { Red Blue }\npub use { Color }\n"),
                 (
                     "main.xulo",
                     "import { Color } from \"./lib\"\nfn main() { print(str(Color::Red)) print(Color.Blue) }\n",
@@ -2215,8 +2280,8 @@ fn export_bare_enum_name_imports_on_both_paths() {
         );
         let mut cmd = Command::new(BIN);
         cmd.arg("run");
-        if native {
-            cmd.arg("--native");
+        if !native {
+            cmd.arg("--js");
         }
         let out = cmd.arg(&entry).output().unwrap();
         assert!(
@@ -2240,7 +2305,7 @@ fn native_run_library_side_effects_run_before_entry() {
             (
                 "lib.xulo",
                 "print(\"lib-init\")\n\
-                 export fn tag(): string { \"lib\" }\n",
+                 pub fn tag(): string { \"lib\" }\n",
             ),
             (
                 "main.xulo",
@@ -2260,7 +2325,7 @@ fn native_run_semantic_rejects_missing_export() {
         &[
             (
                 "lib.xulo",
-                "export fn add(a: number, b: number): number { a + b }\n",
+                "pub fn add(a: number, b: number): number { a + b }\n",
             ),
             (
                 "main.xulo",
@@ -2278,23 +2343,19 @@ fn native_run_semantic_rejects_missing_export() {
 }
 
 #[test]
-fn native_run_rejects_missing_default() {
+fn native_run_rejects_removed_default_keyword() {
     let (ok, _stdout, stderr) = native_run(
-        &[
-            (
-                "lib.xulo",
-                "export fn add(a: number, b: number): number { a + b }\n",
-            ),
-            (
-                "main.xulo",
-                "import g from \"./lib\"\n\
-                 fn main() { print(g(1, 1)) }\n",
-            ),
-        ],
+        &[(
+            "main.xulo",
+            "default fn main() { print(1) }\n",
+        )],
         "main.xulo",
     );
     assert!(!ok);
-    assert!(stderr.contains("no default export"), "stderr: {stderr}");
+    assert!(
+        stderr.contains("the `default` keyword was removed"),
+        "stderr: {stderr}"
+    );
 }
 
 #[test]

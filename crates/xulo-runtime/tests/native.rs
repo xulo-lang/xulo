@@ -295,6 +295,25 @@ fn higher_order_function() {
 }
 
 #[test]
+fn closure_mutates_captured_outer_variable() {
+    // Regression: `call()` used to hold a live RefCell borrow on the env while
+    // invoking the callee, so a closure body writing `count = count + 1` to the
+    // same env panicked with "already borrowed".
+    let out = run_ok(
+        r#"
+        fn main() {
+            let count: number = 0
+            let bump = fn(): number { count = count + 1 }
+            let f = fn(x: number): number { bump(); bump(); x * 10 }
+            print(f(3))
+            print(count)
+        }
+        "#,
+    );
+    assert_eq!(out, vec!["30", "2"]);
+}
+
+#[test]
 fn named_arguments_are_reordered() {
     let out = run_ok(
         r#"
@@ -569,7 +588,7 @@ fn default_parameter_evaluates_in_callee_scope_across_modules() {
     let out = exec_module_pair(
         r#"
         let rate = 100
-        export fn make(x: number, y: number = rate): number { y }
+        pub fn make(x: number, y: number = rate): number { y }
         "#,
         r#"
         import { make } from "./lib"
@@ -896,7 +915,7 @@ fn type_annotation_is_erased_at_runtime() {
 }
 
 #[test]
-fn export_fn_declares_and_runs_main() {
+fn pub_fn_declares_and_runs_main() {
     let out = run_ok(
         r#"
         pub fn add(a: number, b: number): number { a + b }
@@ -1078,8 +1097,8 @@ fn sync_function_recursion_statement_if_propagates_return() {
 fn module_named_imports_bind_fn_and_const() {
     let out = exec_module_pair(
         r#"
-        export fn add(a: number, b: number): number { a + b }
-        export const PI = 3.14
+        pub fn add(a: number, b: number): number { a + b }
+        pub const PI = 3.14
         "#,
         r#"
         import { add, PI } from "lib"
@@ -1098,7 +1117,7 @@ fn module_named_imports_bind_fn_and_const() {
 fn module_import_alias() {
     let out = exec_module_pair(
         r#"
-        export fn add(a: number, b: number): number { a + b }
+        pub fn add(a: number, b: number): number { a + b }
         "#,
         r#"
         import { add as plus } from "lib"
@@ -1119,8 +1138,8 @@ fn module_import_alias() {
 fn module_namespace_import_exposes_named_fields() {
     let out = exec_module_pair(
         r#"
-        export const HOURS_IN_DAY = 24
-        export fn hours(): number { HOURS_IN_DAY }
+        pub const HOURS_IN_DAY = 24
+        pub fn hours(): number { HOURS_IN_DAY }
         "#,
         r#"
         import * as cal from "lib"
@@ -1146,27 +1165,11 @@ fn module_namespace_import_exposes_named_fields() {
 }
 
 #[test]
-fn module_default_export_importable() {
-    let out = exec_module_pair(
-        r#"
-        export default fn greet(): string { "hi" }
-        "#,
-        r#"
-        import g from "lib"
-        fn main() { print(g()) }
-        "#,
-        |exports| vec![("g".to_string(), exports.default.clone().unwrap())],
-    )
-    .unwrap();
-    assert_eq!(out, vec!["hi"]);
-}
-
-#[test]
 fn module_library_side_effects_run_before_entry() {
     let out = exec_module_pair(
         r#"
         print("lib-init")
-        export fn tag(): string { "lib" }
+        pub fn tag(): string { "lib" }
         "#,
         r#"
         import { tag } from "lib"
@@ -1176,24 +1179,6 @@ fn module_library_side_effects_run_before_entry() {
     )
     .unwrap();
     assert_eq!(out, vec!["lib-init", "lib"]);
-}
-
-#[test]
-fn exec_module_default_export_of_plain_main_fn_is_importable() {
-    // A library whose (non-`main`) default is a plain function still exposes it
-    // as the module default.
-    let out = exec_module_pair(
-        r#"
-        export default fn answer(): number { 42 }
-        "#,
-        r#"
-        import a from "lib"
-        fn main() { print(a()) }
-        "#,
-        |exports| vec![("a".to_string(), exports.default.clone().unwrap())],
-    )
-    .unwrap();
-    assert_eq!(out, vec!["42"]);
 }
 
 #[test]

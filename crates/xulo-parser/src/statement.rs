@@ -49,8 +49,27 @@ pub fn statement(input: &mut In<'_>) -> Pr<Statement> {
         Some(Token::Try) => try_stmt(input).map(Statement::Try),
         Some(Token::Throw) => throw_stmt(input).map(Statement::Throw),
         Some(Token::Import) => import_stmt(input).map(Statement::Import),
-        Some(Token::Export) => export_stmt(input).map(Statement::Export),
         Some(Token::Pub) => pub_stmt(input),
+        Some(Token::Reserved) if is_removed_export(input.first()) => {
+            let original = *input;
+            *input = &input[1..];
+            let span = consumed_span(original, input, 0);
+            Err(ErrMode::Cut(PErr {
+                span,
+                message: "the `export` keyword was removed: use `pub fn`/`pub let`/`pub const`/`pub type`/`pub enum`/`pub trait`, or `pub use { a, b }` to re-export names"
+                    .into(),
+            }))
+        }
+        Some(Token::Reserved) if is_removed_default(input.first()) => {
+            let original = *input;
+            *input = &input[1..];
+            let span = consumed_span(original, input, 0);
+            Err(ErrMode::Cut(PErr {
+                span,
+                message: "the `default` keyword was removed: Xulo has no default exports — export with `pub <decl>` / `pub use { a, b }` and import by name"
+                    .into(),
+            }))
+        }
         Some(Token::At) => decorator_stmt(input),
         Some(Token::Ident) if is_component(input) => {
             component_stmt(input).map(Statement::Component)
@@ -181,6 +200,18 @@ fn param(input: &mut In<'_>, allow_self: bool) -> Pr<Param> {
 /// word; it is only accepted as a parameter name inside `impl` bodies.
 fn is_self_tk(tok: Option<&LexedToken>) -> bool {
     matches!(tok, Some(t) if t.kind == Token::Reserved && t.text == "self")
+}
+
+/// The removed `export` keyword, now a reserved word. A statement starting with
+/// it gets a targeted error pointing at the `pub`-based replacements.
+fn is_removed_export(tok: Option<&LexedToken>) -> bool {
+    matches!(tok, Some(t) if t.kind == Token::Reserved && t.text == "export")
+}
+
+/// The removed `default` keyword, now a reserved word (Xulo has no default
+/// exports). A statement starting with it gets a targeted error.
+fn is_removed_default(tok: Option<&LexedToken>) -> bool {
+    matches!(tok, Some(t) if t.kind == Token::Reserved && t.text == "default")
 }
 
 fn let_binding(input: &mut In<'_>, is_const: bool) -> Pr<LetBinding> {
@@ -581,12 +612,9 @@ fn import_stmt(input: &mut In<'_>) -> Pr<ImportStmt> {
         ImportSpec::Namespace(ns)
     } else {
         let name = ident_name(input)?;
-        if opt_tk(input, Token::As) {
-            let alias = ident_name(input)?;
-            ImportSpec::Named(vec![(name, Some(alias))])
-        } else {
-            ImportSpec::Default(name)
-        }
+        tk(input, Token::As)?;
+        let alias = ident_name(input)?;
+        ImportSpec::Named(vec![(name, Some(alias))])
     };
     tk(input, Token::From)?;
     let t = verified_tk(input, Token::String)?;
@@ -597,11 +625,16 @@ fn import_stmt(input: &mut In<'_>) -> Pr<ImportStmt> {
     })
 }
 
-fn export_stmt(input: &mut In<'_>) -> Pr<ExportStmt> {
-    tk(input, Token::Export)?;
+/// `pub fn/let/const/type/enum/trait` — public-visibility modifier that lowers
+/// to the `Statement::Export` mechanism, so the declaration is visible to other
+/// modules. Also `pub use { a, b }` (re-export already-declared names).
+fn pub_stmt(input: &mut In<'_>) -> Pr<Statement> {
+    tk(input, Token::Pub)?;
     use xulo_core::ast::ExportItem;
-    let item = if opt_tk(input, Token::LBrace) {
+    let item = if matches!(input.first().map(|t| t.kind), Some(Token::Use)) {
+        tk(input, Token::Use)?;
         let mut names = Vec::new();
+        tk(input, Token::LBrace)?;
         if !matches!(input.first().map(|t| t.kind), Some(Token::RBrace)) {
             loop {
                 names.push(ident_name(input)?);
@@ -612,12 +645,10 @@ fn export_stmt(input: &mut In<'_>) -> Pr<ExportStmt> {
         }
         tk(input, Token::RBrace)?;
         ExportItem::Names(names)
-    } else if opt_tk(input, Token::Default) {
-        ExportItem::Default(Box::new(export_decl(input)?))
     } else {
         export_decl(input)?
     };
-    Ok(ExportStmt { item })
+    Ok(Statement::Export(ExportStmt { item }))
 }
 
 fn export_decl(input: &mut In<'_>) -> Pr<ExportItem> {
@@ -631,24 +662,6 @@ fn export_decl(input: &mut In<'_>) -> Pr<ExportItem> {
         Some(Token::Trait) => trait_def(input).map(ExportItem::Trait),
         _ => Err(ErrMode::Cut(PErr::unexpected(input))),
     }
-}
-
-/// `pub fn/let/const/type/enum` — public-visibility modifier that lowers to
-/// the same `Statement::Export` mechanism as `export`, so the declaration is
-/// visible to other modules. `pub` cannot combine with `export`.
-fn pub_stmt(input: &mut In<'_>) -> Pr<Statement> {
-    let original = *input;
-    tk(input, Token::Pub)?;
-    if matches!(input.first().map(|t| t.kind), Some(Token::Export)) {
-        let span = consumed_span(original, input, 0);
-        return Err(ErrMode::Cut(PErr {
-            span,
-            message: "`pub` and `export` cannot be combined: use either `pub fn` or `export fn`"
-                .into(),
-        }));
-    }
-    let item = export_decl(input)?;
-    Ok(Statement::Export(xulo_core::ast::ExportStmt { item }))
 }
 
 /// `@State` / `@Store` / `@Effect` / `@Environment` declarations.

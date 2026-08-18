@@ -4,7 +4,7 @@
    0. Document Root
    ============================================================ *)
 
-document            = { import_stmt | export_stmt | type_def | enum_def | fn_def | const_stmt | let_stmt } ;
+document            = { import_stmt | pub_stmt | type_def | enum_def | fn_def | const_stmt | let_stmt } ;
 module              = document ;
 
 (* ============================================================
@@ -257,7 +257,7 @@ component_call      = identifier [ type_args ] [ "(" [ arg_list ] ")" ] ;
 
 
 (* ============================================================
-   14. Import / Export (Module System)
+   14. Import / Module Exports (`pub`)
    ============================================================ *)
 
 import_stmt         = "import" [ "type" ] import_spec [ "from" string_literal ]  (* "import type" is erased at runtime *)
@@ -267,24 +267,22 @@ import_stmt         = "import" [ "type" ] import_spec [ "from" string_literal ] 
 (* NOTE: the form `import type * as identifier` (without `from`) is a draft
    artifact and is not supported by the current implementation. *)
 
-import_spec         = identifier
-                    | "*" "as" identifier
+import_spec         = "*" "as" identifier
                     | "{" import_name_list "}"
                     | identifier "as" identifier ;
 
 import_name_list    = import_name { "," import_name } [ "," ] ;
 import_name         = identifier [ "as" identifier ] ;
 
-export_stmt         = "export" export_spec ;
+pub_stmt            = "pub" pub_spec ;
 
-export_spec         = ( "const" | "let" | "fn" | "type" | "enum" ) identifier
-                    | "default" ( "const" | "let" | "fn" ) identifier
-                    | "{" export_name_list "}" ;
+pub_spec            = ( "const" | "let" | "fn" | "type" | "enum" | "trait" ) declaration
+                    | "use" "{" pub_name_list "}" ;
 
-export_name_list    = identifier { "," identifier } [ "," ] ;
+pub_name_list       = identifier { "," identifier } [ "," ] ;
 
 (* ============================================================
    15. Full Source File
    ============================================================ *)
 
-source_file         = { ( import_stmt | export_stmt | type_def | enum_def | fn_def | const_stmt | let_stmt ) } ;
+source_file         = { ( import_stmt | pub_stmt | type_def | enum_def | fn_def | const_stmt | let_stmt ) } ;

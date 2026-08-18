@@ -383,26 +383,24 @@ let copy = { ...base, b: 2 }   // 展开合并
 ## 8. 模块系统（TypeScript 风格）
 
 ```
-// 导出
-export fn add(a: number, b: number): number {
+// 导出（pub 声明）
+pub fn add(a: number, b: number): number {
   a + b
 }
 
-export const PI = 3.14
+pub const PI = 3.14
 
-export type User = {
+pub type User = {
   name: string
 }
 
-export enum Status {
+pub enum Status {
   Active
   Inactive
 }
 
-// 默认导出
-export default fn main() {
-  print("Hello")
-}
+// 名称再导出（pub use）
+pub use { add, PI }
 
 // 导入
 import { add, PI } from "math"
@@ -414,7 +412,7 @@ import "core"
 **导入解析规则（打包器）：**
 - 相对路径或本地存在的模块名（如 `./math`、`math`）→ 解析为本地 `.xulo` 文件，参与打包。
 - 其余说明符（如 `@xulo/ui`）→ 视为外部包，原样生成 ESM `import`。
-- `import type` 只供类型检查；运行时仅当导入名同时是运行时值（如 `enum`）时保留其值绑定，以便 `Kind::Admin` 可用，否则完全擦除；`export enum` 同时导出运行时值与类型。
+- `import type` 只供类型检查；运行时仅当导入名同时是运行时值（如 `enum`）时保留其值绑定，以便 `Kind::Admin` 可用，否则完全擦除；`pub enum` 同时导出运行时值与类型。
 - **无运行时模块加载器**：每个文件编译为一个返回导出对象的 IIFE，依赖按拓扑序内联进同一个 JS 文件；入口文件加载时执行其 `main()`。
 - 循环导入（A → B → A）会被拒绝。
 
@@ -461,7 +459,7 @@ fn setTheme(state: AppState, theme: Theme): AppState {
 }
 
 // 注意：当前实现暂不支持显式泛型调用（`createStore<AppState>`），故省略类型实参。
-export const useAppStore = createStore(
+pub const useAppStore = createStore(
   {
     user: null,
     theme: Theme::Light,
@@ -564,7 +562,7 @@ fn helperFunction() {
 
 ```
 // ✅ 正确：直接调用 useAppStore()
-export fn fetchUser(id: string): async {
+pub fn fetchUser(id: string): async {
   const store = useAppStore()
   store.actions.setLoading(true)
   let data = await fetch("/api/users/" + id).json()
@@ -572,7 +570,7 @@ export fn fetchUser(id: string): async {
 }
 
 // ❌ 错误：使用 @Store 装饰器
-export fn fetchUser(id: string): async {
+pub fn fetchUser(id: string): async {
   @Store const { setUser } = useAppStore()  // ❌ 禁止
 }
 ```
@@ -1010,27 +1008,27 @@ project/
 
 ```
 // 枚举
-export enum Theme {
+pub enum Theme {
   Light
   Dark
   System
 }
 
-export enum Status {
+pub enum Status {
   Active
   Inactive
   Pending
 }
 
 // 类型别名
-export type User = {
+pub type User = {
   id: string
   name: string
   email: string
   status: Status
 }
 
-export type Result<T> = {
+pub type Result<T> = {
   data: T?
   error: string?
 }
@@ -1072,7 +1070,7 @@ fn addNotification(state: AppState, message: string): AppState {
 }
 
 // 注意：当前实现暂不支持显式泛型调用（`createStore<AppState>`），故省略类型实参。
-export const useAppStore = createStore(
+pub const useAppStore = createStore(
   {
     user: null,
     theme: Theme::Light,
@@ -1090,7 +1088,7 @@ export const useAppStore = createStore(
 )
 
 // ✅ 异步函数直接调用 useAppStore()，不使用 @Store
-export fn fetchUser(id: string): async {
+pub fn fetchUser(id: string): async {
   const store = useAppStore()
   
   store.actions.setLoading(true)
@@ -1110,14 +1108,14 @@ export fn fetchUser(id: string): async {
 ```
 import type { Theme } from "../types"
 
-export enum ButtonVariant {
+pub enum ButtonVariant {
   Primary
   Secondary
   Outline
   Ghost
 }
 
-export fn PrimaryButton(
+pub fn PrimaryButton(
   label: string,
   onClick: fn()? = null,
   disabled: boolean? = false
@@ -1132,7 +1130,7 @@ export fn PrimaryButton(
   }
 }
 
-export fn OutlineButton(
+pub fn OutlineButton(
   label: string,
   onClick: fn()? = null
 ): Component {
@@ -1153,7 +1151,7 @@ type Props = {
   id: string
 }
 
-export fn UserProfile(props: Props): Component {
+pub fn UserProfile(props: Props): Component {
   // ✅ @State/@Store/@Effect 只能在 Component 函数顶层使用
   @State let editing: boolean = false
   @State let editName: string = ""
@@ -1276,7 +1274,7 @@ fn main(): Component {
 | 交叉类型 `T & U` | TypeScript |
 | 枚举 `enum` | Swift / Rust |
 | 枚举关联数据 | Swift / Rust |
-| 模块 `import`/`export` | TypeScript |
+| 模块 `import`/`pub` | TypeScript |
 | if 表达式 | Rust / Swift |
 | match | Rust |
 | `@State` | SwiftUI |

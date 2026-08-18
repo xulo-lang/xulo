@@ -47,7 +47,7 @@ fn main(): async {
 
 ```xulo
 // ✅ 正确：直接调用 useAppStore()
-export fn fetchUser(id: string): async {
+pub fn fetchUser(id: string): async {
   const store = useAppStore()
   store.actions.setLoading(true)
   let data = await fetch("/api/users/" + id).json()
@@ -55,7 +55,7 @@ export fn fetchUser(id: string): async {
 }
 
 // ❌ 错误：在异步函数里使用 @Store 装饰器
-export fn fetchUser(id: string): async {
+pub fn fetchUser(id: string): async {
   @Store const { setUser } = useAppStore()  // ❌ 禁止
 }
 ```

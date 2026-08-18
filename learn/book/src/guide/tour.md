@@ -89,8 +89,8 @@ fn fetchUser(id: string): async {
 
 ```xulo
 // math.xulo
-export fn add(a: number, b: number): number { a + b }
-export const PI = 3.14
+pub fn add(a: number, b: number): number { a + b }
+pub const PI = 3.14
 
 // main.xulo
 import { add, PI } from "./math"

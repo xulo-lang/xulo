@@ -18,7 +18,7 @@
 | **隐式返回** | 函数体末尾无分号表达式作为返回值 | [函数](reference/functions.md) |
 | **命名参数** | 按参数名传参（可乱序） | [函数](reference/functions.md) |
 | **解构** | `{ a, b } = expr` 取对象字段绑定 | [变量与状态](reference/variables-and-state.md) |
-| **模块** | 一个 `.xulo` 文件，可 import/export | [模块系统](reference/modules.md) |
+| **模块** | 一个 `.xulo` 文件，可 `import`/导出（`pub`） | [模块系统](reference/modules.md) |
 | **IIFE** | 立即执行函数表达式；每个模块编译为返回导出对象的 IIFE | [编译器实现要点](appendix/implementation.md) |
 | **响应式（Reactive）** | 状态变化自动触发依赖更新 | [应用结构](reference/application.md) |
 | **信号（Signal）** | 响应式单元：`{ get, set }` | [应用结构](reference/application.md) |

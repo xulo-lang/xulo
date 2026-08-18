@@ -21,27 +21,27 @@ project/
 
 ```xulo
 // 枚举
-export enum Theme {
+pub enum Theme {
   Light
   Dark
   System
 }
 
-export enum Status {
+pub enum Status {
   Active
   Inactive
   Pending
 }
 
 // 类型别名
-export type User = {
+pub type User = {
   id: string
   name: string
   email: string
   status: Status
 }
 
-export type Result<T> = {
+pub type Result<T> = {
   data: T?
   error: string?
 }
@@ -83,7 +83,7 @@ fn addNotification(state: AppState, message: string): AppState {
 }
 
 // 注意：当前实现暂不支持显式泛型调用（`createStore<AppState>`），故省略类型实参。
-export const useAppStore = createStore(
+pub const useAppStore = createStore(
   {
     user: null,
     theme: Theme::Light,
@@ -101,7 +101,7 @@ export const useAppStore = createStore(
 )
 
 // ✅ 异步函数直接调用 useAppStore()，不使用 @Store
-export fn fetchUser(id: string): async {
+pub fn fetchUser(id: string): async {
   const store = useAppStore()
 
   store.actions.setLoading(true)
@@ -121,14 +121,14 @@ export fn fetchUser(id: string): async {
 ```xulo
 import type { Theme } from "../types"
 
-export enum ButtonVariant {
+pub enum ButtonVariant {
   Primary
   Secondary
   Outline
   Ghost
 }
 
-export fn PrimaryButton(
+pub fn PrimaryButton(
   label: string,
   onClick: fn()? = null,
   disabled: boolean? = false
@@ -143,7 +143,7 @@ export fn PrimaryButton(
   }
 }
 
-export fn OutlineButton(
+pub fn OutlineButton(
   label: string,
   onClick: fn()? = null
 ): Component {
@@ -164,7 +164,7 @@ type Props = {
   id: string
 }
 
-export fn UserProfile(props: Props): Component {
+pub fn UserProfile(props: Props): Component {
   // ✅ @State/@Store/@Effect 只能在 Component 函数顶层使用
   @State let editing: boolean = false
   @State let editName: string = ""

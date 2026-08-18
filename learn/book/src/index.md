@@ -38,7 +38,7 @@
 | `type` / `enum` | [数据与类型](reference/types.md) |
 | `async` / `await` | [异步](reference/async.md) |
 | `try` / `catch` / `throw` | [控制流](reference/control-flow.md) |
-| `import` / `export` | [模块系统](reference/modules.md) |
+| `import` / `pub` | [模块系统](reference/modules.md) |
 | `@State` | [变量与状态](reference/variables-and-state.md) |
 | `@Store` | [变量与状态](reference/variables-and-state.md) |
 | `@Effect` | [变量与状态](reference/variables-and-state.md) |

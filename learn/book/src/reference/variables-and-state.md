@@ -57,7 +57,7 @@ fn setTheme(state: AppState, theme: Theme): AppState {
 }
 
 // 注意：当前实现暂不支持显式泛型调用（`createStore<AppState>`），故省略类型实参。
-export const useAppStore = createStore(
+pub const useAppStore = createStore(
   {
     user: null,
     theme: Theme::Light,

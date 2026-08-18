@@ -1870,13 +1870,13 @@ fn store_binding_keeps_inferred_type() {
 
 #[test]
 fn enum_name_can_be_reexported() {
-    // `export { Color }` re-exports an enum (which has runtime value); a type
+    // `pub use { Color }` re-exports an enum (which has runtime value); a type
     // alias cannot be re-exported by bare name and gets an honest message.
     assert!(
-        analyze_src("enum Color { Red Blue }\nexport { Color }\nfn main() { print(1) }").is_ok()
+        analyze_src("enum Color { Red Blue }\npub use { Color }\nfn main() { print(1) }").is_ok()
     );
     let err =
-        analyze_src("type Rect = object\nexport { Rect }\nfn main() { print(1) }").unwrap_err();
+        analyze_src("type Rect = object\npub use { Rect }\nfn main() { print(1) }").unwrap_err();
     assert!(
         err.message.contains("no runtime value"),
         "got: {}",
@@ -2184,7 +2184,7 @@ fn impl_for_unknown_type_is_rejected() {
 fn exported_trait_is_registered() {
     use xulo_semantic::analyze_with;
     let src = r#"
-        export trait Area {
+        pub trait Area {
             fn area(self): number
         }
         pub fn main() { print(1) }

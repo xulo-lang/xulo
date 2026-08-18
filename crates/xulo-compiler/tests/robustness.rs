@@ -321,12 +321,12 @@ fn cross_module_trait_dispatch_bundle_emits_shared_registry() {
     std::fs::write(
         dir.join("shapes.xulo"),
         r#"
-        export trait Shape { fn area(self): number }
-        export type Rect = object
+        pub trait Shape { fn area(self): number }
+        pub type Rect = object
         impl Shape for Rect {
             fn area(self): number { return self.w * self.h }
         }
-        export fn rect(w: number, h: number): Rect {
+        pub fn rect(w: number, h: number): Rect {
             let r = { w: w, h: h }
             r
         }

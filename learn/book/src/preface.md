@@ -33,7 +33,7 @@ Xulo 是一门 UI First 编程语言，语法吸收 Rust、Swift、TypeScript �
 | 泛型 `<T>` | TypeScript / Rust |
 | 联合类型 `T \| U` / 交叉类型 `T & U` | TypeScript |
 | 枚举 `enum`（含关联数据） | Swift / Rust |
-| 模块 `import`/`export` | TypeScript |
+| 模块 `import`/`pub` | TypeScript |
 | `if` 表达式、`match` | Rust / Swift |
 | `@State` / `@Effect` | SwiftUI |
 | `@Store` | 新设计（Zustand 风格） |

@@ -9,7 +9,7 @@
    0. Document Root
    ============================================================ *)
 
-document            = { import_stmt | export_stmt | pub_stmt | type_def | enum_def | fn_def | const_stmt | let_stmt } ;
+document            = { import_stmt | pub_stmt | type_def | enum_def | fn_def | const_stmt | let_stmt } ;
 module              = document ;
 
 (* ============================================================
@@ -255,31 +255,25 @@ import_stmt         = "import" [ "type" ] import_spec [ "from" string_literal ] 
                     | "import" [ "type" ] string_literal
                     ;
 
-import_spec         = identifier
-                    | "*" "as" identifier
+import_spec         = "*" "as" identifier
                     | "{" import_name_list "}"
                     | identifier "as" identifier ;
 
 import_name_list    = import_name { "," import_name } [ "," ] ;
 import_name         = identifier [ "as" identifier ] ;
 
-export_stmt         = "export" export_spec ;
+pub_stmt            = "pub" pub_spec ;
 
-export_spec         = ( "const" | "let" | "fn" | "type" | "enum" ) identifier
-                    | "default" ( "const" | "let" | "fn" ) identifier
-                    | "{" export_name_list "}" ;
+pub_spec            = ( "const" | "let" | "fn" | "type" | "enum" | "trait" ) declaration
+                    | "use" "{" pub_name_list "}" ;
 
-(* `pub` ≡ `export` for declarations (public visibility); cannot combine *)
-pub_stmt            = "pub" ( "const" | "let" | "fn" | "type" | "enum" ) identifier
-                      /* declaration body as the matching *_def */ ;
-
-export_name_list    = identifier { "," identifier } [ "," ] ;
+pub_name_list       = identifier { "," identifier } [ "," ] ;
 
 (* ============================================================
    15. Full Source File
    ============================================================ *)
 
-source_file         = { ( import_stmt | export_stmt | type_def | enum_def | fn_def | const_stmt | let_stmt ) } ;
+source_file         = { ( import_stmt | pub_stmt | type_def | enum_def | fn_def | const_stmt | let_stmt ) } ;
 ```
 
 ## 与规范源的差异

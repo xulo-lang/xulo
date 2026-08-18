@@ -28,6 +28,12 @@ fn keeps_import_spec_inline() {
 }
 
 #[test]
+fn keeps_pub_use_list_inline() {
+    let out = fmt("pub use {add,PI}\nfn main(){print(1)}");
+    assert!(out.contains("pub use { add, PI }"));
+}
+
+#[test]
 fn keeps_destructure_inline() {
     let out = fmt("fn main(){ @Store const {user,theme} = store() }");
     assert!(out.contains("@Store const { user, theme } = store()"));

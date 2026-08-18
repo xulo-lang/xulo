@@ -52,7 +52,6 @@ enum Tail<'a> {
 /// The runtime exports a module's `export` statements produce.
 pub struct ModuleExports {
     pub bindings: Vec<(String, Value)>,
-    pub default: Option<Value>,
 }
 
 /// The control message passed into an async coroutine. The first resume is
@@ -91,6 +90,10 @@ pub struct Interpreter {
     current_task: Cell<Option<usize>>,
     /// Each task's yielder pointer, stashed by the coroutine on first entry.
     task_yielder: RefCell<Vec<Option<*const Yielder<Control, ()>>>>,
+    /// Reusable task slots whose coroutine has completed. `spawn_async` pops
+    /// here before growing `tasks`, keeping the vector bounded for programs
+    /// that spawn many short-lived async calls.
+    task_free: RefCell<Vec<usize>>,
     /// Active call depth (see [`MAX_CALL_DEPTH`]).
     call_depth: Cell<usize>,
 }
@@ -140,6 +143,7 @@ impl Interpreter {
             ready: RefCell::new(VecDeque::new()),
             current_task: Cell::new(None),
             task_yielder: RefCell::new(Vec::new()),
+            task_free: RefCell::new(Vec::new()),
             call_depth: Cell::new(0),
         }
     }
@@ -257,13 +261,12 @@ impl Interpreter {
             self.drive();
         }
         let mut bindings = Vec::new();
-        let mut default = None;
         for statement in &program.statements {
             if let Statement::Export(export) = statement {
-                collect_exports(&export.item, &global, &mut bindings, &mut default);
+                collect_exports(&export.item, &global, &mut bindings);
             }
         }
-        Ok(ModuleExports { bindings, default })
+        Ok(ModuleExports { bindings })
     }
 
     /// Take the collected `print` lines so far (e.g. across executed modules).
@@ -281,11 +284,18 @@ impl Interpreter {
         self.global.clone()
     }
 
+    /// Current length of the internal task-slot vector (live + completed slots).
+    ///
+    /// Hidden from public API docs; used by memory tests to assert that
+    /// completed task slots are recycled rather than grown unboundedly.
+    #[doc(hidden)]
+    pub fn debug_task_slot_count(&self) -> usize {
+        self.tasks.borrow().len()
+    }
+
     fn register_export_fns(&self, item: &xulo_core::ast::ExportItem, env: &Rc<RefCell<Env>>) {
-        match item {
-            xulo_core::ast::ExportItem::Fn(f) => self.register_fn(f, env),
-            xulo_core::ast::ExportItem::Default(inner) => self.register_export_fns(inner, env),
-            _ => {}
+        if let xulo_core::ast::ExportItem::Fn(f) = item {
+            self.register_fn(f, env);
         }
     }
 
@@ -324,12 +334,25 @@ impl Interpreter {
         );
         let id = {
             let mut tasks = self.tasks.borrow_mut();
-            tasks.push(Some(Task {
-                coro,
-                promise: promise_for_task,
-            }));
-            self.task_yielder.borrow_mut().push(None);
-            tasks.len() - 1
+            let mut free = self.task_free.borrow_mut();
+            let mut yielder_slots = self.task_yielder.borrow_mut();
+            if let Some(id) = free.pop() {
+                // Reuse a slot left by a completed task. Its yielder pointer is
+                // stale (the coroutine stack is gone), so reset it to `None`.
+                yielder_slots[id] = None;
+                tasks[id] = Some(Task {
+                    coro,
+                    promise: promise_for_task,
+                });
+                id
+            } else {
+                tasks.push(Some(Task {
+                    coro,
+                    promise: promise_for_task,
+                }));
+                yielder_slots.push(None);
+                tasks.len() - 1
+            }
         };
         self.resume_task(id, Control::Start);
         Value::Promise(promise)
@@ -342,6 +365,14 @@ impl Interpreter {
     fn resume_task(&self, id: usize, control: Control) {
         let prev = self.current_task.replace(Some(id));
         let prev_interp = CURRENT_INTERP.with(|c| c.replace(Some(self as *const Interpreter)));
+        // SAFETY invariant: a coroutine only ever runs inside this method, so
+        // while it is executing the interpreter is necessarily alive. Dropping
+        // an `Interpreter` drops every task it owns; nothing resumes them
+        // afterward. The raw pointer captured by `spawn_async` cannot dangle.
+        debug_assert_eq!(
+            CURRENT_INTERP.with(|c| c.get()),
+            Some(self as *const Interpreter)
+        );
         let mut task = self.tasks.borrow_mut()[id].take().expect("resumable task");
         let result = task.coro.resume(control);
         CURRENT_INTERP.with(|c| c.set(prev_interp));
@@ -363,7 +394,37 @@ impl Interpreter {
                         .borrow_mut()
                         .push_back((awaiter, Control::Resume(ret.clone())));
                 }
+                // Free the slot for reuse. A returned task is never enqueued in
+                // `ready` again (only suspended tasks are), so handing the id
+                // to the next `spawn_async` is safe.
+                self.task_free.borrow_mut().push(id);
+                // Only trim on the *outermost* resume. A nested resume (a task
+                // spawned while another coroutine runs) finds every running
+                // coroutine's slot "taken" (`None`), so trimming there would
+                // truncate live slots. Reuse (`task_free`) keeps the vector
+                // bounded meanwhile.
+                if prev.is_none() {
+                    self.trim_completed_slots();
+                }
             }
+        }
+    }
+
+    /// Shrink `tasks`/`task_yielder` once every trailing slot is a completed
+    /// one, and drop free-list ids that are now out of bounds.
+    fn trim_completed_slots(&self) {
+        let mut tasks = self.tasks.borrow_mut();
+        if tasks.last().is_some_and(Option::is_none) {
+            let mut len = tasks.len();
+            while len > 0 && tasks[len - 1].is_none() {
+                len -= 1;
+            }
+            tasks.truncate(len);
+            drop(tasks);
+            self.task_yielder.borrow_mut().truncate(len);
+            self.task_free
+                .borrow_mut()
+                .retain(|&id| id < len);
         }
     }
 
@@ -454,8 +515,8 @@ impl Interpreter {
             Statement::Assign(assign) => self.exec_assign(assign, env),
             Statement::TypeAlias(_) => Ok(Flow::Continue),
             Statement::Enum(e) => {
-                // Register the enum's runtime value so `export { Color }` and
-                // `export enum` both resolve it for importers (construction
+                // Register the enum's runtime value so `pub use { Color }` and
+                // `pub enum` both resolve it for importers (construction
                 // `Color::Red` is name-based and unaffected).
                 env.borrow_mut().define(&e.name, enum_value(e));
                 Ok(Flow::Continue)
@@ -527,7 +588,6 @@ impl Interpreter {
             | xulo_core::ast::ExportItem::Type(_)
             | xulo_core::ast::ExportItem::Trait(_)
             | xulo_core::ast::ExportItem::Names(_) => Ok(Flow::Continue),
-            xulo_core::ast::ExportItem::Default(inner) => self.exec_export(inner, env),
         }
     }
 
@@ -1218,7 +1278,8 @@ impl Interpreter {
         if let Some(object) = &call.object {
             return self.method_call(call, object, env);
         }
-        match env.borrow().get(&call.callee) {
+        let callee = env.borrow().get(&call.callee);
+        match callee {
             Some(callee) => self.call_value(&callee, &call.arguments, env),
             None => Err(RunError::err(
                 format!("undefined function `{}`", call.callee),
@@ -1303,7 +1364,7 @@ impl Interpreter {
                 // codegen emits argument *values* in source order and drops any
                 // labels (`print(msg: "hi")` compiles to `console.log("hi")`),
                 // so the native runtime must ignore names too — erroring here
-                // made valid checked programs fail only under `--native`.
+                // made valid checked programs fail only on the native path.
                 let values = self.eval_args(args, call_env)?;
                 native(self, &values)
             }
@@ -1578,17 +1639,12 @@ fn bind_enum_payload(
     Ok(())
 }
 
-/// Find the program's `main`, including `export fn main` and
-/// `export default fn main`.
+/// Find the program's `main`, including `pub fn main`.
 fn main_fn(program: &Program) -> Option<&FnDef> {
     program.statements.iter().find_map(|s| match s {
         Statement::Fn(f) if f.name == "main" => Some(f),
         Statement::Export(export) => match &export.item {
             xulo_core::ast::ExportItem::Fn(f) if f.name == "main" => Some(f),
-            xulo_core::ast::ExportItem::Default(inner) => match inner.as_ref() {
-                xulo_core::ast::ExportItem::Fn(f) if f.name == "main" => Some(f),
-                _ => None,
-            },
             _ => None,
         },
         _ => None,
@@ -1599,24 +1655,12 @@ fn is_component_return(ret: &Option<Type>) -> bool {
     matches!(ret, Some(Type::Named(n)) if n == "Component")
 }
 
-/// The runtime value behind an export item (functions and variables; types and
-/// enums carry no runtime binding, and bare name lists re-export the first one).
-fn export_value(item: &xulo_core::ast::ExportItem, env: &Rc<RefCell<Env>>) -> Option<Value> {
-    match item {
-        xulo_core::ast::ExportItem::Fn(f) => env.borrow().get(&f.name),
-        xulo_core::ast::ExportItem::Let(b) => env.borrow().get(&b.name),
-        xulo_core::ast::ExportItem::Names(names) => names.first().and_then(|n| env.borrow().get(n)),
-        _ => None,
-    }
-}
-
-/// Gather a module's exports: named bindings plus an optional default, from the
-/// bindings already defined by running its statements.
+/// Gather a module's exports: named bindings, from the bindings already
+/// defined by running its statements.
 fn collect_exports(
     item: &xulo_core::ast::ExportItem,
     env: &Rc<RefCell<Env>>,
     bindings: &mut Vec<(String, Value)>,
-    default: &mut Option<Value>,
 ) {
     match item {
         xulo_core::ast::ExportItem::Fn(f) => {
@@ -1639,9 +1683,6 @@ fn collect_exports(
         xulo_core::ast::ExportItem::Type(_) | xulo_core::ast::ExportItem::Trait(_) => {}
         xulo_core::ast::ExportItem::Enum(e) => {
             bindings.push((e.name.clone(), enum_value(e)));
-        }
-        xulo_core::ast::ExportItem::Default(inner) => {
-            *default = export_value(inner, env);
         }
     }
 }

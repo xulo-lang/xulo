@@ -163,4 +163,4 @@ fn describe<T: Area>(t: T): number {
 - 派发接收者必须是**静态具名类型**：`Trait::method(recv)` 的 `recv` 需要在调用点能解析出具体的具名类型，且该类型已注册 `impl`，否则报「does not implement trait」。
 - `impl` 方法必须实现 trait 声明的全部方法，且签名（含 `self`）与声明的参数/返回类型双向可赋值。
 - 泛型参数的值在运行时被擦除，因此 `T: Trait` 约束下无法做派发调用——只有具名类型的实例可以。
-- `trait` 是可导出的模块成员（`export trait` / `pub trait`），可被其他模块 `import type` 引入后再本地实现。
+- `trait` 是可导出的模块成员（`pub trait`），可被其他模块 `import type` 引入后再本地实现。

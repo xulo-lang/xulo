@@ -286,7 +286,7 @@ fn try_catch_throw_emit_native_js() {
 
 #[test]
 fn export_decl_emits_underlying_decl() {
-    let js = generate_js("export fn add(a: number): number { return a }\nfn main() {}");
+    let js = generate_js("pub fn add(a: number): number { return a }\nfn main() {}");
     assert!(js.contains("function add(a)"));
 }
 
@@ -543,22 +543,15 @@ fn signal_used_inside_plain_fn_body() {
 }
 
 #[test]
-fn export_main_is_invoked() {
-    let js = generate_js("export fn main() { print(1) }");
+fn pub_main_is_invoked() {
+    let js = generate_js("pub fn main() { print(1) }");
     assert!(js.contains("function main()"));
     assert!(js.contains("main();"));
 }
 
 #[test]
-fn export_default_main_is_invoked() {
-    let js = generate_js("export default fn main() { print(1) }");
-    assert!(js.contains("function main()"));
-    assert!(js.contains("main();"));
-}
-
-#[test]
-fn export_default_component_main_emits_mount_hook() {
-    let js = generate_js("export default fn main(): Component { }");
+fn pub_component_main_emits_mount_hook() {
+    let js = generate_js("pub fn main(): Component { }");
     assert!(js.contains("const __xulo_main = main();"));
     assert!(js.contains("__xulo_mount"));
 }
@@ -692,10 +685,10 @@ fn user_str_shadow_emits_plain_call() {
 
 #[test]
 fn exported_function_parameter_names_registered() {
-    // `export fn` params are registered so the built module can reorder named
+    // `pub fn` params are registered so the built module can reorder named
     // arguments via the bundler.
     let js = generate_js(
-        r#"export fn greet(name: string, punct: string): string { name + punct }
+        r#"pub fn greet(name: string, punct: string): string { name + punct }
         fn main() { greet(punct: "!", name: "hi") }"#,
     );
     assert!(js.contains("greet(\"hi\", \"!\")"), "js: {js}");

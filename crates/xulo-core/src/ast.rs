@@ -285,29 +285,27 @@ pub struct ImportStmt {
 }
 
 /// What `import` brings in: a namespace (`* as ns`), named bindings
-/// (`{ a, b as c }`), a default binding (`Foo from "..."`), or a bare
-/// side-effect import (`import "..."`).
+/// (`{ a, b as c }`), or a bare side-effect import (`import "..."`).
 #[derive(Debug, Clone, PartialEq)]
 pub enum ImportSpec {
     Namespace(String),
     Named(Vec<(String, Option<String>)>),
-    Default(String),
     Bare,
 }
 
-/// An `export` statement.
+/// A `pub` declaration statement (also the target of `pub use`). Internal
+/// name kept as "export" for historical continuity.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExportStmt {
     pub item: ExportItem,
 }
 
-/// What `export` exposes: a declaration (`export fn/let/const`), a default
-/// export, a bare name list (`export { a, b }`), or a type/enum/alias/trait.
+/// What a `pub` export exposes: a declaration (`pub fn/let/const/type`), a
+/// bare name list (`pub use { a, b }`), or a trait/enum/alias.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExportItem {
     Fn(FnDef),
     Let(LetBinding),
-    Default(Box<ExportItem>),
     Names(Vec<String>),
     Type(TypeAlias),
     Enum(EnumDef),

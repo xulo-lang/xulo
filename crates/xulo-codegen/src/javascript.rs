@@ -287,7 +287,7 @@ impl Javascript {
     }
 
     pub fn program(&mut self, program: &Program) -> Result<(), XuloError> {
-        // Also match `export fn main` / `export default fn main` (see `main_fn`).
+        // Also match `pub fn main` (see `main_fn`).
         let has_main = main_fn(program).is_some();
 
         for statement in &program.statements {
@@ -344,15 +344,11 @@ impl Javascript {
     }
 
     fn register_export_fn_params(&mut self, item: &xulo_core::ast::ExportItem) {
-        match item {
-            xulo_core::ast::ExportItem::Fn(f) => {
-                self.fn_params.insert(
-                    f.name.clone(),
-                    f.params.iter().map(|p| p.name.clone()).collect(),
-                );
-            }
-            xulo_core::ast::ExportItem::Default(inner) => self.register_export_fn_params(inner),
-            _ => {}
+        if let xulo_core::ast::ExportItem::Fn(f) = item {
+            self.fn_params.insert(
+                f.name.clone(),
+                f.params.iter().map(|p| p.name.clone()).collect(),
+            );
         }
     }
 
@@ -436,7 +432,6 @@ impl Javascript {
             xulo_core::ast::ExportItem::Type(_)
             | xulo_core::ast::ExportItem::Names(_)
             | xulo_core::ast::ExportItem::Trait(_) => {}
-            xulo_core::ast::ExportItem::Default(inner) => self.export_item(inner)?,
         }
         Ok(())
     }
@@ -1433,31 +1428,26 @@ fn needs_receiver_parens(expr: &Expression) -> bool {
     )
 }
 
-/// True when the program's `main` (plain, `export fn`, or `export default fn`)
-/// is declared async (its returned promise should be observed, not dropped).
+/// True when the program's `main` (plain `fn main` or `pub fn main`) is
+/// declared async (its returned promise should be observed, not dropped).
 pub fn main_is_async(program: &Program) -> bool {
     main_fn(program).map(|f| f.is_async).unwrap_or(false)
 }
 
-/// Find the program's `main` function definition, including `export fn main`
-/// and `export default fn main`.
+/// Find the program's `main` function definition, including `pub fn main`.
 pub fn main_fn(program: &Program) -> Option<&xulo_core::ast::FnDef> {
     program.statements.iter().find_map(|s| match s {
         Statement::Fn(f) if f.name == "main" => Some(f),
         Statement::Export(export) => match &export.item {
             xulo_core::ast::ExportItem::Fn(f) if f.name == "main" => Some(f),
-            xulo_core::ast::ExportItem::Default(inner) => match inner.as_ref() {
-                xulo_core::ast::ExportItem::Fn(f) if f.name == "main" => Some(f),
-                _ => None,
-            },
             _ => None,
         },
         _ => None,
     })
 }
 
-/// True when the program's `main` (plain, `export fn`, or `export default fn`)
-/// returns `Component`.
+/// True when the program's `main` (plain `fn main` or `pub fn main`) returns
+/// `Component`.
 pub fn main_returns_component(program: &Program) -> bool {
     matches!(
         main_fn(program).and_then(|f| f.return_type.as_ref()),

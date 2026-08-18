@@ -15,7 +15,7 @@
 | `and` `or` | 逻辑与 / 或 | [表达式](reference/expressions.md) |
 | `async` `await` | 异步 | [异步](reference/async.md) |
 | `try` `catch` `throw` | 异常 | [控制流](reference/control-flow.md) |
-| `import` `export` `from` `as` `default` | 模块 | [模块系统](reference/modules.md) |
+| `import` `pub` `use` `from` `as` `default` | 模块 | [模块系统](reference/modules.md) |
 | `type` `enum` | 类型声明 | [数据与类型](reference/types.md) |
 | `null` `true` `false` | 字面量 | [词法结构](reference/lexical.md) |
 | `print` | 内置输出 | [词法结构](reference/lexical.md) |
@@ -79,5 +79,5 @@ fn load(): async { let v = await fetch() return v }
 
 // 模块
 import { add } from "./math"
-export fn f(): number { 1 }
+pub fn f(): number { 1 }
 ```

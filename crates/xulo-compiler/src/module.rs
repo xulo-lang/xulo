@@ -148,7 +148,7 @@ impl Loader {
     }
 }
 
-/// Does this module declare a `main` function (directly or via `export`)?
+/// Does this module declare a `main` function (directly or via `pub`)?
 fn program_has_main(program: &Program) -> bool {
     fn fn_named(f: &xulo_core::ast::FnDef) -> bool {
         f.name == "main"
@@ -157,9 +157,6 @@ fn program_has_main(program: &Program) -> bool {
         Statement::Fn(f) => fn_named(f),
         Statement::Export(export) => match &export.item {
             ExportItem::Fn(f) => fn_named(f),
-            ExportItem::Default(inner) => {
-                matches!(inner.as_ref(), ExportItem::Fn(f) if fn_named(f))
-            }
             _ => false,
         },
         _ => false,
@@ -292,42 +289,6 @@ fn collect_imports(modules: &[Module], idx: usize) -> Result<ImportSeed, XuloErr
                     }
                 }
             }
-            ImportSpec::Default(name) => {
-                if binding.type_only {
-                    // No default *type* exports exist; treat as opaque.
-                    types.push((
-                        name.clone(),
-                        TypeEntry {
-                            type_params: Vec::new(),
-                            kind: TypeEntryKind::Alias(Type::Any),
-                        },
-                    ));
-                    continue;
-                }
-                let Some(default_name) = &analysis.default else {
-                    return Err(XuloError::new(
-                        ErrorKind::Semantic,
-                        format!("module `{}` has no default export", target_readable),
-                    ));
-                };
-                let sym = analysis
-                    .exported_symbols
-                    .iter()
-                    .find(|(n, _)| n == default_name)
-                    .map(|(_, s)| s.clone())
-                    .unwrap_or_else(|| Symbol {
-                        name: default_name.clone(),
-                        type_: Type::Any,
-                        kind: SymbolKind::Variable,
-                        is_const: true,
-                    });
-                symbols.push(Symbol {
-                    name: name.clone(),
-                    type_: sym.type_.clone(),
-                    kind: sym.kind.clone(),
-                    is_const: true,
-                });
-            }
         }
     }
     Ok((symbols, types, impls))
@@ -374,8 +335,8 @@ fn bundle(loaded: &LoadedModules) -> Result<String, XuloError> {
     // every distinct local binding. Historically this deduped by source name
     // and dropped the later alias (`import { Text as T }` + `import { Text }`
     // emitted only `Text as T`, leaving the second module's `Text` undefined
-    // at runtime), and mixed default/namespace/named forms dropped whole
-    // kinds. Every local name is bound at most once: a later import whose
+    // at runtime), and mixed namespace/named forms dropped whole kinds.
+    // Every local name is bound at most once: a later import whose
     // local name is already taken is skipped so the emitted JS never
     // re-declares a binding.
     let mut by_source: std::collections::BTreeMap<&str, Vec<&ImportStmt>> =
@@ -387,18 +348,12 @@ fn bundle(loaded: &LoadedModules) -> Result<String, XuloError> {
         by_source.entry(&imp.source).or_default().push(imp);
     }
     for (source, imports) in by_source {
-        let mut default_names: Vec<&str> = Vec::new();
         let mut namespace_names: Vec<&str> = Vec::new();
         let mut named: Vec<(&str, &str)> = Vec::new();
         let mut has_bare = false;
         for imp in &imports {
             match &imp.spec {
                 ImportSpec::Bare => has_bare = true,
-                ImportSpec::Default(name) => {
-                    if !default_names.contains(&name.as_str()) {
-                        default_names.push(name);
-                    }
-                }
                 ImportSpec::Namespace(ns) => {
                     if !namespace_names.contains(&ns.as_str()) {
                         namespace_names.push(ns);
@@ -414,14 +369,9 @@ fn bundle(loaded: &LoadedModules) -> Result<String, XuloError> {
                 }
             }
         }
-        // Emit a default import (`import d from "pkg"`) first, then a bare
-        // side-effect import, then namespace imports, then one named import.
+        // Emit a bare side-effect import, then namespace imports, then one
+        // named import.
         let mut bound: std::collections::HashSet<&str> = std::collections::HashSet::new();
-        for default in &default_names {
-            if bound.insert(*default) {
-                out.push_str(&format!("import {default} from {:?};\n", source));
-            }
-        }
         if has_bare {
             out.push_str(&format!("import {:?};\n", source));
         }
@@ -434,10 +384,9 @@ fn bundle(loaded: &LoadedModules) -> Result<String, XuloError> {
         // name, same alias) is fine — one binding serves every module that
         // imported it identically. But two *different* bindings sharing a
         // local name (e.g. module A `import { a as x }` and module B
-        // `import { b as x }`, or a default `import D` next to a named
-        // `import { D }`) cannot both be emitted — ESM forbids re-declaring
-        // `x` — and silently dropping the later one would make that module
-        // read the wrong binding. Fail loudly instead.
+        // `import { b as x }`) cannot both be emitted — ESM forbids
+        // re-declaring `x` — and silently dropping the later one would make
+        // that module read the wrong binding. Fail loudly instead.
         let mut emitted_named: Vec<(&str, &str)> = Vec::new();
         for (name, alias) in named {
             if emitted_named.contains(&(name, alias)) {
@@ -488,36 +437,19 @@ fn bundle(loaded: &LoadedModules) -> Result<String, XuloError> {
             }
             let target = &loaded.modules[binding.target];
             let analysis = target.analysis.as_ref().expect("analyzed");
-            match &binding.spec {
-                ImportSpec::Named(names) => {
-                    for (name, alias) in names {
-                        let local = alias.clone().unwrap_or_else(|| name.clone());
-                        if let Some((_, sym)) =
-                            analysis.exported_symbols.iter().find(|(n, _)| n == name)
-                            && let SymbolKind::Function(_, params, _, _) = &sym.kind
-                        {
-                            cg.register_fn_params(
-                                local.clone(),
-                                params.iter().map(|p| p.name.clone()).collect(),
-                            );
-                        }
-                    }
-                }
-                ImportSpec::Default(name) => {
-                    if let Some(default_name) = &analysis.default
-                        && let Some((_, sym)) = analysis
-                            .exported_symbols
-                            .iter()
-                            .find(|(n, _)| n == default_name)
+            if let ImportSpec::Named(names) = &binding.spec {
+                for (name, alias) in names {
+                    let local = alias.clone().unwrap_or_else(|| name.clone());
+                    if let Some((_, sym)) =
+                        analysis.exported_symbols.iter().find(|(n, _)| n == name)
                         && let SymbolKind::Function(_, params, _, _) = &sym.kind
                     {
                         cg.register_fn_params(
-                            name.clone(),
+                            local.clone(),
                             params.iter().map(|p| p.name.clone()).collect(),
                         );
                     }
                 }
-                _ => {}
             }
         }
 
@@ -561,15 +493,6 @@ fn bundle(loaded: &LoadedModules) -> Result<String, XuloError> {
                         });
                     }
                 }
-                ImportSpec::Default(name) => {
-                    if !binding.type_only && !bound.contains(name) {
-                        out.push_str(&format!(
-                            "    const {name} = __mod{}.default;\n",
-                            binding.target
-                        ));
-                        bound.insert(name.clone());
-                    }
-                }
             }
         }
         let mut targets: Vec<usize> = per_target.keys().copied().collect();
@@ -599,14 +522,11 @@ fn bundle(loaded: &LoadedModules) -> Result<String, XuloError> {
             }
         }
         let analysis = module.analysis.as_ref().expect("analyzed");
-        let mut exports: Vec<String> = analysis
+        let exports: Vec<String> = analysis
             .exported_symbols
             .iter()
             .map(|(name, _)| format!("{name}: {name}"))
             .collect();
-        if let Some(def) = &analysis.default {
-            exports.push(format!("default: {def}"));
-        }
         let exports = if exports.is_empty() {
             "{}".to_string()
         } else {

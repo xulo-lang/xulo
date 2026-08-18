@@ -111,7 +111,6 @@ pub struct Analyzer {
     imported_types: HashMap<String, TypeEntry>,
     /// Names exported from this module for codegen / module resolution.
     exported: Vec<String>,
-    exported_default: Option<String>,
     /// Exported symbols captured for cross-module type checking.
     exported_symbols: Vec<(String, Symbol)>,
     /// Non-fatal diagnostics raised during analysis (e.g. ignored return
@@ -138,7 +137,6 @@ pub struct Analyzer {
 pub struct AnalysisResult {
     pub exported_symbols: Vec<(String, Symbol)>,
     pub exported_types: Vec<(String, TypeEntry)>,
-    pub default: Option<String>,
     /// Non-fatal diagnostics from this module.
     pub warnings: Vec<XuloError>,
     /// Trait-dispatch call sites: `(call span, mangled impl function name)`.
@@ -195,7 +193,6 @@ pub fn analyze_with(
             .map(|(n, t)| (n.clone(), t.clone()))
             .collect(),
         exported: Vec::new(),
-        exported_default: None,
         exported_symbols: Vec::new(),
         warnings: Vec::new(),
         render_locals: Vec::new(),
@@ -208,7 +205,6 @@ pub fn analyze_with(
     let mut result = AnalysisResult {
         exported_symbols: analyzer.exported_symbols,
         exported_types: Vec::new(),
-        default: analyzer.exported_default.clone(),
         warnings: analyzer.warnings.clone(),
         trait_dispatch: analyzer.trait_dispatch.clone(),
         list_concat: analyzer.list_concat.clone(),
@@ -338,7 +334,6 @@ fn walk_export(item: &mut ExportItem, f: &mut dyn FnMut(&mut Expression)) {
                 walk_expr(value, f);
             }
         }
-        ExportItem::Default(inner) => walk_export(inner, f),
         ExportItem::Names(_) | ExportItem::Type(_) | ExportItem::Enum(_) | ExportItem::Trait(_) => {
         }
     }
@@ -933,46 +928,6 @@ impl Analyzer {
                 }
                 Ok(())
             }
-            xulo_core::ast::ImportSpec::Default(name) => {
-                if import.type_only {
-                    if !self.imported_types.contains_key(name) {
-                        self.imported_types.insert(
-                            name.clone(),
-                            TypeEntry {
-                                type_params: Vec::new(),
-                                kind: TypeEntryKind::Alias(Type::Any),
-                            },
-                        );
-                    }
-                    return Ok(());
-                }
-                let sym = match self.imports.get(name) {
-                    Some(symbol) => Symbol {
-                        name: name.clone(),
-                        type_: symbol.type_.clone(),
-                        kind: symbol.kind.clone(),
-                        is_const: true,
-                    },
-                    None => {
-                        self.opaque.insert(name.clone());
-                        Symbol {
-                            name: name.clone(),
-                            type_: Type::Any,
-                            kind: SymbolKind::Function(
-                                Vec::new(),
-                                Vec::new(),
-                                Type::Any,
-                                Vec::new(),
-                            ),
-                            is_const: true,
-                        }
-                    }
-                };
-                if !self.table.declare(sym) {
-                    return Err(self.err(format!("`{name}` is already declared",)));
-                }
-                Ok(())
-            }
         }
     }
 
@@ -1018,24 +973,6 @@ impl Analyzer {
                 ));
                 Ok(())
             }
-            xulo_core::ast::ExportItem::Default(item) => {
-                // `export default fn main() {...}` exports the function under
-                // its own name (the module system resolves `main` for `run`).
-                if let xulo_core::ast::ExportItem::Fn(f) = item.as_ref() {
-                    self.check_fn(f)?;
-                    if self.exported_default.is_some() {
-                        return Err(self.err("only one `export default` is allowed per module"));
-                    }
-                    self.exported_default = Some(f.name.clone());
-                    self.exported.push(f.name.clone());
-                    if let Some(sym) = self.table.lookup(&f.name).cloned() {
-                        self.exported_symbols.push((f.name.clone(), sym));
-                    }
-                    Ok(())
-                } else {
-                    Err(self.err("`export default` requires a function declaration"))
-                }
-            }
             xulo_core::ast::ExportItem::Names(names) => {
                 for name in names {
                     let is_enum = matches!(
@@ -1047,11 +984,11 @@ impl Analyzer {
                             // A type alias has no runtime value: it cannot be
                             // re-exported by bare name.
                             self.err(format!(
-                                "cannot export `{name}`: it is a type with no runtime value; use `export type` or `export enum`"
+                                "cannot re-export `{name}`: it is a type with no runtime value; use `pub type` or `pub enum`"
                             ))
                         } else {
                             self.err(format!(
-                                "cannot export `{name}`: it is not declared in this module"
+                                "cannot re-export `{name}`: it is not declared in this module"
                             ))
                         });
                     }

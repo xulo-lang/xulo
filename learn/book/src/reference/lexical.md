@@ -40,7 +40,7 @@ identifier     = (letter | "_") { letter | digit | "_" } ;
 | `match` `and` `or` | 模式匹配 / 逻辑与或 |
 | `async` `await` | 异步 |
 | `try` `catch` `throw` | 异常 |
-| `import` `export` `pub` `from` `as` `default` | 模块 |
+| `import` `pub` `use` `from` `as` | 模块（导入与公开导出） |
 | `type` `enum` | 类型声明 |
 | `trait` `impl` `where` | 特征声明 / 实现 / 泛型约束 |
 | `null` `true` `false` | 字面量关键字 |
@@ -61,7 +61,7 @@ identifier     = (letter | "_") { letter | digit | "_" } ;
 
 以下单词现在既不是关键字、也没有语法含义，但**已被保留**：任何把它们用作标识符（变量 / 函数 / 类型 / 成员名）的代码都会在解析时报 `unexpected reserved keyword X`。预留为未来语言特性留出演进空间：
 
-`abstract` `actor` `associatedtype` `bench` `break` `case` `cfg` `channel` `class` `continue` `defer` `deinit` `derive` `doc` `do` `extension` `fallthrough` `final` `generic` `generator` `global` `guard` `init` `interface` `isolated` `iterator` `lazy` `library` `local` `macro` `meta` `module` `move` `mut` `new` `open` `override` `package` `priv` `protocol` `receiver` `ref` `rethrows` `select` `sender` `spawn` `static` `struct` `super` `switch` `task` `this` `typealias` `unowned` `unsafe` `use` `virtual` `weak` `yield`
+`abstract` `actor` `associatedtype` `bench` `break` `case` `cfg` `channel` `class` `continue` `default` `defer` `deinit` `derive` `doc` `do` `export` `extension` `fallthrough` `final` `generic` `generator` `global` `guard` `init` `interface` `isolated` `iterator` `lazy` `library` `local` `macro` `meta` `module` `move` `mut` `new` `open` `override` `package` `priv` `protocol` `receiver` `ref` `rethrows` `select` `sender` `spawn` `static` `struct` `super` `switch` `task` `this` `typealias` `unowned` `unsafe` `virtual` `weak` `yield`
 
 > `self` 是保留字，但在 `impl` 块的方法参数列表与方法体内可作为接收者使用（见「特征」一章）。
 > `priv` 已预留但**当前无私有语义**：现有模块系统中，未导出的声明本身即为模块私有。预留仅在词法层禁止其作标识符。
