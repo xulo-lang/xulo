@@ -33,6 +33,15 @@ impl Env {
         self.bindings.insert(name.to_string(), value);
     }
 
+    /// Reset this scope to hold exactly `name -> value`. Lets a loop iteration
+    /// scope be recycled across rounds (known issue P3): bindings declared by
+    /// one iteration must not leak into the next, so every round starts with a
+    /// clean scope that only re-binds the loop variable.
+    pub fn reset(&mut self, name: &str, value: Value) {
+        self.bindings.clear();
+        self.bindings.insert(name.to_string(), value);
+    }
+
     /// Drop every binding in this scope. Used when the owning
     /// [`Interpreter`](crate::interpreter::Interpreter) is dropped: a top-level
     /// `fn` binds into the root env while its closure captures that same env, so

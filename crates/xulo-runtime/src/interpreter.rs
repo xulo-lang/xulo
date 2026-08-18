@@ -140,6 +140,122 @@ fn native_str(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> 
     })
 }
 
+fn block_has_closure(block: &Block) -> bool {
+    block.statements.iter().any(stmt_has_closure)
+}
+
+fn stmt_has_closure(stmt: &Statement) -> bool {
+    match stmt {
+        Statement::Fn(_) => true,
+        Statement::Let(l) => l.value.as_ref().is_some_and(expr_has_closure),
+        Statement::Return(r) => r.value.as_ref().is_some_and(expr_has_closure),
+        Statement::For(f) => expr_has_closure(&f.iterable) || block_has_closure(&f.body),
+        Statement::While(w) => expr_has_closure(&w.condition) || block_has_closure(&w.body),
+        Statement::Assign(a) => {
+            let target = match &a.target {
+                AssignTarget::Name(_) => false,
+                AssignTarget::Member(object, _) => expr_has_closure(object),
+                AssignTarget::Index(object, index) => {
+                    expr_has_closure(object) || expr_has_closure(index)
+                }
+            };
+            target || expr_has_closure(&a.value)
+        }
+        Statement::TypeAlias(_) | Statement::Enum(_) | Statement::Import(_)
+        | Statement::Environment(_) | Statement::Trait(_) => false,
+        Statement::Expr(e) => expr_has_closure(&e.expr),
+        Statement::Block(b) => block_has_closure(b),
+        Statement::Try(t) => block_has_closure(&t.try_block) || block_has_closure(&t.catch_block),
+        Statement::Throw(e) => expr_has_closure(e),
+        Statement::Export(e) => match &e.item {
+            xulo_core::ast::ExportItem::Fn(_) => true,
+            xulo_core::ast::ExportItem::Let(l) => {
+                l.value.as_ref().is_some_and(expr_has_closure)
+            }
+            xulo_core::ast::ExportItem::Enum(_) | xulo_core::ast::ExportItem::Type(_)
+            | xulo_core::ast::ExportItem::Trait(_)
+            | xulo_core::ast::ExportItem::Names(_) => false,
+        },
+        Statement::State(s) => s.binding.value.as_ref().is_some_and(expr_has_closure),
+        Statement::Store(s) => expr_has_closure(&s.value),
+        Statement::Effect(_) => true,
+        Statement::Component(c) => {
+            c.args.iter().any(|a| expr_has_closure(&a.value))
+                || c.children.iter().any(ui_has_closure)
+        }
+        Statement::Impl(_) => true,
+    }
+}
+
+fn expr_has_closure(expr: &Expression) -> bool {
+    match expr {
+        Expression::Literal { value, .. } => match value {
+            Literal::List(items) => items.iter().any(expr_has_closure),
+            Literal::Object(fields) => fields.iter().any(|field| match field {
+                ObjectField::Field { value, .. } => expr_has_closure(value),
+                ObjectField::Spread { value } => expr_has_closure(value),
+            }),
+            Literal::String(_) | Literal::Number(_) | Literal::Boolean(_) | Literal::Null => false,
+        },
+        Expression::Identifier { .. } | Expression::EnumRef(_) | Expression::Binding { .. } => false,
+        Expression::BinaryOp(b) => expr_has_closure(&b.left) || expr_has_closure(&b.right),
+        Expression::Unary(u) => expr_has_closure(&u.operand),
+        Expression::Call(c) => {
+            c.object.as_deref().is_some_and(expr_has_closure)
+                || c.arguments.iter().any(|a| expr_has_closure(&a.value))
+        }
+        Expression::If(e) => {
+            expr_has_closure(&e.condition)
+                || block_has_closure(&e.then_branch)
+                || e.else_branch.as_ref().is_some_and(block_has_closure)
+        }
+        Expression::Ternary(t) => {
+            expr_has_closure(&t.condition)
+                || expr_has_closure(&t.then_value)
+                || expr_has_closure(&t.else_value)
+        }
+        Expression::Match(m) => {
+            expr_has_closure(&m.value) || m.arms.iter().any(|arm| expr_has_closure(&arm.value))
+        }
+        Expression::Member(m) => expr_has_closure(&m.object),
+        Expression::Index(i) => expr_has_closure(&i.object) || expr_has_closure(&i.index),
+        Expression::Nullish(n) => expr_has_closure(&n.left) || expr_has_closure(&n.right),
+        Expression::Range(r) => expr_has_closure(&r.start) || expr_has_closure(&r.end),
+        Expression::Await { expr, .. } => expr_has_closure(expr),
+        Expression::FnExpr(_) => true,
+        Expression::Spread { expr, .. } => expr_has_closure(expr),
+        Expression::CallValue(c) => {
+            expr_has_closure(&c.callee) || c.arguments.iter().any(|a| expr_has_closure(&a.value))
+        }
+    }
+}
+
+fn ui_has_closure(el: &xulo_core::ast::UiElement) -> bool {
+    match el {
+        xulo_core::ast::UiElement::Component(c) => {
+            c.args.iter().any(|a| expr_has_closure(&a.value))
+                || c.children.iter().any(ui_has_closure)
+        }
+        xulo_core::ast::UiElement::Text(_) => false,
+        xulo_core::ast::UiElement::Expr(e) => expr_has_closure(e),
+        xulo_core::ast::UiElement::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            expr_has_closure(condition)
+                || then_branch.iter().any(ui_has_closure)
+                || else_branch
+                    .as_ref()
+                    .is_some_and(|branch| branch.iter().any(ui_has_closure))
+        }
+        xulo_core::ast::UiElement::For {
+            iterable, body, ..
+        } => expr_has_closure(iterable) || body.iter().any(ui_has_closure),
+        xulo_core::ast::UiElement::Group(children) => children.iter().any(ui_has_closure),
+    }
+}
+
 impl Interpreter {
     /// A fresh interpreter with `print`/`str` builtins registered in the global
     /// scope (user declarations of the same name shadow them).
@@ -620,18 +736,35 @@ impl Interpreter {
     }
 
     fn exec_for(&self, f: &ForStmt, env: &Rc<RefCell<Env>>) -> Result<Flow, RunError> {
+        // Recycle one iteration scope across rounds when no closure can observe
+        // it (P3). A fresh scope per round is mandatory whenever the body
+        // declares or captures a function (see `block_has_closure`): recycled
+        // environments would make every closure read the *final* loop variable.
+        let recycle = !block_has_closure(&f.body);
         if let Expression::Range(r) = &f.iterable {
             let start = self.eval_number(&r.start, env)?;
             let end = self.eval_number(&r.end, env)?;
             let mut i = start;
-            while i < end {
+            if recycle {
                 let child = Env::child(env);
-                child.borrow_mut().define(&f.iter_var, Value::Number(i));
-                match self.exec_block(&f.body, &child)? {
-                    Flow::Continue => {}
-                    other => return Ok(other),
+                while i < end {
+                    child.borrow_mut().reset(&f.iter_var, Value::Number(i));
+                    match self.exec_stmts(&f.body.statements, &child)? {
+                        Flow::Continue => {}
+                        other => return Ok(other),
+                    }
+                    i += 1.0;
                 }
-                i += 1.0;
+            } else {
+                while i < end {
+                    let child = Env::child(env);
+                    child.borrow_mut().define(&f.iter_var, Value::Number(i));
+                    match self.exec_block(&f.body, &child)? {
+                        Flow::Continue => {}
+                        other => return Ok(other),
+                    }
+                    i += 1.0;
+                }
             }
             Ok(Flow::Continue)
         } else {
@@ -654,26 +787,53 @@ impl Interpreter {
             // snapshot used to diverge (`xs[1] = 99` inside the body read the
             // old value here but the new one in JS).
             let mut i = 0usize;
-            loop {
-                let item = {
-                    let list = list.borrow();
-                    if i >= list.len() {
-                        break;
-                    }
-                    list[i].clone()
-                };
+            if recycle {
                 let child = Env::child(env);
-                child.borrow_mut().define(&f.iter_var, item);
-                match self.exec_block(&f.body, &child)? {
-                    Flow::Continue => {}
-                    other => return Ok(other),
+                loop {
+                    let item = {
+                        let list = list.borrow();
+                        if i >= list.len() {
+                            break;
+                        }
+                        list[i].clone()
+                    };
+                    child.borrow_mut().reset(&f.iter_var, item);
+                    match self.exec_stmts(&f.body.statements, &child)? {
+                        Flow::Continue => {}
+                        other => return Ok(other),
+                    }
+                    i += 1;
                 }
-                i += 1;
+            } else {
+                loop {
+                    let item = {
+                        let list = list.borrow();
+                        if i >= list.len() {
+                            break;
+                        }
+                        list[i].clone()
+                    };
+                    let child = Env::child(env);
+                    child.borrow_mut().define(&f.iter_var, item);
+                    match self.exec_block(&f.body, &child)? {
+                        Flow::Continue => {}
+                        other => return Ok(other),
+                    }
+                    i += 1;
+                }
             }
             Ok(Flow::Continue)
         }
     }
 
+/// Whether a loop body could let a closure observe the loop's iteration scope.
+/// `for` creates a fresh environment per round so an `fn` in the body captures
+/// *that round's* loop variable (JS `let` semantics). When the body contains no
+/// closures the fresh scope is unobservable, and one recycled environment
+/// (reset to just the loop variable each round) is equivalent — that is what
+/// `exec_for` uses to avoid allocating per iteration (P3). Any `fn` — a
+/// declaration, an anonymous expression, a nested loop/if body, an `impl`
+/// method, or a UI element — forces the per-round path instead.
     fn exec_assign(
         &self,
         a: &xulo_core::ast::AssignStmt,

@@ -56,8 +56,8 @@ struct Env {
 ```
 
 - 每个新作用域（函数调用、块、循环体、`try`/`catch`、`match` payload 绑定）
-  都是 `Env::child(parent)` 新建的独立 `Env`。**`for`/`while` 每轮迭代都新建
-  一个**（性能上较费，见 §7 P3）。
+  都是 `Env::child(parent)` 新建的独立 `Env`。**`for` 每轮迭代会新建一个**，除非
+  循环体不含任何闭包——此时复用单层并用 `Env::reset` 逐轮清空重绑（见 §7 P3）。
 - 查找 `get(name)`：本层命中返回 `value.clone()`，否则沿 `parent` 上溯。
 - 赋值 `assign(name, value)`：沿链找到**最近声明处**原地覆盖（模拟 JS `let`
   的重赋值语义），全链未声明则报错。
@@ -164,7 +164,7 @@ ready: VecDeque<(id, Control)>
 | P0 | 无阻塞级问题 | — |
 | P1 | Rc 环（D11）：顶层函数捕获自身定义环境 | **已修复**：`Interpreter::drop` 清扫 root 绑定破环；逃逸闭包语义保持强引用（未改用 Weak，见下） |
 | P2 | `tasks` 槽位从不缩容 | **已修复**：空闲列表复用 + 尾部 `truncate`，槽位有界 |
-| P3 | `for`/`while` 每轮新建 `Env` | 未修复：按轮捕获语义（JS `let` 对齐）已锁定，复用需先探测循环体无闭包 |
+| P3 | `for` 每轮新建 `Env` | **已修复**：循环体无闭包时复用单层 `Env`（`reset` 逐轮清空重绑、内联执行体），纯循环提速约 2 成；含 `fn`/`FnExpr` 仍每轮新建（按轮捕获语义锁定） |
 | P4 | 异步协程栈 1 MiB/个 | 未修复：eval 递归跑在协程栈内，需实测深递归后定值 |
 | — | `String` 深拷贝 | 未计划：`Env::get` 与格式化输出可能复制字符串 |
 | — | `CURRENT_INTERP` 裸指针不变式 | 结构上安全，已加 `debug_assert` 固化（未改架构） |
@@ -186,14 +186,16 @@ Interpreter 生命周期边界，语义零变化，代价仅是 drop 时的一�
 易错点：**只能在最外层 resume 时修剪**——嵌套 resume 中所有正在运行的协程槽位
 都是 `None`（被 `take`），此时修剪会截断活跃槽位。
 
-**P3 — 逐轮 Env 复用（暂缓）**：`for`/`while` 每轮迭代分配一个 `Env`
-（`exec_block:600` 也会再建一层）。**注意这是语义而不是缺陷**：循环体内定义的
-`fn` 捕获**当轮**迭代环境（`interpreter.rs` 的 `exec_for` 每轮新建 + `register_fn`
-闭包捕获），与 JS 路径的 `for (let …)` 一致——即「按轮捕获」，`funcs[0]/[1]/[2]()`
-分别读到 0/1/2（`tests/loop_captures.rs` + CLI 双路径 parity 测试已锁定）。若复用
-循环轮次 Env，所有闭包会共享同一个迭代环境（经典 `var i` 闭包陷阱）。可选的
-安全优化：**仅当循环体不含任何 `fn`/`FnExpr` 时**复用 loop 子环境（块环境仍需
-每轮新建），语义等价且省一半分配，收益有限，暂缓。
+**P3 — 逐轮 Env 复用（已修复）**：`for` 每轮迭代原本分配一个 `Env`（`exec_block`
+还会再建一层）。**按轮捕获是语义而不是缺陷**：循环体内定义的 `fn` 捕获**当轮**
+迭代环境（`exec_for` 每轮新建 + `register_fn` 闭包捕获），与 JS 路径的
+`for (let …)` 一致——`funcs[0]/[1]/[2]()` 分别读到 0/1/2。修复为**仅当循环体
+整体不含任何 `fn`/`FnExpr` 时**（`block_has_closure` 全子树扫描：声明、匿名
+表达式、嵌套 if/循环体、`impl`、UI 元素）复用单层 loop 环境：`Env::reset` 把
+绑定清空再只重绑迭代变量，body 语句内联执行（省掉每轮的 `exec_block` 封层）。
+无闭包时逐层清空与新建在语义上严格等价；有闭包时仍走每轮新建旧路径。纯循环
+`for i in 0..<n` 微基准（release）约提速 2 成（标题微循环 1.5s → 1.1s）。`while`
+本就共享环境只在布局层，本轮未动。
 
 **P4 — 协程栈大小（暂缓）**：corosensei `DefaultStack::default()` 即
 `1024 * 1024`（mmap + guard page），每次 `Coroutine::new` 分配全新栈；且栈内
@@ -216,6 +218,7 @@ Interpreter 生命周期边界，语义零变化，代价仅是 drop 时的一�
   无环）。
 - `crates/xulo-runtime/tests/task_slots.rs`：P2 —— 大量顺序 / fire-and-forget
   async 调用后槽位数始终保持有界，且输出顺序正确。
-- `crates/xulo-runtime/tests/loop_captures.rs` + CLI 双路径 parity：P3 语义锁定
-  —— 循环体内 `fn` 按轮捕获（`funcs[0]/[1]/[2]()` = 0/1/2），JS 与原生（默认）
-  两路径一致。
+- `crates/xulo-runtime/tests/loop_captures.rs` + CLI 双路径 parity：P3 双面锁定
+  —— 循环体内 `fn`（含嵌套块 / `let` 绑定匿名函数）按轮捕获
+  （`funcs[0]/[1]/[2]()` = 0/1/2），JS 与原生（默认）两路径一致；无闭包循环走
+  复用路径仍逐轮隔离 `let`。
