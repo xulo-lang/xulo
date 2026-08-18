@@ -111,3 +111,20 @@ fn unary_minus_is_idempotent() {
     let once = fmt(src);
     assert_eq!(fmt(&once), once);
 }
+
+#[test]
+fn generic_type_annotation_gets_operator_spacing() {
+    // Known D12: the formatter has no type context, so `<`/`>` inside a generic
+    // type annotation are spaced like comparison operators, yielding
+    // `list < number >`. It still re-parses; the deviation is cosmetic. Fixing
+    // it requires distinguishing type annotations from comparisons. Pinned so
+    // the behavior is deliberate.
+    let out = fmt("fn main(){let xs: list<number> = []\nprint(1)}");
+    assert!(out.contains("let xs: list < number > = []"), "out: {out}");
+}
+
+#[test]
+fn comparison_operator_spacing_is_untouched() {
+    let out = fmt("fn main(){let a=1\nlet b=2\nprint(a<b)}");
+    assert!(out.contains("print(a < b)"), "out: {out}");
+}

@@ -115,7 +115,7 @@ CI（GitHub Actions，见 `.github/workflows/ci.yml`）执行 `cargo fmt --check
 │   ├── xulo-lexer/             # 词法分析
 │   ├── xulo-parser/            # 语法分析（winnow）
 │   ├── xulo-semantic/          # 语义检查 + 符号表
-│   ├── xulo-codegen/           # 生成 JavaScript
+│   ├── xulo-codegen/           # 生成 JavaScript（已废弃，职能将并入 xulo-compiler）
 │   ├── xulo-compiler/          # 编译管线 compile() + 多文件加载/打包
 │   ├── xulo-runtime/           # 原生树遍历解释器（xulo run --native）
 │   └── xulo-cli/               # CLI（run/build/check/fmt/repl，二进制名为 xulo）

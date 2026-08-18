@@ -1195,3 +1195,67 @@ fn exec_module_default_export_of_plain_main_fn_is_importable() {
     .unwrap();
     assert_eq!(out, vec!["42"]);
 }
+
+#[test]
+fn overflowing_number_literal_prints_infinity() {
+    // A 310-digit literal overflows f64 to +Infinity. `format_number` must print
+    // it like JS (`String(1e309)` -> "Infinity"), never Rust's "inf".
+    let huge = format!("1{}", "0".repeat(309));
+    let out = run_raw(&format!("print({huge})")).unwrap();
+    assert_eq!(out, vec!["Infinity"]);
+
+    let out = run_raw(&format!("print(-{huge})")).unwrap();
+    assert_eq!(out, vec!["-Infinity"]);
+}
+
+#[test]
+fn huge_finite_number_prints_full_digits() {
+    // Known B3 divergence: the native formatter emits a number's full decimal
+    // expansion where JS prints exponential notation for the same value
+    // (`String(1e21)` -> "1e+21"). Pin the native behavior so any change is
+    // deliberate.
+    let out = run_ok(r#"fn main() { print(1000000000000000000000) }"#);
+    assert_eq!(out, vec!["1000000000000000000000"]);
+}
+
+#[test]
+fn string_index_returns_whole_character() {
+    // `"😀"[0]` reads a full Unicode scalar value in the native runtime
+    // (JS indexes by UTF-16 code unit and would return a lone surrogate —
+    // the divergence is documented as intended, native is stricter).
+    let out = run_ok(r#"fn main() { let s = "😀" print(s[0]) }"#);
+    assert_eq!(out, vec!["😀"]);
+
+    let out = run_ok(r#"fn main() { print("a😀b"[1]) }"#);
+    assert_eq!(out, vec!["😀"]);
+}
+
+#[test]
+fn builtin_call_with_named_arguments_ignores_labels() {
+    // `print`/`str` are variadic builtins with no named parameters. Named
+    // arguments pass the type checker and the JS codegen silently drops the
+    // labels (emitting argument values in source order), so the native runtime
+    // must do the same — it used to reject them with a runtime error, so valid
+    // programs diverged between `xulo run` and `xulo run --native`.
+    let out = run_ok(r#"fn main() { print(msg: "hi") }"#);
+    assert_eq!(out, vec!["hi"]);
+
+    let out = run_ok(r#"fn main() { print(1, b: 2, c: 3) }"#);
+    assert_eq!(out, vec!["1 2 3"]);
+
+    let out = run_ok(r#"fn main() { print(str(value: 42)) }"#);
+    assert_eq!(out, vec!["42"]);
+}
+
+#[test]
+fn missing_object_member_reads_null() {
+    // Reading a field that is not present on an untyped `object` yields `null`
+    // (the language's only null-like value). The JS path yields `undefined`
+    // through node's `console.log`; the divergence in the rendered text of a
+    // missing member is pinned here as the intended native behavior.
+    let out = run_ok(r#"fn main() { let o: object = {} print(o.missing) }"#);
+    assert_eq!(out, vec!["null"]);
+
+    let out = run_ok(r#"fn main() { let o: object = {} print(o["missing"]) }"#);
+    assert_eq!(out, vec!["null"]);
+}

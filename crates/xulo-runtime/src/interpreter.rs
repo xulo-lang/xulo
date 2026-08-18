@@ -271,6 +271,16 @@ impl Interpreter {
         self.out.take()
     }
 
+    /// The shared root environment backing all top-level bindings (`print`,
+    /// `str`, and every `fn`/`impl` registered via [`Interpreter::run`]).
+    ///
+    /// Exposed so embedders and tests can observe the root scope — for example,
+    /// tracking its strong reference count across `drop` to diagnose the Rc
+    /// cycle described in the runtime's memory tests.
+    pub fn root_env(&self) -> Rc<RefCell<Env>> {
+        self.global.clone()
+    }
+
     fn register_export_fns(&self, item: &xulo_core::ast::ExportItem, env: &Rc<RefCell<Env>>) {
         match item {
             xulo_core::ast::ExportItem::Fn(f) => self.register_fn(f, env),
@@ -1289,12 +1299,11 @@ impl Interpreter {
     ) -> Result<Value, RunError> {
         match callee {
             Value::Native(native) => {
-                if args.iter().any(|a| a.name.is_some()) {
-                    return Err(RunError::err(
-                        "named arguments are not supported for builtin functions",
-                        0..0,
-                    ));
-                }
+                // Builtins (`print`, `str`) are called variadically. The JS
+                // codegen emits argument *values* in source order and drops any
+                // labels (`print(msg: "hi")` compiles to `console.log("hi")`),
+                // so the native runtime must ignore names too — erroring here
+                // made valid checked programs fail only under `--native`.
                 let values = self.eval_args(args, call_env)?;
                 native(self, &values)
             }

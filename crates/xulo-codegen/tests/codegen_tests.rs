@@ -1,3 +1,7 @@
+// The crate under test is deprecated (its JS generation is being folded into
+// `xulo-compiler`); these regression tests keep using it until the fold.
+#![allow(deprecated)]
+
 use xulo_codegen::generate;
 use xulo_lexer::tokenize;
 use xulo_parser::parse_program;
@@ -721,4 +725,25 @@ fn match_payload_binding_scopes_under_match() {
         }"#,
     );
     assert!(js.contains("const b = __m.value"), "js: {js}");
+}
+
+#[test]
+fn infinite_number_literal_emits_js_infinity() {
+    // A 310-digit literal overflows f64 to +Infinity during parse. Rust's
+    // `Display` would render it "inf", which is not a JS identifier and would
+    // throw a ReferenceError under node — it must map onto the `Infinity`
+    // global instead, matching JS `String(1e309)` and the native runtime.
+    let huge = format!("1{}", "0".repeat(309));
+    let js = generate_js(&format!("fn main() {{ print({huge}) }}"));
+    assert!(js.contains("console.log(Infinity);"), "js: {js}");
+    assert!(!js.contains("inf"), "js: {js}");
+}
+
+#[test]
+fn negated_infinite_number_literal_emits_js_negative_infinity() {
+    let huge = format!("1{}", "0".repeat(309));
+    let src = format!("fn main() {{ print(-{huge}) }}");
+    let js = generate_js(&src);
+    assert!(js.contains("-Infinity"), "js: {js}");
+    assert!(!js.contains("inf"), "js: {js}");
 }

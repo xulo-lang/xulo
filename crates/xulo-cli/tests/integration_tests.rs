@@ -63,6 +63,44 @@ fn run_arithmetic() {
 }
 
 #[test]
+fn run_overflowing_number_literal_infinity() {
+    // A 310-digit literal overflows f64 to +Infinity. The JS path formats it as
+    // the `Infinity` global (Rust's "inf" is not valid JS and used to throw a
+    // ReferenceError under node).
+    let huge = format!("1{}", "0".repeat(309));
+    let file = temp_file("inf.xulo", &format!("fn main() {{ print({huge}) }}"));
+    let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "Infinity\n");
+    let _ = std::fs::remove_file(&file);
+}
+
+#[test]
+fn build_writes_infinite_literal_js_that_runs() {
+    let huge = format!("1{}", "0".repeat(309));
+    let src = temp_file("infb.xulo", &format!("fn main() {{ print({huge}) }}"));
+    let out = temp_file("infb.js", "");
+    let result = Command::new(BIN)
+        .args(["build", src.to_str().unwrap(), "-o", out.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(result.status.success());
+
+    let js = std::fs::read_to_string(&out).unwrap();
+    assert!(js.contains("console.log(Infinity);"), "js: {js}");
+
+    let node = Command::new("node").arg(&out).output().unwrap();
+    assert!(node.status.success());
+    assert_eq!(String::from_utf8_lossy(&node.stdout), "Infinity\n");
+    let _ = std::fs::remove_file(&src);
+    let _ = std::fs::remove_file(&out);
+}
+
+#[test]
 fn run_fibonacci_recursion() {
     let file = temp_file(
         "fib.xulo",
@@ -975,6 +1013,42 @@ fn run_list_concat_js_and_native() {
         } else {
             assert_eq!(stdout, "[ 1, 2, 3, 4 ]\n0,7\n", "native={native}");
         }
+        let _ = std::fs::remove_file(&file);
+    }
+}
+
+#[test]
+fn run_builtin_named_arguments_js_and_native() {
+    // Named arguments on the variadic builtins `print`/`str` pass the type
+    // checker; the codegen drops the labels and emits argument values in source
+    // order. The native runtime used to reject them with a runtime error, so a
+    // valid program ran under node but failed under `--native` — this pins both
+    // paths to the same output.
+    let src = r#"
+        fn main() {
+            print(msg: "hi")
+            print(1, b: 2, c: 3)
+            print(str(value: 42))
+        }
+    "#;
+    for native in [false, true] {
+        let file = temp_file("builtin_named.xulo", src);
+        let mut cmd = Command::new(BIN);
+        cmd.arg("run");
+        if native {
+            cmd.arg("--native");
+        }
+        let out = cmd.arg(&file).output().unwrap();
+        assert!(
+            out.status.success(),
+            "native={native} stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            "hi\n1 2 3\n42\n",
+            "native={native}"
+        );
         let _ = std::fs::remove_file(&file);
     }
 }

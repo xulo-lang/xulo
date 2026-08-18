@@ -1,3 +1,7 @@
+// `xulo-codegen` is deprecated and about to be folded into this crate; the
+// pipeline below still relies on it until then.
+#![allow(deprecated)]
+
 pub mod module;
 
 use std::path::Path;

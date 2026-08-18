@@ -1465,7 +1465,17 @@ pub fn main_returns_component(program: &Program) -> bool {
     )
 }
 
+/// Render an `f64` as a JavaScript number literal. Rust's `Display` prints
+/// `inf`/`-inf`/`NaN`, which are not valid JS identifiers, so non-finite values
+/// must map onto the JS globals they stand for (`String(1e309)` is `"Infinity"`
+/// in JS, matching the native runtime's `format_number`).
 fn fmt_number(n: f64) -> String {
+    if n.is_nan() {
+        return "NaN".into();
+    }
+    if n.is_infinite() {
+        return if n > 0.0 { "Infinity".into() } else { "-Infinity".into() };
+    }
     if n.fract() == 0.0 && n.abs() < 1e15 {
         format!("{}", n as i64)
     } else {
