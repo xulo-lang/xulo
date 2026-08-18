@@ -100,15 +100,32 @@ pub struct Interpreter {
 
 /// Maximum nested interpreter calls. Guards against unbounded recursion, which
 /// otherwise crashes the process: sync recursion overflows the host stack with
-/// a `stack overflow` abort, and async recursion spawns one 1 MiB coroutine
-/// stack per level until allocation fails. Reaching the limit returns a clean
-/// runtime error instead. The depth is counted at call time, so an `async`
-/// chain that suspends at each `await` is bounded too.
+/// a `stack overflow` abort, and async recursion spawns one coroutine stack per
+/// level (see [`COROUTINE_STACK_SIZE`]) until allocation fails. Reaching the
+/// limit returns a clean runtime error instead. The depth is counted at call
+/// time, so an `async` chain that suspends at each `await` is bounded too.
 ///
 /// The limit must leave headroom for *debug* builds on small host stacks: an
-/// unoptimized interpreter frame can be several KiB, and test/embedding
-/// threads default to a 2 MiB stack, so 128 × ~8 KiB stays safely under it.
+/// unoptimized interpreter frame is ~25 KiB, and test/embedding threads default
+/// to a 2 MiB stack, so 128 × ~25 KiB stays safely under it.
 pub const MAX_CALL_DEPTH: usize = 128;
+
+/// Stack size for each async task's coroutine. A maximal async chain keeps
+/// every suspended level's stack alive at once (up to [`MAX_CALL_DEPTH`] × this
+/// size), so this is the memory multiplier for deep `await` recursion.
+///
+/// The two profiles size it differently because unoptimized interpreter frames
+/// dominate in debug builds:
+/// - Debug keeps the historical 1 MiB: a sync call of ~25 KiB per frame allows a
+///   recursion chain of only ~40 levels inside one async body, and shrinking the
+///   stack would move that crash boundary into ordinary dev workloads.
+/// - Release frames are ~0.3 KiB, so 256 KiB (hundreds of call levels of
+///   headroom) is ample while cutting a maximal chain from 128 MiB to 32 MiB.
+pub const COROUTINE_STACK_SIZE: usize = if cfg!(debug_assertions) {
+    1024 * 1024
+} else {
+    256 * 1024
+};
 
 /// Break the Rc cycle that top-level (and nested) function declarations create:
 /// `env -> "f" -> FunctionValue { closure: env }`. The env graph outlives the
@@ -448,7 +465,9 @@ impl Interpreter {
         }));
         let promise_for_task = promise.clone();
         let interp = self as *const Interpreter;
-        let coro = Coroutine::new(
+        let coro = Coroutine::with_stack(
+            DefaultStack::new(COROUTINE_STACK_SIZE)
+                .expect("failed to allocate async task stack"),
             move |yielder: &Yielder<Control, ()>, _start: Control| -> Result<Value, RunError> {
                 // SAFETY: `resume_task` sets CURRENT_INTERP to this interpreter
                 // around every resume; the coroutine only runs inside one.

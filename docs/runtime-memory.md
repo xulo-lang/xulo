@@ -115,7 +115,8 @@ root，随持有它们的值一起释放。未改用 `Weak<RefCell<Env>>`：那�
 
 基于 **corosensei 栈式协程**：每个 `async` 调用 `spawn_async` 时：
 
-- 分配一个 **1 MiB 协程栈**（`DefaultStack`），suspend 时完整保留调用帧；
+- 分配一个协程栈（`COROUTINE_STACK_SIZE`：debug 1 MiB / release 256 KiB，
+  suspend 时完整保留调用帧；量级与依据见 §7 P4）；
 - 创建一个共享 `Promise`（`Rc<RefCell<Promise>>`）与一个 `Task`；
 - `Task` 存入 `tasks: Vec<Option<Task>>`，`task_yielder` 与之索引对齐
   （spawn 时同步 push，复用槽时置 `None`）。
@@ -135,11 +136,11 @@ root，随持有它们的值一起释放。未改用 `Weak<RefCell<Env>>`：那�
   无法捕获 `&Interpreter`，借由该裸指针在 `resume` 期间访问（单线程，suspend
   期间指针始终有效；`resume_task` 内用 `debug_assert` 固化这一不变式，见 §7）；
 - `call_depth: Cell<usize>` + `MAX_CALL_DEPTH = 128`：同步 / 异步递归统一计数，
-  超限返回干净错误而非宿主栈溢出（每层 async 递归会新建一个 1 MiB 栈，需要上限
-  兜底）。
+  超限返回干净错误而非宿主栈溢出（每层 async 递归会新建一个
+  `COROUTINE_STACK_SIZE` 栈，需要上限兜底）。
 
 ```text
-spawn_async(fn) ──> Promise (共享)  +  Task { coro: 1MiB 栈, promise }
+spawn_async(fn) ──> Promise (共享)  +  Task { coro: 协程栈, promise }
                        │  awaiters: VecDeque<task_id>
 tasks: Vec<Option<Task>>   task_free: Vec<usize>（可复用槽位）
 ready: VecDeque<(id, Control)>
@@ -165,7 +166,7 @@ ready: VecDeque<(id, Control)>
 | P1 | Rc 环（D11）：顶层函数捕获自身定义环境 | **已修复**：`Interpreter::drop` 清扫 root 绑定破环；逃逸闭包语义保持强引用（未改用 Weak，见下） |
 | P2 | `tasks` 槽位从不缩容 | **已修复**：空闲列表复用 + 尾部 `truncate`，槽位有界 |
 | P3 | `for` 每轮新建 `Env` | **已修复**：循环体无闭包时复用单层 `Env`（`reset` 逐轮清空重绑、内联执行体），纯循环提速约 2 成；含 `fn`/`FnExpr` 仍每轮新建（按轮捕获语义锁定） |
-| P4 | 异步协程栈 1 MiB/个 | 未修复：eval 递归跑在协程栈内，需实测深递归后定值 |
+| P4 | 异步协程栈 1 MiB/个 | **已修复**：栈大小按编译档位取值——debug 保持 1 MiB（未优化解释器帧 ~25 KiB），release 降到 256 KiB（帧 ~0.3 KiB），最长 async 链 128 MiB → 32 MiB；深递归量纲实测见下 |
 | — | `String` 深拷贝 | 未计划：`Env::get` 与格式化输出可能复制字符串 |
 | — | `CURRENT_INTERP` 裸指针不变式 | 结构上安全，已加 `debug_assert` 固化（未改架构） |
 
@@ -197,10 +198,19 @@ Interpreter 生命周期边界，语义零变化，代价仅是 drop 时的一�
 `for i in 0..<n` 微基准（release）约提速 2 成（标题微循环 1.5s → 1.1s）。`while`
 本就共享环境只在布局层，本轮未动。
 
-**P4 — 协程栈大小（暂缓）**：corosensei `DefaultStack::default()` 即
-`1024 * 1024`（mmap + guard page），每次 `Coroutine::new` 分配全新栈；且栈内
-跑着解释器 eval 递归，`MAX_CALL_DEPTH = 128` 时每层 Rust 栈消耗可观。调小到
-512 KiB 等需先实测深 async 递归（现测试断言了 100 层 async 递归仍正确）。
+**P4 — 协程栈大小（已修复）**：corosensei `DefaultStack::default()` 即
+`1024 * 1024`（mmap + guard page），每次 `Coroutine::new` 分配全新栈。用
+`Coroutine::with_stack` + `DefaultStack::new(size)` 参数化后实测量纲：
+
+- release 深 async 递归（100 层）只需 ~6 KiB/栈，帧 ~0.3 KiB；
+- debug 深 async 递归（100 层）需 ~70 KiB/栈；但 debug 一帧高达 ~25 KiB，
+  单个 async 体内再跑同步递归链时栈需求线性放大（`chain(60)` 需 ~1.5 MiB）。
+
+因此改为 `cfg!(debug_assertions)` 分档：debug 保持 1 MiB（不改动既有开发档位
+的崩溃边界），release 用 256 KiB——release 帧 ~0.3 KiB，256 KiB 有数百层余量，
+同时把最长 async 链（`MAX_CALL_DEPTH` 层并发常驻栈）从 128 MiB 降到 32 MiB。
+顺带发现既有 1 MiB 在 debug 下也盖不住 async 体内 60+ 层同步递归（~1.5 MiB），
+属既有边界而非本次引入。
 
 **`String` 深拷贝**：`Env::get` 返回借用或 Cow 可减少复制，暂无计划。
 
