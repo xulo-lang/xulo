@@ -110,6 +110,19 @@ pub struct Interpreter {
 /// threads default to a 2 MiB stack, so 128 × ~8 KiB stays safely under it.
 pub const MAX_CALL_DEPTH: usize = 128;
 
+/// Break the Rc cycle that top-level (and nested) function declarations create:
+/// `env -> "f" -> FunctionValue { closure: env }`. The env graph outlives the
+/// interpreter otherwise (known issue D11), leaking in REPL/library hosts that
+/// create and drop interpreters repeatedly. Clearing the root env's bindings
+/// releases the function values — and any other values bound at the top level —
+/// so the whole graph is reclaimed. Nested child envs hang off the root through
+/// the strong `parent` link and drop together with the values that own them.
+impl Drop for Interpreter {
+    fn drop(&mut self) {
+        self.global.borrow_mut().clear();
+    }
+}
+
 fn native_print(interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     let line = args
         .iter()

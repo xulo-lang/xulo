@@ -17,8 +17,9 @@
   （字符数据在堆）与 `Box`（枚举 payload）持有。
 
 因此整个运行时是**引用计数式内存**：谁持有 `Rc` 谁就有权访问，计数归零即释放。
-CLI 场景下进程退出统一回收；**长驻场景（REPL / 库宿主）下若存在循环引用，内存
-不会释放**（见 §4 与 §7）。
+CLI 场景下进程退出统一回收；**长驻场景（REPL / 库宿主）下的环境环已在
+`Interpreter::drop` 时被清扫打断**（见 §4 与 §7 P1）；值级自环（`o.x = o`）仍
+随 Rc 计数语义释放——那种自环由用户构造时持续存活，属引用计数模型的固有边界。
 
 ## 2. `Value` 的表示（`value.rs`）
 
@@ -100,8 +101,15 @@ global
 ```
 
 任何顶层函数都会形成这个环。结果：`drop(Interpreter)` 后 global 仍至少存活一个
-引用计数，**环内的内存不会回收**。CLI 进程退出即回收，无实际影响；REPL / 长驻
-宿主会随每次求值累积泄漏。处置见 §7 P1。
+引用计数，**环内的内存不会回收**。CLI 进程退出即回收，无实际影响；长驻宿主若
+反复创建/丢弃 Interpreter 会逐次泄漏。
+
+**处置（已修复，§7 P1）**：`Interpreter::drop` 实现里清空 root 环境的绑定
+（`Env::clear`），`global ──> "a"` 这条边断开后函数值被释放，closure 不再持有
+global，整个环境图随之回收。子环境（模块 / 调用 / 块）通过强 `parent` 链挂靠
+root，随持有它们的值一起释放。未改用 `Weak<RefCell<Env>>`：那会改变逃逸闭包
+语义——`makeAdder` 这类「函数内 `return fn` 捕获调用环境」的闭包在定义环境 drop
+后 `upgrade` 会失败，与 JS 路径分叉（双路径 parity 测试锁定），故不采用。
 
 ## 5. 异步运行时内存
 
@@ -154,7 +162,7 @@ ready: VecDeque<(id, Control)>
 | 优先级 | 关注点 | 现状 |
 |---|---|---|
 | P0 | 无阻塞级问题 | — |
-| P1 | Rc 环（D11）：顶层函数捕获自身定义环境 | 未修复（post-MVP）。CLI 进程退出即回收，仅 REPL/长驻宿主泄漏 |
+| P1 | Rc 环（D11）：顶层函数捕获自身定义环境 | **已修复**：`Interpreter::drop` 清扫 root 绑定破环；逃逸闭包语义保持强引用（未改用 Weak，见下） |
 | P2 | `tasks` 槽位从不缩容 | **已修复**：空闲列表复用 + 尾部 `truncate`，槽位有界 |
 | P3 | `for`/`while` 每轮新建 `Env` | 未修复：按轮捕获语义（JS `let` 对齐）已锁定，复用需先探测循环体无闭包 |
 | P4 | 异步协程栈 1 MiB/个 | 未修复：eval 递归跑在协程栈内，需实测深递归后定值 |
@@ -163,11 +171,13 @@ ready: VecDeque<(id, Control)>
 
 各项展开：
 
-**P1 — 打破闭包环**：把 `FunctionValue.closure` 改为 `Weak<RefCell<Env>>`，或对
-已捕获的根环境特殊处理，解除 D11 泄漏。注意 `fn` 声明注册进**当前定义环境**
-（`register_fn`），循环体内嵌套 `fn` 的 closure 指向当轮 Env（`exec_for:
-620/657` 逐轮新建）；改成 `Weak` 后，逃逸闭包会在定义环境 drop 后 `upgrade`
-失败——需先决策语言是否支持「逃逸闭包」再实施。post-MVP 处理。
+**P1 — 打破闭包环（已修复）**：`Interpreter::drop` 先 `Env::clear` 清空 global
+绑定，切断 `env -> fn value -> closure -> env` 自环，环境图随 Interpreter 一并
+回收（`tests/memory.rs` 取消 `#[ignore]` 锁定）。刻意没走
+`FunctionValue.closure: Weak<RefCell<Env>>` 的全量弱化：逃逸闭包（如
+`makeAdder` 返回捕获调用环境的匿名 `fn`，双路径 parity 锁定）需要强引用保住
+定义环境，Weak 会让其 `upgrade` 失败而语义分叉。drop 清扫把「破环」限定在
+Interpreter 生命周期边界，语义零变化，代价仅是 drop 时的一次根绑定清空。
 
 **P2 — `tasks` 槽位复用（已修复）**：原 `tasks: Vec<Option<Task>>` 只 push，
 完成的任务留 `None` 永久空洞，`task_yielder` 同步累积陈旧指针。修复为：
@@ -201,8 +211,9 @@ ready: VecDeque<(id, Control)>
 
 ### 回归测试
 
-- `crates/xulo-runtime/tests/memory.rs`：D11 泄漏行为（`#[ignore]`，断言的是
-  破环后的预期，需在修复后取消忽略）+ 无环对照组。
+- `crates/xulo-runtime/tests/memory.rs`：D11 破环后的预期（`Interpreter::drop`
+  清空 root 绑定 → 弱引用 upgrade 为 `None`）+ 无环对照组（裸 `print` 本就
+  无环）。
 - `crates/xulo-runtime/tests/task_slots.rs`：P2 —— 大量顺序 / fire-and-forget
   async 调用后槽位数始终保持有界，且输出顺序正确。
 - `crates/xulo-runtime/tests/loop_captures.rs` + CLI 双路径 parity：P3 语义锁定

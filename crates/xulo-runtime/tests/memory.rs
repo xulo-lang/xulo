@@ -3,8 +3,11 @@
 //! Pins the reference relationship between an interpreter and its shared root
 //! environment. A top-level `fn` is bound into its *defining* environment as a
 //! function value that captures that same environment, so a bare
-//! `env -> "f" -> FunctionValue { closure: env }` Rc cycle keeps the grand
-//! root alive after the interpreter is dropped (known issue D11).
+//! `env -> "f" -> FunctionValue { closure: env }` Rc cycle used to keep the
+//! grand root alive after the interpreter was dropped (known issue D11). The
+//! cycle is now broken by `Interpreter::drop` clearing the root env's
+//! bindings; the tests below pin both the broken case and the cycle-free
+//! control.
 
 use std::rc::Rc;
 
@@ -35,15 +38,10 @@ fn dropping_interpreter_releases_global_env_without_cycle() {
 }
 
 /// Known D11: registering any top-level `fn` ties its captured closure env
-/// back into the env that binds it, so the root env survives the drop. Fine
-/// for the CLI (process exit reclaims it), a leak in a long-running
-/// REPL/library host.
-///
-/// `#[ignore]`d: it asserts the *fixed* behavior (nothing left alive), so it
-/// fails while the cycle exists. Remove the `#[ignore]` once the cycle is
-/// broken (e.g. via `Weak<RefCell<Env>>`).
+/// back into the env that binds it, so the root env survives the drop. Fixed
+/// by clearing the root env's bindings in `Interpreter::drop`, which breaks
+/// the `env -> "f" -> FunctionValue { closure: env }` cycle.
 #[test]
-#[ignore]
 fn dropping_interpreter_releases_global_env() {
     assert!(
         !root_alive_after_drop("fn a(): number { return 1 }"),

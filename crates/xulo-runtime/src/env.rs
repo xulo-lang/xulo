@@ -33,6 +33,17 @@ impl Env {
         self.bindings.insert(name.to_string(), value);
     }
 
+    /// Drop every binding in this scope. Used when the owning
+    /// [`Interpreter`](crate::interpreter::Interpreter) is dropped: a top-level
+    /// `fn` binds into the root env while its closure captures that same env, so
+    /// `root -> "f" -> FunctionValue { closure: root }` is an Rc cycle that
+    /// would otherwise outlive the interpreter (known issue D11). Clearing the
+    /// root's bindings releases the function values (and any other reachable
+    /// values), breaking the cycle so the whole env graph is reclaimed.
+    pub fn clear(&mut self) {
+        self.bindings.clear();
+    }
+
     /// Look `name` up through the scope chain.
     pub fn get(&self, name: &str) -> Option<Value> {
         if let Some(value) = self.bindings.get(name) {

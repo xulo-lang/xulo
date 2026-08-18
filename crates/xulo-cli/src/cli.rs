@@ -368,9 +368,10 @@ fn repl() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// Compile and run the REPL buffer. `pending` is the freshly-typed entry to
-/// add this round. Returns `false` when the entry failed to compile — the
-/// session has been rolled back and the caller restores the entry for editing.
+/// Compile and run the REPL buffer natively (in-process interpreter, no Node).
+/// `pending` is the freshly-typed entry to add this round. Returns `false`
+/// when the entry failed at compile stage — the session has been rolled back
+/// and the caller restores the entry for editing.
 fn repl_run(session: &mut String, pending: &str) -> bool {
     session.push_str(pending);
     let raw = session.trim_start();
@@ -383,32 +384,71 @@ fn repl_run(session: &mut String, pending: &str) -> bool {
     } else {
         format!("fn main() {{\n{session}\n}}\n")
     };
-    let (result, rendered_source): (Result<(String, Vec<XuloError>), ()>, String) = if echo {
+    let rollback = if echo {
         let prior = &session[..session.len().saturating_sub(pending.len())];
         let echoed = format!("fn main() {{\n{}{}\n}}\n", prior, echo_wrap(pending));
-        let echoed_out = compile_source(&echoed);
-        match echoed_out {
-            Ok(out) => (Ok(out), echoed),
-            Err(()) => {
-                // The entry was not a standalone expression; fall back to its
-                // literal form so errors match what was typed.
-                (compile_source(&compiled), compiled)
-            }
+        match repl_execute(&echoed, &echoed) {
+            Ok(()) => false,
+            // The entry was not a standalone expression; fall back to its
+            // literal form so errors match what was typed.
+            Err(true) => repl_execute(&compiled, &compiled).is_err(),
+            // The echoed form ran but raised a runtime error: keep the entry.
+            Err(false) => false,
         }
     } else {
-        (compile_source(&compiled), compiled)
+        repl_execute(&compiled, &compiled).is_err()
     };
-    match result {
-        Ok((js, warnings)) => {
-            print_warnings(&warnings, Some(&rendered_source));
-            run_node(&js);
-            true
+    if rollback {
+        // Roll back the failed entry so it is not re-run later; the caller
+        // restores it into the edit buffer.
+        session.truncate(session.len().saturating_sub(pending.len()));
+        false
+    } else {
+        true
+    }
+}
+
+/// Lex, parse, semantic-check, and run a REPL buffer in-process. Warnings and
+/// `print` output go straight to stderr/stdout. Returns `Err(true)` when the
+/// buffer failed to compile (the entry must be rolled back), or `Err(false)`
+/// when it compiled but raised a runtime error (the entry is kept).
+fn repl_execute(buffer: &str, render_source: &str) -> Result<(), bool> {
+    let tokens = match xulo_lexer::tokenize(buffer) {
+        Ok(t) => t,
+        Err(err) => {
+            print_compile_error(&err, render_source, Path::new("<repl>"));
+            return Err(true);
         }
-        Err(()) => {
-            // Roll back the failed entry so it is not re-run later; the caller
-            // restores it into the edit buffer.
-            session.truncate(session.len().saturating_sub(pending.len()));
-            false
+    };
+    let mut ast = match xulo_parser::parse_program(&tokens) {
+        Ok(p) => p,
+        Err(err) => {
+            print_compile_error(&err, render_source, Path::new("<repl>"));
+            return Err(true);
+        }
+    };
+    let analysis = match xulo_semantic::analyze_with(&ast, &[], &[], &[]) {
+        Ok(a) => a,
+        Err(err) => {
+            print_compile_error(&err, render_source, Path::new("<repl>"));
+            return Err(true);
+        }
+    };
+    print_warnings(&analysis.warnings, Some(render_source));
+    let dispatch = analysis.trait_dispatch.clone();
+    let concat = analysis.list_concat.clone();
+    xulo_semantic::apply_trait_dispatch(&mut ast, &dispatch);
+    xulo_semantic::apply_list_concat(&mut ast, &concat);
+    match Interpreter::new().run(&ast) {
+        Ok(out) => {
+            if !out.is_empty() {
+                println!("{}", out.join("\n"));
+            }
+            Ok(())
+        }
+        Err(err) => {
+            print_compile_error(&err, render_source, Path::new("<repl>"));
+            Err(false)
         }
     }
 }
@@ -603,51 +643,6 @@ fn unbalanced(src: &str) -> bool {
         }
     }
     in_str.is_some() || !stack.is_empty()
-}
-
-fn run_node(js: &str) {
-    let tmp = temp_js_path(None);
-    if let Err(e) = write_js(&tmp, js) {
-        eprintln!("{e}");
-        return;
-    }
-    let status = Command::new("node")
-        .arg(&tmp)
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status();
-    let _ = std::fs::remove_file(&tmp);
-    if let Err(e) = status {
-        eprintln!("failed to run node: {e}");
-    }
-}
-
-fn compile_source(buffer: &str) -> Result<(String, Vec<XuloError>), ()> {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let path =
-        std::env::temp_dir().join(format!("xulo_repl_{}_{}.xulo", std::process::id(), nanos));
-    if let Err(e) = write_js(&path, buffer) {
-        eprintln!("{e}");
-        return Err(());
-    }
-    let result = xulo_compiler::module::compile_file(&path);
-    // Read the source back *before* deleting the temp file: error rendering
-    // needs it (removing first used to leave the diagnostic with an empty
-    // source snippet).
-    let source = std::fs::read_to_string(&path).unwrap_or_default();
-    let _ = std::fs::remove_file(&path);
-    match result {
-        Ok(out) => Ok(out),
-        Err(err) => {
-            let src_file = err.file.clone().unwrap_or(path);
-            print_compile_error(&err, &source, &src_file);
-            Err(())
-        }
-    }
 }
 
 fn compile_to_js(file: &Path) -> Result<(String, Vec<XuloError>), ExitCode> {
