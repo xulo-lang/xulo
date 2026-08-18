@@ -91,7 +91,21 @@ pub struct Interpreter {
     current_task: Cell<Option<usize>>,
     /// Each task's yielder pointer, stashed by the coroutine on first entry.
     task_yielder: RefCell<Vec<Option<*const Yielder<Control, ()>>>>,
+    /// Active call depth (see [`MAX_CALL_DEPTH`]).
+    call_depth: Cell<usize>,
 }
+
+/// Maximum nested interpreter calls. Guards against unbounded recursion, which
+/// otherwise crashes the process: sync recursion overflows the host stack with
+/// a `stack overflow` abort, and async recursion spawns one 1 MiB coroutine
+/// stack per level until allocation fails. Reaching the limit returns a clean
+/// runtime error instead. The depth is counted at call time, so an `async`
+/// chain that suspends at each `await` is bounded too.
+///
+/// The limit must leave headroom for *debug* builds on small host stacks: an
+/// unoptimized interpreter frame can be several KiB, and test/embedding
+/// threads default to a 2 MiB stack, so 128 × ~8 KiB stays safely under it.
+pub const MAX_CALL_DEPTH: usize = 128;
 
 fn native_print(interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     let line = args
@@ -126,6 +140,7 @@ impl Interpreter {
             ready: RefCell::new(VecDeque::new()),
             current_task: Cell::new(None),
             task_yielder: RefCell::new(Vec::new()),
+            call_depth: Cell::new(0),
         }
     }
 
@@ -532,8 +547,8 @@ impl Interpreter {
             Ok(Flow::Continue)
         } else {
             let iterable = self.eval(&f.iterable, env)?;
-            let items = match iterable {
-                Value::List(list) => list.borrow().clone(),
+            let list = match iterable {
+                Value::List(list) => list,
                 other => {
                     return Err(RunError::err(
                         format!(
@@ -544,13 +559,27 @@ impl Interpreter {
                     ));
                 }
             };
-            for item in items {
+            // Iterate *live*, like JS `for...of`: the length and each element
+            // are re-read on every step, so mutations in the body (appending,
+            // replacing, shortening) are visible to later iterations. A
+            // snapshot used to diverge (`xs[1] = 99` inside the body read the
+            // old value here but the new one in JS).
+            let mut i = 0usize;
+            loop {
+                let item = {
+                    let list = list.borrow();
+                    if i >= list.len() {
+                        break;
+                    }
+                    list[i].clone()
+                };
                 let child = Env::child(env);
                 child.borrow_mut().define(&f.iter_var, item);
                 match self.exec_block(&f.body, &child)? {
                     Flow::Continue => {}
                     other => return Ok(other),
                 }
+                i += 1;
             }
             Ok(Flow::Continue)
         }
@@ -1258,8 +1287,20 @@ impl Interpreter {
                 native(self, &values)
             }
             Value::Function(func) => {
-                let bound = self.bind_args(&func.params, args, call_env)?;
-                self.run_function(func, bound)
+                let depth = self.call_depth.get();
+                if depth >= MAX_CALL_DEPTH {
+                    return Err(RunError::err(
+                        format!("call depth exceeded: recursion limit of {MAX_CALL_DEPTH} reached"),
+                        args.first().map(|a| a.value.span().clone()).unwrap_or(0..0),
+                    ));
+                }
+                self.call_depth.set(depth + 1);
+                let result = (|| {
+                    let bound = self.bind_args(&func.params, args, call_env)?;
+                    self.run_function(func, bound)
+                })();
+                self.call_depth.set(depth);
+                result
             }
             other => Err(RunError::err(
                 format!("{} is not callable", other.format()),
@@ -1363,23 +1404,35 @@ impl Interpreter {
         args: &[CallArg],
         call_env: &Rc<RefCell<Env>>,
     ) -> Result<Value, RunError> {
-        let bound = self.bind_args(&f.params, args, call_env)?;
-        if f.is_async {
-            let params = f.params.clone();
-            let body = f.body.clone();
-            let return_type = f.return_type.clone();
-            let call_env = call_env.clone();
-            return Ok(self.spawn_async(move |_yielder| {
-                let env = Env::child(&call_env);
-                with_interp(|interp| {
-                    interp.bind_callee_args(&env, &params, bound)?;
-                    interp.run_body(&body, &env, return_type.is_some())
-                })
-            }));
+        let depth = self.call_depth.get();
+        if depth >= MAX_CALL_DEPTH {
+            return Err(RunError::err(
+                format!("call depth exceeded: recursion limit of {MAX_CALL_DEPTH} reached"),
+                0..0,
+            ));
         }
-        let env = Env::child(call_env);
-        self.bind_callee_args(&env, &f.params, bound)?;
-        self.run_body(&f.body, &env, f.return_type.is_some())
+        self.call_depth.set(depth + 1);
+        let result = (|| {
+            let bound = self.bind_args(&f.params, args, call_env)?;
+            if f.is_async {
+                let params = f.params.clone();
+                let body = f.body.clone();
+                let return_type = f.return_type.clone();
+                let call_env = call_env.clone();
+                return Ok(self.spawn_async(move |_yielder| {
+                    let env = Env::child(&call_env);
+                    with_interp(|interp| {
+                        interp.bind_callee_args(&env, &params, bound)?;
+                        interp.run_body(&body, &env, return_type.is_some())
+                    })
+                }));
+            }
+            let env = Env::child(call_env);
+            self.bind_callee_args(&env, &f.params, bound)?;
+            self.run_body(&f.body, &env, f.return_type.is_some())
+        })();
+        self.call_depth.set(depth);
+        result
     }
 
     /// Execute a function body in its call environment, honoring the implicit

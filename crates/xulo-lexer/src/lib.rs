@@ -16,8 +16,11 @@ type Input<'i> = &'i str;
 type Res<O> = winnow::ModalResult<O, ContextError>;
 
 /// Tokenize a Xulo source file into a token stream (with an explicit trailing
-/// `EOF` token).
+/// `EOF` token). A UTF-8 byte-order mark at the start is skipped (editors on
+/// Windows commonly prepend one; treating it as a character yields a
+/// confusing "unexpected character" error).
 pub fn tokenize(source: &str) -> Result<Vec<LexedToken>, XuloError> {
+    let source = source.strip_prefix('\u{feff}').unwrap_or(source);
     let total = source.len();
     let mut cursor: Input = source;
     let mut tokens = Vec::new();

@@ -622,7 +622,9 @@ fn enum_multi_payload_constructor_emits_array_value() {
         r#"enum Pair<T> { A(T, string) B }
         fn main() { let p = Pair::A(7, "x") print(1) }"#,
     );
-    assert!(js.contains("A: (p0, p1) => ({ tag: \"A\", value: [p0, p1] })"));
+    assert!(js.contains("A: (p0, p1) => { const o = { tag: \"A\", value: [p0, p1] }; Object.defineProperty(o, __enum, { value: true }); return o; }"));
+    // The `__enum` marker (and its symbol) must be emitted alongside the enum.
+    assert!(js.contains("const __enum = Symbol.for(\"xulo.enum\");"));
 }
 
 #[test]

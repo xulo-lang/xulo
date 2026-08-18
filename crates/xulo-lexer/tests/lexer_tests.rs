@@ -338,3 +338,10 @@ fn lone_operators_and_trailing_eof_are_diagnostics_not_panics() {
     }
     assert!(tokenize("\\").is_err());
 }
+
+#[test]
+fn skips_utf8_bom() {
+    let toks = tokenize("\u{feff}let x = 1").unwrap();
+    assert_eq!(toks[0].kind, Token::Let);
+    assert_eq!(toks[1].kind, Token::Ident);
+}

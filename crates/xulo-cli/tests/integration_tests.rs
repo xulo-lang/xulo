@@ -724,6 +724,49 @@ fn external_import_keeps_every_alias_and_kind() {
 }
 
 #[test]
+fn external_import_local_name_conflict_is_rejected() {
+    // Two modules importing *different bindings under the same local name*
+    // (`import { a as x }` vs `import { b as x }`) cannot both be emitted as
+    // ESM (re-declaring `x` is illegal); the bundle must fail loudly instead
+    // of silently dropping the second binding (which would make that module
+    // read the wrong import).
+    let (dir, entry) = temp_dir(
+        &[
+            (
+                "a.xulo",
+                "import { a as x } from \"pkg-c\"\nexport fn fa(): number { x }\n",
+            ),
+            (
+                "main.xulo",
+                "import { fa } from \"./a\"\nimport { b as x } from \"pkg-c\"\nfn main() { print(str(fa() + x)) }\n",
+            ),
+        ],
+        "main.xulo",
+    );
+    let out_dir = dir.join("bundle.mjs");
+    let result = Command::new(BIN)
+        .args([
+            "build",
+            entry.to_str().unwrap(),
+            "-o",
+            out_dir.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        !result.status.success(),
+        "conflicting imports must fail the build"
+    );
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(
+        stderr.contains("conflicting imports from `pkg-c`")
+            && stderr.contains("`x` is already bound"),
+        "stderr: {stderr}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn shared_runtime_emitted_once_across_modules() {
     // Several modules using reactive/range features still yield a single
     // `__runtime` declaration at the top of the bundle (regression).
@@ -1006,6 +1049,46 @@ fn run_enum_equality_js_and_native() {
         assert_eq!(
             String::from_utf8_lossy(&out.stdout),
             "true\nfalse\ntrue\n",
+            "native={native}"
+        );
+        let _ = std::fs::remove_file(&file);
+    }
+}
+
+#[test]
+fn run_plain_tagged_objects_keep_identity_equality() {
+    // A plain object that happens to have a `tag` key is *not* an enum: it
+    // must compare by identity on both paths (regression: the JS structural
+    // `__eq` helper used to treat any `{tag}` object as an enum and report
+    // two distinct literals as equal).
+    let src = r#"
+        fn main() {
+            let a = { tag: "Ok", value: 1 }
+            let b = { tag: "Ok", value: 1 }
+            print(str(a == b))
+            // Enum values still compare structurally.
+            enum R { Ok(number) }
+            let e1 = R::Ok(1)
+            let e2 = R::Ok(1)
+            print(str(e1 == e2))
+        }
+    "#;
+    for native in [false, true] {
+        let file = temp_file("tagobj.xulo", src);
+        let mut cmd = Command::new(BIN);
+        cmd.arg("run");
+        if native {
+            cmd.arg("--native");
+        }
+        let out = cmd.arg(&file).output().unwrap();
+        assert!(
+            out.status.success(),
+            "native={native} stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            "false\ntrue\n",
             "native={native}"
         );
         let _ = std::fs::remove_file(&file);

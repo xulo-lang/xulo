@@ -703,6 +703,18 @@ impl Analyzer {
         if !self.table.declare(symbol) {
             return Err(self.err(format!("function `{}` is already defined", f.name)));
         }
+        // A user function must not collide with a trait-dispatch name
+        // (`impl_{Trait}_{Type}_{method}`). `impl` registration checks this
+        // direction too, so the collision is order-independent: without this
+        // check, an `impl` declared *before* a same-named `fn` silently
+        // overwrote the mangled impl in the native runtime (dispatch then
+        // called the wrong function), while the JS target kept both apart.
+        if self.impl_mangled.contains(&f.name) {
+            return Err(self.err(format!(
+                "function `{}` collides with a trait dispatch impl of the same name (from `impl Trait for Type`)",
+                f.name
+            )));
+        }
 
         // `T: Trait` bounds: validate the trait exists and make the bound shape
         // visible to `member_field_type` / `assignable` while checking the body.
@@ -1882,14 +1894,18 @@ impl Analyzer {
                         element = item_type;
                         first = false;
                     } else if !self.assignable(&item_type, &element) {
-                        // A list literal's elements must be mutually
-                        // assignable: `[1, "a"]` would otherwise slip through
-                        // as `list<number>` and corrupt the runtime value.
-                        return Err(self.err(format!(
-                            "list literal mixes `{}` and `{}` elements; use an explicit `list<...>` annotation",
-                            element.name(),
-                            item_type.name()
-                        )));
+                        // A list literal's elements need not share one type:
+                        // `[1, "a"]` infers `list<number | string>` (an
+                        // explicit `list<T | U>` annotation then type-checks,
+                        // while an incompatible annotation like
+                        // `list<number>` is rejected at the binding). This
+                        // keeps mixed literals *typed* instead of silently
+                        // collapsing them to the first element's type.
+                        if self.assignable(&element, &item_type) {
+                            element = item_type;
+                        } else {
+                            element = union_join(&element, &item_type);
+                        }
                     }
                 }
                 Ok(Type::List(Box::new(element)))
@@ -3165,6 +3181,30 @@ fn expr_type_hint(expr: &Expression) -> Type {
     match expr {
         Expression::Literal { value: lit, .. } => literal_type(lit),
         _ => Type::Any,
+    }
+}
+
+/// Join two types into a union for list-element inference: `[1, "a"]` becomes
+/// `list<number | string>`. Flattens and deduplicates existing unions and
+/// collapses to a plain type when the parts coincide.
+fn union_join(a: &Type, b: &Type) -> Type {
+    let mut parts: Vec<Type> = match a {
+        Type::Union(ps) => ps.clone(),
+        other => vec![other.clone()],
+    };
+    let mut additions: Vec<Type> = match b {
+        Type::Union(ps) => ps.clone(),
+        other => vec![other.clone()],
+    };
+    for part in additions.drain(..) {
+        if !parts.contains(&part) {
+            parts.push(part);
+        }
+    }
+    if parts.len() == 1 {
+        parts.pop().expect("one part")
+    } else {
+        Type::Union(parts)
     }
 }
 

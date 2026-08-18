@@ -80,11 +80,14 @@ const RANGE_RUNTIME: &str =
 /// Structural equality helper for `==`/`!=`. Xulo compares enum values
 /// structurally (tag + payload, like the native interpreter), but a bare JS
 /// `==` on the compiled `{ tag, value }` objects is reference equality, so
-/// `Result::Ok(1) == Result::Ok(1)` used to be `false`. Everything without a
-/// `tag` keeps JS identity/loose semantics, matching both runtimes.
-const EQ_RUNTIME: &str = r#"function __eq(a, b) {
+/// `Result::Ok(1) == Result::Ok(1)` used to be `false`. Compiled enum values
+/// carry a private `__enum` marker so plain user objects with a coincidental
+/// `tag` key keep identity semantics; everything without the marker falls back
+/// to JS identity/loose equality, matching both runtimes.
+const EQ_RUNTIME: &str = r#"const __enum = Symbol.for("xulo.enum");
+function __eq(a, b) {
     if (a === b) return true;
-    if (a && b && typeof a === "object" && typeof b === "object" && a.tag !== undefined && b.tag !== undefined) {
+    if (a && b && typeof a === "object" && typeof b === "object" && a[__enum] && b[__enum]) {
         return a.tag === b.tag && __eq(a.value, b.value);
     }
     return a == b;
@@ -92,11 +95,11 @@ const EQ_RUNTIME: &str = r#"function __eq(a, b) {
 "#;
 
 /// Runtime preambles to emit once at the top of a multi-module bundle. `needs`
-/// is the OR of every module's `runtime_needs()`: (reactive, range, eq).
-pub fn shared_preamble(needs: (bool, bool, bool)) -> String {
-    let (reactive, range, eq) = needs;
+/// is the OR of every module's `runtime_needs()`: (reactive, range, eq, enum).
+pub fn shared_preamble(needs: (bool, bool, bool, bool)) -> String {
+    let (reactive, range, eq, enum_marker) = needs;
     let mut out = String::new();
-    if eq {
+    if eq || enum_marker {
         out.push_str(EQ_RUNTIME);
     }
     if reactive {
@@ -132,6 +135,9 @@ pub struct Javascript {
     used_impls: bool,
     /// Whether any `==`/`!=` was generated (triggers the `__eq` helper).
     used_eq: bool,
+    /// Whether a payload-carrying enum was compiled (its `{tag, value}`
+    /// objects carry the `__enum` marker from the same runtime block).
+    used_enum: bool,
 }
 
 impl Default for Javascript {
@@ -152,6 +158,7 @@ impl Javascript {
             used_range: false,
             used_impls: false,
             used_eq: false,
+            used_enum: false,
         }
     }
 
@@ -168,6 +175,7 @@ impl Javascript {
             used_range: false,
             used_impls: false,
             used_eq: false,
+            used_enum: false,
         }
     }
 
@@ -229,21 +237,27 @@ impl Javascript {
             // a mangled impl function declared in another module's IIFE.
             start.push_str("const __impls = {};\n\n");
         }
-        if self.used_eq || self.used_reactive || self.used_range {
+        if self.used_eq || self.used_enum || self.used_reactive || self.used_range {
             start.push_str(&shared_preamble((
                 self.used_reactive,
                 self.used_range,
                 self.used_eq,
+                self.used_enum,
             )));
         }
         format!("{start}{}", self.out)
     }
 
     /// Which runtime preambles this module needs (reactive runtime, `range`,
-    /// `__eq`). Used by the module bundler to emit shared runtimes once at the
-    /// top of the bundle instead of once per module IIFE.
-    pub fn runtime_needs(&self) -> (bool, bool, bool) {
-        (self.used_reactive, self.used_range, self.used_eq)
+    /// `__eq`/enum marker). Used by the module bundler to emit shared runtimes
+    /// once at the top of the bundle instead of once per module IIFE.
+    pub fn runtime_needs(&self) -> (bool, bool, bool, bool) {
+        (
+            self.used_reactive,
+            self.used_range,
+            self.used_eq,
+            self.used_enum,
+        )
     }
 
     /// Whether this module emits or calls dispatch impls, so the bundler can
@@ -736,6 +750,12 @@ impl Javascript {
     fn enum_def(&mut self, e: &EnumDef) -> Result<(), XuloError> {
         let has_payload = e.variants.iter().any(|v| v.payload.is_some());
         if has_payload {
+            // Payload-carrying variants compile to `{ tag, value }` objects.
+            // The `__enum` marker distinguishes them from plain user objects
+            // that happen to have a `tag` key (the `__eq` helper relies on
+            // it); it is *non-enumerable*, so console.log / Object.keys /
+            // match arms never see it.
+            self.used_enum = true;
             let members = e
                 .variants
                 .iter()
@@ -753,11 +773,14 @@ impl Javascript {
                             (ps.clone(), format!("[{ps}]"))
                         };
                         format!(
-                            "{}: ({params_js}) => ({{ tag: \"{}\", value: {value_js} }})",
+                            "{}: ({params_js}) => {{ const o = {{ tag: \"{}\", value: {value_js} }}; Object.defineProperty(o, __enum, {{ value: true }}); return o; }}",
                             v.name, v.name
                         )
                     } else {
-                        format!("{}: Object.freeze({{ tag: \"{}\" }})", v.name, v.name)
+                        format!(
+                            "{}: (() => {{ const o = {{ tag: \"{}\" }}; Object.defineProperty(o, __enum, {{ value: true }}); return Object.freeze(o); }})()",
+                            v.name, v.name
+                        )
                     }
                 })
                 .collect::<Vec<_>>()

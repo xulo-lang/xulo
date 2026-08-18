@@ -430,12 +430,31 @@ fn bundle(loaded: &LoadedModules) -> Result<String, XuloError> {
                 out.push_str(&format!("import * as {ns} from {:?};\n", source));
             }
         }
-        let named: Vec<(&str, &str)> = named
-            .into_iter()
-            .filter(|(_, alias)| bound.insert(*alias))
-            .collect();
-        if !named.is_empty() {
-            let parts = named
+        // A local name may be bound at most once. A *duplicate* (same source
+        // name, same alias) is fine — one binding serves every module that
+        // imported it identically. But two *different* bindings sharing a
+        // local name (e.g. module A `import { a as x }` and module B
+        // `import { b as x }`, or a default `import D` next to a named
+        // `import { D }`) cannot both be emitted — ESM forbids re-declaring
+        // `x` — and silently dropping the later one would make that module
+        // read the wrong binding. Fail loudly instead.
+        let mut emitted_named: Vec<(&str, &str)> = Vec::new();
+        for (name, alias) in named {
+            if emitted_named.contains(&(name, alias)) {
+                continue;
+            }
+            if !bound.insert(alias) {
+                return Err(XuloError::new(
+                    ErrorKind::Codegen,
+                    format!(
+                        "conflicting imports from `{source}`: the local name `{alias}` is already bound to a different binding; rename one of the imports"
+                    ),
+                ));
+            }
+            emitted_named.push((name, alias));
+        }
+        if !emitted_named.is_empty() {
+            let parts = emitted_named
                 .iter()
                 .map(|(name, alias)| {
                     if *name == *alias {
@@ -452,13 +471,14 @@ fn bundle(loaded: &LoadedModules) -> Result<String, XuloError> {
     out.push('\n');
 
     let entry = loaded.entry;
-    // Shared runtime preambles: the reactive runtime, `range()`, and `__eq`
-    // must be declared once at the top of the bundle, not inside every module
-    // IIFE.
+    // Shared runtime preambles: the reactive runtime, `range()`, and the
+    // `__eq`/enum-marker block must be declared once at the top of the bundle,
+    // not inside every module IIFE.
     let mut used_reactive = false;
     let mut used_range = false;
     let mut used_impls = false;
     let mut used_eq = false;
+    let mut used_enum = false;
     for (idx, module) in loaded.modules.iter().enumerate() {
         let mut cg = xulo_codegen::javascript::Javascript::new();
         // Imported functions may be called with named arguments.
@@ -559,11 +579,12 @@ fn bundle(loaded: &LoadedModules) -> Result<String, XuloError> {
             out.push_str(&format!("    const {{ {names} }} = __mod{target};\n"));
         }
         cg.emit_module_body(&module.program)?;
-        let (reactive, range, eq) = cg.runtime_needs();
+        let (reactive, range, eq, enum_marker) = cg.runtime_needs();
         used_reactive |= reactive;
         used_range |= range;
         used_impls |= cg.needs_impls();
         used_eq |= eq;
+        used_enum |= enum_marker;
         out.push_str(&cg.finish_without_runtime());
         if idx == entry && module.has_main {
             if xulo_codegen::javascript::main_returns_component(&module.program) {
@@ -593,16 +614,17 @@ fn bundle(loaded: &LoadedModules) -> Result<String, XuloError> {
         };
         out.push_str(&format!("    return {exports};\n}})();\n"));
     }
-    if used_reactive || used_range || used_impls || used_eq {
+    if used_reactive || used_range || used_impls || used_eq || used_enum {
         let mut preamble = String::new();
         if used_impls {
             preamble.push_str("const __impls = {};\n\n");
         }
-        if used_reactive || used_range || used_eq {
+        if used_reactive || used_range || used_eq || used_enum {
             preamble.push_str(&xulo_codegen::javascript::shared_preamble((
                 used_reactive,
                 used_range,
                 used_eq,
+                used_enum,
             )));
         }
         out.insert_str(0, &preamble);

@@ -176,6 +176,69 @@ fn recursion_with_if_expression() {
 }
 
 #[test]
+fn unbounded_recursion_errors_instead_of_crashing() {
+    // Unbounded recursion used to overflow the stack and abort the process;
+    // it must surface as a clean runtime error past the depth limit. Runs on
+    // a dedicated big-stack thread so the test harness's default (2 MiB)
+    // test-thread stack can never overflow before the interpreter's own depth
+    // guard fires — the guard is what's under test, not the host stack.
+    std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(|| {
+            // Unbounded *sync* recursion errors cleanly.
+            let err = run_raw(
+                r#"
+                fn rec(n: number): number { rec(n - 1) }
+                fn main() { print(str(rec(1))) }
+                "#,
+            )
+            .unwrap_err();
+            assert!(
+                err.message.contains("call depth exceeded"),
+                "got: {}",
+                err.message
+            );
+
+            // Async recursion hits the same limit before exhausting memory.
+            let err = run_raw(
+                r#"
+                fn rec(n: number): async number { await rec(n - 1) }
+                fn main(): async { print(str(await rec(1))) }
+                "#,
+            )
+            .unwrap_err();
+            assert!(
+                err.message.contains("call depth exceeded"),
+                "got: {}",
+                err.message
+            );
+
+            // Recursion within the limit keeps working (sync and async).
+            assert_eq!(
+                run_ok(
+                    r#"
+                    fn sum(n: number): number { if n <= 0 { return 0 } sum(n - 1) + n }
+                    fn main() { print(str(sum(100))) }
+                    "#,
+                ),
+                vec!["5050"]
+            );
+            assert_eq!(
+                run_ok(
+                    r#"
+                    fn step(n: number): async number { if n <= 0 { return 0 } await step(n - 1) n }
+                    fn main(): async { print(str(await step(100))) }
+                    "#,
+                ),
+                vec!["100"]
+            );
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
 fn implicit_return() {
     let out = run_ok(
         r#"
@@ -294,6 +357,25 @@ fn for_over_list() {
         "#,
     );
     assert_eq!(out, vec!["10"]);
+}
+
+#[test]
+fn for_over_list_iterates_live_like_js() {
+    // Mutations inside the loop body are visible to later iterations, exactly
+    // like JS `for...of` (a snapshot used to diverge: `xs[1] = 99` inside the
+    // body still yielded the old value here but the new one in JS).
+    let out = run_ok(
+        r#"
+        fn main() {
+            let xs = [1, 2]
+            for x in xs {
+                print(str(x))
+                xs[1] = 99
+            }
+        }
+        "#,
+    );
+    assert_eq!(out, vec!["1", "99"]);
 }
 
 #[test]

@@ -1147,31 +1147,32 @@ fn list_concat_is_allowed_but_mixed_concat_is_not() {
 fn list_literal_rejects_heterogeneous_elements() {
     assert!(analyze_src("fn main() { let xs = [1, 2] print(xs) }").is_ok());
     assert!(analyze_src(r#"fn main() { let xs = ["a", "b"] print(xs) }"#).is_ok());
-    // A string in a numeric list must be rejected instead of silently
-    // producing a `list<number>` whose runtime value is corrupted.
+    // A string in a *number-annotated* list must be rejected instead of
+    // silently producing a `list<number>` whose runtime value is corrupted.
     let err =
         analyze_src(r#"fn main() { let xs: list<number> = [1, "a"] print(xs) }"#).unwrap_err();
     assert!(
-        err.message.contains("list literal mixes"),
+        err.message
+            .contains("cannot bind a value of type `list<number | string>`"),
         "got: {}",
         err.message
     );
-    let err = analyze_src("fn main() { let xs = [1, \"a\"] print(xs) }").unwrap_err();
+    // An unannotated mixed literal infers a union element type...
     assert!(
-        err.message.contains("list literal mixes"),
-        "got: {}",
-        err.message
+        analyze_src(r#"fn main() { let xs = [1, "a"] print(xs) }"#).is_ok(),
+        "unannotated mixed list must infer `list<number | string>`"
     );
-    // Spread elements participate: `list<string>` inside a numeric list.
+    // ...and an explicit union annotation is the legal escape hatch.
+    assert!(
+        analyze_src(r#"fn main() { let xs: list<number | string> = [1, "a"] print(xs) }"#).is_ok()
+    );
+    // Spread elements participate: `list<string>` into a numeric list yields
+    // a union, which a `list<number>` binding still rejects.
     let err = analyze_src(
-        r#"fn main() { let strs: list<string> = ["x"] let xs = [1, ...strs] print(xs) }"#,
+        r#"fn main() { let strs: list<string> = ["x"] let xs: list<number> = [1, ...strs] print(xs) }"#,
     )
     .unwrap_err();
-    assert!(
-        err.message.contains("list literal mixes"),
-        "got: {}",
-        err.message
-    );
+    assert!(err.message.contains("cannot bind"), "got: {}", err.message);
 }
 
 #[test]
@@ -1808,6 +1809,29 @@ fn impl_mangled_name_collides_with_user_function_is_rejected() {
     assert!(
         err.message
             .contains("trait dispatch name `impl_Shape_Circle_area` collides"),
+        "unexpected: {}",
+        err.message
+    );
+}
+
+#[test]
+fn user_function_after_impl_collision_is_rejected() {
+    // The reverse order (impl first, then a same-named user `fn`) used to slip
+    // through and silently overwrite the mangled impl in the native runtime.
+    let src = r#"
+        trait Shape {
+            fn area(self): number
+        }
+        type Circle = object
+        impl Shape for Circle {
+            fn area(self): number { return 100 }
+        }
+        fn impl_Shape_Circle_area(): number { return 1 }
+        fn main() { print(1) }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(
+        err.message.contains("collides with a trait dispatch impl"),
         "unexpected: {}",
         err.message
     );
