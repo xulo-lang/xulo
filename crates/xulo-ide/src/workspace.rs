@@ -14,7 +14,7 @@ use std::path::{Component, Path, PathBuf};
 use xulo_core::ast::{ExportItem, ImportSpec, Program, Statement, Type};
 use xulo_core::error::{ErrorKind, XuloError};
 use xulo_semantic::symbol_table::{Symbol, SymbolKind};
-use xulo_semantic::{TypeEntry, TypeEntryKind, analyze_with};
+use xulo_semantic::{TypeEntry, TypeEntryKind, analyze_partial};
 
 use crate::analysis::Analysis;
 use crate::line_index::{Pos, Range};
@@ -228,21 +228,16 @@ impl Builder<'_> {
         self.visiting.remove(file);
 
         let (symbols, types, impls) = seed(self.analyzed(), file, &imports);
-        let analysis = match analyze_with(&program, &symbols, &types, &impls) {
-            Ok(result) => Analysis {
-                source: source.clone(),
-                program: Some(program),
-                result: Some(result),
-                error: None,
-                line_index: crate::line_index::LineIndex::new(&source),
-            },
-            Err(err) => Analysis {
-                source: source.clone(),
-                program: Some(program),
-                result: None,
-                error: Some(err),
-                line_index: crate::line_index::LineIndex::new(&source),
-            },
+        // Use the partial analyzer so a single failing statement never blanks
+        // out the whole document: resolutions/types gathered elsewhere still
+        // feed hover / go-to-definition while the error is reported.
+        let (result, error) = analyze_partial(&program, &symbols, &types, &impls);
+        let analysis = Analysis {
+            source: source.clone(),
+            program: Some(program),
+            result: Some(result),
+            error,
+            line_index: crate::line_index::LineIndex::new(&source),
         };
         self.analyzed.insert(
             file.to_path_buf(),

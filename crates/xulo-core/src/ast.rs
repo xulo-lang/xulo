@@ -116,6 +116,9 @@ pub struct EnvStmt {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ComponentStmt {
     pub name: String,
+    /// The byte span of `name` (for editor tooling: hover/go-to-definition on
+    /// component sites).
+    pub name_span: Range<usize>,
     pub args: Vec<CallArg>,
     pub children: Vec<UiElement>,
 }

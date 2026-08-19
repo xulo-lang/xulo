@@ -9,7 +9,7 @@
 
 use xulo_core::ast::Program;
 use xulo_core::error::XuloError;
-use xulo_semantic::{AnalysisResult, analyze_with};
+use xulo_semantic::{AnalysisResult, analyze_partial};
 
 use crate::line_index::{LineIndex, Pos};
 
@@ -85,20 +85,14 @@ pub fn analyze_source(source: &str) -> Analysis {
         }
         Ok(program) => program,
     };
-    match analyze_with(&program, &[], &[], &[]) {
-        Ok(result) => Analysis {
-            source: source.to_string(),
-            program: Some(program),
-            result: Some(result),
-            error: None,
-            line_index,
-        },
-        Err(err) => Analysis {
-            source: source.to_string(),
-            program: Some(program),
-            result: None,
-            error: Some(err),
-            line_index,
-        },
+    // Partial analysis: a single failing statement keeps the resolutions/types
+    // gathered around it, so hover / go-to-definition survive error files.
+    let (result, error) = analyze_partial(&program, &[], &[], &[]);
+    Analysis {
+        source: source.to_string(),
+        program: Some(program),
+        result: Some(result),
+        error,
+        line_index,
     }
 }

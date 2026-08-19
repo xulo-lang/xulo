@@ -9,7 +9,8 @@ use xulo_lexer::token::{LexedToken, Token};
 use super::expression::{call_args, decode_string, expression, fn_expr, if_expr};
 use super::types::type_expr;
 use super::{
-    In, PErr, Pr, at_eof, consumed_span, enter_nest, ident_name, opt_tk, peek_is, tk, verified_tk,
+    In, PErr, Pr, at_eof, consumed_span, enter_nest, ident_name, ident_name_spanned, opt_tk,
+    peek_is, tk, verified_tk,
 };
 use winnow::error::ErrMode;
 
@@ -774,7 +775,7 @@ fn binding_pattern(input: &mut In<'_>) -> Pr<BindingPattern> {
 
 /// A UI component statement: `ComponentName(args)? { children }?`.
 fn component_stmt(input: &mut In<'_>) -> Pr<ComponentStmt> {
-    let name = ident_name(input)?;
+    let (name, name_span) = ident_name_spanned(input)?;
     let args = if peek_is(input, Token::LParen) {
         call_args(input)?
     } else {
@@ -789,6 +790,7 @@ fn component_stmt(input: &mut In<'_>) -> Pr<ComponentStmt> {
     };
     Ok(ComponentStmt {
         name,
+        name_span,
         args,
         children,
     })

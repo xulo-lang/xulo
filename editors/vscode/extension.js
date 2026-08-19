@@ -113,7 +113,12 @@ function lspPos(pos) {
 
 async function request(method, params) {
   if (!client) return null;
-  return client.request(method, params).then(mapResponse(method), () => null);
+  try {
+    const result = await client.request(method, params);
+    return mapResponse(method)(result);
+  } catch (_) {
+    return null;
+  }
 }
 
 function mapResponse(method) {
@@ -121,7 +126,7 @@ function mapResponse(method) {
     return (loc) => (loc ? new vscode.Location(vscode.Uri.parse(loc.uri), toVscodeRange(loc.range)) : null);
   }
   if (method === 'textDocument/hover') {
-    return (h) => (h ? new vscode.Hover(toMarkdown(h.contents), toVscodeRange(h.range)) : null);
+    return (h) => (h ? new vscode.Hover(toMarkdown(h.contents), h.range && toVscodeRange(h.range)) : null);
   }
   if (method === 'textDocument/references') {
     return (locs) => (locs || []).map((loc) => new vscode.Location(vscode.Uri.parse(loc.uri), toVscodeRange(loc.range)));
@@ -180,6 +185,7 @@ class Client {
     this.pending = new Map();
     this.diagHandler = null;
     this.ready = null;
+    this.stopping = false;
   }
 
   onDiagnostics(handler) {
@@ -187,34 +193,77 @@ class Client {
   }
 
   start() {
+    this.stopping = false;
     const binary = vscode.workspace.getConfiguration('xulo').get('server.path') || process.env.XULO_LSP || 'xulo-analyzer';
     this.child = spawn(binary, [], { stdio: ['pipe', 'pipe', 'pipe'] });
     this.child.stderr.on('data', (data) => output.append(data.toString()));
     this.child.on('error', (err) => {
       output.appendLine(`failed to start ${binary}: ${err.message}`);
-      vscode.window.showErrorMessage(`xulo-analyzer could not be started: ${err.message}`);
+      vscode.window.showErrorMessage(
+        `xulo-analyzer could not be started (${err.message}). Set the xulo.server.path setting to target/debug/xulo-analyzer or add it to PATH.`
+      );
+      for (const entry of this.pending.values()) {
+        entry.reject(new Error('language server failed to start'));
+      }
+      this.pending.clear();
+      this.child = null;
+      client = null;
     });
     this.child.stdout.on('data', (data) => this.onData(data));
     this.child.on('exit', (code, signal) => {
       output.appendLine(`xulo-analyzer exited (code=${code} signal=${signal})`);
+      for (const entry of this.pending.values()) {
+        entry.reject(new Error('language server exited'));
+      }
+      this.pending.clear();
+      this.child = null;
       client = null;
+      // Unexpected death (not an explicit stop/restart): bring the server back
+      // so hover / definition keep working without a manual restart. Bail out
+      // if the server keeps dying at startup (wrong binary etc.) to avoid a
+      // restart hot-loop.
+      if (!this.stopping && code !== 0) {
+        const now = Date.now();
+        if (this._lastExitAt && now - this._lastExitAt < 3000) {
+          output.appendLine('xulo-analyzer keeps exiting; not auto-restarting (check xulo.server.path)');
+        } else {
+          this._lastExitAt = now;
+          setTimeout(() => {
+            if (!client) ensureClient();
+          }, 500);
+        }
+      }
     });
 
     this.ready = this.request('initialize', {
       processId: process.pid,
       rootUri: rootUri(),
       capabilities: { textDocument: { synchronization: { didSave: false, incremental: true } } },
-    }).then(() => {
-      this.notify('initialized', {});
-    });
+    }).then(
+      () => {
+        this.notify('initialized', {});
+      },
+      () => {
+        // The server never became ready (spawn error / timeout / early exit).
+        // didOpen/didChange keep queuing on `ready`, which now resolves; their
+        // notifications are no-ops because `send` guards on a live child.
+      }
+    );
   }
 
   stop() {
-    if (!this.child) return;
-    this.notify('exit', null);
-    try {
-      this.child.kill();
-    } catch (_) { /* already gone */ }
+    this.stopping = true;
+    if (this.child) {
+      this.notify('exit', null);
+      try {
+        this.child.kill();
+      } catch (_) { /* already gone */ }
+      this.child = null;
+    }
+    for (const entry of this.pending.values()) {
+      entry.reject(new Error('language server stopped'));
+    }
+    this.pending.clear();
   }
 
   didOpen(doc) {
@@ -247,19 +296,40 @@ class Client {
   request(method, params) {
     const id = ++this.nextId;
     return new Promise((resolve, reject) => {
+      if (!this.child) {
+        reject(new Error('language server not running'));
+        return;
+      }
       this.pending.set(id, { resolve, reject });
+      // A request must never hang the UI (e.g. hover "Loading..." forever):
+      // if the server does not answer in time, fail it like any other error.
+      const timer = setTimeout(() => {
+        if (!this.pending.delete(id)) return;
+        reject(new Error(`request timed out: ${method}`));
+      }, 2000);
+      this.pending.get(id)._timer = timer;
       this.send({ jsonrpc: '2.0', id, method, params });
     });
   }
 
   notify(method, params) {
+    if (!this.child) return;
     this.send({ jsonrpc: '2.0', method, params });
   }
 
   send(message) {
     const body = Buffer.from(JSON.stringify(message));
-    this.child.stdin.write(Buffer.from(`Content-Length: ${body.length}\r\n\r\n`));
-    this.child.stdin.write(body);
+    try {
+      this.child.stdin.write(Buffer.from(`Content-Length: ${body.length}\r\n\r\n`));
+      this.child.stdin.write(body);
+    } catch (_) {
+      // The child is gone or its stdin closed: fail the matching request.
+      if (message.id !== undefined && this.pending.has(message.id)) {
+        const entry = this.pending.get(message.id);
+        this.pending.delete(message.id);
+        entry.reject(new Error('language server stdin closed'));
+      }
+    }
   }
 
   onData(data) {
@@ -291,6 +361,7 @@ class Client {
       const entry = this.pending.get(message.id);
       if (!entry) return;
       this.pending.delete(message.id);
+      if (entry._timer) clearTimeout(entry._timer);
       if (message.error) {
         entry.reject(new Error(`${message.error.code}: ${message.error.message}`));
       } else {

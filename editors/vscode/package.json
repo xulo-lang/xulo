@@ -2,7 +2,7 @@
   "name": "xulo-analyzer",
   "displayName": "Xulo Analyzer",
   "description": "Language support for Xulo (.xulo) via the xulo-analyzer language server: diagnostics, go-to-definition, hover, references, outline, formatting, syntax and semantic highlighting.",
-  "version": "0.2.1",
+  "version": "0.2.4",
   "publisher": "xulo",
   "engines": {
     "vscode": "^1.85.0"

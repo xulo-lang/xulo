@@ -299,8 +299,22 @@ fn render_hover(info: &xulo_ide::queries::HoverInfo) -> String {
         };
     }
     let mut text = format!("**{kind}** `{name}`", kind = info.kind, name = info.name);
-    if let Some(ty) = &info.type_name {
+    if let Some(comment) = &info.comment {
+        text.push_str(&format!("\n\n{}", comment));
+    }
+    if let Some(sig) = &info.signature {
+        text.push_str(&format!("\n\n```xulo\n{sig}\n```"));
+    } else if let Some(ty) = &info.type_name {
         text.push_str(&format!("\n\n```xulo\n{ty}\n```"));
+    }
+    if !info.params.is_empty() {
+        text.push_str("\n\n**Parameters**");
+        for (name, ty) in &info.params {
+            text.push_str(&format!("\n- `{name}`: `{ty}`"));
+        }
+        if let Some(ty) = &info.type_name {
+            text.push_str(&format!("\n\n**Returns** `{ty}`"));
+        }
     }
     text
 }

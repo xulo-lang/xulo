@@ -74,6 +74,7 @@ fn use_kind_token_type(kind: UseKind) -> Option<TokenType> {
         UseKind::State => TokenType::Property,
         UseKind::Store => TokenType::Property,
         UseKind::Function => TokenType::Function,
+        UseKind::Component => TokenType::Class,
     })
 }
 

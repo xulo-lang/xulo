@@ -2305,3 +2305,85 @@ fn dispatch_annotations_are_applied_to_the_ast() {
     }
     assert_eq!(names, vec!["impl_Shape_Circle_area"]);
 }
+
+#[test]
+fn component_names_are_recorded_as_uses() {
+    let src = r#"
+        fn Card(title: string): View {
+            View {
+                Text(title)
+            }
+        }
+        fn main() {
+            View {
+                Card("hi")
+                Text("x")
+            }
+        }
+    "#;
+    let tokens = tokenize(src).unwrap();
+    let program = parse_program(&tokens).unwrap();
+    let result = xulo_semantic::analyze_with(&program, &[], &[], &[]).unwrap();
+
+    let use_of = |name: &str| {
+        result
+            .resolutions
+            .iter()
+            .find(|r| r.name == name)
+            .expect("resolution recorded")
+    };
+
+    // User component factory: colors like a component, definition still jumps.
+    let card = use_of("Card");
+    assert_eq!(card.kind, xulo_semantic::UseKind::Component);
+    assert_eq!(card.type_.as_ref().map(|t| t.name()), Some("View".into()));
+    assert!(card.def.is_some(), "user component has a definition");
+
+    // Builtin components: no definition, kind `Component`.
+    let text = use_of("Text");
+    assert_eq!(text.kind, xulo_semantic::UseKind::Component);
+    assert!(text.def.is_none(), "builtin component has no definition");
+
+    // The component name span points at the name token.
+    let span = card.span.clone();
+    assert_eq!(&src[span], "Card");
+}
+
+#[test]
+fn partial_analysis_keeps_resolutions_on_error() {
+    let src = r#"
+        fn main() {
+            let good = 1
+            let bad = not_a_function(2)
+            let after = 3
+        }
+    "#;
+    let tokens = tokenize(src).unwrap();
+    let program = parse_program(&tokens).unwrap();
+    let (result, error) = xulo_semantic::analyze_partial(&program, &[], &[], &[]);
+
+    assert!(error.is_some(), "first error preserved");
+    let names: Vec<String> = result.resolutions.iter().map(|r| r.name.clone()).collect();
+    assert!(
+        names.contains(&"good".to_string()),
+        "resolutions before the error survive"
+    );
+    assert!(
+        names.contains(&"after".to_string()),
+        "resolutions after the error survive"
+    );
+}
+
+#[test]
+fn analyze_with_still_fails_fast() {
+    let src = r#"
+        fn main() {
+            let good = 1
+            let bad = not_a_function(2)
+        }
+    "#;
+    let tokens = tokenize(src).unwrap();
+    let program = parse_program(&tokens).unwrap();
+    let result = xulo_semantic::analyze_with(&program, &[], &[], &[]);
+    assert!(result.is_err(), "analyze_with keeps the fail-fast contract");
+}

@@ -457,3 +457,124 @@ fn location_type_is_public() {
         }
     );
 }
+
+#[test]
+fn component_hover_and_definition() {
+    let src = "\
+fn Card(title: string): View {
+    View { Text(title) }
+}
+fn main() {
+    View {
+        Card(\"hi\")
+        Text(\"x\")
+    }
+}
+";
+    let analysis = analyze_source(src);
+    assert!(analysis.error.is_none(), "{:?}", analysis.error);
+
+    // User component: colors like `View`, definition still resolves.
+    let card = analysis
+        .hover_at(pos(&analysis, src, "Card(\"hi\")", 0))
+        .expect("hover on user component");
+    assert_eq!(card.name, "Card");
+    assert_eq!(card.kind, "component");
+    assert_eq!(card.type_name.as_deref(), Some("View"));
+    let def_start = analysis
+        .go_to_definition(pos(&analysis, src, "Card(\"hi\")", 0))
+        .unwrap()
+        .range
+        .start;
+    assert_eq!(def_start, pos(&analysis, src, "Card", 0));
+
+    // Builtin component: hover works, no definition to jump to.
+    let text = analysis
+        .hover_at(pos(&analysis, src, "Text(\"x\")", 0))
+        .expect("hover on builtin component");
+    assert_eq!(text.name, "Text");
+    assert_eq!(text.kind, "component");
+    assert!(text.def.is_none());
+    assert!(
+        analysis
+            .go_to_definition(pos(&analysis, src, "Text(\"x\")", 0))
+            .is_none()
+    );
+}
+
+#[test]
+fn hover_and_definition_survive_errors() {
+    let src = "\
+fn main() {
+    let good = 1
+    let bad = not_a_function(2)
+    let after = good + 1
+}
+";
+    let analysis = analyze_source(src);
+    assert!(analysis.error.is_some(), "file carries a semantic error");
+
+    // Hover still works on a healthy variable even though the file has an error.
+    let hover = analysis
+        .hover_at(pos(&analysis, src, "after =", 0))
+        .expect("hover on healthy variable");
+    assert_eq!(hover.kind, "variable");
+    assert_eq!(hover.type_name.as_deref(), Some("number"));
+
+    // Definition resolution still works.
+    let def = analysis
+        .go_to_definition(pos(&analysis, src, "good +", 0))
+        .expect("definition on healthy variable");
+    assert_eq!(def.range.start, pos(&analysis, src, "good =", 0));
+}
+
+#[test]
+fn hover_shows_signature_params_and_doc_comment() {
+    let src = "\
+type User = object
+// A card that renders a greeting.
+// Title is uppercased.
+fn Card(title: string, user: User): View {
+    View { Text(title) }
+}
+fn main() {
+    View {
+        Card(\"hi\", { name: \"a\" })
+    }
+}
+";
+    let analysis = analyze_source(src);
+    assert!(analysis.error.is_none(), "{:?}", analysis.error);
+
+    // Component usage: preview the factory's signature, params and comment.
+    let usage = analysis
+        .hover_at(pos(&analysis, src, "Card(\"hi\",", 0))
+        .expect("hover on component usage");
+    assert_eq!(usage.kind, "component");
+    assert_eq!(usage.type_name.as_deref(), Some("View"));
+    assert_eq!(
+        usage.signature.as_deref(),
+        Some("fn Card(title: string, user: User): View")
+    );
+    assert_eq!(
+        usage.params,
+        vec![
+            ("title".to_string(), "string".to_string()),
+            ("user".to_string(), "User".to_string()),
+        ]
+    );
+    assert_eq!(
+        usage.comment.as_deref(),
+        Some("A card that renders a greeting.\nTitle is uppercased.")
+    );
+
+    // Function declaration hover also previews the signature.
+    let decl = analysis
+        .hover_at(pos(&analysis, src, "Card(", 0))
+        .expect("hover on function declaration");
+    assert_eq!(decl.kind, "function");
+    assert_eq!(
+        decl.signature.as_deref(),
+        Some("fn Card(title: string, user: User): View")
+    );
+}

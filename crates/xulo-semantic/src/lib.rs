@@ -129,6 +129,11 @@ pub struct Analyzer {
     /// Span of the expression most recently entered by `check_expression`;
     /// semantic errors are attached to it (they cannot name their own span).
     current_span: Range<usize>,
+    /// Editor-tooling mode: keep checking after an error instead of failing
+    /// fast, so partial resolutions survive broken files.
+    lenient: bool,
+    /// The first error raised while checking (only meaningful when `lenient`).
+    first_error: Option<XuloError>,
     /// Every checked expression's inferred type, keyed by its span
     /// (out-of-band for editor tooling).
     expr_types: Vec<(Range<usize>, Type)>,
@@ -145,6 +150,10 @@ pub enum UseKind {
     State,
     Store,
     Function,
+    /// A UI component invocation: either a user-declared component factory
+    /// function (then [`UseRecord::def`] is set) or a builtin component such
+    /// as `View`/`Text`/`Row` (no definition).
+    Component,
 }
 
 impl UseKind {
@@ -211,13 +220,47 @@ pub fn analyze(program: &Program) -> Result<(), XuloError> {
 /// `imported_impls` are `impl Trait for Type` registrations gathered from the
 /// modules that defined the imported receiver types, so dispatch calls on those
 /// types resolve here just as they do in the declaring module.
+///
+/// Fail-fast: returns `Err` at the first error, matching the compiler's
+/// contract. Editor tooling that wants the partial resolutions even when a
+/// file has errors should use [`analyze_partial`] instead.
 pub fn analyze_with(
     program: &Program,
     imports: &[Symbol],
     imported_types: &[(String, TypeEntry)],
     imported_impls: &[(String, String, String)],
 ) -> Result<AnalysisResult, XuloError> {
+    let (result, error) = run_analysis(program, imports, imported_types, imported_impls, false);
+    match error {
+        Some(err) => Err(err),
+        None => Ok(result),
+    }
+}
+
+/// Like [`analyze_with`], but never fails: it keeps checking after an error
+/// (recording only the *first* one, to avoid cascade noise) and returns
+/// whatever resolutions/types were gathered before, at, and after the failure
+/// point. Editor tooling (hover, go-to-definition, references) uses this so a
+/// single broken statement does not blank out the whole document.
+pub fn analyze_partial(
+    program: &Program,
+    imports: &[Symbol],
+    imported_types: &[(String, TypeEntry)],
+    imported_impls: &[(String, String, String)],
+) -> (AnalysisResult, Option<XuloError>) {
+    run_analysis(program, imports, imported_types, imported_impls, true)
+}
+
+fn run_analysis(
+    program: &Program,
+    imports: &[Symbol],
+    imported_types: &[(String, TypeEntry)],
+    imported_impls: &[(String, String, String)],
+    lenient: bool,
+) -> (AnalysisResult, Option<XuloError>) {
     let mut analyzer = Analyzer {
+        lenient,
+        first_error: None,
         table: SymbolTable::new(),
         current_return: None,
         declared_return: false,
@@ -250,8 +293,17 @@ pub fn analyze_with(
         expr_types: Vec::new(),
         resolutions: Vec::new(),
     };
-    for statement in &program.statements {
-        analyzer.check_statement(statement)?;
+    if lenient {
+        for statement in &program.statements {
+            analyzer.check_statement_lenient(statement);
+        }
+    } else {
+        for statement in &program.statements {
+            if let Err(err) = analyzer.check_statement(statement) {
+                analyzer.first_error = Some(err);
+                break;
+            }
+        }
     }
     let mut result = AnalysisResult {
         exported_symbols: analyzer.exported_symbols,
@@ -268,7 +320,7 @@ pub fn analyze_with(
             result.exported_types.push((name.clone(), entry));
         }
     }
-    Ok(result)
+    (result, analyzer.first_error)
 }
 
 /// Apply the trait-dispatch annotations found during analysis back onto the
@@ -602,6 +654,17 @@ impl Analyzer {
 }
 
 impl Analyzer {
+    /// Check a statement, swallowing its error in lenient mode: the first
+    /// error is remembered, later ones are dropped (cascade noise), and
+    /// checking continues so sibling statements still resolve.
+    fn check_statement_lenient(&mut self, statement: &Statement) {
+        if let Err(err) = self.check_statement(statement)
+            && self.first_error.is_none()
+        {
+            self.first_error = Some(err);
+        }
+    }
+
     fn check_statement(&mut self, statement: &Statement) -> SResult<()> {
         match statement {
             Statement::Fn(f) => {
@@ -1352,6 +1415,7 @@ impl Analyzer {
         // Uppercase calls lower to UI components (`Name({ key: value })`);
         // props are not validated against a function signature (see
         // `component_call_props_are_loosely_typed`).
+        self.record_component_use(component);
         for arg in &component.args {
             self.check_expression(&arg.value)?;
         }
@@ -1365,6 +1429,31 @@ impl Analyzer {
         }
         self.block_depth -= 1;
         result
+    }
+
+    /// Record the component name as a name-use so editor tooling (hover /
+    /// go-to-definition) can target it. A component whose name resolves to a
+    /// user-declared factory function records that symbol (so the definition
+    /// jumps to it); otherwise it is treated as a builtin component
+    /// (`View`/`Text`/`Row`/...) with no definition.
+    fn record_component_use(&mut self, component: &xulo_core::ast::ComponentStmt) {
+        let name = &component.name;
+        let span = component.name_span.clone();
+        // A component invocation colors like `View` regardless of whether the
+        // name resolves to a user factory function (its `def` still enables
+        // go-to-definition). Only the *kind* differs from a plain call.
+        let def = self.table.lookup_def(name).flatten().cloned();
+        let type_ = self
+            .lookup_symbol(name)
+            .map(|symbol| symbol.type_)
+            .unwrap_or_else(|_| Type::Named("View".to_string()));
+        self.resolutions.push(UseRecord {
+            span,
+            name: name.clone(),
+            kind: UseKind::Component,
+            type_: Some(type_),
+            def,
+        });
     }
 
     fn check_ui_element(&mut self, el: &xulo_core::ast::UiElement) -> SResult<()> {
@@ -1836,9 +1925,7 @@ impl Analyzer {
         self.block_depth += 1;
         let tail = match block.statements.last() {
             Some(Statement::Expr(e)) => {
-                for statement in &block.statements[..block.statements.len() - 1] {
-                    self.check_statement(statement)?;
-                }
+                self.check_statements_lenient(&block.statements[..block.statements.len() - 1])?;
                 // A trailing `if`/`match` here is still statement position
                 // (codegen emits it via `if_stmt`, whose `await` is fine). Only
                 // an enclosing value-position context (`check_expression` for
@@ -1846,9 +1933,7 @@ impl Analyzer {
                 Some(self.check_expr_stmt(e)?)
             }
             _ => {
-                for statement in &block.statements {
-                    self.check_statement(statement)?;
-                }
+                self.check_statements_lenient(&block.statements)?;
                 None
             }
         };
@@ -1872,9 +1957,7 @@ impl Analyzer {
                 Type::Async(inner) => inner.as_ref(),
                 other => other,
             };
-            for statement in &block.statements[..block.statements.len() - 1] {
-                self.check_statement(statement)?;
-            }
+            self.check_statements_lenient(&block.statements[..block.statements.len() - 1])?;
             if last.has_semicolon {
                 // A trailing `expr;` is an ordinary statement, not an implicit
                 // return (docs §21.2) → warn that its value is discarded.
@@ -1898,12 +1981,28 @@ impl Analyzer {
                 }
             }
         } else {
-            for statement in &block.statements {
-                self.check_statement(statement)?;
-            }
+            self.check_statements_lenient(&block.statements)?;
         }
         self.table.pop_scope();
         Ok(())
+    }
+
+    /// Check a sequence of statements. In lenient (editor-tooling) mode each
+    /// statement is checked independently — an error is remembered (once) and
+    /// the rest keep checking, so sibling statements still resolve; in strict
+    /// mode this is just the fail-fast loop.
+    fn check_statements_lenient(&mut self, statements: &[Statement]) -> SResult<()> {
+        if self.lenient {
+            for statement in statements {
+                self.check_statement_lenient(statement);
+            }
+            Ok(())
+        } else {
+            for statement in statements {
+                self.check_statement(statement)?;
+            }
+            Ok(())
+        }
     }
 
     /// Check an expression and infer its type, recording every checked

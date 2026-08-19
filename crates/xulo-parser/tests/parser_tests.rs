@@ -823,9 +823,11 @@ fn parses_environment_declaration() {
 #[test]
 fn parses_component_block() {
     use xulo_core::ast::{ComponentStmt, UiElement};
-    let p = parse("VStack(spacing: 16) { Text(\"Hello\") }");
+    let src = "VStack(spacing: 16) { Text(\"Hello\") }";
+    let p = parse(src);
     let Statement::Component(ComponentStmt {
         name,
+        name_span,
         args,
         children,
     }) = &p.statements[0]
@@ -833,6 +835,8 @@ fn parses_component_block() {
         panic!("expected component");
     };
     assert_eq!(name, "VStack");
+    assert!(name_span.start < name_span.end);
+    assert_eq!(&src[name_span.clone()], "VStack");
     assert_eq!(args.len(), 1);
     assert!(matches!(&children[0], UiElement::Component(c) if c.name == "Text"));
 }
