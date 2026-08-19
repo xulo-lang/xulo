@@ -251,6 +251,8 @@ fn let_binding_body(input: &mut In<'_>, is_const: bool) -> Pr<LetBinding> {
         type_annotation,
         value,
         is_const,
+        memo: false,
+        memo_deps: None,
     })
 }
 
@@ -683,7 +685,7 @@ fn export_decl(input: &mut In<'_>) -> Pr<ExportItem> {
     }
 }
 
-/// `@State` / `@Store` / `@Effect` / `@Environment` declarations.
+/// `@State` / `@Store` / `@Effect` / `@Environment` / `@Memo` declarations.
 fn decorator_stmt(input: &mut In<'_>) -> Pr<Statement> {
     tk(input, Token::At)?;
     let kind = ident_name(input)?;
@@ -706,26 +708,30 @@ fn decorator_stmt(input: &mut In<'_>) -> Pr<Statement> {
             Ok(Statement::Store(StoreStmt { pattern, value }))
         }
         "Effect" => {
+            // Leading dependency array: `@Effect([count]) fn() { ... }` (canonical).
+            let mut deps = opt_leading_deps(input)?;
             let closure = fn_expr(input)?;
             let Expression::FnExpr(closure) = closure else {
                 return Err(ErrMode::Cut(PErr::unexpected(input)));
             };
-            let deps = if opt_tk(input, Token::Comma) {
+            // Legacy trailing dependency array: `@Effect fn() { ... }, [count]`.
+            if opt_tk(input, Token::Comma) {
+                if deps.is_some() {
+                    return Err(ErrMode::Cut(PErr::unexpected(input)));
+                }
                 tk(input, Token::LBracket)?;
-                let mut deps = Vec::new();
+                let mut trailing = Vec::new();
                 if !peek_is(input, Token::RBracket) {
                     loop {
-                        deps.push(expression(input)?);
+                        trailing.push(expression(input)?);
                         if !opt_tk(input, Token::Comma) {
                             break;
                         }
                     }
                 }
                 tk(input, Token::RBracket)?;
-                Some(deps)
-            } else {
-                None
-            };
+                deps = Some(trailing);
+            }
             Ok(Statement::Effect(EffectStmt {
                 closure: *closure,
                 deps,
@@ -744,8 +750,44 @@ fn decorator_stmt(input: &mut In<'_>) -> Pr<Statement> {
                 type_,
             }))
         }
+        "Memo" => {
+            // `@Memo([deps]) let x = expr` (empty or bare `@Memo` = cache forever).
+            let deps = opt_leading_deps(input)?.unwrap_or_default();
+            let is_const = if opt_tk(input, Token::Const) {
+                true
+            } else {
+                tk(input, Token::Let)?;
+                false
+            };
+            let mut binding = let_binding_body(input, is_const)?;
+            binding.memo = true;
+            binding.memo_deps = Some(deps);
+            Ok(Statement::Let(binding))
+        }
         _ => Err(ErrMode::Cut(PErr::unexpected(input))),
     }
+}
+
+/// An optional leading dependency array: `([a, b])` right after the decorator
+/// keyword. Returns `None` when the next token is not `(`.
+fn opt_leading_deps(input: &mut In<'_>) -> Pr<Option<Vec<Expression>>> {
+    if !peek_is(input, Token::LParen) {
+        return Ok(None);
+    }
+    tk(input, Token::LParen)?;
+    tk(input, Token::LBracket)?;
+    let mut deps = Vec::new();
+    if !peek_is(input, Token::RBracket) {
+        loop {
+            deps.push(expression(input)?);
+            if !opt_tk(input, Token::Comma) {
+                break;
+            }
+        }
+    }
+    tk(input, Token::RBracket)?;
+    tk(input, Token::RParen)?;
+    Ok(Some(deps))
 }
 
 /// A `@Store` binding pattern: `name` or `{ a, b: c }`.

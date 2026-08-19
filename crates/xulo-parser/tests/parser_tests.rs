@@ -1332,3 +1332,54 @@ fn trait_is_a_keyword_not_identifier() {
         err.message
     );
 }
+
+#[test]
+fn parses_effect_with_leading_deps() {
+    use xulo_core::ast::EffectStmt;
+    let p = parse("@Effect([count]) fn() { print(count) }");
+    let Statement::Effect(EffectStmt { deps, .. }) = &p.statements[0] else {
+        panic!("expected effect");
+    };
+    assert_eq!(deps.as_ref().map(|d| d.len()), Some(1));
+}
+
+#[test]
+fn parses_memo_binding_with_deps() {
+    let p = parse("@Memo([a, b]) let x: number = expensive(a)");
+    let Statement::Let(binding) = &p.statements[0] else {
+        panic!("expected let binding");
+    };
+    assert!(binding.memo);
+    assert_eq!(binding.memo_deps.as_ref().map(|d| d.len()), Some(2));
+    assert_eq!(binding.name, "x");
+}
+
+#[test]
+fn parses_memo_binding_empty_and_bare() {
+    let p = parse("@Memo([]) let y = compute()");
+    let Statement::Let(binding) = &p.statements[0] else {
+        panic!("expected let binding");
+    };
+    assert!(binding.memo);
+    assert_eq!(binding.memo_deps.as_ref().map(|d| d.len()), Some(0));
+
+    let p = parse("@Memo let z = simple()");
+    let Statement::Let(binding) = &p.statements[0] else {
+        panic!("expected let binding");
+    };
+    assert!(binding.memo);
+    assert_eq!(binding.memo_deps.as_ref().map(|d| d.len()), Some(0));
+}
+
+#[test]
+fn memo_parses_without_initializer_but_semantic_rejects() {
+    // The parser accepts it (a plain `let x: number` is legal too); the
+    // semantic checker enforces that a `@Memo` binding has an initializer.
+    let src = "@Memo let x: number";
+    let p = parse(src);
+    let Statement::Let(binding) = &p.statements[0] else {
+        panic!("expected let binding");
+    };
+    assert!(binding.memo);
+    assert!(binding.value.is_none());
+}

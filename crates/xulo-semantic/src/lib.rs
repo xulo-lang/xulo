@@ -675,6 +675,17 @@ impl Analyzer {
                 result
             }
             Statement::Let(binding) => {
+                if binding.memo {
+                    self.require_fn_body_top_level("@Memo")?;
+                    if binding.value.is_none() {
+                        return Err(self.err("@Memo requires an initializer: `@Memo let x = expr`"));
+                    }
+                    if let Some(deps) = &binding.memo_deps {
+                        for dep in deps {
+                            self.check_expression(dep)?;
+                        }
+                    }
+                }
                 if let Some(annotation) = &binding.type_annotation {
                     self.check_type(annotation)?;
                 }
@@ -1270,6 +1281,21 @@ impl Analyzer {
         if self.component_depth == 0 {
             return Err(self.err(format!(
                 "`{what}` may only be used at the top level of a function returning `View`"
+            )));
+        }
+        if self.block_depth > 0 {
+            return Err(self.err(format!("`{what}` may not be used inside a nested block")));
+        }
+        Ok(())
+    }
+
+    /// `@Memo` is a general computation optimization: allowed at the top level
+    /// of any function body (not only `View` components), never in a nested
+    /// block or at module scope.
+    fn require_fn_body_top_level(&self, what: &str) -> SResult<()> {
+        if self.current_return.is_none() {
+            return Err(self.err(format!(
+                "`{what}` may only be used at the top level of a function body"
             )));
         }
         if self.block_depth > 0 {

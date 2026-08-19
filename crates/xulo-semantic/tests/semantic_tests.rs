@@ -2387,3 +2387,58 @@ fn analyze_with_still_fails_fast() {
     let result = xulo_semantic::analyze_with(&program, &[], &[], &[]);
     assert!(result.is_err(), "analyze_with keeps the fail-fast contract");
 }
+
+#[test]
+fn memo_requires_initializer() {
+    let src = r#"
+        fn main() {
+            @Memo let x: number
+        }
+    "#;
+    assert!(analyze_src(src).is_err());
+}
+
+#[test]
+fn memo_requires_function_body_top_level() {
+    // Module scope is not a function body.
+    let global = "@Memo let x = 1\n";
+    assert!(analyze_src(global).is_err());
+
+    // A nested block inside a function is not the body's top level.
+    let nested = r#"
+        fn main() {
+            if true {
+                @Memo let x = 1
+            }
+        }
+    "#;
+    assert!(analyze_src(nested).is_err());
+}
+
+#[test]
+fn memo_accepted_at_any_fn_body_top_level() {
+    let src = r#"
+        fn calc(n: number): number {
+            @Memo([n]) let cached = n * 2
+            return cached
+        }
+        fn main() {
+            print(calc(1))
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn memo_deps_are_type_checked() {
+    let src = r#"
+        fn calc(n: number): number {
+            @Memo([n, "str"]) let cached = n * 2
+            return cached
+        }
+        fn main() {
+            print(calc(1))
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}

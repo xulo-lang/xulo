@@ -1321,3 +1321,69 @@ fn missing_object_member_reads_null() {
     let out = run_ok(r#"fn main() { let o: object = {} print(o["missing"]) }"#);
     assert_eq!(out, vec!["null"]);
 }
+
+#[test]
+fn memo_reuses_cached_value_when_deps_unchanged() {
+    let src = r#"
+        let calls = 0
+        fn expensive(n: number): number {
+            calls = calls + 1
+            return n * 2
+        }
+        fn calc(n: number): number {
+            @Memo([n]) let cached = expensive(n)
+            return cached
+        }
+        fn main() {
+            print(calc(5))
+            print(calc(5))
+            print(calls)
+        }
+    "#;
+    assert_eq!(run_ok(src), vec!["10", "10", "1"]);
+}
+
+#[test]
+fn memo_recomputes_when_deps_change() {
+    let src = r#"
+        let calls = 0
+        fn expensive(n: number): number {
+            calls = calls + 1
+            return n * 2
+        }
+        fn calc(n: number): number {
+            @Memo([n]) let cached = expensive(n)
+            return cached
+        }
+        fn main() {
+            print(calc(5))
+            print(calc(6))
+            print(calc(5))
+            print(calls)
+        }
+    "#;
+    assert_eq!(run_ok(src), vec!["10", "12", "10", "2"]);
+}
+
+#[test]
+fn memo_without_deps_caches_forever() {
+    let src = r#"
+        let calls = 0
+        fn expensive(n: number): number {
+            calls = calls + 1
+            return n * 2
+        }
+        fn calc(n: number): number {
+            @Memo let cached = expensive(n)
+            return cached
+        }
+        fn main() {
+            print(calc(5))
+            print(calc(6))
+            print(calls)
+        }
+    "#;
+    // No deps: the first evaluation is cached forever, so the second call
+    // reuses the stale value and `expensive` runs once.
+    assert_eq!(run_ok(src), vec!["10", "10", "1"]);
+}

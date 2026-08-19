@@ -74,6 +74,14 @@ pub struct LetBinding {
     pub type_annotation: Option<Type>,
     pub value: Option<Expression>,
     pub is_const: bool,
+    /// `@Memo` value memoization: `@Memo([deps]) let x = expr`. The native
+    /// interpreter caches the computed value per (site, deps) and reuses it
+    /// when the deps are unchanged; the JS target recomputes on every render
+    /// (documented no-op for now).
+    pub memo: bool,
+    /// The memo dependency expressions (`None` only when `memo` is `false`; a
+    /// bare `@Memo` is normalized to an empty list = cache forever).
+    pub memo_deps: Option<Vec<Expression>>,
 }
 
 /// A `@State` declaration: reactive local state inside a `View` function.

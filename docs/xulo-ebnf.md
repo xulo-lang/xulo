@@ -116,6 +116,7 @@ stmt                = const_stmt
                     | state_stmt
                     | store_stmt
                     | effect_stmt
+                    | memo_stmt
                     ;
 
 expr_stmt           = expr [ ";" ] ;
@@ -144,7 +145,8 @@ throw_stmt          = "throw" expr ;
 
 state_stmt          = "@State" ("let" | "const") identifier ":" type_expr [ "=" expr ] ;
 store_stmt          = "@Store" [ "const" ] binding_pattern "=" expr ;
-effect_stmt         = "@Effect" fn_expr [ "," "[" [ expr_list ] "]" ] ;
+effect_stmt         = "@Effect" [ "(" "[" [ expr_list ] "]" ")" ] fn_expr [ "," "[" [ expr_list ] "]" ] ;
+memo_stmt           = "@Memo" [ "(" "[" [ expr_list ] "]" ")" ] ("let" | "const") let_binding ;
 
 binding_pattern     = identifier
                     | "{" [ binding_field { "," binding_field } [ "," ] ] "}" ;

@@ -99,7 +99,16 @@ pub struct Interpreter {
     task_free: RefCell<Vec<usize>>,
     /// Active call depth (see [`MAX_CALL_DEPTH`]).
     call_depth: Cell<usize>,
+    /// `@Memo let` value cache keyed by the binding's `name_span.start`: each
+    /// site holds `(deps values, cached result)` entries, scanned by value
+    /// equality. Live for the whole run (the native runtime has no re-render
+    /// loop, so repeated calls with unchanged deps reuse the cached value).
+    memo_cache: RefCell<std::collections::HashMap<usize, Vec<MemoEntry>>>,
 }
+
+/// A cached `@Memo` result: the dependency values it was computed from, plus
+/// the computed value. Scanned by value equality (the entry lists are short).
+type MemoEntry = (Vec<Value>, Value);
 
 /// Maximum nested interpreter calls. Guards against unbounded recursion, which
 /// otherwise crashes the process: sync recursion overflows the host stack with
@@ -167,7 +176,10 @@ fn block_has_closure(block: &Block) -> bool {
 fn stmt_has_closure(stmt: &Statement) -> bool {
     match stmt {
         Statement::Fn(_) => true,
-        Statement::Let(l) => l.value.as_ref().is_some_and(expr_has_closure),
+        Statement::Let(l) => {
+            l.value.as_ref().is_some_and(expr_has_closure)
+                || l.memo_deps.iter().flatten().any(expr_has_closure)
+        }
         Statement::Return(r) => r.value.as_ref().is_some_and(expr_has_closure),
         Statement::For(f) => expr_has_closure(&f.iterable) || block_has_closure(&f.body),
         Statement::While(w) => expr_has_closure(&w.condition) || block_has_closure(&w.body),
@@ -300,6 +312,7 @@ impl Interpreter {
             task_yielder: RefCell::new(Vec::new()),
             task_free: RefCell::new(Vec::new()),
             call_depth: Cell::new(0),
+            memo_cache: RefCell::new(std::collections::HashMap::new()),
         }
     }
 
@@ -635,9 +648,13 @@ impl Interpreter {
                 Ok(Flow::Continue)
             }
             Statement::Let(binding) => {
-                let value = match &binding.value {
-                    Some(expr) => self.eval(expr, env)?,
-                    None => Value::Null,
+                let value = if binding.memo {
+                    self.memo_value(binding, env)?
+                } else {
+                    match &binding.value {
+                        Some(expr) => self.eval(expr, env)?,
+                        None => Value::Null,
+                    }
                 };
                 env.borrow_mut().define(&binding.name, value);
                 Ok(Flow::Continue)
@@ -752,6 +769,36 @@ impl Interpreter {
             | xulo_core::ast::ExportItem::Trait(_)
             | xulo_core::ast::ExportItem::Names(_) => Ok(Flow::Continue),
         }
+    }
+
+    /// `@Memo let x = expr` value memoization: evaluate the deps, and reuse the
+    /// cached result for this binding site when the deps are equal to a prior
+    /// evaluation (`@Memo([])` / bare `@Memo` always reuse). The cache lives
+    /// for the whole run and is a computation optimization only.
+    fn memo_value(&self, binding: &LetBinding, env: &Rc<RefCell<Env>>) -> Result<Value, RunError> {
+        let deps: Vec<Value> = binding
+            .memo_deps
+            .iter()
+            .flatten()
+            .map(|dep| self.eval(dep, env))
+            .collect::<Result<_, _>>()?;
+        let key = binding.name_span.start;
+        let mut cache = self.memo_cache.borrow_mut();
+        let entries = cache.entry(key).or_default();
+        for (cached_deps, value) in entries.iter() {
+            if cached_deps.len() == deps.len()
+                && cached_deps.iter().zip(&deps).all(|(a, b)| equal(a, b))
+            {
+                return Ok(value.clone());
+            }
+        }
+        let expr = binding
+            .value
+            .as_ref()
+            .expect("checked: memo has an initializer");
+        let value = self.eval(expr, env)?;
+        entries.push((deps, value.clone()));
+        Ok(value)
     }
 
     /// `@State let x = v` defines a reactive cell (the JS output is
