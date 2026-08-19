@@ -1,0 +1,66 @@
+{
+  "name": "xulo-analyzer",
+  "displayName": "Xulo Analyzer",
+  "description": "Language support for Xulo (.xulo) via the xulo-analyzer language server: diagnostics, go-to-definition, hover, references, outline, formatting, syntax and semantic highlighting.",
+  "version": "0.2.1",
+  "publisher": "xulo",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters"
+  ],
+  "activationEvents": [
+    "onLanguage:xulo"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "xulo",
+        "aliases": [
+          "Xulo",
+          "xulo"
+        ],
+        "extensions": [
+          ".xulo"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "xulo",
+        "scopeName": "source.xulo",
+        "path": "./syntaxes/xulo.tmLanguage.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "xulo.restartServer",
+        "title": "Xulo: Restart Language Server"
+      }
+    ],
+    "configuration": {
+      "title": "Xulo",
+      "properties": {
+        "xulo.server.path": {
+          "type": "string",
+          "default": "xulo-analyzer",
+          "description": "Path to the xulo-analyzer binary (or a name on PATH). Overrides the $XULO_LSP env var."
+        },
+        "xulo.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Trace xulo-analyzer JSON-RPC traffic to the output channel."
+        }
+      }
+    }
+  }
+}

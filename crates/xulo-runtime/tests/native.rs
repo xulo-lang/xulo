@@ -872,7 +872,8 @@ fn dollar_binding_wraps_value_and_setter() {
     // `$name` is `{ value, onChange }`; onChange writes the underlying signal
     // cell, and `.value` reads it — both observable via `print`. Semantic types
     // `$name` as its underlying value (string), so this probe is parse-only.
-    let out = run_raw(r#"
+    let out = run_raw(
+        r#"
         fn Field(): View {
             @State let name: string = "hi"
             let b = $name
@@ -883,7 +884,8 @@ fn dollar_binding_wraps_value_and_setter() {
         fn main(): View {
             Field()
         }
-        "#)
+        "#,
+    )
     .unwrap();
     assert_eq!(out, vec!["yo"]);
 }

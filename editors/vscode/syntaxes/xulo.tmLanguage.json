@@ -1,0 +1,100 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Xulo",
+  "scopeName": "source.xulo",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#attributes" },
+    { "include": "#dollar" },
+    { "include": "#declarations" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#components" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        { "match": "//.*$", "name": "comment.line.double-slash.xulo" },
+        { "begin": "/\\*", "end": "\\*/", "name": "comment.block.xulo" }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.xulo",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [{ "match": "\\\\[\\s\\S]|\\\\$", "name": "constant.character.escape.xulo" }]
+        },
+        {
+          "name": "string.quoted.single.xulo",
+          "begin": "'",
+          "end": "'",
+          "patterns": [{ "match": "\\\\[\\s\\S]|\\\\$", "name": "constant.character.escape.xulo" }]
+        }
+      ]
+    },
+    "numbers": {
+      "match": "\\b(?:0[xX][0-9a-fA-F_]+|\\d[\\d_]*)(?:\\.\\d[\\d_]*)?(?:[eE][+-]?\\d+)?\\b",
+      "name": "constant.numeric.xulo"
+    },
+    "attributes": {
+      "match": "@[A-Za-z_][A-Za-z0-9_]*",
+      "name": "keyword.attribute.xulo"
+    },
+    "dollar": {
+      "match": "\\$[A-Za-z_][A-Za-z0-9_]*",
+      "name": "variable.language.xulo"
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "match": "\\b(fn)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.control.xulo" },
+            "2": { "name": "entity.name.function.xulo" }
+          }
+        },
+        {
+          "match": "\\b(type)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.xulo" },
+            "2": { "name": "entity.name.type.xulo" }
+          }
+        },
+        {
+          "match": "\\b(trait)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.xulo" },
+            "2": { "name": "entity.name.type.xulo" }
+          }
+        },
+        {
+          "match": "\\b(enum)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.xulo" },
+            "2": { "name": "entity.name.type.xulo" }
+          }
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        { "match": "\\b(?:fn|let|const|return|if|else|for|in|while|match|and|or|async|await|try|catch|throw)\\b", "name": "keyword.control.xulo" },
+        { "match": "\\b(?:import|pub|use|from|as|type|enum|trait|where|impl)\\b", "name": "keyword.declaration.xulo" },
+        { "match": "\\b(?:true|false|null)\\b", "name": "constant.language.xulo" },
+        { "match": "\\bprint\\b", "name": "support.function.builtin.xulo" }
+      ]
+    },
+    "types": {
+      "match": "\\b(?:string|number|boolean|object|any|list)\\b",
+      "name": "storage.type.xulo"
+    },
+    "components": {
+      "match": "\\b[A-Z][A-Za-z0-9_]*\\b",
+      "name": "entity.name.type.xulo"
+    }
+  }
+}

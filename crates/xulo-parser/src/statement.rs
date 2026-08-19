@@ -103,7 +103,9 @@ fn fn_def(input: &mut In<'_>) -> Pr<FnDef> {
 fn fn_def_opt(input: &mut In<'_>, allow_self: bool) -> Pr<FnDef> {
     let original = *input;
     tk(input, Token::Fn)?;
+    let name_original = *input;
     let name = ident_name(input)?;
+    let name_span = consumed_span(name_original, input, 0);
     let (type_params, mut bounds) = opt_type_params(input)?;
     let params = params_list_opt(input, allow_self)?;
     let (return_type, is_async) = if opt_tk(input, Token::Colon) {
@@ -128,6 +130,7 @@ fn fn_def_opt(input: &mut In<'_>, allow_self: bool) -> Pr<FnDef> {
     let span = consumed_span(original, input, 0);
     Ok(FnDef {
         name,
+        name_span,
         params,
         return_type,
         type_params,
@@ -286,12 +289,15 @@ fn expr_or_assign(input: &mut In<'_>) -> Pr<Statement> {
 
 fn type_alias(input: &mut In<'_>) -> Pr<TypeAlias> {
     tk(input, Token::Type)?;
+    let name_original = *input;
     let name = ident_name(input)?;
+    let name_span = consumed_span(name_original, input, 0);
     let (type_params, _) = opt_type_params(input)?;
     tk(input, Token::Assign)?;
     let type_ = type_expr(input)?;
     Ok(TypeAlias {
         name,
+        name_span,
         type_params,
         type_,
     })
@@ -299,7 +305,9 @@ fn type_alias(input: &mut In<'_>) -> Pr<TypeAlias> {
 
 fn enum_def(input: &mut In<'_>) -> Pr<EnumDef> {
     tk(input, Token::Enum)?;
+    let name_original = *input;
     let name = ident_name(input)?;
+    let name_span = consumed_span(name_original, input, 0);
     let (type_params, _) = opt_type_params(input)?;
     tk(input, Token::LBrace)?;
     let mut variants = Vec::new();
@@ -307,7 +315,9 @@ fn enum_def(input: &mut In<'_>) -> Pr<EnumDef> {
         if at_eof(input) {
             return Err(ErrMode::Backtrack(PErr::unexpected(input)));
         }
+        let vname_original = *input;
         let vname = ident_name(input)?;
+        let vname_span = consumed_span(vname_original, input, 0);
         let payload = if opt_tk(input, Token::LParen) {
             let mut params = Vec::new();
             loop {
@@ -336,6 +346,7 @@ fn enum_def(input: &mut In<'_>) -> Pr<EnumDef> {
         };
         variants.push(EnumVariant {
             name: vname,
+            name_span: vname_span,
             payload,
         });
         opt_tk(input, Token::Comma);
@@ -343,6 +354,7 @@ fn enum_def(input: &mut In<'_>) -> Pr<EnumDef> {
     tk(input, Token::RBrace)?;
     Ok(EnumDef {
         name,
+        name_span,
         type_params,
         variants,
     })
@@ -515,12 +527,15 @@ fn return_stmt(input: &mut In<'_>) -> Pr<ReturnStmt> {
 
 fn for_stmt(input: &mut In<'_>) -> Pr<ForStmt> {
     tk(input, Token::For)?;
+    let original = *input;
     let iter_var = ident_name(input)?;
+    let iter_var_span = consumed_span(original, input, 0);
     tk(input, Token::In)?;
     let iterable = expression(input)?;
     let body = block(input)?;
     Ok(ForStmt {
         iter_var,
+        iter_var_span,
         iterable,
         body,
     })
@@ -562,12 +577,15 @@ fn try_stmt(input: &mut In<'_>) -> Pr<TryStmt> {
     let try_block = block(input)?;
     tk(input, Token::Catch)?;
     tk(input, Token::LParen)?;
+    let original = *input;
     let catch_var = ident_name(input)?;
+    let catch_var_span = consumed_span(original, input, 0);
     tk(input, Token::RParen)?;
     let catch_block = block(input)?;
     Ok(TryStmt {
         try_block,
         catch_var,
+        catch_var_span,
         catch_block,
     })
 }
@@ -849,7 +867,9 @@ fn ui_if(input: &mut In<'_>) -> Pr<UiElement> {
 /// A UI `for` (list rendering).
 fn ui_for(input: &mut In<'_>) -> Pr<UiElement> {
     tk(input, Token::For)?;
+    let original = *input;
     let iter_var = ident_name(input)?;
+    let iter_var_span = consumed_span(original, input, 0);
     tk(input, Token::In)?;
     let iterable = expression(input)?;
     tk(input, Token::LBrace)?;
@@ -857,6 +877,7 @@ fn ui_for(input: &mut In<'_>) -> Pr<UiElement> {
     tk(input, Token::RBrace)?;
     Ok(UiElement::For {
         iter_var,
+        iter_var_span,
         iterable,
         body,
     })

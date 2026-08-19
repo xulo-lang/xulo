@@ -457,7 +457,8 @@ fn parses_try_catch_throw() {
 fn parses_import_and_pub_forms() {
     use xulo_core::ast::{ExportItem, ExportStmt, ImportSpec, ImportStmt, Statement};
 
-    let p = parse(r#"import { a as b } from "./m" import * as ns from "./n" import t as d from "./d""#);
+    let p =
+        parse(r#"import { a as b } from "./m" import * as ns from "./n" import t as d from "./d""#);
     assert!(matches!(p.statements[0],
         Statement::Import(ImportStmt { spec: ImportSpec::Named(_), ref source, type_only: false }) if source == "./m"));
     assert!(matches!(

@@ -44,6 +44,9 @@ pub struct ExprStmt {
 #[derive(Debug, Clone, PartialEq)]
 pub struct FnDef {
     pub name: String,
+    /// Source span of the function name (for name-related diagnostics and
+    /// editor tooling's go-to-definition).
+    pub name_span: Range<usize>,
     pub params: Vec<Param>,
     pub return_type: Option<Type>,
     pub type_params: Vec<String>,
@@ -135,6 +138,8 @@ pub enum UiElement {
     },
     For {
         iter_var: String,
+        /// Source span of the loop variable name (for name-related diagnostics).
+        iter_var_span: Range<usize>,
         iterable: Expression,
         body: Vec<UiElement>,
     },
@@ -162,6 +167,8 @@ pub struct AssignStmt {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeAlias {
     pub name: String,
+    /// Source span of the alias name (for name-related diagnostics).
+    pub name_span: Range<usize>,
     pub type_params: Vec<String>,
     pub type_: Type,
 }
@@ -222,6 +229,8 @@ pub fn impl_fn_name(trait_name: &str, type_name: &str, method: &str) -> String {
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnumDef {
     pub name: String,
+    /// Source span of the enum name (for name-related diagnostics).
+    pub name_span: Range<usize>,
     pub type_params: Vec<String>,
     pub variants: Vec<EnumVariant>,
 }
@@ -238,6 +247,8 @@ pub struct EnumPayloadParam {
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnumVariant {
     pub name: String,
+    /// Source span of the variant name (for name-related diagnostics).
+    pub name_span: Range<usize>,
     /// Payload parameters, in declaration order. `None` when the variant
     /// carries no payload.
     pub payload: Option<Vec<EnumPayloadParam>>,
@@ -252,6 +263,8 @@ pub struct ReturnStmt {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ForStmt {
     pub iter_var: String,
+    /// Source span of the loop variable name (for name-related diagnostics).
+    pub iter_var_span: Range<usize>,
     pub iterable: Expression,
     pub body: Block,
 }
@@ -272,6 +285,8 @@ pub struct Block {
 pub struct TryStmt {
     pub try_block: Block,
     pub catch_var: String,
+    /// Source span of the catch-variable name (for name-related diagnostics).
+    pub catch_var_span: Range<usize>,
     pub catch_block: Block,
 }
 
@@ -508,6 +523,10 @@ pub struct BinaryOp {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Call {
     pub callee: String,
+    /// Source span of the bare callee name in a plain call (`foo(...)`); `None`
+    /// for enum-constructing (`Color::Red(...)`) and method (`obj.m(...)`)
+    /// calls, whose callee has no single identifier span.
+    pub callee_span: Option<Range<usize>>,
     /// The receiver of a method call (`obj.method(...)`); `None` for a plain
     /// or enum call.
     pub object: Option<Box<Expression>>,

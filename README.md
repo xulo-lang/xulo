@@ -17,6 +17,18 @@ cargo build --release
 
 默认原生解释器与 `xulo repl` 不依赖 Node.js；仅 JS 路径（`xulo run --js` / `xulo build` 产物）需要本机安装 Node.js。
 
+## 编辑器支持（LSP）
+
+`xulo-analyzer`（`crates/xulo-analyzer`）是基于 `xulo-ide`（编辑器分析库）的 LSP 语言服务器，提供跨文件 go-to-definition、hover、find-references、文档大纲、诊断（UTF-16 坐标、增量同步）、整文档格式化，以及语义高亮（`textDocument/semanticTokens/full` + TextMate 静态语法兜底，参考 rust-analyzer 双层做法）。直接运行二进制可用任意 LSP 客户端挂载：
+
+```bash
+# 服务器二进制（stdio JSON-RPC）
+cargo build -p xulo-analyzer
+target/debug/xulo-analyzer
+```
+
+VSCode：用 F5 或「Run Extension」调试启动 `editors/vscode/`（见 `.vscode/launch.json`）；在设置中把 `xulo.server.path` 指向 `target/debug/xulo-analyzer`（或加入 PATH）。扩展为无依赖手写 stdio LSP 客户端，提供定义/悬停/引用/大纲、`Format Document`、语义高亮与语法着色，`Xulo: Restart Language Server` 命令可重启服务器。也可把 `editors/vscode/` 打包为 vsix 本地安装：`code --install-extension xulo-analyzer-*.vsix`。
+
 ## 使用
 
 ```bash
@@ -114,15 +126,19 @@ CI（GitHub Actions，见 `.github/workflows/ci.yml`）执行 `cargo fmt --check
 │   ├── xulo-core/              # AST + 错误类型 + 诊断渲染（零依赖基础）
 │   ├── xulo-lexer/             # 词法分析
 │   ├── xulo-parser/            # 语法分析（winnow）
-│   ├── xulo-semantic/          # 语义检查 + 符号表
+│   ├── xulo-semantic/          # 语义检查 + 符号表 + 名称解析记录（供编辑器查询）
 │   ├── xulo-codegen/           # 生成 JavaScript（已废弃，职能将并入 xulo-compiler）
 │   ├── xulo-compiler/          # 编译管线 compile() + 多文件加载/打包
 │   ├── xulo-runtime/           # 原生树遍历解释器（xulo run 默认路径）
-│   └── xulo-cli/               # CLI（run/build/check/fmt/repl，二进制名为 xulo）
+│   ├── xulo-ide/               # 编辑器分析库：LineIndex、单文件查询、多文件 Workspace、诊断、格式化、语义 tokens（协议无关）
+│   ├── xulo-analyzer/          # LSP 语言服务器（lsp-types/lsp-server，xulo-ide 上层，二进制 xulo-analyzer）
+│   └── xulo-cli/               # CLI（run/build/check/fmt/repl，二进制名为 xulo；fmt 复用 xulo-ide）
+├── editors/
+│   └── vscode/                 # VSCode 扩展：无依赖手写 LSP 客户端 + TextMate 语法 + 语言配置
 ├── stdlib/                     # 未来标准库源码占位（.xulo）
 ├── docs/                       # 语言规范（EBNF / 语法）+ 原生运行时内存模型
 ├── examples/                   # 示例 .xulo 文件
 └── tests/                      # （各 crate 的 tests/ 目录承载测试）
 ```
 
-`xulo run` 用 `xulo-runtime` crate 的 Rust 解释器直接执行（默认，不经 JS/Node）；`xulo run --js` 改为通过本机 Node.js 执行生成的 JS。
+`xulo run` 用 `xulo-runtime` crate 的 Rust 解释器直接执行（默认，不经 JS/Node）；`xulo run --js` 改为通过本机 Node.js 执行生成的 JS。`xulo-ide` 与 LSP 协议解耦：`xulo-analyzer` 只负责把 `xulo-ide` 的 `Range`/`Location`/`Diagnostic`/符号条目映射为 `lsp-types` 并通过 stdio 收发；每次文档变更由 `xulo-analyzer` 重建内存 Workspace 后重新发布诊断（非增量，MVP 实现）。

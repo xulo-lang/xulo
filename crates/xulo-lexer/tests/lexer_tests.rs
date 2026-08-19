@@ -203,8 +203,8 @@ fn tokenizes_phase3_keywords() {
             Async, Fn, Ident, LParen, RParen, Colon, Async, LBrace, Await, Ident, LParen, RParen,
             RBrace, Try, LBrace, Throw, Number, RBrace, Catch, LParen, Ident, RParen, LBrace,
             RBrace, Import, LBrace, Ident, As, Ident, RBrace, From, String, Import, Star, As,
-            Ident, From, String, Import, Type, LBrace, Ident, RBrace, From, String, Pub,
-            Fn, Ident, LParen, RParen, LBrace, RBrace, EOF
+            Ident, From, String, Import, Type, LBrace, Ident, RBrace, From, String, Pub, Fn, Ident,
+            LParen, RParen, LBrace, RBrace, EOF
         ]
     );
 }
@@ -226,7 +226,10 @@ fn tokenizes_pub_keyword() {
 fn tokenizes_use_keyword() {
     let tokens = tokenize("pub use { a, b }").unwrap();
     let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
-    assert_eq!(kinds, vec![Pub, Use, LBrace, Ident, Comma, Ident, RBrace, EOF]);
+    assert_eq!(
+        kinds,
+        vec![Pub, Use, LBrace, Ident, Comma, Ident, RBrace, EOF]
+    );
 }
 
 #[test]

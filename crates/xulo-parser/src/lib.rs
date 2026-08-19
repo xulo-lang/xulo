@@ -221,6 +221,13 @@ pub fn ident_name(input: &mut In<'_>) -> Pr<String> {
     verified_tk(input, Token::Ident).map(|t| t.text)
 }
 
+/// Reads an ordinary identifier (`Ident`) and returns it with the byte span of
+/// its token. Callers that need a precise name span for diagnostics/tooling use
+/// this instead of [`ident_name`].
+pub fn ident_name_spanned(input: &mut In<'_>) -> Pr<(String, Range<usize>)> {
+    verified_tk(input, Token::Ident).map(|t| (t.text, t.span))
+}
+
 /// Reads either an `Ident` or the `print` keyword as a name.
 pub fn name(input: &mut In<'_>) -> Pr<String> {
     let t = input

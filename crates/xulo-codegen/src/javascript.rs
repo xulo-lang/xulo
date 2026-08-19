@@ -729,6 +729,7 @@ impl Javascript {
                     iter_var,
                     iterable,
                     body,
+                    ..
                 } => {
                     let iter = self.expr(iterable)?;
                     self.push_scope();
@@ -1464,7 +1465,11 @@ fn fmt_number(n: f64) -> String {
         return "NaN".into();
     }
     if n.is_infinite() {
-        return if n > 0.0 { "Infinity".into() } else { "-Infinity".into() };
+        return if n > 0.0 {
+            "Infinity".into()
+        } else {
+            "-Infinity".into()
+        };
     }
     if n.fract() == 0.0 && n.abs() < 1e15 {
         format!("{}", n as i64)

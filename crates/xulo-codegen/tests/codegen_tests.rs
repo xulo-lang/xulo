@@ -344,8 +344,7 @@ fn component_emits_runtime_preamble() {
 
 #[test]
 fn expr_child_emits_direct_value() {
-    let js =
-        generate_js("fn main(): View { @State let name: string = \"Xulo\" VStack { name } }");
+    let js = generate_js("fn main(): View { @State let name: string = \"Xulo\" VStack { name } }");
     assert!(js.contains("children: [name.get()]"), "js: {js}");
 }
 
@@ -398,25 +397,22 @@ fn effect_emits_runtime_call() {
 
 #[test]
 fn effect_without_deps_emits_undefined_thunk() {
-    let js = generate_js(
-        "fn main(): View { @State let id: number = 0 @Effect fn() { print(id) } }",
-    );
+    let js =
+        generate_js("fn main(): View { @State let id: number = 0 @Effect fn() { print(id) } }");
     assert!(js.contains("__effect((function"));
     assert!(js.contains(", undefined);"));
 }
 
 #[test]
 fn environment_emits_env_lookup() {
-    let js = generate_js(
-        "type Router = object\nfn main(): View { @Environment let router: Router }",
-    );
+    let js =
+        generate_js("type Router = object\nfn main(): View { @Environment let router: Router }");
     assert!(js.contains("const router = __env(\"Router\");"));
 }
 
 #[test]
 fn dollar_binding_emits_value_onchange() {
-    let js =
-        generate_js("fn main(): View { @State let name: string = \"\" Input(value: $name) }");
+    let js = generate_js("fn main(): View { @State let name: string = \"\" Input(value: $name) }");
     assert!(js.contains("{ value: name.get(), onChange: (__v) => name.set(__v) }"));
 }
 

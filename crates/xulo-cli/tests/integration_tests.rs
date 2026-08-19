@@ -2345,10 +2345,7 @@ fn native_run_semantic_rejects_missing_export() {
 #[test]
 fn native_run_rejects_removed_default_keyword() {
     let (ok, _stdout, stderr) = native_run(
-        &[(
-            "main.xulo",
-            "default fn main() { print(1) }\n",
-        )],
+        &[("main.xulo", "default fn main() { print(1) }\n")],
         "main.xulo",
     );
     assert!(!ok);

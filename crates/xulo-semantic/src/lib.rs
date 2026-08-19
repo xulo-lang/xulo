@@ -129,6 +129,50 @@ pub struct Analyzer {
     /// Span of the expression most recently entered by `check_expression`;
     /// semantic errors are attached to it (they cannot name their own span).
     current_span: Range<usize>,
+    /// Every checked expression's inferred type, keyed by its span
+    /// (out-of-band for editor tooling).
+    expr_types: Vec<(Range<usize>, Type)>,
+    /// Name resolutions captured while checking (see [`UseRecord`]).
+    resolutions: Vec<UseRecord>,
+}
+
+/// The kind of a value symbol a name-use resolved to (a light projection of
+/// `SymbolKind` for tooling; parameter bindings and plain `let`s are both
+/// `Variable`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UseKind {
+    Variable,
+    State,
+    Store,
+    Function,
+}
+
+impl UseKind {
+    fn of(symbol: &symbol_table::Symbol) -> Self {
+        match &symbol.kind {
+            SymbolKind::Variable => UseKind::Variable,
+            SymbolKind::State => UseKind::State,
+            SymbolKind::Store => UseKind::Store,
+            SymbolKind::Function(_, _, _, _) => UseKind::Function,
+        }
+    }
+}
+
+/// A name-use the checker resolved while analyzing: its source span, the
+/// resolved symbol, and (when statically known) the source span of the
+/// declaration it binds to. Collected out-of-band for editor tooling
+/// (go-to-definition / find-references / hover) the way trait dispatch and
+/// list-concat annotations are for codegen — the checker never annotates the
+/// AST itself.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UseRecord {
+    pub span: Range<usize>,
+    pub name: String,
+    pub kind: UseKind,
+    pub type_: Option<Type>,
+    /// The declaration site of the resolved symbol (`None` when unknown, e.g.
+    /// for imported, builtin, or synthesized names).
+    pub def: Option<Range<usize>>,
 }
 
 /// The result of analyzing a module: the names/symbols/types it exports, so a
@@ -150,6 +194,11 @@ pub struct AnalysisResult {
     /// also dispatch `Trait::method(recv)`: the receiver's concrete type carries
     /// its impls, and the mangled impl function is registered module-wide.
     pub impls: Vec<(String, String, String)>,
+    /// Every expression's inferred type, keyed by its source span. Out-of-band
+    /// data for editor tooling (hover); the checker never annotates the AST.
+    pub expr_types: Vec<(Range<usize>, Type)>,
+    /// The checker's name resolutions (see [`UseRecord`]).
+    pub resolutions: Vec<UseRecord>,
 }
 
 /// Run all semantic checks over a parsed program.
@@ -198,6 +247,8 @@ pub fn analyze_with(
         render_locals: Vec::new(),
         in_effect: false,
         current_span: 0..0,
+        expr_types: Vec::new(),
+        resolutions: Vec::new(),
     };
     for statement in &program.statements {
         analyzer.check_statement(statement)?;
@@ -209,6 +260,8 @@ pub fn analyze_with(
         trait_dispatch: analyzer.trait_dispatch.clone(),
         list_concat: analyzer.list_concat.clone(),
         impls: analyzer.impls.iter().cloned().collect(),
+        expr_types: analyzer.expr_types.clone(),
+        resolutions: analyzer.resolutions.clone(),
     };
     for name in &analyzer.exported {
         if let Some(entry) = analyzer.type_table.get(name).cloned() {
@@ -483,6 +536,47 @@ impl Analyzer {
     fn err(&self, message: impl Into<String>) -> XuloError {
         XuloError::new(ErrorKind::Semantic, message).at(self.current_span.clone())
     }
+
+    /// Record that the name at `span` resolved to `symbol` (out-of-band, for
+    /// editor tooling's go-to-definition / find-references / hover). Also
+    /// drops an entry for bindings the cursor can sit on directly.
+    fn record_use(&mut self, span: Range<usize>, name: &str, symbol: &Symbol) {
+        let def = self.table.lookup_def(name).flatten().cloned();
+        self.resolutions.push(UseRecord {
+            span,
+            name: name.to_string(),
+            kind: UseKind::of(symbol),
+            type_: Some(symbol.type_.clone()),
+            def,
+        });
+    }
+
+    /// Record a declaration site itself, so the cursor over a declared name
+    /// (e.g. `let m ...`) resolves to that declaration.
+    fn record_decl(&mut self, span: Range<usize>, name: &str, kind: UseKind, ty: Type) {
+        self.resolutions.push(UseRecord {
+            span: span.clone(),
+            name: name.to_string(),
+            kind,
+            type_: Some(ty),
+            def: Some(span),
+        });
+    }
+
+    /// Record a callee-name resolution for a plain call, when the call's bare
+    /// callee name has a precise source span (see `Call.callee_span`).
+    fn record_call_callee(&mut self, call: &xulo_core::ast::Call, symbol: &Symbol) {
+        if let Some(span) = &call.callee_span {
+            let def = self.table.lookup_def(&call.callee).flatten().cloned();
+            self.resolutions.push(UseRecord {
+                span: span.clone(),
+                name: call.callee.clone(),
+                kind: UseKind::of(symbol),
+                type_: Some(symbol.type_.clone()),
+                def,
+            });
+        }
+    }
 }
 
 impl Analyzer {
@@ -547,18 +641,28 @@ impl Analyzer {
                         binding.type_annotation.as_ref().unwrap().name()
                     )));
                 }
-                let declared = self.table.declare(Symbol {
-                    name: binding.name.clone(),
-                    type_: binding.type_annotation.clone().unwrap_or(value_type),
-                    kind: SymbolKind::Variable,
-                    is_const: binding.is_const,
-                });
+                let declared_type = binding.type_annotation.clone().unwrap_or(value_type);
+                let declared = self.table.declare_with_def(
+                    Symbol {
+                        name: binding.name.clone(),
+                        type_: declared_type.clone(),
+                        kind: SymbolKind::Variable,
+                        is_const: binding.is_const,
+                    },
+                    Some(binding.name_span.clone()),
+                );
                 if !declared {
                     return Err(self.err(format!(
                         "binding `{}` is already declared in this scope",
                         binding.name
                     )));
                 }
+                self.record_decl(
+                    binding.name_span.clone(),
+                    &binding.name,
+                    UseKind::Variable,
+                    declared_type,
+                );
                 Ok(())
             }
             Statement::Assign(assign) => self.check_assign(assign),
@@ -612,12 +716,15 @@ impl Analyzer {
                     }
                 }
                 self.table.push_scope();
-                self.table.declare(Symbol {
-                    name: stmt.iter_var.clone(),
-                    type_: Type::Any,
-                    kind: SymbolKind::Variable,
-                    is_const: false,
-                });
+                self.table.declare_with_def(
+                    Symbol {
+                        name: stmt.iter_var.clone(),
+                        type_: Type::Any,
+                        kind: SymbolKind::Variable,
+                        is_const: false,
+                    },
+                    Some(stmt.iter_var_span.clone()),
+                );
                 let result = self.check_block(&stmt.body);
                 self.table.pop_scope();
                 result?;
@@ -645,12 +752,15 @@ impl Analyzer {
             Statement::Try(try_stmt) => {
                 self.check_block(&try_stmt.try_block)?;
                 self.table.push_scope();
-                self.table.declare(Symbol {
-                    name: try_stmt.catch_var.clone(),
-                    type_: Type::Any,
-                    kind: SymbolKind::Variable,
-                    is_const: true,
-                });
+                self.table.declare_with_def(
+                    Symbol {
+                        name: try_stmt.catch_var.clone(),
+                        type_: Type::Any,
+                        kind: SymbolKind::Variable,
+                        is_const: true,
+                    },
+                    Some(try_stmt.catch_var_span.clone()),
+                );
                 let result = self.check_block(&try_stmt.catch_block);
                 self.table.pop_scope();
                 result
@@ -709,7 +819,10 @@ impl Analyzer {
             ),
             is_const: true,
         };
-        if !self.table.declare(symbol) {
+        if !self
+            .table
+            .declare_with_def(symbol, Some(f.name_span.clone()))
+        {
             return Err(self.err(format!("function `{}` is already defined", f.name)));
         }
         // A user function must not collide with a trait-dispatch name
@@ -815,12 +928,15 @@ impl Analyzer {
                 }
             }
             let ty = p.type_annotation.clone().unwrap_or(Type::Any);
-            self.table.declare(Symbol {
-                name: p.name.clone(),
-                type_: ty.clone(),
-                kind: SymbolKind::Variable,
-                is_const: true,
-            });
+            self.table.declare_with_def(
+                Symbol {
+                    name: p.name.clone(),
+                    type_: ty.clone(),
+                    kind: SymbolKind::Variable,
+                    is_const: true,
+                },
+                Some(p.span.clone()),
+            );
             types.push(ty);
         }
         Ok(types)
@@ -1131,12 +1247,15 @@ impl Analyzer {
                 )));
             }
         }
-        let declared = self.table.declare(Symbol {
-            name: binding.name.clone(),
-            type_: binding.type_annotation.clone().unwrap_or(value_type),
-            kind: SymbolKind::State,
-            is_const: binding.is_const,
-        });
+        let declared = self.table.declare_with_def(
+            Symbol {
+                name: binding.name.clone(),
+                type_: binding.type_annotation.clone().unwrap_or(value_type),
+                kind: SymbolKind::State,
+                is_const: binding.is_const,
+            },
+            Some(binding.name_span.clone()),
+        );
         if !declared {
             return Err(self.err(format!(
                 "binding `{}` is already declared in this scope",
@@ -1212,12 +1331,15 @@ impl Analyzer {
     fn check_environment(&mut self, env: &xulo_core::ast::EnvStmt) -> SResult<()> {
         self.require_component_top_level("@Environment")?;
         self.check_type(&env.type_)?;
-        if !self.table.declare(Symbol {
-            name: env.name.clone(),
-            type_: env.type_.clone(),
-            kind: SymbolKind::Store,
-            is_const: true,
-        }) {
+        if !self.table.declare_with_def(
+            Symbol {
+                name: env.name.clone(),
+                type_: env.type_.clone(),
+                kind: SymbolKind::Store,
+                is_const: true,
+            },
+            Some(env.name_span.clone()),
+        ) {
             return Err(self.err(format!(
                 "binding `{}` is already declared in this scope",
                 env.name
@@ -1296,6 +1418,7 @@ impl Analyzer {
             }
             xulo_core::ast::UiElement::For {
                 iter_var,
+                iter_var_span,
                 iterable,
                 body,
             } => {
@@ -1310,12 +1433,15 @@ impl Analyzer {
                     }
                 }
                 self.table.push_scope();
-                self.table.declare(Symbol {
-                    name: iter_var.clone(),
-                    type_: Type::Any,
-                    kind: SymbolKind::Variable,
-                    is_const: false,
-                });
+                self.table.declare_with_def(
+                    Symbol {
+                        name: iter_var.clone(),
+                        type_: Type::Any,
+                        kind: SymbolKind::Variable,
+                        is_const: false,
+                    },
+                    Some(iter_var_span.clone()),
+                );
                 let mut result = Ok(());
                 for e in body {
                     if let Err(err) = self.check_ui_element(e) {
@@ -1605,20 +1731,26 @@ impl Analyzer {
             self.table.push_scope();
             for param in &m.params {
                 if param.name == "self" {
-                    self.table.declare(Symbol {
-                        name: "self".to_string(),
-                        type_: Type::Named(imp.type_name.clone()),
-                        kind: SymbolKind::Variable,
-                        is_const: true,
-                    });
+                    self.table.declare_with_def(
+                        Symbol {
+                            name: "self".to_string(),
+                            type_: Type::Named(imp.type_name.clone()),
+                            kind: SymbolKind::Variable,
+                            is_const: true,
+                        },
+                        None,
+                    );
                 } else {
                     let ty = param.type_annotation.clone().unwrap_or(Type::Any);
-                    self.table.declare(Symbol {
-                        name: param.name.clone(),
-                        type_: ty,
-                        kind: SymbolKind::Variable,
-                        is_const: true,
-                    });
+                    self.table.declare_with_def(
+                        Symbol {
+                            name: param.name.clone(),
+                            type_: ty,
+                            kind: SymbolKind::Variable,
+                            is_const: true,
+                        },
+                        Some(param.span.clone()),
+                    );
                 }
             }
             let saved = self.current_return.replace(impl_ret.clone());
@@ -1774,13 +1906,24 @@ impl Analyzer {
         Ok(())
     }
 
-    /// Check an expression and infer its type.
+    /// Check an expression and infer its type, recording every checked
+    /// expression's type out-of-band (`AnalysisResult.expr_types`, keyed by
+    /// span) for editor tooling. The bulk of the work happens in
+    /// [`Analyzer::check_expression_inner`]; the recording is deliberately
+    /// done here, on success, so a failed check never leaves a type entry.
     fn check_expression(&mut self, expr: &Expression) -> SResult<Type> {
         self.current_span = expr.span().clone();
+        let ty = self.check_expression_inner(expr)?;
+        self.expr_types.push((expr.span().clone(), ty.clone()));
+        Ok(ty)
+    }
+
+    fn check_expression_inner(&mut self, expr: &Expression) -> SResult<Type> {
         match expr {
             Expression::Literal { value: lit, .. } => self.check_literal(lit),
             Expression::Identifier { name, .. } => {
                 let sym = self.lookup_symbol(name)?;
+                self.record_use(expr.span().clone(), name, &sym);
                 Ok(sym.type_.clone())
             }
             Expression::BinaryOp(bin) => self.check_binary(bin),
@@ -1810,6 +1953,7 @@ impl Analyzer {
             Expression::FnExpr(f) => self.check_fn_expr(f),
             Expression::Binding { name, .. } => {
                 let sym = self.lookup_symbol(name)?;
+                self.record_use(expr.span().clone(), name, &sym);
                 match sym.kind {
                     SymbolKind::State | SymbolKind::Store => Ok(sym.type_.clone()),
                     _ => Err(self.err(format!(
@@ -2137,12 +2281,15 @@ impl Analyzer {
                                 if binding == "_" {
                                     continue;
                                 }
-                                self.table.declare(Symbol {
-                                    name: binding.clone(),
-                                    type_: self.resolve_alias(&param.type_, 0),
-                                    kind: SymbolKind::Variable,
-                                    is_const: true,
-                                });
+                                self.table.declare_with_def(
+                                    Symbol {
+                                        name: binding.clone(),
+                                        type_: self.resolve_alias(&param.type_, 0),
+                                        kind: SymbolKind::Variable,
+                                        is_const: true,
+                                    },
+                                    Some(span.clone()),
+                                );
                             }
                             let t = self.check_expression(&arm.value)?;
                             self.table.pop_scope();
@@ -2331,6 +2478,7 @@ impl Analyzer {
         // A user-declared `str`/`print` shadows the builtin of the same name
         // (the builtins only apply when no user symbol matches).
         if let Some(sym) = self.table.lookup(&call.callee).cloned() {
+            self.record_call_callee(call, &sym);
             return self.check_call_symbol(call, &sym);
         }
         if call.callee == "print" {
@@ -2354,6 +2502,7 @@ impl Analyzer {
         let Some(sym) = self.table.lookup(&call.callee).cloned() else {
             return Err(self.err(format!("unknown function `{}`", call.callee)));
         };
+        self.record_call_callee(call, &sym);
         self.check_call_symbol(call, &sym)
     }
 

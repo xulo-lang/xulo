@@ -1,4 +1,4 @@
-use xulo_cli::formatter::format;
+use xulo_ide::format::format;
 
 fn fmt(source: &str) -> String {
     format(source).unwrap()

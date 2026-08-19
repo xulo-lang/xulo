@@ -285,7 +285,7 @@ fn fmt_file(file: &Path) -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    let formatted = match crate::formatter::format(&source) {
+    let formatted = match xulo_ide::format::format(&source) {
         Ok(f) => f,
         Err(e) => {
             let err = e.clone().with_file(file.to_path_buf());
@@ -324,37 +324,9 @@ fn check_file(file: &Path) -> ExitCode {
 
 /// Keywords, type names, and REPL commands offered by `Tab` completion.
 const REPL_CANDIDATES: &[&str] = &[
-    "exit",
-    "clear",
-    "run",
-    "fn",
-    "let",
-    "const",
-    "return",
-    "if",
-    "else",
-    "for",
-    "in",
-    "while",
-    "match",
-    "print",
-    "type",
-    "enum",
-    "null",
-    "true",
-    "false",
-    "and",
-    "or",
-    "await",
-    "async",
-    "try",
-    "catch",
-    "throw",
-    "import",
-    "pub",
-    "use",
-    "from",
-    "as",
+    "exit", "clear", "run", "fn", "let", "const", "return", "if", "else", "for", "in", "while",
+    "match", "print", "type", "enum", "null", "true", "false", "and", "or", "await", "async",
+    "try", "catch", "throw", "import", "pub", "use", "from", "as",
 ];
 
 /// Completion/history helper for the REPL line editor.
@@ -413,8 +385,7 @@ fn history_path() -> Option<std::path::PathBuf> {
 }
 
 fn repl() -> ExitCode {
-    let mut rl = match rustyline::Editor::<ReplHelper, rustyline::history::DefaultHistory>::new()
-    {
+    let mut rl = match rustyline::Editor::<ReplHelper, rustyline::history::DefaultHistory>::new() {
         Ok(rl) => rl,
         Err(err) => {
             eprintln!("cannot start line editor: {err}");
@@ -431,7 +402,9 @@ fn repl() -> ExitCode {
     if let Some(path) = &history {
         let _ = rl.load_history(path);
     }
-    println!("xulo REPL — native interpreter, no Node; an empty line or `run` executes, `exit` quits");
+    println!(
+        "xulo REPL — native interpreter, no Node; an empty line or `run` executes, `exit` quits"
+    );
     let mut entry = String::new();
     let mut session = String::new();
     loop {
@@ -520,9 +493,7 @@ fn repl_step(session: &mut String, entry: &mut String, line: &str) -> bool {
 fn repl_run(session: &mut String, pending: &str) -> bool {
     session.push_str(pending);
     let raw = session.trim_start();
-    let has_main = raw
-        .split('\n')
-        .any(|l| has_main_decl(l.trim_start()));
+    let has_main = raw.split('\n').any(|l| has_main_decl(l.trim_start()));
     let echo = !has_main && looks_like_echo(pending);
     let compiled = if has_main {
         session.clone()

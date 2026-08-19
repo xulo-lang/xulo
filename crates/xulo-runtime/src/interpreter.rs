@@ -7,8 +7,9 @@ use corosensei::{Coroutine, Yielder};
 
 use xulo_core::ast::{
     AssignTarget, BinaryOp, BinaryOperator, BindingPattern, Block, Call, ComponentStmt, EffectStmt,
-    Expression, FnDef, ForStmt, IfExpr, ImplDecl, LetBinding, Literal, MatchExpr, ObjectField, Param,
-    Program, ReturnStmt, Statement, StoreStmt, TryStmt, Type, UiElement, UnaryOperator, impl_fn_name,
+    Expression, FnDef, ForStmt, IfExpr, ImplDecl, LetBinding, Literal, MatchExpr, ObjectField,
+    Param, Program, ReturnStmt, Statement, StoreStmt, TryStmt, Type, UiElement, UnaryOperator,
+    impl_fn_name,
 };
 use xulo_core::error::{ErrorKind, XuloError};
 
@@ -180,18 +181,20 @@ fn stmt_has_closure(stmt: &Statement) -> bool {
             };
             target || expr_has_closure(&a.value)
         }
-        Statement::TypeAlias(_) | Statement::Enum(_) | Statement::Import(_)
-        | Statement::Environment(_) | Statement::Trait(_) => false,
+        Statement::TypeAlias(_)
+        | Statement::Enum(_)
+        | Statement::Import(_)
+        | Statement::Environment(_)
+        | Statement::Trait(_) => false,
         Statement::Expr(e) => expr_has_closure(&e.expr),
         Statement::Block(b) => block_has_closure(b),
         Statement::Try(t) => block_has_closure(&t.try_block) || block_has_closure(&t.catch_block),
         Statement::Throw(e) => expr_has_closure(e),
         Statement::Export(e) => match &e.item {
             xulo_core::ast::ExportItem::Fn(_) => true,
-            xulo_core::ast::ExportItem::Let(l) => {
-                l.value.as_ref().is_some_and(expr_has_closure)
-            }
-            xulo_core::ast::ExportItem::Enum(_) | xulo_core::ast::ExportItem::Type(_)
+            xulo_core::ast::ExportItem::Let(l) => l.value.as_ref().is_some_and(expr_has_closure),
+            xulo_core::ast::ExportItem::Enum(_)
+            | xulo_core::ast::ExportItem::Type(_)
             | xulo_core::ast::ExportItem::Trait(_)
             | xulo_core::ast::ExportItem::Names(_) => false,
         },
@@ -216,7 +219,9 @@ fn expr_has_closure(expr: &Expression) -> bool {
             }),
             Literal::String(_) | Literal::Number(_) | Literal::Boolean(_) | Literal::Null => false,
         },
-        Expression::Identifier { .. } | Expression::EnumRef(_) | Expression::Binding { .. } => false,
+        Expression::Identifier { .. } | Expression::EnumRef(_) | Expression::Binding { .. } => {
+            false
+        }
         Expression::BinaryOp(b) => expr_has_closure(&b.left) || expr_has_closure(&b.right),
         Expression::Unary(u) => expr_has_closure(&u.operand),
         Expression::Call(c) => {
@@ -268,9 +273,9 @@ fn ui_has_closure(el: &xulo_core::ast::UiElement) -> bool {
                     .as_ref()
                     .is_some_and(|branch| branch.iter().any(ui_has_closure))
         }
-        xulo_core::ast::UiElement::For {
-            iterable, body, ..
-        } => expr_has_closure(iterable) || body.iter().any(ui_has_closure),
+        xulo_core::ast::UiElement::For { iterable, body, .. } => {
+            expr_has_closure(iterable) || body.iter().any(ui_has_closure)
+        }
         xulo_core::ast::UiElement::Group(children) => children.iter().any(ui_has_closure),
     }
 }
@@ -467,8 +472,7 @@ impl Interpreter {
         let promise_for_task = promise.clone();
         let interp = self as *const Interpreter;
         let coro = Coroutine::with_stack(
-            DefaultStack::new(COROUTINE_STACK_SIZE)
-                .expect("failed to allocate async task stack"),
+            DefaultStack::new(COROUTINE_STACK_SIZE).expect("failed to allocate async task stack"),
             move |yielder: &Yielder<Control, ()>, _start: Control| -> Result<Value, RunError> {
                 // SAFETY: `resume_task` sets CURRENT_INTERP to this interpreter
                 // around every resume; the coroutine only runs inside one.
@@ -571,9 +575,7 @@ impl Interpreter {
             tasks.truncate(len);
             drop(tasks);
             self.task_yielder.borrow_mut().truncate(len);
-            self.task_free
-                .borrow_mut()
-                .retain(|&id| id < len);
+            self.task_free.borrow_mut().retain(|&id| id < len);
         }
     }
 
@@ -755,11 +757,7 @@ impl Interpreter {
     /// `@State let x = v` defines a reactive cell (the JS output is
     /// `const x = __signal(v)`); writes later rewrite into the cell. A missing
     /// initializer starts as `null`, mirroring `__signal(undefined)`.
-    fn exec_state(
-        &self,
-        binding: &LetBinding,
-        env: &Rc<RefCell<Env>>,
-    ) -> Result<Flow, RunError> {
+    fn exec_state(&self, binding: &LetBinding, env: &Rc<RefCell<Env>>) -> Result<Flow, RunError> {
         let value = match &binding.value {
             Some(value) => self.eval(value, env)?,
             None => Value::Null,
@@ -800,11 +798,7 @@ impl Interpreter {
     /// `@Effect` runs its closure once with the current environment. The JS
     /// path registers an effect that runs on render; natively there is no
     /// subscription model, so the body executes exactly once (documented).
-    fn exec_effect(
-        &self,
-        effect: &EffectStmt,
-        env: &Rc<RefCell<Env>>,
-    ) -> Result<Flow, RunError> {
+    fn exec_effect(&self, effect: &EffectStmt, env: &Rc<RefCell<Env>>) -> Result<Flow, RunError> {
         let closure = &effect.closure;
         let func = Value::Function(Rc::new(FunctionValue {
             params: closure.params.clone(),
@@ -830,11 +824,7 @@ impl Interpreter {
     }
 
     /// Evaluate a single UI element into a renderable value.
-    fn eval_ui_element(
-        &self,
-        el: &UiElement,
-        env: &Rc<RefCell<Env>>,
-    ) -> Result<Value, RunError> {
+    fn eval_ui_element(&self, el: &UiElement, env: &Rc<RefCell<Env>>) -> Result<Value, RunError> {
         match el {
             UiElement::Component(c) => self.eval_component_stmt(c, env),
             UiElement::Text(text) => Ok(Value::String(Rc::from(text.as_str()))),
@@ -856,6 +846,7 @@ impl Interpreter {
                 iter_var,
                 iterable,
                 body,
+                ..
             } => {
                 let iterable = self.eval(iterable, env)?;
                 let items = match iterable {
@@ -864,16 +855,22 @@ impl Interpreter {
                         Value::List(list) => list,
                         other => {
                             return Err(RunError::err(
-                                format!("for loop must iterate over a `list`, found {}", other.kind_name()),
+                                format!(
+                                    "for loop must iterate over a `list`, found {}",
+                                    other.kind_name()
+                                ),
                                 0..0,
-                            ))
+                            ));
                         }
                     },
                     other => {
                         return Err(RunError::err(
-                            format!("for loop must iterate over a `list`, found {}", other.kind_name()),
+                            format!(
+                                "for loop must iterate over a `list`, found {}",
+                                other.kind_name()
+                            ),
                             0..0,
-                        ))
+                        ));
                     }
                 };
                 let child = Env::child(env);
@@ -980,7 +977,10 @@ impl Interpreter {
         }
         Ok(Value::Object(Rc::new(RefCell::new(vec![
             ("name".to_string(), Value::String(Rc::from(name))),
-            ("props".to_string(), Value::Object(Rc::new(RefCell::new(props)))),
+            (
+                "props".to_string(),
+                Value::Object(Rc::new(RefCell::new(props))),
+            ),
         ]))))
     }
 
@@ -1090,14 +1090,14 @@ impl Interpreter {
         }
     }
 
-/// Whether a loop body could let a closure observe the loop's iteration scope.
-/// `for` creates a fresh environment per round so an `fn` in the body captures
-/// *that round's* loop variable (JS `let` semantics). When the body contains no
-/// closures the fresh scope is unobservable, and one recycled environment
-/// (reset to just the loop variable each round) is equivalent — that is what
-/// `exec_for` uses to avoid allocating per iteration (P3). Any `fn` — a
-/// declaration, an anonymous expression, a nested loop/if body, an `impl`
-/// method, or a UI element — forces the per-round path instead.
+    /// Whether a loop body could let a closure observe the loop's iteration scope.
+    /// `for` creates a fresh environment per round so an `fn` in the body captures
+    /// *that round's* loop variable (JS `let` semantics). When the body contains no
+    /// closures the fresh scope is unobservable, and one recycled environment
+    /// (reset to just the loop variable each round) is equivalent — that is what
+    /// `exec_for` uses to avoid allocating per iteration (P3). Any `fn` — a
+    /// declaration, an anonymous expression, a nested loop/if body, an `impl`
+    /// method, or a UI element — forces the per-round path instead.
     fn exec_assign(
         &self,
         a: &xulo_core::ast::AssignStmt,
@@ -1158,7 +1158,9 @@ impl Interpreter {
                     }
                     (Value::Object(fields), Value::String(key)) => {
                         let mut fields = fields.borrow_mut();
-                        if let Some((_, slot)) = fields.iter_mut().find(|(k, _)| k.as_str() == key.as_ref()) {
+                        if let Some((_, slot)) =
+                            fields.iter_mut().find(|(k, _)| k.as_str() == key.as_ref())
+                        {
                             *slot = value;
                         } else {
                             fields.push((key.to_string(), value));
@@ -1366,11 +1368,15 @@ impl Interpreter {
                 match env.borrow().get(name) {
                     Some(Value::Signal(cell)) => {
                         let setter_cell = cell.clone();
-                        let setter = Rc::new(move |_interp: &Interpreter, args: &[Value]| -> Result<Value, RunError> {
-                            let next = args.first().cloned().unwrap_or(Value::Null);
-                            *setter_cell.borrow_mut() = next;
-                            Ok(Value::Null)
-                        });
+                        let setter = Rc::new(
+                            move |_interp: &Interpreter,
+                                  args: &[Value]|
+                                  -> Result<Value, RunError> {
+                                let next = args.first().cloned().unwrap_or(Value::Null);
+                                *setter_cell.borrow_mut() = next;
+                                Ok(Value::Null)
+                            },
+                        );
                         Ok(Value::Object(Rc::new(RefCell::new(vec![
                             ("value".to_string(), cell.borrow().clone()),
                             ("onChange".to_string(), Value::Native(setter)),
@@ -1378,9 +1384,12 @@ impl Interpreter {
                     }
                     Some(v) => Ok(Value::Object(Rc::new(RefCell::new(vec![
                         ("value".to_string(), v),
-                        ("onChange".to_string(), Value::Native(Rc::new(
-                            |_interp: &Interpreter, _args: &[Value]| Ok(Value::Null),
-                        ))),
+                        (
+                            "onChange".to_string(),
+                            Value::Native(Rc::new(|_interp: &Interpreter, _args: &[Value]| {
+                                Ok(Value::Null)
+                            })),
+                        ),
                     ])))),
                     None => Err(RunError::err(
                         format!("undefined variable `{name}`"),
@@ -1497,16 +1506,12 @@ impl Interpreter {
                 out.extend(b.borrow().iter().cloned());
                 Ok(Value::List(Rc::new(RefCell::new(out))))
             }
-            (Value::String(a), Value::Number(b)) => Ok(Value::String(format!(
-                "{a}{}",
-                crate::value::format_number(b)
-            )
-            .into())),
-            (Value::Number(a), Value::String(b)) => Ok(Value::String(format!(
-                "{}{b}",
-                crate::value::format_number(a)
-            )
-            .into())),
+            (Value::String(a), Value::Number(b)) => Ok(Value::String(
+                format!("{a}{}", crate::value::format_number(b)).into(),
+            )),
+            (Value::Number(a), Value::String(b)) => Ok(Value::String(
+                format!("{}{b}", crate::value::format_number(a)).into(),
+            )),
             (a, b) => Err(RunError::err(
                 format!(
                     "cannot apply `+` to {} and {}",
@@ -2031,11 +2036,7 @@ impl Interpreter {
     /// `__component(() => ...)`). An explicit `return` beats the implicit
     /// render value; a trailing expression only counts without a `;`, exactly
     /// like the codegen's `return <expr>`.
-    fn run_component_body(
-        &self,
-        body: &Block,
-        env: &Rc<RefCell<Env>>,
-    ) -> Result<Value, RunError> {
+    fn run_component_body(&self, body: &Block, env: &Rc<RefCell<Env>>) -> Result<Value, RunError> {
         if let Some(last) = body.statements.last() {
             for stmt in &body.statements[..body.statements.len() - 1] {
                 match self.exec_stmt(stmt, env)? {

@@ -10,6 +10,10 @@ edition = "2024"
 winnow = "1.0.4"
 clap = { version = "4.6.6", features = ["derive"] }
 rustyline = "18.0.1"
+lsp-types = "0.94"
+lsp-server = "0.7"
+serde = "1"
+serde_json = "1"
 xulo-core = { path = "crates/xulo-core" }
 xulo-lexer = { path = "crates/xulo-lexer" }
 xulo-parser = { path = "crates/xulo-parser" }
@@ -18,3 +22,5 @@ xulo-codegen = { path = "crates/xulo-codegen" }
 xulo-compiler = { path = "crates/xulo-compiler" }
 xulo-runtime = { path = "crates/xulo-runtime" }
 xulo-cli = { path = "crates/xulo-cli" }
+xulo-ide = { path = "crates/xulo-ide" }
+xulo-analyzer = { path = "crates/xulo-analyzer" }

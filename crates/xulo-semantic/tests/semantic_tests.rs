@@ -822,8 +822,8 @@ fn decorators_rejected_outside_component() {
 
 #[test]
 fn decorators_rejected_in_nested_block() {
-    let err = analyze_src("fn main(): View { if true { @State let count: number = 0 } }")
-        .unwrap_err();
+    let err =
+        analyze_src("fn main(): View { if true { @State let count: number = 0 } }").unwrap_err();
     assert!(err.message.contains("nested block"));
 }
 
@@ -852,16 +852,15 @@ fn dollar_binding_requires_state_or_store() {
     "#;
     assert!(analyze_src(src).is_ok());
 
-    let err = analyze_src("fn main(): View { let name: string = \"\" Input(value: $name) }")
-        .unwrap_err();
+    let err =
+        analyze_src("fn main(): View { let name: string = \"\" Input(value: $name) }").unwrap_err();
     assert!(err.message.contains("`$` binding"));
 }
 
 #[test]
 fn state_cannot_be_redeclared() {
-    let err =
-        analyze_src("fn main(): View { @State let x: number = 0 @State let x: number = 1 }")
-            .unwrap_err();
+    let err = analyze_src("fn main(): View { @State let x: number = 0 @State let x: number = 1 }")
+        .unwrap_err();
     assert!(err.message.contains("already declared"));
 }
 
@@ -877,8 +876,7 @@ fn component_children_are_type_checked() {
     "#;
     assert!(analyze_src(src).is_ok());
 
-    let err =
-        analyze_src("fn main(): View { VStack { for x in 5 { Text(\"x\") } } }").unwrap_err();
+    let err = analyze_src("fn main(): View { VStack { for x in 5 { Text(\"x\") } } }").unwrap_err();
     assert!(err.message.contains("must iterate over a `list`"));
 }
 
@@ -997,9 +995,8 @@ fn decorators_rejected_in_closure_inside_component() {
 
 #[test]
 fn decorators_rejected_in_anonymous_closure_inside_component() {
-    let err =
-        analyze_src("fn main(): View { let handle = fn() { @State let count: number = 0 } }")
-            .unwrap_err();
+    let err = analyze_src("fn main(): View { let handle = fn() { @State let count: number = 0 } }")
+        .unwrap_err();
     assert!(err.message.contains("returning `View`"));
 }
 
@@ -1855,12 +1852,10 @@ fn store_binding_keeps_inferred_type() {
     // `@Store const n = 5` binds `n` as `number` (not `Any`), so type errors
     // on it are caught like they are for `@State`.
     assert!(
-        analyze_src("fn main(): View { @Store const n = 5 VStack { Text(str(n + 1)) } }")
-            .is_ok()
+        analyze_src("fn main(): View { @Store const n = 5 VStack { Text(str(n + 1)) } }").is_ok()
     );
-    let err =
-        analyze_src("fn main(): View { @Store const n = \"x\" VStack { Text(str(n + 1)) } }")
-            .unwrap_err();
+    let err = analyze_src("fn main(): View { @Store const n = \"x\" VStack { Text(str(n + 1)) } }")
+        .unwrap_err();
     assert!(
         err.message.contains("cannot apply `+`"),
         "got: {}",

@@ -1,0 +1,15 @@
+[package]
+name = "xulo-analyzer"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "xulo-analyzer"
+path = "src/main.rs"
+
+[dependencies]
+lsp-types = { workspace = true }
+lsp-server = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+xulo-ide = { workspace = true }

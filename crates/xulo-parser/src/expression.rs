@@ -251,8 +251,9 @@ fn postfix(input: &mut In<'_>) -> Pr<Expression> {
             let arguments = call_args(input)?;
             let span = consumed_span(original, input, expr.span().start);
             expr = match expr {
-                Expression::Identifier { name, .. } => Expression::Call(Call {
+                Expression::Identifier { name, span } => Expression::Call(Call {
                     callee: name,
+                    callee_span: Some(span.clone()),
                     object: None,
                     method: None,
                     optional: false,
@@ -262,6 +263,7 @@ fn postfix(input: &mut In<'_>) -> Pr<Expression> {
                 }),
                 Expression::EnumRef(r) => Expression::Call(Call {
                     callee: format!("{}::{}", r.enum_name, r.variant),
+                    callee_span: None,
                     object: None,
                     method: None,
                     optional: false,
@@ -275,6 +277,7 @@ fn postfix(input: &mut In<'_>) -> Pr<Expression> {
                     let optional = m.optional;
                     Expression::Call(Call {
                         callee: property.clone(),
+                        callee_span: None,
                         object: Some(Box::new(object)),
                         method: Some(property),
                         optional,
