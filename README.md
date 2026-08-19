@@ -89,10 +89,10 @@ fn main() {
 - `fmt` 为基于 token 流的格式化器：会丢弃注释，且匹配/对象字面量的换行风格以源码为基准（不做智能重排）
 - `repl` 为会话式 REPL：每轮用原生解释器重新编译并执行整个会话（无状态持久化到语言内部，靠重放保持跨条目变量），支持 `exit` / `clear`；行编辑走 rustyline（方向键历史、Tab 补全）
 - 调用函数必须在调用点之前已声明（不支持前向引用）
-- `@Store` 的 `$` 绑定写方向为空操作；跨模块/`@xulo/store` 的订阅重渲染由外部运行时接管
+- `$` 绑定（`{ value, onChange }`）：对 `@State` 信号，`onChange` 写回信号单元；对普通绑定为空操作；跨模块/`@xulo/store` 的订阅重渲染由外部运行时接管
 - 组件函数体在重渲染时会重新执行（`@State` 信号已提升到函数级；`@Effect` 仅在依赖数组（若有）变化或挂载时重新执行）
 - `++`/`--` 自增运算符不在语言中
-- 原生运行时（`xulo run`，默认路径）为 MVP：支持核心语言（字面量、变量、函数/闭包/递归、if/else、for/while、match、枚举、列表/对象、try/catch、`?.`/`??`/`...`、`print`/`str`）、`async`/`await`（协同调度，交错顺序与 JS 微任务语义一致）以及本地 `import`/`pub` 导出（named/namespace）。UI（`Component`/`@State` 等）、外部包 `import`、`$` 绑定仍报「不支持」的运行时错误。原生 `print` 对列表/对象的输出格式为 `[1, 2]` / `{ k: v }`（与 node `console.log` 的带空格/引号形式不同）。JS 路径用 `xulo run --js` 显式选择。
+- 原生运行时（`xulo run`，默认路径）为 MVP：支持核心语言（字面量、变量、函数/闭包/递归、if/else、for/while、match、枚举、列表/对象、try/catch、`?.`/`??`/`...`、`print`/`str`）、`async`/`await`（协同调度，交错顺序与 JS 微任务语义一致）、本地 `import`/`pub` 导出（named/namespace）以及 UI。UI 程序无头运行：`Component` 函数、`@State`/`@Store`/`@Effect`、组件块与 `$` 绑定均可用，组件树被构建并交给（不存在的）宿主运行时——`print` 副作用（如 `@Effect` 中）可观察；外部包（`@xulo/ui`）的导入名绑定为 `null` 占位符，`@Environment` 仍报「不支持」（无注入机制）。原生 `print` 对列表/对象的输出格式为 `[1, 2]` / `{ k: v }`（与 node `console.log` 的带空格/引号形式不同）。JS 路径用 `xulo run --js` 显式选择。
 
 ## 测试
 

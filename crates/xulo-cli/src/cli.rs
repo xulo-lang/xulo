@@ -139,13 +139,18 @@ fn native_run(file: &Path) -> ExitCode {
     xulo_compiler::module::apply_trait_dispatch(&mut loaded);
     print_warnings(&warnings, None);
 
-    if let Some(external) = loaded.external_imports.iter().find(|i| !i.type_only) {
-        eprintln!(
-            "error: external imports are not supported in the native runtime (`import` from {:?})",
-            external.source
-        );
-        return ExitCode::from(1);
-    }
+    // External packages (`@xulo/ui`) have no native values; their imported
+    // names are bound to `null` placeholders so UI components still resolve by
+    // name (they build the props-object shape) and headless programs can run.
+    // Expression use of a missing external value fails only if a program
+    // computes with it.
+    let placeholders: Vec<(String, Value)> = loaded
+        .external_imports
+        .iter()
+        .filter(|i| !i.type_only)
+        .flat_map(|i| import_binding_names(&i.spec))
+        .map(|name| (name, Value::Null))
+        .collect();
 
     let interp = Interpreter::new();
     let mut export_maps: Vec<HashMap<String, Value>> = Vec::with_capacity(loaded.modules.len());
@@ -169,6 +174,7 @@ fn native_run(file: &Path) -> ExitCode {
             eprintln!("error: {msg}");
             return ExitCode::from(1);
         }
+        imports.extend_from_slice(&placeholders);
         let run_main = idx == loaded.entry && module.has_main;
         match interp.exec_module(&module.program, &imports, run_main) {
             Ok(exports) => {
@@ -199,6 +205,19 @@ fn native_run(file: &Path) -> ExitCode {
 
 /// Resolve one import binding against the exports of its already-executed
 /// target module, returning the `(local name, value)` pairs to bind.
+/// The binding names an `import` statement introduces (namespace or named
+/// bindings with their aliases); a bare side-effect import binds nothing.
+fn import_binding_names(spec: &ImportSpec) -> Vec<String> {
+    match spec {
+        ImportSpec::Namespace(ns) => vec![ns.clone()],
+        ImportSpec::Named(bindings) => bindings
+            .iter()
+            .map(|(name, alias)| alias.clone().unwrap_or_else(|| name.clone()))
+            .collect(),
+        ImportSpec::Bare => Vec::new(),
+    }
+}
+
 fn resolve_import(
     binding: &xulo_compiler::module::ImportBinding,
     export_maps: &[HashMap<String, Value>],

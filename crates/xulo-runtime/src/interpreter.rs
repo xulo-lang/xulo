@@ -6,9 +6,9 @@ use corosensei::stack::DefaultStack;
 use corosensei::{Coroutine, Yielder};
 
 use xulo_core::ast::{
-    AssignTarget, BinaryOp, BinaryOperator, Block, Call, Expression, FnDef, ForStmt, IfExpr,
-    ImplDecl, Literal, MatchExpr, ObjectField, Param, Program, ReturnStmt, Statement, TryStmt,
-    Type, UnaryOperator, impl_fn_name,
+    AssignTarget, BinaryOp, BinaryOperator, BindingPattern, Block, Call, ComponentStmt, EffectStmt,
+    Expression, FnDef, ForStmt, IfExpr, ImplDecl, LetBinding, Literal, MatchExpr, ObjectField, Param,
+    Program, ReturnStmt, Statement, StoreStmt, TryStmt, Type, UiElement, UnaryOperator, impl_fn_name,
 };
 use xulo_core::error::{ErrorKind, XuloError};
 
@@ -17,8 +17,10 @@ use crate::value::{FunctionValue, Value, equal, is_truthy};
 
 pub use xulo_core::ast::CallArg;
 
-/// Signature of a builtin function (`print`, `str`).
-pub type NativeFn = fn(&Interpreter, &[Value]) -> Result<Value, RunError>;
+/// Signature of a builtin function (`print`, `str`) or a captured native like a
+/// `$` binding's `onChange` setter. A reference-counted trait object so a
+/// builtin can close over runtime cells.
+pub type NativeFn = Rc<dyn Fn(&Interpreter, &[Value]) -> Result<Value, RunError>>;
 
 /// The outcome of running a statement: keep executing, or return from the
 /// enclosing function. Thrown values are carried by [`RunError::Throw`] so a
@@ -280,8 +282,10 @@ impl Interpreter {
         let global = Env::root();
         global
             .borrow_mut()
-            .define("print", Value::Native(native_print));
-        global.borrow_mut().define("str", Value::Native(native_str));
+            .define("print", Value::Native(Rc::new(native_print)));
+        global
+            .borrow_mut()
+            .define("str", Value::Native(Rc::new(native_str)));
         Interpreter {
             out: RefCell::new(Vec::new()),
             global,
@@ -332,14 +336,11 @@ impl Interpreter {
     }
 
     /// Invoke `main`, draining the async task queue afterward. A rejected async
-    /// `main` surfaces like any other uncaught error.
+    /// `main` surfaces like any other uncaught error. A `Component` `main` runs
+    /// headlessly: its render value is produced and dropped (the JS path hands
+    /// it to `__xulo_mount`, which needs an external runtime the native one
+    /// does not have).
     fn run_main(&self, main: &FnDef, global: &Rc<RefCell<Env>>) -> Result<(), XuloError> {
-        if is_component_return(&main.return_type) {
-            return Err(XuloError::new(
-                ErrorKind::Runtime,
-                "UI components are not supported in the native runtime",
-            ));
-        }
         let result = self.call_fn(main, &[], global);
         self.drive();
         match result {
@@ -693,24 +694,36 @@ impl Interpreter {
                 if imp.type_only {
                     Ok(Flow::Continue)
                 } else {
-                    Err(RunError::err(
-                        "imports are not supported in the native runtime",
-                        0..0,
-                    ))
+                    // Local imports are bound into the module scope by
+                    // `exec_module` before statements run; any remaining import
+                    // is an external package. The headless runtime has no
+                    // external values, so bind the names to `null` placeholders
+                    // — UI components still resolve by name (they build the
+                    // props-object shape), and expression uses of a missing
+                    // external value fail only if a program computes with it.
+                    for name in import_binding_names(&imp.spec) {
+                        if env.borrow().get(&name).is_none() {
+                            env.borrow_mut().define(&name, Value::Null);
+                        }
+                    }
+                    Ok(Flow::Continue)
                 }
             }
             Statement::Export(export) => self.exec_export(&export.item, env),
-            Statement::State(_)
-            | Statement::Store(_)
-            | Statement::Effect(_)
-            | Statement::Environment(_) => Err(RunError::err(
-                "reactive state (`@State`/`@Store`/`@Effect`/`@Environment`) is not supported in the native runtime",
+            Statement::State(s) => self.exec_state(&s.binding, env),
+            Statement::Store(s) => self.exec_store(s, env),
+            Statement::Effect(e) => self.exec_effect(e, env),
+            Statement::Environment(_) => Err(RunError::err(
+                "@Environment is not supported in the native runtime (no provider mechanism)",
                 0..0,
             )),
-            Statement::Component(_) => Err(RunError::err(
-                "UI components are not supported in the native runtime",
-                0..0,
-            )),
+            Statement::Component(c) => {
+                // In a plain body a component block renders into the tree and
+                // its value is only used when it is a component function's
+                // trailing statement (see `run_component_body`).
+                self.eval_component_stmt(c, env)?;
+                Ok(Flow::Continue)
+            }
             Statement::Trait(_) => Ok(Flow::Continue),
             Statement::Impl(imp) => {
                 self.register_impl(imp, env);
@@ -737,6 +750,238 @@ impl Interpreter {
             | xulo_core::ast::ExportItem::Trait(_)
             | xulo_core::ast::ExportItem::Names(_) => Ok(Flow::Continue),
         }
+    }
+
+    /// `@State let x = v` defines a reactive cell (the JS output is
+    /// `const x = __signal(v)`); writes later rewrite into the cell. A missing
+    /// initializer starts as `null`, mirroring `__signal(undefined)`.
+    fn exec_state(
+        &self,
+        binding: &LetBinding,
+        env: &Rc<RefCell<Env>>,
+    ) -> Result<Flow, RunError> {
+        let value = match &binding.value {
+            Some(value) => self.eval(value, env)?,
+            None => Value::Null,
+        };
+        env.borrow_mut()
+            .define(&binding.name, Value::Signal(Rc::new(RefCell::new(value))));
+        Ok(Flow::Continue)
+    }
+
+    /// `@Store { a, b } = expr` is a plain value binding in the codegen
+    /// (`const { a, b } = expr;`): a single name binds the whole value and a
+    /// destructure reads the object members. No signal is created.
+    fn exec_store(&self, store: &StoreStmt, env: &Rc<RefCell<Env>>) -> Result<Flow, RunError> {
+        let value = self.eval(&store.value, env)?;
+        match &store.pattern {
+            BindingPattern::Ident(name) => {
+                env.borrow_mut().define(name, value);
+            }
+            BindingPattern::Destructure(fields) => {
+                for (key, alias) in fields {
+                    let member = match &value {
+                        Value::Object(fields_map) => fields_map
+                            .borrow()
+                            .iter()
+                            .find(|(k, _)| k == key)
+                            .map(|(_, v)| v.clone())
+                            .unwrap_or(Value::Null),
+                        _ => Value::Null,
+                    };
+                    let binding_name = alias.clone().unwrap_or_else(|| key.clone());
+                    env.borrow_mut().define(&binding_name, member);
+                }
+            }
+        }
+        Ok(Flow::Continue)
+    }
+
+    /// `@Effect` runs its closure once with the current environment. The JS
+    /// path registers an effect that runs on render; natively there is no
+    /// subscription model, so the body executes exactly once (documented).
+    fn exec_effect(
+        &self,
+        effect: &EffectStmt,
+        env: &Rc<RefCell<Env>>,
+    ) -> Result<Flow, RunError> {
+        let closure = &effect.closure;
+        let func = Value::Function(Rc::new(FunctionValue {
+            params: closure.params.clone(),
+            body: closure.body.clone(),
+            return_type: closure.return_type.clone(),
+            is_async: closure.is_async,
+            closure: env.clone(),
+        }));
+        self.call_value(&func, &[], env)?;
+        Ok(Flow::Continue)
+    }
+
+    /// A component block inside a component body (`Button { "hi" }`) builds a
+    /// tree node in the render array. The value is only *used* when the block
+    /// is the trailing statement of a component function (see
+    /// `run_component_body`), which is the implicit-return contract.
+    fn eval_component_stmt(
+        &self,
+        c: &ComponentStmt,
+        env: &Rc<RefCell<Env>>,
+    ) -> Result<Value, RunError> {
+        self.local_component_call(&c.name, &c.args, &c.children, env)
+    }
+
+    /// Evaluate a single UI element into a renderable value.
+    fn eval_ui_element(
+        &self,
+        el: &UiElement,
+        env: &Rc<RefCell<Env>>,
+    ) -> Result<Value, RunError> {
+        match el {
+            UiElement::Component(c) => self.eval_component_stmt(c, env),
+            UiElement::Text(text) => Ok(Value::String(Rc::from(text.as_str()))),
+            UiElement::Expr(expr) => self.eval(expr, env),
+            UiElement::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                if is_truthy(&self.eval(condition, env)?) {
+                    self.ui_children_value(Some(then_branch), env)
+                } else if let Some(els) = else_branch {
+                    self.ui_children_value(Some(els), env)
+                } else {
+                    Ok(Value::Null)
+                }
+            }
+            UiElement::For {
+                iter_var,
+                iterable,
+                body,
+            } => {
+                let iterable = self.eval(iterable, env)?;
+                let items = match iterable {
+                    Value::List(list) => list,
+                    Value::Signal(cell) => match cell.borrow().clone() {
+                        Value::List(list) => list,
+                        other => {
+                            return Err(RunError::err(
+                                format!("for loop must iterate over a `list`, found {}", other.kind_name()),
+                                0..0,
+                            ))
+                        }
+                    },
+                    other => {
+                        return Err(RunError::err(
+                            format!("for loop must iterate over a `list`, found {}", other.kind_name()),
+                            0..0,
+                        ))
+                    }
+                };
+                let child = Env::child(env);
+                let mut acc = Vec::with_capacity(items.borrow().len());
+                for v in items.borrow().iter().cloned() {
+                    child.borrow_mut().define(iter_var, v);
+                    acc.push(self.ui_children_value(Some(body), &child)?);
+                }
+                Ok(Value::List(Rc::new(RefCell::new(acc))))
+            }
+            UiElement::Group(elements) => self.ui_children_value(Some(elements), env),
+        }
+    }
+
+    /// Render `children` into an array. A single element stays scalar in the
+    /// JS output (`<View>{x}</View>` with one child emits a bare expression);
+    /// multiple elements are collected into a list so `for`/`if` blocks can
+    /// spread into it. An empty children body stays `null` (the default-slot
+    /// shape), matching the codegen's `children` prop.
+    fn ui_children_value(
+        &self,
+        children: Option<&[UiElement]>,
+        env: &Rc<RefCell<Env>>,
+    ) -> Result<Value, RunError> {
+        match children {
+            None | Some([]) => Ok(Value::Null),
+            Some([single]) => self.eval_ui_element(single, env),
+            Some(multi) => {
+                let mut acc = Vec::with_capacity(multi.len());
+                for el in multi {
+                    acc.push(self.eval_ui_element(el, env)?);
+                }
+                Ok(Value::List(Rc::new(RefCell::new(acc))))
+            }
+        }
+    }
+
+    /// Resolve a component by name. A known local component function is called
+    /// with the same slot-routing as the codegen (`local_component_call`): named
+    /// args reordered into parameter order, leftover positional args appended,
+    /// and the rendered `children` list routed to a parameter named `children`
+    /// (dropped when the function declares none). Anything else — `@xulo/ui`
+    /// placeholders, unresolved names — becomes an opaque structured node; the
+    /// headless runtime never mounts or renders it to a screen.
+    fn local_component_call(
+        &self,
+        name: &str,
+        args: &[CallArg],
+        children: &[UiElement],
+        env: &Rc<RefCell<Env>>,
+    ) -> Result<Value, RunError> {
+        if let Some(Value::Function(func)) = env.borrow().get(name) {
+            let params: Vec<String> = func.params.iter().map(|p| p.name.clone()).collect();
+            let mut slots: Vec<Option<Value>> = vec![None; params.len()];
+            let mut extras = Vec::new();
+            for (i, arg) in args.iter().enumerate() {
+                let value = self.eval(&arg.value, env)?;
+                match &arg.name {
+                    Some(named) => {
+                        if let Some(idx) = params.iter().position(|p| p == named) {
+                            slots[idx] = Some(value);
+                        } else {
+                            extras.push(value);
+                        }
+                    }
+                    None => {
+                        if i < slots.len() {
+                            slots[i] = Some(value);
+                        } else {
+                            extras.push(value);
+                        }
+                    }
+                }
+            }
+            if let Some(idx) = params.iter().position(|p| p == "children") {
+                slots[idx] = Some(self.ui_children_value(Some(children), env)?);
+            }
+            let mut bound = slots;
+            bound.extend(extras.into_iter().map(Some));
+            let depth = self.call_depth.get();
+            if depth >= MAX_CALL_DEPTH {
+                return Err(RunError::err(
+                    format!("call depth exceeded: recursion limit of {MAX_CALL_DEPTH} reached"),
+                    0..0,
+                ));
+            }
+            self.call_depth.set(depth + 1);
+            let result = self.run_function(&func, bound);
+            self.call_depth.set(depth);
+            return result;
+        }
+        let mut props = Vec::new();
+        for (i, arg) in args.iter().enumerate() {
+            let key = match &arg.name {
+                Some(name) => name.clone(),
+                // Numeric string keys mirror the codegen's `"0": v` props.
+                None => i.to_string(),
+            };
+            props.push((key, self.eval(&arg.value, env)?));
+        }
+        let rendered = self.ui_children_value(Some(children), env)?;
+        if !equal(&rendered, &Value::Null) {
+            props.push(("children".to_string(), rendered));
+        }
+        Ok(Value::Object(Rc::new(RefCell::new(vec![
+            ("name".to_string(), Value::String(Rc::from(name))),
+            ("props".to_string(), Value::Object(Rc::new(RefCell::new(props)))),
+        ]))))
     }
 
     fn exec_block(&self, block: &Block, env: &Rc<RefCell<Env>>) -> Result<Flow, RunError> {
@@ -861,7 +1106,12 @@ impl Interpreter {
         let value = self.eval(&a.value, env)?;
         match &a.target {
             AssignTarget::Name(name) => {
-                if !env.borrow_mut().assign(name, value) {
+                // A `@State` name holds a signal cell: assignment rewrites into
+                // the cell (JS emits `name.set(v)`), and a shadowing plain
+                // binding in an inner scope takes a plain assignment.
+                if let Some(Value::Signal(cell)) = env.borrow().get(name) {
+                    *cell.borrow_mut() = value;
+                } else if !env.borrow_mut().assign(name, value) {
                     return Err(RunError::err(
                         format!("undefined variable `{name}` cannot be assigned"),
                         a.span.clone(),
@@ -946,6 +1196,10 @@ impl Interpreter {
         match expr {
             Expression::Literal { value, .. } => self.eval_literal(value, env),
             Expression::Identifier { name, span } => match env.borrow().get(name) {
+                // A `@State` read unwraps to the cell's value (`__signal().get()`);
+                // a shadowing plain binding in an inner scope resolves first, so
+                // loop variables and block locals read the raw value.
+                Some(Value::Signal(cell)) => Ok(cell.borrow().clone()),
                 Some(v) => Ok(v),
                 None => Err(RunError::err(
                     format!("undefined variable `{name}`"),
@@ -1105,10 +1359,35 @@ impl Interpreter {
                 let callee = self.eval(&cv.callee, env)?;
                 self.call_value(&callee, &cv.arguments, env)
             }
-            Expression::Binding { name, span } => Err(RunError::err(
-                format!("`$` binding `${name}` is not supported in the native runtime"),
-                span.clone(),
-            )),
+            Expression::Binding { name, span } => {
+                // `$name` two-way binding, mirroring the JS shape
+                // `{ value: ...get(), onChange: v => ...set(v) }`. For a signal the
+                // onChange writes the cell; for a plain binding it is a no-op.
+                match env.borrow().get(name) {
+                    Some(Value::Signal(cell)) => {
+                        let setter_cell = cell.clone();
+                        let setter = Rc::new(move |_interp: &Interpreter, args: &[Value]| -> Result<Value, RunError> {
+                            let next = args.first().cloned().unwrap_or(Value::Null);
+                            *setter_cell.borrow_mut() = next;
+                            Ok(Value::Null)
+                        });
+                        Ok(Value::Object(Rc::new(RefCell::new(vec![
+                            ("value".to_string(), cell.borrow().clone()),
+                            ("onChange".to_string(), Value::Native(setter)),
+                        ]))))
+                    }
+                    Some(v) => Ok(Value::Object(Rc::new(RefCell::new(vec![
+                        ("value".to_string(), v),
+                        ("onChange".to_string(), Value::Native(Rc::new(
+                            |_interp: &Interpreter, _args: &[Value]| Ok(Value::Null),
+                        ))),
+                    ])))),
+                    None => Err(RunError::err(
+                        format!("undefined variable `{name}`"),
+                        span.clone(),
+                    )),
+                }
+            }
         }
     }
 
@@ -1671,7 +1950,11 @@ impl Interpreter {
         }
         let env = Env::child(&func.closure);
         self.bind_callee_args(&env, &func.params, args)?;
-        self.run_body(&func.body, &env, func.return_type.is_some())
+        if is_component_return(&func.return_type) {
+            self.run_component_body(&func.body, &env)
+        } else {
+            self.run_body(&func.body, &env, func.return_type.is_some())
+        }
     }
 
     fn call_fn(
@@ -1705,7 +1988,11 @@ impl Interpreter {
             }
             let env = Env::child(call_env);
             self.bind_callee_args(&env, &f.params, bound)?;
-            self.run_body(&f.body, &env, f.return_type.is_some())
+            if is_component_return(&f.return_type) {
+                self.run_component_body(&f.body, &env)
+            } else {
+                self.run_body(&f.body, &env, f.return_type.is_some())
+            }
         })();
         self.call_depth.set(depth);
         result
@@ -1735,6 +2022,37 @@ impl Interpreter {
         match self.exec_stmts(&body.statements, env)? {
             Flow::Continue => Ok(Value::Null),
             Flow::Return(v) => Ok(v),
+        }
+    }
+
+    /// Execute a component function body. Reactive declarations hoist before
+    /// the render section runs, and the trailing render block is evaluated as
+    /// the component's tree value (the JS output wraps the same block in
+    /// `__component(() => ...)`). An explicit `return` beats the implicit
+    /// render value; a trailing expression only counts without a `;`, exactly
+    /// like the codegen's `return <expr>`.
+    fn run_component_body(
+        &self,
+        body: &Block,
+        env: &Rc<RefCell<Env>>,
+    ) -> Result<Value, RunError> {
+        if let Some(last) = body.statements.last() {
+            for stmt in &body.statements[..body.statements.len() - 1] {
+                match self.exec_stmt(stmt, env)? {
+                    Flow::Continue => {}
+                    Flow::Return(v) => return Ok(v),
+                }
+            }
+            match last {
+                Statement::Component(block) => self.eval_component_stmt(block, env),
+                Statement::Expr(es) if !es.has_semicolon => self.eval(&es.expr, env),
+                other => {
+                    self.exec_stmt(other, env)?;
+                    Ok(Value::Null)
+                }
+            }
+        } else {
+            Ok(Value::Null)
         }
     }
 }
@@ -1850,6 +2168,19 @@ fn main_fn(program: &Program) -> Option<&FnDef> {
 
 fn is_component_return(ret: &Option<Type>) -> bool {
     matches!(ret, Some(Type::Named(n)) if n == "Component")
+}
+
+/// The binding names an `import` statement introduces (namespace or named
+/// bindings with their aliases); a bare side-effect import binds nothing.
+fn import_binding_names(spec: &xulo_core::ast::ImportSpec) -> Vec<String> {
+    match spec {
+        xulo_core::ast::ImportSpec::Namespace(ns) => vec![ns.clone()],
+        xulo_core::ast::ImportSpec::Named(bindings) => bindings
+            .iter()
+            .map(|(name, alias)| alias.clone().unwrap_or_else(|| name.clone()))
+            .collect(),
+        xulo_core::ast::ImportSpec::Bare => Vec::new(),
+    }
 }
 
 /// Gather a module's exports: named bindings, from the bindings already

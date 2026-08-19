@@ -2359,8 +2359,10 @@ fn native_run_rejects_removed_default_keyword() {
 }
 
 #[test]
-fn native_run_rejects_external_import() {
-    let (ok, _stdout, stderr) = native_run(
+fn native_run_external_import_binds_placeholder() {
+    // An external package has no native values, but the run must not reject the
+    // program: imported names bind to `null` placeholders and the entry runs.
+    let (ok, stdout, stderr) = native_run(
         &[(
             "main.xulo",
             "import { useSignal } from \"@xulo/ui\"\n\
@@ -2368,11 +2370,8 @@ fn native_run_rejects_external_import() {
         )],
         "main.xulo",
     );
-    assert!(!ok);
-    assert!(
-        stderr.contains("external imports are not supported in the native runtime"),
-        "stderr: {stderr}"
-    );
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout, "1\n");
 }
 
 #[test]
@@ -2412,17 +2411,40 @@ fn native_run_async_rejected_main_is_uncaught() {
 }
 
 #[test]
-fn native_run_rejects_ui_components() {
-    let (ok, _stdout, stderr) = native_run(
+fn native_run_ui_component_headless() {
+    // The full UI example runs natively: `@State`, `@Effect`, component blocks,
+    // `$` binding — the tree builds and effects fire, with no DOM to mount.
+    let (ok, stdout, stderr) = native_run(
         &[(
             "main.xulo",
-            "fn main(): Component { VStack { Text(\"hi\") } }\n",
+            "import { Screen, VStack, HStack, Text, Button, Input } from \"@xulo/ui\"\n\
+                 fn Counter(): Component {\n\
+                     @State let count: number = 0\n\
+                     @Effect fn() { print(\"mounted\") }\n\
+                     VStack(spacing: 8) {\n\
+                         Text(\"Count: \" + str(count))\n\
+                         HStack(spacing: 4) {\n\
+                             Button(onClick: fn() { count = count + 1 }) { Text(\"+\") }\n\
+                             Button(onClick: fn() { count = count - 1 }) { Text(\"-\") }\n\
+                         }\n\
+                     }\n\
+                 }\n\
+                 fn NameField(): Component {\n\
+                     @State let name: string = \"\"\n\
+                     VStack {\n\
+                         Input(value: $name)\n\
+                         Text(\"Hello, \" + name)\n\
+                     }\n\
+                 }\n\
+                 fn main(): Component {\n\
+                     Screen {\n\
+                         Counter()\n\
+                         NameField()\n\
+                     }\n\
+                 }\n",
         )],
         "main.xulo",
     );
-    assert!(!ok);
-    assert!(
-        stderr.contains("UI components are not supported in the native runtime"),
-        "stderr: {stderr}"
-    );
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout, "mounted\n");
 }

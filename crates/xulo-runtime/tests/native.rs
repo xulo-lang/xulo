@@ -826,14 +826,97 @@ fn print_multiple_args() {
 }
 
 #[test]
-fn rejects_ui_components() {
-    let err = run(r#"
+fn ui_component_runs_headlessly() {
+    // A `Component` `main` builds its tree (local components, `@State`, `@Effect`)
+    // without mounting anything; a `print` in the effect is observable.
+    let out = run(r#"
+        fn Counter(): Component {
+            @State let count: number = 0
+            @Effect fn() { print("mounted") }
+            VStack(spacing: 8) {
+                Text("Count: " + str(count))
+            }
+        }
         fn main(): Component {
-            VStack { Text("hi") }
+            Counter()
         }
         "#)
-    .unwrap_err();
-    assert!(err.message.contains("UI components"), "{}", err.message);
+    .unwrap();
+    assert_eq!(out, vec!["mounted"]);
+}
+
+#[test]
+fn ui_component_state_mutation_and_for() {
+    // `@State` reads/writes go through the signal cell (`count = count + 1`
+    // writes it), and a `for` element spreads into the children array.
+    let out = run(r#"
+        fn List(): Component {
+            @State let items: list<number> = [1, 2, 3]
+            @Effect fn() { items = [7, 8, 9] }
+            VStack {
+                for item in items {
+                    Text("Item: " + str(item))
+                }
+            }
+        }
+        fn main(): Component {
+            List()
+        }
+        "#)
+    .unwrap();
+    assert_eq!(out, Vec::<String>::new());
+}
+
+#[test]
+fn dollar_binding_wraps_value_and_setter() {
+    // `$name` is `{ value, onChange }`; onChange writes the underlying signal
+    // cell, and `.value` reads it — both observable via `print`. Semantic types
+    // `$name` as its underlying value (string), so this probe is parse-only.
+    let out = run_raw(r#"
+        fn Field(): Component {
+            @State let name: string = "hi"
+            let b = $name
+            b.onChange("yo")
+            print(name)
+            VStack { Input(value: $name) }
+        }
+        fn main(): Component {
+            Field()
+        }
+        "#)
+    .unwrap();
+    assert_eq!(out, vec!["yo"]);
+}
+
+#[test]
+fn external_import_binds_null_placeholder() {
+    // An unresolved external package still binds its imported names (to a
+    // `null` placeholder) so UI components resolve by name; the program runs.
+    let out = run(r#"
+        import { Button } from "@xulo/ui"
+        fn main(): Component {
+            Button(onClick: fn() { print("clicked") }) { Text("ok") }
+        }
+        "#)
+    .unwrap();
+    assert_eq!(out, Vec::<String>::new());
+}
+
+#[test]
+fn store_destructures_value_bindings() {
+    let out = run(r#"
+        let store = { theme: "dark", user: "ada" }
+        fn App(): Component {
+            @Store { theme, user } = store
+            @Effect fn() { print(theme) }
+            VStack { Text(user) }
+        }
+        fn main(): Component {
+            App()
+        }
+        "#)
+    .unwrap();
+    assert_eq!(out, vec!["dark"]);
 }
 
 #[test]
@@ -850,23 +933,15 @@ fn await_outside_async_rejected() {
 }
 
 #[test]
-fn rejects_imports() {
-    let err = run(r#"import { foo } from "bar" fn main() { print(1) }"#).unwrap_err();
-    assert!(err.message.contains("imports"), "{}", err.message);
-}
-
-#[test]
-fn rejects_state_decorators() {
-    // The semantic layer forbids `@State` outside a `Component` function, so
-    // this exercises the interpreter's guard directly (parse only).
-    let err = run_raw(r#"@State let count: number = 0 fn main() { print(1) }"#).unwrap_err();
-    assert!(err.message.contains("reactive state"), "{}", err.message);
-}
-
-#[test]
-fn rejects_dollar_binding() {
-    let err = run_raw(r#"fn main() { print($x) }"#).unwrap_err();
-    assert!(err.message.contains("not supported"), "{}", err.message);
+fn environment_decorator_un_supported() {
+    // Reads of `@Environment` need a provider mechanism the headless runtime
+    // has no access to, so they stay an interpreter-level error (parse-only).
+    let err = run_raw(r#"@Environment let router: Router fn main() { print(1) }"#).unwrap_err();
+    assert!(
+        err.message.contains("@Environment"),
+        "message: {}",
+        err.message
+    );
 }
 
 #[test]

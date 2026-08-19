@@ -33,6 +33,10 @@ pub enum Value {
     },
     /// A builtin (`print`, `str`).
     Native(NativeFn),
+    /// A `@State` reactive cell: reads dereference to the inner value and
+    /// assignments write it back (the equivalent of `__signal(...).get/set`).
+    /// Held in the environment so identifier lookups can unwrap it.
+    Signal(Rc<RefCell<Value>>),
     /// An in-flight `async` call: the result of running an async function. Await
     /// tasks register themselves in `Promise.awaiters` and the scheduler
     /// resumes them in FIFO order once the promise settles.
@@ -76,6 +80,7 @@ impl Value {
             Value::List(_) => "a `list`".into(),
             Value::Object(_) => "an `object`".into(),
             Value::Function(_) | Value::Native(_) => "a function".into(),
+            Value::Signal(_) => "a signal".into(),
             Value::Enum { .. } => "an enum value".into(),
             Value::Promise(_) => "a promise".into(),
         }
@@ -109,6 +114,7 @@ impl Value {
                 seen.remove(&id);
                 format!("[{}]", parts.join(", "))
             }
+            Value::Signal(cell) => cell.borrow().format_seen(seen),
             Value::Object(fields) => {
                 let id = Rc::as_ptr(fields) as usize;
                 if !seen.insert(id) {
@@ -167,6 +173,7 @@ pub fn equal(a: &Value, b: &Value) -> bool {
         (Value::List(x), Value::List(y)) => Rc::ptr_eq(x, y),
         (Value::Object(x), Value::Object(y)) => Rc::ptr_eq(x, y),
         (Value::Promise(x), Value::Promise(y)) => Rc::ptr_eq(x, y),
+        (Value::Signal(x), Value::Signal(y)) => Rc::ptr_eq(x, y),
         (
             Value::Enum {
                 enum_name: n1,
