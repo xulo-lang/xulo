@@ -7,7 +7,7 @@ use xulo_core::error::XuloError;
 const INDENT: &str = "    ";
 
 /// The minimal reactive runtime, emitted once when any `@State`/`@Store`/
-/// `@Effect`/`@Environment`/`Component` feature is used. Provides signals
+/// `@Effect`/`@Environment`/UI component feature is used. Provides signals
 /// (`__signal`), effects (`__effect`), a component render wrapper
 /// (`__component`), and environment lookup (`__env`).
 const REACTIVE_RUNTIME: &str = r#"const __runtime = (() => {
@@ -455,7 +455,7 @@ impl Javascript {
     /// Shared function-emission body: `fn_def_named` declares `function name`,
     /// `fn_def_registered` assigns `__impls["key"] = function`.
     fn fn_def_emitted(&mut self, f: &FnDef, name: &str, registered: bool) -> Result<(), XuloError> {
-        if matches!(&f.return_type, Some(Type::Named(n)) if n == "Component") {
+        if matches!(&f.return_type, Some(Type::Named(n)) if n == "View") {
             return self.component_fn_def(f);
         }
         let params = f
@@ -822,7 +822,7 @@ impl Javascript {
         Ok(())
     }
 
-    /// A `fn ...(): Component` compiles to a function whose `@State`/`@Store`/
+    /// A `fn ...(): View` compiles to a function whose `@State`/`@Store`/
     /// `@Effect`/`@Environment` declarations are hoisted into setup code, and
     /// whose remaining body (the UI) runs inside `__component(function(){...})`
     /// so signal changes trigger a re-render.
@@ -1447,11 +1447,11 @@ pub fn main_fn(program: &Program) -> Option<&xulo_core::ast::FnDef> {
 }
 
 /// True when the program's `main` (plain `fn main` or `pub fn main`) returns
-/// `Component`.
+/// `View`.
 pub fn main_returns_component(program: &Program) -> bool {
     matches!(
         main_fn(program).and_then(|f| f.return_type.as_ref()),
-        Some(Type::Named(n)) if n == "Component"
+        Some(Type::Named(n)) if n == "View"
     )
 }
 

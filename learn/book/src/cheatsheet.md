@@ -20,9 +20,9 @@
 | `null` `true` `false` | 字面量 | [词法结构](reference/lexical.md) |
 | `print` | 内置输出 | [词法结构](reference/lexical.md) |
 
-装饰器（`@` 后，仅 `Component` 函数顶层）：`@State`、`@Store`、`@Effect`、`@Environment`。
+装饰器（`@` 后，仅返回 `View` 的组件函数顶层）：`@State`、`@Store`、`@Effect`、`@Environment`。
 
-内建类型名：`string` `number` `boolean` `list` `object` `Component`。
+内建类型名：`string` `number` `boolean` `list` `object` `View`。
 
 ## 运算符优先级（高 → 低）
 
@@ -66,7 +66,7 @@ while c < 10 { c = c + 1 }
 match x { 0 => "zero" _ => "other" }
 
 // 组件与状态
-fn Counter(): Component {
+fn Counter(): View {
   @State let n: number = 0
   VStack {
     Text("Count: " + str(n))

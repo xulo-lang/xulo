@@ -218,7 +218,7 @@ fn greet(name: string = "stranger"): string {
 }
 
 // 命名参数（参数可乱序传入）
-fn Button(label: string, variant: string = "primary"): Component
+fn Button(label: string, variant: string = "primary"): View
 
 Button(variant: "outline", label: "Submit")  // ✅ 命名参数
 ```
@@ -478,7 +478,7 @@ pub const useAppStore = createStore(
 ```
 import { useAppStore } from "../stores/app"
 
-fn Home(): Component {
+fn Home(): View {
   @Store const { user, theme, loading } = useAppStore()
   @Store const { setTheme } = useAppStore()
   
@@ -533,12 +533,12 @@ fn Home(): Component {
 
 ### 核心原则
 
-> **`@State`、`@Store`、`@Effect` 只能在返回类型为 `Component` 的函数顶层使用。**
+> **`@State`、`@Store`、`@Effect` 只能在返回类型为 `View` 的函数顶层使用。**
 
 ### ✅ 正确用法（UI 组件中）
 
 ```
-fn UserProfile(): Component {
+fn UserProfile(): View {
   @Store const { user, loading } = useAppStore()
   @State let editing: boolean = false
   @Effect fn() { fetchUser(id) }
@@ -579,12 +579,12 @@ pub fn fetchUser(id: string): async {
 
 | 语法 | 允许的位置 | 禁止的位置 |
 |------|-----------|-----------|
-| `@State` | 仅 `fn ...(): Component` 顶层 | 普通函数、异步函数、嵌套块 |
-| `@Store` | 仅 `fn ...(): Component` 顶层 | 普通函数、异步函数、嵌套块 |
-| `@Effect` | 仅 `fn ...(): Component` 顶层 | 普通函数、异步函数、嵌套块 |
-| `@Environment` | 仅 `fn ...(): Component` 顶层 | 普通函数、异步函数、嵌套块 |
+| `@State` | 仅 `fn ...(): View` 顶层 | 普通函数、异步函数、嵌套块 |
+| `@Store` | 仅 `fn ...(): View` 顶层 | 普通函数、异步函数、嵌套块 |
+| `@Effect` | 仅 `fn ...(): View` 顶层 | 普通函数、异步函数、嵌套块 |
+| `@Environment` | 仅 `fn ...(): View` 顶层 | 普通函数、异步函数、嵌套块 |
 
-> 闭包（`fn() { ... }`）和嵌套 `fn` 属于独立函数：即使在 `Component` 函数内部，其体内也不允许使用上述装饰器。
+> 闭包（`fn() { ... }`）和嵌套 `fn` 属于独立函数：即使在返回 `View` 的组件函数内部，其体内也不允许使用上述装饰器。
 
 ---
 
@@ -624,7 +624,7 @@ fn fetchUser(id: string): async {
 ```
 import { useAsync } from "@xulo/async"
 
-fn UserProfile(id: string): Component {
+fn UserProfile(id: string): View {
   const { data: user, loading, error, refetch } = useAsync(
     fn() { fetchUser(id) },
     [id]
@@ -689,8 +689,8 @@ Screen {
 ### 自定义组件
 
 ```
-// 组件 = 返回 Component 的函数
-fn MyCard(title: string, children: list<Component>): Component {
+// 组件 = 返回 View 的函数
+fn MyCard(title: string, children: list<View>): View {
   Card(radius: "md", shadow: "sm") {
     Text(title, weight: "bold")
     children
@@ -730,7 +730,7 @@ for item in items {
 ### 必传参数
 
 ```
-fn Button(label: string): Component
+fn Button(label: string): View
 
 // 调用时必须传入
 Button(label: "Submit")  // ✅
@@ -740,7 +740,7 @@ Button()                 // ❌ 错误
 ### 可选参数（?）
 
 ```
-fn Button(label: string, icon: string?): Component
+fn Button(label: string, icon: string?): View
 
 // 调用时可传可不传
 Button(label: "Submit")              // ✅ icon = null
@@ -750,7 +750,7 @@ Button(label: "Submit", icon: "save") // ✅
 ### 默认值（=）
 
 ```
-fn Button(label: string, variant: string = "primary"): Component
+fn Button(label: string, variant: string = "primary"): View
 
 // 调用时可传可不传
 Button(label: "Submit")                 // ✅ variant = "primary"
@@ -765,7 +765,7 @@ fn Button(
   variant: string = "primary",       // 默认值
   icon: string? = null,              // 可选，默认 null
   disabled: boolean? = false         // 可选，默认 false
-): Component
+): View
 ```
 
 ---
@@ -845,12 +845,12 @@ Text("Named", color: "blue")
 import { Router, Route, Link } from "@xulo/router"
 
 // 定义页面
-fn Home(): Component { ... }
-fn About(): Component { ... }
-fn Profile(id: string): Component { ... }
+fn Home(): View { ... }
+fn About(): View { ... }
+fn Profile(id: string): View { ... }
 
 // 路由配置
-fn main(): Component {
+fn main(): View {
   Router {
     Route(path: "/", component: Home)
     Route(path: "/about", component: About)
@@ -875,10 +875,10 @@ router.push("/about")
 
 `fn main()` 是 Xulo 应用的入口点，根据返回值类型决定身份：
 
-### UI 应用（返回 Component）
+### UI 应用（返回 View）
 
 ```
-fn main(): Component {
+fn main(): View {
   Screen {
     VStack {
       Text("Hello, World!")
@@ -897,7 +897,7 @@ fn main() {
 
 ### 规则
 
-- `fn main(): Component` → 根组件，返回 UI（由外部运行时通过 `__xulo_mount` 钩子挂载/渲染）
+- `fn main(): View` → 根组件，返回 UI（由外部运行时通过 `__xulo_mount` 钩子挂载/渲染）
 - `fn main()` (void) → 逻辑入口，执行脚本
 - 一个文件只能有一个 `main` 函数
 - 有 `main` 的文件是可执行应用，无 `main` 的文件是库模块
@@ -906,7 +906,7 @@ fn main() {
 
 | 文件类型 | `xulo run` 行为 |
 |---------|----------------|
-| 有 `fn main(): Component` | 生成 JS，通过 `__xulo_mount` 钩子交由外部 UI 运行时挂载/渲染 |
+| 有 `fn main(): View` | 生成 JS，通过 `__xulo_mount` 钩子交由外部 UI 运行时挂载/渲染 |
 | 有 `fn main()` | 执行脚本，输出到终端 |
 | 无 `main` | 视为库模块，仅导出供其他文件使用 |
 
@@ -1119,7 +1119,7 @@ pub fn PrimaryButton(
   label: string,
   onClick: fn()? = null,
   disabled: boolean? = false
-): Component {
+): View {
   Button(
     variant: ButtonVariant::Primary,
     onClick: onClick,
@@ -1133,7 +1133,7 @@ pub fn PrimaryButton(
 pub fn OutlineButton(
   label: string,
   onClick: fn()? = null
-): Component {
+): View {
   Button(variant: ButtonVariant::Outline, onClick: onClick) {
     Text(label)
   }
@@ -1151,8 +1151,8 @@ type Props = {
   id: string
 }
 
-pub fn UserProfile(props: Props): Component {
-  // ✅ @State/@Store/@Effect 只能在 Component 函数顶层使用
+pub fn UserProfile(props: Props): View {
+  // ✅ @State/@Store/@Effect 只能在返回 View 的函数顶层使用
   @State let editing: boolean = false
   @State let editName: string = ""
   @Store const { user, theme, loading, error } = useAppStore()
@@ -1238,7 +1238,7 @@ import { UserProfile } from "./pages/profile"
 import { useAppStore } from "./stores/app"
 import type { Theme } from "./types"
 
-fn main(): Component {
+fn main(): View {
   @Store const { theme } = useAppStore()
   
   Screen(

@@ -75,14 +75,14 @@ fn main() {
 - 表达式：成员访问、下标、`?.`、`??`、列表/对象展开 `...`、`$name` 双向绑定
 - 异步：`: async` 返回标注、`await`
 - 模块系统：`import` / `pub`（named/namespace/type-only/bare；`pub` 声明、`pub use { a, b }` 两种导出形态），本地打包为 IIFE，外部包原样 ESM
-- UI：`Component` 返回类型、组件块语法（`VStack { Text(...) }`）、`@State` / `@Store` / `@Effect` / `@Environment`、UI 条件/循环渲染
+- UI：`View` 返回类型、组件块语法（`VStack { Text(...) }`）、`@State` / `@Store` / `@Effect` / `@Environment`、UI 条件/循环渲染
 
 ### UI 运行时约定
 
-- UI 组件来自外部包（`@xulo/ui`），原样保留为 ESM `import`；外部组件调用降级为 `Name({ key: value, children: [...] })`（props 对象 + `children` 数组，位置实参放入 `"0"`/`"1"` 键）。本地自定义组件函数按**位置实参**调用（具名实参依声明顺序重排，`children` 路由到名为 `children` 的参数）。组件块内允许「表达式子元素」（`string` / `Component` / `list<Component>`，列表渲染为嵌套数组）。
+- UI 组件来自外部包（`@xulo/ui`），原样保留为 ESM `import`；外部组件调用降级为 `Name({ key: value, children: [...] })`（props 对象 + `children` 数组，位置实参放入 `"0"`/`"1"` 键）。本地自定义组件函数按**位置实参**调用（具名实参依声明顺序重排，`children` 路由到名为 `children` 的参数）。组件块内允许「表达式子元素」（`string` / `View` / `list<View>`，列表渲染为嵌套数组）。
 - `@State` 编译为响应式信号（`__signal`），读写分别变为 `.get()` / `.set()`；`@Effect` → `__effect`，`@Environment` → `__env`，组件函数体包裹在 `__component(function(){...})` 中。
-- 编译器按需内联一个最小响应式运行时；`fn main(): Component` 会生成 `if (typeof __xulo_mount === "function") __xulo_mount(main());` 挂载钩子，由外部运行时负责真正的渲染/更新。
-- `@State` / `@Store` / `@Effect` / `@Environment` 只能在返回类型为 `Component` 的函数顶层使用（嵌套块/普通函数内报语义错误）。
+- 编译器按需内联一个最小响应式运行时；`fn main(): View` 会生成 `if (typeof __xulo_mount === "function") __xulo_mount(main());` 挂载钩子，由外部运行时负责真正的渲染/更新。
+- `@State` / `@Store` / `@Effect` / `@Environment` 只能在返回类型为 `View` 的函数顶层使用（嵌套块/普通函数内报语义错误）。术语：**组件**（component）指构造 UI 的语法/函数形态，**`View`** 是组件函数返回的类型（渲染树值）。
 
 ### 未实现 / 限制
 
@@ -92,7 +92,7 @@ fn main() {
 - `$` 绑定（`{ value, onChange }`）：对 `@State` 信号，`onChange` 写回信号单元；对普通绑定为空操作；跨模块/`@xulo/store` 的订阅重渲染由外部运行时接管
 - 组件函数体在重渲染时会重新执行（`@State` 信号已提升到函数级；`@Effect` 仅在依赖数组（若有）变化或挂载时重新执行）
 - `++`/`--` 自增运算符不在语言中
-- 原生运行时（`xulo run`，默认路径）为 MVP：支持核心语言（字面量、变量、函数/闭包/递归、if/else、for/while、match、枚举、列表/对象、try/catch、`?.`/`??`/`...`、`print`/`str`）、`async`/`await`（协同调度，交错顺序与 JS 微任务语义一致）、本地 `import`/`pub` 导出（named/namespace）以及 UI。UI 程序无头运行：`Component` 函数、`@State`/`@Store`/`@Effect`、组件块与 `$` 绑定均可用，组件树被构建并交给（不存在的）宿主运行时——`print` 副作用（如 `@Effect` 中）可观察；外部包（`@xulo/ui`）的导入名绑定为 `null` 占位符，`@Environment` 仍报「不支持」（无注入机制）。原生 `print` 对列表/对象的输出格式为 `[1, 2]` / `{ k: v }`（与 node `console.log` 的带空格/引号形式不同）。JS 路径用 `xulo run --js` 显式选择。
+- 原生运行时（`xulo run`，默认路径）为 MVP：支持核心语言（字面量、变量、函数/闭包/递归、if/else、for/while、match、枚举、列表/对象、try/catch、`?.`/`??`/`...`、`print`/`str`）、`async`/`await`（协同调度，交错顺序与 JS 微任务语义一致）、本地 `import`/`pub` 导出（named/namespace）以及 UI。UI 程序无头运行：返回 `View` 的组件函数、`@State`/`@Store`/`@Effect`、组件块与 `$` 绑定均可用，组件树被构建并交给（不存在的）宿主运行时——`print` 副作用（如 `@Effect` 中）可观察；外部包（`@xulo/ui`）的导入名绑定为 `null` 占位符，`@Environment` 仍报「不支持」（无注入机制）。原生 `print` 对列表/对象的输出格式为 `[1, 2]` / `{ k: v }`（与 node `console.log` 的带空格/引号形式不同）。JS 路径用 `xulo run --js` 显式选择。
 
 ## 测试
 

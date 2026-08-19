@@ -73,7 +73,7 @@ pub struct LetBinding {
     pub is_const: bool,
 }
 
-/// A `@State` declaration: reactive local state inside a `Component` function.
+/// A `@State` declaration: reactive local state inside a `View` function.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StateStmt {
     pub binding: LetBinding,
@@ -578,7 +578,7 @@ pub enum Type {
     Null,
     /// The loose, dynamic `object` type (object literals).
     Object,
-    /// A named type: an alias, an enum, or a stdlib type (`User`, `Component`).
+    /// A named type: an alias, an enum, or a stdlib type (`User`, `View`).
     Named(String),
     /// A string literal type: `"active"`.
     Literal(String),

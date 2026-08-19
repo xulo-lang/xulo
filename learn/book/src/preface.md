@@ -10,7 +10,7 @@ Xulo 是一门 UI First 编程语言，语法吸收 Rust、Swift、TypeScript �
 
 ## 设计目标
 
-- **UI 优先**：把 UI 组件、响应式状态、副作用作为一等语言特性（`Component`、`@State`、`@Store`、`@Effect`）。
+- **UI 优先**：把 UI 组件、响应式状态、副作用作为一等语言特性（`View`、`@State`、`@Store`、`@Effect`）。
 - **风格融合**：变量绑定取 TypeScript，函数与枚举取 Rust/Swift，状态管理取 SwiftUI/Zustand。
 - **小而完整**：用 Rust + [winnow](https://github.com/winnow-rs/winnow) 实现一个能真正编译运行的前端，生成现代 JavaScript。
 

@@ -62,8 +62,8 @@ fn ternary_spacing() {
 
 #[test]
 fn empty_block_stays_inline() {
-    let out = fmt("fn main(): Component { }\nfn empty() { }");
-    assert!(out.contains("fn main(): Component { }"));
+    let out = fmt("fn main(): View { }\nfn empty() { }");
+    assert!(out.contains("fn main(): View { }"));
     assert!(out.contains("fn empty() { }"));
 }
 

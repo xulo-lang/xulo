@@ -336,7 +336,7 @@ impl Interpreter {
     }
 
     /// Invoke `main`, draining the async task queue afterward. A rejected async
-    /// `main` surfaces like any other uncaught error. A `Component` `main` runs
+    /// `main` surfaces like any other uncaught error. A `View` `main` runs
     /// headlessly: its render value is produced and dropped (the JS path hands
     /// it to `__xulo_mount`, which needs an external runtime the native one
     /// does not have).
@@ -2167,7 +2167,7 @@ fn main_fn(program: &Program) -> Option<&FnDef> {
 }
 
 fn is_component_return(ret: &Option<Type>) -> bool {
-    matches!(ret, Some(Type::Named(n)) if n == "Component")
+    matches!(ret, Some(Type::Named(n)) if n == "View")
 }
 
 /// The binding names an `import` statement introduces (namespace or named

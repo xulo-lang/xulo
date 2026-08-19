@@ -827,17 +827,17 @@ fn print_multiple_args() {
 
 #[test]
 fn ui_component_runs_headlessly() {
-    // A `Component` `main` builds its tree (local components, `@State`, `@Effect`)
+    // A `View` `main` builds its tree (local components, `@State`, `@Effect`)
     // without mounting anything; a `print` in the effect is observable.
     let out = run(r#"
-        fn Counter(): Component {
+        fn Counter(): View {
             @State let count: number = 0
             @Effect fn() { print("mounted") }
             VStack(spacing: 8) {
                 Text("Count: " + str(count))
             }
         }
-        fn main(): Component {
+        fn main(): View {
             Counter()
         }
         "#)
@@ -850,7 +850,7 @@ fn ui_component_state_mutation_and_for() {
     // `@State` reads/writes go through the signal cell (`count = count + 1`
     // writes it), and a `for` element spreads into the children array.
     let out = run(r#"
-        fn List(): Component {
+        fn List(): View {
             @State let items: list<number> = [1, 2, 3]
             @Effect fn() { items = [7, 8, 9] }
             VStack {
@@ -859,7 +859,7 @@ fn ui_component_state_mutation_and_for() {
                 }
             }
         }
-        fn main(): Component {
+        fn main(): View {
             List()
         }
         "#)
@@ -873,14 +873,14 @@ fn dollar_binding_wraps_value_and_setter() {
     // cell, and `.value` reads it — both observable via `print`. Semantic types
     // `$name` as its underlying value (string), so this probe is parse-only.
     let out = run_raw(r#"
-        fn Field(): Component {
+        fn Field(): View {
             @State let name: string = "hi"
             let b = $name
             b.onChange("yo")
             print(name)
             VStack { Input(value: $name) }
         }
-        fn main(): Component {
+        fn main(): View {
             Field()
         }
         "#)
@@ -894,7 +894,7 @@ fn external_import_binds_null_placeholder() {
     // `null` placeholder) so UI components resolve by name; the program runs.
     let out = run(r#"
         import { Button } from "@xulo/ui"
-        fn main(): Component {
+        fn main(): View {
             Button(onClick: fn() { print("clicked") }) { Text("ok") }
         }
         "#)
@@ -906,12 +906,12 @@ fn external_import_binds_null_placeholder() {
 fn store_destructures_value_bindings() {
     let out = run(r#"
         let store = { theme: "dark", user: "ada" }
-        fn App(): Component {
+        fn App(): View {
             @Store { theme, user } = store
             @Effect fn() { print(theme) }
             VStack { Text(user) }
         }
-        fn main(): Component {
+        fn main(): View {
             App()
         }
         "#)

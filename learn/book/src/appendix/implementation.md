@@ -15,7 +15,7 @@ UIBlock {
 }
 
 // UIElement::Expr 承载组件块内的「表达式子元素」，语义阶段限定其类型为
-// string / Component / Any / list<Component|string|Any> 之一；list 渲染为
+// string / View / Any / list<View|string|Any> 之一；list 渲染为
 // 嵌套数组，由运行时渲染器展平（与 if/for 产物同一约定）。
 
 // 代码块 — 只能包含普通语句

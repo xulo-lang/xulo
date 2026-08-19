@@ -2,7 +2,8 @@
 
 | 术语 | 定义 | 章节 |
 |------|------|------|
-| **Component** | UI 组件的返回类型；返回 `Component` 的函数是组件 | [UI 组件](reference/ui.md) |
+| **组件（Component）** | 构造 UI 的语法/函数形态（组件函数、组件块）；产出 **`View`** | [UI 组件](reference/ui.md) |
+| **View** | UI 组件的返回类型（渲染树值）；返回 `View` 的函数即组件 | [UI 组件](reference/ui.md) |
 | **@State** | 组件内局部响应式状态，赋值触发重渲染 | [变量与状态](reference/variables-and-state.md) |
 | **@Store** | 全局响应式状态的解构绑定（Zustand 风格） | [变量与状态](reference/variables-and-state.md) |
 | **@Effect** | 组件副作用（挂载时运行，可带依赖数组） | [变量与状态](reference/variables-and-state.md) |

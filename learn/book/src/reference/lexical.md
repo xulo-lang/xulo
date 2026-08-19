@@ -74,9 +74,9 @@ identifier     = (letter | "_") { letter | digit | "_" } ;
 
 以下内建类型名建议不要作为变量名使用（当前不报错，仅约定）：
 
-`string` `number` `boolean` `list` `object` `Component`
+`string` `number` `boolean` `list` `object` `View`
 
-`Component` 是内建**标记类型**：编译器仅用它识别「返回该类型的函数即 UI 组件」（并据此启用 `@State` / `@Store` 顶层校验），本身无运行时可执行实现——具体组件实现由标准库 `@xulo/ui` 提供。
+`View` 是内建**标记类型**：编译器仅用它识别「返回该类型的函数即 UI 组件」（并据此启用 `@State` / `@Store` 顶层校验），本身无运行时可执行实现——具体组件实现由标准库 `@xulo/ui` 提供。
 
 ### 具体 UI 组件不属于语言层
 

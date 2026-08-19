@@ -732,11 +732,11 @@ fn external_import_keeps_every_alias_and_kind() {
         &[
             (
                 "a.xulo",
-                "import { Text as T } from \"pkg-x\"\npub fn header(): Component { Screen { T(\"aliased\") } }\n",
+                "import { Text as T } from \"pkg-x\"\npub fn header(): View { Screen { T(\"aliased\") } }\n",
             ),
             (
                 "main.xulo",
-                "import { header } from \"./a\"\nimport { Text } from \"pkg-x\"\nimport * as ui from \"pkg-x\"\nfn main(): Component { Screen { header() Text(\"plain\") } }\n",
+                "import { header } from \"./a\"\nimport { Text } from \"pkg-x\"\nimport * as ui from \"pkg-x\"\nfn main(): View { Screen { header() Text(\"plain\") } }\n",
             ),
         ],
         "main.xulo",
@@ -820,7 +820,7 @@ fn shared_runtime_emitted_once_across_modules() {
         &[
             (
                 "a.xulo",
-                "pub fn comp(): Component { @State let n: number = 0 print(str(n)) }\n",
+                "pub fn comp(): View { @State let n: number = 0 print(str(n)) }\n",
             ),
             (
                 "util.xulo",
@@ -828,7 +828,7 @@ fn shared_runtime_emitted_once_across_modules() {
             ),
             (
                 "main.xulo",
-                "import { comp } from \"./a\"\nimport { sum } from \"./util\"\nfn main(): Component { comp() print(sum()) }\n",
+                "import { comp } from \"./a\"\nimport { sum } from \"./util\"\nfn main(): View { comp() print(sum()) }\n",
             ),
         ],
         "main.xulo",
@@ -1575,7 +1575,7 @@ fn run_component_state_and_effect() {
     let file = temp_file(
         "comp.xulo",
         r#"
-        fn main(): Component {
+        fn main(): View {
             @State let count: number = 0
             @Effect fn() { print("mounted") }
             count = count + 1
@@ -1604,7 +1604,7 @@ fn build_component_with_external_ui() {
         r#"
         import { Screen, VStack, Text } from "@xulo/ui"
 
-        fn main(): Component {
+        fn main(): View {
             @State let name: string = "Xulo"
             Screen {
                 VStack(spacing: 16) {
@@ -1657,14 +1657,14 @@ fn run_component_with_forwarded_children() {
         r#"
         import { Screen, VStack, Text } from "@xulo/ui"
 
-        fn Card(title: string, children: list<Component>): Component {
+        fn Card(title: string, children: list<View>): View {
             VStack {
                 Text(title, weight: "bold")
                 children
             }
         }
 
-        fn main(): Component {
+        fn main(): View {
             @State let name: string = "Xulo"
             Screen {
                 Card(title: "Profile") {
@@ -1736,14 +1736,14 @@ fn run_component_missing_positional_arg_keeps_children() {
         r#"
         import { Screen, VStack, Text } from "@xulo/ui"
 
-        fn Panel(title: string = "default", children: list<Component>): Component {
+        fn Panel(title: string = "default", children: list<View>): View {
             VStack {
                 Text(title)
                 children
             }
         }
 
-        fn main(): Component {
+        fn main(): View {
             Screen {
                 Panel { Text("child") }
             }
@@ -1793,7 +1793,7 @@ fn check_rejects_decorator_outside_component() {
     let file = temp_file("bad.xulo", "fn main() { @State let count: number = 0 }");
     let out = Command::new(BIN).arg("check").arg(&file).output().unwrap();
     assert!(!out.status.success());
-    assert!(String::from_utf8_lossy(&out.stderr).contains("returning `Component`"));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("returning `View`"));
     let _ = std::fs::remove_file(&file);
 }
 
@@ -1802,7 +1802,7 @@ fn run_component_loop_var_shadowing() {
     let file = temp_file(
         "shadow.xulo",
         r#"
-        fn main(): Component {
+        fn main(): View {
             @State let x: number = 0
             let ys = [1, 2, 3]
             for x in ys { print(x) }
@@ -1828,7 +1828,7 @@ fn check_rejects_effect_capturing_render_local() {
     let file = temp_file(
         "bad.xulo",
         r#"
-        fn main(): Component {
+        fn main(): View {
             let a = 5
             @Effect fn() { print(a) }
         }
@@ -2418,7 +2418,7 @@ fn native_run_ui_component_headless() {
         &[(
             "main.xulo",
             "import { Screen, VStack, HStack, Text, Button, Input } from \"@xulo/ui\"\n\
-                 fn Counter(): Component {\n\
+                 fn Counter(): View {\n\
                      @State let count: number = 0\n\
                      @Effect fn() { print(\"mounted\") }\n\
                      VStack(spacing: 8) {\n\
@@ -2429,14 +2429,14 @@ fn native_run_ui_component_headless() {
                          }\n\
                      }\n\
                  }\n\
-                 fn NameField(): Component {\n\
+                 fn NameField(): View {\n\
                      @State let name: string = \"\"\n\
                      VStack {\n\
                          Input(value: $name)\n\
                          Text(\"Hello, \" + name)\n\
                      }\n\
                  }\n\
-                 fn main(): Component {\n\
+                 fn main(): View {\n\
                      Screen {\n\
                          Counter()\n\
                          NameField()\n\

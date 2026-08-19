@@ -34,7 +34,7 @@ fn add(a: number, b: number): number {
 }
 
 // 可选 / 默认参数，命名实参
-fn Button(label: string, variant: string = "primary"): Component {
+fn Button(label: string, variant: string = "primary"): View {
   // ...
 }
 Button(variant: "outline", label: "Submit")
@@ -57,7 +57,7 @@ let label = match theme {
 ## 响应式状态
 
 ```xulo
-fn Counter(): Component {
+fn Counter(): View {
   @State let count: number = 0
 
   VStack {

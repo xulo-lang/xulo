@@ -44,5 +44,5 @@
 | `@Effect` | [变量与状态](reference/variables-and-state.md) |
 | `@Environment` | [变量与状态](reference/variables-and-state.md) |
 | `$` 绑定 | [变量与状态](reference/variables-and-state.md) |
-| `Component` | [UI 组件](reference/ui.md) |
+| `View` | [UI 组件](reference/ui.md) |
 | `main` | [应用结构](reference/application.md) |

@@ -797,14 +797,14 @@ fn optional_chaining_allows_null_base() {
 
 #[test]
 fn component_type_is_recognized() {
-    let src = "fn main(): Component { }";
+    let src = "fn main(): View { }";
     assert!(analyze_src(src).is_ok());
 }
 
 #[test]
 fn state_is_allowed_in_component_function() {
     let src = r#"
-        fn main(): Component {
+        fn main(): View {
             @State let count: number = 0
         }
     "#;
@@ -814,15 +814,15 @@ fn state_is_allowed_in_component_function() {
 #[test]
 fn decorators_rejected_outside_component() {
     let err = analyze_src("fn main() { @State let count: number = 0 }").unwrap_err();
-    assert!(err.message.contains("returning `Component`"));
+    assert!(err.message.contains("returning `View`"));
 
     let err = analyze_src("fn helper(): async { @State let count = 0 }").unwrap_err();
-    assert!(err.message.contains("returning `Component`"));
+    assert!(err.message.contains("returning `View`"));
 }
 
 #[test]
 fn decorators_rejected_in_nested_block() {
-    let err = analyze_src("fn main(): Component { if true { @State let count: number = 0 } }")
+    let err = analyze_src("fn main(): View { if true { @State let count: number = 0 } }")
         .unwrap_err();
     assert!(err.message.contains("nested block"));
 }
@@ -831,7 +831,7 @@ fn decorators_rejected_in_nested_block() {
 fn effect_and_store_and_environment_in_component() {
     let src = r#"
         fn useAppStore(): object { return { user: null } }
-        fn main(): Component {
+        fn main(): View {
             @State let editing: boolean = false
             @Store const { user } = useAppStore()
             @Environment let router: object
@@ -845,14 +845,14 @@ fn effect_and_store_and_environment_in_component() {
 #[test]
 fn dollar_binding_requires_state_or_store() {
     let src = r#"
-        fn main(): Component {
+        fn main(): View {
             @State let name: string = ""
             Input(value: $name)
         }
     "#;
     assert!(analyze_src(src).is_ok());
 
-    let err = analyze_src("fn main(): Component { let name: string = \"\" Input(value: $name) }")
+    let err = analyze_src("fn main(): View { let name: string = \"\" Input(value: $name) }")
         .unwrap_err();
     assert!(err.message.contains("`$` binding"));
 }
@@ -860,7 +860,7 @@ fn dollar_binding_requires_state_or_store() {
 #[test]
 fn state_cannot_be_redeclared() {
     let err =
-        analyze_src("fn main(): Component { @State let x: number = 0 @State let x: number = 1 }")
+        analyze_src("fn main(): View { @State let x: number = 0 @State let x: number = 1 }")
             .unwrap_err();
     assert!(err.message.contains("already declared"));
 }
@@ -868,7 +868,7 @@ fn state_cannot_be_redeclared() {
 #[test]
 fn component_children_are_type_checked() {
     let src = r#"
-        fn main(): Component {
+        fn main(): View {
             VStack {
                 if 1 > 0 { Text("ok") }
                 for x in [1, 2] { Text("x") }
@@ -878,7 +878,7 @@ fn component_children_are_type_checked() {
     assert!(analyze_src(src).is_ok());
 
     let err =
-        analyze_src("fn main(): Component { VStack { for x in 5 { Text(\"x\") } } }").unwrap_err();
+        analyze_src("fn main(): View { VStack { for x in 5 { Text(\"x\") } } }").unwrap_err();
     assert!(err.message.contains("must iterate over a `list`"));
 }
 
@@ -886,20 +886,20 @@ fn component_children_are_type_checked() {
 fn expr_child_accepts_string_and_component_lists() {
     // A string variable as a bare child renders like a `Text`.
     assert!(
-        analyze_src("fn main(): Component { @State let name: string = \"Xulo\" VStack { name } }")
+        analyze_src("fn main(): View { @State let name: string = \"Xulo\" VStack { name } }")
             .is_ok()
     );
 
     // A member access yielding a string is also a valid child.
     assert!(analyze_src(
-        "type User = object\nfn main(): Component { @State let u: User = { name: \"a\" } VStack { u.name } }"
+        "type User = object\nfn main(): View { @State let u: User = { name: \"a\" } VStack { u.name } }"
     )
     .is_ok());
 
-    // The documented custom-component pattern: a `children: list<Component>`
+    // The documented custom-component pattern: a `children: list<View>`
     // parameter is forwarded as a bare element.
     let src = r#"
-        fn MyCard(title: string, children: list<Component>): Component {
+        fn MyCard(title: string, children: list<View>): View {
             VStack {
                 Text(title, weight: "bold")
                 children
@@ -912,9 +912,9 @@ fn expr_child_accepts_string_and_component_lists() {
 #[test]
 fn expr_child_rejects_non_renderable_types() {
     for src in [
-        "fn main(): Component { @State let n: number = 0 VStack { n } }",
-        "fn main(): Component { @State let ok: boolean = true VStack { ok } }",
-        "fn main(): Component { @State let xs: list<number> = [1, 2] VStack { xs } }",
+        "fn main(): View { @State let n: number = 0 VStack { n } }",
+        "fn main(): View { @State let ok: boolean = true VStack { ok } }",
+        "fn main(): View { @State let xs: list<number> = [1, 2] VStack { xs } }",
     ] {
         let err = analyze_src(src).unwrap_err();
         assert!(
@@ -989,25 +989,25 @@ fn await_allowed_in_async_closure() {
 #[test]
 fn decorators_rejected_in_closure_inside_component() {
     let err = analyze_src(
-        "fn main(): Component { fn handle() { @State let count: number = 0 } print(\"x\") }",
+        "fn main(): View { fn handle() { @State let count: number = 0 } print(\"x\") }",
     )
     .unwrap_err();
-    assert!(err.message.contains("returning `Component`"));
+    assert!(err.message.contains("returning `View`"));
 }
 
 #[test]
 fn decorators_rejected_in_anonymous_closure_inside_component() {
     let err =
-        analyze_src("fn main(): Component { let handle = fn() { @State let count: number = 0 } }")
+        analyze_src("fn main(): View { let handle = fn() { @State let count: number = 0 } }")
             .unwrap_err();
-    assert!(err.message.contains("returning `Component`"));
+    assert!(err.message.contains("returning `View`"));
 }
 
 #[test]
 fn effect_cannot_capture_render_local() {
     let err = analyze_src(
         r#"
-        fn main(): Component {
+        fn main(): View {
             let a = 5
             @Effect fn() { print("a=" + a) }
         }
@@ -1024,7 +1024,7 @@ fn effect_cannot_capture_render_local() {
 fn effect_cannot_capture_render_local_via_deps() {
     let err = analyze_src(
         r#"
-        fn main(): Component {
+        fn main(): View {
             let a = 5
             @Effect fn() { print(1) }, [a]
         }
@@ -1041,7 +1041,7 @@ fn effect_cannot_capture_render_local_via_deps() {
 fn effect_cannot_call_render_local_function() {
     let err = analyze_src(
         r#"
-        fn main(): Component {
+        fn main(): View {
             fn helper() { print("h") }
             @Effect fn() { helper() }
         }
@@ -1058,7 +1058,7 @@ fn effect_cannot_call_render_local_function() {
 fn effect_can_capture_state_store_and_env() {
     let src = r#"
         fn useAppStore(): object { return { user: null } }
-        fn main(): Component {
+        fn main(): View {
             @State let count: number = 0
             @Store const { user } = useAppStore()
             @Environment let router: object
@@ -1071,7 +1071,7 @@ fn effect_can_capture_state_store_and_env() {
 #[test]
 fn effect_local_let_is_allowed() {
     let src = r#"
-        fn main(): Component {
+        fn main(): View {
             @State let count: number = 0
             @Effect fn() { let x = count + 1 print(x) }
         }
@@ -1292,7 +1292,7 @@ fn nested_async_fn_inside_if_arm_can_await() {
 fn effect_closure_rejects_parameters() {
     let err = analyze_src(
         r#"
-        fn main(): Component {
+        fn main(): View {
             @Effect fn(x: number) { print(str(x)) }
             Screen { }
         }
@@ -1394,11 +1394,11 @@ fn nested_typed_object_member_access() {
 #[test]
 fn state_assignment_is_type_checked_inside_component() {
     let ok = r#"
-        fn main(): Component { @State let n: number = 0 n = 1 VStack { Text(str(n)) } }
+        fn main(): View { @State let n: number = 0 n = 1 VStack { Text(str(n)) } }
     "#;
     assert!(analyze_src(ok).is_ok());
     let bad = r#"
-        fn main(): Component { @State let n: number = 0 n = "x" VStack { Text(str(n)) } }
+        fn main(): View { @State let n: number = 0 n = "x" VStack { Text(str(n)) } }
     "#;
     let err = analyze_src(bad).unwrap_err();
     assert!(
@@ -1411,7 +1411,7 @@ fn state_assignment_is_type_checked_inside_component() {
 fn store_destructure_is_immutable() {
     let src = r#"
         fn makeStore(): object { let o = { theme: { x: 1 } } o }
-        fn main(): Component { @Store const { theme } = makeStore() theme = { x: 2 } VStack { Text("x") } }
+        fn main(): View { @Store const { theme } = makeStore() theme = { x: 2 } VStack { Text("x") } }
     "#;
     let err = analyze_src(src).unwrap_err();
     assert!(err.message.contains("cannot assign to `theme`"));
@@ -1855,11 +1855,11 @@ fn store_binding_keeps_inferred_type() {
     // `@Store const n = 5` binds `n` as `number` (not `Any`), so type errors
     // on it are caught like they are for `@State`.
     assert!(
-        analyze_src("fn main(): Component { @Store const n = 5 VStack { Text(str(n + 1)) } }")
+        analyze_src("fn main(): View { @Store const n = 5 VStack { Text(str(n + 1)) } }")
             .is_ok()
     );
     let err =
-        analyze_src("fn main(): Component { @Store const n = \"x\" VStack { Text(str(n + 1)) } }")
+        analyze_src("fn main(): View { @Store const n = \"x\" VStack { Text(str(n + 1)) } }")
             .unwrap_err();
     assert!(
         err.message.contains("cannot apply `+`"),

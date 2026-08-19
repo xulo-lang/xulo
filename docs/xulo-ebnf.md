@@ -249,7 +249,7 @@ ui_element          = component_stmt
 
 (* NOTE: state_stmt / store_stmt / effect_stmt are intentionally NOT allowed inside
    a UI block. They may only appear at the top level of a function returning
-   `Component` (see the language reference, "变量与状态"). *)
+   `View` (see the language reference, "变量与状态"). *)
 
 text_literal_expr   = string_literal ;   (* naked string literal in UI block *)
 

@@ -58,7 +58,7 @@ fn greet(name: string = "stranger"): string {
 ### 命名参数
 
 ```xulo
-fn Button(label: string, variant: string = "primary"): Component
+fn Button(label: string, variant: string = "primary"): View
 
 Button(variant: "outline", label: "Submit")  // ✅ 命名参数，可乱序
 ```

@@ -47,7 +47,7 @@ fn adversarial_corpus_does_not_panic() {
         "match 1 { _ => 1 }",
         "fn main() { match 1 { _ => } }",
         "@State let x = 1",
-        "Component { }",
+        "View { }",
         "$ $ $",
         "async fn f() { await await await x }",
         "fn main() { try { } catch (e) { } }",
@@ -122,7 +122,7 @@ fn token_soup_fuzz_does_not_panic() {
         "null",
         "true",
         "false",
-        "Component",
+        "View",
         "Screen",
         "@State",
         "@Store",
@@ -230,14 +230,14 @@ fn deep_nesting_does_not_panic() {
     on_big_stack(move || compile_quiet(&ifs));
 
     let ui = format!(
-        "fn main(): Component {{ {} Text(\"x\") {} }}",
+        "fn main(): View {{ {} Text(\"x\") {} }}",
         "Screen { ".repeat(40),
         " }".repeat(40)
     );
     on_big_stack(move || compile_quiet(&ui));
 
     let ui_else_if = format!(
-        "fn main(): Component {{ Screen {{ {} Text(\"x\") {} }} }}",
+        "fn main(): View {{ Screen {{ {} Text(\"x\") {} }} }}",
         "if true { ".repeat(40),
         " } else { ".repeat(39) + " }"
     );
@@ -280,7 +280,7 @@ fn extreme_nesting_returns_error_not_crash() {
 #[test]
 fn extreme_ui_nesting_returns_error_not_crash() {
     let src = format!(
-        "fn main(): Component {{ {} Text(\"x\") {} }}",
+        "fn main(): View {{ {} Text(\"x\") {} }}",
         "Screen { ".repeat(10_000),
         " }".repeat(10_000)
     );

@@ -2,7 +2,7 @@
 
 > 相关：[数据与类型](types.md) · [UI 组件](ui.md) · [应用结构](application.md)
 
-Xulo 的绑定分两类：普通变量（`let` / `const`）与响应式状态（`@State` / `@Store` / `@Environment` / `@Effect`）。后三者是语言关键字（不是装饰器），只能在返回类型为 `Component` 的函数顶层使用。
+Xulo 的绑定分两类：普通变量（`let` / `const`）与响应式状态（`@State` / `@Store` / `@Environment` / `@Effect`）。后三者是语言关键字（不是装饰器），只能在返回类型为 `View` 的组件函数顶层使用。
 
 ## 变量绑定（TypeScript 风格）
 
@@ -28,7 +28,7 @@ let maybe: string? = null     // 可选类型
 @State let isActive: boolean = true
 ```
 
-- `@State` 只能在 UI 组件（返回 `Component` 的函数）顶层声明
+- `@State` 只能在 UI 组件（返回 `View` 的函数）顶层声明
 - 触发 UI 重新渲染
 - 编译为响应式信号：读取 `.get()`，写入 `.set()`
 
@@ -76,7 +76,7 @@ pub const useAppStore = createStore(
 ```xulo
 import { useAppStore } from "../stores/app"
 
-fn Home(): Component {
+fn Home(): View {
   @Store const { user, theme, loading } = useAppStore()
   @Store const { setTheme } = useAppStore()
 
@@ -100,7 +100,7 @@ router.push("/about")
 ```
 
 - 从外部运行时注入一个值（编译为 `__env("Router")`）
-- 同样仅在 `Component` 函数顶层可用
+- 同样仅在 `View` 组件函数顶层可用
 
 ## 副作用 `@Effect`（SwiftUI 风格）
 
@@ -147,12 +147,12 @@ Input(value: name, onInput: fn(e) {
 
 ## 状态 / 副作用使用限制
 
-> **`@State`、`@Store`、`@Effect`、`@Environment` 只能在返回类型为 `Component` 的函数顶层使用。**
+> **`@State`、`@Store`、`@Effect`、`@Environment` 只能在返回类型为 `View` 的函数顶层使用。**
 
 ### ✅ 正确用法（UI 组件中）
 
 ```xulo
-fn UserProfile(): Component {
+fn UserProfile(): View {
   @Store const { user, loading } = useAppStore()
   @State let editing: boolean = false
   @Effect fn() { fetchUser(id) }
@@ -169,7 +169,7 @@ fn helperFunction() {
   @State let count = 0                   // ❌ 禁止
 }
 
-fn main(): Component {
+fn main(): View {
   if true {
     @State let x = 0                     // ❌ 禁止（嵌套块）
   }
@@ -180,7 +180,7 @@ fn main(): Component {
 
 | 语法 | 允许的位置 | 禁止的位置 |
 |------|-----------|-----------|
-| `@State` | 仅 `fn ...(): Component` 顶层 | 普通函数、异步函数、嵌套块 |
-| `@Store` | 仅 `fn ...(): Component` 顶层 | 普通函数、异步函数、嵌套块 |
-| `@Effect` | 仅 `fn ...(): Component` 顶层 | 普通函数、异步函数、嵌套块 |
-| `@Environment` | 仅 `fn ...(): Component` 顶层 | 普通函数、异步函数、嵌套块 |
+| `@State` | 仅 `fn ...(): View` 顶层 | 普通函数、异步函数、嵌套块 |
+| `@Store` | 仅 `fn ...(): View` 顶层 | 普通函数、异步函数、嵌套块 |
+| `@Effect` | 仅 `fn ...(): View` 顶层 | 普通函数、异步函数、嵌套块 |
+| `@Environment` | 仅 `fn ...(): View` 顶层 | 普通函数、异步函数、嵌套块 |

@@ -1,7 +1,7 @@
 // UI 组件示例：@State / @Effect / 组件块 / $ 绑定
 import { Screen, VStack, HStack, Text, Button, Input } from "@xulo/ui"
 
-fn Counter(): Component {
+fn Counter(): View {
     @State let count: number = 0
     @Effect fn() { print("mounted") }
 
@@ -18,7 +18,7 @@ fn Counter(): Component {
     }
 }
 
-fn NameField(): Component {
+fn NameField(): View {
     @State let name: string = ""
 
     VStack {
@@ -27,7 +27,7 @@ fn NameField(): Component {
     }
 }
 
-fn main(): Component {
+fn main(): View {
     Screen {
         Counter()
         NameField()

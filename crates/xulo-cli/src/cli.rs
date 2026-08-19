@@ -629,7 +629,7 @@ fn looks_like_echo(entry: &str) -> bool {
         "continue",
         "@Effect ",
         "@State ",
-        "Component ",
+        "View ",
     ] {
         if e.starts_with(kw) {
             return false;

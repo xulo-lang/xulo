@@ -132,7 +132,7 @@ pub fn PrimaryButton(
   label: string,
   onClick: fn()? = null,
   disabled: boolean? = false
-): Component {
+): View {
   Button(
     variant: ButtonVariant::Primary,
     onClick: onClick,
@@ -146,7 +146,7 @@ pub fn PrimaryButton(
 pub fn OutlineButton(
   label: string,
   onClick: fn()? = null
-): Component {
+): View {
   Button(variant: ButtonVariant::Outline, onClick: onClick) {
     Text(label)
   }
@@ -164,8 +164,8 @@ type Props = {
   id: string
 }
 
-pub fn UserProfile(props: Props): Component {
-  // ✅ @State/@Store/@Effect 只能在 Component 函数顶层使用
+pub fn UserProfile(props: Props): View {
+  // ✅ @State/@Store/@Effect 只能在返回 View 的函数顶层使用
   @State let editing: boolean = false
   @State let editName: string = ""
   @Store const { user, theme, loading, error } = useAppStore()
@@ -251,7 +251,7 @@ import { UserProfile } from "./pages/profile"
 import { useAppStore } from "./stores/app"
 import type { Theme } from "./types"
 
-fn main(): Component {
+fn main(): View {
   @Store const { theme } = useAppStore()
 
   Screen(

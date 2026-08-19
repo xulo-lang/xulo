@@ -237,7 +237,7 @@ component_block     = "{" { ui_element } "}" ;
 (* UI Element: only UI-specific constructs *)
 ui_element          = component_stmt
                     | text_literal_expr
-                    | expression            (* string / Component / list<Component> *)
+                    | expression            (* string / View / list<View> *)
                     | if_stmt
                     | for_stmt
                     | "{" { ui_element } "}"
@@ -280,7 +280,7 @@ source_file         = { ( import_stmt | pub_stmt | type_def | enum_def | fn_def 
 
 本修订版相对 `docs/xulo-ebnf.md` 的改动：
 
-1. `ui_element` 移除了 `state_stmt` / `store_stmt` / `effect_stmt` —— 装饰器只能在返回 `Component` 的函数顶层使用（见 [变量与状态](variables-and-state.md)），不能嵌套在 UI 块内。
+1. `ui_element` 移除了 `state_stmt` / `store_stmt` / `effect_stmt` —— 装饰器只能在返回 `View` 的函数顶层使用（见 [变量与状态](variables-and-state.md)），不能嵌套在 UI 块内。
 2. `import_stmt` 移除了 `"import" "type" "*" "as" identifier`（无 `from`）的草案形式。
 
 ## 实现与语法的已知差异

@@ -319,7 +319,7 @@ fn call_value_emits_parenthesized_callee() {
 #[test]
 fn state_emits_signal_and_get_set() {
     let js = generate_js(
-        "fn main(): Component { @State let count: number = 0 count = count + 1 print(count) }",
+        "fn main(): View { @State let count: number = 0 count = count + 1 print(count) }",
     );
     assert!(js.contains("__signal"));
     assert!(js.contains("const count = __signal(0);"));
@@ -329,7 +329,7 @@ fn state_emits_signal_and_get_set() {
 
 #[test]
 fn component_emits_props_and_children() {
-    let js = generate_js("fn main(): Component { VStack(spacing: 16) { Text(\"Hi\") } }");
+    let js = generate_js("fn main(): View { VStack(spacing: 16) { Text(\"Hi\") } }");
     assert!(js.contains("__component"));
     assert!(js.contains("VStack({"));
     assert!(js.contains("children: [Text({"));
@@ -337,7 +337,7 @@ fn component_emits_props_and_children() {
 
 #[test]
 fn component_emits_runtime_preamble() {
-    let js = generate_js("fn main(): Component { }");
+    let js = generate_js("fn main(): View { }");
     assert!(js.contains("__signal = __runtime.signal"));
     assert!(js.contains("__component = __runtime.component"));
 }
@@ -345,13 +345,13 @@ fn component_emits_runtime_preamble() {
 #[test]
 fn expr_child_emits_direct_value() {
     let js =
-        generate_js("fn main(): Component { @State let name: string = \"Xulo\" VStack { name } }");
+        generate_js("fn main(): View { @State let name: string = \"Xulo\" VStack { name } }");
     assert!(js.contains("children: [name.get()]"), "js: {js}");
 }
 
 #[test]
 fn forwarded_children_emit_nested_array() {
-    let js = generate_js("fn MyCard(children: list<Component>): Component { VStack { children } }");
+    let js = generate_js("fn MyCard(children: list<View>): View { VStack { children } }");
     assert!(js.contains("children: [children]"), "js: {js}");
 }
 
@@ -362,10 +362,10 @@ fn local_component_is_called_positionally() {
     // (external `@xulo/ui` components keep the props-object convention).
     let js = generate_js(
         r#"
-        fn MyCard(title: string, children: list<Component>): Component {
+        fn MyCard(title: string, children: list<View>): View {
             VStack { Text(title) }
         }
-        fn main(): Component { MyCard(title: "Hello") { Text("Hi") } }
+        fn main(): View { MyCard(title: "Hello") { Text("Hi") } }
         "#,
     );
     assert!(js.contains("return MyCard(\"Hello\", [Text({"), "js: {js}");
@@ -381,7 +381,7 @@ fn no_runtime_without_reactive_features() {
 fn store_emits_destructure() {
     let js = generate_js(
         "fn useAppStore(): object { return { user: null } }\n\
-         fn main(): Component { @Store const { user, theme } = useAppStore() }",
+         fn main(): View { @Store const { user, theme } = useAppStore() }",
     );
     assert!(js.contains("const { user, theme } = useAppStore();"));
 }
@@ -389,7 +389,7 @@ fn store_emits_destructure() {
 #[test]
 fn effect_emits_runtime_call() {
     let js = generate_js(
-        "fn main(): Component { @State let id: number = 0 @Effect fn() { print(id) }, [id] }",
+        "fn main(): View { @State let id: number = 0 @Effect fn() { print(id) }, [id] }",
     );
     assert!(js.contains("__effect("));
     assert!(js.contains("() => [id.get()]"));
@@ -399,7 +399,7 @@ fn effect_emits_runtime_call() {
 #[test]
 fn effect_without_deps_emits_undefined_thunk() {
     let js = generate_js(
-        "fn main(): Component { @State let id: number = 0 @Effect fn() { print(id) } }",
+        "fn main(): View { @State let id: number = 0 @Effect fn() { print(id) } }",
     );
     assert!(js.contains("__effect((function"));
     assert!(js.contains(", undefined);"));
@@ -408,7 +408,7 @@ fn effect_without_deps_emits_undefined_thunk() {
 #[test]
 fn environment_emits_env_lookup() {
     let js = generate_js(
-        "type Router = object\nfn main(): Component { @Environment let router: Router }",
+        "type Router = object\nfn main(): View { @Environment let router: Router }",
     );
     assert!(js.contains("const router = __env(\"Router\");"));
 }
@@ -416,14 +416,14 @@ fn environment_emits_env_lookup() {
 #[test]
 fn dollar_binding_emits_value_onchange() {
     let js =
-        generate_js("fn main(): Component { @State let name: string = \"\" Input(value: $name) }");
+        generate_js("fn main(): View { @State let name: string = \"\" Input(value: $name) }");
     assert!(js.contains("{ value: name.get(), onChange: (__v) => name.set(__v) }"));
 }
 
 #[test]
 fn ui_if_and_for_emit_spread() {
     let js = generate_js(
-        "fn main(): Component { let ok = true let xs = [1] VStack { if ok { Text(\"a\") } for x in xs { Text(x) } } }",
+        "fn main(): View { let ok = true let xs = [1] VStack { if ok { Text(\"a\") } for x in xs { Text(x) } } }",
     );
     assert!(js.contains("...(() => { if (ok) {"));
     assert!(js.contains(").map((x) =>"));
@@ -431,7 +431,7 @@ fn ui_if_and_for_emit_spread() {
 
 #[test]
 fn component_main_emits_mount_hook() {
-    let js = generate_js("fn main(): Component { }");
+    let js = generate_js("fn main(): View { }");
     assert!(js.contains("const __xulo_main = main();"));
     assert!(js.contains("__xulo_mount"));
 }
@@ -492,7 +492,7 @@ fn closure_optional_param_emits_null() {
 #[test]
 fn for_var_shadows_signal() {
     let js = generate_js(
-        "fn main(): Component { @State let x: number = 0 let ys = [1, 2, 3] for x in ys { print(x) } }",
+        "fn main(): View { @State let x: number = 0 let ys = [1, 2, 3] for x in ys { print(x) } }",
     );
     assert!(js.contains("const x = __signal(0);"));
     assert!(js.contains("for (let x of ys) {"));
@@ -506,7 +506,7 @@ fn for_var_shadows_signal() {
 #[test]
 fn block_local_shadows_signal() {
     let js = generate_js(
-        "fn main(): Component { @State let x: number = 0 { let x = 42 print(x) } print(x) }",
+        "fn main(): View { @State let x: number = 0 { let x = 42 print(x) } print(x) }",
     );
     assert!(
         js.contains("console.log(x);"),
@@ -521,7 +521,7 @@ fn block_local_shadows_signal() {
 #[test]
 fn ui_for_var_shadows_signal() {
     let js = generate_js(
-        "fn main(): Component { @State let item: object = { name: \"x\" } let items = [{ name: \"a\" }] VStack { for item in items { Card(title: item.name) } } }",
+        "fn main(): View { @State let item: object = { name: \"x\" } let items = [{ name: \"a\" }] VStack { for item in items { Card(title: item.name) } } }",
     );
     assert!(js.contains(".map((item) =>"));
     assert!(
@@ -534,7 +534,7 @@ fn ui_for_var_shadows_signal() {
 #[test]
 fn signal_used_inside_plain_fn_body() {
     let js = generate_js(
-        "fn main(): Component { @State let n: number = 0 let read = fn(): number { n } VStack { } }",
+        "fn main(): View { @State let n: number = 0 let read = fn(): number { n } VStack { } }",
     );
     assert!(
         js.contains("return n.get();"),
@@ -551,7 +551,7 @@ fn pub_main_is_invoked() {
 
 #[test]
 fn pub_component_main_emits_mount_hook() {
-    let js = generate_js("pub fn main(): Component { }");
+    let js = generate_js("pub fn main(): View { }");
     assert!(js.contains("const __xulo_main = main();"));
     assert!(js.contains("__xulo_mount"));
 }
@@ -627,7 +627,7 @@ fn enum_multi_payload_constructor_emits_array_value() {
 #[test]
 fn state_reassignment_emits_setter() {
     let js = generate_js(
-        r#"fn main(): Component { @State let n: number = 0 n = 4 VStack { Text(str(n)) } }"#,
+        r#"fn main(): View { @State let n: number = 0 n = 4 VStack { Text(str(n)) } }"#,
     );
     assert!(js.contains("n.set(4);"));
     assert!(js.contains("const n = __signal(0);"));
@@ -699,7 +699,7 @@ fn multi_statement_closure_keeps_shadowing_scope() {
     // A closure with several statement-local bindings must shadow an outer
     // `@State` inside its body (single child, not one per statement).
     let js = generate_js(
-        r#"fn main(): Component {
+        r#"fn main(): View {
             @State let name: string = "outer"
             @Effect fn() { let name: string = "inner" print(name) }
         }"#,
@@ -711,7 +711,7 @@ fn multi_statement_closure_keeps_shadowing_scope() {
 fn match_payload_binding_scopes_under_match() {
     let js = generate_js(
         r#"enum R<T> { A(T) B }
-        fn main(): Component {
+        fn main(): View {
             let other = 1
             let v = R::A(9)
             match v { R::A(b) => print(b) R::B => print(0) }

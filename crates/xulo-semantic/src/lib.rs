@@ -92,7 +92,7 @@ pub struct Analyzer {
     list_concat: Vec<Range<usize>>,
     /// Depth of enclosing async functions; `await` is only valid when > 0.
     async_depth: usize,
-    /// Depth of enclosing `Component`-returning functions; `@State`/`@Store`/
+    /// Depth of enclosing `View`-returning functions; `@State`/`@Store`/
     /// `@Effect`/`@Environment` are only valid when > 0.
     component_depth: usize,
     /// Depth of nested blocks below the current function body's top level;
@@ -742,7 +742,7 @@ impl Analyzer {
         let saved_async = self.async_depth;
         self.async_depth = if f.is_async { saved_async + 1 } else { 0 };
         // This function is its own scope: decorators are only legal at the top
-        // level of a `Component` function (itself), never inside a nested
+        // level of a `View` function (itself), never inside a nested
         // function, and `await` needs this function to be `async` (docs §12).
         // `no_await_depth` is a property of the *current* function's if/match
         // arms, so a nested function body must not inherit it.
@@ -842,7 +842,7 @@ impl Analyzer {
         self.async_depth = if f.is_async { saved_async + 1 } else { 0 };
         // A closure is its own (ordinary) function: `@State`/`@Store`/
         // `@Effect`/`@Environment` are not allowed inside it, even when the
-        // closure appears at the top level of a `Component` function (docs §12).
+        // closure appears at the top level of a `View` function (docs §12).
         let saved_component = self.component_depth;
         let saved_block = self.block_depth;
         let saved_no_await = self.no_await_depth;
@@ -1086,11 +1086,11 @@ impl Analyzer {
     }
 
     /// `@State` / `@Store` / `@Effect` / `@Environment` are only valid at the
-    /// top level of a function whose return type is `Component` (docs §12).
+    /// top level of a function whose return type is `View` (docs §12).
     fn require_component_top_level(&self, what: &str) -> SResult<()> {
         if self.component_depth == 0 {
             return Err(self.err(format!(
-                "`{what}` may only be used at the top level of a function returning `Component`"
+                "`{what}` may only be used at the top level of a function returning `View`"
             )));
         }
         if self.block_depth > 0 {
@@ -1099,11 +1099,11 @@ impl Analyzer {
         Ok(())
     }
 
-    /// Is this type `Component` (optionally wrapped in `async`)?
+    /// Is this type `View` (optionally wrapped in `async`)?
     fn is_component_type(&self, ty: &Type) -> bool {
         match self.resolve_alias(ty, 0) {
-            Type::Named(n) => n == "Component",
-            Type::Async(inner) => matches!(inner.as_ref(), Type::Named(n) if n == "Component"),
+            Type::Named(n) => n == "View",
+            Type::Async(inner) => matches!(inner.as_ref(), Type::Named(n) if n == "View"),
             _ => false,
         }
     }
@@ -1255,7 +1255,7 @@ impl Analyzer {
                     Type::String | Type::Any => true,
                     other if self.is_component_type(other) => true,
                     // A list/optional child forwards ready-made children (e.g.
-                    // a `children: list<Component>` parameter); only element
+                    // a `children: list<View>` parameter); only element
                     // types that can themselves be children make sense.
                     Type::Optional(inner) => self.is_component_type(inner),
                     Type::List(inner) => {
@@ -2859,7 +2859,7 @@ impl Analyzer {
     fn check_type(&self, ty: &Type) -> SResult<()> {
         match ty {
             Type::Named(name) => {
-                if name == "Component"
+                if name == "View"
                     || self.generics.contains(name)
                     || self.type_table.contains_key(name)
                     || self.imported_types.contains_key(name)
