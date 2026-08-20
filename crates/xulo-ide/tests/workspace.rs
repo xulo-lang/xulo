@@ -250,3 +250,55 @@ fn located_is_public_shape() {
     assert!(located.file.ends_with("lib.xulo"));
     assert!(located.range.start.character > 0);
 }
+
+#[test]
+fn local_shadowing_beats_import_edge_in_go_to_definition() {
+    // A locally-declared `greet` shadows the imported `greet`: go-to-definition
+    // on the use must jump to the local `let`, not the exporting module.
+    let all = HashMap::from([
+        (
+            PathBuf::from(MAIN),
+            "import { greet } from \"./lib\"\n\nfn f() {\n    let greet = \"local\"\n    print(greet)\n}\n"
+                .to_string(),
+        ),
+        (
+            PathBuf::from(LIB),
+            "pub fn greet(name: string): string {\n    return name\n}\n".to_string(),
+        ),
+    ]);
+    let ws = Workspace::open(&all, Path::new(MAIN)).expect("open");
+    let main = ws.analysis(Path::new(MAIN)).unwrap();
+    assert!(main.error.is_none(), "{:?}", main.error);
+
+    let located = ws
+        .go_to_definition(Path::new(MAIN), pos(main, &main.source, "greet)"))
+        .expect("shadowed use resolves locally");
+    assert_eq!(located.file, PathBuf::from(MAIN));
+    assert_eq!(
+        located.range.start,
+        pos(main, &main.source, "greet = \"local\"")
+    );
+}
+
+#[test]
+fn byte_to_position_tolerates_non_char_boundary_offsets() {
+    // Offsets can land inside a multi-byte UTF-8 character; the converter must
+    // count the full preceding character instead of slicing mid-char (panic).
+    let src = "fn main() {\n    print(\"你\")\n}\n";
+    let ws = Workspace::open(
+        &HashMap::from([(PathBuf::from(MAIN), src.to_string())]),
+        Path::new(MAIN),
+    )
+    .expect("open");
+    let main = ws.analysis(Path::new(MAIN)).unwrap();
+    let boundary = src.find('你').expect("CJK present");
+    // The 你 character occupies bytes boundary..boundary+3. Querying its own
+    // start yields column 11; bytes that land mid-character clamp forward to
+    // the following boundary (column 12) instead of panicking.
+    let expected = [(boundary, 11), (boundary + 1, 12), (boundary + 2, 12)];
+    for (probe, character) in expected {
+        let p = main.byte_to_position(probe).expect("position in range");
+        assert_eq!(p.line, 1);
+        assert_eq!(p.character, character);
+    }
+}

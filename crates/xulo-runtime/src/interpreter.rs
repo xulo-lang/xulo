@@ -1058,7 +1058,7 @@ impl Interpreter {
             let mut i = start;
             if recycle {
                 let child = Env::child(env);
-                while i < end {
+                while self.range_has_next(i, end, r.end_inclusive) {
                     child.borrow_mut().reset(&f.iter_var, Value::Number(i));
                     match self.exec_stmts(&f.body.statements, &child)? {
                         Flow::Continue => {}
@@ -1067,7 +1067,7 @@ impl Interpreter {
                     i += 1.0;
                 }
             } else {
-                while i < end {
+                while self.range_has_next(i, end, r.end_inclusive) {
                     let child = Env::child(env);
                     child.borrow_mut().define(&f.iter_var, Value::Number(i));
                     match self.exec_block(&f.body, &child)? {
@@ -1346,7 +1346,7 @@ impl Interpreter {
                 let end = self.eval_number(&r.end, env)?;
                 let mut out = Vec::new();
                 let mut i = start;
-                while i < end {
+                while self.range_has_next(i, end, r.end_inclusive) {
                     out.push(Value::Number(i));
                     i += 1.0;
                 }
@@ -1633,6 +1633,12 @@ impl Interpreter {
                 expr.span().clone(),
             )),
         }
+    }
+
+    /// Whether `i` is still inside a range with upper bound `end`:
+    /// `..<` is half-open (i < end), `...` is closed (i <= end).
+    fn range_has_next(&self, i: f64, end: f64, end_inclusive: bool) -> bool {
+        if end_inclusive { i <= end } else { i < end }
     }
 
     fn eval_if(&self, if_expr: &IfExpr, env: &Rc<RefCell<Env>>) -> Result<Value, RunError> {

@@ -442,11 +442,13 @@ pub struct IndexExpr {
     pub span: Range<usize>,
 }
 
-/// A range literal `start..<end` (exclusive upper bound).
+/// A range literal `start..<end` (exclusive upper bound) or `start...end`
+/// (inclusive upper bound, `end_inclusive`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct RangeExpr {
     pub start: Box<Expression>,
     pub end: Box<Expression>,
+    pub end_inclusive: bool,
     pub span: Range<usize>,
 }
 

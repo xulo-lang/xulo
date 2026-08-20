@@ -108,15 +108,19 @@ impl Workspace {
         let byte = analysis.position_to_byte(pos)?;
         let result = analysis.result()?;
         let record = result.resolutions.iter().find(|r| r.span.contains(&byte));
-        if let Some(link) = record.and_then(|r| self.import_link(file, &r.name)) {
-            return self.imported_definition(&link);
-        }
+        // A local declaration always wins: a name that shadows an import (e.g.
+        // `import { foo } ...` followed by a local `let foo`) must jump to the
+        // local binding, not the exporting module. Imported names carry no
+        // local def, so they fall through to the import edge below.
         if let Some(def) = record.and_then(|r| r.def.as_ref()) {
             let range = analysis.line_index.span_to_range(&module.source, def)?;
             return Some(Located {
                 file: file.to_path_buf(),
                 range,
             });
+        }
+        if let Some(link) = record.and_then(|r| self.import_link(file, &r.name)) {
+            return self.imported_definition(&link);
         }
         // The cursor may sit directly on a declaration (e.g. `let m ...`):
         // report the declaration itself as its own definition.

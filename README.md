@@ -1,11 +1,11 @@
 # Xulo
 
-Xulo 是一门 UI First 编程语言：解析 `.xulo` 文件 → 语义检查 → 由 Rust 原生解释器执行（默认路径）；也可生成 JavaScript 通过 Node.js 运行（`xulo run --js` / `xulo build`）。
+Xulo 是一门 UI First 编程语言：解析 `.xulo` 文件 → 语义检查 → 由 Rust 原生解释器执行。JS 代码生成已移除，工具链不依赖 Node.js。
 
 本仓库实现 Xulo 的 MVP（Rust + [winnow](https://github.com/winnow-rs/winnow)）：
 
 ```
-.xulo 文件 → 词法分析 (Token) → 语法分析 (AST) → 语义检查 → 原生 Rust 解释器（默认）/ 代码生成 (JS) → node 运行
+.xulo 文件 → 词法分析 (Token) → 语法分析 (AST) → 语义检查 → 原生 Rust 解释器
 ```
 
 ## 构建
@@ -15,7 +15,7 @@ cargo build --release
 # 二进制位于 target/release/xulo
 ```
 
-默认原生解释器与 `xulo repl` 不依赖 Node.js；仅 JS 路径（`xulo run --js` / `xulo build` 产物）需要本机安装 Node.js。
+原生解释器与 `xulo repl` 不依赖 Node.js。
 
 ## 编辑器支持（LSP）
 
@@ -32,14 +32,8 @@ VSCode：用 F5 或「Run Extension」调试启动 `editors/vscode/`（见 `.vsc
 ## 使用
 
 ```bash
-# 编译并运行（默认走 Rust 原生解释器，不经过 Node.js）
+# 编译并运行（Rust 原生解释器，不经过 Node.js）
 xulo run examples/hello.xulo
-
-# 编译为 JavaScript 并用 node 运行（需要本机 Node.js）
-xulo run --js examples/fibonacci.xulo
-
-# 生成 JS 文件
-xulo build examples/hello.xulo -o hello.js
 
 # 仅做词法/语法/语义检查
 xulo check examples/fibonacci.xulo
@@ -83,28 +77,25 @@ fn main() {
 - 变量绑定：`let` / `const`，可选类型注解；赋值语句
 - 函数：`fn name(p: number): number { ... }`，隐式/显式返回、递归、泛型（调用处推断）、可选/默认/命名参数、匿名函数（闭包）
 - 类型：`string` `number` `boolean` `list<T>` `object` `null` `T?` `T | U` `T & U`、字符串字面量联合、函数类型 `fn(...): T`、类型别名 `type`、枚举 `enum`（含关联数据、泛型）
-- 控制流：`if` / `else if` / `else`（表达式与语句）、`for x in list`、`for i in 0..<n`、`while`、`match`、`and`/`or`/`!`、三目、`throw`/`try`/`catch`
+- 控制流：`if` / `else if` / `else`（表达式与语句）、`for x in list`、`for i in 0..<n` / `for i in 0...n`（区间：`..<` 排他上界、`...` 闭合含上界，Swift 语义）、`while`、`match`、`and`/`or`/`!`、三目、`throw`/`try`/`catch`
 - 表达式：成员访问、下标、`?.`、`??`、列表/对象展开 `...`、`$name` 双向绑定
 - 异步：`: async` 返回标注、`await`
-- 模块系统：`import` / `pub`（named/namespace/type-only/bare；`pub` 声明、`pub use { a, b }` 两种导出形态），本地打包为 IIFE，外部包原样 ESM
+- 模块系统：`import` / `pub`（named/namespace/type-only/bare；`pub` 声明、`pub use { a, b }` 两种导出形态），按依赖拓扑序加载，循环检测、导出符号/类型跨模块校验
 - UI：`View` 返回类型、组件块语法（`VStack { Text(...) }`）、`@State` / `@Store` / `@Effect` / `@Environment`、UI 条件/循环渲染
 
 ### UI 运行时约定
 
-- UI 组件来自外部包（`@xulo/ui`），原样保留为 ESM `import`；外部组件调用降级为 `Name({ key: value, children: [...] })`（props 对象 + `children` 数组，位置实参放入 `"0"`/`"1"` 键）。本地自定义组件函数按**位置实参**调用（具名实参依声明顺序重排，`children` 路由到名为 `children` 的参数）。组件块内允许「表达式子元素」（`string` / `View` / `list<View>`，列表渲染为嵌套数组）。
-- `@State` 编译为响应式信号（`__signal`），读写分别变为 `.get()` / `.set()`；`@Effect` → `__effect`，`@Environment` → `__env`，组件函数体包裹在 `__component(function(){...})` 中。
-- 编译器按需内联一个最小响应式运行时；`fn main(): View` 会生成 `if (typeof __xulo_mount === "function") __xulo_mount(main());` 挂载钩子，由外部运行时负责真正的渲染/更新。
 - `@State` / `@Store` / `@Effect` / `@Environment` 只能在返回类型为 `View` 的函数顶层使用（嵌套块/普通函数内报语义错误）。术语：**组件**（component）指构造 UI 的语法/函数形态，**`View`** 是组件函数返回的类型（渲染树值）。
+- 组件块内允许「表达式子元素」（`string` / `View` / `list<View>`，列表渲染为嵌套数组）。外部组件调用（`@xulo/ui` 包，原生无实现）按位置实参构造成 `Name({ key: value, children: [...] })` 形状的 props 对象。
 
 ### 未实现 / 限制
 
 - `fmt` 为基于 token 流的格式化器：会丢弃注释，且匹配/对象字面量的换行风格以源码为基准（不做智能重排）
 - `repl` 为会话式 REPL：每轮用原生解释器重新编译并执行整个会话（无状态持久化到语言内部，靠重放保持跨条目变量），支持 `exit` / `clear`；行编辑走 rustyline（方向键历史、Tab 补全）
 - 调用函数必须在调用点之前已声明（不支持前向引用）
-- `$` 绑定（`{ value, onChange }`）：对 `@State` 信号，`onChange` 写回信号单元；对普通绑定为空操作；跨模块/`@xulo/store` 的订阅重渲染由外部运行时接管
-- 组件函数体在重渲染时会重新执行（`@State` 信号已提升到函数级；`@Effect` 仅在依赖数组（若有）变化或挂载时重新执行）
+- `$` 绑定（`{ value, onChange }`）：对 `@State` 信号，`onChange` 写回信号单元；对普通绑定为空操作
+- 原生运行时（`xulo run`）为 MVP：支持核心语言（字面量、变量、函数/闭包/递归、if/else、for/while、match、枚举、列表/对象、try/catch、`?.`/`??`/`...`、`print`/`str`）、`async`/`await`（协同调度）、本地 `import`/`pub` 导出（named/namespace）以及 UI。UI 程序无头运行：返回 `View` 的组件函数、`@State`/`@Store`/`@Effect`、组件块与 `$` 绑定均可用，组件树被构建并交给（不存在的）宿主运行时——`print` 副作用（如 `@Effect` 中）可观察；外部包（`@xulo/ui`）的导入名绑定为 `null` 占位符，`@Environment` 仍报「不支持」（无注入机制）。原生 `print` 对列表/对象的输出格式为 `[1, 2]` / `{ k: v }`。
 - `++`/`--` 自增运算符不在语言中
-- 原生运行时（`xulo run`，默认路径）为 MVP：支持核心语言（字面量、变量、函数/闭包/递归、if/else、for/while、match、枚举、列表/对象、try/catch、`?.`/`??`/`...`、`print`/`str`）、`async`/`await`（协同调度，交错顺序与 JS 微任务语义一致）、本地 `import`/`pub` 导出（named/namespace）以及 UI。UI 程序无头运行：返回 `View` 的组件函数、`@State`/`@Store`/`@Effect`、组件块与 `$` 绑定均可用，组件树被构建并交给（不存在的）宿主运行时——`print` 副作用（如 `@Effect` 中）可观察；外部包（`@xulo/ui`）的导入名绑定为 `null` 占位符，`@Environment` 仍报「不支持」（无注入机制）。原生 `print` 对列表/对象的输出格式为 `[1, 2]` / `{ k: v }`（与 node `console.log` 的带空格/引号形式不同）。JS 路径用 `xulo run --js` 显式选择。
 
 ## 测试
 
@@ -112,7 +103,7 @@ fn main() {
 cargo test
 ```
 
-覆盖词法、语法、语义、代码生成以及端到端（真实调用 `node`）测试。另有 `tests/robustness.rs`：对抗语料 + 确定性 token-soup fuzz（3000 次）+ 深嵌套压力测试，断言编译器对任意输入都不 panic——解析嵌套深度超过 128 层返回 `"nesting is too deep"` 诊断而非崩溃。
+覆盖词法、语法、语义、原生解释器以及 CLI 端到端测试。另有 `tests/robustness.rs`：对抗语料 + 确定性 token-soup fuzz（3000 次）+ 深嵌套压力测试，断言编译器对任意输入都不 panic——解析嵌套深度超过 128 层返回 `"nesting is too deep"` 诊断而非崩溃。
 
 CI（GitHub Actions，见 `.github/workflows/ci.yml`）执行 `cargo fmt --check` → `cargo clippy --all-targets -- -D warnings` → `cargo test` → 遍历运行全部 examples。
 
@@ -127,12 +118,12 @@ CI（GitHub Actions，见 `.github/workflows/ci.yml`）执行 `cargo fmt --check
 │   ├── xulo-lexer/             # 词法分析
 │   ├── xulo-parser/            # 语法分析（winnow）
 │   ├── xulo-semantic/          # 语义检查 + 符号表 + 名称解析记录（供编辑器查询）
-│   ├── xulo-codegen/           # 生成 JavaScript（已废弃，职能将并入 xulo-compiler）
-│   ├── xulo-compiler/          # 编译管线 compile() + 多文件加载/打包
+│   ├── xulo-codegen/           # 生成 JavaScript（已废弃，保留但不再参与执行路径）
+│   ├── xulo-compiler/          # 前端管线 compile() + 多文件模块加载/分析
 │   ├── xulo-runtime/           # 原生树遍历解释器（xulo run 默认路径）
 │   ├── xulo-ide/               # 编辑器分析库：LineIndex、单文件查询、多文件 Workspace、诊断、格式化、语义 tokens（协议无关）
 │   ├── xulo-analyzer/          # LSP 语言服务器（lsp-types/lsp-server，xulo-ide 上层，二进制 xulo-analyzer）
-│   └── xulo-cli/               # CLI（run/build/check/fmt/repl，二进制名为 xulo；fmt 复用 xulo-ide）
+│   └── xulo-cli/               # CLI（run/check/fmt/repl，二进制名为 xulo；fmt 复用 xulo-ide）
 ├── editors/
 │   └── vscode/                 # VSCode 扩展：无依赖手写 LSP 客户端 + TextMate 语法 + 语言配置
 ├── stdlib/                     # 未来标准库源码占位（.xulo）
@@ -141,4 +132,4 @@ CI（GitHub Actions，见 `.github/workflows/ci.yml`）执行 `cargo fmt --check
 └── tests/                      # （各 crate 的 tests/ 目录承载测试）
 ```
 
-`xulo run` 用 `xulo-runtime` crate 的 Rust 解释器直接执行（默认，不经 JS/Node）；`xulo run --js` 改为通过本机 Node.js 执行生成的 JS。`xulo-ide` 与 LSP 协议解耦：`xulo-analyzer` 只负责把 `xulo-ide` 的 `Range`/`Location`/`Diagnostic`/符号条目映射为 `lsp-types` 并通过 stdio 收发；每次文档变更由 `xulo-analyzer` 重建内存 Workspace 后重新发布诊断（非增量，MVP 实现）。
+`xulo run` 用 `xulo-runtime` crate 的 Rust 解释器直接执行，不经 JS/Node。`xulo-ide` 与 LSP 协议解耦：`xulo-analyzer` 只负责把 `xulo-ide` 的 `Range`/`Location`/`Diagnostic`/符号条目映射为 `lsp-types` 并通过 stdio 收发；每次文档变更由 `xulo-analyzer` 重建内存 Workspace 后重新发布诊断（非增量，MVP 实现）。

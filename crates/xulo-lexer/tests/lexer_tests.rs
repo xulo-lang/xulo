@@ -154,7 +154,7 @@ fn tokenizes_phase2_keywords() {
 
 #[test]
 fn tokenizes_phase2_symbols() {
-    let tokens = tokenize("a.b c?.d e ?? f g..<h ...i").unwrap();
+    let tokens = tokenize("a.b c?.d e ?? f g..<h h...i ...j").unwrap();
     let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
     assert_eq!(
         kinds,
@@ -171,11 +171,23 @@ fn tokenizes_phase2_symbols() {
             Ident,
             RangeOp,
             Ident,
+            Ident,
+            Ellipsis,
+            Ident,
             Ellipsis,
             Ident,
             EOF
         ]
     );
+}
+
+#[test]
+fn tokenizes_closed_range_after_number() {
+    // `0...9` is `0` + `...` + `9` (the third dot must not be re-read as a
+    // member access, and the number lexer must not swallow `..` as a fraction).
+    let tokens = tokenize("0...9").unwrap();
+    let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
+    assert_eq!(kinds, vec![Number, Ellipsis, Number, EOF]);
 }
 
 #[test]
@@ -385,4 +397,172 @@ fn skips_utf8_bom() {
     let toks = tokenize("\u{feff}let x = 1").unwrap();
     assert_eq!(toks[0].kind, Token::Let);
     assert_eq!(toks[1].kind, Token::Ident);
+}
+
+#[test]
+fn plain_backtick_template_is_a_single_chunk() {
+    let tokens = tokenize("`abc`").unwrap();
+    let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
+    assert_eq!(kinds, vec![TChunk, EOF]);
+    assert_eq!(tokens[0].text, "abc");
+}
+
+#[test]
+fn empty_template_is_a_single_empty_chunk() {
+    let tokens = tokenize("``").unwrap();
+    let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
+    assert_eq!(kinds, vec![TChunk, EOF]);
+    assert_eq!(tokens[0].text, "");
+}
+
+#[test]
+fn template_interpolation_token_run() {
+    let tokens = tokenize("`a${x}b`").unwrap();
+    let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
+    assert_eq!(
+        kinds,
+        vec![TChunk, InterpOpen, Ident, InterpClose, TChunk, EOF]
+    );
+    assert_eq!(tokens[0].text, "a");
+    assert_eq!(tokens[2].text, "x");
+    assert_eq!(tokens[4].text, "b");
+}
+
+#[test]
+fn template_interpolation_spans_are_absolute() {
+    // ` a ${ x } b `
+    let tokens = tokenize("`a${x}b`").unwrap();
+    assert_eq!(tokens[0].span, 1..2); // chunk "a"
+    assert_eq!(tokens[1].span, 2..4); // `${`
+    assert_eq!(tokens[2].span, 4..5); // `x`
+    assert_eq!(tokens[3].span, 5..6); // `}`
+    assert_eq!(tokens[4].span, 6..7); // chunk "b"
+    assert_eq!(tokens[5].span, 8..8); // EOF
+}
+
+#[test]
+fn template_desugars_each_section() {
+    let tokens = tokenize("`a${x}b${2+3}c`").unwrap();
+    let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
+    assert_eq!(
+        kinds,
+        vec![
+            TChunk,
+            InterpOpen,
+            Ident,
+            InterpClose,
+            TChunk,
+            InterpOpen,
+            Number,
+            Plus,
+            Number,
+            InterpClose,
+            TChunk,
+            EOF
+        ]
+    );
+}
+
+#[test]
+fn template_counts_braces_inside_expressions() {
+    let tokens = tokenize("`a${ {b:1}.b }c`").unwrap();
+    let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
+    assert_eq!(
+        kinds,
+        vec![
+            TChunk,
+            InterpOpen,
+            LBrace,
+            Ident,
+            Colon,
+            Number,
+            RBrace,
+            Dot,
+            Ident,
+            InterpClose,
+            TChunk,
+            EOF
+        ]
+    );
+}
+
+#[test]
+fn template_nested_quotes_are_opaque() {
+    let tokens = tokenize("`x${ \"}\" }y`").unwrap();
+    let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
+    assert_eq!(
+        kinds,
+        vec![TChunk, InterpOpen, String, InterpClose, TChunk, EOF]
+    );
+}
+
+#[test]
+fn template_nested_backticks_lex_their_own_interpolation() {
+    let tokens = tokenize("`x${ `y${z}` }w`").unwrap();
+    let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
+    assert_eq!(
+        kinds,
+        vec![
+            TChunk,      // "x"
+            InterpOpen,  // outer ${ ... } opens
+            TChunk,      // nested "y"
+            InterpOpen,  // nested ${ opens
+            Ident,       // z
+            InterpClose, // nested } closes
+            TChunk,      // nested trailing ""
+            InterpClose, // outer } closes
+            TChunk,      // "w"
+            EOF
+        ]
+    );
+}
+
+#[test]
+fn template_escapes() {
+    let tokens = tokenize("`\\`` + `\\$\\\\\\n\\t`").unwrap();
+    let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
+    assert_eq!(kinds, vec![TChunk, Plus, TChunk, EOF]);
+    assert_eq!(tokens[0].text, r"\`");
+    assert_eq!(tokens[2].text, r"\$\\\n\t");
+}
+
+#[test]
+fn template_multiline_is_allowed() {
+    let tokens = tokenize("`line1\nline2`").unwrap();
+    let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
+    assert_eq!(kinds, vec![TChunk, EOF]);
+}
+
+#[test]
+fn template_dollar_brace_escape_stays_literal() {
+    let tokens = tokenize(r#"`\${x}`"#).unwrap();
+    let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
+    assert_eq!(kinds, vec![TChunk, EOF]);
+    assert_eq!(tokens[0].text, r"\${x}");
+}
+
+#[test]
+fn unterminated_template_is_an_error() {
+    let err = tokenize("`abc${x}").unwrap_err();
+    assert_eq!(err.kind, xulo_core::error::ErrorKind::Lex);
+    assert!(err.message.contains("unterminated template"));
+    assert!(tokenize("`abc").is_err());
+}
+
+#[test]
+fn invalid_template_escape_is_an_error() {
+    let err = tokenize(r#"`a\qb`"#).unwrap_err();
+    assert_eq!(err.kind, xulo_core::error::ErrorKind::Lex);
+    assert!(err.message.contains("invalid escape"));
+    let err = tokenize(r#"`a\u{}`"#).unwrap_err();
+    assert_eq!(err.kind, xulo_core::error::ErrorKind::Lex);
+}
+
+#[test]
+fn quoted_strings_do_not_interpolate() {
+    for src in [r#""a${x}b""#, r#"'a${x}b'"#] {
+        let tokens = tokenize(src).unwrap();
+        let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
+        assert_eq!(kinds, vec![String, EOF], "input {src:?}");
+    }
 }

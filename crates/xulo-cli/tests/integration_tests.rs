@@ -80,27 +80,6 @@ fn run_overflowing_number_literal_infinity() {
 }
 
 #[test]
-fn build_writes_infinite_literal_js_that_runs() {
-    let huge = format!("1{}", "0".repeat(309));
-    let src = temp_file("infb.xulo", &format!("fn main() {{ print({huge}) }}"));
-    let out = temp_file("infb.js", "");
-    let result = Command::new(BIN)
-        .args(["build", src.to_str().unwrap(), "-o", out.to_str().unwrap()])
-        .output()
-        .unwrap();
-    assert!(result.status.success());
-
-    let js = std::fs::read_to_string(&out).unwrap();
-    assert!(js.contains("console.log(Infinity);"), "js: {js}");
-
-    let node = Command::new("node").arg(&out).output().unwrap();
-    assert!(node.status.success());
-    assert_eq!(String::from_utf8_lossy(&node.stdout), "Infinity\n");
-    let _ = std::fs::remove_file(&src);
-    let _ = std::fs::remove_file(&out);
-}
-
-#[test]
 fn run_fibonacci_recursion() {
     let file = temp_file(
         "fib.xulo",
@@ -116,28 +95,6 @@ fn run_fibonacci_recursion() {
     assert!(out.status.success());
     assert_eq!(String::from_utf8_lossy(&out.stdout), "21\n");
     let _ = std::fs::remove_file(&file);
-}
-
-#[test]
-fn build_writes_js_that_runs() {
-    let src = temp_file("b.xulo", r#"fn main() { print("built") }"#);
-    let out = temp_file("b.js", "");
-    let result = Command::new(BIN)
-        .args(["build", src.to_str().unwrap(), "-o", out.to_str().unwrap()])
-        .output()
-        .unwrap();
-    assert!(result.status.success());
-
-    let js = std::fs::read_to_string(&out).unwrap();
-    assert!(js.contains("function main()"));
-    assert!(js.contains("console.log(\"built\");"));
-    assert!(js.contains("main();"));
-
-    let node = Command::new("node").arg(&out).output().unwrap();
-    assert_eq!(String::from_utf8_lossy(&node.stdout), "built\n");
-
-    let _ = std::fs::remove_file(&src);
-    let _ = std::fs::remove_file(&out);
 }
 
 #[test]
@@ -232,11 +189,7 @@ fn run_types_enums_const_null() {
         }
         "#,
     );
-    let out = Command::new(BIN)
-        .args(["run", "--js"])
-        .arg(&file)
-        .output()
-        .unwrap();
+    let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
     assert!(
         out.status.success(),
         "stderr: {}",
@@ -244,54 +197,9 @@ fn run_types_enums_const_null() {
     );
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
-        "true\n{ tag: 'Success', value: 42 }\nXulo\n1\n2\ntrue\n"
+        "true\nResult.Success(42)\nXulo\n1\n2\ntrue\n"
     );
     let _ = std::fs::remove_file(&file);
-}
-
-#[test]
-fn run_file_with_external_import() {
-    let dir = std::env::temp_dir().join(format!(
-        "xulo_ext_{}_{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    let pkg = dir.join("node_modules/@xulo/shapes");
-    std::fs::create_dir_all(&pkg).unwrap();
-    std::fs::write(
-        pkg.join("package.json"),
-        r#"{ "name": "@xulo/shapes", "version": "0.0.1", "type": "module", "main": "index.js" }"#,
-    )
-    .unwrap();
-    std::fs::write(
-        pkg.join("index.js"),
-        r#"export const box = (w, h) => ({ kind: "box", area: w * h });"#,
-    )
-    .unwrap();
-    let src = dir.join("main.xulo");
-    std::fs::write(
-        &src,
-        r#"
-        import { box } from "@xulo/shapes"
-        fn main() { let b = box(3, 4) print("area=" + str(b.area)) }
-        "#,
-    )
-    .unwrap();
-    let out = Command::new(BIN)
-        .args(["run", "--js"])
-        .arg(&src)
-        .output()
-        .unwrap();
-    assert!(
-        out.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert_eq!(String::from_utf8_lossy(&out.stdout), "area=12\n");
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -382,6 +290,37 @@ fn run_phase2_control_flow_and_expressions() {
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
         "10\n3\nanon\nXulo\n2\ntrue\ntrue\nyes\nother\ngot 7\nerr: boom\n"
+    );
+    let _ = std::fs::remove_file(&file);
+}
+
+#[test]
+fn run_closed_range_loops() {
+    // `a...b` is a Swift-style closed range (inclusive upper bound), while
+    // `a..<b` stays half-open. Both drive `for` iteration and evaluate to a
+    // list of numbers when used as an expression.
+    let file = temp_file(
+        "range.xulo",
+        r#"
+        fn main() {
+            for i in 0...2 { print(i) }
+            for i in 3..<6 { print(i) }
+            let closed = 0...3
+            let half = 0..<3
+            print(closed)
+            print(half)
+        }
+        "#,
+    );
+    let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "0\n1\n2\n3\n4\n5\n[0, 1, 2, 3]\n[0, 1, 2]\n"
     );
     let _ = std::fs::remove_file(&file);
 }
@@ -485,25 +424,16 @@ fn run_pub_module_exports() {
         ],
         "main.xulo",
     );
-    let out_dir = dir.join("bundle.js");
-    let result = Command::new(BIN)
-        .args([
-            "build",
-            entry.to_str().unwrap(),
-            "-o",
-            out_dir.to_str().unwrap(),
-        ])
-        .output()
-        .unwrap();
+    let out = Command::new(BIN).arg("run").arg(&entry).output().unwrap();
     assert!(
-        result.status.success(),
+        out.status.success(),
         "stderr: {}",
-        String::from_utf8_lossy(&result.stderr)
+        String::from_utf8_lossy(&out.stderr)
     );
-
-    let node = Command::new("node").arg(&out_dir).output().unwrap();
-    let stdout = String::from_utf8_lossy(&node.stdout);
-    assert_eq!(stdout.trim(), "5\n3.14\nRole.Admin");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "5\n3.14\nRole.Admin\n"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -549,17 +479,13 @@ fn allows_stdlib_type_names_as_identifiers() {
              print(string) print(number) print(list)\n\
          }",
     );
-    let out = Command::new(BIN)
-        .args(["run", "--js"])
-        .arg(&file)
-        .output()
-        .unwrap();
+    let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
     assert!(
         out.status.success(),
         "stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&out.stdout), "s\n42\n[ 1 ]\n");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "s\n42\n[1]\n");
     let _ = std::fs::remove_file(&file);
 }
 
@@ -578,280 +504,13 @@ fn run_module_import_destructure() {
         ],
         "main.xulo",
     );
-    let out_dir = dir.join("bundle.js");
-    let result = Command::new(BIN)
-        .args([
-            "build",
-            entry.to_str().unwrap(),
-            "-o",
-            out_dir.to_str().unwrap(),
-        ])
-        .output()
-        .unwrap();
+    let out = Command::new(BIN).arg("run").arg(&entry).output().unwrap();
     assert!(
-        result.status.success(),
+        out.status.success(),
         "stderr: {}",
-        String::from_utf8_lossy(&result.stderr)
+        String::from_utf8_lossy(&out.stderr)
     );
-
-    let js = std::fs::read_to_string(&out_dir).unwrap();
-    assert!(js.contains("function double(x)"));
-    assert!(js.contains("function main()"));
-    assert!(js.contains("__mod0"));
-    assert!(js.contains("main();"));
-
-    let node = Command::new("node").arg(&out_dir).output().unwrap();
-    assert_eq!(String::from_utf8_lossy(&node.stdout), "8\n");
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
-fn external_type_only_import_is_erased_from_bundle() {
-    let (dir, entry) = temp_dir(
-        &[(
-            "main.xulo",
-            r#"
-                import type { Config } from "lib-b"
-                fn makeConfig(): Config { return "production" }
-                "#,
-        )],
-        "main.xulo",
-    );
-    let out_dir = dir.join("bundle.js");
-    let result = Command::new(BIN)
-        .args([
-            "build",
-            entry.to_str().unwrap(),
-            "-o",
-            out_dir.to_str().unwrap(),
-        ])
-        .output()
-        .unwrap();
-    assert!(
-        result.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&result.stderr)
-    );
-
-    let js = std::fs::read_to_string(&out_dir).unwrap();
-    assert!(
-        !js.contains("lib-b"),
-        "type-only external import leaked into the bundle:\n{js}"
-    );
-    assert!(
-        !js.contains("import "),
-        "bundle should have no ESM imports:\n{js}"
-    );
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
-fn external_runtime_import_is_kept_in_bundle() {
-    let (dir, entry) = temp_dir(
-        &[(
-            "main.xulo",
-            "import { helper } from \"lib-b\"\nfn main() { helper() }\n",
-        )],
-        "main.xulo",
-    );
-    let out_dir = dir.join("bundle.js");
-    let result = Command::new(BIN)
-        .args([
-            "build",
-            entry.to_str().unwrap(),
-            "-o",
-            out_dir.to_str().unwrap(),
-        ])
-        .output()
-        .unwrap();
-    assert!(
-        result.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&result.stderr)
-    );
-
-    let js = std::fs::read_to_string(&out_dir).unwrap();
-    assert!(js.contains("import { helper } from \"lib-b\";"));
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
-fn external_import_is_deduplicated_across_modules() {
-    // Two modules importing the same external package must emit a single
-    // `import` statement with the merged specifiers (regression).
-    let (dir, entry) = temp_dir(
-        &[
-            (
-                "util.xulo",
-                "import { double, triple } from \"lib-m\"\npub fn f(x: number): number { return double(x) + triple(x) }\n",
-            ),
-            (
-                "main.xulo",
-                "import { square } from \"lib-m\"\nimport { f } from \"./util\"\nfn main() { print(f(square(2))) }\n",
-            ),
-        ],
-        "main.xulo",
-    );
-    let out_dir = dir.join("bundle.js");
-    let result = Command::new(BIN)
-        .args([
-            "build",
-            entry.to_str().unwrap(),
-            "-o",
-            out_dir.to_str().unwrap(),
-        ])
-        .output()
-        .unwrap();
-    assert!(
-        result.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&result.stderr)
-    );
-
-    let js = std::fs::read_to_string(&out_dir).unwrap();
-    let import_lines = js.lines().filter(|l| l.starts_with("import ")).count();
-    assert_eq!(import_lines, 1, "expected a single import statement:\n{js}");
-    assert!(
-        js.contains("from \"lib-m\"")
-            && js.contains("double")
-            && js.contains("triple")
-            && js.contains("square"),
-        "js:\n{js}"
-    );
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
-fn external_import_keeps_every_alias_and_kind() {
-    // Two modules importing the same external package with *different aliases*
-    // of the same name must both keep their local binding (regression: the
-    // bundle used to dedup by source name, emitting only the first alias and
-    // leaving the other module's reference undefined at runtime). Namespace
-    // and named forms must all survive.
-    let (dir, entry) = temp_dir(
-        &[
-            (
-                "a.xulo",
-                "import { Text as T } from \"pkg-x\"\npub fn header(): View { Screen { T(\"aliased\") } }\n",
-            ),
-            (
-                "main.xulo",
-                "import { header } from \"./a\"\nimport { Text } from \"pkg-x\"\nimport * as ui from \"pkg-x\"\nfn main(): View { Screen { header() Text(\"plain\") } }\n",
-            ),
-        ],
-        "main.xulo",
-    );
-    let out_dir = dir.join("bundle.mjs");
-    let result = Command::new(BIN)
-        .args([
-            "build",
-            entry.to_str().unwrap(),
-            "-o",
-            out_dir.to_str().unwrap(),
-        ])
-        .output()
-        .unwrap();
-    assert!(
-        result.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&result.stderr)
-    );
-
-    let js = std::fs::read_to_string(&out_dir).unwrap();
-    assert!(
-        js.contains("import { Text as T, Text } from \"pkg-x\";"),
-        "both aliases must be bound:\n{js}"
-    );
-    assert!(
-        js.contains("import * as ui from \"pkg-x\";"),
-        "namespace import must survive:\n{js}"
-    );
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
-fn external_import_local_name_conflict_is_rejected() {
-    // Two modules importing *different bindings under the same local name*
-    // (`import { a as x }` vs `import { b as x }`) cannot both be emitted as
-    // ESM (re-declaring `x` is illegal); the bundle must fail loudly instead
-    // of silently dropping the second binding (which would make that module
-    // read the wrong import).
-    let (dir, entry) = temp_dir(
-        &[
-            (
-                "a.xulo",
-                "import { a as x } from \"pkg-c\"\npub fn fa(): number { x }\n",
-            ),
-            (
-                "main.xulo",
-                "import { fa } from \"./a\"\nimport { b as x } from \"pkg-c\"\nfn main() { print(str(fa() + x)) }\n",
-            ),
-        ],
-        "main.xulo",
-    );
-    let out_dir = dir.join("bundle.mjs");
-    let result = Command::new(BIN)
-        .args([
-            "build",
-            entry.to_str().unwrap(),
-            "-o",
-            out_dir.to_str().unwrap(),
-        ])
-        .output()
-        .unwrap();
-    assert!(
-        !result.status.success(),
-        "conflicting imports must fail the build"
-    );
-    let stderr = String::from_utf8_lossy(&result.stderr);
-    assert!(
-        stderr.contains("conflicting imports from `pkg-c`")
-            && stderr.contains("`x` is already bound"),
-        "stderr: {stderr}"
-    );
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
-fn shared_runtime_emitted_once_across_modules() {
-    // Several modules using reactive/range features still yield a single
-    // `__runtime` declaration at the top of the bundle (regression).
-    let (dir, entry) = temp_dir(
-        &[
-            (
-                "a.xulo",
-                "pub fn comp(): View { @State let n: number = 0 print(str(n)) }\n",
-            ),
-            (
-                "util.xulo",
-                "pub fn sum(): number { let t = 0 for i in 0..<4 { t = t + i } return t }\n",
-            ),
-            (
-                "main.xulo",
-                "import { comp } from \"./a\"\nimport { sum } from \"./util\"\nfn main(): View { comp() print(sum()) }\n",
-            ),
-        ],
-        "main.xulo",
-    );
-    let out_dir = dir.join("bundle.js");
-    let result = Command::new(BIN)
-        .args([
-            "build",
-            entry.to_str().unwrap(),
-            "-o",
-            out_dir.to_str().unwrap(),
-        ])
-        .output()
-        .unwrap();
-    assert!(
-        result.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&result.stderr)
-    );
-
-    let js = std::fs::read_to_string(&out_dir).unwrap();
-    let runtime_count = js.matches("const __runtime =").count();
-    assert_eq!(runtime_count, 1, "expected a single __runtime:\n{js}");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "8\n");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -947,7 +606,7 @@ fn type_only_enum_import_still_binds_the_value() {
 }
 
 #[test]
-fn run_trait_dispatch_js_and_native() {
+fn run_trait_dispatch_native() {
     let src = r#"
         trait Area { fn area(self): number; fn perimeter(self): number }
         type Rectangle = object
@@ -964,32 +623,24 @@ fn run_trait_dispatch_js_and_native() {
             print("perimeter=" + str(Area::perimeter(rect(3, 4))))
         }
     "#;
-    for native in [false, true] {
-        let file = temp_file("trait.xulo", src);
-        let mut cmd = Command::new(BIN);
-        cmd.arg("run");
-        if !native {
-            cmd.arg("--js");
-        }
-        let out = cmd.arg(&file).output().unwrap();
-        assert!(
-            out.status.success(),
-            "native={native} stderr: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        assert_eq!(
-            String::from_utf8_lossy(&out.stdout),
-            "area=12\nperimeter=14\n",
-            "native={native}"
-        );
-        let _ = std::fs::remove_file(&file);
-    }
+    let file = temp_file("trait.xulo", src);
+    let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "area=12\nperimeter=14\n",
+        ""
+    );
+    let _ = std::fs::remove_file(&file);
 }
 
 #[test]
-fn run_list_concat_js_and_native() {
-    // `list + list` must concatenate on both execution paths (a bare JS `+`
-    // would coerce the arrays into a string).
+fn run_list_concat_native() {
+    // `list + list` concatenates the lists (native runtime).
     let src = r#"
         fn main() {
             let a = [1, 2]
@@ -998,40 +649,23 @@ fn run_list_concat_js_and_native() {
             print(str([0] + [7]))
         }
     "#;
-    for native in [false, true] {
-        let file = temp_file("listcat.xulo", src);
-        let mut cmd = Command::new(BIN);
-        cmd.arg("run");
-        if !native {
-            cmd.arg("--js");
-        }
-        let out = cmd.arg(&file).output().unwrap();
-        assert!(
-            out.status.success(),
-            "native={native} stderr: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        // Native renders lists as `[1, 2, 3, 4]`; the JS path prints through
-        // node's console.log (`[ 1, 2, 3, 4 ]`). `str()` on a list likewise
-        // differs by design (native `[0, 7]` vs JS `String()` -> `0,7`), so
-        // compare per-path.
-        let stdout = String::from_utf8_lossy(&out.stdout);
-        if native {
-            assert_eq!(stdout, "[1, 2, 3, 4]\n[0, 7]\n", "native={native}");
-        } else {
-            assert_eq!(stdout, "[ 1, 2, 3, 4 ]\n0,7\n", "native={native}");
-        }
-        let _ = std::fs::remove_file(&file);
-    }
+    let file = temp_file("listcat.xulo", src);
+    let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // Lists render as `[1, 2, 3, 4]`; `str()` on a list yields `[0, 7]`.
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(stdout, "[1, 2, 3, 4]\n[0, 7]\n");
+    let _ = std::fs::remove_file(&file);
 }
 
 #[test]
-fn run_builtin_named_arguments_js_and_native() {
-    // Named arguments on the variadic builtins `print`/`str` pass the type
-    // checker; the codegen drops the labels and emits argument values in source
-    // order. The native runtime used to reject them with a runtime error, so a
-    // valid program ran under node but failed under `--native` — this pins both
-    // paths to the same output.
+fn run_builtin_named_arguments_native() {
+    // Named arguments on the variadic builtins `print`/`str` are allowed and
+    // rendered in source order by the native runtime.
     let src = r#"
         fn main() {
             print(msg: "hi")
@@ -1039,35 +673,22 @@ fn run_builtin_named_arguments_js_and_native() {
             print(str(value: 42))
         }
     "#;
-    for native in [false, true] {
-        let file = temp_file("builtin_named.xulo", src);
-        let mut cmd = Command::new(BIN);
-        cmd.arg("run");
-        if !native {
-            cmd.arg("--js");
-        }
-        let out = cmd.arg(&file).output().unwrap();
-        assert!(
-            out.status.success(),
-            "native={native} stderr: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        assert_eq!(
-            String::from_utf8_lossy(&out.stdout),
-            "hi\n1 2 3\n42\n",
-            "native={native}"
-        );
-        let _ = std::fs::remove_file(&file);
-    }
+    let file = temp_file("builtin_named.xulo", src);
+    let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "hi\n1 2 3\n42\n", "");
+    let _ = std::fs::remove_file(&file);
 }
 
 #[test]
-fn run_loop_closure_capture_js_and_native() {
-    // An `fn` declared in a loop body must capture *its own iteration* of the
-    // loop variable (JS `let` semantics), not a shared binding that reads the
-    // final value from every closure. Pins both execution paths to the same
-    // per-iteration capture (native `exec_for` re-creates the iteration Env;
-    // the codegen emits `for (let ...)`).
+fn run_loop_closure_capture_native() {
+    // An `fn` declared in a loop body captures *its own iteration* of the loop
+    // variable, not a shared binding that reads the final value from every
+    // closure (native `exec_for` re-creates the iteration Env).
     let src = r#"
         let funcs = []
         for i in 0..<3 {
@@ -1080,34 +701,25 @@ fn run_loop_closure_capture_js_and_native() {
             }
         }
     "#;
-    for native in [false, true] {
-        let file = temp_file("loopcap.xulo", src);
-        let mut cmd = Command::new(BIN);
-        cmd.arg("run");
-        if !native {
-            cmd.arg("--js");
-        }
-        let out = cmd.arg(&file).output().unwrap();
-        assert!(
-            out.status.success(),
-            "native={native} stderr: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        assert_eq!(
-            String::from_utf8_lossy(&out.stdout),
-            "0\n1\n2\n",
-            "native={native}: each closure reads its own iteration of `i`"
-        );
-        let _ = std::fs::remove_file(&file);
-    }
+    let file = temp_file("loopcap.xulo", src);
+    let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "0\n1\n2\n",
+        "each closure reads its own iteration of `i`"
+    );
+    let _ = std::fs::remove_file(&file);
 }
 
 #[test]
-fn run_for_loop_var_reassignment_js_and_native() {
+fn run_for_loop_var_reassignment_native() {
     // `x = x + 1` inside `for x in xs` is legal (the loop variable is
-    // mutable); it must not throw a JS "Assignment to constant variable"
-    // (codegen used to emit `for (const x of ...)`), and must behave the same
-    // on both execution paths: the source list is untouched.
+    // mutable): the source list is left untouched.
     let src = r#"
         fn main() {
             let xs = [1, 2, 3]
@@ -1117,34 +729,22 @@ fn run_for_loop_var_reassignment_js_and_native() {
             print(xs)
         }
     "#;
-    for native in [false, true] {
-        let file = temp_file("forvar.xulo", src);
-        let mut cmd = Command::new(BIN);
-        cmd.arg("run");
-        if !native {
-            cmd.arg("--js");
-        }
-        let out = cmd.arg(&file).output().unwrap();
-        assert!(
-            out.status.success(),
-            "native={native} stderr: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        let stdout = String::from_utf8_lossy(&out.stdout);
-        if native {
-            assert_eq!(stdout, "[1, 2, 3]\n", "native={native}");
-        } else {
-            assert_eq!(stdout, "[ 1, 2, 3 ]\n", "native={native}");
-        }
-        let _ = std::fs::remove_file(&file);
-    }
+    let file = temp_file("forvar.xulo", src);
+    let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(stdout, "[1, 2, 3]\n");
+    let _ = std::fs::remove_file(&file);
 }
 
 #[test]
-fn run_enum_equality_js_and_native() {
-    // Payload enums compare structurally on both paths: separately-constructed
-    // `Result::Ok(1)` values are equal (the JS path used to compare the
-    // compiled `{ tag, value }` objects by reference and report `false`).
+fn run_enum_equality_native() {
+    // Payload enums compare structurally: separately-constructed `Result::Ok(1)`
+    // values are equal, and differ from `Result::Ok(2)`.
     let src = r#"
         enum Result { Ok(number) Err(string) }
         fn main() {
@@ -1156,34 +756,25 @@ fn run_enum_equality_js_and_native() {
             print(str(a != c))
         }
     "#;
-    for native in [false, true] {
-        let file = temp_file("enumeq.xulo", src);
-        let mut cmd = Command::new(BIN);
-        cmd.arg("run");
-        if !native {
-            cmd.arg("--js");
-        }
-        let out = cmd.arg(&file).output().unwrap();
-        assert!(
-            out.status.success(),
-            "native={native} stderr: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        assert_eq!(
-            String::from_utf8_lossy(&out.stdout),
-            "true\nfalse\ntrue\n",
-            "native={native}"
-        );
-        let _ = std::fs::remove_file(&file);
-    }
+    let file = temp_file("enumeq.xulo", src);
+    let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "true\nfalse\ntrue\n",
+        ""
+    );
+    let _ = std::fs::remove_file(&file);
 }
 
 #[test]
 fn run_plain_tagged_objects_keep_identity_equality() {
     // A plain object that happens to have a `tag` key is *not* an enum: it
-    // must compare by identity on both paths (regression: the JS structural
-    // `__eq` helper used to treat any `{tag}` object as an enum and report
-    // two distinct literals as equal).
+    // compares by identity, while enum values still compare structurally.
     let src = r#"
         fn main() {
             let a = { tag: "Ok", value: 1 }
@@ -1196,34 +787,22 @@ fn run_plain_tagged_objects_keep_identity_equality() {
             print(str(e1 == e2))
         }
     "#;
-    for native in [false, true] {
-        let file = temp_file("tagobj.xulo", src);
-        let mut cmd = Command::new(BIN);
-        cmd.arg("run");
-        if !native {
-            cmd.arg("--js");
-        }
-        let out = cmd.arg(&file).output().unwrap();
-        assert!(
-            out.status.success(),
-            "native={native} stderr: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        assert_eq!(
-            String::from_utf8_lossy(&out.stdout),
-            "false\ntrue\n",
-            "native={native}"
-        );
-        let _ = std::fs::remove_file(&file);
-    }
+    let file = temp_file("tagobj.xulo", src);
+    let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "false\ntrue\n", "");
+    let _ = std::fs::remove_file(&file);
 }
 
 #[test]
 fn cross_module_trait_dispatch() {
     // The `impl` is declared in a library module; the dependent entry module
-    // imports the receiver type and dispatches `Shape::area` on it. Both the
-    // JS bundler and the native runtime must resolve the mangled impl function
-    // across module boundaries.
+    // imports the receiver type and dispatches `Shape::area` on it across
+    // module boundaries.
     let (dir, entry) = temp_dir(
         &[
             (
@@ -1254,24 +833,13 @@ fn cross_module_trait_dispatch() {
         ],
         "main.xulo",
     );
-    for native in [false, true] {
-        let mut cmd = Command::new(BIN);
-        cmd.arg("run");
-        if !native {
-            cmd.arg("--js");
-        }
-        let out = cmd.arg(&entry).output().unwrap();
-        assert!(
-            out.status.success(),
-            "native={native} stderr: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        assert_eq!(
-            String::from_utf8_lossy(&out.stdout),
-            "area=12\n",
-            "native={native}"
-        );
-    }
+    let out = Command::new(BIN).arg("run").arg(&entry).output().unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "area=12\n", "");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1583,11 +1151,7 @@ fn run_component_state_and_effect() {
         }
         "#,
     );
-    let out = Command::new(BIN)
-        .args(["run", "--js"])
-        .arg(&file)
-        .output()
-        .unwrap();
+    let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
     assert!(
         out.status.success(),
         "stderr: {}",
@@ -1595,197 +1159,6 @@ fn run_component_state_and_effect() {
     );
     assert_eq!(String::from_utf8_lossy(&out.stdout), "mounted\ncount=1\n");
     let _ = std::fs::remove_file(&file);
-}
-
-#[test]
-fn build_component_with_external_ui() {
-    let file = temp_file(
-        "ui.xulo",
-        r#"
-        import { Screen, VStack, Text } from "@xulo/ui"
-
-        fn main(): View {
-            @State let name: string = "Xulo"
-            Screen {
-                VStack(spacing: 16) {
-                    Text("Name: " + name)
-                }
-            }
-        }
-        "#,
-    );
-    let out = temp_file("ui.mjs", "");
-    let result = Command::new(BIN)
-        .args(["build", file.to_str().unwrap(), "-o", out.to_str().unwrap()])
-        .output()
-        .unwrap();
-    assert!(
-        result.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&result.stderr)
-    );
-
-    let js = std::fs::read_to_string(&out).unwrap();
-    assert!(js.contains("import { Screen, VStack, Text } from \"@xulo/ui\";"));
-    assert!(js.contains("__component"));
-    assert!(js.contains("children: ["));
-    assert!(js.contains("name.get()"));
-    assert!(js.contains("__xulo_mount"));
-    let _ = std::fs::remove_file(&file);
-    let _ = std::fs::remove_file(&out);
-}
-
-#[test]
-fn run_component_with_forwarded_children() {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static N: AtomicU64 = AtomicU64::new(0);
-    let dir = std::env::temp_dir().join(format!(
-        "xulo_ui_{}_{}",
-        std::process::id(),
-        N.fetch_add(1, Ordering::Relaxed)
-    ));
-    let pkg = dir.join("node_modules/@xulo/ui");
-    std::fs::create_dir_all(&pkg).unwrap();
-    let shim = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../examples/node_modules/@xulo/ui");
-    std::fs::copy(shim.join("package.json"), pkg.join("package.json")).unwrap();
-    std::fs::copy(shim.join("index.js"), pkg.join("index.js")).unwrap();
-
-    let entry = dir.join("app.xulo");
-    std::fs::write(
-        &entry,
-        r#"
-        import { Screen, VStack, Text } from "@xulo/ui"
-
-        fn Card(title: string, children: list<View>): View {
-            VStack {
-                Text(title, weight: "bold")
-                children
-            }
-        }
-
-        fn main(): View {
-            @State let name: string = "Xulo"
-            Screen {
-                Card(title: "Profile") {
-                    Text("Hello, " + name)
-                }
-            }
-        }
-        "#,
-    )
-    .unwrap();
-
-    let out = dir.join("app.mjs");
-    let result = Command::new(BIN)
-        .args([
-            "build",
-            entry.to_str().unwrap(),
-            "-o",
-            out.to_str().unwrap(),
-        ])
-        .output()
-        .unwrap();
-    assert!(
-        result.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&result.stderr)
-    );
-
-    let node = Command::new("node").arg(&out).output().unwrap();
-    assert!(
-        node.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&node.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&node.stdout).to_string();
-    // The forwarded slot renders both the custom component's own text title
-    // and the caller-supplied child (`children` is flattened).
-    assert!(stdout.contains("weight: bold"), "stdout: {stdout}");
-    assert!(stdout.contains("Hello, Xulo"), "stdout: {stdout}");
-    assert!(stdout.contains("<Screen>"), "stdout: {stdout}");
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
-fn run_component_missing_positional_arg_keeps_children() {
-    // Omitting a positional arg must not shift the routed `children` into the
-    // missing slot (regression: `Panel { Text("child") }` used to compile to
-    // `Panel([Text(...)])`, binding the children array to `title` and losing
-    // the whole subtree). Missing slots become `undefined`, so a JS default
-    // parameter fills in and `children` keeps its slot.
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static N: AtomicU64 = AtomicU64::new(0);
-    // Distinct prefix from `run_component_with_forwarded_children` so parallel
-    // test runs never collide on the same temp directory.
-    let dir = std::env::temp_dir().join(format!(
-        "xulo_ui_missing_{}_{}",
-        std::process::id(),
-        N.fetch_add(1, Ordering::Relaxed)
-    ));
-    let pkg = dir.join("node_modules/@xulo/ui");
-    std::fs::create_dir_all(&pkg).unwrap();
-    let shim = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../examples/node_modules/@xulo/ui");
-    std::fs::copy(shim.join("package.json"), pkg.join("package.json")).unwrap();
-    std::fs::copy(shim.join("index.js"), pkg.join("index.js")).unwrap();
-
-    let entry = dir.join("app.xulo");
-    std::fs::write(
-        &entry,
-        r#"
-        import { Screen, VStack, Text } from "@xulo/ui"
-
-        fn Panel(title: string = "default", children: list<View>): View {
-            VStack {
-                Text(title)
-                children
-            }
-        }
-
-        fn main(): View {
-            Screen {
-                Panel { Text("child") }
-            }
-        }
-        "#,
-    )
-    .unwrap();
-
-    let out = dir.join("app.mjs");
-    let result = Command::new(BIN)
-        .args([
-            "build",
-            entry.to_str().unwrap(),
-            "-o",
-            out.to_str().unwrap(),
-        ])
-        .output()
-        .unwrap();
-    assert!(
-        result.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&result.stderr)
-    );
-
-    // The emitted call keeps the slot structure: `undefined` for the omitted
-    // `title`, the children array in the `children` slot.
-    let js = std::fs::read_to_string(&out).unwrap();
-    assert!(
-        js.contains("Panel(undefined, [Text({ \"0\": \"child\", children: [] })])"),
-        "js:\n{js}"
-    );
-
-    let node = Command::new("node").arg(&out).output().unwrap();
-    assert!(
-        node.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&node.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&node.stdout).to_string();
-    assert!(stdout.contains("0: default"), "stdout: {stdout}");
-    assert!(stdout.contains("0: child"), "stdout: {stdout}");
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -1809,11 +1182,7 @@ fn run_component_loop_var_shadowing() {
         }
         "#,
     );
-    let out = Command::new(BIN)
-        .args(["run", "--js"])
-        .arg(&file)
-        .output()
-        .unwrap();
+    let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
     assert!(
         out.status.success(),
         "stderr: {}",
@@ -2068,17 +1437,13 @@ fn run_optional_chaining_deep_on_null() {
         }
         "#,
     );
-    let out = Command::new(BIN)
-        .args(["run", "--js"])
-        .arg(&file)
-        .output()
-        .unwrap();
+    let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
     assert!(
         out.status.success(),
         "stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&out.stdout), "undefined\ntrue\n");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "null\ntrue\n");
     let _ = std::fs::remove_file(&file);
 }
 
@@ -2096,11 +1461,7 @@ fn run_multi_payload_enum_value_shape() {
         }
         "#,
     );
-    let out = Command::new(BIN)
-        .args(["run", "--js"])
-        .arg(&file)
-        .output()
-        .unwrap();
+    let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
     assert!(
         out.status.success(),
         "stderr: {}",
@@ -2108,7 +1469,7 @@ fn run_multi_payload_enum_value_shape() {
     );
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
-        "{ tag: 'A', value: [ 1, 'x' ] }\na1x\n"
+        "Pair.A([1, x])\na1x\n"
     );
     let _ = std::fs::remove_file(&file);
 }
@@ -2122,7 +1483,7 @@ fn run_multi_payload_enum_value_shape() {
 fn native_run(files: &[(&str, &str)], entry: &str) -> (bool, String, String) {
     let (dir, entry_path) = temp_dir(files, entry);
     let out = Command::new(BIN)
-        .args(["run", "--native", entry_path.to_str().unwrap()])
+        .args(["run", entry_path.to_str().unwrap()])
         .output()
         .unwrap();
     let result = (
@@ -2265,37 +1626,30 @@ fn native_run_imports_exported_enum_value() {
 
 #[test]
 fn pub_bare_enum_name_imports_on_both_paths() {
-    // `pub use { Color }` (the bare-names form) must make the enum importable
-    // on both runtimes, like `pub enum Color` does.
-    for native in [false, true] {
-        let (dir, entry) = temp_dir(
-            &[
-                ("lib.xulo", "enum Color { Red Blue }\npub use { Color }\n"),
-                (
-                    "main.xulo",
-                    "import { Color } from \"./lib\"\nfn main() { print(str(Color::Red)) print(Color.Blue) }\n",
-                ),
-            ],
-            "main.xulo",
-        );
-        let mut cmd = Command::new(BIN);
-        cmd.arg("run");
-        if !native {
-            cmd.arg("--js");
-        }
-        let out = cmd.arg(&entry).output().unwrap();
-        assert!(
-            out.status.success(),
-            "native={native} stderr: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        assert_eq!(
-            String::from_utf8_lossy(&out.stdout),
-            "Color.Red\nColor.Blue\n",
-            "native={native}"
-        );
-        let _ = std::fs::remove_dir_all(&dir);
-    }
+    // `pub use { Color }` (the bare-names form) makes the enum importable,
+    // like `pub enum Color` does.
+    let (dir, entry) = temp_dir(
+        &[
+            ("lib.xulo", "enum Color { Red Blue }\npub use { Color }\n"),
+            (
+                "main.xulo",
+                "import { Color } from \"./lib\"\nfn main() { print(str(Color::Red)) print(Color.Blue) }\n",
+            ),
+        ],
+        "main.xulo",
+    );
+    let out = Command::new(BIN).arg("run").arg(&entry).output().unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "Color.Red\nColor.Blue\n",
+        ""
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -2444,4 +1798,107 @@ fn native_run_ui_component_headless() {
     );
     assert!(ok, "stderr: {stderr}");
     assert_eq!(stdout, "mounted\n");
+}
+
+#[test]
+fn run_template_interpolation() {
+    let file = temp_file(
+        "interp.xulo",
+        r#"
+        fn main() {
+            let name = "xulo"
+            print(`Hello, ${name}!`)
+            print(`2 + 3 = ${2 + 3}`)
+            let b = true
+            print(`bool: ${b}`)
+            let xs = [1, 2]
+            print(`list: ${xs}`)
+        }
+        "#,
+    );
+    let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "Hello, xulo!\n2 + 3 = 5\nbool: true\nlist: [1, 2]\n"
+    );
+    let _ = std::fs::remove_file(&file);
+}
+
+#[test]
+fn run_closed_range_loop_with_interpolation() {
+    // The motivating example: a `for` loop over a closed range whose body
+    // prints a JS-style template literal.
+    let file = temp_file(
+        "times.xulo",
+        "fn main() { for i in 1...5 { print(`${i} times 5 is ${i * 5}`) } }",
+    );
+    let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "1 times 5 is 5\n2 times 5 is 10\n3 times 5 is 15\n4 times 5 is 20\n5 times 5 is 25\n"
+    );
+    let _ = std::fs::remove_file(&file);
+}
+
+#[test]
+fn run_template_nested_and_escaped() {
+    let file = temp_file(
+        "interp_nested.xulo",
+        "fn main() { let c = 1 print(`a${\n`b${c}`\n}${ {d: 1}.d }\\${not interp}`) }",
+    );
+    let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "ab11${not interp}\n");
+    let _ = std::fs::remove_file(&file);
+}
+
+#[test]
+fn run_template_multiline() {
+    let file = temp_file("multiline.xulo", "fn main() { print(`line1\nline2`) }");
+    let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "line1\nline2\n");
+    let _ = std::fs::remove_file(&file);
+}
+
+#[test]
+fn run_template_stringify_object() {
+    let file = temp_file(
+        "interp_obj.xulo",
+        r#"
+        fn main() {
+            let o = { a: 1, b: "two" }
+            print(`object: ${o}`)
+        }
+        "#,
+    );
+    let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "object: { a: 1, b: two }\n"
+    );
+    let _ = std::fs::remove_file(&file);
 }

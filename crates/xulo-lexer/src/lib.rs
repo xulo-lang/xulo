@@ -35,6 +35,10 @@ pub fn tokenize(source: &str) -> Result<Vec<LexedToken>, XuloError> {
         }
         let start = total - cursor.len();
         let first = cursor.chars().next();
+        if first == Some('`') {
+            lex_template(&mut cursor, total, &mut tokens)?;
+            continue;
+        }
         match lex_token(&mut cursor, total) {
             Ok(tok) => tokens.push(tok),
             Err(_) => {
@@ -273,6 +277,157 @@ fn consume_unicode_escape(input: &mut Input) -> Res<()> {
         return Err(backtrack(input));
     }
     Ok(())
+}
+
+/// Lex a backtick template literal (JS-style `` `text ${expr} text` ``).
+///
+/// Emits a fresh token stream: one `TChunk` per literal text run (interior raw
+/// slice, unescaped by the parser) and `InterpOpen`/`InterpClose` sentinels
+/// bracketing the re-lexed tokens of every `${expr}` section. Double- and
+/// single-quoted strings never interpolate; backtick text may span lines.
+fn lex_template(
+    input: &mut Input<'_>,
+    total: usize,
+    tokens: &mut Vec<LexedToken>,
+) -> Result<(), XuloError> {
+    let source = *input;
+    let base = total - source.len();
+    let mut pos = base + 1;
+    let mut chunk_start = base + 1;
+    let mut expr_start = 0usize;
+    let mut depth = 0usize;
+    let mut in_expr = false;
+
+    let rest = |pos: usize| &source[pos - base..];
+
+    loop {
+        let cur = rest(pos);
+        let Some(c) = cur.chars().next() else {
+            return Err(
+                XuloError::new(ErrorKind::Lex, "unterminated template literal").at(base..total),
+            );
+        };
+        if in_expr {
+            match c {
+                '{' => {
+                    depth += 1;
+                    pos += c.len_utf8();
+                }
+                '}' if depth == 0 => {
+                    let inner = &source[expr_start - base..pos - base];
+                    let lexed = tokenize(inner).map_err(|mut e| {
+                        if let Some(span) = &mut e.span {
+                            span.start += expr_start;
+                            span.end += expr_start;
+                        }
+                        e
+                    })?;
+                    for t in lexed {
+                        if t.kind == Token::EOF {
+                            continue;
+                        }
+                        tokens.push(LexedToken::new(
+                            t.kind,
+                            t.text,
+                            t.span.start + expr_start..t.span.end + expr_start,
+                        ));
+                    }
+                    tokens.push(LexedToken::new(Token::InterpClose, "}", pos..pos + 1));
+                    in_expr = false;
+                    chunk_start = pos + 1;
+                    pos += c.len_utf8();
+                }
+                '}' => {
+                    depth -= 1;
+                    pos += c.len_utf8();
+                }
+                // Nested strings / template literals inside the expression are
+                // opaque to the outer scan (braces inside them are their own).
+                '"' | '\'' | '`' => {
+                    pos += 1;
+                    loop {
+                        let cur2 = rest(pos);
+                        let Some(n) = cur2.chars().next() else {
+                            return Err(XuloError::new(
+                                ErrorKind::Lex,
+                                "unterminated template literal",
+                            )
+                            .at(base..total));
+                        };
+                        if n == '\\' {
+                            let Some(e) = cur2[1..].chars().next() else {
+                                return Err(XuloError::new(
+                                    ErrorKind::Lex,
+                                    "unterminated template literal",
+                                )
+                                .at(base..total));
+                            };
+                            pos += 1 + e.len_utf8();
+                            continue;
+                        }
+                        pos += n.len_utf8();
+                        if n == c {
+                            break;
+                        }
+                    }
+                }
+                _ => {
+                    pos += c.len_utf8();
+                }
+            }
+        } else {
+            match c {
+                '`' => {
+                    let text = &source[chunk_start - base..pos - base];
+                    tokens.push(LexedToken::new(Token::TChunk, text, chunk_start..pos));
+                    *input = rest(pos + 1);
+                    return Ok(());
+                }
+                '\\' => {
+                    let Some(e) = cur[1..].chars().next() else {
+                        return Err(XuloError::new(
+                            ErrorKind::Lex,
+                            "unterminated template literal",
+                        )
+                        .at(base..total));
+                    };
+                    match e {
+                        '`' | '\\' | '$' | 'n' | 't' | 'r' | '\'' | '"' => {
+                            pos += 1 + e.len_utf8();
+                        }
+                        'u' => {
+                            let mut inner: Input = &cur[2..];
+                            if consume_unicode_escape(&mut inner).is_err() {
+                                return Err(XuloError::new(
+                                    ErrorKind::Lex,
+                                    "invalid escape sequence",
+                                )
+                                .at(pos..pos + 2));
+                            }
+                            pos += 2 + (cur.len() - 2 - inner.len());
+                        }
+                        _ => {
+                            let bad = rest(pos);
+                            return Err(XuloError::new(ErrorKind::Lex, "invalid escape sequence")
+                                .at(pos..pos + bad.chars().next().map_or(1, |c| c.len_utf8())));
+                        }
+                    }
+                }
+                '$' if cur[1..].starts_with('{') => {
+                    let text = &source[chunk_start - base..pos - base];
+                    tokens.push(LexedToken::new(Token::TChunk, text, chunk_start..pos));
+                    tokens.push(LexedToken::new(Token::InterpOpen, "${", pos..pos + 2));
+                    in_expr = true;
+                    depth = 0;
+                    expr_start = pos + 2;
+                    pos += 2;
+                }
+                _ => {
+                    pos += c.len_utf8();
+                }
+            }
+        }
+    }
 }
 
 /// Manually match punctuation and operator symbols.

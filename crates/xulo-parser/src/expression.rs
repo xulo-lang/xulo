@@ -131,7 +131,7 @@ fn nullish(input: &mut In<'_>) -> Pr<Expression> {
 fn comparison(input: &mut In<'_>) -> Pr<Expression> {
     let original = *input;
     let mut lhs = additive(input)?;
-    // Comparison operators and the range operator share one flat precedence
+    // Comparison operators and the range operators share one flat precedence
     // level, so `a == b ..< c` and `a ..< b == c` parse symmetrically
     // (as `(a == b) ..< c` and `(a ..< b) == c`); both then fail the range
     // endpoint / comparison type checks rather than one being a parse error.
@@ -141,21 +141,35 @@ fn comparison(input: &mut In<'_>) -> Pr<Expression> {
             lhs = bin(original, lhs, op, rhs, input);
             continue;
         }
-        if opt_tk(input, Token::RangeOp) {
-            let end = additive(input)?;
-            lhs = range(original, lhs, end, input);
-            continue;
-        }
-        break;
+        // `a..<b` is a half-open range, `a...b` a closed range. In infix
+        // position (after a complete left operand) `...` always means a closed
+        // range; the spread `...expr` is only recognized at the *start* of a
+        // list/object element, so there is no ambiguity.
+        let end_inclusive = if opt_tk(input, Token::RangeOp) {
+            false
+        } else if opt_tk(input, Token::Ellipsis) {
+            true
+        } else {
+            break;
+        };
+        let end = additive(input)?;
+        lhs = range(original, lhs, end, end_inclusive, input);
     }
     Ok(lhs)
 }
 
-fn range(original: In<'_>, start: Expression, end: Expression, input: In<'_>) -> Expression {
+fn range(
+    original: In<'_>,
+    start: Expression,
+    end: Expression,
+    end_inclusive: bool,
+    input: In<'_>,
+) -> Expression {
     let span = consumed_span(original, input, start.span().start);
     Expression::Range(Box::new(RangeExpr {
         start: Box::new(start),
         end: Box::new(end),
+        end_inclusive,
         span,
     }))
 }
@@ -327,9 +341,9 @@ fn primary(input: &mut In<'_>) -> Pr<Expression> {
         }
         Some(Token::LBracket) => list_literal(input),
         Some(Token::LBrace) => object_literal(input),
-        Some(Token::String) | Some(Token::Number) | Some(Token::Boolean) | Some(Token::Null) => {
-            literal_value(input)
-        }
+        Some(Token::String) => string_primary(input),
+        Some(Token::TChunk) => template_string(input),
+        Some(Token::Number) | Some(Token::Boolean) | Some(Token::Null) => literal_value(input),
         Some(Token::LParen) => paren_expr(input),
         Some(Token::Dollar) => {
             let original = *input;
@@ -527,6 +541,125 @@ fn literal_value(input: &mut In<'_>) -> Pr<Expression> {
 
 fn string_value(input: &mut In<'_>) -> Pr<String> {
     verified_tk(input, Token::String).map(|t| decode_string(&t.text))
+}
+
+/// A `"..."` / `'...'` string literal. Double- and single-quoted strings never
+/// interpolate (JS-style templates live in backticks), so this is always a
+/// plain literal.
+fn string_primary(input: &mut In<'_>) -> Pr<Expression> {
+    let original = *input;
+    let span_start = input.first().map(|t| t.span.start).unwrap_or(0);
+    let text = string_value(input)?;
+    let span = consumed_span(original, input, span_start);
+    Ok(Expression::Literal {
+        value: Literal::String(text),
+        span,
+    })
+}
+
+/// A backtick template literal `` `text ${expr} text` `` (JS-style). Parser
+/// desugars each `${expr}` section into `str(expr)` appended onto the literal
+/// runs with `+`, using only pre-existing AST nodes so the semantic pass,
+/// runtime, and (untouched) JS codegen need no changes:
+/// `` `a${b}c` `` ⇒ `"a" + str(b) + "c"`.
+fn template_string(input: &mut In<'_>) -> Pr<Expression> {
+    let original = *input;
+    let span_start = input.first().map(|t| t.span.start).unwrap_or(0);
+
+    let first_tok = verified_tk(input, Token::TChunk)?;
+    let first_text = decode_template_chunk(&first_tok.text);
+    let mut acc = if first_text.is_empty() {
+        None
+    } else {
+        Some(Expression::Literal {
+            value: Literal::String(first_text),
+            span: first_tok.span.clone(),
+        })
+    };
+
+    while peek_is(input, Token::InterpOpen) {
+        let open = verified_tk(input, Token::InterpOpen)?;
+        let inner = expression(input)?;
+        let close = verified_tk(input, Token::InterpClose)?;
+        let tail_tok = verified_tk(input, Token::TChunk)?;
+        let tail_text = decode_template_chunk(&tail_tok.text);
+
+        let call = Expression::Call(Call {
+            callee: "str".to_string(),
+            callee_span: None,
+            object: None,
+            method: None,
+            optional: false,
+            arguments: vec![CallArg {
+                name: None,
+                value: inner,
+            }],
+            span: open.span.start..close.span.end,
+            trait_impl: None,
+        });
+        acc = concat_add(acc, call, span_start);
+
+        if !tail_text.is_empty() {
+            let lit = Expression::Literal {
+                value: Literal::String(tail_text),
+                span: tail_tok.span.clone(),
+            };
+            acc = concat_add(acc, lit, span_start);
+        }
+    }
+
+    let span = consumed_span(original, input, span_start);
+    Ok(acc.unwrap_or(Expression::Literal {
+        value: Literal::String(String::new()),
+        span,
+    }))
+}
+
+/// Left-associatively append `right` onto an accumulated `+` chain.
+fn concat_add(
+    left: Option<Expression>,
+    right: Expression,
+    span_start: usize,
+) -> Option<Expression> {
+    match left {
+        None => Some(right),
+        Some(l) => {
+            let span = span_start..right.span().end;
+            Some(Expression::BinaryOp(Box::new(BinaryOp {
+                left: l,
+                operator: BinaryOperator::Add,
+                right,
+                span,
+                list_concat: false,
+            })))
+        }
+    }
+}
+
+/// Decode the raw interior of a template chunk (already stripped of the
+/// surrounding backticks and `${`/`}` delimiters). Escape rules mirror
+/// `decode_string` plus `` \` `` and `\$`; raw newlines are preserved
+/// (JS-style multiline templates).
+fn decode_template_chunk(raw: &str) -> String {
+    let mut chars = raw.chars().peekable();
+    let mut out = String::new();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('n') => out.push('\n'),
+            Some('t') => out.push('\t'),
+            Some('r') => out.push('\r'),
+            Some('`') => out.push('`'),
+            Some('$') => out.push('$'),
+            Some('u') => out.push(decode_unicode_escape(&mut chars)),
+            Some(other) => out.push(other),
+            None => break,
+        }
+    }
+    out
 }
 
 /// `if <cond> { ... } else { ... }` — usable as an expression or a statement.

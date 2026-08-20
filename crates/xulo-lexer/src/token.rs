@@ -17,6 +17,14 @@ pub enum Token {
     Null,
     Number,
     String,
+    /// A literal text run inside a backtick template literal (`` `...` ``).
+    /// Templates are emitted as a run of `TChunk` tokens separated by
+    /// `InterpOpen`…`InterpClose` bracketing each `${expr}` section.
+    TChunk,
+    /// The `${` that opens an interpolated section of a template literal.
+    InterpOpen,
+    /// The `}` that closes an interpolated section of a template literal.
+    InterpClose,
     Boolean,
     Colon,
     DoubleColon,
@@ -236,6 +244,9 @@ impl Token {
             Token::Dollar => "`$`",
             Token::Number => "number",
             Token::String => "string",
+            Token::TChunk => "template text",
+            Token::InterpOpen => "`${`",
+            Token::InterpClose => "`}`",
             Token::Boolean => "boolean",
             Token::Colon => "`:`",
             Token::DoubleColon => "`::`",

@@ -1,19 +1,20 @@
-// `xulo-codegen` is deprecated and about to be folded into this crate; the
-// pipeline below still relies on it until then.
-#![allow(deprecated)]
-
+/// JavaScript generation has been retired: programs run on the native
+/// interpreter (`xulo_runtime`). This crate handles the front end
+/// (tokenize -> parse -> semantic check) and multi-file module loading for the
+/// native runner.
 pub mod module;
 
 use std::path::Path;
 
 use xulo_core::error::XuloError;
 
-/// Full pipeline: tokenize -> parse -> semantic check -> generate JavaScript.
-pub fn compile(source: &str, _file: &Path) -> Result<String, XuloError> {
-    let tokens = xulo_lexer::tokenize(source)?;
-    let mut ast = xulo_parser::parse_program(&tokens)?;
-    let result = xulo_semantic::analyze_with(&ast, &[], &[], &[])?;
-    xulo_semantic::apply_trait_dispatch(&mut ast, &result.trait_dispatch);
-    xulo_semantic::apply_list_concat(&mut ast, &result.list_concat);
-    xulo_codegen::generate(&ast)
+/// Front-end pipeline for a single file: tokenize -> parse -> semantic check,
+/// returning any non-fatal warnings raised during analysis. JS generation has
+/// been retired; executing programs is the native interpreter's job.
+pub fn compile(source: &str, file: &Path) -> Result<Vec<XuloError>, XuloError> {
+    let tokens = xulo_lexer::tokenize(source).map_err(|e| e.with_file(file.to_path_buf()))?;
+    let program =
+        xulo_parser::parse_program(&tokens).map_err(|e| e.with_file(file.to_path_buf()))?;
+    let result = xulo_semantic::analyze_with(&program, &[], &[], &[])?;
+    Ok(result.warnings)
 }

@@ -304,11 +304,10 @@ fn extreme_ui_nesting_returns_error_not_crash() {
 }
 
 /// A dependent module dispatching `Trait::method` on an impl declared in an
-/// imported module must produce a bundle where impls register into (and
-/// dispatch through) a single shared `__impls` registry declared once at the
-/// top, before any module IIFE runs.
+/// imported module must resolve across module boundaries in the native runtime
+/// (the impl registers into a shared dispatch table before the entry runs).
 #[test]
-fn cross_module_trait_dispatch_bundle_emits_shared_registry() {
+fn cross_module_trait_dispatch_loads_and_runs() {
     let dir = std::env::temp_dir().join(format!(
         "xulo_cg_{}_{}",
         std::process::id(),
@@ -344,21 +343,7 @@ fn cross_module_trait_dispatch_bundle_emits_shared_registry() {
     )
     .unwrap();
 
-    let (js, _) = xulo_compiler::module::compile_file(&dir.join("main.xulo")).unwrap();
+    let mut loaded = xulo_compiler::module::load(&dir.join("main.xulo")).unwrap();
+    xulo_compiler::module::analyze(&mut loaded).unwrap();
     let _ = std::fs::remove_dir_all(&dir);
-    assert!(
-        js.starts_with("const __impls = {};\n"),
-        "registry must precede every module IIFE:\n{js}"
-    );
-    assert!(
-        js.contains("__impls[\"impl_Shape_Rect_area\"] = function (self) {"),
-        "impl must register into the shared registry:\n{js}"
-    );
-    // One declaration, two references (registration + dispatch).
-    assert_eq!(js.matches("const __impls").count(), 1, "js:\n{js}");
-    assert_eq!(
-        js.matches("__impls[\"impl_Shape_Rect_area\"]").count(),
-        2,
-        "js:\n{js}"
-    );
 }

@@ -776,7 +776,6 @@ dependencies = [
 name = "xulo-compiler"
 version = "0.1.0"
 dependencies = [
- "xulo-codegen",
  "xulo-core",
  "xulo-lexer",
  "xulo-parser",

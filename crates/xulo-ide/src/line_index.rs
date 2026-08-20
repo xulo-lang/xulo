@@ -62,7 +62,7 @@ impl LineIndex {
         let line_end = line_starts.get(line + 1).copied().unwrap_or(source.len());
         let line_text = &source[line_start.min(source.len())..line_end.min(source.len())];
         let in_line = offset.min(source.len()).saturating_sub(line_start);
-        let character = utf16_len(&line_text[..in_line.min(line_text.len())]);
+        let character = utf16_len_before(line_text, in_line);
         Some(Pos {
             line: line as u32,
             character: character as u32,
@@ -100,7 +100,16 @@ impl LineIndex {
     }
 }
 
-/// Number of UTF-16 code units in a (char-boundary-delimited) byte slice.
-fn utf16_len(s: &str) -> usize {
-    s.chars().map(char::len_utf16).sum()
+/// UTF-16 units of `s` that end at or before byte `limit` (which need not be
+/// a char boundary): walking char-by-char avoids slicing in the middle of a
+/// multi-byte character (a panic on valid-but-non-boundary offsets).
+fn utf16_len_before(s: &str, limit: usize) -> usize {
+    let mut count = 0;
+    for (i, c) in s.char_indices() {
+        if i >= limit {
+            break;
+        }
+        count += c.len_utf16();
+    }
+    count
 }

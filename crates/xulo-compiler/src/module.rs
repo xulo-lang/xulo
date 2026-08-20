@@ -1,13 +1,12 @@
-//! Multi-file module loading and bundling.
+//! Multi-file module loading.
 //!
 //! `import` statements with a specifier that resolves to a local `.xulo` file
-//! (relative paths, or a bare name that exists next to the importer) are loaded,
-//! semantically analyzed in dependency order, and bundled into a single
-//! JavaScript file. Any other specifier is treated as an external package and
-//! emitted verbatim as an ES-module `import` at the top of the bundle.
-//!
-//! There is no runtime module loader: each bundled module becomes an IIFE that
-//! returns its exports object, and importers read bindings from that object.
+//! (relative paths, or a bare name that exists next to the importer) are loaded
+//! and semantically analyzed in dependency order, so the native interpreter can
+//! execute them module by module. Any other specifier is treated as an external
+//! package (with no native value; the CLI binds its names to `null`
+//! placeholders). There is no JavaScript backend anymore: programs run on the
+//! native Rust interpreter.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -46,15 +45,14 @@ pub struct LoadedModules {
     pub entry: usize,
 }
 
-/// Load, analyze in dependency order, and bundle the module graph reachable
-/// from `entry`. Returns the bundle and any non-fatal warnings raised during
-/// analysis (each as `(file, message)`).
-pub fn compile_file(entry: &Path) -> Result<(String, Vec<XuloError>), XuloError> {
+/// Load, analyze, and annotate the module graph reachable from `entry`.
+/// Returns the non-fatal warnings raised during analysis (each as
+/// `(file, message)`).
+pub fn compile_file(entry: &Path) -> Result<Vec<XuloError>, XuloError> {
     let mut loaded = load(entry)?;
     let warnings = analyze(&mut loaded)?;
     apply_trait_dispatch(&mut loaded);
-    let js = bundle(&loaded)?;
-    Ok((js, warnings))
+    Ok(warnings)
 }
 
 /// Resolve the transitive local imports of `entry`.
@@ -322,232 +320,4 @@ fn no_export(module: &dyn std::fmt::Display, name: &str) -> XuloError {
         ErrorKind::Semantic,
         format!("module `{module}` has no export named `{name}`"),
     )
-}
-
-/// Emit one JavaScript file for the whole bundle: external imports as ESM at
-/// the top, then each module as an IIFE returning its exports. The entry
-/// module's `main()` runs when the file is loaded.
-fn bundle(loaded: &LoadedModules) -> Result<String, XuloError> {
-    let mut out = String::new();
-    // Deduplicate external imports: multiple modules importing the same
-    // package must produce a single ESM `import` statement per binding kind —
-    // merging named specifiers and dropping *exact* duplicates, but keeping
-    // every distinct local binding. Historically this deduped by source name
-    // and dropped the later alias (`import { Text as T }` + `import { Text }`
-    // emitted only `Text as T`, leaving the second module's `Text` undefined
-    // at runtime), and mixed namespace/named forms dropped whole kinds.
-    // Every local name is bound at most once: a later import whose
-    // local name is already taken is skipped so the emitted JS never
-    // re-declares a binding.
-    let mut by_source: std::collections::BTreeMap<&str, Vec<&ImportStmt>> =
-        std::collections::BTreeMap::new();
-    for imp in &loaded.external_imports {
-        if imp.type_only {
-            continue;
-        }
-        by_source.entry(&imp.source).or_default().push(imp);
-    }
-    for (source, imports) in by_source {
-        let mut namespace_names: Vec<&str> = Vec::new();
-        let mut named: Vec<(&str, &str)> = Vec::new();
-        let mut has_bare = false;
-        for imp in &imports {
-            match &imp.spec {
-                ImportSpec::Bare => has_bare = true,
-                ImportSpec::Namespace(ns) => {
-                    if !namespace_names.contains(&ns.as_str()) {
-                        namespace_names.push(ns);
-                    }
-                }
-                ImportSpec::Named(names) => {
-                    for (name, alias) in names {
-                        let alias = alias.as_deref().unwrap_or(name);
-                        if !named.iter().any(|(n, a)| *n == name && *a == alias) {
-                            named.push((name, alias));
-                        }
-                    }
-                }
-            }
-        }
-        // Emit a bare side-effect import, then namespace imports, then one
-        // named import.
-        let mut bound: std::collections::HashSet<&str> = std::collections::HashSet::new();
-        if has_bare {
-            out.push_str(&format!("import {:?};\n", source));
-        }
-        for ns in &namespace_names {
-            if bound.insert(*ns) {
-                out.push_str(&format!("import * as {ns} from {:?};\n", source));
-            }
-        }
-        // A local name may be bound at most once. A *duplicate* (same source
-        // name, same alias) is fine — one binding serves every module that
-        // imported it identically. But two *different* bindings sharing a
-        // local name (e.g. module A `import { a as x }` and module B
-        // `import { b as x }`) cannot both be emitted — ESM forbids
-        // re-declaring `x` — and silently dropping the later one would make
-        // that module read the wrong binding. Fail loudly instead.
-        let mut emitted_named: Vec<(&str, &str)> = Vec::new();
-        for (name, alias) in named {
-            if emitted_named.contains(&(name, alias)) {
-                continue;
-            }
-            if !bound.insert(alias) {
-                return Err(XuloError::new(
-                    ErrorKind::Codegen,
-                    format!(
-                        "conflicting imports from `{source}`: the local name `{alias}` is already bound to a different binding; rename one of the imports"
-                    ),
-                ));
-            }
-            emitted_named.push((name, alias));
-        }
-        if !emitted_named.is_empty() {
-            let parts = emitted_named
-                .iter()
-                .map(|(name, alias)| {
-                    if *name == *alias {
-                        (*name).to_string()
-                    } else {
-                        format!("{name} as {alias}")
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join(", ");
-            out.push_str(&format!("import {{ {parts} }} from {:?};\n", source));
-        }
-    }
-    out.push('\n');
-
-    let entry = loaded.entry;
-    // Shared runtime preambles: the reactive runtime, `range()`, and the
-    // `__eq`/enum-marker block must be declared once at the top of the bundle,
-    // not inside every module IIFE.
-    let mut used_reactive = false;
-    let mut used_range = false;
-    let mut used_impls = false;
-    let mut used_eq = false;
-    let mut used_enum = false;
-    for (idx, module) in loaded.modules.iter().enumerate() {
-        let mut cg = xulo_codegen::javascript::Javascript::new();
-        // Imported functions may be called with named arguments.
-        for binding in &module.imports {
-            if binding.type_only {
-                continue;
-            }
-            let target = &loaded.modules[binding.target];
-            let analysis = target.analysis.as_ref().expect("analyzed");
-            if let ImportSpec::Named(names) = &binding.spec {
-                for (name, alias) in names {
-                    let local = alias.clone().unwrap_or_else(|| name.clone());
-                    if let Some((_, sym)) =
-                        analysis.exported_symbols.iter().find(|(n, _)| n == name)
-                        && let SymbolKind::Function(_, params, _, _) = &sym.kind
-                    {
-                        cg.register_fn_params(
-                            local.clone(),
-                            params.iter().map(|p| p.name.clone()).collect(),
-                        );
-                    }
-                }
-            }
-        }
-
-        out.push_str(&format!("const __mod{idx} = (() => {{\n"));
-        // One destructuring per target module, so the same name is never
-        // bound twice (`import { Color }` + `import type { Color }`) and a
-        // type-only import of an enum still gets its runtime value (so
-        // `Color::Red` works in value position).
-        let mut bound: std::collections::HashSet<String> = std::collections::HashSet::new();
-        let mut per_target: std::collections::HashMap<usize, Vec<String>> =
-            std::collections::HashMap::new();
-        for binding in &module.imports {
-            let target = &loaded.modules[binding.target];
-            let analysis = target.analysis.as_ref().expect("analyzed");
-            let is_runtime_value =
-                |name: &str| analysis.exported_symbols.iter().any(|(n, _)| n == name);
-            match &binding.spec {
-                ImportSpec::Bare => {}
-                ImportSpec::Namespace(ns) => {
-                    if !binding.type_only && !bound.contains(ns) {
-                        out.push_str(&format!("    const {ns} = __mod{};\n", binding.target));
-                        bound.insert(ns.clone());
-                    }
-                }
-                ImportSpec::Named(names) => {
-                    let entries = per_target.entry(binding.target).or_default();
-                    for (name, alias) in names {
-                        let local = alias.clone().unwrap_or_else(|| name.clone());
-                        if binding.type_only {
-                            // Only enums/types with a runtime value survive.
-                            if !is_runtime_value(name) || bound.contains(&local) {
-                                continue;
-                            }
-                        } else if bound.contains(&local) {
-                            continue;
-                        }
-                        bound.insert(local.clone());
-                        entries.push(match alias {
-                            Some(a) => format!("{name}: {a}"),
-                            None => name.clone(),
-                        });
-                    }
-                }
-            }
-        }
-        let mut targets: Vec<usize> = per_target.keys().copied().collect();
-        targets.sort_unstable();
-        for target in targets {
-            let names = per_target.get(&target).expect("key").join(", ");
-            out.push_str(&format!("    const {{ {names} }} = __mod{target};\n"));
-        }
-        cg.emit_module_body(&module.program)?;
-        let (reactive, range, eq, enum_marker) = cg.runtime_needs();
-        used_reactive |= reactive;
-        used_range |= range;
-        used_impls |= cg.needs_impls();
-        used_eq |= eq;
-        used_enum |= enum_marker;
-        out.push_str(&cg.finish_without_runtime());
-        if idx == entry && module.has_main {
-            if xulo_codegen::javascript::main_returns_component(&module.program) {
-                out.push_str("    const __xulo_main = main();\n");
-                out.push_str(
-                    "    if (typeof __xulo_mount === \"function\") __xulo_mount(__xulo_main);\n",
-                );
-            } else if xulo_codegen::javascript::main_is_async(&module.program) {
-                out.push_str("    main().catch((e) => { console.error(e); if (typeof process !== \"undefined\") process.exitCode = 1; });\n");
-            } else {
-                out.push_str("    main();\n");
-            }
-        }
-        let analysis = module.analysis.as_ref().expect("analyzed");
-        let exports: Vec<String> = analysis
-            .exported_symbols
-            .iter()
-            .map(|(name, _)| format!("{name}: {name}"))
-            .collect();
-        let exports = if exports.is_empty() {
-            "{}".to_string()
-        } else {
-            format!("{{ {} }}", exports.join(", "))
-        };
-        out.push_str(&format!("    return {exports};\n}})();\n"));
-    }
-    if used_reactive || used_range || used_impls || used_eq || used_enum {
-        let mut preamble = String::new();
-        if used_impls {
-            preamble.push_str("const __impls = {};\n\n");
-        }
-        if used_reactive || used_range || used_eq || used_enum {
-            preamble.push_str(&xulo_codegen::javascript::shared_preamble((
-                used_reactive,
-                used_range,
-                used_eq,
-                used_enum,
-            )));
-        }
-        out.insert_str(0, &preamble);
-    }
-    Ok(out)
 }

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode, Stdio};
+use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 
@@ -15,7 +15,7 @@ use xulo_runtime::value::Value;
 #[command(
     name = "xulo",
     version,
-    about = "Xulo: compile and run .xulo files via the native Rust interpreter (default) or through JavaScript + Node"
+    about = "Xulo: check and run .xulo files via the native Rust interpreter"
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -24,25 +24,8 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Compile and run a .xulo file in the native Rust interpreter (the
-    /// default); --js compiles to JavaScript and runs it with node
-    Run {
-        file: PathBuf,
-        /// Compile to JavaScript and run via node instead of the native interpreter
-        #[arg(long, conflicts_with = "native")]
-        js: bool,
-        /// Run in the native Rust interpreter (the default) — kept for backward
-        /// compatibility with scripts and tests written before the default flipped
-        #[arg(long, hide = true, conflicts_with = "js")]
-        native: bool,
-    },
-    /// Compile a .xulo file to a JavaScript file
-    Build {
-        file: PathBuf,
-        /// Output .js path (defaults to the input stem + .js in the current dir)
-        #[arg(short, long)]
-        out: Option<PathBuf>,
-    },
+    /// Compile and run a .xulo file in the native Rust interpreter
+    Run { file: PathBuf },
     /// Only run lexical + syntax + semantic checks
     Check { file: PathBuf },
     /// Format a .xulo file in place (comments are not preserved)
@@ -62,61 +45,17 @@ pub fn run() -> ExitCode {
 
 fn run_command(command: Commands) -> ExitCode {
     match command {
-        Commands::Run { file, native, js } => run_file(&file, js, native),
-        Commands::Build { file, out } => build_file(&file, out),
+        Commands::Run { file } => native_run(&file),
         Commands::Check { file } => check_file(&file),
         Commands::Fmt { file } => fmt_file(&file),
         Commands::Repl => repl(),
     }
 }
 
-/// Execute a `.xulo` file. The native Rust interpreter is the default; only
-/// `--js` (and not the deprecated `--native`) routes through the node path.
-fn run_file(file: &Path, js: bool, native: bool) -> ExitCode {
-    if js && !native {
-        return node_run(file);
-    }
-    native_run(file)
-}
-
-/// Compile a `.xulo` file to JavaScript and run the result under node.
-fn node_run(file: &Path) -> ExitCode {
-    let (js, warnings) = match compile_to_js(file) {
-        Ok(out) => out,
-        Err(code) => return code,
-    };
-    print_warnings(&warnings, None);
-
-    // Write the temporary module next to the source so ESM bare specifiers
-    // (e.g. `@xulo/ui`) resolve against node_modules walking up from there.
-    let tmp = temp_js_path(file.parent());
-    if let Err(e) = write_js(&tmp, &js) {
-        eprintln!("{e}");
-        return ExitCode::from(1);
-    }
-
-    let status = Command::new("node")
-        .arg(&tmp)
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status();
-
-    let _ = std::fs::remove_file(&tmp);
-
-    match status {
-        Ok(output) => ExitCode::from(output.code().unwrap_or(1) as u8),
-        Err(e) => {
-            eprintln!("failed to run node: {e}");
-            ExitCode::from(1)
-        }
-    }
-}
-
-/// Run a `.xulo` file natively: lex -> parse -> semantic check -> the Rust
-/// tree-walking interpreter (no Node.js). Local imports are loaded, analyzed in
-/// dependency order, and executed module by module; external (non-`type`-only)
-/// imports are rejected.
+/// Run a `.xulo` file: lex -> parse -> semantic check -> the Rust
+/// tree-walking interpreter. Local imports are loaded, analyzed in dependency
+/// order, and executed module by module; external (non-`type`-only) imports
+/// bind their names to `null` placeholders.
 fn native_run(file: &Path) -> ExitCode {
     let mut loaded = match xulo_compiler::module::load(file) {
         Ok(l) => l,
@@ -255,28 +194,6 @@ fn resolve_import(
     Ok(out)
 }
 
-fn build_file(file: &Path, out: Option<PathBuf>) -> ExitCode {
-    let (js, warnings) = match compile_to_js(file) {
-        Ok(out) => out,
-        Err(code) => return code,
-    };
-    print_warnings(&warnings, None);
-    // An ESM `import` at the top of the bundle requires a `.mjs` extension
-    // (or a `"type": "module"` package.json) to run under Node.
-    let has_external_imports = js.lines().any(|l| l.starts_with("import "));
-    let out = out.unwrap_or_else(|| {
-        let stem = file.file_stem().map(|s| s.to_string_lossy().into_owned());
-        let ext = if has_external_imports { "mjs" } else { "js" };
-        PathBuf::from(format!("{}.{ext}", stem.unwrap_or_else(|| "out".into())))
-    });
-    if let Err(e) = write_js(&out, &js) {
-        eprintln!("{e}");
-        return ExitCode::from(1);
-    }
-    println!("wrote {}", out.display());
-    ExitCode::SUCCESS
-}
-
 fn fmt_file(file: &Path) -> ExitCode {
     let source = match std::fs::read_to_string(file) {
         Ok(s) => s,
@@ -294,7 +211,7 @@ fn fmt_file(file: &Path) -> ExitCode {
         }
     };
     if formatted != source {
-        match write_js(file, &formatted) {
+        match write_file(file, &formatted) {
             Ok(()) => {}
             Err(e) => {
                 eprintln!("{e}");
@@ -307,8 +224,17 @@ fn fmt_file(file: &Path) -> ExitCode {
 }
 
 fn check_file(file: &Path) -> ExitCode {
-    match xulo_compiler::module::compile_file(file) {
-        Ok((_, warnings)) => {
+    let mut loaded = match xulo_compiler::module::load(file) {
+        Ok(l) => l,
+        Err(err) => {
+            let src_file = err.file.clone().unwrap_or_else(|| file.to_path_buf());
+            let source = std::fs::read_to_string(&src_file).unwrap_or_default();
+            print_compile_error(&err, &source, &src_file);
+            return ExitCode::from(1);
+        }
+    };
+    match xulo_compiler::module::analyze(&mut loaded) {
+        Ok(warnings) => {
             print_warnings(&warnings, None);
             println!("no errors");
             ExitCode::SUCCESS
@@ -761,18 +687,6 @@ fn unbalanced(src: &str) -> bool {
     in_str.is_some() || !stack.is_empty()
 }
 
-fn compile_to_js(file: &Path) -> Result<(String, Vec<XuloError>), ExitCode> {
-    match xulo_compiler::module::compile_file(file) {
-        Ok((js, warnings)) => Ok((js, warnings)),
-        Err(err) => {
-            let src_file = err.file.clone().unwrap_or_else(|| file.to_path_buf());
-            let source = std::fs::read_to_string(&src_file).unwrap_or_default();
-            print_compile_error(&err, &source, &src_file);
-            Err(ExitCode::from(1))
-        }
-    }
-}
-
 fn print_warnings(warnings: &[XuloError], fallback_source: Option<&str>) {
     for w in warnings {
         let source = w
@@ -789,24 +703,9 @@ fn print_compile_error(err: &XuloError, source: &str, file: &Path) {
     eprintln!("{}", diagnostics::render(&err, Some(source)));
 }
 
-fn write_js(path: &Path, js: &str) -> Result<(), String> {
+fn write_file(path: &Path, content: &str) -> Result<(), String> {
     let mut f =
         std::fs::File::create(path).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
-    f.write_all(js.as_bytes())
+    f.write_all(content.as_bytes())
         .map_err(|e| format!("cannot write {}: {e}", path.display()))
-}
-
-/// A unique `.mjs` path. For `run`, place it in `src_dir` (the source's
-/// directory) so node can resolve bare package specifiers from there; the
-/// REPL has no source directory and falls back to the system temp dir.
-fn temp_js_path(src_dir: Option<&Path>) -> PathBuf {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let name = format!("xulo_{}_{}.mjs", std::process::id(), nanos);
-    match src_dir {
-        Some(dir) => dir.join(name),
-        None => std::env::temp_dir().join(name),
-    }
 }

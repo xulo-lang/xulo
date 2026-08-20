@@ -66,6 +66,49 @@ fn range_and_comparison_share_one_precedence_level() {
 }
 
 #[test]
+fn parses_closed_range_and_keeps_spread() {
+    use xulo_core::ast::{Expression, Statement};
+
+    // `a...b` parses as a *closed* range (end_inclusive)...
+    let p = parse("let x = a...b");
+    let Statement::Let(b) = &p.statements[0] else {
+        panic!();
+    };
+    match b.value.as_ref() {
+        Some(Expression::Range(r)) => {
+            assert!(r.end_inclusive, "`a...b` must be an inclusive range");
+        }
+        other => panic!("expected `a...b` range, got {other:?}"),
+    }
+    // ...while `a..<b` stays half-open.
+    let p = parse("let y = a..<b");
+    let Statement::Let(b) = &p.statements[0] else {
+        panic!();
+    };
+    match b.value.as_ref() {
+        Some(Expression::Range(r)) => {
+            assert!(!r.end_inclusive, "`a..<b` must stay half-open");
+        }
+        other => panic!("expected `a..<b` range, got {other:?}"),
+    }
+    // `[a, ...b]` is a list with a spread element, not a range over `b`.
+    let p = parse("let z = [a, ...b]");
+    let Statement::Let(b) = &p.statements[0] else {
+        panic!();
+    };
+    match b.value.as_ref() {
+        Some(Expression::Literal {
+            value: Literal::List(items),
+            ..
+        }) => {
+            assert_eq!(items.len(), 2);
+            assert!(matches!(items[1], Expression::Spread { .. }));
+        }
+        other => panic!("expected list with spread, got {other:?}"),
+    }
+}
+
+#[test]
 fn parses_if_else_if() {
     let p = parse("if a { 1 } else if b { 2 } else { 3 }");
     let Statement::Expr(es) = &p.statements[0] else {
@@ -1382,4 +1425,166 @@ fn memo_parses_without_initializer_but_semantic_rejects() {
     };
     assert!(binding.memo);
     assert!(binding.value.is_none());
+}
+
+#[test]
+fn plain_backtick_template_is_a_string_literal() {
+    let p = parse("let x = `abc`");
+    let Statement::Let(b) = &p.statements[0] else {
+        panic!();
+    };
+    assert_eq!(
+        b.value,
+        Some(Expression::Literal {
+            value: Literal::String("abc".into()),
+            span: 9..12,
+        })
+    );
+}
+
+#[test]
+fn template_interpolation_desugars_to_concat_of_str_calls() {
+    // `a${b}c` -> "a" + str(b) + "c"
+    let p = parse(r#"let x = `a${b}c`"#);
+    let Statement::Let(b) = &p.statements[0] else {
+        panic!();
+    };
+    match b.value.as_ref() {
+        Some(Expression::BinaryOp(outer)) => {
+            assert_eq!(outer.operator, BinaryOperator::Add);
+            // left: "a" + str(b)
+            match &outer.left {
+                Expression::BinaryOp(l) => {
+                    assert_eq!(l.operator, BinaryOperator::Add);
+                    assert_eq!(
+                        l.left,
+                        Expression::Literal {
+                            value: Literal::String("a".into()),
+                            span: 9..10,
+                        }
+                    );
+                    assert!(
+                        matches!(&l.right, Expression::Call(c)
+                        if c.callee == "str" && c.arguments.len() == 1
+                           && matches!(&c.arguments[0].value, Expression::Identifier { name, .. } if name == "b")),
+                        "expected str(b), got {:?}",
+                        l.right
+                    );
+                }
+                other => panic!("expected nested add for `\"a\" + str(b)`, got {other:?}"),
+            }
+            // right: "c"
+            assert_eq!(
+                outer.right,
+                Expression::Literal {
+                    value: Literal::String("c".into()),
+                    span: 14..15,
+                }
+            );
+        }
+        other => panic!("expected add chain, got {other:?}"),
+    }
+}
+
+#[test]
+fn template_double_interpolation_desugars_left_associatively() {
+    let p = parse(r#"let x = `a${b}c${2}d`"#);
+    let Statement::Let(b) = &p.statements[0] else {
+        panic!();
+    };
+    match b.value.as_ref() {
+        Some(Expression::BinaryOp(first)) => {
+            // first: (("a" + str(b)) + "c") + str(2)
+            let left = match &first.left {
+                Expression::BinaryOp(inner) => &inner.right,
+                other => panic!("expected nested add, got {other:?}"),
+            };
+            assert!(matches!(left, Expression::Call(c) if c.callee == "str"));
+            // right: str(2) + "d" is missing? No: full is
+            // (("a" + str(b)) + "c") ... let's verify shape structurally instead.
+            assert_eq!(
+                first.right,
+                Expression::Literal {
+                    value: Literal::String("d".into()),
+                    span: 19..20,
+                }
+            );
+        }
+        other => panic!("expected add chain, got {other:?}"),
+    }
+}
+
+#[test]
+fn template_empty_text_segments_are_skipped() {
+    // `a${b}` -> "a" + str(b)  (trailing empty chunk dropped)
+    let p = parse(r#"let x = `a${b}`"#);
+    let Statement::Let(b) = &p.statements[0] else {
+        panic!();
+    };
+    match b.value.as_ref() {
+        Some(Expression::BinaryOp(op)) => {
+            assert_eq!(op.operator, BinaryOperator::Add);
+            assert!(matches!(&op.right, Expression::Call(c) if c.callee == "str"));
+        }
+        other => panic!("expected `a` + str(b), got {other:?}"),
+    }
+
+    // `${b}c` -> str(b) + "c"  (leading empty chunk dropped)
+    let p = parse(r#"let x = `${b}c`"#);
+    let Statement::Let(b) = &p.statements[0] else {
+        panic!();
+    };
+    match b.value.as_ref() {
+        Some(Expression::BinaryOp(op)) => {
+            assert!(matches!(&op.left, Expression::Call(c) if c.callee == "str"));
+            assert_eq!(
+                op.right,
+                Expression::Literal {
+                    value: Literal::String("c".into()),
+                    span: 13..14,
+                }
+            );
+        }
+        other => panic!("expected str(b) + \"c\", got {other:?}"),
+    }
+}
+
+#[test]
+fn template_escape_sequences_decode_in_chunks() {
+    let p = parse(r#"let x = `\`\${2}&\u{1F600}`"#);
+    let Statement::Let(b) = &p.statements[0] else {
+        panic!();
+    };
+    // The whole thing is one plain chunk (no interpolation after escapes), so
+    // it must decode into a single literal without desugaring.
+    match b.value.as_ref() {
+        Some(Expression::Literal {
+            value: Literal::String(s),
+            ..
+        }) => {
+            assert_eq!(s, "`${2}&😀");
+        }
+        other => panic!("expected one literal, got {other:?}"),
+    }
+}
+
+#[test]
+fn template_nested_expression_with_braces_parses() {
+    let p = parse(r#"let x = `v=${ {a:1}.a }`"#);
+    let Statement::Let(b) = &p.statements[0] else {
+        panic!();
+    };
+    match b.value.as_ref() {
+        Some(Expression::BinaryOp(op)) => {
+            assert_eq!(op.operator, BinaryOperator::Add);
+            assert!(
+                matches!(&op.right, Expression::Call(c)
+                if c.callee == "str"
+                   && matches!(&c.arguments[0].value, Expression::Member(m) if m.property == "a")),
+                "expected str of object member access, got {:?}",
+                op.right
+            );
+        }
+        other => panic!("expected add chain, got {other:?}"),
+    }
 }
