@@ -1,0 +1,28 @@
+// @Memo 值记忆化示例（原生解释器的计算优化）
+//   @Memo([deps]) let x = expr  依赖数组不变时复用缓存
+//   @Memo([]) / @Memo           空依赖 = 永久缓存，只算一次
+// 注意：JS 目标当前不生效（每次渲染重算），见 docs/xulo-syntax.md
+let expensiveCalls = 0
+
+fn slowSquare(n: number): number {
+    expensiveCalls = expensiveCalls + 1
+    return n * n
+}
+
+fn compute(n: number): number {
+    @Memo([n]) let cached = slowSquare(n)
+    return cached
+}
+
+fn main() {
+    print(compute(4))
+    print(compute(4)) // 依赖 [4] 未变 → 复用缓存，不重算
+    print(compute(5)) // 依赖变化 → 重算
+    print(compute(5)) // 依赖 [5] 未变 → 复用
+    print("slowSquare 实际调用次数: " + str(expensiveCalls))
+
+    @Memo([]) let once = slowSquare(7) // 空依赖：永久缓存
+    print(once)
+    print(once)
+    print("计入 once 后调用次数: " + str(expensiveCalls))
+}
