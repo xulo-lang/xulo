@@ -566,3 +566,11 @@ fn quoted_strings_do_not_interpolate() {
         assert_eq!(kinds, vec![String, EOF], "input {src:?}");
     }
 }
+
+#[test]
+fn println_is_a_keyword_token() {
+    let tokens = tokenize("println(x)").unwrap();
+    let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
+    assert_eq!(kinds, vec![Println, LParen, Ident, RParen, EOF]);
+    assert_eq!(tokens[0].text, "println");
+}

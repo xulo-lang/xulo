@@ -41,8 +41,11 @@ xulo check examples/fibonacci.xulo
 # 格式化（就地改写；注意：注释会被丢弃）
 xulo fmt file.xulo
 
-# 交互式 REPL（原生解释器；空行或 `run` 执行，`exit` 退出，Tab 补全，历史持久化到 ~/.xulo_history 或 $XULO_HISTORY）
+# 交互式 REPL（原生解释器；空行或 `run` 执行，`exit` 退出，Ctrl-D（Unix）/ Ctrl-C（Windows）退出，Tab 补全，历史持久化到 ~/.xulo_history 或 $XULO_HISTORY）
 xulo repl
+
+# 不带参数也默认进入 REPL
+xulo
 ```
 
 ### 示例
@@ -109,7 +112,7 @@ fn main() {
 - `repl` 为会话式 REPL：每轮用原生解释器重新编译并执行整个会话（无状态持久化到语言内部，靠重放保持跨条目变量），支持 `exit` / `clear`；行编辑走 rustyline（方向键历史、Tab 补全）
 - 调用函数必须在调用点之前已声明（不支持前向引用）
 - `$` 绑定（`{ value, onChange }`）：对 `@State` 信号，`onChange` 写回信号单元；对普通绑定为空操作
-- 原生运行时（`xulo run`）为 MVP：支持核心语言（字面量、变量、函数/闭包/递归、if/else、for/while、match、枚举、列表/对象、try/catch、`?.`/`??`/`...`、`print`/`str`）、`async`/`await`（协同调度）、本地 `import`/`pub` 导出（named/namespace）以及 UI。UI 程序无头运行：返回 `View` 的组件函数、`@State`/`@Store`/`@Effect`、组件块与 `$` 绑定均可用，组件树被构建并交给（不存在的）宿主运行时——`print` 副作用（如 `@Effect` 中）可观察；外部包（`@xulo/ui`）的导入名绑定为 `null` 占位符，`@Environment` 仍报「不支持」（无注入机制）。原生 `print` 对列表/对象的输出格式为 `[1, 2]` / `{ k: v }`。
+- 原生运行时（`xulo run`）为 MVP：支持核心语言（字面量、变量、函数/闭包/递归、if/else、for/while、match、枚举、列表/对象、try/catch、`?.`/`??`/`...`、`print`/`println`/`str`）、`async`/`await`（协同调度）、本地 `import`/`pub` 导出（named/namespace）以及 UI。UI 程序无头运行：返回 `View` 的组件函数、`@State`/`@Store`/`@Effect`、组件块与 `$` 绑定均可用，组件树被构建并交给（不存在的）宿主运行时——`print` 副作用（如 `@Effect` 中）可观察；外部包（`@xulo/ui`）的导入名绑定为 `null` 占位符，`@Environment` 仍报「不支持」（无注入机制）。原生 `print` 对列表/对象的输出格式为 `[1, 2]` / `{ k: v }`。
 - `++`/`--` 自增运算符不在语言中
 
 ## 测试

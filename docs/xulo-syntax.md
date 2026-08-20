@@ -332,6 +332,14 @@ let n = a > 1 ? "big" : "small"  // 三目
 print(!flag)                     // 逻辑非
 ```
 
+### 输出（print / println）
+
+```
+print("hi")            // 输出一行（换行结尾）
+println("hi")          // 与 print 等价（本语言输出按行组织，两者行为一致）
+print("a", 1, true)    // 多实参以空格拼接
+```
+
 ### 字符串拼接
 
 ```

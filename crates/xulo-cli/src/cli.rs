@@ -2,13 +2,14 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::rc::Rc;
 
 use clap::{Parser, Subcommand};
 
 use xulo_core::ast::ImportSpec;
 use xulo_core::diagnostics;
 use xulo_core::error::XuloError;
-use xulo_runtime::interpreter::{Interpreter, RunError};
+use xulo_runtime::interpreter::{Interpreter, NativeFn, RunError};
 use xulo_runtime::value::Value;
 
 #[derive(Parser)]
@@ -19,7 +20,7 @@ use xulo_runtime::value::Value;
 )]
 pub struct Cli {
     #[command(subcommand)]
-    pub command: Commands,
+    pub command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
@@ -40,7 +41,10 @@ pub fn run() -> ExitCode {
     let stderr_is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
     xulo_core::diagnostics::use_color(stderr_is_tty);
     let cli = Cli::parse();
-    run_command(cli.command)
+    match cli.command {
+        Some(command) => run_command(command),
+        None => repl(),
+    }
 }
 
 fn run_command(command: Commands) -> ExitCode {
@@ -329,14 +333,20 @@ fn repl() -> ExitCode {
         let _ = rl.load_history(path);
     }
     println!(
-        "xulo REPL — native interpreter, no Node; an empty line or `run` executes, `exit` quits"
+        "Welcome to xulo v{} (native interpreter, no Node).\n\
+         Type `exit` to quit; an empty line or `run` executes; Ctrl-D (Unix) / Ctrl-C twice (Windows) leave; Tab completes.",
+        env!("CARGO_PKG_VERSION")
     );
     let mut entry = String::new();
     let mut session = String::new();
+    // First Ctrl-C at an idle prompt hints how to leave; a second one quits
+    // (on Windows there is no Ctrl-D/Eof, so Ctrl-C is the way to exit).
+    let mut interrupted = false;
     loop {
         let prompt = if entry.is_empty() { "xulo> " } else { "...> " };
         match rl.readline(prompt) {
             Ok(line) => {
+                interrupted = false;
                 // Keep the previously-accumulated lines alive until the entry
                 // executes so history holds whole commands, not fragments.
                 let cmd = entry.is_empty();
@@ -348,8 +358,17 @@ fn repl() -> ExitCode {
                 }
             }
             Err(rustyline::error::ReadlineError::Interrupted) => {
-                // Ctrl-C cancels the pending partial entry, like a shell.
-                entry.clear();
+                // Ctrl-C cancels a pending partial entry, like a shell.
+                if !entry.is_empty() {
+                    entry.clear();
+                    interrupted = false;
+                    continue;
+                }
+                if interrupted {
+                    break;
+                }
+                interrupted = true;
+                println!("(To exit, press Ctrl+C again or Ctrl+D or type `exit`)");
             }
             Err(rustyline::error::ReadlineError::Eof) => break,
             Err(err) => {
@@ -399,9 +418,15 @@ fn repl_step(session: &mut String, entry: &mut String, line: &str) -> bool {
     if unbalanced(entry) {
         return true;
     }
-    if !trimmed.is_empty() && trimmed != "run" && !entry.trim_end().ends_with('}') {
+    let code = entry.trim_end();
+    let single_line = !code.contains('\n');
+    // A freshly-typed single line that leaves a construct open (dangling
+    // operator, `=`, `,`, `(`, backtick, ...) is a continuation: keep reading.
+    if single_line && !code.ends_with('}') && ends_with_continuation(code) {
         return true;
     }
+    // Everything else is complete now: execute immediately (a single-line
+    // statement/expression, a closing block, or a buffered multi-line entry).
     let pending = entry.clone();
     entry.clear();
     if !repl_run(session, &pending) {
@@ -410,6 +435,37 @@ fn repl_step(session: &mut String, entry: &mut String, line: &str) -> bool {
         entry.push_str(&pending);
     }
     true
+}
+
+/// Does `code` end in a way that suggests the next line continues it?
+/// Operators, `=`, `,`, `.`, `(`, `[`, `` ` `` and the like all defer the
+/// entry; a plain expression such as `4 > 5` does not.
+fn ends_with_continuation(code: &str) -> bool {
+    let last = code.chars().last();
+    matches!(
+        last,
+        Some(
+            '=' | '+'
+                | '-'
+                | '*'
+                | '/'
+                | '%'
+                | '&'
+                | '|'
+                | '^'
+                | '<'
+                | '>'
+                | ','
+                | '.'
+                | '('
+                | '['
+                | '{'
+                | ':'
+                | '\\'
+                | '`'
+                | '?'
+        )
+    )
 }
 
 /// Compile and run the REPL buffer natively (in-process interpreter, no Node).
@@ -428,7 +484,11 @@ fn repl_run(session: &mut String, pending: &str) -> bool {
     };
     let rollback = if echo {
         let prior = &session[..session.len().saturating_sub(pending.len())];
-        let echoed = format!("fn main() {{\n{}{}\n}}\n", prior, echo_wrap(pending));
+        let echoed = format!(
+            "fn main() {{\n{}{}\n}}\n",
+            prior,
+            echo_wrap(pending, repl_color())
+        );
         match repl_execute(&echoed, &echoed) {
             Ok(()) => false,
             // The entry was not a standalone expression; fall back to its
@@ -481,7 +541,14 @@ fn repl_execute(buffer: &str, render_source: &str) -> Result<(), bool> {
     let concat = analysis.list_concat.clone();
     xulo_semantic::apply_trait_dispatch(&mut ast, &dispatch);
     xulo_semantic::apply_list_concat(&mut ast, &concat);
-    match Interpreter::new().run(&ast) {
+    let interp = Interpreter::new();
+    if repl_color() {
+        interp
+            .root_env()
+            .borrow_mut()
+            .define("repl_echo", Value::Native(repl_echo_native()));
+    }
+    match interp.run(&ast) {
         Ok(out) => {
             if !out.is_empty() {
                 println!("{}", out.join("\n"));
@@ -626,9 +693,51 @@ fn valid_assign_target(chars: &[char]) -> bool {
     }
 }
 
-/// Wrap a single expression entry as `print(expr)` for value echo.
-fn echo_wrap(entry: &str) -> String {
-    format!("print({})", entry.trim())
+/// Should the REPL colorize echoed values? Node does this only when stdout is
+/// a terminal; honor that plus `NO_COLOR`.
+fn repl_color() -> bool {
+    // `CLICOLOR_FORCE` forces colors even when stdout is not a terminal (used
+    // by tests and scripts); otherwise colorize only on a real terminal,
+    // honoring `NO_COLOR`.
+    std::env::var_os("CLICOLOR_FORCE").is_some()
+        || (std::io::IsTerminal::is_terminal(&std::io::stdout())
+            && std::env::var_os("NO_COLOR").is_none())
+}
+
+/// The REPL's echo builtin: like `print`, but colorizes each argument by its
+/// runtime type (strings green, numbers/booleans yellow, `null` grey) so the
+/// interactive result looks like `node`'s `util.inspect` output.
+fn repl_echo_native() -> NativeFn {
+    let colors = repl_color();
+    Rc::new(
+        move |interp: &Interpreter, args: &[Value]| -> Result<Value, RunError> {
+            let parts: Vec<String> = args.iter().map(|v| colorize_value(v, colors)).collect();
+            interp.push_output(parts.join(" "));
+            Ok(Value::Null)
+        },
+    )
+}
+
+/// Colorize a value with the node-style palette when `colors` is enabled.
+fn colorize_value(v: &Value, colors: bool) -> String {
+    let plain = v.format();
+    if !colors {
+        return plain;
+    }
+    let code = match v {
+        Value::String(_) => "\x1b[32m",                     // green
+        Value::Number(_) | Value::Boolean(_) => "\x1b[33m", // yellow
+        Value::Null => "\x1b[1m\x1b[90m",                   // bold grey
+        _ => return plain,
+    };
+    format!("{code}{plain}\x1b[39m\x1b[22m")
+}
+
+/// Wrap a single expression entry as `print(expr)` for value echo, or as the
+/// colorizing `repl_echo(expr)` when the REPL echoes with colors.
+fn echo_wrap(entry: &str, colors: bool) -> String {
+    let name = if colors { "repl_echo" } else { "print" };
+    format!("{name}({})", entry.trim())
 }
 
 fn unbalanced(src: &str) -> bool {

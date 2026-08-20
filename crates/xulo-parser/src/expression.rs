@@ -326,7 +326,7 @@ fn primary(input: &mut In<'_>) -> Pr<Expression> {
         Some(Token::If) => if_expr(input).map(|e| Expression::If(Box::new(e))),
         Some(Token::Match) => match_expr(input).map(|e| Expression::Match(Box::new(e))),
         Some(Token::Fn) => fn_expr(input),
-        Some(Token::Ident) | Some(Token::Print) => ident_or_enum(input),
+        Some(Token::Ident) | Some(Token::Print) | Some(Token::Println) => ident_or_enum(input),
         // `self` (a reserved word everywhere else) is allowed as an expression
         // so `impl` method bodies can reference the receiver. Semantic scoping
         // restricts it to `impl` methods that declare a `self` parameter.

@@ -235,7 +235,7 @@ pub fn name(input: &mut In<'_>) -> Pr<String> {
         .cloned()
         .ok_or_else(|| ErrMode::Backtrack(PErr::unexpected(input)))?;
     match t.kind {
-        Token::Ident | Token::Print => {
+        Token::Ident | Token::Print | Token::Println => {
             *input = &input[1..];
             Ok(t.text)
         }

@@ -163,7 +163,7 @@ fn needs_space(
     if cur == Token::LParen
         && matches!(
             prev,
-            Some(Token::Ident) | Some(Token::Print) | Some(Token::Fn)
+            Some(Token::Ident) | Some(Token::Print) | Some(Token::Println) | Some(Token::Fn)
         )
     {
         return false;

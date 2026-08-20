@@ -136,8 +136,8 @@ fn fmt_formats_and_repl_runs() {
 #[test]
 fn repl_assignment_and_run() {
     // Assignments must compile as statements (not be mis-echoed as an
-    // expression, which previously produced a spurious error); `run` forces
-    // the buffered session to execute.
+    // expression, which previously produced a spurious error); single lines
+    // execute immediately, and `run` forces the whole session to re-run.
     let repl = Command::new(BIN)
         .arg("repl")
         .stdin(Stdio::piped())
@@ -147,15 +147,88 @@ fn repl_assignment_and_run() {
         .unwrap();
     let mut stdin = repl.stdin.as_ref().unwrap();
     stdin
-        .write_all(b"let x = 5\n\nx = x + 2\n\nprint(x)\n\nrun\nexit\n")
+        .write_all(b"let x = 5\nx = x + 2\nprint(x)\nrun\nexit\n")
         .unwrap();
     let out = repl.wait_with_output().unwrap();
     assert!(out.status.success());
     let text = String::from_utf8_lossy(&out.stdout);
-    // `print(x)` evaluates x to 7; re-running the session prints it again.
+    // `print(x)` evaluates x to 7; `run` re-runs the session and prints it again.
     assert!(
         text.matches('7').count() >= 2,
         "missing assignment result in:\n{text}"
+    );
+}
+
+#[test]
+fn repl_single_line_expression_echoes_immediately() {
+    // A complete single-line entry (here a comparison) must echo on Enter,
+    // not wait for a second Enter.
+    let repl = Command::new(BIN)
+        .arg("repl")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = repl.stdin.as_ref().unwrap();
+    stdin.write_all(b"4>5\nexit\n").unwrap();
+    let out = repl.wait_with_output().unwrap();
+    assert!(out.status.success());
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("false"), "missing echo in:\n{text}");
+}
+
+#[test]
+fn default_no_args_enters_repl() {
+    // `xulo` with no arguments (and no subcommand) starts the REPL.
+    let repl = Command::new(BIN)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = repl.stdin.as_ref().unwrap();
+    stdin.write_all(b"print(21 + 21)\n\nexit\n").unwrap();
+    let out = repl.wait_with_output().unwrap();
+    assert!(out.status.success());
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("Welcome to xulo"));
+    assert!(text.contains("42"));
+}
+
+#[test]
+fn repl_echo_colors_values() {
+    // Echoed values are colorized by runtime type like `node`'s `util.inspect`
+    // (strings green, numbers/booleans yellow, null grey). `CLICOLOR_FORCE`
+    // makes colors visible even though the test stdout is a pipe.
+    let repl = Command::new(BIN)
+        .arg("repl")
+        .env("CLICOLOR_FORCE", "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = repl.stdin.as_ref().unwrap();
+    stdin.write_all(b"4>5\n\"hi\"\nnull\n123\nexit\n").unwrap();
+    let out = repl.wait_with_output().unwrap();
+    assert!(out.status.success());
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        text.contains("\x1b[33mfalse\x1b[39m\x1b[22m"),
+        "missing yellow boolean in:\n{text}"
+    );
+    assert!(
+        text.contains("\x1b[32mhi\x1b[39m\x1b[22m"),
+        "missing green string in:\n{text}"
+    );
+    assert!(
+        text.contains("\x1b[1m\x1b[90mnull\x1b[39m\x1b[22m"),
+        "missing grey null in:\n{text}"
+    );
+    assert!(
+        text.contains("\x1b[33m123\x1b[39m\x1b[22m"),
+        "missing yellow number in:\n{text}"
     );
 }
 
@@ -1899,6 +1972,25 @@ fn run_template_stringify_object() {
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
         "object: { a: 1, b: two }\n"
+    );
+    let _ = std::fs::remove_file(&file);
+}
+
+#[test]
+fn run_println() {
+    let file = temp_file(
+        "println.xulo",
+        "fn main() { print(\"no marker\") println(\"one\") println(\"multi\", 1, true) println(`tpl ${2 + 3}`) }",
+    );
+    let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "no marker\none\nmulti 1 true\ntpl 5\n"
     );
     let _ = std::fs::remove_file(&file);
 }

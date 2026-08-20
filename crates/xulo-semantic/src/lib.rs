@@ -2606,7 +2606,7 @@ impl Analyzer {
             self.record_call_callee(call, &sym);
             return self.check_call_symbol(call, &sym);
         }
-        if call.callee == "print" {
+        if call.callee == "print" || call.callee == "println" || call.callee == "repl_echo" {
             for arg in &call.arguments {
                 self.check_expression(&arg.value)?;
             }

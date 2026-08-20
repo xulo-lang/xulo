@@ -302,6 +302,9 @@ impl Interpreter {
             .define("print", Value::Native(Rc::new(native_print)));
         global
             .borrow_mut()
+            .define("println", Value::Native(Rc::new(native_print)));
+        global
+            .borrow_mut()
             .define("str", Value::Native(Rc::new(native_str)));
         Interpreter {
             out: RefCell::new(Vec::new()),
@@ -437,6 +440,13 @@ impl Interpreter {
     /// Take the collected `print` lines so far (e.g. across executed modules).
     pub fn take_output(&self) -> Vec<String> {
         self.out.take()
+    }
+
+    /// Append a line to the interpreter's output buffer. Used by native
+    /// builtins that produce output other than through [`Interpreter::run`]
+    /// (e.g. the REPL's colorizing echo hook).
+    pub fn push_output(&self, line: String) {
+        self.out.borrow_mut().push(line);
     }
 
     /// The shared root environment backing all top-level bindings (`print`,
