@@ -1,0 +1,37 @@
+// 泛型：类型参数 <T>，调用处自动推断类型实参
+fn first<T>(list: list<T>): T {
+    list[0]
+}
+
+fn identity<T>(value: T): T {
+    value
+}
+
+fn twice<T>(value: T): list<T> {
+    [value, value]
+}
+
+fn combine<T>(a: list<T>, b: list<T>): list<T> {
+    a + b
+}
+
+fn prependAll<T>(prefix: T, list: list<T>): list<T> {
+    let out = []
+    for x in list {
+        out = out + [prefix, x]
+    }
+    out
+}
+
+fn main() {
+    let n = first([10, 20, 30]) // T = number
+    let s = first(["a", "b"])   // T = string
+    print(n)
+    print(s)
+    print(identity(true))
+    print(twice(7))
+    print(twice("hi"))
+    print(combine([1, 2], [3, 4]))
+    print(prependAll(0, [1, 2, 3]))
+    print(prependAll("p", ["a", "b"]))
+}

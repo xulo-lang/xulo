@@ -1,0 +1,35 @@
+// 列表 / 对象集合操作：下标、+ 拼接、展开、成员访问
+fn main() {
+    // 列表
+    let xs = [1, 2, 3]
+    print(xs[0])
+    print(xs[2])
+    print(xs + [4, 5])       // + 拼接列表
+
+    let head = [1, 2]
+    let tail = [3, 4]
+    let all = [...head, ...tail]   // 展开合并
+    let withExtra = [...all, 9]    // 展开 + 追加
+    print(all)
+    print(withExtra)
+
+    // 对象
+    let base = { a: 1 }
+    let copy = { ...base, b: 2 }  // 对象展开
+    print(copy.a)
+    print(copy.b)
+
+    let user = { name: "x", roles: ["admin", "dev"] }
+    print(user.name)
+    print(user.roles[1])
+    print(user.roles[0])
+
+    // 对象作为数据类型：带类型标注
+    let point = { x: 10, y: 20 }
+    print(point.x + point.y)
+
+    // 空列表 / 末尾追加
+    let acc = []
+    let out = acc + [1] + [2]
+    print(out)
+}

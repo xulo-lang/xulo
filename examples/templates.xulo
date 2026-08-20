@@ -1,0 +1,31 @@
+// 反引号模板字面量（JS 风格 ${...}）+ 字符串拼接 + 转义
+fn main() {
+    let name = "Xulo"
+    let n = 3
+
+    // 基础插值
+    print(`Hello, ${name}!`)
+    print(`${n}.${n} = ${n * n}`)
+
+    // 任意表达式插值
+    let user = { name: "alice", age: 30 }
+    print(`user: ${user.name}, age ${user.age}`)
+    print(`sum: ${1 + 2 + 3}`)
+    let xs = [1, 2, 3]
+    print(`first: ${xs[0]}`)
+
+    // 只读反引号字符串等价于 str() + 拼接（可混搭 number/boolean/null）
+    print(`count=${n} ok=${true} none=${null}`)
+    print("count=" + str(n) + " ok=" + str(true))
+
+    // 转义：`  \$  \${  多行
+    print(`backtick: \` dollar: \$ raw: \${not interp}`)
+    print(`line one
+line two`)
+
+    // 嵌套模板
+    print(`${`inner: ${n * 2}`}`)
+
+    // Unicode 转义（\uXXXX / \u{...}）
+    print(`wave \u{1F44B} \u2640\uFE0F`)
+}

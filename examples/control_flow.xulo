@@ -1,0 +1,48 @@
+// 控制流：区间（半开 ..< / 闭合 ...）、while、if 表达式、match、return
+fn sumTo(n: number): number {
+    let acc = 0
+    for i in 1...n {        // 闭合区间 1..n，含上界
+        acc = acc + i
+    }
+    acc
+}
+
+fn main() {
+    // 区间表达式本身求值为列表
+    print(0..<3)            // 半开：0,1,2
+    print(0...3)            // 闭合：0,1,2,3
+    print(5...7)
+
+    // for 遍历区间
+    for i in 0...4 {
+        print(`i=${i}`)
+    }
+    for ch in ["a", "b", "c"] {
+        print(`ch=${ch}`)
+    }
+
+    print(sumTo(100))
+
+    // while
+    let n = 1
+    while n * n < 50 {
+        n = n + 1
+    }
+    print(n)
+
+    // if 表达式（两分支类型一致）
+    let x = 7
+    let parity = if x > 5 { "big" } else { "small" }
+    print(parity)
+    let sign = if x > 0 { "pos" } else if x < 0 { "neg" } else { "zero" }
+    print(sign)
+
+    // match 匹配数字
+    print(match x { 0 => "zero" 1 => "one" _ => "many" })
+
+    // 条件/比较
+    print(3 == 3)
+    print(2 != 5)
+    print(1 < 2 and 2 < 3)
+    print(5 > 10 or 2 > 1)
+}

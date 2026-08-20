@@ -1,0 +1,52 @@
+// enum + match：简单枚举、带关联数据的枚举、泛型枚举、match 表达式
+enum Direction {
+    North
+    South
+    East
+    West
+}
+
+enum Shape {
+    Circle(number)                      // 位置形式 payload
+    Rect(width: number, height: number) // 具名 payload，匹配仍按位置
+}
+
+enum Result<T> {
+    Success(T)
+    Error(string)
+}
+
+fn area(s: Shape): number {
+    match s {
+        Shape::Circle(r) => 3.14 * r * r
+        Shape::Rect(w, h) => w * h
+    }
+}
+
+fn describe<T>(r: Result<T>): string {
+    match r {
+        Result::Success(v) => `ok: ${str(v)}`
+        Result::Error(msg) => `err: ${msg}`
+    }
+}
+
+fn main() {
+    let dir = Direction::East
+    print(dir)
+
+    print(area(Shape::Circle(2)))
+    print(area(Shape::Rect(3, 4)))
+
+    print(describe(Result::Success(42)))
+    print(describe(Result::Success("hi")))
+    print(describe(Result::Error("boom")))
+
+    // match 作为表达式，分支结果类型须一致
+    let label = match dir {
+        Direction::North => "north"
+        Direction::South => "south"
+        Direction::East => "east"
+        Direction::West => "west"
+    }
+    print(label)
+}

@@ -45,6 +45,21 @@ xulo fmt file.xulo
 xulo repl
 ```
 
+### 示例
+
+`examples/` 下每个 `.xulo` 都可通过 `xulo run examples/<文件>` 直接运行：
+
+| 文件 | 展示的语法 |
+|------|-----------|
+| `enums_match.xulo` | `enum`（含关联数据、泛型）+ `match` 表达式 |
+| `closures_hof.xulo` | 匿名函数 / 闭包（捕获、可变捕获）/ 高阶函数 / 函数值调用 |
+| `generics.xulo` | 泛型函数（调用处推断类型实参） |
+| `templates.xulo` | 反引号模板字面量 `${...}`、转义、多行、嵌套、Unicode |
+| `collections.xulo` | 列表 / 对象：下标、`+` 拼接、`...` 展开、成员访问 |
+| `optional_chaining.xulo` | `T?` 可选类型、`?.`、`??`、三目、`and` / `or` / `!` |
+| `control_flow.xulo` | 区间 `..<` / `...`、`for` / `while`、`if` 表达式、`match` |
+| `for.xulo` | 闭合区间 `1...5` + 模板插值 |
+
 ## 语言速览
 
 ```xulo

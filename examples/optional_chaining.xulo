@@ -1,0 +1,36 @@
+// 可选类型、可选链、空合并、三目（Swift/TS 混合风格）
+fn greet(name: string?): string {
+    // `?.` 对 null 短路得到 null，`??` 给出默认值
+    let who = name ?? "stranger"
+    `Hello, ${who}!`
+}
+
+fn main() {
+    let maybe: string? = "xulo"
+    let none: string? = null
+
+    print(maybe ?? "no value")
+    print(none ?? "no value")
+    print(greet(maybe))
+    print(greet(none))
+
+    let user = { email: "a@b.c" }
+    let empty = null
+    print(user?.email ?? "unknown")
+    print(empty?.email ?? "unknown")
+
+    // 三目
+    let score = 85
+    let grade = score >= 90 ? "A" : score >= 60 ? "B" : "C"
+    print(grade)
+
+    // 与 / 或 / 非
+    print(true and false)
+    print(false or true)
+    print(!false)
+
+    // 可选参数：调用时可省略
+    let name: string? = null
+    name = "set later"
+    print(`name=${name}`)
+}

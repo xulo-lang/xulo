@@ -1,0 +1,47 @@
+// 闭包 / 高阶函数：匿名函数、捕获外层变量、函数值调用
+fn apply(f: fn(number): number, x: number): number {
+    f(x)
+}
+
+fn makeAdder(n: number): fn(number): number {
+    fn(v: number): number { v + n } // 捕获 n
+}
+
+// 返回带内部状态的闭包（计数器）
+fn makeCounter(): fn(): number {
+    let count = 0
+    fn(): number {
+        count = count + 1 // 可变捕获，修改外层 let
+        count
+    }
+}
+
+// 列表元素依次应用函数，返回新列表
+fn map(xs: list<number>, f: fn(number): number): list<number> {
+    let out = []
+    for x in xs {
+        out = out + [f(x)]
+    }
+    out
+}
+
+fn main() {
+    let double = fn(x: number): number { x * 2 }
+    print(apply(double, 21))
+
+    let add5 = makeAdder(5)
+    print(add5(10))
+    print(apply(fn(v: number): number { v * v }, 7))
+
+    let counter = makeCounter()
+    print(counter())
+    print(counter())
+    print(counter())
+
+    print(map([1, 2, 3], double))
+    print(map([1, 2, 3], fn(x: number): number { x + 10 }))
+
+    // 函数值可从任意表达式中调用
+    let fs = [fn(): number { 1 }, fn(): number { 2 }]
+    print(fs[0]())
+}
