@@ -33,6 +33,14 @@ pub enum Commands {
     Fmt { file: PathBuf },
     /// Start an interactive REPL
     Repl,
+    /// Build a .xulo file to a native executable
+    Build {
+        /// Source file to compile
+        file: PathBuf,
+        /// Output file path (default: same name without extension)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
 }
 
 pub fn run() -> ExitCode {
@@ -53,6 +61,7 @@ fn run_command(command: Commands) -> ExitCode {
         Commands::Check { file } => check_file(&file),
         Commands::Fmt { file } => fmt_file(&file),
         Commands::Repl => repl(),
+        Commands::Build { file, output } => build_native(&file, output),
     }
 }
 
@@ -817,4 +826,129 @@ fn write_file(path: &Path, content: &str) -> Result<(), String> {
         std::fs::File::create(path).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
     f.write_all(content.as_bytes())
         .map_err(|e| format!("cannot write {}: {e}", path.display()))
+}
+
+/// Build a .xulo file to a native executable using Cranelift AOT compilation
+fn build_native(file: &Path, output: Option<PathBuf>) -> ExitCode {
+    let source = match std::fs::read_to_string(file) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("error: cannot read {}: {}", file.display(), e);
+            return ExitCode::from(1);
+        }
+    };
+
+    // 编译到 IR
+    let ir = match xulo_compiler::compile_to_ir(&source, file) {
+        Ok(ir) => ir,
+        Err(err) => {
+            let src_file = err.file.clone().unwrap_or_else(|| file.to_path_buf());
+            let source = std::fs::read_to_string(&src_file).unwrap_or_default();
+            print_compile_error(&err, &source, &src_file);
+            return ExitCode::from(1);
+        }
+    };
+
+    // 使用 Cranelift AOT 生成目标文件
+    let codegen = match xulo_compiler::aot::AotCodeGen::new() {
+        Ok(cg) => cg,
+        Err(err) => {
+            eprintln!("error: failed to initialize AOT codegen: {}", err);
+            return ExitCode::from(1);
+        }
+    };
+
+    let product = match codegen.compile(&ir) {
+        Ok(p) => p,
+        Err(err) => {
+            eprintln!("error: code generation failed: {}", err);
+            return ExitCode::from(1);
+        }
+    };
+
+    // 确定输出路径
+    let output_path = output.unwrap_or_else(|| {
+        let stem = file.file_stem().unwrap_or_default();
+        PathBuf::from(stem).with_extension("")
+    });
+
+    // 获取输出目录
+    let output_dir = output_path.parent().unwrap_or(Path::new("."));
+    if let Err(e) = std::fs::create_dir_all(output_dir) {
+        eprintln!("error: cannot create output directory: {}", e);
+        return ExitCode::from(1);
+    }
+
+    // 写入 .o 文件
+    let obj_path = output_path.with_extension("o");
+    let obj_file = match std::fs::File::create(&obj_path) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("error: cannot create {}: {}", obj_path.display(), e);
+            return ExitCode::from(1);
+        }
+    };
+    if let Err(e) = product.object.write_stream(obj_file) {
+        eprintln!("error: cannot write object file: {}", e);
+        return ExitCode::from(1);
+    }
+
+    // 查找 libxulo_runtime.a
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir.parent().and_then(|p| p.parent()).unwrap_or(Path::new("."));
+    let runtime_lib = workspace_root.join("target/release/libxulo_runtime.a");
+
+    if !runtime_lib.exists() {
+        eprintln!("error: runtime library not found at {}", runtime_lib.display());
+        eprintln!("hint: run `cargo build --release -p xulo-runtime` first");
+        return ExitCode::from(1);
+    }
+
+    // 使用 cc 链接
+    let exe_path = output_path.with_extension("");
+    let link_status = std::process::Command::new("cc")
+        .arg("-no-pie")
+        .arg("-o").arg(&exe_path)
+        .arg(&obj_path)
+        .arg(&runtime_lib)
+        .arg("-lpthread")
+        .arg("-lm")
+        .arg("-ldl")
+        .status();
+
+    match link_status {
+        Ok(status) if status.success() => {
+            // 清理 .o 文件
+            let _ = std::fs::remove_file(&obj_path);
+            println!("build successful: {}", exe_path.display());
+            println!("\nRunning compiled program:");
+            println!("-------------------------");
+
+            // 运行生成的可执行文件 (使用绝对路径)
+            let abs_exe = std::fs::canonicalize(&exe_path).unwrap_or(exe_path.clone());
+            match std::process::Command::new(&abs_exe).status() {
+                Ok(status) => {
+                    if !status.success() {
+                        eprintln!("program exited with status: {}", status);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("error: failed to run {}: {}", abs_exe.display(), e);
+                }
+            }
+        }
+        Ok(status) => {
+            eprintln!("error: linker failed with status: {}", status);
+            let _ = std::fs::remove_file(&obj_path);
+            return ExitCode::from(1);
+        }
+        Err(e) => {
+            eprintln!("error: failed to run linker: {}", e);
+            eprintln!("hint: make sure 'cc' (gcc/clang) is installed");
+            let _ = std::fs::remove_file(&obj_path);
+            return ExitCode::from(1);
+        }
+    }
+
+    ExitCode::SUCCESS
 }

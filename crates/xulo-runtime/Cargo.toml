@@ -3,6 +3,9 @@ name = "xulo-runtime"
 version.workspace = true
 edition.workspace = true
 
+[lib]
+crate-type = ["staticlib", "lib"]
+
 [dependencies]
 xulo-core = { workspace = true }
 corosensei = "0.2"
