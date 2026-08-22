@@ -175,7 +175,9 @@ fn outline_statement(
         | Statement::Throw(_)
         | Statement::Import(_)
         | Statement::Effect(_)
-        | Statement::Component(_) => None,
+        | Statement::Component(_)
+        | Statement::Break
+        | Statement::Continue => None,
     }
 }
 

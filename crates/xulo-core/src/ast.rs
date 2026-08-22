@@ -28,6 +28,8 @@ pub enum Statement {
     Component(ComponentStmt),
     Trait(TraitDecl),
     Impl(ImplDecl),
+    Break,
+    Continue,
 }
 
 /// An expression used as a statement. `has_semicolon` records whether it ended
@@ -698,6 +700,8 @@ pub enum BinaryOperator {
     Sub,
     Mul,
     Div,
+    Mod,
+    Pow,
     Eq,
     Neq,
     Lt,
@@ -715,6 +719,8 @@ impl BinaryOperator {
             BinaryOperator::Sub => "-",
             BinaryOperator::Mul => "*",
             BinaryOperator::Div => "/",
+            BinaryOperator::Mod => "%",
+            BinaryOperator::Pow => "**",
             BinaryOperator::Eq => "==",
             BinaryOperator::Neq => "!=",
             BinaryOperator::Lt => "<",

@@ -417,6 +417,8 @@ impl Javascript {
                     )?;
                 }
             }
+            Statement::Break => self.line("break;"),
+            Statement::Continue => self.line("continue;"),
         }
         Ok(())
     }

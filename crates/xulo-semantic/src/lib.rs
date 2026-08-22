@@ -126,6 +126,9 @@ pub struct Analyzer {
     /// resolve to render-scoped locals are rejected (they are out of scope when
     /// the effect runs).
     in_effect: bool,
+    /// Depth of enclosing `for`/`while` loops; `break`/`continue` are only
+    /// valid when > 0.
+    in_loop: usize,
     /// Span of the expression most recently entered by `check_expression`;
     /// semantic errors are attached to it (they cannot name their own span).
     current_span: Range<usize>,
@@ -289,6 +292,7 @@ fn run_analysis(
         warnings: Vec::new(),
         render_locals: Vec::new(),
         in_effect: false,
+        in_loop: 0,
         current_span: 0..0,
         expr_types: Vec::new(),
         resolutions: Vec::new(),
@@ -427,7 +431,9 @@ fn walk_stmt(stmt: &mut Statement, f: &mut dyn FnMut(&mut Expression)) {
         Statement::TypeAlias(_)
         | Statement::Enum(_)
         | Statement::Import(_)
-        | Statement::Trait(_) => {}
+        | Statement::Trait(_)
+        | Statement::Break
+        | Statement::Continue => {}
     }
 }
 
@@ -799,7 +805,9 @@ impl Analyzer {
                     },
                     Some(stmt.iter_var_span.clone()),
                 );
+                self.in_loop += 1;
                 let result = self.check_block(&stmt.body);
+                self.in_loop -= 1;
                 self.table.pop_scope();
                 result?;
                 Ok(())
@@ -812,7 +820,10 @@ impl Analyzer {
                         condition.name()
                     )));
                 }
-                self.check_block(&stmt.body)?;
+                self.in_loop += 1;
+                let result = self.check_block(&stmt.body);
+                self.in_loop -= 1;
+                result?;
                 Ok(())
             }
             Statement::Expr(stmt) => {
@@ -850,6 +861,22 @@ impl Analyzer {
             Statement::Effect(effect) => self.check_effect(effect),
             Statement::Environment(env) => self.check_environment(env),
             Statement::Component(component) => self.check_component(component),
+            Statement::Break => {
+                if self.in_loop == 0 {
+                    return Err(self.err(
+                        "`break` may only be used inside a `for` or `while` loop",
+                    ));
+                }
+                Ok(())
+            }
+            Statement::Continue => {
+                if self.in_loop == 0 {
+                    return Err(self.err(
+                        "`continue` may only be used inside a `for` or `while` loop",
+                    ));
+                }
+                Ok(())
+            }
         }
     }
 
@@ -2484,7 +2511,7 @@ impl Analyzer {
                         .at(bin.span.clone()))
                 }
             }
-            BinaryOperator::Sub | BinaryOperator::Mul | BinaryOperator::Div => {
+            BinaryOperator::Sub | BinaryOperator::Mul | BinaryOperator::Div | BinaryOperator::Mod | BinaryOperator::Pow => {
                 if self.assignable(&left, &Type::Number) && self.assignable(&right, &Type::Number) {
                     Ok(Type::Number)
                 } else {

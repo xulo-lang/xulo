@@ -2442,3 +2442,130 @@ fn memo_deps_are_type_checked() {
     "#;
     assert!(analyze_src(src).is_ok());
 }
+
+#[test]
+fn break_requires_loop() {
+    let src = r#"
+        fn f() {
+            break
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(err.message.contains("`break` may only be used inside a `for` or `while` loop"));
+}
+
+#[test]
+fn continue_requires_loop() {
+    let src = r#"
+        fn f() {
+            continue
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(err.message.contains("`continue` may only be used inside a `for` or `while` loop"));
+}
+
+#[test]
+fn break_allowed_in_for_loop() {
+    let src = r#"
+        fn f() {
+            let list = [1, 2, 3]
+            for i in list {
+                break
+            }
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn continue_allowed_in_for_loop() {
+    let src = r#"
+        fn f() {
+            let list = [1, 2, 3]
+            for i in list {
+                continue
+            }
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn break_allowed_in_while_loop() {
+    let src = r#"
+        fn f() {
+            while true {
+                break
+            }
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn continue_allowed_in_while_loop() {
+    let src = r#"
+        fn f() {
+            while true {
+                continue
+            }
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn break_rejected_in_if_not_loop() {
+    let src = r#"
+        fn f() {
+            if true {
+                break
+            }
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(err.message.contains("`break` may only be used inside a `for` or `while` loop"));
+}
+
+#[test]
+fn modulo_requires_numbers() {
+    let src = r#"
+        fn f() {
+            let x = "a" % "b"
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(err.message.contains("cannot apply `%`"));
+}
+
+#[test]
+fn power_requires_numbers() {
+    let src = r#"
+        fn f() {
+            let x = "a" ** "b"
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(err.message.contains("cannot apply `**`"));
+}
+
+#[test]
+fn modulo_accepts_numbers() {
+    let src = r#"
+        fn f() {
+            let x = 10 % 3
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn power_accepts_numbers() {
+    let src = r#"
+        fn f() {
+            let x = 2 ** 10
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}

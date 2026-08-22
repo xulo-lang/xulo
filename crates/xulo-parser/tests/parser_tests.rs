@@ -1588,3 +1588,136 @@ fn template_nested_expression_with_braces_parses() {
         other => panic!("expected add chain, got {other:?}"),
     }
 }
+
+#[test]
+fn parses_break_statement() {
+    let p = parse("fn f() { for i in list { break } }");
+    let Statement::Fn(f) = &p.statements[0] else {
+        panic!();
+    };
+    let Statement::For(for_stmt) = &f.body.statements[0] else {
+        panic!("expected for");
+    };
+    assert!(
+        matches!(for_stmt.body.statements[0], Statement::Break),
+        "expected break"
+    );
+}
+
+#[test]
+fn parses_continue_statement() {
+    let p = parse("fn f() { for i in list { continue } }");
+    let Statement::Fn(f) = &p.statements[0] else {
+        panic!();
+    };
+    let Statement::For(for_stmt) = &f.body.statements[0] else {
+        panic!("expected for");
+    };
+    assert!(
+        matches!(for_stmt.body.statements[0], Statement::Continue),
+        "expected continue"
+    );
+}
+
+#[test]
+fn parses_modulo_operator() {
+    let p = parse("let x = 10 % 3");
+    let Statement::Let(b) = &p.statements[0] else {
+        panic!();
+    };
+    match &b.value {
+        Some(Expression::BinaryOp(op)) => {
+            assert_eq!(op.operator, BinaryOperator::Mod);
+        }
+        _ => panic!("expected binary op"),
+    }
+}
+
+#[test]
+fn parses_power_operator() {
+    let p = parse("let x = 2 ** 10");
+    let Statement::Let(b) = &p.statements[0] else {
+        panic!();
+    };
+    match &b.value {
+        Some(Expression::BinaryOp(op)) => {
+            assert_eq!(op.operator, BinaryOperator::Pow);
+        }
+        _ => panic!("expected binary op"),
+    }
+}
+
+#[test]
+fn power_is_right_associative() {
+    let p = parse("let x = 2 ** 3 ** 2");
+    let Statement::Let(b) = &p.statements[0] else {
+        panic!();
+    };
+    match &b.value {
+        Some(Expression::BinaryOp(op)) => {
+            assert_eq!(op.operator, BinaryOperator::Pow);
+            match &op.right {
+                Expression::BinaryOp(right) => {
+                    assert_eq!(right.operator, BinaryOperator::Pow);
+                }
+                _ => panic!("expected right side to be power"),
+            }
+        }
+        _ => panic!("expected binary op"),
+    }
+}
+
+#[test]
+fn power_higher_precedence_than_mul() {
+    let p = parse("let x = 2 * 3 ** 2");
+    let Statement::Let(b) = &p.statements[0] else {
+        panic!();
+    };
+    match &b.value {
+        Some(Expression::BinaryOp(op)) => {
+            assert_eq!(op.operator, BinaryOperator::Mul);
+            match &op.right {
+                Expression::BinaryOp(right) => {
+                    assert_eq!(right.operator, BinaryOperator::Pow);
+                }
+                _ => panic!("expected right side to be power"),
+            }
+        }
+        _ => panic!("expected binary op"),
+    }
+}
+
+#[test]
+fn modulo_same_precedence_as_mul() {
+    let p = parse("let x = 6 * 7 % 4");
+    let Statement::Let(b) = &p.statements[0] else {
+        panic!();
+    };
+    match &b.value {
+        Some(Expression::BinaryOp(op)) => {
+            assert_eq!(op.operator, BinaryOperator::Mod);
+            match &op.left {
+                Expression::BinaryOp(left) => {
+                    assert_eq!(left.operator, BinaryOperator::Mul);
+                }
+                _ => panic!("expected left side to be multiply"),
+            }
+        }
+        _ => panic!("expected binary op"),
+    }
+}
+
+#[test]
+fn break_in_while_loop() {
+    let p = parse("fn f() { while true { break } }");
+    let Statement::Fn(f) = &p.statements[0] else {
+        panic!();
+    };
+    let Statement::While(w) = &f.body.statements[0] else {
+        panic!("expected while");
+    };
+    assert!(
+        matches!(w.body.statements[0], Statement::Break),
+        "expected break"
+    );
+}

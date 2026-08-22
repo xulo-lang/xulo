@@ -28,7 +28,7 @@ fn NameField(): View {
 }
 
 fn main(): View {
-    Screen {
+    Screen(orientation: "portrait", backgroundColor: "#f0f0f0") {
         Counter()
         NameField()
     }

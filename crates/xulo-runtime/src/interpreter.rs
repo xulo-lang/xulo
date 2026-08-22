@@ -23,12 +23,15 @@ pub use xulo_core::ast::CallArg;
 /// builtin can close over runtime cells.
 pub type NativeFn = Rc<dyn Fn(&Interpreter, &[Value]) -> Result<Value, RunError>>;
 
-/// The outcome of running a statement: keep executing, or return from the
-/// enclosing function. Thrown values are carried by [`RunError::Throw`] so a
+/// The outcome of running a statement: keep executing, return from the
+/// enclosing function, break out of a loop, or continue to the next loop
+/// iteration. Thrown values are carried by [`RunError::Throw`] so a
 /// surrounding `try`/`catch` can intercept them.
 pub enum Flow {
     Continue,
     Return(Value),
+    Break,
+    LoopContinue,
 }
 
 /// A run-time failure: a fatal error (optionally with a source span) or a value
@@ -197,7 +200,9 @@ fn stmt_has_closure(stmt: &Statement) -> bool {
         | Statement::Enum(_)
         | Statement::Import(_)
         | Statement::Environment(_)
-        | Statement::Trait(_) => false,
+        | Statement::Trait(_)
+        | Statement::Break
+        | Statement::Continue => false,
         Statement::Expr(e) => expr_has_closure(&e.expr),
         Statement::Block(b) => block_has_closure(b),
         Statement::Try(t) => block_has_closure(&t.try_block) || block_has_closure(&t.catch_block),
@@ -684,7 +689,8 @@ impl Interpreter {
                         break;
                     }
                     match self.exec_block(&w.body, env)? {
-                        Flow::Continue => {}
+                        Flow::Continue | Flow::LoopContinue => {}
+                        Flow::Break => break,
                         other => return Ok(other),
                     }
                 }
@@ -758,6 +764,8 @@ impl Interpreter {
                 self.register_impl(imp, env);
                 Ok(Flow::Continue)
             }
+            Statement::Break => Ok(Flow::Break),
+            Statement::Continue => Ok(Flow::LoopContinue),
         }
     }
 
@@ -1071,7 +1079,8 @@ impl Interpreter {
                 while self.range_has_next(i, end, r.end_inclusive) {
                     child.borrow_mut().reset(&f.iter_var, Value::Number(i));
                     match self.exec_stmts(&f.body.statements, &child)? {
-                        Flow::Continue => {}
+                        Flow::Continue | Flow::LoopContinue => {}
+                        Flow::Break => break,
                         other => return Ok(other),
                     }
                     i += 1.0;
@@ -1081,7 +1090,8 @@ impl Interpreter {
                     let child = Env::child(env);
                     child.borrow_mut().define(&f.iter_var, Value::Number(i));
                     match self.exec_block(&f.body, &child)? {
-                        Flow::Continue => {}
+                        Flow::Continue | Flow::LoopContinue => {}
+                        Flow::Break => break,
                         other => return Ok(other),
                     }
                     i += 1.0;
@@ -1120,7 +1130,8 @@ impl Interpreter {
                     };
                     child.borrow_mut().reset(&f.iter_var, item);
                     match self.exec_stmts(&f.body.statements, &child)? {
-                        Flow::Continue => {}
+                        Flow::Continue | Flow::LoopContinue => {}
+                        Flow::Break => break,
                         other => return Ok(other),
                     }
                     i += 1;
@@ -1137,7 +1148,8 @@ impl Interpreter {
                     let child = Env::child(env);
                     child.borrow_mut().define(&f.iter_var, item);
                     match self.exec_block(&f.body, &child)? {
-                        Flow::Continue => {}
+                        Flow::Continue | Flow::LoopContinue => {}
+                        Flow::Break => break,
                         other => return Ok(other),
                     }
                     i += 1;
@@ -1542,6 +1554,8 @@ impl Interpreter {
                     BinaryOperator::Sub => self.arith(left, right, bin, "`-`", |a, b| a - b),
                     BinaryOperator::Mul => self.arith(left, right, bin, "`*`", |a, b| a * b),
                     BinaryOperator::Div => self.arith(left, right, bin, "`/`", |a, b| a / b),
+                    BinaryOperator::Mod => self.arith(left, right, bin, "`%`", |a, b| a % b),
+                    BinaryOperator::Pow => self.arith(left, right, bin, "`**`", |a, b| a.powf(b)),
                     BinaryOperator::Eq => Ok(Value::Boolean(equal(&left, &right))),
                     BinaryOperator::Neq => Ok(Value::Boolean(!equal(&left, &right))),
                     BinaryOperator::Lt => self.compare(left, right, bin, "<"),
@@ -1690,8 +1704,9 @@ impl Interpreter {
             ),
             _ => {
                 return match self.exec_stmts(&block.statements, &child)? {
-                    Flow::Continue => Ok(Value::Null),
+                    Flow::Continue | Flow::LoopContinue => Ok(Value::Null),
                     Flow::Return(v) => Ok(v),
+                    Flow::Break => Ok(Value::Null),
                 };
             }
         };
@@ -1721,8 +1736,9 @@ impl Interpreter {
     ) -> Result<Option<Value>, RunError> {
         for stmt in stmts {
             match self.exec_stmt(stmt, env)? {
-                Flow::Continue => {}
+                Flow::Continue | Flow::LoopContinue => {}
                 Flow::Return(v) => return Ok(Some(v)),
+                Flow::Break => return Ok(None),
             }
         }
         Ok(None)
@@ -2081,15 +2097,17 @@ impl Interpreter {
         {
             for stmt in &body.statements[..body.statements.len() - 1] {
                 match self.exec_stmt(stmt, env)? {
-                    Flow::Continue => {}
+                    Flow::Continue | Flow::LoopContinue => {}
                     Flow::Return(v) => return Ok(v),
+                    Flow::Break => return Ok(Value::Null),
                 }
             }
             return self.eval(&last.expr, env);
         }
         match self.exec_stmts(&body.statements, env)? {
-            Flow::Continue => Ok(Value::Null),
+            Flow::Continue | Flow::LoopContinue => Ok(Value::Null),
             Flow::Return(v) => Ok(v),
+            Flow::Break => Ok(Value::Null),
         }
     }
 
@@ -2103,8 +2121,9 @@ impl Interpreter {
         if let Some(last) = body.statements.last() {
             for stmt in &body.statements[..body.statements.len() - 1] {
                 match self.exec_stmt(stmt, env)? {
-                    Flow::Continue => {}
+                    Flow::Continue | Flow::LoopContinue => {}
                     Flow::Return(v) => return Ok(v),
+                    Flow::Break => return Ok(Value::Null),
                 }
             }
             match last {

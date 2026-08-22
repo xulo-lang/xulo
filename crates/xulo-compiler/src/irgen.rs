@@ -232,6 +232,20 @@ impl IrGenerator {
             Statement::Assign(assign) => self.generate_assign(assign),
             Statement::Fn(_) => Ok(()), // 已处理
             Statement::Export(_) => Ok(()), // 已处理
+            Statement::Break => {
+                if let Some(ctx) = self.loop_stack.last() {
+                    let func_idx = self.current_func.unwrap();
+                    self.module.functions[func_idx].instructions.push(Instruction::Jump(ctx.break_label));
+                }
+                Ok(())
+            }
+            Statement::Continue => {
+                if let Some(ctx) = self.loop_stack.last() {
+                    let func_idx = self.current_func.unwrap();
+                    self.module.functions[func_idx].instructions.push(Instruction::Jump(ctx.continue_label));
+                }
+                Ok(())
+            }
             _ => Ok(()), // 其他语句暂时忽略
         }
     }
@@ -568,7 +582,8 @@ impl IrGenerator {
                         }
                     }
                     BinaryOperator::Sub
-                    | BinaryOperator::Mul | BinaryOperator::Div => {
+                    | BinaryOperator::Mul | BinaryOperator::Div
+                    | BinaryOperator::Mod | BinaryOperator::Pow => {
                         if self.has_float_operand(&binop.left) || self.has_float_operand(&binop.right) {
                             2
                         } else {
@@ -778,7 +793,8 @@ impl IrGenerator {
         
         let ty = match binop.operator {
             BinaryOperator::Add | BinaryOperator::Sub | 
-            BinaryOperator::Mul | BinaryOperator::Div => IrType::I64,
+            BinaryOperator::Mul | BinaryOperator::Div |
+            BinaryOperator::Mod | BinaryOperator::Pow => IrType::I64,
             _ => IrType::Bool,
         };
 
@@ -789,6 +805,8 @@ impl IrGenerator {
             BinaryOperator::Sub => Instruction::Sub { dst: local, left, right },
             BinaryOperator::Mul => Instruction::Mul { dst: local, left, right },
             BinaryOperator::Div => Instruction::Div { dst: local, left, right },
+            BinaryOperator::Mod => Instruction::Mod { dst: local, left, right },
+            BinaryOperator::Pow => Instruction::Pow { dst: local, left, right },
             BinaryOperator::Eq => Instruction::Eq { dst: local, left, right },
             BinaryOperator::Neq => Instruction::Neq { dst: local, left, right },
             BinaryOperator::Lt => Instruction::Lt { dst: local, left, right },

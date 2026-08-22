@@ -438,6 +438,7 @@ fn operator(input: &mut Input) -> Res<Token> {
     let (tok, len) = match (c1, c2, c3) {
         ('.', Some('.'), Some('<')) => (Token::RangeOp, 3),
         ('.', Some('.'), Some('.')) => (Token::Ellipsis, 3),
+        ('*', Some('*'), _) => (Token::Power, 2),
         ('=', Some('='), _) => (Token::Eq, 2),
         ('!', Some('='), _) => (Token::Neq, 2),
         ('<', Some('='), _) => (Token::Lte, 2),
@@ -451,6 +452,7 @@ fn operator(input: &mut Input) -> Res<Token> {
         ('-', _, _) => (Token::Minus, 1),
         ('*', _, _) => (Token::Star, 1),
         ('/', _, _) => (Token::Slash, 1),
+        ('%', _, _) => (Token::Modulo, 1),
         ('<', _, _) => (Token::Lt, 1),
         ('>', _, _) => (Token::Gt, 1),
         ('|', _, _) => (Token::Pipe, 1),

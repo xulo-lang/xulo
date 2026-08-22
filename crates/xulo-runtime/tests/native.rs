@@ -1387,3 +1387,155 @@ fn memo_without_deps_caches_forever() {
     // reuses the stale value and `expensive` runs once.
     assert_eq!(run_ok(src), vec!["10", "10", "1"]);
 }
+
+// ── break / continue ──────────────────────────────────────────────────────
+
+#[test]
+fn break_exits_for_loop() {
+    let src = r#"
+        fn main() {
+            let sum = 0
+            for i in 0..<10 {
+                if i == 5 { break }
+                sum = sum + i
+            }
+            print(sum)
+        }
+    "#;
+    assert_eq!(run_ok(src), vec!["10"]);
+}
+
+#[test]
+fn continue_skips_iteration() {
+    let src = r#"
+        fn main() {
+            let sum = 0
+            for i in 0..<10 {
+                if i % 2 == 0 { continue }
+                sum = sum + i
+            }
+            print(sum)
+        }
+    "#;
+    assert_eq!(run_ok(src), vec!["25"]);
+}
+
+#[test]
+fn break_exits_while_loop() {
+    let src = r#"
+        fn main() {
+            let x = 0
+            while true {
+                if x == 10 { break }
+                x = x + 1
+            }
+            print(x)
+        }
+    "#;
+    assert_eq!(run_ok(src), vec!["10"]);
+}
+
+#[test]
+fn continue_while_loop() {
+    let src = r#"
+        fn main() {
+            let sum = 0
+            let i = 0
+            let x = 0
+            while x < 10 {
+                x = x + 1
+                if x % 2 == 0 { continue }
+                sum = sum + x
+            }
+            print(sum)
+        }
+    "#;
+    assert_eq!(run_ok(src), vec!["25"]);
+}
+
+#[test]
+fn break_nested_loop_only_exits_inner() {
+    let src = r#"
+        fn main() {
+            let result = 0
+            for i in 0..<3 {
+                for j in 0..<10 {
+                    if j == 3 { break }
+                    result = result + 1
+                }
+                result = result + 100
+            }
+            print(result)
+        }
+    "#;
+    // inner loop runs 3 iterations (j=0,1,2 then break), each adds 3 + 100 = 103
+    // 3 * 103 = 309
+    assert_eq!(run_ok(src), vec!["309"]);
+}
+
+#[test]
+fn continue_nested_loop() {
+    let src = r#"
+        fn main() {
+            let sum = 0
+            for i in 0..<3 {
+                for j in 0..<5 {
+                    if j % 2 == 0 { continue }
+                    sum = sum + 1
+                }
+            }
+            print(sum)
+        }
+    "#;
+    // inner loop: j=1,3 pass (2 iterations), 3 outer iterations = 6
+    assert_eq!(run_ok(src), vec!["6"]);
+}
+
+// ── modulo / exponentiation ───────────────────────────────────────────────
+
+#[test]
+fn modulo_basic() {
+    assert_eq!(run_ok(r#"fn main() { print(10 % 3) }"#), vec!["1"]);
+}
+
+#[test]
+fn modulo_zero() {
+    assert_eq!(run_ok(r#"fn main() { print(9 % 3) }"#), vec!["0"]);
+}
+
+#[test]
+fn modulo_float() {
+    assert_eq!(run_ok(r#"fn main() { print(7.5 % 2.5) }"#), vec!["0"]);
+}
+
+#[test]
+fn power_basic() {
+    assert_eq!(run_ok(r#"fn main() { print(2 ** 10) }"#), vec!["1024"]);
+}
+
+#[test]
+fn power_zero_exponent() {
+    assert_eq!(run_ok(r#"fn main() { print(5 ** 0) }"#), vec!["1"]);
+}
+
+#[test]
+fn power_one_exponent() {
+    assert_eq!(run_ok(r#"fn main() { print(7 ** 1) }"#), vec!["7"]);
+}
+
+#[test]
+fn power_float_base() {
+    assert_eq!(run_ok(r#"fn main() { print(3.0 ** 2.0) }"#), vec!["9"]);
+}
+
+#[test]
+fn combined_mod_and_pow() {
+    // 3 ** 2 % 5 = 9 % 5 = 4
+    assert_eq!(run_ok(r#"fn main() { print(3 ** 2 % 5) }"#), vec!["4"]);
+}
+
+#[test]
+fn combined_mul_pow() {
+    // 2 * 3 ** 2 = 2 * 9 = 18
+    assert_eq!(run_ok(r#"fn main() { print(2 * 3 ** 2) }"#), vec!["18"]);
+}

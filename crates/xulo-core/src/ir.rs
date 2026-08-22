@@ -80,6 +80,8 @@ pub enum Instruction {
     Sub { dst: LocalId, left: Operand, right: Operand },
     Mul { dst: LocalId, left: Operand, right: Operand },
     Div { dst: LocalId, left: Operand, right: Operand },
+    Mod { dst: LocalId, left: Operand, right: Operand },
+    Pow { dst: LocalId, left: Operand, right: Operand },
     Neg { dst: LocalId, operand: Operand },
 
     // 比较运算

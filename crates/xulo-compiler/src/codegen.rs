@@ -318,6 +318,15 @@ impl CodeGen {
                     let val = builder.ins().sdiv(l, r);
                     if let Some(&var) = vars.get(dst) { builder.def_var(var, val); }
                 }
+                Instruction::Mod { dst, left, right } => {
+                    let l = resolve_operand(&mut builder, left, &vars);
+                    let r = resolve_operand(&mut builder, right, &vars);
+                    let val = builder.ins().srem(l, r);
+                    if let Some(&var) = vars.get(dst) { builder.def_var(var, val); }
+                }
+                Instruction::Pow { .. } => {
+                    // Pow not natively supported in Cranelift; handled by runtime interpreter
+                }
                 Instruction::Neg { dst, operand } => {
                     let o = resolve_operand(&mut builder, operand, &vars);
                     let val = builder.ins().ineg(o);

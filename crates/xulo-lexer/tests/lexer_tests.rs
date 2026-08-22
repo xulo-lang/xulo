@@ -574,3 +574,41 @@ fn println_is_a_keyword_token() {
     assert_eq!(kinds, vec![Println, LParen, Ident, RParen, EOF]);
     assert_eq!(tokens[0].text, "println");
 }
+
+#[test]
+fn break_and_continue_are_keywords() {
+    let tokens = tokenize("break continue").unwrap();
+    let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
+    assert_eq!(kinds, vec![Break, Continue, EOF]);
+}
+
+#[test]
+fn modulo_operator() {
+    let tokens = tokenize("a % b").unwrap();
+    let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
+    assert_eq!(kinds, vec![Ident, Modulo, Ident, EOF]);
+}
+
+#[test]
+fn power_operator() {
+    let tokens = tokenize("a ** b").unwrap();
+    let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
+    assert_eq!(kinds, vec![Ident, Power, Ident, EOF]);
+}
+
+#[test]
+fn power_does_not_consume_single_star() {
+    let tokens = tokenize("a * b").unwrap();
+    let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
+    assert_eq!(kinds, vec![Ident, Star, Ident, EOF]);
+}
+
+#[test]
+fn break_continue_in_loop_context() {
+    let tokens = tokenize("for i in list { break continue }").unwrap();
+    let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
+    assert_eq!(
+        kinds,
+        vec![For, Ident, In, Ident, LBrace, Break, Continue, RBrace, EOF]
+    );
+}

@@ -20,6 +20,7 @@ const ADD_OPS: &[(Token, BinaryOperator)] = &[
 const MUL_OPS: &[(Token, BinaryOperator)] = &[
     (Token::Star, BinaryOperator::Mul),
     (Token::Slash, BinaryOperator::Div),
+    (Token::Modulo, BinaryOperator::Mod),
 ];
 
 const CMP_OPS: &[(Token, BinaryOperator)] = &[
@@ -186,12 +187,24 @@ fn additive(input: &mut In<'_>) -> Pr<Expression> {
 
 fn multiplicative(input: &mut In<'_>) -> Pr<Expression> {
     let original = *input;
-    let mut lhs = unary(input)?;
+    let mut lhs = power(input)?;
     while let Ok(op) = take_op(input, MUL_OPS) {
-        let rhs = unary(input)?;
+        let rhs = power(input)?;
         lhs = bin(original, lhs, op, rhs, input);
     }
     Ok(lhs)
+}
+
+/// Power operator `**` (right-associative, higher precedence than `*`/`/`/`%`).
+fn power(input: &mut In<'_>) -> Pr<Expression> {
+    let original = *input;
+    let base = unary(input)?;
+    if opt_tk(input, Token::Power) {
+        let exp = power(input)?; // right-associative: recurse
+        Ok(bin(original, base, BinaryOperator::Pow, exp, input))
+    } else {
+        Ok(base)
+    }
 }
 
 fn unary(input: &mut In<'_>) -> Pr<Expression> {

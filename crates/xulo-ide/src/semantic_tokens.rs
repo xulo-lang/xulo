@@ -169,7 +169,9 @@ fn collect_decls(statements: &[Statement], tokens: &mut Vec<SemanticToken>) {
             | Statement::Throw(_)
             | Statement::Import(_)
             | Statement::Effect(_)
-            | Statement::Component(_) => {}
+            | Statement::Component(_)
+            | Statement::Break
+            | Statement::Continue => {}
         }
     }
 }

@@ -45,6 +45,8 @@ pub fn statement(input: &mut In<'_>) -> Pr<Statement> {
         Some(Token::Return) => return_stmt(input).map(Statement::Return),
         Some(Token::For) => for_stmt(input).map(Statement::For),
         Some(Token::While) => while_stmt(input).map(Statement::While),
+        Some(Token::Break) => break_stmt(input),
+        Some(Token::Continue) => continue_stmt(input),
         Some(Token::If) => if_stmt(input),
         Some(Token::LBrace) => block(input).map(Statement::Block),
         Some(Token::Try) => try_stmt(input).map(Statement::Try),
@@ -526,6 +528,20 @@ fn return_stmt(input: &mut In<'_>) -> Pr<ReturnStmt> {
     };
     let span = consumed_span(original, input, 0);
     Ok(ReturnStmt { value, span })
+}
+
+fn break_stmt(input: &mut In<'_>) -> Pr<Statement> {
+    let original = *input;
+    tk(input, Token::Break)?;
+    let _span = consumed_span(original, input, 0);
+    Ok(Statement::Break)
+}
+
+fn continue_stmt(input: &mut In<'_>) -> Pr<Statement> {
+    let original = *input;
+    tk(input, Token::Continue)?;
+    let _span = consumed_span(original, input, 0);
+    Ok(Statement::Continue)
 }
 
 fn for_stmt(input: &mut In<'_>) -> Pr<ForStmt> {
