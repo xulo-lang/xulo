@@ -11,6 +11,8 @@ use crate::value::Value;
 pub struct Env {
     parent: Option<Rc<RefCell<Env>>>,
     bindings: HashMap<String, Value>,
+    /// Parallel to `bindings`: tracks whether each variable is mutable.
+    mutability: HashMap<String, bool>,
 }
 
 impl Env {
@@ -25,21 +27,25 @@ impl Env {
         Rc::new(RefCell::new(Env {
             parent: Some(parent.clone()),
             bindings: HashMap::new(),
+            mutability: HashMap::new(),
         }))
     }
 
     /// Bind `name` in this scope, shadowing any outer binding of the same name.
-    pub fn define(&mut self, name: &str, value: Value) {
+    pub fn define(&mut self, name: &str, value: Value, is_mutable: bool) {
         self.bindings.insert(name.to_string(), value);
+        self.mutability.insert(name.to_string(), is_mutable);
     }
 
     /// Reset this scope to hold exactly `name -> value`. Lets a loop iteration
     /// scope be recycled across rounds (known issue P3): bindings declared by
     /// one iteration must not leak into the next, so every round starts with a
     /// clean scope that only re-binds the loop variable.
-    pub fn reset(&mut self, name: &str, value: Value) {
+    pub fn reset(&mut self, name: &str, value: Value, is_mutable: bool) {
         self.bindings.clear();
+        self.mutability.clear();
         self.bindings.insert(name.to_string(), value);
+        self.mutability.insert(name.to_string(), is_mutable);
     }
 
     /// Drop every binding in this scope. Used when the owning
@@ -51,6 +57,7 @@ impl Env {
     /// values), breaking the cycle so the whole env graph is reclaimed.
     pub fn clear(&mut self) {
         self.bindings.clear();
+        self.mutability.clear();
     }
 
     /// Look `name` up through the scope chain.
@@ -59,6 +66,17 @@ impl Env {
             return Some(value.clone());
         }
         self.parent.as_ref().and_then(|p| p.borrow().get(name))
+    }
+
+    /// Check if `name` is mutable in this scope or any parent scope.
+    pub fn is_mutable(&self, name: &str) -> bool {
+        if let Some(mutable) = self.mutability.get(name) {
+            return *mutable;
+        }
+        self.parent
+            .as_ref()
+            .map(|p| p.borrow().is_mutable(name))
+            .unwrap_or(false)
     }
 
     /// Reassign `name`, walking outward to the scope that declared it. Returns

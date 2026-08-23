@@ -612,3 +612,45 @@ fn break_continue_in_loop_context() {
         vec![For, Ident, In, Ident, LBrace, Break, Continue, RBrace, EOF]
     );
 }
+
+#[test]
+fn bitwise_not_token() {
+    let tokens = tokenize("~x").unwrap();
+    let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
+    assert_eq!(kinds, vec![Tilde, Ident, EOF]);
+}
+
+#[test]
+fn bitwise_xor_token() {
+    let tokens = tokenize("a ^ b").unwrap();
+    let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
+    assert_eq!(kinds, vec![Ident, Xor, Ident, EOF]);
+}
+
+#[test]
+fn shift_left_two_tokens() {
+    let tokens = tokenize("a << b").unwrap();
+    let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
+    assert_eq!(kinds, vec![Ident, Lt, Lt, Ident, EOF]);
+}
+
+#[test]
+fn shift_right_two_tokens() {
+    let tokens = tokenize("a >> b").unwrap();
+    let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
+    assert_eq!(kinds, vec![Ident, Gt, Gt, Ident, EOF]);
+}
+
+#[test]
+fn bitwise_and_token() {
+    let tokens = tokenize("a & b").unwrap();
+    let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
+    assert_eq!(kinds, vec![Ident, Amp, Ident, EOF]);
+}
+
+#[test]
+fn bitwise_or_token() {
+    let tokens = tokenize("a | b").unwrap();
+    let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
+    assert_eq!(kinds, vec![Ident, Pipe, Ident, EOF]);
+}

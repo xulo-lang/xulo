@@ -699,6 +699,54 @@ impl Analyzer {
                     Some(value) => self.check_expression(value)?,
                     None => binding.type_annotation.clone().unwrap_or(Type::Any),
                 };
+
+                // Tuple destructuring: `let (a, b, c) = expr`
+                if let Some(tuple_names) = &binding.tuple_names {
+                    let inner_type = match &value_type {
+                        Type::List(inner) => *inner.clone(),
+                        Type::Any => Type::Any,
+                        other => {
+                            return Err(self.err(format!(
+                                "cannot destructure `{}` as a list (expected a list, found `{}`)",
+                                binding.name,
+                                other.name()
+                            )));
+                        }
+                    };
+                    let mut seen = std::collections::HashSet::new();
+                    for name in tuple_names {
+                        if !seen.insert(name.clone()) {
+                            return Err(self.err(format!(
+                                "duplicate binding name `{}` in tuple destructuring",
+                                name
+                            )));
+                        }
+                        let declared = self.table.declare_with_def(
+                            Symbol {
+                                name: name.clone(),
+                                type_: inner_type.clone(),
+                                kind: SymbolKind::Variable,
+                                is_const: binding.is_const,
+                                is_mutable: false,
+                            },
+                            Some(binding.name_span.clone()),
+                        );
+                        if !declared {
+                            return Err(self.err(format!(
+                                "binding `{}` is already declared in this scope",
+                                name
+                            )));
+                        }
+                        self.record_decl(
+                            binding.name_span.clone(),
+                            name,
+                            UseKind::Variable,
+                            inner_type.clone(),
+                        );
+                    }
+                    return Ok(());
+                }
+
                 let mut ok = true;
                 if let Some(annotation) = &binding.type_annotation
                     && !self.assignable(&value_type, annotation)
@@ -728,6 +776,7 @@ impl Analyzer {
                         type_: declared_type.clone(),
                         kind: SymbolKind::Variable,
                         is_const: binding.is_const,
+                        is_mutable: binding.is_mutable,
                     },
                     Some(binding.name_span.clone()),
                 );
@@ -802,6 +851,7 @@ impl Analyzer {
                         type_: Type::Any,
                         kind: SymbolKind::Variable,
                         is_const: false,
+                        is_mutable: true,
                     },
                     Some(stmt.iter_var_span.clone()),
                 );
@@ -843,6 +893,7 @@ impl Analyzer {
                         type_: Type::Any,
                         kind: SymbolKind::Variable,
                         is_const: true,
+                        is_mutable: false,
                     },
                     Some(try_stmt.catch_var_span.clone()),
                 );
@@ -919,6 +970,7 @@ impl Analyzer {
                 f.bounds.clone(),
             ),
             is_const: true,
+            is_mutable: false,
         };
         if !self
             .table
@@ -1035,6 +1087,7 @@ impl Analyzer {
                     type_: ty.clone(),
                     kind: SymbolKind::Variable,
                     is_const: true,
+                    is_mutable: false,
                 },
                 Some(p.span.clone()),
             );
@@ -1095,6 +1148,7 @@ impl Analyzer {
                     type_: Type::Any,
                     kind: SymbolKind::Variable,
                     is_const: true,
+                    is_mutable: false,
                 }) {
                     return Err(self.err(format!("`{ns}` is already declared",)));
                 }
@@ -1123,6 +1177,7 @@ impl Analyzer {
                             type_: symbol.type_.clone(),
                             kind: symbol.kind.clone(),
                             is_const: true,
+                            is_mutable: false,
                         },
                         None => {
                             self.opaque.insert(local.clone());
@@ -1136,6 +1191,7 @@ impl Analyzer {
                                     Vec::new(),
                                 ),
                                 is_const: true,
+                                is_mutable: false,
                             }
                         }
                     };
@@ -1186,6 +1242,7 @@ impl Analyzer {
                         type_: Type::Named(e.name.clone()),
                         kind: symbol_table::SymbolKind::Variable,
                         is_const: true,
+                        is_mutable: false,
                     },
                 ));
                 Ok(())
@@ -1219,6 +1276,7 @@ impl Analyzer {
                                 type_: Type::Named(name.clone()),
                                 kind: symbol_table::SymbolKind::Variable,
                                 is_const: true,
+                                is_mutable: false,
                             },
                         ));
                     }
@@ -1259,6 +1317,11 @@ impl Analyzer {
                 if sym.is_const {
                     return Err(
                         self.err(format!("cannot assign to `{name}`: binding is immutable"))
+                    );
+                }
+                if !sym.is_mutable {
+                    return Err(
+                        self.err(format!("cannot assign to `{name}`: variable is not declared `mut`"))
                     );
                 }
                 match &sym.kind {
@@ -1369,6 +1432,7 @@ impl Analyzer {
                 type_: binding.type_annotation.clone().unwrap_or(value_type),
                 kind: SymbolKind::State,
                 is_const: binding.is_const,
+                is_mutable: true,
             },
             Some(binding.name_span.clone()),
         );
@@ -1394,6 +1458,7 @@ impl Analyzer {
                     type_: value_type.clone(),
                     kind: SymbolKind::Store,
                     is_const: true,
+                    is_mutable: false,
                 }) {
                     return Err(self.err(format!(
                         "binding `{name}` is already declared in this scope"
@@ -1408,6 +1473,7 @@ impl Analyzer {
                         type_: Type::Any,
                         kind: SymbolKind::Store,
                         is_const: true,
+                        is_mutable: false,
                     }) {
                         return Err(self.err(format!(
                             "binding `{local}` is already declared in this scope"
@@ -1453,6 +1519,7 @@ impl Analyzer {
                 type_: env.type_.clone(),
                 kind: SymbolKind::Store,
                 is_const: true,
+                is_mutable: false,
             },
             Some(env.name_span.clone()),
         ) {
@@ -1581,6 +1648,7 @@ impl Analyzer {
                         type_: Type::Any,
                         kind: SymbolKind::Variable,
                         is_const: false,
+                        is_mutable: true,
                     },
                     Some(iter_var_span.clone()),
                 );
@@ -1879,6 +1947,7 @@ impl Analyzer {
                             type_: Type::Named(imp.type_name.clone()),
                             kind: SymbolKind::Variable,
                             is_const: true,
+                            is_mutable: false,
                         },
                         None,
                     );
@@ -1890,6 +1959,7 @@ impl Analyzer {
                             type_: ty,
                             kind: SymbolKind::Variable,
                             is_const: true,
+                            is_mutable: false,
                         },
                         Some(param.span.clone()),
                     );
@@ -2260,6 +2330,16 @@ impl Analyzer {
                     )))
                 }
             }
+            xulo_core::ast::UnaryOperator::BitNot => {
+                if self.assignable(&operand, &Type::Number) {
+                    Ok(Type::Number)
+                } else {
+                    Err(self.err(format!(
+                        "unary `~` requires a `number` operand, found `{}`",
+                        operand.name()
+                    )))
+                }
+            }
         }
     }
 
@@ -2318,6 +2398,10 @@ impl Analyzer {
                 .map(|(_, t)| t.clone())
                 .ok_or_else(|| self.err(format!("type has no member `{property}`"))),
             Type::Object | Type::Any => Ok(Type::Any),
+            Type::List(_) => match property {
+                "length" | "capacity" => Ok(Type::Number),
+                _ => Ok(Type::Any),
+            },
             Type::Named(name) => {
                 // A bounded generic parameter (`T: Area`) exposes its bound's
                 // members, so `t.area()` type-checks against the trait shape.
@@ -2439,6 +2523,7 @@ impl Analyzer {
                                         type_: self.resolve_alias(&param.type_, 0),
                                         kind: SymbolKind::Variable,
                                         is_const: true,
+                                        is_mutable: false,
                                     },
                                     Some(span.clone()),
                                 );
@@ -2512,6 +2597,20 @@ impl Analyzer {
                 }
             }
             BinaryOperator::Sub | BinaryOperator::Mul | BinaryOperator::Div | BinaryOperator::Mod | BinaryOperator::Pow => {
+                if self.assignable(&left, &Type::Number) && self.assignable(&right, &Type::Number) {
+                    Ok(Type::Number)
+                } else {
+                    Err(self
+                        .err(format!(
+                            "cannot apply `{}` to `{}` and `{}`",
+                            bin.operator.symbol(),
+                            left.name(),
+                            right.name()
+                        ))
+                        .at(bin.span.clone()))
+                }
+            }
+            BinaryOperator::BitAnd | BinaryOperator::BitOr | BinaryOperator::Xor | BinaryOperator::Shl | BinaryOperator::Shr => {
                 if self.assignable(&left, &Type::Number) && self.assignable(&right, &Type::Number) {
                     Ok(Type::Number)
                 } else {
@@ -2624,6 +2723,25 @@ impl Analyzer {
             }
             for arg in &call.arguments {
                 self.check_expression(&arg.value)?;
+            }
+            // Infer return type for known list methods
+            if let Type::List(inner) = &receiver
+                && let Some(method) = &call.method
+            {
+                return Ok(match method.as_str() {
+                    "length" | "capacity" | "indexOf" => Type::Number,
+                    "isEmpty" => Type::Boolean,
+                    "first" | "last" | "get" => Type::Optional(inner.clone()),
+                    "pop" | "remove" => *inner.clone(),
+                    "push" | "set" | "insert" | "reverse" | "sort" | "shrink" | "clear" => {
+                        receiver.clone()
+                    }
+                    "removeValue" | "contains" | "some" | "every" => Type::Boolean,
+                    "filter" | "slice" | "concat" | "map" | "flat" => Type::List(inner.clone()),
+                    "join" => Type::String,
+                    "reduce" | "find" | "forEach" => Type::Any,
+                    _ => Type::Any,
+                });
             }
             return Ok(Type::Any);
         }

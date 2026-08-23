@@ -302,7 +302,7 @@ fn closure_mutates_captured_outer_variable() {
     let out = run_ok(
         r#"
         fn main() {
-            let count: number = 0
+            let mut count: number = 0
             let bump = fn(): number { count = count + 1 }
             let f = fn(x: number): number { bump(); bump(); x * 10 }
             print(f(3))
@@ -385,7 +385,7 @@ fn for_over_list() {
     let out = run_ok(
         r#"
         fn main() {
-            let total = 0
+            let mut total = 0
             for x in [1, 2, 3, 4] {
                 total = total + x
             }
@@ -434,7 +434,7 @@ fn while_loop() {
     let out = run_ok(
         r#"
         fn main() {
-            let i = 0
+            let mut i = 0
             while i < 4 {
                 print(i)
                 i = i + 1
@@ -1325,7 +1325,7 @@ fn missing_object_member_reads_null() {
 #[test]
 fn memo_reuses_cached_value_when_deps_unchanged() {
     let src = r#"
-        let calls = 0
+        let mut calls = 0
         fn expensive(n: number): number {
             calls = calls + 1
             return n * 2
@@ -1346,7 +1346,7 @@ fn memo_reuses_cached_value_when_deps_unchanged() {
 #[test]
 fn memo_recomputes_when_deps_change() {
     let src = r#"
-        let calls = 0
+        let mut calls = 0
         fn expensive(n: number): number {
             calls = calls + 1
             return n * 2
@@ -1368,7 +1368,7 @@ fn memo_recomputes_when_deps_change() {
 #[test]
 fn memo_without_deps_caches_forever() {
     let src = r#"
-        let calls = 0
+        let mut calls = 0
         fn expensive(n: number): number {
             calls = calls + 1
             return n * 2
@@ -1394,7 +1394,7 @@ fn memo_without_deps_caches_forever() {
 fn break_exits_for_loop() {
     let src = r#"
         fn main() {
-            let sum = 0
+            let mut sum = 0
             for i in 0..<10 {
                 if i == 5 { break }
                 sum = sum + i
@@ -1409,7 +1409,7 @@ fn break_exits_for_loop() {
 fn continue_skips_iteration() {
     let src = r#"
         fn main() {
-            let sum = 0
+            let mut sum = 0
             for i in 0..<10 {
                 if i % 2 == 0 { continue }
                 sum = sum + i
@@ -1424,7 +1424,7 @@ fn continue_skips_iteration() {
 fn break_exits_while_loop() {
     let src = r#"
         fn main() {
-            let x = 0
+            let mut x = 0
             while true {
                 if x == 10 { break }
                 x = x + 1
@@ -1439,9 +1439,9 @@ fn break_exits_while_loop() {
 fn continue_while_loop() {
     let src = r#"
         fn main() {
-            let sum = 0
+            let mut sum = 0
             let i = 0
-            let x = 0
+            let mut x = 0
             while x < 10 {
                 x = x + 1
                 if x % 2 == 0 { continue }
@@ -1457,7 +1457,7 @@ fn continue_while_loop() {
 fn break_nested_loop_only_exits_inner() {
     let src = r#"
         fn main() {
-            let result = 0
+            let mut result = 0
             for i in 0..<3 {
                 for j in 0..<10 {
                     if j == 3 { break }
@@ -1477,7 +1477,7 @@ fn break_nested_loop_only_exits_inner() {
 fn continue_nested_loop() {
     let src = r#"
         fn main() {
-            let sum = 0
+            let mut sum = 0
             for i in 0..<3 {
                 for j in 0..<5 {
                     if j % 2 == 0 { continue }
@@ -1538,4 +1538,508 @@ fn combined_mod_and_pow() {
 fn combined_mul_pow() {
     // 2 * 3 ** 2 = 2 * 9 = 18
     assert_eq!(run_ok(r#"fn main() { print(2 * 3 ** 2) }"#), vec!["18"]);
+}
+
+// ── bitwise operations ────────────────────────────────────────────────────
+
+#[test]
+fn bitwise_and_basic() {
+    assert_eq!(run_ok(r#"fn main() { print(12 & 10) }"#), vec!["8"]);
+}
+
+#[test]
+fn bitwise_or_basic() {
+    assert_eq!(run_ok(r#"fn main() { print(12 | 10) }"#), vec!["14"]);
+}
+
+#[test]
+fn bitwise_xor_basic() {
+    assert_eq!(run_ok(r#"fn main() { print(12 ^ 10) }"#), vec!["6"]);
+}
+
+#[test]
+fn shift_left_basic() {
+    assert_eq!(run_ok(r#"fn main() { print(1 << 4) }"#), vec!["16"]);
+}
+
+#[test]
+fn shift_right_basic() {
+    assert_eq!(run_ok(r#"fn main() { print(16 >> 2) }"#), vec!["4"]);
+}
+
+#[test]
+fn bitwise_not_basic() {
+    assert_eq!(run_ok(r#"fn main() { print(~0) }"#), vec!["-1"]);
+}
+
+#[test]
+fn bitwise_and_zero() {
+    assert_eq!(run_ok(r#"fn main() { print(255 & 0) }"#), vec!["0"]);
+}
+
+#[test]
+fn bitwise_or_zero() {
+    assert_eq!(run_ok(r#"fn main() { print(255 | 0) }"#), vec!["255"]);
+}
+
+#[test]
+fn shift_left_zero() {
+    assert_eq!(run_ok(r#"fn main() { print(0 << 10) }"#), vec!["0"]);
+}
+
+#[test]
+fn shift_right_zero() {
+    assert_eq!(run_ok(r#"fn main() { print(0 >> 10) }"#), vec!["0"]);
+}
+
+#[test]
+fn bitwise_chained() {
+    // (12 & 10) ^ 5 = 8 ^ 5 = 13 (left-to-right same precedence)
+    assert_eq!(run_ok(r#"fn main() { print(12 & 10 ^ 5) }"#), vec!["13"]);
+}
+
+#[test]
+fn shift_higher_than_add() {
+    // 1 + 2 << 3 = (1 + 2) << 3 = 3 << 3 = 24
+    assert_eq!(run_ok(r#"fn main() { print(1 + 2 << 3) }"#), vec!["24"]);
+}
+
+// ──────────────────────────────────────────────────────────────────────
+//  Array methods – basic properties
+// ──────────────────────────────────────────────────────────────────────
+
+#[test]
+fn list_length_property() {
+    assert_eq!(run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.length) }"#), vec!["3"]);
+}
+
+#[test]
+fn list_capacity_property() {
+    assert_eq!(run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.capacity >= 3) }"#), vec!["true"]);
+}
+
+#[test]
+fn list_is_empty_true() {
+    assert_eq!(run_ok(r#"fn main() { let a = []; print(a.isEmpty()) }"#), vec!["true"]);
+}
+
+#[test]
+fn list_is_empty_false() {
+    assert_eq!(run_ok(r#"fn main() { let a = [1]; print(a.isEmpty()) }"#), vec!["false"]);
+}
+
+#[test]
+fn list_first() {
+    assert_eq!(run_ok(r#"fn main() { let a = [10, 20, 30]; print(a.first()) }"#), vec!["10"]);
+}
+
+#[test]
+fn list_first_empty() {
+    assert_eq!(run_ok(r#"fn main() { let a: list<number> = []; print(a.first()) }"#), vec!["null"]);
+}
+
+#[test]
+fn list_last() {
+    assert_eq!(run_ok(r#"fn main() { let a = [10, 20, 30]; print(a.last()) }"#), vec!["30"]);
+}
+
+#[test]
+fn list_last_empty() {
+    assert_eq!(run_ok(r#"fn main() { let a: list<number> = []; print(a.last()) }"#), vec!["null"]);
+}
+
+// ──────────────────────────────────────────────────────────────────────
+//  Array methods – safe access & mutation
+// ──────────────────────────────────────────────────────────────────────
+
+#[test]
+fn list_get_safe() {
+    assert_eq!(run_ok(r#"fn main() { let a = [10, 20]; print(a.get(1)) }"#), vec!["20"]);
+}
+
+#[test]
+fn list_get_out_of_bounds_returns_null() {
+    assert_eq!(run_ok(r#"fn main() { let a = [10, 20]; print(a.get(5)) }"#), vec!["null"]);
+}
+
+#[test]
+fn list_set_returns_self() {
+    assert_eq!(run_ok(r#"fn main() { let a = [1, 2, 3]; a.set(1, 99); print(a) }"#), vec!["[1, 99, 3]"]);
+}
+
+#[test]
+fn list_push_returns_self() {
+    assert_eq!(run_ok(r#"fn main() { let a = [1, 2]; a.push(3); print(a) }"#), vec!["[1, 2, 3]"]);
+}
+
+#[test]
+fn list_push_chain() {
+    assert_eq!(
+        run_ok(r#"fn main() { let a = []; a.push(1).push(2).push(3); print(a) }"#),
+        vec!["[1, 2, 3]"]
+    );
+}
+
+#[test]
+fn list_pop() {
+    assert_eq!(run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.pop()) }"#), vec!["3"]);
+}
+
+#[test]
+fn list_pop_empty_errors() {
+    let err = run(r#"fn main() { let a: list<number> = []; a.pop() }"#).unwrap_err();
+    assert!(err.message.contains("empty list"), "unexpected: {}", err.message);
+}
+
+#[test]
+fn list_insert() {
+    assert_eq!(run_ok(r#"fn main() { let a = [1, 3]; a.insert(1, 2); print(a) }"#), vec!["[1, 2, 3]"]);
+}
+
+#[test]
+fn list_remove() {
+    assert_eq!(run_ok(r#"fn main() { let a = [10, 20, 30]; print(a.remove(1)) }"#), vec!["20"]);
+}
+
+#[test]
+fn list_remove_value_found() {
+    assert_eq!(run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.removeValue(2)) }"#), vec!["true"]);
+}
+
+#[test]
+fn list_remove_value_not_found() {
+    assert_eq!(run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.removeValue(9)) }"#), vec!["false"]);
+}
+
+// ──────────────────────────────────────────────────────────────────────
+//  Array methods – slicing & views
+// ──────────────────────────────────────────────────────────────────────
+
+#[test]
+fn list_slice() {
+    assert_eq!(run_ok(r#"fn main() { let a = [1, 2, 3, 4, 5]; print(a.slice(1, 4)) }"#), vec!["[2, 3, 4]"]);
+}
+
+#[test]
+fn list_slice_no_args() {
+    assert_eq!(run_ok(r#"fn main() { let a = [1, 2]; print(a.slice()) }"#), vec!["[1, 2]"]);
+}
+
+#[test]
+fn list_index_of() {
+    assert_eq!(run_ok(r#"fn main() { let a = [10, 20, 30]; print(a.indexOf(20)) }"#), vec!["1"]);
+}
+
+#[test]
+fn list_index_of_not_found() {
+    assert_eq!(run_ok(r#"fn main() { let a = [10, 20]; print(a.indexOf(99)) }"#), vec!["-1"]);
+}
+
+#[test]
+fn list_contains() {
+    assert_eq!(run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.contains(2)) }"#), vec!["true"]);
+}
+
+#[test]
+fn list_contains_not() {
+    assert_eq!(run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.contains(9)) }"#), vec!["false"]);
+}
+
+#[test]
+fn list_join() {
+    assert_eq!(run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.join(", ")) }"#), vec!["1, 2, 3"]);
+}
+
+#[test]
+fn list_join_no_sep() {
+    assert_eq!(run_ok(r#"fn main() { let a = ["a", "b"]; print(a.join()) }"#), vec!["ab"]);
+}
+
+#[test]
+fn list_reverse() {
+    assert_eq!(run_ok(r#"fn main() { let a = [1, 2, 3]; a.reverse(); print(a) }"#), vec!["[3, 2, 1]"]);
+}
+
+#[test]
+fn list_sort_numbers() {
+    assert_eq!(run_ok(r#"fn main() { let a = [3, 1, 2]; a.sort(); print(a) }"#), vec!["[1, 2, 3]"]);
+}
+
+#[test]
+fn list_sort_strings() {
+    assert_eq!(
+        run_ok(r#"fn main() { let a = ["c", "a", "b"]; a.sort(); print(a) }"#),
+        vec!["[a, b, c]"]
+    );
+}
+
+#[test]
+fn list_concat() {
+    assert_eq!(
+        run_ok(r#"fn main() { let a = [1, 2]; let b = [3, 4]; print(a.concat(b)) }"#),
+        vec!["[1, 2, 3, 4]"]
+    );
+}
+
+#[test]
+fn list_concat_does_not_mutate() {
+    assert_eq!(
+        run_ok(r#"fn main() { let a = [1, 2]; let _ = a.concat([3]); print(a) }"#),
+        vec!["[1, 2]"]
+    );
+}
+
+// ──────────────────────────────────────────────────────────────────────
+//  Array methods – higher-order functions
+// ──────────────────────────────────────────────────────────────────────
+
+#[test]
+fn list_map() {
+    assert_eq!(
+        run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.map(fn(x) { x * 2 })) }"#),
+        vec!["[2, 4, 6]"]
+    );
+}
+
+#[test]
+fn list_filter() {
+    assert_eq!(
+        run_ok(r#"fn main() { let a = [1, 2, 3, 4]; print(a.filter(fn(x) { x > 2 })) }"#),
+        vec!["[3, 4]"]
+    );
+}
+
+#[test]
+fn list_reduce_with_init() {
+    assert_eq!(
+        run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.reduce(fn(acc, x) { acc + x }, 0)) }"#),
+        vec!["6"]
+    );
+}
+
+#[test]
+fn list_reduce_without_init() {
+    assert_eq!(
+        run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.reduce(fn(acc, x) { acc + x })) }"#),
+        vec!["6"]
+    );
+}
+
+#[test]
+fn list_reduce_empty_without_init_errors() {
+    let err = run(r#"fn main() { let a: list<number> = []; a.reduce(fn(acc, x) { acc + x }) }"#).unwrap_err();
+    assert!(err.message.contains("empty list"), "unexpected: {}", err.message);
+}
+
+#[test]
+fn list_find() {
+    assert_eq!(
+        run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.find(fn(x) { x > 1 })) }"#),
+        vec!["2"]
+    );
+}
+
+#[test]
+fn list_find_not_found() {
+    assert_eq!(
+        run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.find(fn(x) { x > 10 })) }"#),
+        vec!["null"]
+    );
+}
+
+#[test]
+fn list_some() {
+    assert_eq!(
+        run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.some(fn(x) { x > 2 })) }"#),
+        vec!["true"]
+    );
+}
+
+#[test]
+fn list_some_false() {
+    assert_eq!(
+        run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.some(fn(x) { x > 10 })) }"#),
+        vec!["false"]
+    );
+}
+
+#[test]
+fn list_every() {
+    assert_eq!(
+        run_ok(r#"fn main() { let a = [2, 4, 6]; print(a.every(fn(x) { x % 2 == 0 })) }"#),
+        vec!["true"]
+    );
+}
+
+#[test]
+fn list_every_false() {
+    assert_eq!(
+        run_ok(r#"fn main() { let a = [2, 3, 6]; print(a.every(fn(x) { x % 2 == 0 })) }"#),
+        vec!["false"]
+    );
+}
+
+#[test]
+fn list_for_each() {
+    assert_eq!(
+        run_ok(r#"fn main() { let a = [10, 20]; let mut s = 0; a.forEach(fn(v, i) { s = s + v }); print(s) }"#),
+        vec!["30"]
+    );
+}
+
+// ──────────────────────────────────────────────────────────────────────
+//  Array global constructors
+// ──────────────────────────────────────────────────────────────────────
+
+#[test]
+fn array_new_with_fill() {
+    assert_eq!(run_raw(r#"fn main() { print(Array.create(3, 0)) }"#).unwrap(), vec!["[0, 0, 0]"]);
+}
+
+#[test]
+fn array_new_without_fill() {
+    assert_eq!(run_raw(r#"fn main() { print(Array.create(2)) }"#).unwrap(), vec!["[null, null]"]);
+}
+
+#[test]
+fn array_fill() {
+    assert_eq!(run_raw(r#"fn main() { print(Array.fill(4, "x")) }"#).unwrap(), vec!["[x, x, x, x]"]);
+}
+
+#[test]
+fn array_from() {
+    assert_eq!(run_raw(r#"fn main() { let a = [1, 2]; let b = Array.copy(a); print(b) }"#).unwrap(), vec!["[1, 2]"]);
+}
+
+#[test]
+fn array_from_copies() {
+    assert_eq!(
+        run_raw(r#"fn main() { let a = [1, 2]; let b = Array.copy(a); b.push(3); print(a); print(b) }"#).unwrap(),
+        vec!["[1, 2]", "[1, 2, 3]"]
+    );
+}
+
+// ──────────────────────────────────────────────────────────────────────
+//  flat() – flatten nested arrays
+// ──────────────────────────────────────────────────────────────────────
+
+#[test]
+fn list_flat_basic() {
+    assert_eq!(
+        run_ok(r#"fn main() { let a = [[1, 2], [3, 4]]; print(a.flat()) }"#),
+        vec!["[1, 2, 3, 4]"]
+    );
+}
+
+#[test]
+fn list_flat_mixed() {
+    assert_eq!(
+        run_ok(r#"fn main() { let a = [1, [2, 3], 4]; print(a.flat()) }"#),
+        vec!["[1, 2, 3, 4]"]
+    );
+}
+
+#[test]
+fn list_flat_empty() {
+    assert_eq!(
+        run_ok(r#"fn main() { let a: list<list<number>> = []; print(a.flat()) }"#),
+        vec!["[]"]
+    );
+}
+
+#[test]
+fn list_flat_single_level() {
+    assert_eq!(
+        run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.flat()) }"#),
+        vec!["[1, 2, 3]"]
+    );
+}
+
+#[test]
+fn list_flat_nested_deep() {
+    assert_eq!(
+        run_ok(r#"fn main() { let a = [[1], [2, [3, 4]]]; print(a.flat()) }"#),
+        vec!["[1, 2, [3, 4]]"]
+    );
+}
+
+// ──────────────────────────────────────────────────────────────────────
+//  shrink() – release excess memory
+// ──────────────────────────────────────────────────────────────────────
+
+#[test]
+fn list_shrink_returns_self() {
+    assert_eq!(
+        run_ok(r#"fn main() { let a = [1, 2, 3]; let b = a.shrink(); print(b) }"#),
+        vec!["[1, 2, 3]"]
+    );
+}
+
+#[test]
+fn list_shrink_preserves_elements() {
+    assert_eq!(
+        run_ok(r#"fn main() { let a = [10, 20, 30]; a.shrink(); print(a); print(a.length) }"#),
+        vec!["[10, 20, 30]", "3"]
+    );
+}
+
+// ──────────────────────────────────────────────────────────────────────
+//  clear() – remove all elements
+// ──────────────────────────────────────────────────────────────────────
+
+#[test]
+fn list_clear() {
+    assert_eq!(
+        run_ok(r#"fn main() { let a = [1, 2, 3]; a.clear(); print(a); print(a.length) }"#),
+        vec!["[]", "0"]
+    );
+}
+
+#[test]
+fn list_clear_returns_self() {
+    assert_eq!(
+        run_ok(r#"fn main() { let a = [1, 2]; let b = a.clear(); print(b) }"#),
+        vec!["[]"]
+    );
+}
+
+// ──────────────────────────────────────────────────────────────────────
+//  Tuple destructuring: let (a, b, c) = expr
+// ──────────────────────────────────────────────────────────────────────
+
+#[test]
+fn tuple_destructure_basic() {
+    assert_eq!(
+        run_ok(r#"fn main() { let (a, b, c) = [1, 2, 3]; print(a); print(b); print(c) }"#),
+        vec!["1", "2", "3"]
+    );
+}
+
+#[test]
+fn tuple_destructure_two() {
+    assert_eq!(
+        run_ok(r#"fn main() { let (x, y) = [10, 20]; print(x + y) }"#),
+        vec!["30"]
+    );
+}
+
+#[test]
+fn tuple_destructure_with_function() {
+    assert_eq!(
+        run_ok(r#"fn pair() { return [100, 200] }
+fn main() { let (a, b) = pair(); print(a); print(b) }"#),
+        vec!["100", "200"]
+    );
+}
+
+#[test]
+fn tuple_destructure_count_mismatch_errors() {
+    let err = run(r#"fn main() { let (a, b) = [1, 2, 3] }"#).unwrap_err();
+    assert!(err.message.contains("expected 2 elements"), "unexpected: {}", err.message);
+}
+
+#[test]
+fn tuple_destructure_not_a_list_errors() {
+    let err = run(r#"fn main() { let (a, b) = 42 }"#).unwrap_err();
+    assert!(err.message.contains("expected a list"), "unexpected: {}", err.message);
 }

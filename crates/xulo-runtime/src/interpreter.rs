@@ -172,6 +172,67 @@ fn native_str(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> 
     })
 }
 
+fn native_array_new(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    let size = match args.first() {
+        Some(Value::Number(n)) => {
+            if n.is_nan() || *n < 0.0 || n.fract() != 0.0 {
+                return Err(RunError::err(
+                    format!("Array.new() size must be a non-negative integer, found {n}"),
+                    0..0,
+                ));
+            }
+            *n as usize
+        }
+        Some(other) => {
+            return Err(RunError::err(
+                format!("Array.new() size must be a number, found {}", other.kind_name()),
+                0..0,
+            ));
+        }
+        None => {
+            return Err(RunError::err("Array.new() requires at least 1 argument", 0..0));
+        }
+    };
+    let fill = if args.len() > 1 { args[1].clone() } else { Value::Null };
+    Ok(Value::List(Rc::new(RefCell::new(vec![fill; size]))))
+}
+
+fn native_array_fill(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    let n = match args.first() {
+        Some(Value::Number(n)) => {
+            if n.is_nan() || *n < 0.0 || n.fract() != 0.0 {
+                return Err(RunError::err(
+                    format!("Array.fill() count must be a non-negative integer, found {n}"),
+                    0..0,
+                ));
+            }
+            *n as usize
+        }
+        Some(other) => {
+            return Err(RunError::err(
+                format!("Array.fill() count must be a number, found {}", other.kind_name()),
+                0..0,
+            ));
+        }
+        None => {
+            return Err(RunError::err("Array.fill() requires 2 arguments", 0..0));
+        }
+    };
+    let fill = args.get(1).cloned().unwrap_or(Value::Null);
+    Ok(Value::List(Rc::new(RefCell::new(vec![fill; n]))))
+}
+
+fn native_array_from(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    match args.first() {
+        Some(Value::List(list)) => Ok(Value::List(Rc::new(RefCell::new(list.borrow().clone())))),
+        Some(other) => Err(RunError::err(
+            format!("Array.from() expected a list, found {}", other.kind_name()),
+            0..0,
+        )),
+        None => Err(RunError::err("Array.from() requires 1 argument", 0..0)),
+    }
+}
+
 fn block_has_closure(block: &Block) -> bool {
     block.statements.iter().any(stmt_has_closure)
 }
@@ -304,13 +365,22 @@ impl Interpreter {
         let global = Env::root();
         global
             .borrow_mut()
-            .define("print", Value::Native(Rc::new(native_print)));
+            .define("print", Value::Native(Rc::new(native_print)), false);
         global
             .borrow_mut()
-            .define("println", Value::Native(Rc::new(native_print)));
+            .define("println", Value::Native(Rc::new(native_print)), false);
         global
             .borrow_mut()
-            .define("str", Value::Native(Rc::new(native_str)));
+            .define("str", Value::Native(Rc::new(native_str)), false);
+        // Array global: Array.new(size, fill?), Array.fill(n, v), Array.from(iter)
+        let array_methods = vec![
+            ("create".to_string(), Value::Native(Rc::new(native_array_new))),
+            ("fill".to_string(), Value::Native(Rc::new(native_array_fill))),
+            ("copy".to_string(), Value::Native(Rc::new(native_array_from))),
+        ];
+        global
+            .borrow_mut()
+            .define("Array", Value::Object(Rc::new(RefCell::new(array_methods))), false);
         Interpreter {
             out: RefCell::new(Vec::new()),
             global,
@@ -406,7 +476,7 @@ impl Interpreter {
     ) -> Result<ModuleExports, RunError> {
         let global = Env::child(&self.global);
         for (name, value) in imports {
-            global.borrow_mut().define(name, value.clone());
+            global.borrow_mut().define(name, value.clone(), false);
         }
         for statement in &program.statements {
             match statement {
@@ -629,7 +699,7 @@ impl Interpreter {
             is_async: f.is_async,
             closure: env.clone(),
         }));
-        env.borrow_mut().define(&f.name, func);
+        env.borrow_mut().define(&f.name, func, false);
     }
 
     /// Register every method of an `impl` block under its mangled name
@@ -652,6 +722,7 @@ impl Interpreter {
             self.global.borrow_mut().define(
                 &impl_fn_name(&imp.trait_name, &imp.type_name, &method.name),
                 func,
+                false,
             );
         }
     }
@@ -671,7 +742,38 @@ impl Interpreter {
                         None => Value::Null,
                     }
                 };
-                env.borrow_mut().define(&binding.name, value);
+                // Tuple destructuring: `let (a, b, c) = expr`
+                if let Some(tuple_names) = &binding.tuple_names {
+                    match value {
+                        Value::List(list) => {
+                            let l = list.borrow();
+                            if l.len() != tuple_names.len() {
+                                return Err(RunError::err(
+                                    format!(
+                                        "tuple destructuring expected {} elements, found {}",
+                                        tuple_names.len(),
+                                        l.len()
+                                    ),
+                                    binding.name_span.clone(),
+                                ));
+                            }
+                            for (name, item) in tuple_names.iter().zip(l.iter()) {
+                                env.borrow_mut().define(name, item.clone(), binding.is_mutable);
+                            }
+                        }
+                        other => {
+                            return Err(RunError::err(
+                                format!(
+                                    "cannot destructure {} as a tuple (expected a list)",
+                                    other.kind_name()
+                                ),
+                                binding.name_span.clone(),
+                            ));
+                        }
+                    }
+                } else {
+                    env.borrow_mut().define(&binding.name, value, binding.is_mutable);
+                }
                 Ok(Flow::Continue)
             }
             Statement::Return(r) => {
@@ -702,7 +804,7 @@ impl Interpreter {
                 // Register the enum's runtime value so `pub use { Color }` and
                 // `pub enum` both resolve it for importers (construction
                 // `Color::Red` is name-based and unaffected).
-                env.borrow_mut().define(&e.name, enum_value(e));
+                env.borrow_mut().define(&e.name, enum_value(e), false);
                 Ok(Flow::Continue)
             }
             Statement::Expr(es) => {
@@ -738,7 +840,7 @@ impl Interpreter {
                     // external value fail only if a program computes with it.
                     for name in import_binding_names(&imp.spec) {
                         if env.borrow().get(&name).is_none() {
-                            env.borrow_mut().define(&name, Value::Null);
+                            env.borrow_mut().define(&name, Value::Null, false);
                         }
                     }
                     Ok(Flow::Continue)
@@ -828,7 +930,7 @@ impl Interpreter {
             None => Value::Null,
         };
         env.borrow_mut()
-            .define(&binding.name, Value::Signal(Rc::new(RefCell::new(value))));
+            .define(&binding.name, Value::Signal(Rc::new(RefCell::new(value))), binding.is_mutable);
         Ok(Flow::Continue)
     }
 
@@ -839,7 +941,7 @@ impl Interpreter {
         let value = self.eval(&store.value, env)?;
         match &store.pattern {
             BindingPattern::Ident(name) => {
-                env.borrow_mut().define(name, value);
+                env.borrow_mut().define(name, value, false);
             }
             BindingPattern::Destructure(fields) => {
                 for (key, alias) in fields {
@@ -853,7 +955,7 @@ impl Interpreter {
                         _ => Value::Null,
                     };
                     let binding_name = alias.clone().unwrap_or_else(|| key.clone());
-                    env.borrow_mut().define(&binding_name, member);
+                    env.borrow_mut().define(&binding_name, member, false);
                 }
             }
         }
@@ -941,7 +1043,7 @@ impl Interpreter {
                 let child = Env::child(env);
                 let mut acc = Vec::with_capacity(items.borrow().len());
                 for v in items.borrow().iter().cloned() {
-                    child.borrow_mut().define(iter_var, v);
+                    child.borrow_mut().define(iter_var, v, true);
                     acc.push(self.ui_children_value(Some(body), &child)?);
                 }
                 Ok(Value::List(Rc::new(RefCell::new(acc))))
@@ -1077,7 +1179,7 @@ impl Interpreter {
             if recycle {
                 let child = Env::child(env);
                 while self.range_has_next(i, end, r.end_inclusive) {
-                    child.borrow_mut().reset(&f.iter_var, Value::Number(i));
+                    child.borrow_mut().reset(&f.iter_var, Value::Number(i), true);
                     match self.exec_stmts(&f.body.statements, &child)? {
                         Flow::Continue | Flow::LoopContinue => {}
                         Flow::Break => break,
@@ -1088,7 +1190,7 @@ impl Interpreter {
             } else {
                 while self.range_has_next(i, end, r.end_inclusive) {
                     let child = Env::child(env);
-                    child.borrow_mut().define(&f.iter_var, Value::Number(i));
+                    child.borrow_mut().define(&f.iter_var, Value::Number(i), true);
                     match self.exec_block(&f.body, &child)? {
                         Flow::Continue | Flow::LoopContinue => {}
                         Flow::Break => break,
@@ -1128,7 +1230,7 @@ impl Interpreter {
                         }
                         list[i].clone()
                     };
-                    child.borrow_mut().reset(&f.iter_var, item);
+                    child.borrow_mut().reset(&f.iter_var, item, true);
                     match self.exec_stmts(&f.body.statements, &child)? {
                         Flow::Continue | Flow::LoopContinue => {}
                         Flow::Break => break,
@@ -1146,7 +1248,7 @@ impl Interpreter {
                         list[i].clone()
                     };
                     let child = Env::child(env);
-                    child.borrow_mut().define(&f.iter_var, item);
+                    child.borrow_mut().define(&f.iter_var, item, true);
                     match self.exec_block(&f.body, &child)? {
                         Flow::Continue | Flow::LoopContinue => {}
                         Flow::Break => break,
@@ -1180,11 +1282,20 @@ impl Interpreter {
                 // binding in an inner scope takes a plain assignment.
                 if let Some(Value::Signal(cell)) = env.borrow().get(name) {
                     *cell.borrow_mut() = value;
-                } else if !env.borrow_mut().assign(name, value) {
-                    return Err(RunError::err(
-                        format!("undefined variable `{name}` cannot be assigned"),
-                        a.span.clone(),
-                    ));
+                } else {
+                    // Check if variable is mutable before assignment.
+                    if !env.borrow().is_mutable(name) {
+                        return Err(RunError::err(
+                            format!("cannot assign to immutable variable `{name}`"),
+                            a.span.clone(),
+                        ));
+                    }
+                    if !env.borrow_mut().assign(name, value) {
+                        return Err(RunError::err(
+                            format!("undefined variable `{name}` cannot be assigned"),
+                            a.span.clone(),
+                        ));
+                    }
                 }
             }
             AssignTarget::Member(object, property) => {
@@ -1256,7 +1367,7 @@ impl Interpreter {
             Ok(flow) => Ok(flow),
             Err(RunError::Throw(value)) => {
                 let child = Env::child(env);
-                child.borrow_mut().define(&t.catch_var, value);
+                child.borrow_mut().define(&t.catch_var, value, true);
                 self.exec_block(&t.catch_block, &child)
             }
             Err(e) => Err(e),
@@ -1286,6 +1397,13 @@ impl Interpreter {
                         Value::Number(n) => Ok(Value::Number(-n)),
                         other => Err(RunError::err(
                             format!("cannot negate {}", other.kind_name()),
+                            un.span.clone(),
+                        )),
+                    },
+                    UnaryOperator::BitNot => match operand {
+                        Value::Number(n) => Ok(Value::Number((!(n as i64)) as f64)),
+                        other => Err(RunError::err(
+                            format!("cannot apply `~` to {}", other.kind_name()),
                             un.span.clone(),
                         )),
                     },
@@ -1556,6 +1674,11 @@ impl Interpreter {
                     BinaryOperator::Div => self.arith(left, right, bin, "`/`", |a, b| a / b),
                     BinaryOperator::Mod => self.arith(left, right, bin, "`%`", |a, b| a % b),
                     BinaryOperator::Pow => self.arith(left, right, bin, "`**`", |a, b| a.powf(b)),
+                    BinaryOperator::BitAnd => self.arith(left, right, bin, "`&`", |a, b| (a as i64 & b as i64) as f64),
+                    BinaryOperator::BitOr => self.arith(left, right, bin, "`|`", |a, b| (a as i64 | b as i64) as f64),
+                    BinaryOperator::Xor => self.arith(left, right, bin, "`^`", |a, b| (a as i64 ^ b as i64) as f64),
+                    BinaryOperator::Shl => self.arith(left, right, bin, "`<<`", |a, b| ((a as i64) << (b as i64)) as f64),
+                    BinaryOperator::Shr => self.arith(left, right, bin, "`>>`", |a, b| ((a as i64) >> (b as i64)) as f64),
                     BinaryOperator::Eq => Ok(Value::Boolean(equal(&left, &right))),
                     BinaryOperator::Neq => Ok(Value::Boolean(!equal(&left, &right))),
                     BinaryOperator::Lt => self.compare(left, right, bin, "<"),
@@ -1764,6 +1887,9 @@ impl Interpreter {
             Value::List(list) if m.property == "length" => {
                 Ok(Value::Number(list.borrow().len() as f64))
             }
+            Value::List(list) if m.property == "capacity" => {
+                Ok(Value::Number(list.borrow().capacity() as f64))
+            }
             Value::String(s) if m.property == "length" => {
                 // JS `.length` counts UTF-16 code units, not Unicode scalars
                 // (`"😀".length` is 2 there); mirror it.
@@ -1862,6 +1988,9 @@ impl Interpreter {
                 .iter()
                 .find(|(k, _)| k == method)
                 .map(|(_, v)| v.clone()),
+            Value::List(list) => {
+                return self.list_method(method, list.clone(), &call.arguments, &call.span, env);
+            }
             _ => None,
         };
         match callee {
@@ -1871,6 +2000,370 @@ impl Interpreter {
                 call.span.clone(),
             )),
         }
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    //  Built-in list methods
+    // ──────────────────────────────────────────────────────────────────
+
+    fn list_method(
+        &self,
+        method: &str,
+        list: std::rc::Rc<RefCell<Vec<Value>>>,
+        args: &[CallArg],
+        span: &std::ops::Range<usize>,
+        env: &Rc<RefCell<crate::env::Env>>,
+    ) -> Result<Value, RunError> {
+        match method {
+            // ── basic properties ──
+            "isEmpty" => Ok(Value::Boolean(list.borrow().is_empty())),
+            "first" => {
+                let l = list.borrow();
+                Ok(l.first().cloned().unwrap_or(Value::Null))
+            }
+            "last" => {
+                let l = list.borrow();
+                Ok(l.last().cloned().unwrap_or(Value::Null))
+            }
+
+            // ── safe access & mutation ──
+            "get" => {
+                if args.len() != 1 {
+                    return Err(RunError::err("get() requires exactly 1 argument", span.clone()));
+                }
+                let idx = self.eval_number_arg(&args[0], env)?;
+                if idx.is_nan() || idx < 0.0 || idx.fract() != 0.0 {
+                    return Err(RunError::err(
+                        format!("index must be a non-negative integer, found {idx}"),
+                        span.clone(),
+                    ));
+                }
+                let i = idx as usize;
+                if i >= list.borrow().len() {
+                    Ok(Value::Null)
+                } else {
+                    Ok(list.borrow()[i].clone())
+                }
+            }
+            "set" => {
+                if args.len() != 2 {
+                    return Err(RunError::err("set() requires exactly 2 arguments", span.clone()));
+                }
+                let idx = self.eval_number_arg(&args[0], env)?;
+                let val = self.eval(&args[1].value, env)?;
+                let i = self.list_index_bound(idx, list.borrow().len(), span)?;
+                list.borrow_mut()[i] = val;
+                Ok(Value::List(list))
+            }
+            "push" => {
+                if args.len() != 1 {
+                    return Err(RunError::err("push() requires exactly 1 argument", span.clone()));
+                }
+                let val = self.eval(&args[0].value, env)?;
+                list.borrow_mut().push(val);
+                Ok(Value::List(list))
+            }
+            "pop" => {
+                if !args.is_empty() {
+                    return Err(RunError::err("pop() takes no arguments", span.clone()));
+                }
+                let val = list.borrow_mut().pop().ok_or_else(|| {
+                    RunError::err("pop() called on an empty list", span.clone())
+                })?;
+                Ok(val)
+            }
+            "insert" => {
+                if args.len() != 2 {
+                    return Err(RunError::err("insert() requires exactly 2 arguments", span.clone()));
+                }
+                let idx = self.eval_number_arg(&args[0], env)?;
+                let val = self.eval(&args[1].value, env)?;
+                let i = self.list_index_bound(idx, list.borrow().len(), span)?;
+                list.borrow_mut().insert(i, val);
+                Ok(Value::List(list))
+            }
+            "remove" => {
+                if args.len() != 1 {
+                    return Err(RunError::err("remove() requires exactly 1 argument", span.clone()));
+                }
+                let idx = self.eval_number_arg(&args[0], env)?;
+                let i = self.list_index_bound(idx, list.borrow().len(), span)?;
+                Ok(list.borrow_mut().remove(i))
+            }
+            "removeValue" => {
+                if args.len() != 1 {
+                    return Err(RunError::err("removeValue() requires exactly 1 argument", span.clone()));
+                }
+                let val = self.eval(&args[0].value, env)?;
+                let mut l = list.borrow_mut();
+                if let Some(pos) = l.iter().position(|v| equal(v, &val)) {
+                    l.remove(pos);
+                    Ok(Value::Boolean(true))
+                } else {
+                    Ok(Value::Boolean(false))
+                }
+            }
+
+            // ── slicing & views ──
+            "slice" => {
+                if args.len() > 2 {
+                    return Err(RunError::err("slice() takes at most 2 arguments", span.clone()));
+                }
+                let l = list.borrow();
+                let len = l.len() as i64;
+                let start = if args.is_empty() {
+                    0i64
+                } else {
+                    self.eval_number_arg(&args[0], env)? as i64
+                };
+                let end = if args.len() < 2 {
+                    len
+                } else {
+                    self.eval_number_arg(&args[1], env)? as i64
+                };
+                let s = start.max(0).min(len) as usize;
+                let e = end.max(0).min(len) as usize;
+                Ok(Value::List(Rc::new(RefCell::new(l[s..e].to_vec()))))
+            }
+            "indexOf" => {
+                if args.len() != 1 {
+                    return Err(RunError::err("indexOf() requires exactly 1 argument", span.clone()));
+                }
+                let val = self.eval(&args[0].value, env)?;
+                let l = list.borrow();
+                match l.iter().position(|v| equal(v, &val)) {
+                    Some(i) => Ok(Value::Number(i as f64)),
+                    None => Ok(Value::Number(-1.0)),
+                }
+            }
+            "contains" => {
+                if args.len() != 1 {
+                    return Err(RunError::err("contains() requires exactly 1 argument", span.clone()));
+                }
+                let val = self.eval(&args[0].value, env)?;
+                let l = list.borrow();
+                Ok(Value::Boolean(l.iter().any(|v| equal(v, &val))))
+            }
+            "join" => {
+                if args.len() > 1 {
+                    return Err(RunError::err("join() takes at most 1 argument", span.clone()));
+                }
+                let sep = if args.is_empty() {
+                    String::new()
+                } else {
+                    match self.eval(&args[0].value, env)? {
+                        Value::String(s) => s.to_string(),
+                        v => v.format(),
+                    }
+                };
+                let l = list.borrow();
+                let parts: Vec<String> = l.iter().map(|v| v.format()).collect();
+                Ok(Value::String(parts.join(&sep).into()))
+            }
+            "reverse" => {
+                if !args.is_empty() {
+                    return Err(RunError::err("reverse() takes no arguments", span.clone()));
+                }
+                list.borrow_mut().reverse();
+                Ok(Value::List(list))
+            }
+            "sort" => {
+                if !args.is_empty() {
+                    return Err(RunError::err("sort() takes no arguments", span.clone()));
+                }
+                list.borrow_mut().sort_by(|a, b| {
+                    match (a, b) {
+                        (Value::Number(x), Value::Number(y)) => x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal),
+                        (Value::String(x), Value::String(y)) => x.cmp(y),
+                        _ => std::cmp::Ordering::Equal,
+                    }
+                });
+                Ok(Value::List(list))
+            }
+            "concat" => {
+                if args.len() != 1 {
+                    return Err(RunError::err("concat() requires exactly 1 argument", span.clone()));
+                }
+                let other = self.eval(&args[0].value, env)?;
+                match other {
+                    Value::List(other_list) => {
+                        let mut out = list.borrow().clone();
+                        out.extend(other_list.borrow().iter().cloned());
+                        Ok(Value::List(Rc::new(RefCell::new(out))))
+                    }
+                    _ => Err(RunError::err(
+                        format!("concat() expected a list, found {}", other.kind_name()),
+                        span.clone(),
+                    )),
+                }
+            }
+            "flat" => {
+                if !args.is_empty() {
+                    return Err(RunError::err("flat() takes no arguments", span.clone()));
+                }
+                let mut out = Vec::new();
+                for item in list.borrow().iter() {
+                    match item {
+                        Value::List(inner) => {
+                            out.extend(inner.borrow().iter().cloned());
+                        }
+                        other => out.push(other.clone()),
+                    }
+                }
+                Ok(Value::List(Rc::new(RefCell::new(out))))
+            }
+            "shrink" => {
+                if !args.is_empty() {
+                    return Err(RunError::err("shrink() takes no arguments", span.clone()));
+                }
+                list.borrow_mut().shrink_to_fit();
+                Ok(Value::List(list))
+            }
+            "clear" => {
+                if !args.is_empty() {
+                    return Err(RunError::err("clear() takes no arguments", span.clone()));
+                }
+                list.borrow_mut().clear();
+                Ok(Value::List(list))
+            }
+
+            // ── higher-order functions ──
+            "map" => {
+                if args.len() != 1 {
+                    return Err(RunError::err("map() requires exactly 1 argument (a function)", span.clone()));
+                }
+                let f_val = self.eval(&args[0].value, env)?;
+                let l = list.borrow();
+                let mut out = Vec::with_capacity(l.len());
+                for (i, item) in l.iter().enumerate() {
+                    let result = self.call_value_with_values(&f_val, &[item.clone(), Value::Number(i as f64)])?;
+                    out.push(result);
+                }
+                Ok(Value::List(Rc::new(RefCell::new(out))))
+            }
+            "filter" => {
+                if args.len() != 1 {
+                    return Err(RunError::err("filter() requires exactly 1 argument (a function)", span.clone()));
+                }
+                let f_val = self.eval(&args[0].value, env)?;
+                let l = list.borrow();
+                let mut out = Vec::new();
+                for item in l.iter() {
+                    let keep = self.call_value_with_values(&f_val, &[item.clone()])?;
+                    if is_truthy(&keep) {
+                        out.push(item.clone());
+                    }
+                }
+                Ok(Value::List(Rc::new(RefCell::new(out))))
+            }
+            "reduce" => {
+                if args.is_empty() || args.len() > 2 {
+                    return Err(RunError::err("reduce() requires 1 or 2 arguments", span.clone()));
+                }
+                let f_val = self.eval(&args[0].value, env)?;
+                let l = list.borrow();
+                let has_init = args.len() == 2;
+                let mut acc = if has_init {
+                    self.eval(&args[1].value, env)?
+                } else if l.is_empty() {
+                    return Err(RunError::err("reduce() called on an empty list without initial value", span.clone()));
+                } else {
+                    l[0].clone()
+                };
+                let start = if has_init { 0 } else { 1 };
+                for item in &l[start..] {
+                    let new_acc = self.call_value_with_values(&f_val, &[acc, item.clone()])?;
+                    acc = new_acc;
+                }
+                Ok(acc)
+            }
+            "find" => {
+                if args.len() != 1 {
+                    return Err(RunError::err("find() requires exactly 1 argument (a function)", span.clone()));
+                }
+                let f_val = self.eval(&args[0].value, env)?;
+                let l = list.borrow();
+                for item in l.iter() {
+                    let found = self.call_value_with_values(&f_val, &[item.clone()])?;
+                    if is_truthy(&found) {
+                        return Ok(item.clone());
+                    }
+                }
+                Ok(Value::Null)
+            }
+            "some" => {
+                if args.len() != 1 {
+                    return Err(RunError::err("some() requires exactly 1 argument (a function)", span.clone()));
+                }
+                let f_val = self.eval(&args[0].value, env)?;
+                let l = list.borrow();
+                for item in l.iter() {
+                    let result = self.call_value_with_values(&f_val, &[item.clone()])?;
+                    if is_truthy(&result) {
+                        return Ok(Value::Boolean(true));
+                    }
+                }
+                Ok(Value::Boolean(false))
+            }
+            "every" => {
+                if args.len() != 1 {
+                    return Err(RunError::err("every() requires exactly 1 argument (a function)", span.clone()));
+                }
+                let f_val = self.eval(&args[0].value, env)?;
+                let l = list.borrow();
+                for item in l.iter() {
+                    let result = self.call_value_with_values(&f_val, &[item.clone()])?;
+                    if !is_truthy(&result) {
+                        return Ok(Value::Boolean(false));
+                    }
+                }
+                Ok(Value::Boolean(true))
+            }
+            "forEach" => {
+                if args.len() != 1 {
+                    return Err(RunError::err("forEach() requires exactly 1 argument (a function)", span.clone()));
+                }
+                let f_val = self.eval(&args[0].value, env)?;
+                let l = list.borrow();
+                for (i, item) in l.iter().enumerate() {
+                    self.call_value_with_values(&f_val, &[item.clone(), Value::Number(i as f64)])?;
+                }
+                Ok(Value::Null)
+            }
+
+            _ => Err(RunError::err(
+                format!("`{method}` is not a method of list"),
+                span.clone(),
+            )),
+        }
+    }
+
+    fn eval_number_arg(&self, arg: &CallArg, env: &Rc<RefCell<crate::env::Env>>) -> Result<f64, RunError> {
+        let val = self.eval(&arg.value, env)?;
+        match val {
+            Value::Number(n) => Ok(n),
+            other => Err(RunError::err(
+                format!("expected a number, found {}", other.kind_name()),
+                arg.value.span().clone(),
+            )),
+        }
+    }
+
+    fn list_index_bound(&self, n: f64, len: usize, span: &std::ops::Range<usize>) -> Result<usize, RunError> {
+        if n.is_nan() || n < 0.0 || n.fract() != 0.0 {
+            return Err(RunError::err(
+                format!("index must be a non-negative integer, found {n}"),
+                span.clone(),
+            ));
+        }
+        let i = n as usize;
+        if i > len {
+            return Err(RunError::err(
+                format!("index {n} out of bounds for a list of length {len}"),
+                span.clone(),
+            ));
+        }
+        Ok(i)
     }
 
     fn enum_construct(
@@ -1948,6 +2441,46 @@ impl Interpreter {
         }
     }
 
+    /// Call a callable with pre-evaluated `Value` arguments (bypasses expression
+    /// evaluation). Used by built-in higher-order list methods.
+    fn call_value_with_values(
+        &self,
+        callee: &Value,
+        values: &[Value],
+    ) -> Result<Value, RunError> {
+        match callee {
+            Value::Native(native) => native(self, values),
+            Value::Function(func) => {
+                let depth = self.call_depth.get();
+                if depth >= MAX_CALL_DEPTH {
+                    return Err(RunError::err(
+                        format!("call depth exceeded: recursion limit of {MAX_CALL_DEPTH} reached"),
+                        0..0,
+                    ));
+                }
+                self.call_depth.set(depth + 1);
+                let empty_env = crate::env::Env::root();
+                let result = (|| {
+                    let mut bound = Vec::with_capacity(func.params.len());
+                    for (i, param) in func.params.iter().enumerate() {
+                        bound.push(if i < values.len() {
+                            Some(values[i].clone())
+                        } else {
+                            Some(self.default_param(param, &empty_env)?)
+                        });
+                    }
+                    self.run_function(func, bound)
+                })();
+                self.call_depth.set(depth);
+                result
+            }
+            other => Err(RunError::err(
+                format!("{} is not callable", other.format()),
+                0..0,
+            )),
+        }
+    }
+
     fn eval_args(&self, args: &[CallArg], env: &Rc<RefCell<Env>>) -> Result<Vec<Value>, RunError> {
         let mut values = Vec::with_capacity(args.len());
         for arg in args {
@@ -2012,7 +2545,7 @@ impl Interpreter {
                 Some(v) => v,
                 None => self.default_param(param, env)?,
             };
-            env.borrow_mut().define(&param.name, value);
+            env.borrow_mut().define(&param.name, value, false);
         }
         Ok(())
     }
@@ -2089,10 +2622,9 @@ impl Interpreter {
         &self,
         body: &Block,
         env: &Rc<RefCell<Env>>,
-        declared_return: bool,
+        _declared_return: bool,
     ) -> Result<Value, RunError> {
-        if declared_return
-            && let Some(Statement::Expr(last)) = body.statements.last()
+        if let Some(Statement::Expr(last)) = body.statements.last()
             && !last.has_semicolon
         {
             for stmt in &body.statements[..body.statements.len() - 1] {
@@ -2216,7 +2748,7 @@ fn bind_enum_payload(
     if bindings.len() == 1 {
         let name = &bindings[0];
         if name != "_" {
-            env.borrow_mut().define(name, payload.clone());
+            env.borrow_mut().define(name, payload.clone(), false);
         }
         return Ok(());
     }
@@ -2232,7 +2764,7 @@ fn bind_enum_payload(
             continue;
         }
         let value = list.get(i).cloned().unwrap_or(Value::Null);
-        env.borrow_mut().define(name, value);
+        env.borrow_mut().define(name, value, false);
     }
     Ok(())
 }

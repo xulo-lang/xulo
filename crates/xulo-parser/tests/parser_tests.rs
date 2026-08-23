@@ -1721,3 +1721,157 @@ fn break_in_while_loop() {
         "expected break"
     );
 }
+
+#[test]
+fn parses_bitwise_not() {
+    let p = parse("let x = ~a");
+    let Statement::Let(b) = &p.statements[0] else {
+        panic!();
+    };
+    match &b.value {
+        Some(Expression::Unary(op)) => {
+            assert_eq!(op.operator, xulo_core::ast::UnaryOperator::BitNot);
+        }
+        _ => panic!("expected unary ~"),
+    }
+}
+
+#[test]
+fn parses_bitwise_xor() {
+    let p = parse("let x = a ^ b");
+    let Statement::Let(b) = &p.statements[0] else {
+        panic!();
+    };
+    match &b.value {
+        Some(Expression::BinaryOp(op)) => {
+            assert_eq!(op.operator, BinaryOperator::Xor);
+        }
+        _ => panic!("expected binary ^"),
+    }
+}
+
+#[test]
+fn parses_shift_left() {
+    let p = parse("let x = a << b");
+    let Statement::Let(b) = &p.statements[0] else {
+        panic!();
+    };
+    match &b.value {
+        Some(Expression::BinaryOp(op)) => {
+            assert_eq!(op.operator, BinaryOperator::Shl);
+        }
+        _ => panic!("expected binary <<"),
+    }
+}
+
+#[test]
+fn parses_shift_right() {
+    let p = parse("let x = a >> b");
+    let Statement::Let(b) = &p.statements[0] else {
+        panic!();
+    };
+    match &b.value {
+        Some(Expression::BinaryOp(op)) => {
+            assert_eq!(op.operator, BinaryOperator::Shr);
+        }
+        _ => panic!("expected binary >>"),
+    }
+}
+
+#[test]
+fn parses_bitwise_and() {
+    let p = parse("let x = a & b");
+    let Statement::Let(b) = &p.statements[0] else {
+        panic!();
+    };
+    match &b.value {
+        Some(Expression::BinaryOp(op)) => {
+            assert_eq!(op.operator, BinaryOperator::BitAnd);
+        }
+        _ => panic!("expected binary &"),
+    }
+}
+
+#[test]
+fn parses_bitwise_or() {
+    let p = parse("let x = a | b");
+    let Statement::Let(b) = &p.statements[0] else {
+        panic!();
+    };
+    match &b.value {
+        Some(Expression::BinaryOp(op)) => {
+            assert_eq!(op.operator, BinaryOperator::BitOr);
+        }
+        _ => panic!("expected binary |"),
+    }
+}
+
+#[test]
+fn shift_precedence_higher_than_add() {
+    let p = parse("let x = a + b << c");
+    let Statement::Let(b) = &p.statements[0] else {
+        panic!();
+    };
+    match &b.value {
+        Some(Expression::BinaryOp(op)) => {
+            assert_eq!(op.operator, BinaryOperator::Shl);
+            assert!(
+                matches!(op.left, Expression::BinaryOp(ref m) if m.operator == BinaryOperator::Add)
+            );
+        }
+        _ => panic!("expected binary op"),
+    }
+}
+
+#[test]
+fn bitwise_left_to_right() {
+    // All bitwise + additive operators at same precedence, left-to-right
+    let p = parse("let x = a & b ^ c");
+    let Statement::Let(b) = &p.statements[0] else {
+        panic!();
+    };
+    match &b.value {
+        Some(Expression::BinaryOp(op)) => {
+            assert_eq!(op.operator, BinaryOperator::Xor);
+            assert!(
+                matches!(op.left, Expression::BinaryOp(ref m) if m.operator == BinaryOperator::BitAnd)
+            );
+        }
+        _ => panic!("expected binary op"),
+    }
+}
+
+#[test]
+fn bitwise_or_left_to_right() {
+    let p = parse("let x = a ^ b | c");
+    let Statement::Let(b) = &p.statements[0] else {
+        panic!();
+    };
+    match &b.value {
+        Some(Expression::BinaryOp(op)) => {
+            assert_eq!(op.operator, BinaryOperator::BitOr);
+            assert!(
+                matches!(op.left, Expression::BinaryOp(ref m) if m.operator == BinaryOperator::Xor)
+            );
+        }
+        _ => panic!("expected binary op"),
+    }
+}
+
+#[test]
+fn bitwise_same_precedence_as_add() {
+    // & has same precedence as +, left-to-right
+    let p = parse("let x = a + b & c");
+    let Statement::Let(b) = &p.statements[0] else {
+        panic!();
+    };
+    match &b.value {
+        Some(Expression::BinaryOp(op)) => {
+            assert_eq!(op.operator, BinaryOperator::BitAnd);
+            assert!(
+                matches!(op.left, Expression::BinaryOp(ref m) if m.operator == BinaryOperator::Add)
+            );
+        }
+        _ => panic!("expected binary op"),
+    }
+}

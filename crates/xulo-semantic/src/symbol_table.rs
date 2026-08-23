@@ -20,6 +20,8 @@ pub struct Symbol {
     pub kind: SymbolKind,
     /// `true` when the binding may not be reassigned (`const`, or a parameter).
     pub is_const: bool,
+    /// `true` when the variable can be reassigned (`let mut` or `let :=`).
+    pub is_mutable: bool,
 }
 
 /// A stack of scopes mapping names to symbols. The innermost scope is last.

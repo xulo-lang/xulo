@@ -583,7 +583,10 @@ impl IrGenerator {
                     }
                     BinaryOperator::Sub
                     | BinaryOperator::Mul | BinaryOperator::Div
-                    | BinaryOperator::Mod | BinaryOperator::Pow => {
+                    | BinaryOperator::Mod | BinaryOperator::Pow
+                    | BinaryOperator::BitAnd | BinaryOperator::BitOr
+                    | BinaryOperator::Xor | BinaryOperator::Shl
+                    | BinaryOperator::Shr => {
                         if self.has_float_operand(&binop.left) || self.has_float_operand(&binop.right) {
                             2
                         } else {
@@ -599,7 +602,7 @@ impl IrGenerator {
             Expression::Unary(unop) => {
                 match &unop.operator {
                     UnaryOperator::Not => 5,
-                    UnaryOperator::Neg => self.determine_element_tag(&unop.operand),
+                    UnaryOperator::Neg | UnaryOperator::BitNot => self.determine_element_tag(&unop.operand),
                 }
             }
             Expression::Call(call) => {
@@ -815,6 +818,11 @@ impl IrGenerator {
             BinaryOperator::Gte => Instruction::Gte { dst: local, left, right },
             BinaryOperator::And => Instruction::And { dst: local, left, right },
             BinaryOperator::Or => Instruction::Or { dst: local, left, right },
+            BinaryOperator::BitAnd => Instruction::BitAnd { dst: local, left, right },
+            BinaryOperator::BitOr => Instruction::BitOr { dst: local, left, right },
+            BinaryOperator::Xor => Instruction::Xor { dst: local, left, right },
+            BinaryOperator::Shl => Instruction::Shl { dst: local, left, right },
+            BinaryOperator::Shr => Instruction::Shr { dst: local, left, right },
         };
 
         self.module.functions[func_idx].instructions.push(instr);
@@ -828,6 +836,7 @@ impl IrGenerator {
         let ty = match unary.operator {
             UnaryOperator::Not => IrType::Bool,
             UnaryOperator::Neg => IrType::I64,
+            UnaryOperator::BitNot => IrType::I64,
         };
 
         let local = self.module.functions[func_idx].add_local(ty);
@@ -835,6 +844,7 @@ impl IrGenerator {
         let instr = match unary.operator {
             UnaryOperator::Not => Instruction::Not { dst: local, operand },
             UnaryOperator::Neg => Instruction::Neg { dst: local, operand },
+            UnaryOperator::BitNot => Instruction::BitNot { dst: local, operand },
         };
 
         self.module.functions[func_idx].instructions.push(instr);

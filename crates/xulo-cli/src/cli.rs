@@ -555,7 +555,7 @@ fn repl_execute(buffer: &str, render_source: &str) -> Result<(), bool> {
         interp
             .root_env()
             .borrow_mut()
-            .define("repl_echo", Value::Native(repl_echo_native()));
+            .define("repl_echo", Value::Native(repl_echo_native()), false);
     }
     match interp.run(&ast) {
         Ok(out) => {

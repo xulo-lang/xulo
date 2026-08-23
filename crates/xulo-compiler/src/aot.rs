@@ -330,6 +330,41 @@ impl AotCodeGen {
                     let val = builder.ins().ineg(o);
                     if let Some(&var) = vars.get(dst) { builder.def_var(var, val); }
                 }
+                Instruction::BitAnd { dst, left, right } => {
+                    let l = resolve_operand(&mut builder, left, &vars);
+                    let r = resolve_operand(&mut builder, right, &vars);
+                    let val = builder.ins().band(l, r);
+                    if let Some(&var) = vars.get(dst) { builder.def_var(var, val); }
+                }
+                Instruction::BitOr { dst, left, right } => {
+                    let l = resolve_operand(&mut builder, left, &vars);
+                    let r = resolve_operand(&mut builder, right, &vars);
+                    let val = builder.ins().bor(l, r);
+                    if let Some(&var) = vars.get(dst) { builder.def_var(var, val); }
+                }
+                Instruction::Xor { dst, left, right } => {
+                    let l = resolve_operand(&mut builder, left, &vars);
+                    let r = resolve_operand(&mut builder, right, &vars);
+                    let val = builder.ins().bxor(l, r);
+                    if let Some(&var) = vars.get(dst) { builder.def_var(var, val); }
+                }
+                Instruction::Shl { dst, left, right } => {
+                    let l = resolve_operand(&mut builder, left, &vars);
+                    let r = resolve_operand(&mut builder, right, &vars);
+                    let val = builder.ins().ishl(l, r);
+                    if let Some(&var) = vars.get(dst) { builder.def_var(var, val); }
+                }
+                Instruction::Shr { dst, left, right } => {
+                    let l = resolve_operand(&mut builder, left, &vars);
+                    let r = resolve_operand(&mut builder, right, &vars);
+                    let val = builder.ins().sshr(l, r);
+                    if let Some(&var) = vars.get(dst) { builder.def_var(var, val); }
+                }
+                Instruction::BitNot { dst, operand } => {
+                    let o = resolve_operand(&mut builder, operand, &vars);
+                    let val = builder.ins().bnot(o);
+                    if let Some(&var) = vars.get(dst) { builder.def_var(var, val); }
+                }
                 Instruction::Eq { dst, left, right } => {
                     let l = resolve_operand(&mut builder, left, &vars);
                     let r = resolve_operand(&mut builder, right, &vars);

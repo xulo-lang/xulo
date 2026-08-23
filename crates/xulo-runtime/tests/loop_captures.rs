@@ -25,7 +25,7 @@ fn run_raw(src: &str) -> Vec<String> {
 fn ranged_loop_function_captures_its_own_iteration() {
     let out = run_raw(
         r#"
-        let funcs = []
+        let mut funcs = []
         for i in 0..<3 {
             fn get(): number { i }
             funcs = [...funcs, get]
@@ -50,7 +50,7 @@ fn ranged_loop_function_captures_its_own_iteration() {
 fn list_loop_function_captures_its_own_iteration() {
     let out = run_raw(
         r#"
-        let funcs = []
+        let mut funcs = []
         for x in [10, 20, 30] {
             fn get(): number { x }
             funcs = [...funcs, get]
@@ -71,7 +71,7 @@ fn list_loop_function_captures_its_own_iteration() {
 fn closure_in_nested_block_captures_its_own_iteration() {
     let out = run_raw(
         r#"
-        let funcs = []
+        let mut funcs = []
         for i in 0..<3 {
             if i < 3 {
                 fn get(): number { i }
@@ -94,7 +94,7 @@ fn closure_in_nested_block_captures_its_own_iteration() {
 fn closure_bound_by_let_captures_its_own_iteration() {
     let out = run_raw(
         r#"
-        let funcs = []
+        let mut funcs = []
         for i in 0..<3 {
             let f = fn(): number { i }
             funcs = [...funcs, f]
@@ -117,13 +117,13 @@ fn closure_free_loop_recycles_its_iteration_scope() {
     let out = run_raw(
         r#"
         fn main() {
-            let acc = 0
+            let mut acc = 0
             for i in 0..<3 {
                 let step = i + 1
                 acc = acc + step
             }
             print(acc)
-            let doubled = []
+            let mut doubled = []
             for x in [1, 2, 3] {
                 doubled = [...doubled, x * 2]
             }

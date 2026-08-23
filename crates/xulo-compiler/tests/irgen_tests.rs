@@ -95,7 +95,7 @@ fn main() {
 fn test_compile_while_loop() {
     let source = r#"
 fn main() {
-    let i = 0
+    let mut i = 0
     while i < 10 {
         i = i + 1
     }

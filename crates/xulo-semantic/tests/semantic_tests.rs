@@ -129,7 +129,7 @@ fn rejects_const_reassignment() {
 
 #[test]
 fn rejects_let_type_mismatch_on_assignment() {
-    let err = analyze_src(r#"fn main() { let x: number = 1 x = "s" }"#).unwrap_err();
+    let err = analyze_src(r#"fn main() { let mut x: number = 1 x = "s" }"#).unwrap_err();
     assert!(
         err.message
             .contains("cannot assign a value of type `string`")
@@ -376,7 +376,7 @@ fn ternary_requires_boolean_condition() {
 
 #[test]
 fn while_requires_boolean() {
-    assert!(analyze_src("fn main() { let c = 0 while c < 3 { c = c + 1 } }").is_ok());
+    assert!(analyze_src("fn main() { let mut c = 0 while c < 3 { c = c + 1 } }").is_ok());
     let err = analyze_src("fn main() { while 5 { } }").unwrap_err();
     assert!(err.message.contains("while condition"));
 }
@@ -2568,4 +2568,417 @@ fn power_accepts_numbers() {
         }
     "#;
     assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn bitwise_and_requires_numbers() {
+    let src = r#"
+        fn f() {
+            let x = "a" & "b"
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(err.message.contains("cannot apply `&`"));
+}
+
+#[test]
+fn bitwise_or_requires_numbers() {
+    let src = r#"
+        fn f() {
+            let x = "a" | "b"
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(err.message.contains("cannot apply `|`"));
+}
+
+#[test]
+fn bitwise_xor_requires_numbers() {
+    let src = r#"
+        fn f() {
+            let x = "a" ^ "b"
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(err.message.contains("cannot apply `^`"));
+}
+
+#[test]
+fn shift_left_requires_numbers() {
+    let src = r#"
+        fn f() {
+            let x = "a" << "b"
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(err.message.contains("cannot apply `<<`"));
+}
+
+#[test]
+fn shift_right_requires_numbers() {
+    let src = r#"
+        fn f() {
+            let x = "a" >> "b"
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(err.message.contains("cannot apply `>>`"));
+}
+
+#[test]
+fn bitwise_not_requires_number() {
+    let src = r#"
+        fn f() {
+            let x = ~"a"
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(err.message.contains("unary `~` requires a `number` operand"));
+}
+
+#[test]
+fn bitwise_and_accepts_numbers() {
+    let src = r#"
+        fn f() {
+            let x = 10 & 3
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn bitwise_or_accepts_numbers() {
+    let src = r#"
+        fn f() {
+            let x = 10 | 3
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn bitwise_xor_accepts_numbers() {
+    let src = r#"
+        fn f() {
+            let x = 10 ^ 3
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn shift_left_accepts_numbers() {
+    let src = r#"
+        fn f() {
+            let x = 10 << 3
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn shift_right_accepts_numbers() {
+    let src = r#"
+        fn f() {
+            let x = 10 >> 3
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn bitwise_not_accepts_number() {
+    let src = r#"
+        fn f() {
+            let x = ~10
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+// ──────────────────────────────────────────────────────────────────────
+//  List method type inference
+// ──────────────────────────────────────────────────────────────────────
+
+#[test]
+fn list_length_returns_number() {
+    let src = r#"
+        fn f() {
+            let a = [1, 2, 3]
+            let n: number = a.length
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn list_capacity_returns_number() {
+    let src = r#"
+        fn f() {
+            let a = [1, 2, 3]
+            let n: number = a.capacity
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn list_is_empty_returns_bool() {
+    let src = r#"
+        fn f() {
+            let a = [1, 2]
+            let b: boolean = a.isEmpty()
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn list_first_returns_optional() {
+    let src = r#"
+        fn f() {
+            let a = [1, 2, 3]
+            let n: number? = a.first()
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn list_last_returns_optional() {
+    let src = r#"
+        fn f() {
+            let a = [1, 2, 3]
+            let n: number? = a.last()
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn list_get_returns_optional() {
+    let src = r#"
+        fn f() {
+            let a = [1, 2, 3]
+            let n: number? = a.get(0)
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn list_push_returns_self() {
+    let src = r#"
+        fn f() {
+            let a = [1, 2]
+            let b: list<number> = a.push(3)
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn list_pop_returns_element() {
+    let src = r#"
+        fn f() {
+            let a = [1, 2, 3]
+            let n: number = a.pop()
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn list_contains_returns_bool() {
+    let src = r#"
+        fn f() {
+            let a = [1, 2, 3]
+            let b: boolean = a.contains(2)
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn list_index_of_returns_number() {
+    let src = r#"
+        fn f() {
+            let a = [1, 2, 3]
+            let n: number = a.indexOf(2)
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn list_join_returns_string() {
+    let src = r#"
+        fn f() {
+            let a = ["a", "b"]
+            let s: string = a.join(", ")
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn list_sort_returns_self() {
+    let src = r#"
+        fn f() {
+            let a = [3, 1, 2]
+            let b: list<number> = a.sort()
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn list_reverse_returns_self() {
+    let src = r#"
+        fn f() {
+            let a = [1, 2, 3]
+            let b: list<number> = a.reverse()
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn list_concat_returns_list() {
+    let src = r#"
+        fn f() {
+            let a = [1, 2]
+            let b = [3, 4]
+            let c: list<number> = a.concat(b)
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn list_slice_returns_list() {
+    let src = r#"
+        fn f() {
+            let a = [1, 2, 3, 4]
+            let b: list<number> = a.slice(1, 3)
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn list_remove_value_returns_bool() {
+    let src = r#"
+        fn f() {
+            let a = [1, 2, 3]
+            let b: boolean = a.removeValue(2)
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn list_map_returns_list() {
+    let src = r#"
+        fn f() {
+            let a = [1, 2, 3]
+            let b: list<number> = a.map(fn(x) { x * 2 })
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn list_filter_returns_list() {
+    let src = r#"
+        fn f() {
+            let a = [1, 2, 3, 4]
+            let b: list<number> = a.filter(fn(x) { x > 2 })
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn list_some_returns_bool() {
+    let src = r#"
+        fn f() {
+            let a = [1, 2, 3]
+            let b: boolean = a.some(fn(x) { x > 2 })
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn list_every_returns_bool() {
+    let src = r#"
+        fn f() {
+            let a = [2, 4, 6]
+            let b: boolean = a.every(fn(x) { x > 0 })
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+// ──────────────────────────────────────────────────────────────────────
+//  flat() and shrink() type inference
+// ──────────────────────────────────────────────────────────────────────
+
+#[test]
+fn list_flat_returns_list() {
+    let src = r#"
+        fn f() {
+            let a = [[1, 2], [3, 4]]
+            let b = a.flat()
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn list_shrink_returns_self() {
+    let src = r#"
+        fn f() {
+            let a = [1, 2, 3]
+            let b = a.shrink()
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+// ──────────────────────────────────────────────────────────────────────
+//  Tuple destructuring
+// ──────────────────────────────────────────────────────────────────────
+
+#[test]
+fn tuple_destructure_semantic_ok() {
+    let src = r#"
+        fn f() {
+            let (a, b, c) = [1, 2, 3]
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn tuple_destructure_binds_correct_types() {
+    let src = r#"
+        fn f() {
+            let (x, y) = [10, 20]
+            let a: number = x
+            let b: number = y
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn tuple_destructure_non_list_is_error() {
+    let src = r#"
+        fn f() {
+            let (a, b) = 42
+        }
+    "#;
+    assert!(analyze_src(src).is_err());
 }

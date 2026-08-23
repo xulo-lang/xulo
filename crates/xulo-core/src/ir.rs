@@ -84,6 +84,14 @@ pub enum Instruction {
     Pow { dst: LocalId, left: Operand, right: Operand },
     Neg { dst: LocalId, operand: Operand },
 
+    // 位运算
+    BitAnd { dst: LocalId, left: Operand, right: Operand },
+    BitOr { dst: LocalId, left: Operand, right: Operand },
+    Xor { dst: LocalId, left: Operand, right: Operand },
+    Shl { dst: LocalId, left: Operand, right: Operand },
+    Shr { dst: LocalId, left: Operand, right: Operand },
+    BitNot { dst: LocalId, operand: Operand },
+
     // 比较运算
     Eq { dst: LocalId, left: Operand, right: Operand },
     Neq { dst: LocalId, left: Operand, right: Operand },

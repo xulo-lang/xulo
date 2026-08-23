@@ -233,7 +233,7 @@ fn main() {
 fn test_codegen_for_loop_concat() {
     let out = compile_and_run(r#"
 fn main() {
-    let out = []
+    let mut out = []
     for x in [1, 2, 3] {
         out = out + [x]
     }
@@ -247,7 +247,7 @@ fn main() {
 fn test_codegen_for_loop_concat_strings() {
     let out = compile_and_run(r#"
 fn main() {
-    let out = []
+    let mut out = []
     for x in ["a", "b"] {
         out = out + [x]
     }
@@ -356,7 +356,7 @@ fn main() {
 fn test_codegen_generic_prepend_all() {
     let out = compile_and_run(r#"
 fn prependAll<T>(prefix: T, list: list<T>): list<T> {
-    let out = []
+    let mut out = []
     for x in list {
         out = out + [prefix, x]
     }

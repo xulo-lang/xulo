@@ -110,8 +110,10 @@ fn test_let_binding_basic() {
             span: 8..10,
         }),
         is_const: false,
+        is_mutable: false,
         memo: false,
         memo_deps: None,
+        tuple_names: None,
     };
     assert_eq!(binding.name, "x");
     assert!(!binding.is_const);
@@ -129,8 +131,10 @@ fn test_let_binding_const() {
             span: 12..15,
         }),
         is_const: true,
+        is_mutable: false,
         memo: false,
         memo_deps: None,
+        tuple_names: None,
     };
     assert!(binding.is_const);
 }
@@ -146,6 +150,7 @@ fn test_let_binding_memo() {
             span: 15..24,
         }),
         is_const: false,
+        is_mutable: false,
         memo: true,
         memo_deps: Some(vec![
             Expression::Identifier {
@@ -157,6 +162,7 @@ fn test_let_binding_memo() {
                 span: 37..41,
             },
         ]),
+        tuple_names: None,
     };
     assert!(binding.memo);
     assert_eq!(binding.memo_deps.as_ref().unwrap().len(), 2);

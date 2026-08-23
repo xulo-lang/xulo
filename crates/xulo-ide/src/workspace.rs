@@ -297,6 +297,7 @@ fn seed(
                         type_: Type::Any,
                         kind: SymbolKind::Variable,
                         is_const: true,
+                        is_mutable: false,
                     });
                 }
             }
@@ -323,6 +324,7 @@ fn seed(
                         type_: sym.type_.clone(),
                         kind: sym.kind.clone(),
                         is_const: true,
+                        is_mutable: false,
                     });
                     if let Type::Named(named) = &sym.type_
                         && let Some((_, entry)) =

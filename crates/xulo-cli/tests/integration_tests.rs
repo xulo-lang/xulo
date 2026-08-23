@@ -147,7 +147,7 @@ fn repl_assignment_and_run() {
         .unwrap();
     let mut stdin = repl.stdin.as_ref().unwrap();
     stdin
-        .write_all(b"let x = 5\nx = x + 2\nprint(x)\nrun\nexit\n")
+        .write_all(b"let mut x = 5\nx = x + 2\nprint(x)\nrun\nexit\n")
         .unwrap();
     let out = repl.wait_with_output().unwrap();
     assert!(out.status.success());
@@ -242,7 +242,7 @@ fn run_types_enums_const_null() {
         type Status = "active" | "inactive"
 
         const APP = "Xulo"
-        let count = 0
+        let mut count = 0
         count = count + 1
 
         fn run(): number {
@@ -323,11 +323,11 @@ fn run_phase2_control_flow_and_expressions() {
         }
 
         fn main() {
-          let total = 0
+          let mut total = 0
           for i in 0..<5 { total = total + i }
           print(total)
 
-          let c = 0
+          let mut c = 0
           while c < 3 { c = c + 1 }
           print(c)
 
@@ -763,7 +763,7 @@ fn run_loop_closure_capture_native() {
     // variable, not a shared binding that reads the final value from every
     // closure (native `exec_for` re-creates the iteration Env).
     let src = r#"
-        let funcs = []
+        let mut funcs = []
         for i in 0..<3 {
             fn get(): number { i }
             funcs = [...funcs, get]
@@ -955,7 +955,7 @@ fn run_closures_and_higher_order_functions() {
             print(apply(double, 4))
             let add5 = makeAdder(5)
             print(add5(10))
-            let count = 0
+            let mut count = 0
             let bump = fn() { count = count + 1 }
             bump()
             bump()
@@ -1003,7 +1003,7 @@ fn run_list_spread() {
             let head = [1, 2]
             let tail = [3, 4]
             let all = [...head, ...tail]
-            let sum = 0
+            let mut sum = 0
             for x in all { sum = sum + x }
             print(sum)
             let merged = [...tail, ...head]
@@ -1379,7 +1379,7 @@ fn run_nested_loops_and_ranges() {
         "loops.xulo",
         r#"
         fn main() {
-            let total = 0
+            let mut total = 0
             for i in 0..<3 {
                 for j in 0..<2 {
                     total = total + (i + j)
@@ -1407,7 +1407,7 @@ fn run_else_if_chain_and_while() {
             else { "big" }
         }
         fn main() {
-            let n = 0
+            let mut n = 0
             while n < 3 { print(classify(n - 1)) n = n + 1 }
         }
         "#,

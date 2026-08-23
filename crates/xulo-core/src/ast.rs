@@ -68,6 +68,8 @@ pub struct Param {
 }
 
 /// A `let` or `const` binding. `const` bindings may not be reassigned.
+/// `is_mutable` controls whether reassignment is allowed: `let x = 1` is
+/// immutable by default; `let mut x = 1` or `let x := 1` sets `is_mutable`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LetBinding {
     pub name: String,
@@ -76,6 +78,8 @@ pub struct LetBinding {
     pub type_annotation: Option<Type>,
     pub value: Option<Expression>,
     pub is_const: bool,
+    /// When true, the variable can be reassigned after declaration.
+    pub is_mutable: bool,
     /// `@Memo` value memoization: `@Memo([deps]) let x = expr`. The native
     /// interpreter caches the computed value per (site, deps) and reuses it
     /// when the deps are unchanged; the JS target recomputes on every render
@@ -84,6 +88,10 @@ pub struct LetBinding {
     /// The memo dependency expressions (`None` only when `memo` is `false`; a
     /// bare `@Memo` is normalized to an empty list = cache forever).
     pub memo_deps: Option<Vec<Expression>>,
+    /// Tuple destructuring: `let (a, b, c) = expr`. When `Some`, the binding
+    /// destructures the right-hand side into the listed names. `name` is set
+    /// to a synthetic empty string for tuple patterns.
+    pub tuple_names: Option<Vec<String>>,
 }
 
 /// A `@State` declaration: reactive local state inside a `View` function.
@@ -683,6 +691,7 @@ impl Type {
 pub enum UnaryOperator {
     Not,
     Neg,
+    BitNot,
 }
 
 impl UnaryOperator {
@@ -690,6 +699,7 @@ impl UnaryOperator {
         match self {
             UnaryOperator::Not => "!",
             UnaryOperator::Neg => "-",
+            UnaryOperator::BitNot => "~",
         }
     }
 }
@@ -710,6 +720,11 @@ pub enum BinaryOperator {
     Gte,
     And,
     Or,
+    BitAnd,
+    BitOr,
+    Xor,
+    Shl,
+    Shr,
 }
 
 impl BinaryOperator {
@@ -729,6 +744,11 @@ impl BinaryOperator {
             BinaryOperator::Gte => ">=",
             BinaryOperator::And => "and",
             BinaryOperator::Or => "or",
+            BinaryOperator::BitAnd => "&",
+            BinaryOperator::BitOr => "|",
+            BinaryOperator::Xor => "^",
+            BinaryOperator::Shl => "<<",
+            BinaryOperator::Shr => ">>",
         }
     }
 }

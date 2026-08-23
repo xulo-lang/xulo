@@ -251,6 +251,7 @@ fn collect_imports(modules: &[Module], idx: usize) -> Result<ImportSeed, XuloErr
                         type_: Type::Any,
                         kind: SymbolKind::Variable,
                         is_const: true,
+                        is_mutable: false,
                     });
                 }
             }
@@ -275,6 +276,7 @@ fn collect_imports(modules: &[Module], idx: usize) -> Result<ImportSeed, XuloErr
                         type_: sym.type_.clone(),
                         kind: sym.kind.clone(),
                         is_const: true,
+                        is_mutable: false,
                     });
                     // Importing an enum gives both a value and a type.
                     if let Type::Named(named) = &sym.type_

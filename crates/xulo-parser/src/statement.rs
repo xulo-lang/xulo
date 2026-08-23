@@ -226,12 +226,55 @@ fn let_binding(input: &mut In<'_>, is_const: bool) -> Pr<LetBinding> {
     } else {
         tk(input, Token::Let)?;
     }
-    let_binding_body(input, is_const)
+    let is_mutable = if !is_const && peek_is(input, Token::Mut) {
+        tk(input, Token::Mut)?;
+        true
+    } else {
+        false
+    };
+    let_binding_body(input, is_const, is_mutable)
 }
 
 /// Parse a `let`/`const` binding after the keyword has been consumed.
-fn let_binding_body(input: &mut In<'_>, is_const: bool) -> Pr<LetBinding> {
+fn let_binding_body(input: &mut In<'_>, is_const: bool, is_mutable: bool) -> Pr<LetBinding> {
     let name_original = *input;
+
+    // Tuple destructuring: `let (a, b, c) = expr`
+    if peek_is(input, Token::LParen) {
+        let mut names = Vec::new();
+        tk(input, Token::LParen)?;
+        if !peek_is(input, Token::RParen) {
+            loop {
+                let n = ident_name(input)?;
+                names.push(n);
+                if !opt_tk(input, Token::Comma) || peek_is(input, Token::RParen) {
+                    break;
+                }
+            }
+        }
+        tk(input, Token::RParen)?;
+        let name_span = consumed_span(name_original, input, 0);
+        let value = if opt_tk(input, Token::Assign) {
+            Some(expression(input)?)
+        } else {
+            None
+        };
+        if is_const && value.is_none() {
+            return Err(ErrMode::Cut(PErr::unexpected(input)));
+        }
+        return Ok(LetBinding {
+            name: String::new(),
+            name_span,
+            type_annotation: None,
+            value,
+            is_const,
+            is_mutable,
+            memo: false,
+            memo_deps: None,
+            tuple_names: Some(names),
+        });
+    }
+
     let name = ident_name(input)?;
     let name_span = consumed_span(name_original, input, 0);
     let type_annotation = if opt_tk(input, Token::Colon) {
@@ -239,10 +282,15 @@ fn let_binding_body(input: &mut In<'_>, is_const: bool) -> Pr<LetBinding> {
     } else {
         None
     };
-    let value = if opt_tk(input, Token::Assign) {
-        Some(expression(input)?)
+    // `let x := expr` is sugar for `let mut x = expr`.
+    let (value, mutability) = if opt_tk(input, Token::ColonAssign) {
+        let v = Some(expression(input)?);
+        (v, true)
+    } else if opt_tk(input, Token::Assign) {
+        let v = Some(expression(input)?);
+        (v, is_mutable)
     } else {
-        None
+        (None, is_mutable)
     };
     if is_const && value.is_none() {
         return Err(ErrMode::Cut(PErr::unexpected(input)));
@@ -253,8 +301,10 @@ fn let_binding_body(input: &mut In<'_>, is_const: bool) -> Pr<LetBinding> {
         type_annotation,
         value,
         is_const,
+        is_mutable: mutability,
         memo: false,
         memo_deps: None,
+        tuple_names: None,
     })
 }
 
@@ -713,7 +763,7 @@ fn decorator_stmt(input: &mut In<'_>) -> Pr<Statement> {
                 tk(input, Token::Let)?;
                 false
             };
-            let binding = let_binding_body(input, is_const)?;
+            let binding = let_binding_body(input, is_const, false)?;
             Ok(Statement::State(StateStmt { binding }))
         }
         "Store" => {
@@ -775,7 +825,7 @@ fn decorator_stmt(input: &mut In<'_>) -> Pr<Statement> {
                 tk(input, Token::Let)?;
                 false
             };
-            let mut binding = let_binding_body(input, is_const)?;
+            let mut binding = let_binding_body(input, is_const, false)?;
             binding.memo = true;
             binding.memo_deps = Some(deps);
             Ok(Statement::Let(binding))

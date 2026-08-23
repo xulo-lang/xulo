@@ -15,6 +15,9 @@ use winnow::error::ErrMode;
 const ADD_OPS: &[(Token, BinaryOperator)] = &[
     (Token::Plus, BinaryOperator::Add),
     (Token::Minus, BinaryOperator::Sub),
+    (Token::Amp, BinaryOperator::BitAnd),
+    (Token::Xor, BinaryOperator::Xor),
+    (Token::Pipe, BinaryOperator::BitOr),
 ];
 
 const MUL_OPS: &[(Token, BinaryOperator)] = &[
@@ -175,12 +178,40 @@ fn range(
     }))
 }
 
+/// Check if the next two tokens are `< <` (left shift).
+fn peek_shl(input: &In<'_>) -> bool {
+    matches!(input.first().map(|t| t.kind), Some(Token::Lt))
+        && matches!(input.get(1).map(|t| t.kind), Some(Token::Lt))
+}
+
+/// Check if the next two tokens are `> >` (right shift).
+fn peek_shr(input: &In<'_>) -> bool {
+    matches!(input.first().map(|t| t.kind), Some(Token::Gt))
+        && matches!(input.get(1).map(|t| t.kind), Some(Token::Gt))
+}
+
 fn additive(input: &mut In<'_>) -> Pr<Expression> {
     let original = *input;
     let mut lhs = multiplicative(input)?;
-    while let Ok(op) = take_op(input, ADD_OPS) {
-        let rhs = multiplicative(input)?;
-        lhs = bin(original, lhs, op, rhs, input);
+    loop {
+        if peek_shl(input) {
+            *input = &input[2..];
+            let rhs = multiplicative(input)?;
+            lhs = bin(original, lhs, BinaryOperator::Shl, rhs, input);
+            continue;
+        }
+        if peek_shr(input) {
+            *input = &input[2..];
+            let rhs = multiplicative(input)?;
+            lhs = bin(original, lhs, BinaryOperator::Shr, rhs, input);
+            continue;
+        }
+        if let Ok(op) = take_op(input, ADD_OPS) {
+            let rhs = multiplicative(input)?;
+            lhs = bin(original, lhs, op, rhs, input);
+            continue;
+        }
+        break;
     }
     Ok(lhs)
 }
@@ -214,6 +245,8 @@ fn unary(input: &mut In<'_>) -> Pr<Expression> {
         Some(UnaryOperator::Neg)
     } else if peek_kind(input, Token::Bang) {
         Some(UnaryOperator::Not)
+    } else if peek_kind(input, Token::Tilde) {
+        Some(UnaryOperator::BitNot)
     } else {
         None
     };
