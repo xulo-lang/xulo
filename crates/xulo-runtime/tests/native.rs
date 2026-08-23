@@ -2043,3 +2043,110 @@ fn tuple_destructure_not_a_list_errors() {
     let err = run(r#"fn main() { let (a, b) = 42 }"#).unwrap_err();
     assert!(err.message.contains("expected a list"), "unexpected: {}", err.message);
 }
+
+// Struct runtime tests
+
+#[test]
+fn struct_literal_and_field_access() {
+    assert_eq!(
+        run_ok(r#"
+            struct User { name: string, age: number }
+            fn main() {
+                let u = { name: "Alice", age: 30 }
+                print(u.name)
+                print(u.age)
+            }
+        "#),
+        vec!["Alice", "30"]
+    );
+}
+
+#[test]
+fn object_destructure_runtime() {
+    assert_eq!(
+        run_ok(r#"
+            fn main() {
+                let obj = { name: "Alice", age: 30 }
+                let { name, age } = obj
+                print(name)
+                print(age)
+            }
+        "#),
+        vec!["Alice", "30"]
+    );
+}
+
+#[test]
+fn object_destructure_with_alias_runtime() {
+    assert_eq!(
+        run_ok(r#"
+            fn main() {
+                let obj = { name: "Alice", age: 30 }
+                let { name: n, age: a } = obj
+                print(n)
+                print(a)
+            }
+        "#),
+        vec!["Alice", "30"]
+    );
+}
+
+#[test]
+fn object_destructure_not_an_object_errors() {
+    let err = run(r#"fn main() { let { name } = 42 }"#).unwrap_err();
+    assert!(err.message.contains("expected an object"), "unexpected: {}", err.message);
+}
+
+#[test]
+fn inherent_impl_methods() {
+    assert_eq!(
+        run_ok(r#"
+            struct User { name: string, age: number }
+            impl User {
+                fn create(name: string, age: number): User {
+                    return { name: name, age: age }
+                }
+            }
+            fn main() {
+                let u = User.create("Bob", 25)
+                print(u.name)
+            }
+        "#),
+        vec!["Bob"]
+    );
+}
+
+#[test]
+fn struct_name_accessible_in_main() {
+    assert_eq!(
+        run_ok(r#"
+            struct User { name: string }
+            fn main() {
+                print(User)
+            }
+        "#),
+        vec!["{  }"]
+    );
+}
+
+#[test]
+fn struct_instance_method_dispatch() {
+    assert_eq!(
+        run_ok(r#"
+            struct User { name: string, age: number }
+            impl User {
+                fn create(name: string, age: number): User {
+                    return { name: name, age: age }
+                }
+                fn greet(self): string {
+                    return "Hi " + self.name
+                }
+            }
+            fn main() {
+                let u = User.create("Bob", 25)
+                print(u.greet())
+            }
+        "#),
+        vec!["Hi Bob"]
+    );
+}

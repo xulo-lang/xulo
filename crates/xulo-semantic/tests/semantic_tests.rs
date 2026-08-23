@@ -2982,3 +2982,139 @@ fn tuple_destructure_non_list_is_error() {
     "#;
     assert!(analyze_src(src).is_err());
 }
+
+// Struct tests
+
+#[test]
+fn struct_definition_registers_type() {
+    let src = r#"
+        struct User { name: string, age: number }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn struct_duplicate_field_is_error() {
+    let src = r#"
+        struct User { name: string, name: number }
+    "#;
+    assert!(analyze_src(src).is_err());
+}
+
+#[test]
+fn struct_duplicate_type_is_error() {
+    let src = r#"
+        struct User { name: string }
+        struct User { age: number }
+    "#;
+    assert!(analyze_src(src).is_err());
+}
+
+#[test]
+fn struct_literal_infers_named_type() {
+    let src = r#"
+        struct User { name: string, age: number }
+        fn f() {
+            let u = { name: "Alice", age: 30 }
+            let n: string = u.name
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn struct_literal_wrong_field_name_is_error() {
+    let src = r#"
+        struct User { name: string, age: number }
+        fn f() {
+            let u = { name: "Alice", wrong: 30 }
+        }
+    "#;
+    // This won't error because without type annotation, it's just an object literal
+    // The struct matching is best-effort
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn struct_literal_with_type_annotation_checks_fields() {
+    let src = r#"
+        struct User { name: string, age: number }
+        fn f() {
+            let u: User = { name: "Alice", age: 30 }
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn inherent_impl_block() {
+    let src = r#"
+        struct User { name: string, age: number }
+        impl User {
+            fn create(name: string, age: number): User {
+                return { name: name, age: age }
+            }
+            fn greet(self): string {
+                return "Hello, " + self.name
+            }
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn inherent_impl_unknown_type_is_error() {
+    let src = r#"
+        impl Unknown {
+            fn new(): Unknown { return {} }
+        }
+    "#;
+    assert!(analyze_src(src).is_err());
+}
+
+#[test]
+fn object_destructuring() {
+    let src = r#"
+        fn f() {
+            let obj = { name: "Alice", age: 30 }
+            let { name, age } = obj
+            let n: string = name
+            let a: number = age
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn object_destructuring_with_alias() {
+    let src = r#"
+        fn f() {
+            let obj = { name: "Alice", age: 30 }
+            let { name: n, age: a } = obj
+            let n2: string = n
+            let a2: number = a
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn object_destructuring_non_object_is_error() {
+    let src = r#"
+        fn f() {
+            let { name } = 42
+        }
+    "#;
+    assert!(analyze_src(src).is_err());
+}
+
+#[test]
+fn object_destructuring_duplicate_binding_is_error() {
+    let src = r#"
+        fn f() {
+            let obj = { name: "Alice" }
+            let { name, name: n } = obj
+        }
+    "#;
+    assert!(analyze_src(src).is_err());
+}

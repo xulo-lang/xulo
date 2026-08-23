@@ -247,6 +247,7 @@ fn test_impl_decl() {
             span: 0..20,
         }],
         span: 0..25,
+        is_inherent: false,
     };
     assert_eq!(impl_decl.trait_name, "Display");
     assert_eq!(impl_decl.type_name, "User");

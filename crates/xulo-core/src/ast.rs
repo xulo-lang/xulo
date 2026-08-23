@@ -15,6 +15,7 @@ pub enum Statement {
     Assign(AssignStmt),
     TypeAlias(TypeAlias),
     Enum(EnumDef),
+    Struct(StructDef),
     Expr(ExprStmt),
     Block(Block),
     Try(TryStmt),
@@ -92,6 +93,11 @@ pub struct LetBinding {
     /// destructures the right-hand side into the listed names. `name` is set
     /// to a synthetic empty string for tuple patterns.
     pub tuple_names: Option<Vec<String>>,
+    /// Object destructuring: `let { name, age: user_age } = expr`. When `Some`,
+    /// the binding destructures an object's fields. Each entry is
+    /// `(field_name, alias)`: `None` alias means the variable name matches the
+    /// field name.
+    pub object_destructuring: Option<Vec<(String, Option<String>)>>,
 }
 
 /// A `@State` declaration: reactive local state inside a `View` function.
@@ -229,15 +235,18 @@ pub struct TraitMethod {
     pub span: Range<usize>,
 }
 
-/// An `impl Trait for Type` block: provides method bodies for a concrete named
-/// type. `self` may be the first parameter of each method and is bound to the
-/// receiver's type during checking.
+/// An `impl Trait for Type` block or an inherent `impl Type` block: provides
+/// method bodies for a concrete named type. `self` may be the first parameter
+/// of each method and is bound to the receiver's type during checking.
+/// When `is_inherent` is true, this is an inherent impl (no trait).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImplDecl {
     pub trait_name: String,
     pub type_name: String,
     pub methods: Vec<FnDef>,
     pub span: Range<usize>,
+    /// `true` for `impl Type { ... }` (inherent), `false` for `impl Trait for Type { ... }`.
+    pub is_inherent: bool,
 }
 
 /// Mangle an `impl` method into the module-level function name that codegen
@@ -273,6 +282,27 @@ pub struct EnumVariant {
     /// Payload parameters, in declaration order. `None` when the variant
     /// carries no payload.
     pub payload: Option<Vec<EnumPayloadParam>>,
+}
+
+/// A `struct` definition: `struct User { name: string, age: number = 0 }`
+#[derive(Debug, Clone, PartialEq)]
+pub struct StructDef {
+    pub name: String,
+    /// Source span of the struct name (for name-related diagnostics).
+    pub name_span: Range<usize>,
+    pub type_params: Vec<String>,
+    pub fields: Vec<StructField>,
+    pub span: Range<usize>,
+}
+
+/// A single field in a `struct` definition.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StructField {
+    pub name: String,
+    pub name_span: Range<usize>,
+    pub type_: Type,
+    /// Optional default value expression. `None` means the field is required.
+    pub default: Option<Expression>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -345,6 +375,7 @@ pub enum ExportItem {
     Names(Vec<String>),
     Type(TypeAlias),
     Enum(EnumDef),
+    Struct(StructDef),
     Trait(TraitDecl),
 }
 

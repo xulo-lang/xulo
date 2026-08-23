@@ -15,20 +15,21 @@ use xulo_core::error::{ErrorKind, XuloError};
 /// attached by the lexer/parser; semantic checks target names).
 type SResult<T> = Result<T, XuloError>;
 
-/// A named type known to the program: a user `type` alias, an `enum`, or a
-/// `trait`.
+/// A named type known to the program: a user `type` alias, an `enum`, a
+/// `trait`, or a `struct`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeEntryKind {
     Alias(Type),
     Enum(Vec<EnumVariant>),
     Trait(TraitDef),
+    Struct(Vec<(String, Type, Option<xulo_core::ast::Expression>)>),
 }
 
 impl TypeEntryKind {
     pub fn variants(&self) -> Option<&Vec<EnumVariant>> {
         match self {
             TypeEntryKind::Enum(variants) => Some(variants),
-            TypeEntryKind::Alias(_) | TypeEntryKind::Trait(_) => None,
+            TypeEntryKind::Alias(_) | TypeEntryKind::Trait(_) | TypeEntryKind::Struct(_) => None,
         }
     }
 }
@@ -430,6 +431,7 @@ fn walk_stmt(stmt: &mut Statement, f: &mut dyn FnMut(&mut Expression)) {
         }
         Statement::TypeAlias(_)
         | Statement::Enum(_)
+        | Statement::Struct(_)
         | Statement::Import(_)
         | Statement::Trait(_)
         | Statement::Break
@@ -445,8 +447,11 @@ fn walk_export(item: &mut ExportItem, f: &mut dyn FnMut(&mut Expression)) {
                 walk_expr(value, f);
             }
         }
-        ExportItem::Names(_) | ExportItem::Type(_) | ExportItem::Enum(_) | ExportItem::Trait(_) => {
-        }
+        ExportItem::Names(_)
+        | ExportItem::Type(_)
+        | ExportItem::Enum(_)
+        | ExportItem::Struct(_)
+        | ExportItem::Trait(_) => {}
     }
 }
 
@@ -747,6 +752,78 @@ impl Analyzer {
                     return Ok(());
                 }
 
+                // Object destructuring: `let { name, age: user_age } = expr`
+                if let Some(fields) = &binding.object_destructuring {
+                    let inner_type = match &value_type {
+                        Type::Object | Type::Named(_) => value_type.clone(),
+                        Type::Any => Type::Any,
+                        other => {
+                            return Err(self.err(format!(
+                                "cannot destructure `{}` as an object (expected an object, found `{}`)",
+                                binding.name,
+                                other.name()
+                            )));
+                        }
+                    };
+                    let mut seen_names = std::collections::HashSet::new();
+                    let mut seen_aliases = std::collections::HashSet::new();
+                    for (field_name, alias) in fields {
+                        if !seen_names.insert(field_name.to_string()) {
+                            return Err(self.err(format!(
+                                "duplicate field name `{}` in object destructuring",
+                                field_name
+                            )));
+                        }
+                        let bind_name = alias.as_deref().unwrap_or(field_name);
+                        if !seen_aliases.insert(bind_name.to_string()) {
+                            return Err(self.err(format!(
+                                "duplicate binding name `{}` in object destructuring",
+                                bind_name
+                            )));
+                        }
+                        // If we have a Named type with struct fields, look up the field type
+                        let field_type = if let Type::Named(type_name) = &inner_type {
+                            if let Some(entry) = self.type_table.get(type_name) {
+                                if let TypeEntryKind::Struct(fields) = &entry.kind {
+                                    fields.iter()
+                                        .find(|(n, _, _)| n == field_name)
+                                        .map(|(_, t, _)| t.clone())
+                                        .unwrap_or(Type::Any)
+                                } else {
+                                    Type::Any
+                                }
+                            } else {
+                                Type::Any
+                            }
+                        } else {
+                            Type::Any
+                        };
+                        let declared = self.table.declare_with_def(
+                            Symbol {
+                                name: bind_name.to_string(),
+                                type_: field_type.clone(),
+                                kind: SymbolKind::Variable,
+                                is_const: binding.is_const,
+                                is_mutable: binding.is_mutable,
+                            },
+                            Some(binding.name_span.clone()),
+                        );
+                        if !declared {
+                            return Err(self.err(format!(
+                                "binding `{}` is already declared in this scope",
+                                bind_name
+                            )));
+                        }
+                        self.record_decl(
+                            binding.name_span.clone(),
+                            bind_name,
+                            UseKind::Variable,
+                            field_type,
+                        );
+                    }
+                    return Ok(());
+                }
+
                 let mut ok = true;
                 if let Some(annotation) = &binding.type_annotation
                     && !self.assignable(&value_type, annotation)
@@ -797,6 +874,7 @@ impl Analyzer {
             Statement::Assign(assign) => self.check_assign(assign),
             Statement::TypeAlias(alias) => self.check_type_alias(alias),
             Statement::Enum(e) => self.check_enum(e),
+            Statement::Struct(s) => self.check_struct(s),
             Statement::Trait(t) => self.check_trait(t),
             Statement::Impl(imp) => self.check_impl(imp),
             Statement::Return(stmt) => {
@@ -1240,6 +1318,21 @@ impl Analyzer {
                     Symbol {
                         name: e.name.clone(),
                         type_: Type::Named(e.name.clone()),
+                        kind: symbol_table::SymbolKind::Variable,
+                        is_const: true,
+                        is_mutable: false,
+                    },
+                ));
+                Ok(())
+            }
+            xulo_core::ast::ExportItem::Struct(s) => {
+                self.check_struct(s)?;
+                self.exported.push(s.name.clone());
+                self.exported_symbols.push((
+                    s.name.clone(),
+                    Symbol {
+                        name: s.name.clone(),
+                        type_: Type::Named(s.name.clone()),
                         kind: symbol_table::SymbolKind::Variable,
                         is_const: true,
                         is_mutable: false,
@@ -1725,6 +1818,50 @@ impl Analyzer {
         Ok(())
     }
 
+    fn check_struct(&mut self, s: &xulo_core::ast::StructDef) -> SResult<()> {
+        if self.type_table.contains_key(&s.name) {
+            return Err(self.err(format!("type `{}` is already defined", s.name)));
+        }
+        // Register the struct name as a variable so `User.create(...)` /
+        // `User.method(instance)` member calls type-check (the runtime keeps
+        // the struct object in the global environment).
+        self.table.declare_with_def(
+            Symbol {
+                name: s.name.clone(),
+                type_: Type::Named(s.name.clone()),
+                kind: SymbolKind::Variable,
+                is_const: true,
+                is_mutable: false,
+            },
+            Some(s.name_span.clone()),
+        );
+        self.generics.extend(s.type_params.iter().cloned());
+        let mut fields = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for field in &s.fields {
+            if !seen.insert(field.name.clone()) {
+                self.generics
+                    .truncate(self.generics.len().saturating_sub(s.type_params.len()));
+                return Err(self.err(format!(
+                    "struct `{}` has a duplicate field `{}`",
+                    s.name, field.name
+                )));
+            }
+            self.check_type(&field.type_)?;
+            fields.push((field.name.clone(), field.type_.clone(), field.default.clone()));
+        }
+        self.generics
+            .truncate(self.generics.len().saturating_sub(s.type_params.len()));
+        self.type_table.insert(
+            s.name.clone(),
+            TypeEntry {
+                type_params: s.type_params.clone(),
+                kind: TypeEntryKind::Struct(fields),
+            },
+        );
+        Ok(())
+    }
+
     fn check_trait(&mut self, t: &TraitDecl) -> SResult<()> {
         if self.type_table.contains_key(&t.name) {
             return Err(self.err(format!("type `{}` is already defined", t.name)));
@@ -1790,6 +1927,63 @@ impl Analyzer {
     /// compatible with the trait's, and its body is checked as a normal
     /// function (where `self` binds to the implemented type).
     fn check_impl(&mut self, imp: &ImplDecl) -> SResult<()> {
+        // Inherent impl: `impl Type { ... }` — no trait, just methods on the type
+        if imp.is_inherent {
+            let ty_entry = self
+                .type_entry(&imp.type_name)
+                .ok_or_else(|| self.err(format!("unknown type `{}`", imp.type_name)))?;
+            if matches!(ty_entry.kind, TypeEntryKind::Trait(_)) {
+                return Err(self.err(format!(
+                    "`{}` is a trait and cannot be the receiver type of an inherent `impl`",
+                    imp.type_name
+                )));
+            }
+            for m in &imp.methods {
+                // Check the method body with the receiver bound to the type.
+                self.table.push_scope();
+                for param in &m.params {
+                    if param.name == "self" {
+                        self.table.declare_with_def(
+                            Symbol {
+                                name: "self".to_string(),
+                                type_: Type::Named(imp.type_name.clone()),
+                                kind: SymbolKind::Variable,
+                                is_const: true,
+                                is_mutable: false,
+                            },
+                            None,
+                        );
+                    } else {
+                        let ty = param.type_annotation.clone().unwrap_or(Type::Any);
+                        self.table.declare_with_def(
+                            Symbol {
+                                name: param.name.clone(),
+                                type_: ty,
+                                kind: SymbolKind::Variable,
+                                is_const: true,
+                                is_mutable: false,
+                            },
+                            Some(param.span.clone()),
+                        );
+                    }
+                }
+                let impl_ret = m.return_type.clone().unwrap_or(Type::Any);
+                let saved = self.current_return.replace(impl_ret);
+                let saved_declared = self.declared_return;
+                self.declared_return = m.return_type.is_some();
+                let saved_async = self.async_depth;
+                self.async_depth = if m.is_async { saved_async + 1 } else { 0 };
+                let result = self.check_block_implicit(&m.body);
+                self.async_depth = saved_async;
+                self.declared_return = saved_declared;
+                self.current_return = saved;
+                result?;
+                self.table.pop_scope();
+            }
+            return Ok(());
+        }
+
+        // Trait impl: `impl Trait for Type { ... }`
         let entry = self
             .type_entry(&imp.trait_name)
             .cloned()
@@ -2256,10 +2450,12 @@ impl Analyzer {
                 Ok(Type::List(Box::new(element)))
             }
             Literal::Object(fields) => {
+                let mut field_names = Vec::new();
                 for field in fields {
                     match field {
-                        ObjectField::Field { value, .. } => {
+                        ObjectField::Field { name, value } => {
                             self.check_expression(value)?;
+                            field_names.push(name.clone());
                         }
                         ObjectField::Spread { value } => {
                             let spread_type = self.check_expression(value)?;
@@ -2268,6 +2464,22 @@ impl Analyzer {
                                     "spread operand must be an object, got `{}`",
                                     spread_type.name()
                                 )));
+                            }
+                            // Spread means we can't do exact struct matching
+                            field_names.clear();
+                        }
+                    }
+                }
+                // Try to match against a known struct type
+                if !field_names.is_empty() {
+                    for (name, entry) in &self.type_table {
+                        if let TypeEntryKind::Struct(fields) = &entry.kind {
+                            let struct_field_names: Vec<&str> =
+                                fields.iter().map(|(n, _, _)| n.as_str()).collect();
+                            let literal_field_names: Vec<&str> =
+                                field_names.iter().map(|n| n.as_str()).collect();
+                            if struct_field_names == literal_field_names {
+                                return Ok(Type::Named(name.clone()));
                             }
                         }
                     }
@@ -3048,7 +3260,7 @@ impl Analyzer {
                 }
                 Ok(Type::Named(enum_name))
             }
-            TypeEntryKind::Alias(_) | TypeEntryKind::Trait(_) => {
+            TypeEntryKind::Alias(_) | TypeEntryKind::Trait(_) | TypeEntryKind::Struct(_) => {
                 Err(self.err(format!("`{enum_name}` is not an enum")))
             }
         }

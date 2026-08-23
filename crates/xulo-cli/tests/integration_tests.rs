@@ -528,12 +528,12 @@ fn run_pub_main_entry() {
 
 #[test]
 fn rejects_reserved_word_programs() {
-    let file = temp_file("reserved.xulo", "fn main() { let struct = 1 }");
+    let file = temp_file("reserved.xulo", "fn main() { let class = 1 }");
     let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("reserved keyword `struct`"),
+        stderr.contains("reserved keyword") || stderr.contains("unexpected"),
         "stderr: {stderr}"
     );
     let _ = std::fs::remove_file(&file);

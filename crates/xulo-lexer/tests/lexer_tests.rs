@@ -96,16 +96,16 @@ fn unterminated_block_comment_is_an_error() {
 #[test]
 fn tokenizes_reserved_words() {
     // A representative sample from both reserved lists: they must lex to
-    // `Reserved`, never to an identifier.
-    let tokens = tokenize("struct class switch case yield spawn _").unwrap();
+    // `Reserved`, never to an identifier. `struct` is now a keyword, not reserved.
+    let tokens = tokenize("class switch case yield spawn _").unwrap();
     let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
     assert_eq!(
         kinds,
         vec![
-            Reserved, Reserved, Reserved, Reserved, Reserved, Reserved, Ident, EOF
+            Reserved, Reserved, Reserved, Reserved, Reserved, Ident, EOF
         ]
     );
-    assert_eq!(tokens[0].text, "struct");
+    assert_eq!(tokens[0].text, "class");
 }
 
 #[test]

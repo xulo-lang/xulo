@@ -1153,16 +1153,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "xulo-codegen"
-version = "0.1.0"
-dependencies = [
- "xulo-core",
- "xulo-lexer",
- "xulo-parser",
- "xulo-semantic",
-]
-
-[[package]]
 name = "xulo-compiler"
 version = "0.1.0"
 dependencies = [

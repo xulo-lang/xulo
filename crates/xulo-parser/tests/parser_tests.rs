@@ -615,10 +615,10 @@ fn rejects_removed_export_keyword() {
 
 #[test]
 fn rejects_reserved_word_as_binding_name() {
-    let tokens = tokenize("let struct = 1").unwrap();
+    let tokens = tokenize("let class = 1").unwrap();
     let err = parse_program(&tokens).unwrap_err();
     assert!(
-        err.message.contains("reserved keyword `struct`"),
+        err.message.contains("reserved keyword `class`"),
         "got: {}",
         err.message
     );
@@ -651,10 +651,10 @@ fn rejects_reserved_word_as_statement() {
 
 #[test]
 fn rejects_reserved_word_in_type_position() {
-    let tokens = tokenize("let x: struct = 1").unwrap();
+    let tokens = tokenize("let x: class = 1").unwrap();
     let err = parse_program(&tokens).unwrap_err();
     assert!(
-        err.message.contains("reserved keyword `struct`"),
+        err.message.contains("reserved keyword `class`"),
         "unexpected message: {}",
         err.message
     );

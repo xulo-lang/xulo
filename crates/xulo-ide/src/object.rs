@@ -119,6 +119,7 @@ fn outline_statement(
             )),
             ExportItem::Enum(e) => Some(enum_symbol(e, index, source)),
             ExportItem::Trait(t) => Some(trait_symbol(t, index, source)),
+            ExportItem::Struct(_) => None,
             ExportItem::Names(_) => None,
         },
         Statement::Let(b) => Some(sym(
@@ -176,6 +177,7 @@ fn outline_statement(
         | Statement::Import(_)
         | Statement::Effect(_)
         | Statement::Component(_)
+        | Statement::Struct(_)
         | Statement::Break
         | Statement::Continue => None,
     }

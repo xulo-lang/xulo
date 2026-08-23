@@ -102,6 +102,10 @@ pub struct Interpreter {
     task_free: RefCell<Vec<usize>>,
     /// Active call depth (see [`MAX_CALL_DEPTH`]).
     call_depth: Cell<usize>,
+    /// Names of `struct` types registered in this interpreter. `method_call`
+    /// falls back to these objects (which hold inherent impl methods) when a
+    /// method is not found directly on a receiver instance.
+    struct_names: RefCell<Vec<String>>,
     /// `@Memo let` value cache keyed by the binding's `name_span.start`: each
     /// site holds `(deps values, cached result)` entries, scanned by value
     /// equality. Live for the whole run (the native runtime has no re-render
@@ -259,6 +263,7 @@ fn stmt_has_closure(stmt: &Statement) -> bool {
         }
         Statement::TypeAlias(_)
         | Statement::Enum(_)
+        | Statement::Struct(_)
         | Statement::Import(_)
         | Statement::Environment(_)
         | Statement::Trait(_)
@@ -273,6 +278,7 @@ fn stmt_has_closure(stmt: &Statement) -> bool {
             xulo_core::ast::ExportItem::Let(l) => l.value.as_ref().is_some_and(expr_has_closure),
             xulo_core::ast::ExportItem::Enum(_)
             | xulo_core::ast::ExportItem::Type(_)
+            | xulo_core::ast::ExportItem::Struct(_)
             | xulo_core::ast::ExportItem::Trait(_)
             | xulo_core::ast::ExportItem::Names(_) => false,
         },
@@ -391,6 +397,7 @@ impl Interpreter {
             task_free: RefCell::new(Vec::new()),
             call_depth: Cell::new(0),
             memo_cache: RefCell::new(std::collections::HashMap::new()),
+            struct_names: RefCell::new(Vec::new()),
         }
     }
 
@@ -403,6 +410,14 @@ impl Interpreter {
             match statement {
                 Statement::Fn(f) => self.register_fn(f, &global),
                 Statement::Impl(imp) => self.register_impl(imp, &global),
+                Statement::Struct(s) => {
+                    self.struct_names.borrow_mut().push(s.name.clone());
+                    global.borrow_mut().define(
+                        &s.name,
+                        Value::Object(Rc::new(RefCell::new(Vec::new()))),
+                        false,
+                    );
+                }
                 Statement::Export(export) => {
                     if let xulo_core::ast::ExportItem::Fn(f) = &export.item {
                         self.register_fn(f, &global);
@@ -719,11 +734,17 @@ impl Interpreter {
                 is_async: method.is_async,
                 closure: closure.clone(),
             }));
-            self.global.borrow_mut().define(
-                &impl_fn_name(&imp.trait_name, &imp.type_name, &method.name),
-                func,
-                false,
-            );
+            if imp.is_inherent {
+                // Inherent impl: add method to the struct's object in the environment
+                let env = self.global.borrow_mut();
+                if let Some(Value::Object(obj)) = env.get(&imp.type_name) {
+                    obj.borrow_mut().push((method.name.clone(), func));
+                }
+            } else {
+                // Trait impl: register as standalone function with mangled name
+                let name = impl_fn_name(&imp.trait_name, &imp.type_name, &method.name);
+                self.global.borrow_mut().define(&name, func, false);
+            }
         }
     }
 
@@ -765,6 +786,30 @@ impl Interpreter {
                             return Err(RunError::err(
                                 format!(
                                     "cannot destructure {} as a tuple (expected a list)",
+                                    other.kind_name()
+                                ),
+                                binding.name_span.clone(),
+                            ));
+                        }
+                    }
+                // Object destructuring: `let { name, age: user_age } = expr`
+                } else if let Some(fields) = &binding.object_destructuring {
+                    match value {
+                        Value::Object(obj) => {
+                            let o = obj.borrow();
+                            for (field_name, alias) in fields {
+                                let bind_name = alias.as_deref().unwrap_or(field_name);
+                                let val = o.iter()
+                                    .find(|(k, _)| k == field_name)
+                                    .map(|(_, v)| v.clone())
+                                    .unwrap_or(Value::Null);
+                                env.borrow_mut().define(bind_name, val, binding.is_mutable);
+                            }
+                        }
+                        other => {
+                            return Err(RunError::err(
+                                format!(
+                                    "cannot destructure {} as an object (expected an object)",
                                     other.kind_name()
                                 ),
                                 binding.name_span.clone(),
@@ -868,6 +913,12 @@ impl Interpreter {
             }
             Statement::Break => Ok(Flow::Break),
             Statement::Continue => Ok(Flow::LoopContinue),
+            Statement::Struct(_) => {
+                // Struct name was already registered in the first pass of run();
+                // skip re-registration in exec_stmt to avoid wiping out inherent
+                // impl methods that were added during the first pass.
+                Ok(Flow::Continue)
+            }
         }
     }
 
@@ -886,6 +937,7 @@ impl Interpreter {
             }
             xulo_core::ast::ExportItem::Enum(_)
             | xulo_core::ast::ExportItem::Type(_)
+            | xulo_core::ast::ExportItem::Struct(_)
             | xulo_core::ast::ExportItem::Trait(_)
             | xulo_core::ast::ExportItem::Names(_) => Ok(Flow::Continue),
         }
@@ -1995,11 +2047,55 @@ impl Interpreter {
         };
         match callee {
             Some(v) => self.call_value(&v, &call.arguments, env),
-            None => Err(RunError::err(
-                format!("`{method}` is not a function of {}", receiver.kind_name()),
-                call.span.clone(),
-            )),
+            None => {
+                // Inherent impl methods live on the struct's object in the
+                // global environment (`impl User { fn method(self, ...) }`), not
+                // on instances. Fall back to the matching struct method, binding
+                // the receiver as the first (`self`) argument.
+                if let Value::Object(_) = &receiver
+                    && let Some(struct_callee) =
+                        self.struct_method(method, &receiver, &call.arguments, env)
+                {
+                    return struct_callee;
+                }
+                Err(RunError::err(
+                    format!("`{method}` is not a function of {}", receiver.kind_name()),
+                    call.span.clone(),
+                ))
+            }
         }
+    }
+
+    /// Fall back to an inherent impl method registered on a `struct` object in
+    /// the global environment when it is not found on the receiver itself. The
+    /// receiver is passed as the first (`self`) argument.
+    fn struct_method(
+        &self,
+        method: &str,
+        receiver: &Value,
+        call_args: &[CallArg],
+        call_env: &Rc<RefCell<Env>>,
+    ) -> Option<Result<Value, RunError>> {
+        let global = self.global.borrow();
+        for struct_name in self.struct_names.borrow().iter() {
+            let Some(Value::Object(struct_obj)) = global.get(struct_name) else {
+                continue;
+            };
+            let Some(func) = struct_obj
+                .borrow()
+                .iter()
+                .find(|(k, _)| k == method)
+                .map(|(_, v)| v.clone())
+            else {
+                continue;
+            };
+            let arg_values = self.eval_args(call_args, call_env).ok()?;
+            let args = std::iter::once(receiver.clone())
+                .chain(arg_values)
+                .collect::<Vec<_>>();
+            return Some(self.call_value_with_values(&func, &args));
+        }
+        None
     }
 
     // ──────────────────────────────────────────────────────────────────
@@ -2823,7 +2919,9 @@ fn collect_exports(
                 }
             }
         }
-        xulo_core::ast::ExportItem::Type(_) | xulo_core::ast::ExportItem::Trait(_) => {}
+        xulo_core::ast::ExportItem::Type(_)
+        | xulo_core::ast::ExportItem::Trait(_)
+        | xulo_core::ast::ExportItem::Struct(_) => {}
         xulo_core::ast::ExportItem::Enum(e) => {
             bindings.push((e.name.clone(), enum_value(e)));
         }

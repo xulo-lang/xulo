@@ -83,6 +83,7 @@ pub enum Token {
     Where,
     Impl,
     Mut,
+    Struct,
     /// A reserved-for-future-use word (see `RESERVED_WORDS`): it lexes as a
     /// token instead of an identifier so it can never be used as a name.
     Reserved,
@@ -149,7 +150,6 @@ pub const RESERVED_WORDS: &[&str] = &[
     "sender",
     "spawn",
     "static",
-    "struct",
     "super",
     "switch",
     "task",
@@ -201,6 +201,7 @@ impl Token {
             "where" => Token::Where,
             "impl" => Token::Impl,
             "mut" => Token::Mut,
+            "struct" => Token::Struct,
             "break" => Token::Break,
             "continue" => Token::Continue,
             "true" | "false" => Token::Boolean,
@@ -251,6 +252,7 @@ impl Token {
             Token::Where => "`where`",
             Token::Impl => "`impl`",
             Token::Mut => "`mut`",
+            Token::Struct => "`struct`",
             Token::Reserved => "`<reserved keyword>`",
             Token::Break => "`break`",
             Token::Continue => "`continue`",

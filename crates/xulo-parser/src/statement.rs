@@ -2,7 +2,8 @@ use xulo_core::ast::{
     AssignStmt, AssignTarget, BindingPattern, Block, ComponentStmt, EffectStmt, EnumDef,
     EnumPayloadParam, EnumVariant, EnvStmt, ExportItem, ExportStmt, ExprStmt, Expression, FnBound,
     FnDef, ForStmt, ImplDecl, ImportSpec, ImportStmt, LetBinding, Param, ReturnStmt, StateStmt,
-    Statement, StoreStmt, TraitDecl, TraitMethod, TryStmt, TypeAlias, UiElement, WhileStmt,
+    Statement, StoreStmt, StructDef, StructField, TraitDecl, TraitMethod, TryStmt, TypeAlias,
+    UiElement, WhileStmt,
 };
 use xulo_lexer::token::{LexedToken, Token};
 
@@ -40,6 +41,7 @@ pub fn statement(input: &mut In<'_>) -> Pr<Statement> {
         Some(Token::Const) => let_binding(input, true).map(Statement::Let),
         Some(Token::Type) => type_alias(input).map(Statement::TypeAlias),
         Some(Token::Enum) => enum_def(input).map(Statement::Enum),
+        Some(Token::Struct) => struct_def(input).map(Statement::Struct),
         Some(Token::Trait) => trait_def(input).map(Statement::Trait),
         Some(Token::Impl) => impl_def(input).map(Statement::Impl),
         Some(Token::Return) => return_stmt(input).map(Statement::Return),
@@ -272,6 +274,49 @@ fn let_binding_body(input: &mut In<'_>, is_const: bool, is_mutable: bool) -> Pr<
             memo: false,
             memo_deps: None,
             tuple_names: Some(names),
+            object_destructuring: None,
+        });
+    }
+
+    // Object destructuring: `let { name, age: user_age } = expr`
+    if peek_is(input, Token::LBrace) {
+        let mut fields = Vec::new();
+        tk(input, Token::LBrace)?;
+        if !peek_is(input, Token::RBrace) {
+            loop {
+                let field_name = ident_name(input)?;
+                let alias = if opt_tk(input, Token::Colon) {
+                    Some(ident_name(input)?)
+                } else {
+                    None
+                };
+                fields.push((field_name, alias));
+                if !opt_tk(input, Token::Comma) || peek_is(input, Token::RBrace) {
+                    break;
+                }
+            }
+        }
+        tk(input, Token::RBrace)?;
+        let name_span = consumed_span(name_original, input, 0);
+        let value = if opt_tk(input, Token::Assign) {
+            Some(expression(input)?)
+        } else {
+            None
+        };
+        if is_const && value.is_none() {
+            return Err(ErrMode::Cut(PErr::unexpected(input)));
+        }
+        return Ok(LetBinding {
+            name: String::new(),
+            name_span,
+            type_annotation: None,
+            value,
+            is_const,
+            is_mutable,
+            memo: false,
+            memo_deps: None,
+            tuple_names: None,
+            object_destructuring: Some(fields),
         });
     }
 
@@ -305,6 +350,7 @@ fn let_binding_body(input: &mut In<'_>, is_const: bool, is_mutable: bool) -> Pr<
         memo: false,
         memo_deps: None,
         tuple_names: None,
+        object_destructuring: None,
     })
 }
 
@@ -412,6 +458,48 @@ fn enum_def(input: &mut In<'_>) -> Pr<EnumDef> {
         name_span,
         type_params,
         variants,
+    })
+}
+
+fn struct_def(input: &mut In<'_>) -> Pr<StructDef> {
+    let original = *input;
+    tk(input, Token::Struct)?;
+    let name_original = *input;
+    let name = ident_name(input)?;
+    let name_span = consumed_span(name_original, input, 0);
+    let (type_params, _) = opt_type_params(input)?;
+    tk(input, Token::LBrace)?;
+    let mut fields = Vec::new();
+    while !matches!(input.first().map(|t| t.kind), Some(Token::RBrace)) {
+        if at_eof(input) {
+            return Err(ErrMode::Backtrack(PErr::unexpected(input)));
+        }
+        let field_name_original = *input;
+        let field_name = ident_name(input)?;
+        let field_name_span = consumed_span(field_name_original, input, 0);
+        tk(input, Token::Colon)?;
+        let field_type = type_expr(input)?;
+        let default = if opt_tk(input, Token::Assign) {
+            Some(expression(input)?)
+        } else {
+            None
+        };
+        fields.push(StructField {
+            name: field_name,
+            name_span: field_name_span,
+            type_: field_type,
+            default,
+        });
+        opt_tk(input, Token::Comma);
+    }
+    tk(input, Token::RBrace)?;
+    let span = consumed_span(original, input, 0);
+    Ok(StructDef {
+        name,
+        name_span,
+        type_params,
+        fields,
+        span,
     })
 }
 
@@ -538,14 +626,21 @@ fn trait_method(input: &mut In<'_>) -> Pr<TraitMethod> {
     })
 }
 
-/// `impl Area for Rectangle { fn area(self): number { ... } }` — bodies for the
-/// named trait's methods on a concrete type.
+/// `impl Trait for Type { fn method(...) ... }` or inherent `impl Type { fn method(...) ... }`.
+/// Bodies for the named trait's methods, or inherent methods on a concrete type.
 fn impl_def(input: &mut In<'_>) -> Pr<ImplDecl> {
     let original = *input;
     tk(input, Token::Impl)?;
-    let trait_name = ident_name(input)?;
-    tk(input, Token::For)?;
-    let type_name = ident_name(input)?;
+    let first_name = ident_name(input)?;
+    // Check if this is `impl Type { ... }` (inherent) or `impl Trait for Type { ... }`.
+    let (trait_name, type_name, is_inherent) = if peek_is(input, Token::For) {
+        tk(input, Token::For)?;
+        let type_name = ident_name(input)?;
+        (first_name, type_name, false)
+    } else {
+        // Inherent impl: `impl Type { ... }`
+        (String::new(), first_name, true)
+    };
     tk(input, Token::LBrace)?;
     let mut methods = Vec::new();
     while !matches!(input.first().map(|t| t.kind), Some(Token::RBrace)) {
@@ -561,6 +656,7 @@ fn impl_def(input: &mut In<'_>) -> Pr<ImplDecl> {
         type_name,
         methods,
         span,
+        is_inherent,
     })
 }
 
@@ -746,6 +842,7 @@ fn export_decl(input: &mut In<'_>) -> Pr<ExportItem> {
         Some(Token::Const) => let_binding(input, true).map(ExportItem::Let),
         Some(Token::Type) => type_alias(input).map(ExportItem::Type),
         Some(Token::Enum) => enum_def(input).map(ExportItem::Enum),
+        Some(Token::Struct) => struct_def(input).map(ExportItem::Struct),
         Some(Token::Trait) => trait_def(input).map(ExportItem::Trait),
         _ => Err(ErrMode::Cut(PErr::unexpected(input))),
     }

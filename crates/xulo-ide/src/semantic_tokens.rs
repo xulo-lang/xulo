@@ -148,6 +148,7 @@ fn collect_decls(statements: &[Statement], tokens: &mut Vec<SemanticToken>) {
                         decl(tokens, method.name_span.clone(), TokenType::Method);
                     }
                 }
+                ExportItem::Struct(_) => {}
                 ExportItem::Names(_) => {}
             },
             // No name span on the store pattern; nothing to declare.
@@ -170,6 +171,7 @@ fn collect_decls(statements: &[Statement], tokens: &mut Vec<SemanticToken>) {
             | Statement::Import(_)
             | Statement::Effect(_)
             | Statement::Component(_)
+            | Statement::Struct(_)
             | Statement::Break
             | Statement::Continue => {}
         }
