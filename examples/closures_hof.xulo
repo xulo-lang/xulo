@@ -9,7 +9,7 @@ fn makeAdder(n: number): fn(number): number {
 
 // 返回带内部状态的闭包（计数器）
 fn makeCounter(): fn(): number {
-    let count = 0
+    let mut count = 0
     fn(): number {
         count = count + 1 // 可变捕获，修改外层 let
         count
@@ -18,7 +18,7 @@ fn makeCounter(): fn(): number {
 
 // 列表元素依次应用函数，返回新列表
 fn map(xs: list<number>, f: fn(number): number): list<number> {
-    let out = []
+    let mut out = []
     for x in xs {
         out = out + [f(x)]
     }

@@ -2,7 +2,7 @@
 //   @Memo([deps]) let x = expr  依赖数组不变时复用缓存
 //   @Memo([]) / @Memo           空依赖 = 永久缓存，只算一次
 // 注意：JS 目标当前不生效（每次渲染重算），见 docs/xulo-syntax.md
-let expensiveCalls = 0
+let mut expensiveCalls = 0
 
 fn slowSquare(n: number): number {
     expensiveCalls = expensiveCalls + 1

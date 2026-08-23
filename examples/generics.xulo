@@ -16,7 +16,7 @@ fn combine<T>(a: list<T>, b: list<T>): list<T> {
 }
 
 fn prependAll<T>(prefix: T, list: list<T>): list<T> {
-    let out = []
+    let mut out = []
     for x in list {
         out = out + [prefix, x]
     }

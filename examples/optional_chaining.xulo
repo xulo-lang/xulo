@@ -30,7 +30,7 @@ fn main() {
     print(!false)
 
     // 可选参数：调用时可省略
-    let name: string? = null
+    let mut name: string? = null
     name = "set later"
     print(`name=${name}`)
 }

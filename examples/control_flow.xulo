@@ -1,6 +1,6 @@
 // 控制流：区间（半开 ..< / 闭合 ...）、while、if 表达式、match、return
 fn sumTo(n: number): number {
-    let acc = 0
+    let mut acc = 0
     for i in 1...n {        // 闭合区间 1..n，含上界
         acc = acc + i
     }
@@ -24,7 +24,7 @@ fn main() {
     print(sumTo(100))
 
     // while
-    let n = 1
+    let mut n = 1
     while n * n < 50 {
         n = n + 1
     }
