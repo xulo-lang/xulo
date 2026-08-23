@@ -26,7 +26,12 @@ pub struct Cli {
 #[derive(Subcommand)]
 pub enum Commands {
     /// Compile and run a .xulo file in the native Rust interpreter
-    Run { file: PathBuf },
+    Run {
+        file: PathBuf,
+        /// Render the program's `View` with a backend instead of running headless
+        #[arg(long, value_enum)]
+        render: Option<RenderBackend>,
+    },
     /// Only run lexical + syntax + semantic checks
     Check { file: PathBuf },
     /// Format a .xulo file in place (comments are not preserved)
@@ -43,6 +48,16 @@ pub enum Commands {
     },
 }
 
+/// A renderer backend for `xulo run --render`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum RenderBackend {
+    /// Render to a character-cell ANSI terminal
+    Terminal,
+    /// Render to a native webview window (requires the `webview` feature)
+    #[cfg(feature = "webview")]
+    Webview,
+}
+
 pub fn run() -> ExitCode {
     // ANSI color only when the stream is a terminal and `NO_COLOR` is unset
     // (diagnostics::use_color also honors `NO_COLOR`).
@@ -57,11 +72,30 @@ pub fn run() -> ExitCode {
 
 fn run_command(command: Commands) -> ExitCode {
     match command {
-        Commands::Run { file } => native_run(&file),
+        Commands::Run { file, render } => match render {
+            Some(RenderBackend::Terminal) => rendered_run(&file, xulo_framework::Backend::Terminal),
+            #[cfg(feature = "webview")]
+            Some(RenderBackend::Webview) => rendered_run(&file, xulo_framework::Backend::Webview),
+            None => native_run(&file),
+        },
         Commands::Check { file } => check_file(&file),
         Commands::Fmt { file } => fmt_file(&file),
         Commands::Repl => repl(),
         Commands::Build { file, output } => build_native(&file, output),
+    }
+}
+
+/// Run a `.xulo` file and render its `View` with the given backend, delegating
+/// to `xulo-framework` for the load/analyze/execute/render pipeline.
+fn rendered_run(file: &Path, backend: xulo_framework::Backend) -> ExitCode {
+    match xulo_framework::run(file, backend) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(err) => {
+            let src_file = err.file.clone().unwrap_or_else(|| file.to_path_buf());
+            let source = std::fs::read_to_string(&src_file).unwrap_or_default();
+            print_compile_error(&err, &source, &src_file);
+            ExitCode::from(1)
+        }
     }
 }
 

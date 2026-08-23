@@ -111,6 +111,18 @@ pub struct Interpreter {
     /// equality. Live for the whole run (the native runtime has no re-render
     /// loop, so repeated calls with unchanged deps reuse the cached value).
     memo_cache: RefCell<std::collections::HashMap<usize, Vec<MemoEntry>>>,
+    /// The render tree the entry `main` produced when it returns a `View`
+    /// (see [`Interpreter::take_root_view`]). Kept out of `out` so rendering
+    /// hosts can pick it up after execution.
+    view: RefCell<Option<Value>>,
+    /// The entry module's scope, kept so the UI host can re-invoke `main` to
+    /// re-render (see [`Interpreter::rerender_main`]).
+    entry_env: RefCell<Option<Rc<RefCell<Env>>>>,
+    /// `@State` cells keyed by their binding site (source offset), so a
+    /// re-render reuses the cell instead of re-initializing it: state survives
+    /// across `rerender_main` calls. Multiple instances of the same component
+    /// share a cell (no instance identity is tracked yet).
+    state_store: RefCell<std::collections::HashMap<usize, Rc<RefCell<Value>>>>,
 }
 
 /// A cached `@Memo` result: the dependency values it was computed from, plus
@@ -398,6 +410,9 @@ impl Interpreter {
             call_depth: Cell::new(0),
             memo_cache: RefCell::new(std::collections::HashMap::new()),
             struct_names: RefCell::new(Vec::new()),
+            view: RefCell::new(None),
+            entry_env: RefCell::new(None),
+            state_store: RefCell::new(std::collections::HashMap::new()),
         }
     }
 
@@ -436,6 +451,7 @@ impl Interpreter {
             }
         }
         if let Some(main) = main_fn(program) {
+            *self.entry_env.borrow_mut() = Some(global.clone());
             self.run_main(main, &global)?;
         } else {
             // No `main` (e.g. a script of top-level statements): still drain the
@@ -451,14 +467,27 @@ impl Interpreter {
     /// headlessly: its render value is produced and dropped (the JS path hands
     /// it to `__xulo_mount`, which needs an external runtime the native one
     /// does not have).
+    ///
+    /// When `main` declares a `View` return type the produced render value is
+    /// kept in `self.view`, retrievable via [`Interpreter::take_root_view`], so
+    /// a rendering host (the UI framework) can pick it up after execution.
     fn run_main(&self, main: &FnDef, global: &Rc<RefCell<Env>>) -> Result<(), XuloError> {
+        let is_view = matches!(
+            &main.return_type,
+            Some(Type::Named(name)) if name == "View"
+        );
         let result = self.call_fn(main, &[], global);
         self.drive();
         match result {
             Ok(Value::Promise(promise)) => {
                 let state = promise.borrow();
                 match &state.state {
-                    crate::value::PromiseState::Fulfilled(_) => {}
+                    crate::value::PromiseState::Fulfilled(v) => {
+                        if is_view {
+                            *self.view.borrow_mut() = Some(v.clone());
+                        }
+                        Ok(())
+                    }
                     crate::value::PromiseState::Rejected(e) => {
                         return Err(match e {
                             RunError::Err(e) => e.clone(),
@@ -472,9 +501,13 @@ impl Interpreter {
                         ));
                     }
                 }
+            }
+            Ok(view) => {
+                if is_view {
+                    *self.view.borrow_mut() = Some(view);
+                }
                 Ok(())
             }
-            Ok(_) => Ok(()),
             Err(RunError::Err(e)) => Err(e),
             Err(RunError::Throw(v)) => Err(self.uncaught(&v)),
         }
@@ -511,6 +544,9 @@ impl Interpreter {
             }
         }
         if run_main && let Some(main) = main_fn(program) {
+            // Remember the entry scope so the UI host can re-invoke `main`
+            // later to re-render (see [`Interpreter::rerender_main`]).
+            *self.entry_env.borrow_mut() = Some(global.clone());
             self.run_main(main, &global).map_err(RunError::Err)?;
         } else {
             // A module without `main` (any dependency module, or a no-main
@@ -530,6 +566,41 @@ impl Interpreter {
     /// Take the collected `print` lines so far (e.g. across executed modules).
     pub fn take_output(&self) -> Vec<String> {
         self.out.take()
+    }
+
+    /// Take the render tree the entry `main` produced, if it declared a `View`
+    /// return type. A non-`View` `main` (or a program without `main`) leaves
+    /// the slot empty. The value is a render tree of opaque `{ name, props }`
+    /// nodes; the UI framework converts it into a widget tree.
+    pub fn take_root_view(&self) -> Option<Value> {
+        self.view.take()
+    }
+
+    /// Invoke a callable value (a UI callback such as `Button.onClick`) with
+    /// no arguments. State cells the callback writes to are shared with the
+    /// component that declared them, so a following
+    /// [`Interpreter::rerender_main`] observes the update.
+    pub fn invoke(&self, callee: &Value) -> Result<Value, RunError> {
+        self.call_value_with_values(callee, &[])
+    }
+
+    /// Re-invoke the entry `main` to rebuild the render tree, reusing the
+    /// `@State` cells created by the previous run (see [`Interpreter::exec_state`]).
+    /// Returns a copy of the freshly rendered tree (which stays in the
+    /// interpreter for [`Interpreter::take_root_view`]); `None` when the
+    /// program has no `View` `main` to re-render.
+    pub fn rerender_main(&self, program: &Program) -> Result<Option<Value>, RunError> {
+        let main = match main_fn(program) {
+            Some(main) => main,
+            None => return Ok(None),
+        };
+        let entry_env = self
+            .entry_env
+            .borrow()
+            .clone()
+            .ok_or_else(|| RunError::err("entry module was not executed", 0..0))?;
+        self.run_main(main, &entry_env).map_err(RunError::Err)?;
+        Ok(self.view.borrow().clone())
     }
 
     /// Append a line to the interpreter's output buffer. Used by native
@@ -976,13 +1047,26 @@ impl Interpreter {
     /// `@State let x = v` defines a reactive cell (the JS output is
     /// `const x = __signal(v)`); writes later rewrite into the cell. A missing
     /// initializer starts as `null`, mirroring `__signal(undefined)`.
+    ///
+    /// Cells are kept in [`Interpreter::state_store`] keyed by binding site, so
+    /// a re-render (see [`Interpreter::rerender_main`]) reuses the existing
+    /// cell and the initializer is not re-run — `@State` values survive across
+    /// renders.
     fn exec_state(&self, binding: &LetBinding, env: &Rc<RefCell<Env>>) -> Result<Flow, RunError> {
-        let value = match &binding.value {
-            Some(value) => self.eval(value, env)?,
-            None => Value::Null,
+        let key = binding.name_span.start;
+        let cell: Rc<RefCell<Value>> = if let Some(existing) = self.state_store.borrow().get(&key) {
+            existing.clone()
+        } else {
+            let value = match &binding.value {
+                Some(value) => self.eval(value, env)?,
+                None => Value::Null,
+            };
+            let cell = Rc::new(RefCell::new(value));
+            self.state_store.borrow_mut().insert(key, cell.clone());
+            cell
         };
         env.borrow_mut()
-            .define(&binding.name, Value::Signal(Rc::new(RefCell::new(value))), binding.is_mutable);
+            .define(&binding.name, Value::Signal(cell), binding.is_mutable);
         Ok(Flow::Continue)
     }
 

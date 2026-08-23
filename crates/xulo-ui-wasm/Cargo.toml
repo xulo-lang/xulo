@@ -1,0 +1,12 @@
+[package]
+name = "xulo-ui-wasm"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+# cdylib → a `.wasm` when built for wasm32; rlib lets host tests build.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+xulo-ui = { workspace = true, features = ["serde"] }
+serde_json = { workspace = true }

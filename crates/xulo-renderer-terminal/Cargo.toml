@@ -1,0 +1,10 @@
+[package]
+name = "xulo-renderer-terminal"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["lib"]
+
+[dependencies]
+xulo-ui = { workspace = true }

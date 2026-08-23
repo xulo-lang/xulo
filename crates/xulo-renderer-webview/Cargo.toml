@@ -1,0 +1,21 @@
+[package]
+name = "xulo-renderer-webview"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["lib"]
+
+[dependencies]
+xulo-ui = { workspace = true }
+wry = "0.56"
+# wry's `WebViewBuilder::build` supports Linux via X11 only. Disable winit's
+# Wayland backend so the created window exposes an X11 handle wry can wrap
+# (XWayland provides one on Wayland-only sessions). A Wayland-only setup
+# without XWayland is unsupported by this backend for now.
+winit = { version = "0.30", default-features = false, features = ["x11", "rwh_06"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# wry's Linux webview is a GTK widget: init GTK and pump its event loop
+# alongside winit (see the wry winit example).
+gtk = "0.18"

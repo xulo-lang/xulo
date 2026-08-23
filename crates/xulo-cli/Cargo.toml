@@ -17,5 +17,10 @@ xulo-semantic = { workspace = true }
 xulo-runtime = { workspace = true }
 xulo-compiler = { workspace = true }
 xulo-ide = { workspace = true }
+xulo-framework = { workspace = true }
+
+[features]
+default = []
+webview = ["xulo-framework/webview"]
 
 [dev-dependencies]

@@ -35,6 +35,13 @@ VSCode：用 F5 或「Run Extension」调试启动 `editors/vscode/`（见 `.vsc
 # 编译并运行（Rust 原生解释器，不经过 Node.js）
 xulo run examples/hello.xulo
 
+# 渲染运行：把 main(): View 布局并绘制到 ANSI 终端（示例见 examples/ui.xulo）
+xulo run --render terminal examples/ui.xulo
+
+# 渲染运行：原生 webview 窗口（需要 webview feature；Linux 需 webkit2gtk-4.1 + X11/XWayland）
+# 布局/绘制引擎（xulo-ui）编译为 WASM 并在页面内运行，如同 egui/eframe 的 web 后端
+cargo run --bin xulo --features webview -- run --render webview examples/ui.xulo
+
 # 仅做词法/语法/语义检查
 xulo check examples/fibonacci.xulo
 
@@ -105,6 +112,8 @@ fn main() {
 
 - `@State` / `@Store` / `@Effect` / `@Environment` 只能在返回类型为 `View` 的函数顶层使用（嵌套块/普通函数内报语义错误）。术语：**组件**（component）指构造 UI 的语法/函数形态，**`View`** 是组件函数返回的类型（渲染树值）。
 - 组件块内允许「表达式子元素」（`string` / `View` / `list<View>`，列表渲染为嵌套数组）。外部组件调用（`@xulo/ui` 包，原生无实现）按位置实参构造成 `Name({ key: value, children: [...] })` 形状的 props 对象。
+- 渲染：`xulo run --render terminal examples/ui.xulo` 把入口 `main` 返回的 `View` 布局并绘制到 ANSI 终端（字符单元、边框按钮、true-color 背景）；`--render webview`（`--features webview`）用 wry 打开原生窗口——布局/绘制引擎 `xulo-ui` 编译为 **WASM**（`xulo-ui-wasm`，原始 ABI：`xulo_layout`/`xulo_hit_test`），页面实例化后在浏览器内完成布局，JS 只做最后的画布栅格化，如同 egui/eframe 的 web 后端。Linux 下窗口走 GTK 原生主循环（`build_gtk`，wry 官方推荐路径），并把 `Screen.backgroundColor` 同时设为窗口与页面的即时背景——打开即有主题色、无黑屏过渡。渲染管线按 crate 分层：`xulo-ui`（widget 树 + 布局 + 绘制命令，零依赖）、`xulo-renderer-terminal`（字符网格后端，零外部依赖）、`xulo-ui-wasm`（同引擎的 wasm32 产物，框架构建时经 `build.rs` 编译内嵌）、`xulo-renderer-webview`（wry 窗口后端，feature 化）、`xulo-framework`（统一 `run()`：编译 → 执行 → 取渲染树 → 转换 → 布局 → 绘制 → 后端输出）。
+- 交互：`--render` 为交互式会话。终端后端每帧渲染后输入 `1..N` 点击对应按钮、`r`/回车刷新、`q` 退出；webview 后端在页面上真实响应鼠标点击（wasm 内命中测试）。点击执行 `Button.onClick`（闭包在解释器内运行、改写 `@State` 信号），随后 `main` 被重新调用以重渲染——解释器按绑定位置复用 `@State` 单元，因此状态跨帧存活。`@Effect` 每次重渲染都会重跑。已知限制：同一组件多次实例化会共享 `@State`（尚未跟踪实例身份）。
 
 ### 未实现 / 限制
 
@@ -112,7 +121,7 @@ fn main() {
 - `repl` 为会话式 REPL：每轮用原生解释器重新编译并执行整个会话（无状态持久化到语言内部，靠重放保持跨条目变量），支持 `exit` / `clear`；行编辑走 rustyline（方向键历史、Tab 补全）
 - 调用函数必须在调用点之前已声明（不支持前向引用）
 - `$` 绑定（`{ value, onChange }`）：对 `@State` 信号，`onChange` 写回信号单元；对普通绑定为空操作
-- 原生运行时（`xulo run`）为 MVP：支持核心语言（字面量、变量、函数/闭包/递归、if/else、for/while、match、枚举、列表/对象、try/catch、`?.`/`??`/`...`、`print`/`println`/`str`）、`async`/`await`（协同调度）、本地 `import`/`pub` 导出（named/namespace）以及 UI。UI 程序无头运行：返回 `View` 的组件函数、`@State`/`@Store`/`@Effect`、组件块与 `$` 绑定均可用，组件树被构建并交给（不存在的）宿主运行时——`print` 副作用（如 `@Effect` 中）可观察；外部包（`@xulo/ui`）的导入名绑定为 `null` 占位符，`@Environment` 仍报「不支持」（无注入机制）。原生 `print` 对列表/对象的输出格式为 `[1, 2]` / `{ k: v }`。
+- 原生运行时（`xulo run`）为 MVP：支持核心语言（字面量、变量、函数/闭包/递归、if/else、for/while、match、枚举、列表/对象、try/catch、`?.`/`??`/`...`、`print`/`println`/`str`）、`async`/`await`（协同调度）、本地 `import`/`pub` 导出（named/namespace）以及 UI。返回 `View` 的组件函数、`@State`/`@Store`/`@Effect`、组件块与 `$` 绑定均可用；无 `--render` 时组件树被构建并丢弃（无头运行），`--render terminal` 时布局绘制到终端。`print` 副作用（如 `@Effect` 中）可观察；外部包（`@xulo/ui`）的导入名绑定为 `null` 占位符，`@Environment` 仍报「不支持」（无注入机制）。原生 `print` 对列表/对象的输出格式为 `[1, 2]` / `{ k: v }`。
 - `++`/`--` 自增运算符不在语言中
 
 ## 测试
@@ -139,6 +148,11 @@ CI（GitHub Actions，见 `.github/workflows/ci.yml`）执行 `cargo fmt --check
 │   ├── xulo-codegen/           # 生成 JavaScript（已废弃，保留但不再参与执行路径）
 │   ├── xulo-compiler/          # 前端管线 compile() + 多文件模块加载/分析
 │   ├── xulo-runtime/           # 原生树遍历解释器（xulo run 默认路径）
+│   ├── xulo-ui/                # 纯 UI 逻辑：widget 树 + 布局 + 绘制命令（零依赖，对应 egui）
+│   ├── xulo-ui-wasm/           # 同一布局引擎的 wasm32 产物（原始 ABI，框架 build.rs 编译内嵌）
+│   ├── xulo-renderer-terminal/ # 终端渲染后端：PaintOp → 字符网格 + ANSI（零外部依赖）
+│   ├── xulo-renderer-webview/  # webview 渲染后端：页面内实例化 wasm 布局引擎（wry + winit，feature 化）
+│   ├── xulo-framework/         # 统一入口：编译 → 执行 → 取渲染树 → 布局 → 后端输出（对应 eframe）
 │   ├── xulo-ide/               # 编辑器分析库：LineIndex、单文件查询、多文件 Workspace、诊断、格式化、语义 tokens（协议无关）
 │   ├── xulo-analyzer/          # LSP 语言服务器（lsp-types/lsp-server，xulo-ide 上层，二进制 xulo-analyzer）
 │   └── xulo-cli/               # CLI（run/check/fmt/repl，二进制名为 xulo；fmt 复用 xulo-ide）

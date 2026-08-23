@@ -905,6 +905,217 @@ fn external_import_binds_null_placeholder() {
 }
 
 #[test]
+fn view_main_captures_render_tree() {
+    // A `View` `main` stores its render tree for a rendering host to pick up;
+    // a non-`View` `main` leaves the slot empty.
+    let src = r#"
+        fn main(): View {
+            VStack(spacing: 8) {
+                Text("hi")
+            }
+        }
+    "#;
+    let tokens = tokenize(src).unwrap();
+    let program = parse_program(&tokens).unwrap();
+    xulo_semantic::analyze(&program).unwrap();
+    let interp = Interpreter::new();
+    interp.run(&program).unwrap();
+
+    let view = interp.take_root_view().expect("main returns a View");
+    let Value::Object(fields) = &view else {
+        panic!("render tree must be an object, got {}", view.format());
+    };
+    let fields = fields.borrow();
+    let name = fields
+        .iter()
+        .find(|(k, _)| k == "name")
+        .expect("render node carries a name")
+        .1
+        .clone();
+    assert!(xulo_runtime::value::equal(
+        &name,
+        &Value::String(Rc::from("VStack"))
+    ));
+    let props = fields
+        .iter()
+        .find(|(k, _)| k == "props")
+        .expect("render node carries props")
+        .1
+        .clone();
+    let Value::Object(props) = props else {
+        panic!("props must be an object");
+    };
+    let props = props.borrow();
+    assert!(props
+        .iter()
+        .any(|(k, v)| k == "spacing" && xulo_runtime::value::equal(v, &Value::Number(8.0))));
+    let children = props
+        .iter()
+        .find(|(k, _)| k == "children")
+        .map(|(_, v)| v.clone())
+        .expect("VStack has children");
+    let Value::Object(text_node) = children else {
+        panic!("single child stays scalar, got {}", children.format());
+    };
+    let text_node = text_node.borrow();
+    let text_name = text_node
+        .iter()
+        .find(|(k, _)| k == "name")
+        .map(|(_, v)| v.clone())
+        .expect("Text node carries a name");
+    assert!(xulo_runtime::value::equal(
+        &text_name,
+        &Value::String(Rc::from("Text"))
+    ));
+}
+
+#[test]
+fn non_view_main_leaves_view_slot_empty() {
+    let src = r#"
+        fn main(): number {
+            42
+        }
+    "#;
+    let tokens = tokenize(src).unwrap();
+    let program = parse_program(&tokens).unwrap();
+    xulo_semantic::analyze(&program).unwrap();
+    let interp = Interpreter::new();
+    interp.run(&program).unwrap();
+    assert!(interp.take_root_view().is_none());
+}
+
+/// Collect every string in a render tree (Text content, prop strings), for
+/// asserting rendered text across re-renders.
+fn collect_strings(v: &Value, out: &mut Vec<String>) {
+    match v {
+        Value::String(s) => out.push(s.to_string()),
+        Value::List(list) => {
+            for item in list.borrow().iter() {
+                collect_strings(item, out);
+            }
+        }
+        Value::Object(fields) => {
+            for (_, value) in fields.borrow().iter() {
+                collect_strings(value, out);
+            }
+        }
+        Value::Signal(cell) => collect_strings(&cell.borrow(), out),
+        _ => {}
+    }
+}
+
+/// Find the render node of kind `kind` anywhere in the tree and return its
+/// prop `prop`.
+fn find_prop(v: &Value, kind: &str, prop: &str) -> Option<Value> {
+    if let Some(found) = node_prop(v, kind, prop) {
+        return Some(found);
+    }
+    match v {
+        Value::List(list) => {
+            for item in list.borrow().iter() {
+                if let Some(found) = find_prop(item, kind, prop) {
+                    return Some(found);
+                }
+            }
+        }
+        Value::Object(fields) => {
+            for (_, value) in fields.borrow().iter() {
+                if let Some(found) = find_prop(value, kind, prop) {
+                    return Some(found);
+                }
+            }
+        }
+        _ => {}
+    }
+    None
+}
+
+fn node_prop(v: &Value, kind: &str, prop: &str) -> Option<Value> {
+    let Value::Object(fields) = v else {
+        return None;
+    };
+    let fields = fields.borrow();
+    let Value::String(name) = fields.iter().find(|(k, _)| k == "name")?.1.clone() else {
+        return None;
+    };
+    if name.as_ref() != kind {
+        return None;
+    }
+    let Value::Object(props) = fields.iter().find(|(k, _)| k == "props")?.1.clone() else {
+        return None;
+    };
+    let props = props.borrow();
+    props.iter().find(|(k, _)| k == prop).map(|(_, v)| v.clone())
+}
+
+#[test]
+fn onclick_mutates_state_across_rerender() {
+    // `@State` survives re-renders, and a `Button.onClick` closure invoked on
+    // the first render's tree writes the cell the re-render observes.
+    let src = r#"
+        fn Counter(): View {
+            @State let count: number = 0
+            VStack(spacing: 1) {
+                Text("Count: " + str(count))
+                Button(onClick: fn() { count = count + 1 }) {
+                    Text("+")
+                }
+            }
+        }
+        fn main(): View {
+            Counter()
+        }
+    "#;
+    let tokens = tokenize(src).unwrap();
+    let program = parse_program(&tokens).unwrap();
+    xulo_semantic::analyze(&program).unwrap();
+    let interp = Interpreter::new();
+    interp.run(&program).unwrap();
+
+    let view = interp.take_root_view().expect("initial view");
+    let mut strings = Vec::new();
+    collect_strings(&view, &mut strings);
+    assert!(strings.iter().any(|s| s.contains("Count: 0")), "{strings:?}");
+
+    let on_click = find_prop(&view, "Button", "onClick").expect("button onClick");
+    unwrap_run(interp.invoke(&on_click));
+    unwrap_run(interp.invoke(&on_click));
+
+    let rerendered = unwrap_run(interp.rerender_main(&program)).expect("rerender produces a view");
+    let mut strings = Vec::new();
+    collect_strings(&rerendered, &mut strings);
+    assert!(
+        strings.iter().any(|s| s.contains("Count: 2")),
+        "state survives re-render: {strings:?}"
+    );
+}
+
+#[test]
+fn rerender_without_main_returns_none() {
+    let src = r#"
+        fn main(): number {
+            42
+        }
+    "#;
+    let tokens = tokenize(src).unwrap();
+    let program = parse_program(&tokens).unwrap();
+    xulo_semantic::analyze(&program).unwrap();
+    let interp = Interpreter::new();
+    interp.run(&program).unwrap();
+    assert!(unwrap_run(interp.rerender_main(&program)).is_none());
+}
+
+/// Unwrap a `RunError` result, panicking with a readable message (the error
+/// type has no `Debug` impl, so `.unwrap()` is unavailable).
+fn unwrap_run<T>(result: Result<T, RunError>) -> T {
+    match result {
+        Ok(value) => value,
+        Err(RunError::Err(e)) => panic!("{}", e.message),
+        Err(RunError::Throw(v)) => panic!("uncaught exception: {}", v.format()),
+    }
+}
+
+#[test]
 fn store_destructures_value_bindings() {
     let out = run(r#"
         let store = { theme: "dark", user: "ada" }

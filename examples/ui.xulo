@@ -6,7 +6,7 @@ fn Counter(): View {
     @Effect fn() { print("mounted") }
 
     VStack(spacing: 8) {
-        Text("Count: " + str(count))
+        Text("Count: " + str(count), color: "#302d2d", fontSize: 20)
         HStack(spacing: 4) {
             Button(onClick: fn() { count = count + 1 }) {
                 Text("+")
@@ -23,7 +23,7 @@ fn NameField(): View {
 
     VStack {
         Input(value: $name)
-        Text("Hello, " + name)
+        Text("Hello, " + name, color: "#333", fontSize: 16)
     }
 }
 
@@ -31,5 +31,6 @@ fn main(): View {
     Screen(orientation: "portrait", backgroundColor: "#f0f0f0") {
         Counter()
         NameField()
+        Text("Welcome!", color: "#ff6b6b")
     }
 }

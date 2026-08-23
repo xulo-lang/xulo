@@ -24,3 +24,8 @@ xulo-runtime = { path = "crates/xulo-runtime" }
 xulo-cli = { path = "crates/xulo-cli" }
 xulo-ide = { path = "crates/xulo-ide" }
 xulo-analyzer = { path = "crates/xulo-analyzer" }
+xulo-ui = { path = "crates/xulo-ui" }
+xulo-ui-wasm = { path = "crates/xulo-ui-wasm" }
+xulo-renderer-terminal = { path = "crates/xulo-renderer-terminal" }
+xulo-renderer-webview = { path = "crates/xulo-renderer-webview" }
+xulo-framework = { path = "crates/xulo-framework" }

@@ -1,0 +1,16 @@
+[package]
+name = "xulo-ui"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["lib"]
+
+[dependencies]
+serde = { workspace = true, optional = true }
+
+[features]
+default = []
+# Enables (de)serialization of the widget tree (used to move a tree into a
+# wasm layout engine). xulo-ui stays dependency-free unless this is on.
+serde = ["dep:serde", "serde/derive"]

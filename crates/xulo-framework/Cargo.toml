@@ -1,0 +1,24 @@
+[package]
+name = "xulo-framework"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["lib"]
+
+[dependencies]
+xulo-core = { workspace = true }
+xulo-runtime = { workspace = true }
+xulo-compiler = { workspace = true }
+xulo-ui = { workspace = true, features = ["serde"] }
+serde_json = { workspace = true }
+xulo-renderer-terminal = { workspace = true, optional = true }
+xulo-renderer-webview = { workspace = true, optional = true }
+
+[build-dependencies]
+base64 = "0.22"
+
+[features]
+default = ["terminal"]
+terminal = ["dep:xulo-renderer-terminal"]
+webview = ["dep:xulo-renderer-webview"]
