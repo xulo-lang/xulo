@@ -2622,8 +2622,9 @@ impl Interpreter {
     }
 
     /// Call a callable with pre-evaluated `Value` arguments (bypasses expression
-    /// evaluation). Used by built-in higher-order list methods.
-    fn call_value_with_values(
+    /// evaluation). Used by built-in higher-order list methods and UI callbacks
+    /// that need to pass arguments (e.g. Input `onChange`).
+    pub fn call_value_with_values(
         &self,
         callee: &Value,
         values: &[Value],
