@@ -5,7 +5,7 @@ use xulo_ui::{Color, PaintOp, Rect, Size, Widget};
 
 const SIZE: TerminalSize = TerminalSize { cols: 40, rows: 12 };
 
-fn paint(root: &Widget) -> Vec<PaintOp> {
+fn paint(root: &Widget) -> Vec<PaintOp<'_>> {
     xulo_ui::UiContext::new(
         Size {
             width: SIZE.cols,

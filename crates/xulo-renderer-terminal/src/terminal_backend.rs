@@ -73,7 +73,7 @@ impl Grid {
     }
 
     /// Rasterize a sequence of paint commands into the grid.
-    pub fn from_ops(ops: &[PaintOp], size: TerminalSize) -> Self {
+    pub fn from_ops(ops: &[PaintOp<'_>], size: TerminalSize) -> Self {
         let mut grid = Self::new(size.cols, size.rows);
         for op in ops {
             match op {
@@ -90,6 +90,23 @@ impl Grid {
                 }
                 PaintOp::DrawBorder { rect, color } => {
                     grid.draw_border(*rect, *color);
+                }
+                PaintOp::Input { rect, text, placeholder: _, color, focused } => {
+                    grid.draw_border(*rect, Color::GRAY);
+                    let inner = Rect::new(
+                        rect.x + 1,
+                        rect.y + 1,
+                        rect.width.saturating_sub(2),
+                        rect.height.saturating_sub(2),
+                    );
+                    grid.draw_text(inner, text, *color);
+                    // Show cursor indicator when focused
+                    if *focused {
+                        let cursor_x = inner.x + text.chars().count() as u32;
+                        if cursor_x < rect.right().saturating_sub(1) {
+                            grid.set_char(cursor_x, inner.y, '▏', *color);
+                        }
+                    }
                 }
             }
         }
@@ -217,18 +234,18 @@ impl Grid {
 }
 
 /// Rasterize `ops` into a grid and return it as plain text (no escapes).
-pub fn render_plain(ops: &[PaintOp], size: TerminalSize) -> String {
+pub fn render_plain(ops: &[PaintOp<'_>], size: TerminalSize) -> String {
     Grid::from_ops(ops, size).to_plain()
 }
 
 /// Rasterize `ops` into a grid and return it with ANSI true-color escapes.
-pub fn render_ansi(ops: &[PaintOp], size: TerminalSize) -> String {
+pub fn render_ansi(ops: &[PaintOp<'_>], size: TerminalSize) -> String {
     Grid::from_ops(ops, size).to_ansi()
 }
 
 /// Rasterize `ops` and print them to stdout, clearing the screen first. ANSI
 /// color is skipped when `NO_COLOR` is set or stdout is not a terminal.
-pub fn render_stdout(ops: &[PaintOp], size: TerminalSize) {
+pub fn render_stdout(ops: &[PaintOp<'_>], size: TerminalSize) {
     let grid = Grid::from_ops(ops, size);
     let colored = std::env::var_os("NO_COLOR").is_none()
         && std::io::IsTerminal::is_terminal(&std::io::stdout());
