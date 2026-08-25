@@ -153,27 +153,30 @@ fn main(): View {
     };
     let frame: xulo_framework::FrameBuilder = Box::new(|root, surface| {
         let ctx = UiContext::new(surface, Box::new(CharMetrics));
-        let ops = ctx.paint(root);
         let placed = ctx.layout(root);
+        let mut ops = Vec::new();
+        xulo_ui::layout::paint(&placed, &ctx.theme, &mut ops);
         let mut buttons = Vec::new();
         xulo_framework::collect_button_rects(&placed, &mut buttons);
-        (ops, buttons)
+        let mut inputs = Vec::new();
+        xulo_ui::collect_input_rects(&placed, &mut inputs);
+        (ops, buttons, inputs)
     });
     let mut ui = xulo_framework::ReactiveUi::load(&path, surface, Some(frame)).unwrap();
     cleanup(&path);
 
     let size = TerminalSize { cols: 40, rows: 12 };
-    assert!(render_plain(&ui.ops, size).contains("Count: 0"));
+    assert!(render_plain(&ui.ops(), size).contains("Count: 0"));
 
     let (bx, by) = (ui.buttons[0].x, ui.buttons[0].y);
     ui.handle_click(bx, by).unwrap();
     assert!(
-        render_plain(&ui.ops, size).contains("Count: 1"),
+        render_plain(&ui.ops(), size).contains("Count: 1"),
         "click increments state across re-render"
     );
 
     ui.handle_click(bx, by).unwrap();
-    assert!(render_plain(&ui.ops, size).contains("Count: 2"));
+    assert!(render_plain(&ui.ops(), size).contains("Count: 2"));
 }
 
 #[test]

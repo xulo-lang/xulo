@@ -117,7 +117,8 @@ pub fn run(entry: &Path, backend: Backend) -> Result<(), XuloError> {
 }
 
 /// Interactive terminal session: print the current frame, then read `1..N` to
-/// click a button, `r`/empty to re-render, `q` to quit.
+/// click a button, `i<idx>=<value>` to change an input, `r`/empty to
+/// re-render, `q` to quit.
 #[cfg(feature = "terminal")]
 fn run_terminal_interactive(entry: &Path) -> Result<(), XuloError> {
     use xulo_renderer_terminal::{render_stdout, CharMetrics, TerminalSize};
@@ -130,30 +131,52 @@ fn run_terminal_interactive(entry: &Path) -> Result<(), XuloError> {
     };
     let frame: FrameBuilder = Box::new(|root, surface| {
         let ctx = UiContext::new(surface, Box::new(CharMetrics));
-        let ops = ctx.paint(root);
         let placed = ctx.layout(root);
+        let mut ops = Vec::new();
+        xulo_ui::layout::paint(&placed, &ctx.theme, &mut ops);
         let mut buttons = Vec::new();
         xulo_ui::collect_button_rects(&placed, &mut buttons);
-        (ops, buttons)
+        let mut inputs = Vec::new();
+        xulo_ui::collect_input_rects(&placed, &mut inputs);
+        (ops, buttons, inputs)
     });
     let mut ui = ReactiveUi::load(entry, surface, Some(frame))?;
     if !ui.output.is_empty() {
         println!("{}", ui.output.join("\n"));
     }
     loop {
-        render_stdout(&ui.ops, size);
-        let count = ui.buttons.len();
-        eprint!("buttons 1..{count}, r=refresh, q=quit > ");
-        let mut line = String::new();
-        if std::io::stdin().read_line(&mut line).is_err() {
-            break;
+        render_stdout(&ui.ops(), size);
+        let bcount = ui.buttons.len();
+        let icount = ui.inputs.len();
+        if icount > 0 {
+            eprint!("buttons 1..{bcount}, inputs i1=<text>..i{icount}=<text>, r=refresh, q=quit > ");
+        } else {
+            eprint!("buttons 1..{bcount}, r=refresh, q=quit > ");
         }
-        match line.trim() {
+        let mut line = String::new();
+        match std::io::stdin().read_line(&mut line) {
+            Ok(0) | Err(_) => break,
+            _ => {}
+        }
+        let trimmed = line.trim();
+        match trimmed {
             "q" | "Q" => break,
             "r" | "R" | "" => {}
-            number => {
-                if let Ok(k) = number.parse::<usize>() {
-                    if (1..=count).contains(&k) {
+            _ if trimmed.starts_with('i') && trimmed.contains('=') => {
+                // Parse `i1=hello` format
+                if let Some(eq_pos) = trimmed.find('=') {
+                    let idx_part = &trimmed[1..eq_pos];
+                    let value = &trimmed[eq_pos + 1..];
+                    if let Ok(k) = idx_part.parse::<usize>() {
+                        if (1..=icount).contains(&k) {
+                            ui.input_change(k - 1, value.to_string())?;
+                        }
+                    }
+                }
+            }
+            _ => {
+                if let Ok(k) = trimmed.parse::<usize>() {
+                    if (1..=bcount).contains(&k) {
                         ui.click_button(k - 1)?;
                     }
                 }
@@ -171,7 +194,7 @@ fn run_terminal_interactive(entry: &Path) -> Result<(), XuloError> {
 fn run_webview_interactive(entry: &Path) -> Result<(), XuloError> {
     use std::cell::RefCell;
 
-    use xulo_renderer_webview::{build_html, run, ClickHandler};
+    use xulo_renderer_webview::{build_html, run, ClickHandler, InputHandler};
     use xulo_ui::Size;
 
     let size = webview_size();
@@ -206,7 +229,23 @@ fn run_webview_interactive(entry: &Path) -> Result<(), XuloError> {
             }
         })
     };
-    run(html, "xulo".into(), size, background, on_click)
+    let on_input: InputHandler = {
+        let ui = ui.clone();
+        Box::new(move |index, new_value| {
+            let mut ui = ui.borrow_mut();
+            match ui.input_change(index as usize, new_value) {
+                Ok(()) => match serde_json::to_string(&ui.widget) {
+                    Ok(json) => Some(format!("window.redraw({json})")),
+                    Err(_) => None,
+                },
+                Err(err) => {
+                    eprintln!("runtime error: {}", err.message);
+                    None
+                }
+            }
+        })
+    };
+    run(html, "xulo".into(), size, background, on_click, on_input)
         .map_err(|e| XuloError::new(xulo_core::error::ErrorKind::Runtime, e))
 }
 
