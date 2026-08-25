@@ -53,7 +53,10 @@ pub fn build_html(
 <style>html,body{margin:0;padding:0;background:__BG__;overflow:hidden;}</style>
 </head>
 <body>
+<div id="wrap" style="position:relative;display:inline-block;">
 <canvas id="screen"></canvas>
+<div id="inputs"></div>
+</div>
 <script>
 const t0 = performance.now();
 const TREE = __TREE__;
@@ -87,8 +90,71 @@ function draw(ops) {
       case 'border':
         ctx.strokeStyle = col(op.color); ctx.lineWidth = 1;
         ctx.strokeRect(op.x + 0.5, op.y + 0.5, op.w - 1, op.h - 1); break;
+      case 'input':
+        // Draw input border and background on canvas; the actual text editing
+        // happens in an HTML <input> element synced by syncInputs().
+        ctx.strokeStyle = col(op.color); ctx.lineWidth = 1;
+        ctx.strokeRect(op.x + 0.5, op.y + 0.5, op.w - 1, op.h - 1);
+        ctx.fillStyle = 'rgba(255,255,255,0.95)';
+        ctx.fillRect(op.x + 1, op.y + 1, op.w - 2, op.h - 2);
+        break;
     }
   }
+}
+// --- Input field management ---
+const inputContainer = document.getElementById('inputs');
+inputContainer.style.position = 'absolute';
+inputContainer.style.top = '0';
+inputContainer.style.left = '0';
+inputContainer.style.pointerEvents = 'none';
+const inputEls = [];
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
+function syncInputs() {
+  if (!wasm) return;
+  const count = wasm.xulo_input_count();
+  // Ensure we have the right number of <input> elements.
+  while (inputEls.length < count) {
+    const el = document.createElement('input');
+    el.type = 'text';
+    el.style.position = 'absolute';
+    el.style.font = '12px monospace';
+    el.style.border = 'none';
+    el.style.outline = 'none';
+    el.style.background = 'transparent';
+    el.style.padding = '0';
+    el.style.margin = '0';
+    el.style.pointerEvents = 'auto';
+    el.style.boxSizing = 'border-box';
+    const idx = inputEls.length;
+    el.addEventListener('input', (e) => {
+      window.ipc.postMessage('input ' + idx + ' ' + e.target.value);
+    });
+    inputContainer.appendChild(el);
+    inputEls.push(el);
+  }
+  // Remove excess elements.
+  while (inputEls.length > count) {
+    const el = inputEls.pop();
+    inputContainer.removeChild(el);
+  }
+  // Position each input over its canvas rect.
+  const buf = new Float64Array(4);
+  const bufPtr = wasm.xulo_alloc(32); // 4 f64s = 32 bytes
+  for (let i = 0; i < count; i++) {
+    if (wasm.xulo_input(i, bufPtr)) {
+      const raw = new Float64Array(wasm.memory.buffer, bufPtr, 4);
+      const x = raw[0], y = raw[1], w = raw[2], h = raw[3];
+      const el = inputEls[i];
+      el.style.left = x + 'px';
+      el.style.top = y + 'px';
+      el.style.width = w + 'px';
+      el.style.height = h + 'px';
+      // Read current text from the canvas ops — for now, keep the input
+      // value in sync by reading from the value set during the last draw.
+    }
+  }
+  wasm.xulo_dealloc(bufPtr, 32);
 }
 const bin = atob('__WASM_B64__');
 const bytes = new Uint8Array(bin.length);
@@ -100,21 +166,24 @@ WebAssembly.instantiate(bytes, {})
 function redraw(tree) {
   if (!wasm) return;
   try {
-    const t = (typeof tree === 'string') ? JSON.parse(tree) : tree;
-    const text = JSON.stringify(t);
-    const enc = new TextEncoder().encode(text);
+    const text = (typeof tree === 'string') ? tree : JSON.stringify(tree);
+    const enc = encoder.encode(text);
     const ptr = wasm.xulo_alloc(enc.length);
     new Uint8Array(wasm.memory.buffer, ptr, enc.length).set(enc);
     const len = wasm.xulo_layout(ptr, enc.length, W, H);
     wasm.xulo_dealloc(ptr, enc.length);
     const rptr = wasm.xulo_result_ptr();
-    const ops = JSON.parse(new TextDecoder().decode(new Uint8Array(wasm.memory.buffer, rptr, len)));
-    // WebKitGTK skips repainting an idle page, so a canvas update triggered from
-    // evaluate_script isn't presented until the next interaction. Drawing inside
-    // an animation frame forces a rendering update, so the click result shows
-    // immediately instead of waiting for a mouse move.
+    const ops = JSON.parse(decoder.decode(new Uint8Array(wasm.memory.buffer, rptr, len)));
     requestAnimationFrame(() => {
       draw(ops);
+      syncInputs();
+      // Sync input text values from ops
+      for (let i = 0; i < inputEls.length; i++) {
+        const op = ops.find(o => o.op === 'input' && ops.indexOf(o) === ops.indexOf(ops.filter(x => x.op === 'input')[i]));
+        if (op && document.activeElement !== inputEls[i]) {
+          inputEls[i].value = op.text || '';
+        }
+      }
       if (!window.__perf) {
         window.__perf = true;
         window.ipc.postMessage('PERF firstdraw=' + Math.round(performance.now() - t0));
@@ -131,6 +200,22 @@ canvas.addEventListener('click', (e) => {
   const y = e.clientY - r.top;
   const idx = wasm ? wasm.xulo_hit_test(x, y) : -1;
   if (idx >= 0) window.ipc.postMessage('click ' + idx);
+  // Click on canvas also focuses the nearest input if applicable.
+  if (wasm) {
+    const iCount = wasm.xulo_input_count();
+    const bufPtr = wasm.xulo_alloc(32);
+    for (let i = 0; i < iCount; i++) {
+      if (wasm.xulo_input(i, bufPtr)) {
+        const raw = new Float64Array(wasm.memory.buffer, bufPtr, 4);
+        const ix = raw[0], iy = raw[1], iw = raw[2], ih = raw[3];
+        if (x >= ix && x < ix + iw && y >= iy && y < iy + ih && inputEls[i]) {
+          inputEls[i].focus();
+          break;
+        }
+      }
+    }
+    wasm.xulo_dealloc(bufPtr, 32);
+  }
 });
 </script>
 </body>
@@ -151,31 +236,52 @@ fn parse_click(body: &str) -> Option<i32> {
     parts.next()?.parse().ok()
 }
 
+/// Parse a `"input <index> <value>"` IPC message from the page.
+fn parse_input_change(body: &str) -> Option<(i32, String)> {
+    let mut parts = body.splitn(3, ' ');
+    if parts.next()? != "input" {
+        return None;
+    }
+    let index: i32 = parts.next()?.parse().ok()?;
+    let value = parts.next()?.to_string();
+    Some((index, value))
+}
+
 /// A click handler: receives the index of the clicked button (0-based, tree
 /// order) and returns a JS expression to evaluate for re-rendering (usually
 /// `redraw(<tree-json>)`), or `None` when nothing changed.
 pub type ClickHandler = Box<dyn Fn(i32) -> Option<String> + 'static>;
 
+/// An input change handler: receives the 0-based input index and the new text
+/// value, and returns a JS expression to evaluate for re-rendering, or `None`.
+pub type InputHandler = Box<dyn Fn(i32, String) -> Option<String> + 'static>;
+
 /// Build a webview over the given HTML. The IPC handler reports button clicks
-/// to `on_click` and redraws the page through the webview stored in `slot`
-/// (filled once the webview is created, after the builder returns).
+/// to `on_click`, input changes to `on_input`, and redraws the page through
+/// the webview stored in `slot` (filled once the webview is created, after the
+/// builder returns).
 fn build_webview(
     html: &str,
     background: (u8, u8, u8),
     on_click: ClickHandler,
+    on_input: InputHandler,
     slot: Rc<RefCell<Option<wry::WebView>>>,
-) -> wry::WebViewBuilder {
+) -> wry::WebViewBuilder<'_> {
     wry::WebViewBuilder::new()
         .with_html(html.to_string())
         .with_background_color((background.0, background.1, background.2, 255))
         .with_ipc_handler(move |req| {
             let body = req.body().clone();
-            if let Some(index) = parse_click(&body) {
-                if let Some(js) = on_click(index) {
-                    if let Some(webview) = slot.borrow().as_ref() {
-                        let _ = webview.evaluate_script(&js);
-                    }
-                }
+            if let Some(index) = parse_click(&body)
+                && let Some(js) = on_click(index)
+                && let Some(webview) = slot.borrow().as_ref()
+            {
+                let _ = webview.evaluate_script(&js);
+            } else if let Some((index, value)) = parse_input_change(&body)
+                && let Some(js) = on_input(index, value)
+                && let Some(webview) = slot.borrow().as_ref()
+            {
+                let _ = webview.evaluate_script(&js);
             } else if body.starts_with("PERF")
                 || body.starts_with("BOOTERR")
                 || body.starts_with("RENDERERR")
@@ -186,24 +292,26 @@ fn build_webview(
 }
 
 /// Open a native webview window rendering `html` and block until it is closed.
-/// Canvas button clicks are reported to `on_click`, whose returned JS
-/// expression (if any) is evaluated in the page to redraw it. `background`
-/// colors the window itself so it is never a black void while the page loads.
-/// Returns a user-facing error string on failure (e.g. no display server).
+/// Canvas button clicks are reported to `on_click`, input changes to
+/// `on_input`, whose returned JS expression (if any) is evaluated in the page
+/// to redraw it. `background` colors the window itself so it is never a black
+/// void while the page loads. Returns a user-facing error string on failure
+/// (e.g. no display server).
 pub fn run(
     html: String,
     title: String,
     size: WebviewSize,
     background: (u8, u8, u8),
     on_click: ClickHandler,
+    on_input: InputHandler,
 ) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
-        run_linux(html, &title, size, background, on_click)
+        run_linux(html, &title, size, background, on_click, on_input)
     }
     #[cfg(not(target_os = "linux"))]
     {
-        run_winit(html, &title, size, background, on_click)
+        run_winit(html, &title, size, background, on_click, on_input)
     }
 }
 
@@ -217,6 +325,7 @@ fn run_linux(
     size: WebviewSize,
     background: (u8, u8, u8),
     on_click: ClickHandler,
+    on_input: InputHandler,
 ) -> Result<(), String> {
     use gtk::prelude::*;
     use wry::WebViewBuilderExtUnix;
@@ -241,7 +350,7 @@ fn run_linux(
     box_.show_all();
 
     let slot = Rc::new(RefCell::new(None::<wry::WebView>));
-    let webview = build_webview(&html, background, on_click, slot.clone())
+    let webview = build_webview(&html, background, on_click, on_input, slot.clone())
         .build_gtk(&box_)
         .map_err(|e| format!("cannot create webview: {e}"))?;
     *slot.borrow_mut() = Some(webview);
@@ -263,6 +372,7 @@ fn run_winit(
     size: WebviewSize,
     background: (u8, u8, u8),
     on_click: ClickHandler,
+    on_input: InputHandler,
 ) -> Result<(), String> {
     use winit::application::ApplicationHandler;
     use winit::event::WindowEvent;
@@ -275,6 +385,7 @@ fn run_winit(
         size: WebviewSize,
         background: (u8, u8, u8),
         on_click: Option<ClickHandler>,
+        on_input: Option<InputHandler>,
         /// The built webview, reachable from the IPC handler (which is created
         /// before the webview exists) so a click can redraw the page.
         webview_slot: Rc<RefCell<Option<wry::WebView>>>,
@@ -301,8 +412,9 @@ fn run_winit(
             };
             let html = self.html.take().expect("html consumed once");
             let on_click = self.on_click.take().expect("click handler consumed once");
+            let on_input = self.on_input.take().expect("input handler consumed once");
             let slot = self.webview_slot.clone();
-            let webview = match build_webview(&html, self.background, on_click, slot.clone())
+            let webview = match build_webview(&html, self.background, on_click, on_input, slot.clone())
                 .build(&window)
             {
                 Ok(webview) => webview,
@@ -335,6 +447,7 @@ fn run_winit(
         size,
         background,
         on_click: Some(on_click),
+        on_input: Some(on_input),
         webview_slot: Rc::new(RefCell::new(None)),
         window: None,
     };

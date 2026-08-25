@@ -4,5 +4,5 @@
 pub mod webview_backend;
 
 pub use webview_backend::{
-    build_html, run, CellMetrics, ClickHandler, WebviewSize, CELL_H, CELL_W,
+    build_html, run, CellMetrics, ClickHandler, InputHandler, WebviewSize, CELL_H, CELL_W,
 };
