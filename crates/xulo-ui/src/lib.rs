@@ -9,6 +9,6 @@ pub mod painting;
 pub mod widgets;
 
 pub use ctx::UiContext;
-pub use layout::{collect_button_rects, CellMetrics, FontMetrics, Placed, Theme, PAD_X, PAD_Y};
+pub use layout::{collect_button_rects, collect_input_rects, CellMetrics, FontMetrics, Placed, Theme, PAD_X, PAD_Y};
 pub use painting::PaintOp;
 pub use widgets::{Color, Rect, Size, Widget, CELL_H, CELL_W};

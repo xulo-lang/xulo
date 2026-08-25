@@ -54,6 +54,16 @@ pub fn collect_button_rects(placed: &Placed<'_>, out: &mut Vec<Rect>) {
     }
 }
 
+/// Collect the rectangles of every `Input` in a placed tree, in pre-order.
+pub fn collect_input_rects(placed: &Placed<'_>, out: &mut Vec<Rect>) {
+    if matches!(placed.widget, Widget::Input { .. }) {
+        out.push(placed.rect);
+    }
+    for child in &placed.children {
+        collect_input_rects(child, out);
+    }
+}
+
 /// A widget with the rectangle it occupies. Children mirror the widget tree.
 #[derive(Debug)]
 pub struct Placed<'a> {
@@ -94,7 +104,7 @@ pub fn layout<'a>(root: &'a Widget, surface: Size, metrics: &dyn FontMetrics) ->
 }
 
 /// Flatten a placed tree into paint commands.
-pub fn paint(placed: &Placed<'_>, theme: &Theme, ops: &mut Vec<PaintOp>) {
+pub fn paint<'a>(placed: &Placed<'a>, theme: &Theme, ops: &mut Vec<PaintOp<'a>>) {
     match placed.widget {
         Widget::Screen { background, .. } => {
             let color = background.unwrap_or(theme.background);
@@ -111,7 +121,7 @@ pub fn paint(placed: &Placed<'_>, theme: &Theme, ops: &mut Vec<PaintOp>) {
         Widget::Text { text, color } => {
             ops.push(PaintOp::DrawText {
                 rect: placed.rect,
-                text: text.clone(),
+                text,
                 color: color.unwrap_or(theme.text),
             });
         }
@@ -122,19 +132,30 @@ pub fn paint(placed: &Placed<'_>, theme: &Theme, ops: &mut Vec<PaintOp>) {
             });
             ops.push(PaintOp::DrawText {
                 rect: inset(placed.rect),
-                text: label.clone(),
+                text: label,
                 color: theme.accent,
             });
         }
-        Widget::Input { value } => {
-            ops.push(PaintOp::DrawBorder {
+        Widget::Input {
+            value,
+            placeholder,
+            ..
+        } => {
+            let display = if value.is_empty() {
+                placeholder.as_str()
+            } else {
+                value.as_str()
+            };
+            ops.push(PaintOp::Input {
                 rect: placed.rect,
-                color: theme.border,
-            });
-            ops.push(PaintOp::DrawText {
-                rect: inset(placed.rect),
-                text: value.clone(),
-                color: theme.text,
+                text: display,
+                placeholder,
+                color: if value.is_empty() {
+                    Color::GRAY
+                } else {
+                    theme.text
+                },
+                focused: false,
             });
         }
         Widget::Unknown { kind } => {
@@ -144,7 +165,7 @@ pub fn paint(placed: &Placed<'_>, theme: &Theme, ops: &mut Vec<PaintOp>) {
             });
             ops.push(PaintOp::DrawText {
                 rect: placed.rect,
-                text: kind.clone(),
+                text: kind,
                 color: theme.text,
             });
         }
@@ -171,13 +192,26 @@ fn measure(widget: &Widget, width_bound: u32, metrics: &dyn FontMetrics) -> Size
                 .min(width_bound),
             height: metrics.line_height().saturating_add(PAD_Y * 2),
         },
-        Widget::Input { value } => Size {
-            width: metrics
-                .text_width(value)
-                .saturating_add(PAD_X * 2)
-                .min(width_bound),
-            height: metrics.line_height().saturating_add(PAD_Y * 2),
-        },
+        Widget::Input {
+            value,
+            width,
+            placeholder,
+        } => {
+            let display = if value.is_empty() {
+                placeholder.as_str()
+            } else {
+                value.as_str()
+            };
+            let w = width.unwrap_or_else(|| {
+                metrics
+                    .text_width(display)
+                    .saturating_add(PAD_X * 2)
+            });
+            Size {
+                width: w.min(width_bound),
+                height: metrics.line_height().saturating_add(PAD_Y * 2),
+            }
+        }
         Widget::Unknown { kind } => Size {
             width: metrics
                 .text_width(kind)
@@ -264,19 +298,27 @@ fn place<'a>(
             ),
             children: Vec::new(),
         },
-        Widget::Input { value } => Placed {
-            widget,
-            rect: Rect::new(
-                x,
-                y,
+        Widget::Input {
+            value,
+            width: input_width,
+            placeholder,
+        } => {
+            let display = if value.is_empty() {
+                placeholder.as_str()
+            } else {
+                value.as_str()
+            };
+            let w = input_width.unwrap_or_else(|| {
                 metrics
-                    .text_width(value)
+                    .text_width(display)
                     .saturating_add(PAD_X * 2)
-                    .min(width),
-                metrics.line_height().saturating_add(PAD_Y * 2),
-            ),
-            children: Vec::new(),
-        },
+            });
+            Placed {
+                widget,
+                rect: Rect::new(x, y, w.min(width), metrics.line_height().saturating_add(PAD_Y * 2)),
+                children: Vec::new(),
+            }
+        }
         Widget::Unknown { kind } => Placed {
             widget,
             rect: Rect::new(
@@ -304,11 +346,17 @@ fn place<'a>(
                     cursor_x = cursor_x.saturating_add(*spacing);
                 }
                 let remaining = width.saturating_sub(cursor_x - x);
-                let child_width = measure(child, remaining, metrics).width;
-                let child_placed = place(child, (cursor_x, y), child_width, metrics);
-                cursor_x = cursor_x.saturating_add(child_placed.rect.width);
+                let child_width = match child {
+                    Widget::VStack { .. } | Widget::Screen { .. } => {
+                        measure(child, remaining, metrics).width
+                    }
+                    _ => remaining,
+                };
+                let (child_placed, child_size) =
+                    place_sized(child, (cursor_x, y), child_width, metrics);
+                cursor_x = cursor_x.saturating_add(child_size.width);
                 max_right = max_right.max(cursor_x);
-                max_height = max_height.max(child_placed.rect.height);
+                max_height = max_height.max(child_size.height);
                 placed_children.push(child_placed);
             }
             Placed {
@@ -318,6 +366,22 @@ fn place<'a>(
             }
         }
     }
+}
+
+/// Like `place`, but also returns the widget's measured size, avoiding a
+/// separate `measure` call for HStack children that need intrinsic width.
+fn place_sized<'a>(
+    widget: &'a Widget,
+    origin: (u32, u32),
+    width: u32,
+    metrics: &dyn FontMetrics,
+) -> (Placed<'a>, Size) {
+    let placed = place(widget, origin, width, metrics);
+    let size = Size {
+        width: placed.rect.width,
+        height: placed.rect.height,
+    };
+    (placed, size)
 }
 
 fn place_stack<'a>(

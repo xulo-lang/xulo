@@ -13,7 +13,7 @@ impl xulo_ui::FontMetrics for CharMetrics {
     }
 }
 
-fn paint(root: &Widget) -> Vec<PaintOp> {
+fn paint(root: &Widget) -> Vec<PaintOp<'_>> {
     xulo_ui::UiContext::new(
         Size {
             width: 80,
@@ -44,7 +44,7 @@ fn screen_clears_with_its_background() {
         ops[1],
         PaintOp::DrawText {
             rect: Rect::new(0, 0, 2, 1),
-            text: "hi".into(),
+            text: "hi",
             color: Color::WHITE,
         }
     );
@@ -75,7 +75,7 @@ fn button_paints_border_and_accent_text() {
         ops[1],
         PaintOp::DrawText {
             rect: Rect::new(1, 1, 1, 1),
-            text: "+".into(),
+            text: "+",
             color: Color::ACCENT,
         }
     );
@@ -92,7 +92,7 @@ fn text_honors_its_color() {
         ops[0],
         PaintOp::DrawText {
             rect: Rect::new(0, 0, 2, 1),
-            text: "hi".into(),
+            text: "hi",
             color: Color::new(1, 2, 3),
         }
     );
@@ -109,7 +109,7 @@ fn text_without_color_uses_theme() {
         ops[0],
         PaintOp::DrawText {
             rect: Rect::new(0, 0, 2, 1),
-            text: "hi".into(),
+            text: "hi",
             color: Color::WHITE,
         }
     );
@@ -136,12 +136,12 @@ fn vstack_paints_children_in_order() {
         vec![
             PaintOp::DrawText {
                 rect: Rect::new(0, 0, 1, 1),
-                text: "a".into(),
+                text: "a",
                 color: Color::WHITE,
             },
             PaintOp::DrawText {
                 rect: Rect::new(0, 2, 1, 1),
-                text: "b".into(),
+                text: "b",
                 color: Color::WHITE,
             },
         ]

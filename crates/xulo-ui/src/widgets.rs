@@ -168,7 +168,11 @@ pub enum Widget {
     /// yet; this round only the visuals render.
     Button { label: String },
     /// A single-line text field.
-    Input { value: String },
+    Input {
+        value: String,
+        width: Option<u32>,
+        placeholder: String,
+    },
     /// A widget the UI layer does not recognize yet; rendered as a labeled box.
     Unknown { kind: String },
 }

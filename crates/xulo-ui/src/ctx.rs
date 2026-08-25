@@ -28,7 +28,7 @@ impl UiContext {
     }
 
     /// Lay `root` out and flatten it into paint commands.
-    pub fn paint(&self, root: &Widget) -> Vec<PaintOp> {
+    pub fn paint<'a>(&self, root: &'a Widget) -> Vec<PaintOp<'a>> {
         let placed = self.layout(root);
         let mut ops = Vec::new();
         crate::layout::paint(&placed, &self.theme, &mut ops);
