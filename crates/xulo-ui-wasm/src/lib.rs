@@ -11,16 +11,23 @@ use std::cell::RefCell;
 
 use xulo_ui::{PaintOp, Rect, Size, Widget};
 
-/// Lay a widget tree out against a pixel surface: paint commands plus the
-/// button rectangles (in the same pre-order the framework keeps callbacks).
-/// Pure, so it is testable on the host.
-pub fn layout_tree(tree: &Widget, width: u32, height: u32) -> (Vec<PaintOp>, Vec<Rect>) {
+/// Lay a widget tree out against a pixel surface: paint commands, button
+/// rectangles, and input field rectangles (in the same pre-order the framework
+/// keeps callbacks). Pure, so it is testable on the host.
+pub fn layout_tree(
+    tree: &Widget,
+    width: u32,
+    height: u32,
+) -> (Vec<PaintOp<'_>>, Vec<Rect>, Vec<Rect>) {
     let ctx = xulo_ui::UiContext::new(Size { width, height }, Box::new(xulo_ui::CellMetrics));
-    let ops = ctx.paint(tree);
     let placed = ctx.layout(tree);
+    let mut ops = Vec::new();
+    xulo_ui::layout::paint(&placed, &ctx.theme, &mut ops);
     let mut buttons = Vec::new();
     xulo_ui::collect_button_rects(&placed, &mut buttons);
-    (ops, buttons)
+    let mut inputs = Vec::new();
+    xulo_ui::collect_input_rects(&placed, &mut inputs);
+    (ops, buttons, inputs)
 }
 
 /// Hit-test `(x, y)` against `buttons`; returns the 0-based index or -1.
@@ -32,39 +39,62 @@ pub fn hit_index(buttons: &[Rect], x: f64, y: f64) -> i32 {
 }
 
 /// Serialize paint commands into the flat `[{op, color, x, y, w, h, text}]`
-/// array the page's rasterizer consumes.
-pub fn ops_to_json(ops: &[PaintOp]) -> String {
-    let color_json = |c: &xulo_ui::Color| serde_json::json!({ "r": c.r, "g": c.g, "b": c.b });
-    let rect_json =
-        |r: &Rect| serde_json::json!({ "x": r.x, "y": r.y, "w": r.width, "h": r.height });
-    let arr: Vec<serde_json::Value> = ops
-        .iter()
-        .map(|op| match op {
+/// array the page's rasterizer consumes. Writes directly to a `String` to
+/// avoid intermediate `serde_json::Value` heap allocations.
+pub fn ops_to_json(ops: &[PaintOp<'_>]) -> String {
+    use std::fmt::Write;
+    let mut out = String::with_capacity(ops.len() * 80);
+    out.push('[');
+    for (i, op) in ops.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        match op {
             PaintOp::Clear { color } => {
-                serde_json::json!({ "op": "clear", "color": color_json(color) })
+                let _ = write!(
+                    out,
+                    "{{\"op\":\"clear\",\"color\":{{\"r\":{},\"g\":{},\"b\":{}}}}}",
+                    color.r, color.g, color.b
+                );
             }
             PaintOp::FillRect { rect, color } => {
-                let mut v = rect_json(rect);
-                v["op"] = serde_json::json!("fill");
-                v["color"] = color_json(color);
-                v
+                let _ = write!(
+                    out,
+                    "{{\"op\":\"fill\",\"x\":{},\"y\":{},\"w\":{},\"h\":{},\"color\":{{\"r\":{},\"g\":{},\"b\":{}}}}}",
+                    rect.x, rect.y, rect.width, rect.height, color.r, color.g, color.b
+                );
             }
             PaintOp::DrawText { rect, text, color } => {
-                let mut v = rect_json(rect);
-                v["op"] = serde_json::json!("text");
-                v["text"] = serde_json::json!(text);
-                v["color"] = color_json(color);
-                v
+                let _ = write!(
+                    out,
+                    "{{\"op\":\"text\",\"x\":{},\"y\":{},\"w\":{},\"h\":{},\"text\":\"{}\",\"color\":{{\"r\":{},\"g\":{},\"b\":{}}}}}",
+                    rect.x, rect.y, rect.width, rect.height,
+                    text.replace('\\', "\\\\").replace('"', "\\\""),
+                    color.r, color.g, color.b
+                );
             }
             PaintOp::DrawBorder { rect, color } => {
-                let mut v = rect_json(rect);
-                v["op"] = serde_json::json!("border");
-                v["color"] = color_json(color);
-                v
+                let _ = write!(
+                    out,
+                    "{{\"op\":\"border\",\"x\":{},\"y\":{},\"w\":{},\"h\":{},\"color\":{{\"r\":{},\"g\":{},\"b\":{}}}}}",
+                    rect.x, rect.y, rect.width, rect.height, color.r, color.g, color.b
+                );
             }
-        })
-        .collect();
-    serde_json::Value::Array(arr).to_string()
+            PaintOp::Input { rect, text, placeholder, color, focused } => {
+                let _ = write!(
+                    out,
+                    "{{\"op\":\"input\",\"x\":{},\"y\":{},\"w\":{},\"h\":{},\"text\":\"{}\",\"placeholder\":\"{}\",\"color\":{{\"r\":{},\"g\":{},\"b\":{}}},\"focused\":{}}}",
+                    rect.x, rect.y, rect.width, rect.height,
+                    text.replace('\\', "\\\\").replace('"', "\\\""),
+                    placeholder.replace('\\', "\\\\").replace('"', "\\\""),
+                    color.r, color.g, color.b,
+                    if *focused { "true" } else { "false" }
+                );
+            }
+        }
+    }
+    out.push(']');
+    out
 }
 
 thread_local! {
@@ -72,6 +102,8 @@ thread_local! {
     static RESULT: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
     /// The last layout's button rectangles.
     static BUTTONS: RefCell<Vec<Rect>> = const { RefCell::new(Vec::new()) };
+    /// The last layout's input field rectangles.
+    static INPUTS: RefCell<Vec<Rect>> = const { RefCell::new(Vec::new()) };
 }
 
 /// Allocate `len` bytes of wasm memory (for JS to write the tree into).
@@ -113,8 +145,9 @@ pub extern "C" fn xulo_layout(
         Ok(tree) => tree,
         Err(_) => return 0,
     };
-    let (ops, buttons) = layout_tree(&tree, width, height);
+    let (ops, buttons, inputs) = layout_tree(&tree, width, height);
     BUTTONS.with(|b| *b.borrow_mut() = buttons);
+    INPUTS.with(|i| *i.borrow_mut() = inputs);
     let result = ops_to_json(&ops);
     RESULT.with(|r| {
         *r.borrow_mut() = result.into_bytes();
@@ -160,4 +193,31 @@ pub extern "C" fn xulo_button(index: usize, out: *mut f64) -> i32 {
 pub extern "C" fn xulo_hit_test(x: f64, y: f64) -> i32 {
     let buttons = BUTTONS.with(|b| b.borrow().clone());
     hit_index(&buttons, x, y)
+}
+
+/// Number of input fields in the last layout.
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_input_count() -> usize {
+    INPUTS.with(|i| i.borrow().len())
+}
+
+/// Rectangle of the `index`-th input field, written as `[x, y, w, h]` into
+/// `out` (4 f64s). Returns 1 on success, 0 if `index` is out of range.
+// Safety: `out` must point to 4 f64s of writable memory; the JS host provides it.
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_input(index: usize, out: *mut f64) -> i32 {
+    let rect = INPUTS.with(|i| i.borrow().get(index).copied());
+    match rect {
+        Some(r) => {
+            unsafe {
+                *out.add(0) = r.x as f64;
+                *out.add(1) = r.y as f64;
+                *out.add(2) = r.width as f64;
+                *out.add(3) = r.height as f64;
+            }
+            1
+        }
+        None => 0,
+    }
 }

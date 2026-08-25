@@ -17,11 +17,11 @@ fn lays_out_a_stack_and_collects_buttons() {
         ],
     };
     // Pixel surface: 40 cols x 12 rows of 8x16 cells.
-    let (ops, buttons) = layout_tree(&tree, 320, 192);
+    let (ops, buttons, _inputs) = layout_tree(&tree, 320, 192);
     // Screen-less root: first op draws the text; buttons appear as border ops.
     assert!(ops
         .iter()
-        .any(|op| matches!(op, PaintOp::DrawText { text, .. } if text == "Count: 0")));
+        .any(|op| matches!(op, PaintOp::DrawText { text, .. } if *text == "Count: 0")));
     assert_eq!(buttons.len(), 2);
     // Text at y=0 (16px tall); spacing is 1px; button 1 at y = 17.
     let b1 = buttons[0];
@@ -42,7 +42,7 @@ fn hit_test_finds_buttons_by_position() {
             Widget::Button { label: "-".into() },
         ],
     };
-    let (_, buttons) = layout_tree(&tree, 320, 192);
+    let (_, buttons, _) = layout_tree(&tree, 320, 192);
     // "+" at x=0 (w=10), "-" at x=10+2=12.
     assert_eq!(buttons.len(), 2);
     assert_eq!(hit_index(&buttons, 5.0, 16.0), 0);
