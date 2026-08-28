@@ -13,7 +13,12 @@ pub enum PaintOp<'a> {
     /// Fill the whole surface with `color` (clear).
     Clear { color: Color },
     /// Fill a rectangle with `color`.
-    FillRect { rect: Rect, color: Color },
+    FillRect {
+        rect: Rect,
+        color: Color,
+        /// Corner radius in layout units (0 = sharp corners).
+        border_radius: u32,
+    },
     /// Draw `text`, clipped to `rect`. The rect's top-left is the text origin.
     DrawText {
         rect: Rect,
@@ -21,7 +26,12 @@ pub enum PaintOp<'a> {
         color: Color,
     },
     /// Outline `rect` with `color`.
-    DrawBorder { rect: Rect, color: Color },
+    DrawBorder {
+        rect: Rect,
+        color: Color,
+        /// Corner radius in layout units (0 = sharp corners).
+        border_radius: u32,
+    },
     /// An editable text input field. `focused` indicates whether this input
     /// currently has keyboard focus (backends render a cursor when true).
     Input {
@@ -30,5 +40,7 @@ pub enum PaintOp<'a> {
         placeholder: &'a str,
         color: Color,
         focused: bool,
+        /// Corner radius in layout units (0 = sharp corners).
+        border_radius: u32,
     },
 }

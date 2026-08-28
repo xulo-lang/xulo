@@ -23,10 +23,7 @@ pub fn layout_tree(
     let placed = ctx.layout(tree);
     let mut ops = Vec::new();
     xulo_ui::layout::paint(&placed, &ctx.theme, &mut ops);
-    let mut buttons = Vec::new();
-    xulo_ui::collect_button_rects(&placed, &mut buttons);
-    let mut inputs = Vec::new();
-    xulo_ui::collect_input_rects(&placed, &mut inputs);
+    let (buttons, inputs) = xulo_ui::layout::collect_interactive_rects(&placed);
     (ops, buttons, inputs)
 }
 
@@ -57,44 +54,73 @@ pub fn ops_to_json(ops: &[PaintOp<'_>]) -> String {
                     color.r, color.g, color.b
                 );
             }
-            PaintOp::FillRect { rect, color } => {
+            PaintOp::FillRect { rect, color, border_radius } => {
                 let _ = write!(
                     out,
-                    "{{\"op\":\"fill\",\"x\":{},\"y\":{},\"w\":{},\"h\":{},\"color\":{{\"r\":{},\"g\":{},\"b\":{}}}}}",
-                    rect.x, rect.y, rect.width, rect.height, color.r, color.g, color.b
+                    "{{\"op\":\"fill\",\"x\":{},\"y\":{},\"w\":{},\"h\":{},\"color\":{{\"r\":{},\"g\":{},\"b\":{}}},\"borderRadius\":{}}}",
+                    rect.x, rect.y, rect.width, rect.height, color.r, color.g, color.b, border_radius
                 );
             }
             PaintOp::DrawText { rect, text, color } => {
                 let _ = write!(
                     out,
-                    "{{\"op\":\"text\",\"x\":{},\"y\":{},\"w\":{},\"h\":{},\"text\":\"{}\",\"color\":{{\"r\":{},\"g\":{},\"b\":{}}}}}",
+                    "{{\"op\":\"text\",\"x\":{},\"y\":{},\"w\":{},\"h\":{},\"text\":\"",
                     rect.x, rect.y, rect.width, rect.height,
-                    text.replace('\\', "\\\\").replace('"', "\\\""),
+                );
+                write_escaped_json_str(&mut out, text);
+                let _ = write!(
+                    out,
+                    "\",\"color\":{{\"r\":{},\"g\":{},\"b\":{}}}}}",
                     color.r, color.g, color.b
                 );
             }
-            PaintOp::DrawBorder { rect, color } => {
+            PaintOp::DrawBorder { rect, color, border_radius } => {
                 let _ = write!(
                     out,
-                    "{{\"op\":\"border\",\"x\":{},\"y\":{},\"w\":{},\"h\":{},\"color\":{{\"r\":{},\"g\":{},\"b\":{}}}}}",
-                    rect.x, rect.y, rect.width, rect.height, color.r, color.g, color.b
+                    "{{\"op\":\"border\",\"x\":{},\"y\":{},\"w\":{},\"h\":{},\"color\":{{\"r\":{},\"g\":{},\"b\":{}}},\"borderRadius\":{}}}",
+                    rect.x, rect.y, rect.width, rect.height, color.r, color.g, color.b, border_radius
                 );
             }
-            PaintOp::Input { rect, text, placeholder, color, focused } => {
+            PaintOp::Input { rect, text, placeholder, color, focused, border_radius } => {
                 let _ = write!(
                     out,
-                    "{{\"op\":\"input\",\"x\":{},\"y\":{},\"w\":{},\"h\":{},\"text\":\"{}\",\"placeholder\":\"{}\",\"color\":{{\"r\":{},\"g\":{},\"b\":{}}},\"focused\":{}}}",
+                    "{{\"op\":\"input\",\"x\":{},\"y\":{},\"w\":{},\"h\":{},\"text\":\"",
                     rect.x, rect.y, rect.width, rect.height,
-                    text.replace('\\', "\\\\").replace('"', "\\\""),
-                    placeholder.replace('\\', "\\\\").replace('"', "\\\""),
+                );
+                write_escaped_json_str(&mut out, text);
+                let _ = write!(out, "\",\"placeholder\":\"");
+                write_escaped_json_str(&mut out, placeholder);
+                let _ = write!(
+                    out,
+                    "\",\"color\":{{\"r\":{},\"g\":{},\"b\":{}}},\"focused\":{},\"borderRadius\":{}}}",
                     color.r, color.g, color.b,
-                    if *focused { "true" } else { "false" }
+                    if *focused { "true" } else { "false" },
+                    border_radius
                 );
             }
         }
     }
     out.push(']');
     out
+}
+
+/// Write `text` to `out` with JSON escaping (backslash and double-quote),
+/// without allocating an intermediate String.
+fn write_escaped_json_str(out: &mut String, text: &str) {
+    use std::fmt::Write;
+    for ch in text.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control() => {
+                let _ = write!(out, "\\u{:04x}", c as u32);
+            }
+            c => out.push(c),
+        }
+    }
 }
 
 thread_local! {
@@ -191,8 +217,7 @@ pub extern "C" fn xulo_button(index: usize, out: *mut f64) -> i32 {
 /// Which button does `(x, y)` fall in? 0-based index, or -1.
 #[unsafe(no_mangle)]
 pub extern "C" fn xulo_hit_test(x: f64, y: f64) -> i32 {
-    let buttons = BUTTONS.with(|b| b.borrow().clone());
-    hit_index(&buttons, x, y)
+    BUTTONS.with(|b| hit_index(&b.borrow(), x, y))
 }
 
 /// Number of input fields in the last layout.

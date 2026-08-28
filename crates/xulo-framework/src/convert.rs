@@ -7,15 +7,7 @@ use std::rc::Rc;
 
 use xulo_runtime::interpreter::Interpreter;
 use xulo_runtime::value::Value;
-use xulo_ui::{Color, Widget};
-
-/// A UI callback registered during widget conversion.
-pub struct UiCallback {
-    /// Button `onClick` — called with no arguments.
-    pub on_click: Option<Box<dyn Fn()>>,
-    /// Input `onChange` — called with the new text value.
-    pub on_change: Option<Box<dyn Fn(String)>>,
-}
+use xulo_ui::{Widget, from_props, Props, UiCallback, StyleProps};
 
 /// Convert a render value into a widget, dropping any click callbacks.
 /// Strings become text; objects with a `name`/`props` shape are matched by
@@ -46,49 +38,57 @@ fn widget_with(
         Value::String(s) => Widget::Text {
             text: s.to_string(),
             color: None,
+            style: StyleProps::default(),
         },
         Value::Object(fields) => {
             let fields = fields.borrow();
             let name = match get(&fields, "name") {
                 Some(Value::String(n)) => n.to_string(),
-                _ => return Widget::Unknown { kind: "?".into() },
+                _ => return Widget::Unknown { kind: "?".into(), style: StyleProps::default() },
             };
-            let props = match get(&fields, "props") {
+            let props_obj = match get(&fields, "props") {
                 Some(Value::Object(p)) => p,
-                _ => return Widget::Unknown { kind: name },
+                _ => return Widget::Unknown { kind: name, style: StyleProps::default() },
             };
-            let props = props.borrow();
+            let props_obj = props_obj.borrow();
+
+            // Convert interpreter props to xulo-ui Props
+            let mut props = Props::new();
+
+            // Extract common props based on component name
             match name.as_str() {
                 "Screen" => {
-                    let background = get(&props, "backgroundColor")
+                    if let Some(bg) = get(&props_obj, "backgroundColor")
                         .and_then(|v| string_of(v))
-                        .and_then(|s| Color::parse_hex(&s));
-                    Widget::Screen {
-                        background,
-                        children: children_with(get(&props, "children"), interp, callbacks),
+                    {
+                        props = props.string("backgroundColor", bg);
                     }
+                    let children = children_with(get(&props_obj, "children"), interp, callbacks);
+                    props = props.children(children);
                 }
-                "VStack" => Widget::VStack {
-                    spacing: spacing_of(get(&props, "spacing")),
-                    children: children_with(get(&props, "children"), interp, callbacks),
-                },
-                "HStack" => Widget::HStack {
-                    spacing: spacing_of(get(&props, "spacing")),
-                    children: children_with(get(&props, "children"), interp, callbacks),
-                },
+                "VStack" | "HStack" => {
+                    if let Some(Value::Number(spacing)) = get(&props_obj, "spacing") {
+                        props = props.number("spacing", *spacing);
+                    }
+                    let children = children_with(get(&props_obj, "children"), interp, callbacks);
+                    props = props.children(children);
+                }
                 "Text" => {
-                    let text = get(&props, "0")
-                        .or_else(|| get(&props, "text"))
+                    let text = get(&props_obj, "0")
+                        .or_else(|| get(&props_obj, "text"))
                         .and_then(|v| string_of(v))
                         .unwrap_or_default();
-                    let color = get(&props, "color")
+                    props = props.string("0", text);
+                    if let Some(color) = get(&props_obj, "color")
                         .and_then(|v| string_of(v))
-                        .and_then(|s| Color::parse_hex(&s));
-                    Widget::Text { text, color }
+                    {
+                        props = props.string("color", color);
+                    }
                 }
                 "Button" => {
+                    // Extract onClick callback before converting props
                     if let Some(interp) = interp {
-                        let on_click = get(&props, "onClick");
+                        let on_click = get(&props_obj, "onClick");
                         if let Some(on_click) = on_click {
                             if matches!(on_click, Value::Function(_) | Value::Native(_)) {
                                 let interp = interp.clone();
@@ -102,24 +102,24 @@ fn widget_with(
                             }
                         }
                     }
-                    Widget::Button {
-                        label: button_label(get(&props, "0"), &props, interp, callbacks),
-                    }
+                    // Extract label from "0" prop or children
+                    let label = button_label(get(&props_obj, "0"), &props_obj, interp, callbacks);
+                    props = props.string("0", label);
                 }
                 "Input" => {
-                    let value = input_value(get(&props, "value"));
-                    let width = get(&props, "width").and_then(|v| {
-                        if let Value::Number(n) = v {
-                            Some(*n as u32)
-                        } else {
-                            None
-                        }
-                    });
-                    let placeholder = get(&props, "placeholder")
+                    let value = input_value(get(&props_obj, "value"));
+                    props = props.string("value", value);
+                    if let Some(Value::Number(width)) = get(&props_obj, "width") {
+                        props = props.number("width", *width);
+                    }
+                    if let Some(placeholder) = get(&props_obj, "placeholder")
                         .and_then(|v| string_of(v))
-                        .unwrap_or_default();
+                    {
+                        props = props.string("placeholder", placeholder);
+                    }
+                    // Extract onChange callback from $binding
                     if let Some(interp) = interp {
-                        let on_change = get(&props, "value")
+                        let on_change = get(&props_obj, "value")
                             .and_then(|v| extract_on_change(v));
                         if let Some(on_change) = on_change {
                             let interp = interp.clone();
@@ -134,19 +134,26 @@ fn widget_with(
                             });
                         }
                     }
-                    Widget::Input {
-                        value,
-                        width,
-                        placeholder,
+                }
+                _ => {
+                    // Unknown component — pass through all props as strings
+                    for (key, value) in props_obj.iter() {
+                        if let Some(s) = string_of(value) {
+                            props = props.string(key, s);
+                        }
                     }
                 }
-                other => Widget::Unknown {
-                    kind: other.to_string(),
-                },
             }
+
+            // Extract style props (color, backgroundColor, padding, margin, etc.)
+            props = extract_style(&props_obj, props);
+
+            // Use the unified entry point
+            from_props(&name, &props, callbacks)
         }
         other => Widget::Unknown {
             kind: other.kind_name(),
+            style: StyleProps::default(),
         },
     }
 }
@@ -227,13 +234,6 @@ fn input_value(value: Option<&Value>) -> String {
     }
 }
 
-fn spacing_of(value: Option<&Value>) -> u32 {
-    match value {
-        Some(Value::Number(n)) => n.max(0.0) as u32,
-        _ => 0,
-    }
-}
-
 fn get<'a>(fields: &'a [(String, Value)], key: &str) -> Option<&'a Value> {
     fields.iter().find(|(k, _)| k == key).map(|(_, v)| v)
 }
@@ -260,4 +260,49 @@ fn extract_on_change(value: &Value) -> Option<Value> {
         }
         _ => None,
     }
+}
+
+/// Extract style-related props from interpreter Value objects and add them
+/// to the Props bag. Called for every component so `from_props` can build
+/// a complete `StyleProps`.
+fn extract_style(fields: &[(String, Value)], mut props: Props) -> Props {
+    // Color props
+    if let Some(s) = get(fields, "color").and_then(|v| string_of(v)) {
+        props = props.string("color", s);
+    }
+    if let Some(s) = get(fields, "backgroundColor").and_then(|v| string_of(v)) {
+        props = props.string("backgroundColor", s);
+    }
+    if let Some(s) = get(fields, "borderColor").and_then(|v| string_of(v)) {
+        props = props.string("borderColor", s);
+    }
+    // Numeric style props
+    if let Some(Value::Number(n)) = get(fields, "fontSize") {
+        props = props.number("fontSize", *n);
+    }
+    if let Some(s) = get(fields, "fontWeight").and_then(|v| string_of(v)) {
+        props = props.string("fontWeight", s);
+    }
+    if let Some(Value::Number(n)) = get(fields, "padding") {
+        props = props.number("padding", *n);
+    }
+    if let Some(Value::Number(n)) = get(fields, "margin") {
+        props = props.number("margin", *n);
+    }
+    if let Some(Value::Number(n)) = get(fields, "width") {
+        props = props.number("width", *n);
+    }
+    if let Some(Value::Number(n)) = get(fields, "height") {
+        props = props.number("height", *n);
+    }
+    if let Some(Value::Number(n)) = get(fields, "borderRadius") {
+        props = props.number("borderRadius", *n);
+    }
+    if let Some(Value::Number(n)) = get(fields, "opacity") {
+        props = props.number("opacity", *n);
+    }
+    if let Some(s) = get(fields, "alignment").and_then(|v| string_of(v)) {
+        props = props.string("alignment", s);
+    }
+    props
 }

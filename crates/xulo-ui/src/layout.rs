@@ -14,7 +14,7 @@
 //! [`PaintOp`]s using a [`Theme`].
 
 use crate::painting::PaintOp;
-use crate::widgets::{Color, Rect, Size, Widget};
+use crate::widgets::{Color, Rect, Size, StyleProps, Widget};
 
 /// Horizontal padding inside buttons and inputs, in layout units.
 pub const PAD_X: u32 = 1;
@@ -64,6 +64,26 @@ pub fn collect_input_rects(placed: &Placed<'_>, out: &mut Vec<Rect>) {
     }
 }
 
+/// Collect the rectangles of every `Button` and `Input` in a placed tree in a
+/// single pre-order walk, returning `(buttons, inputs)`.
+pub fn collect_interactive_rects(placed: &Placed<'_>) -> (Vec<Rect>, Vec<Rect>) {
+    let mut buttons = Vec::new();
+    let mut inputs = Vec::new();
+    collect_interactive_walk(placed, &mut buttons, &mut inputs);
+    (buttons, inputs)
+}
+
+fn collect_interactive_walk(placed: &Placed<'_>, buttons: &mut Vec<Rect>, inputs: &mut Vec<Rect>) {
+    match placed.widget {
+        Widget::Button { .. } => buttons.push(placed.rect),
+        Widget::Input { .. } => inputs.push(placed.rect),
+        _ => {}
+    }
+    for child in &placed.children {
+        collect_interactive_walk(child, buttons, inputs);
+    }
+}
+
 /// A widget with the rectangle it occupies. Children mirror the widget tree.
 #[derive(Debug)]
 pub struct Placed<'a> {
@@ -106,124 +126,200 @@ pub fn layout<'a>(root: &'a Widget, surface: Size, metrics: &dyn FontMetrics) ->
 /// Flatten a placed tree into paint commands.
 pub fn paint<'a>(placed: &Placed<'a>, theme: &Theme, ops: &mut Vec<PaintOp<'a>>) {
     match placed.widget {
-        Widget::Screen { background, .. } => {
-            let color = background.unwrap_or(theme.background);
-            ops.push(PaintOp::Clear { color });
+        Widget::Screen { background, style, .. } => {
+            let bg = style.background_color.or(*background).unwrap_or(theme.background);
+            ops.push(PaintOp::Clear { color: bg });
             for child in &placed.children {
                 paint(child, theme, ops);
             }
         }
-        Widget::VStack { .. } | Widget::HStack { .. } => {
+        Widget::VStack { style, .. } | Widget::HStack { style, .. } => {
+            if let Some(bg) = style.background_color {
+                ops.push(PaintOp::FillRect {
+                    rect: placed.rect,
+                    color: bg,
+                    border_radius: style.border_radius.unwrap_or(0),
+                });
+            }
             for child in &placed.children {
                 paint(child, theme, ops);
             }
         }
-        Widget::Text { text, color } => {
+        Widget::Text { text, color, style } => {
+            let text_color = style.color.or(*color).unwrap_or(theme.text);
             ops.push(PaintOp::DrawText {
                 rect: placed.rect,
                 text,
-                color: color.unwrap_or(theme.text),
+                color: text_color,
             });
         }
-        Widget::Button { label } => {
+        Widget::Button { label, style } => {
+            let border_color = style.border_color.unwrap_or(theme.border);
+            let label_color = style.color.unwrap_or(theme.accent);
+            let br = style.border_radius.unwrap_or(0);
+            if let Some(bg) = style.background_color {
+                ops.push(PaintOp::FillRect {
+                    rect: placed.rect,
+                    color: bg,
+                    border_radius: br,
+                });
+            }
             ops.push(PaintOp::DrawBorder {
                 rect: placed.rect,
-                color: theme.border,
+                color: border_color,
+                border_radius: br,
             });
             ops.push(PaintOp::DrawText {
-                rect: inset(placed.rect),
+                rect: inset(placed.rect, style),
                 text: label,
-                color: theme.accent,
+                color: label_color,
             });
         }
         Widget::Input {
             value,
             placeholder,
+            style,
             ..
         } => {
-            let display = if value.is_empty() {
-                placeholder.as_str()
+            let text_color = if value.is_empty() {
+                Color::GRAY
             } else {
-                value.as_str()
+                style.color.unwrap_or(theme.text)
             };
+            let br = style.border_radius.unwrap_or(0);
+            if let Some(bg) = style.background_color {
+                ops.push(PaintOp::FillRect {
+                    rect: placed.rect,
+                    color: bg,
+                    border_radius: br,
+                });
+            }
+            if style.border_color.is_some() {
+                ops.push(PaintOp::DrawBorder {
+                    rect: placed.rect,
+                    color: style.border_color.unwrap_or(theme.border),
+                    border_radius: br,
+                });
+            }
             ops.push(PaintOp::Input {
                 rect: placed.rect,
-                text: display,
+                text: value,
                 placeholder,
-                color: if value.is_empty() {
-                    Color::GRAY
-                } else {
-                    theme.text
-                },
+                color: text_color,
                 focused: false,
+                border_radius: br,
             });
         }
-        Widget::Unknown { kind } => {
+        Widget::Unknown { kind, style } => {
+            let border_color = style.border_color.unwrap_or(theme.border);
+            let text_color = style.color.unwrap_or(theme.text);
+            let br = style.border_radius.unwrap_or(0);
+            if let Some(bg) = style.background_color {
+                ops.push(PaintOp::FillRect {
+                    rect: placed.rect,
+                    color: bg,
+                    border_radius: br,
+                });
+            }
             ops.push(PaintOp::DrawBorder {
                 rect: placed.rect,
-                color: theme.border,
+                color: border_color,
+                border_radius: br,
             });
             ops.push(PaintOp::DrawText {
                 rect: placed.rect,
                 text: kind,
-                color: theme.text,
+                color: text_color,
             });
         }
     }
 }
 
-fn inset(rect: Rect) -> Rect {
-    let width = rect.width.saturating_sub(PAD_X * 2);
-    let height = rect.height.saturating_sub(PAD_Y * 2);
-    Rect::new(rect.x + PAD_X, rect.y + PAD_Y, width, height)
+fn inset(rect: Rect, style: &StyleProps) -> Rect {
+    let (px, py) = style.effective_padding();
+    let width = rect.width.saturating_sub(px * 2);
+    let height = rect.height.saturating_sub(py * 2);
+    Rect::new(rect.x + px, rect.y + py, width, height)
 }
 
 /// Intrinsic size of `widget` given a width bound (`width_bound`).
 fn measure(widget: &Widget, width_bound: u32, metrics: &dyn FontMetrics) -> Size {
     match widget {
-        Widget::Text { text, .. } => Size {
-            width: metrics.text_width(text).min(width_bound),
-            height: metrics.line_height(),
-        },
-        Widget::Button { label } => Size {
-            width: metrics
+        Widget::Text { text, style, .. } => {
+            let pad = style.padding.unwrap_or(0);
+            let w = metrics.text_width(text).saturating_add(pad * 2);
+            let h = metrics.line_height().saturating_add(pad * 2);
+            Size {
+                width: style.width.unwrap_or(w).min(width_bound),
+                height: style.height.unwrap_or(h),
+            }
+        }
+        Widget::Button { label, style } => {
+            let (px, py) = style.effective_padding();
+            let w = metrics
                 .text_width(label)
-                .saturating_add(PAD_X * 2)
-                .min(width_bound),
-            height: metrics.line_height().saturating_add(PAD_Y * 2),
-        },
+                .saturating_add(px * 2);
+            let h = metrics.line_height().saturating_add(py * 2);
+            Size {
+                width: style.width.unwrap_or(w).min(width_bound),
+                height: style.height.unwrap_or(h),
+            }
+        }
         Widget::Input {
             value,
-            width,
+            width: input_width,
             placeholder,
+            style,
         } => {
             let display = if value.is_empty() {
                 placeholder.as_str()
             } else {
                 value.as_str()
             };
-            let w = width.unwrap_or_else(|| {
-                metrics
-                    .text_width(display)
-                    .saturating_add(PAD_X * 2)
-            });
+            let (px, py) = style.effective_padding();
+            let w = input_width
+                .or(style.width)
+                .unwrap_or_else(|| {
+                    metrics
+                        .text_width(display)
+                        .saturating_add(px * 2)
+                });
+            let h = metrics.line_height().saturating_add(py * 2);
             Size {
                 width: w.min(width_bound),
-                height: metrics.line_height().saturating_add(PAD_Y * 2),
+                height: style.height.unwrap_or(h),
             }
         }
-        Widget::Unknown { kind } => Size {
-            width: metrics
+        Widget::Unknown { kind, style } => {
+            let (px, py) = style.effective_padding();
+            let w = metrics
                 .text_width(kind)
-                .saturating_add(PAD_X * 2)
-                .min(width_bound),
-            height: metrics.line_height().saturating_add(PAD_Y * 2),
-        },
-        Widget::VStack { spacing, children } => {
-            measure_stack(children, *spacing, width_bound, metrics)
+                .saturating_add(px * 2);
+            let h = metrics.line_height().saturating_add(py * 2);
+            Size {
+                width: style.width.unwrap_or(w).min(width_bound),
+                height: style.height.unwrap_or(h),
+            }
         }
-        Widget::Screen { children, .. } => measure_stack(children, 0, width_bound, metrics),
-        Widget::HStack { spacing, children } => {
+        Widget::VStack { spacing, children, style } => {
+            let mut size = measure_stack(children, *spacing, width_bound, metrics);
+            let pad = style.padding.unwrap_or(0);
+            size.width = size.width.saturating_add(pad * 2);
+            size.height = size.height.saturating_add(pad * 2);
+            size.width = style.width.unwrap_or(size.width).min(width_bound);
+            size.height = style.height.unwrap_or(size.height);
+            size
+        }
+        Widget::Screen { children, style, .. } => {
+            let mut size = measure_stack(children, 0, width_bound, metrics);
+            let pad = style.padding.unwrap_or(0);
+            size.width = size.width.saturating_add(pad * 2);
+            size.height = size.height.saturating_add(pad * 2);
+            size.width = style.width.unwrap_or(size.width).min(width_bound);
+            size.height = style.height.unwrap_or(size.height);
+            size
+        }
+        Widget::HStack { spacing, children, style } => {
             let mut width = 0u32;
             let mut height = 0u32;
             for (i, child) in children.iter().enumerate() {
@@ -235,9 +331,12 @@ fn measure(widget: &Widget, width_bound: u32, metrics: &dyn FontMetrics) -> Size
                 width = width.saturating_add(child_size.width);
                 height = height.max(child_size.height);
             }
+            let pad = style.padding.unwrap_or(0);
+            width = width.saturating_add(pad * 2);
+            height = height.saturating_add(pad * 2);
             Size {
-                width: width.min(width_bound),
-                height,
+                width: style.width.unwrap_or(width).min(width_bound),
+                height: style.height.unwrap_or(height),
             }
         }
     }
@@ -275,77 +374,140 @@ fn place<'a>(
 ) -> Placed<'a> {
     let (x, y) = origin;
     match widget {
-        Widget::Text { text, .. } => Placed {
-            widget,
-            rect: Rect::new(
-                x,
-                y,
-                metrics.text_width(text).min(width),
-                metrics.line_height(),
-            ),
-            children: Vec::new(),
-        },
-        Widget::Button { label } => Placed {
-            widget,
-            rect: Rect::new(
-                x,
-                y,
-                metrics
-                    .text_width(label)
-                    .saturating_add(PAD_X * 2)
-                    .min(width),
-                metrics.line_height().saturating_add(PAD_Y * 2),
-            ),
-            children: Vec::new(),
-        },
+        Widget::Text { text, style, .. } => {
+            let margin = style.margin.unwrap_or(0);
+            let pad = style.padding.unwrap_or(0);
+            let text_w = metrics.text_width(text).saturating_add(pad * 2);
+            let text_h = metrics.line_height().saturating_add(pad * 2);
+            let w = style.width.unwrap_or(text_w);
+            let h = style.height.unwrap_or(text_h);
+            Placed {
+                widget,
+                rect: Rect::new(x + margin, y + margin, w.min(width.saturating_sub(margin * 2)), h),
+                children: Vec::new(),
+            }
+        }
+        Widget::Button { label, style } => {
+            let margin = style.margin.unwrap_or(0);
+            let (px, py) = style.effective_padding();
+            let w = metrics
+                .text_width(label)
+                .saturating_add(px * 2);
+            let h = metrics.line_height().saturating_add(py * 2);
+            let w = style.width.unwrap_or(w);
+            let h = style.height.unwrap_or(h);
+            Placed {
+                widget,
+                rect: Rect::new(x + margin, y + margin, w.min(width.saturating_sub(margin * 2)), h),
+                children: Vec::new(),
+            }
+        }
         Widget::Input {
             value,
             width: input_width,
             placeholder,
+            style,
         } => {
             let display = if value.is_empty() {
                 placeholder.as_str()
             } else {
                 value.as_str()
             };
-            let w = input_width.unwrap_or_else(|| {
-                metrics
-                    .text_width(display)
-                    .saturating_add(PAD_X * 2)
-            });
+            let margin = style.margin.unwrap_or(0);
+            let (px, py) = style.effective_padding();
+            let w = input_width
+                .or(style.width)
+                .unwrap_or_else(|| {
+                    metrics
+                        .text_width(display)
+                        .saturating_add(px * 2)
+                });
+            let h = metrics.line_height().saturating_add(py * 2);
             Placed {
                 widget,
-                rect: Rect::new(x, y, w.min(width), metrics.line_height().saturating_add(PAD_Y * 2)),
+                rect: Rect::new(x + margin, y + margin, w.min(width.saturating_sub(margin * 2)), style.height.unwrap_or(h)),
                 children: Vec::new(),
             }
         }
-        Widget::Unknown { kind } => Placed {
-            widget,
-            rect: Rect::new(
-                x,
-                y,
-                metrics
-                    .text_width(kind)
-                    .saturating_add(PAD_X * 2)
-                    .min(width),
-                metrics.line_height().saturating_add(PAD_Y * 2),
-            ),
-            children: Vec::new(),
-        },
-        Widget::VStack { spacing, children } => {
-            place_stack(widget, children, *spacing, origin, width, metrics)
+        Widget::Unknown { kind, style } => {
+            let margin = style.margin.unwrap_or(0);
+            let (px, py) = style.effective_padding();
+            let w = metrics
+                .text_width(kind)
+                .saturating_add(px * 2);
+            let h = metrics.line_height().saturating_add(py * 2);
+            let w = style.width.unwrap_or(w);
+            let h = style.height.unwrap_or(h);
+            Placed {
+                widget,
+                rect: Rect::new(x + margin, y + margin, w.min(width.saturating_sub(margin * 2)), h),
+                children: Vec::new(),
+            }
         }
-        Widget::Screen { children, .. } => place_stack(widget, children, 0, origin, width, metrics),
-        Widget::HStack { spacing, children } => {
-            let mut cursor_x = x;
-            let mut max_right = x;
+        Widget::VStack { spacing, children, style } => {
+            let margin = style.margin.unwrap_or(0);
+            let pad = style.padding.unwrap_or(0);
+            let inner_x = x + margin;
+            let inner_y = y + margin;
+            let inner_width = width.saturating_sub(margin * 2).saturating_sub(pad * 2);
+            let mut cursor_y = inner_y + pad;
+            let mut max_bottom = inner_y + pad;
+            let mut placed_children = Vec::with_capacity(children.len());
+            for (i, child) in children.iter().enumerate() {
+                if i > 0 {
+                    cursor_y = cursor_y.saturating_add(*spacing);
+                }
+                let child_placed = place(child, (inner_x + pad, cursor_y), inner_width, metrics);
+                cursor_y = cursor_y.saturating_add(child_placed.rect.height);
+                max_bottom = max_bottom.max(cursor_y);
+                placed_children.push(child_placed);
+            }
+            let total_h = max_bottom + pad - y - margin;
+            let total_w = style.width.unwrap_or(width);
+            Placed {
+                widget,
+                rect: Rect::new(x + margin, y + margin, total_w.saturating_sub(margin * 2), total_h),
+                children: placed_children,
+            }
+        }
+        Widget::Screen { children, style, .. } => {
+            let margin = style.margin.unwrap_or(0);
+            let pad = style.padding.unwrap_or(0);
+            let inner_x = x + margin + pad;
+            let inner_y = y + margin + pad;
+            let inner_width = width.saturating_sub(margin * 2).saturating_sub(pad * 2);
+            let mut cursor_y = inner_y;
+            let mut max_bottom = inner_y;
+            let mut placed_children = Vec::with_capacity(children.len());
+            for child in children.iter() {
+                let child_placed = place(child, (inner_x, cursor_y), inner_width, metrics);
+                cursor_y = cursor_y.saturating_add(child_placed.rect.height);
+                max_bottom = max_bottom.max(cursor_y);
+                placed_children.push(child_placed);
+            }
+            let total_h = max_bottom + pad - y - margin;
+            let total_w = style.width.unwrap_or(width);
+            Placed {
+                widget,
+                rect: Rect::new(x + margin, y + margin, total_w.saturating_sub(margin * 2), total_h),
+                children: placed_children,
+            }
+        }
+        Widget::HStack { spacing, children, style } => {
+            let margin = style.margin.unwrap_or(0);
+            let pad = style.padding.unwrap_or(0);
+            let inner_x = x + margin + pad;
+            let inner_y = y + margin + pad;
+            let inner_width = width.saturating_sub(margin * 2).saturating_sub(pad * 2);
+            let mut cursor_x = inner_x;
+            let mut max_right = inner_x;
             let mut max_height = 0u32;
             let mut placed_children = Vec::with_capacity(children.len());
             for (i, child) in children.iter().enumerate() {
                 if i > 0 {
                     cursor_x = cursor_x.saturating_add(*spacing);
                 }
-                let remaining = width.saturating_sub(cursor_x - x);
+                let remaining = inner_width.saturating_sub(cursor_x - inner_x);
                 let child_width = match child {
                     Widget::VStack { .. } | Widget::Screen { .. } => {
                         measure(child, remaining, metrics).width
@@ -353,15 +515,17 @@ fn place<'a>(
                     _ => remaining,
                 };
                 let (child_placed, child_size) =
-                    place_sized(child, (cursor_x, y), child_width, metrics);
+                    place_sized(child, (cursor_x, inner_y), child_width, metrics);
                 cursor_x = cursor_x.saturating_add(child_size.width);
                 max_right = max_right.max(cursor_x);
                 max_height = max_height.max(child_size.height);
                 placed_children.push(child_placed);
             }
+            let total_w = style.width.unwrap_or(max_right - x + pad + margin);
+            let total_h = style.height.unwrap_or(max_height.saturating_add(pad * 2));
             Placed {
                 widget,
-                rect: Rect::new(x, y, max_right - x, max_height),
+                rect: Rect::new(x + margin, y + margin, total_w.saturating_sub(margin * 2), total_h),
                 children: placed_children,
             }
         }
@@ -382,32 +546,4 @@ fn place_sized<'a>(
         height: placed.rect.height,
     };
     (placed, size)
-}
-
-fn place_stack<'a>(
-    widget: &'a Widget,
-    children: &'a [Widget],
-    spacing: u32,
-    origin: (u32, u32),
-    width: u32,
-    metrics: &dyn FontMetrics,
-) -> Placed<'a> {
-    let (x, y) = origin;
-    let mut cursor_y = y;
-    let mut max_bottom = y;
-    let mut placed_children = Vec::with_capacity(children.len());
-    for (i, child) in children.iter().enumerate() {
-        if i > 0 {
-            cursor_y = cursor_y.saturating_add(spacing);
-        }
-        let child_placed = place(child, (x, cursor_y), width, metrics);
-        cursor_y = cursor_y.saturating_add(child_placed.rect.height);
-        max_bottom = max_bottom.max(cursor_y);
-        placed_children.push(child_placed);
-    }
-    Placed {
-        widget,
-        rect: Rect::new(x, y, width, max_bottom - y),
-        children: placed_children,
-    }
 }

@@ -1,6 +1,6 @@
 //! Painting (paint-command emission) and color parsing tests.
 
-use xulo_ui::{Color, PaintOp, Rect, Size, Widget};
+use xulo_ui::{StyleProps, Color, PaintOp, Rect, Size, Widget};
 
 struct CharMetrics;
 
@@ -31,7 +31,9 @@ fn screen_clears_with_its_background() {
         children: vec![Widget::Text {
             text: "hi".into(),
             color: None,
+            style: StyleProps::default(),
         }],
+        style: StyleProps::default(),
     };
     let ops = paint(&root);
     assert_eq!(
@@ -55,6 +57,7 @@ fn screen_defaults_to_theme_background() {
     let root = Widget::Screen {
         background: None,
         children: Vec::new(),
+        style: StyleProps::default(),
     };
     let ops = paint(&root);
     assert_eq!(ops[0], PaintOp::Clear { color: Color::DARK });
@@ -62,13 +65,14 @@ fn screen_defaults_to_theme_background() {
 
 #[test]
 fn button_paints_border_and_accent_text() {
-    let root = Widget::Button { label: "+".into() };
+    let root = Widget::Button { label: "+".into(), style: StyleProps::default() };
     let ops = paint(&root);
     assert_eq!(
         ops[0],
         PaintOp::DrawBorder {
             rect: Rect::new(0, 0, 3, 3),
             color: Color::GRAY,
+            border_radius: 0,
         }
     );
     assert_eq!(
@@ -86,6 +90,7 @@ fn text_honors_its_color() {
     let root = Widget::Text {
         text: "hi".into(),
         color: Some(Color::new(1, 2, 3)),
+        style: StyleProps::default(),
     };
     let ops = paint(&root);
     assert_eq!(
@@ -103,6 +108,7 @@ fn text_without_color_uses_theme() {
     let root = Widget::Text {
         text: "hi".into(),
         color: None,
+        style: StyleProps::default(),
     };
     let ops = paint(&root);
     assert_eq!(
@@ -123,12 +129,15 @@ fn vstack_paints_children_in_order() {
             Widget::Text {
                 text: "a".into(),
                 color: None,
+                style: StyleProps::default(),
             },
             Widget::Text {
                 text: "b".into(),
                 color: None,
+                style: StyleProps::default(),
             },
         ],
+        style: StyleProps::default(),
     };
     let ops = paint(&root);
     assert_eq!(

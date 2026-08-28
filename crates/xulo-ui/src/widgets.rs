@@ -146,6 +146,85 @@ impl Rect {
     }
 }
 
+/// Font weight for text rendering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum FontWeight {
+    Normal,
+    Bold,
+}
+
+/// Horizontal / vertical alignment inside a container.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum Alignment {
+    Start,
+    Center,
+    End,
+}
+
+/// A bag of optional CSS-like style properties. Every field is `None` by
+/// default; the layout / paint engines fall back to theme values or hardcoded
+/// defaults when a field is absent.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Default)]
+pub struct StyleProps {
+    /// Foreground / text color override.
+    pub color: Option<Color>,
+    /// Background fill color.
+    pub background_color: Option<Color>,
+    /// Border color (buttons, inputs, unknowns).
+    pub border_color: Option<Color>,
+    /// Font size in pixels (currently only 12 is rendered by the canvas backend;
+    /// reserved for future use).
+    pub font_size: Option<u32>,
+    /// Bold / normal weight.
+    pub font_weight: Option<FontWeight>,
+    /// Inner padding on all four sides (layout units).
+    pub padding: Option<u32>,
+    /// Outer margin on all four sides (layout units).
+    pub margin: Option<u32>,
+    /// Explicit width override (layout units).
+    pub width: Option<u32>,
+    /// Explicit height override (layout units).
+    pub height: Option<u32>,
+    /// Corner radius for border / fill (layout units).
+    pub border_radius: Option<u32>,
+    /// Opacity multiplier (0.0 – 1.0). `None` means fully opaque.
+    pub opacity: Option<f32>,
+    /// Child alignment inside a container.
+    pub alignment: Option<Alignment>,
+}
+
+impl StyleProps {
+    /// Returns `true` when every field is `None`.
+    pub fn is_empty(&self) -> bool {
+        self.color.is_none()
+            && self.background_color.is_none()
+            && self.border_color.is_none()
+            && self.font_size.is_none()
+            && self.font_weight.is_none()
+            && self.padding.is_none()
+            && self.margin.is_none()
+            && self.width.is_none()
+            && self.height.is_none()
+            && self.border_radius.is_none()
+            && self.opacity.is_none()
+            && self.alignment.is_none()
+    }
+
+    /// Returns `(horizontal_padding, vertical_padding)`. If a custom `padding`
+    /// is set it is used for both axes; otherwise the default button/input
+    /// padding constants are returned.
+    pub fn effective_padding(&self) -> (u32, u32) {
+        match self.padding {
+            Some(pad) if pad > 0 => (pad, pad),
+            _ => (super::layout::PAD_X, super::layout::PAD_Y),
+        }
+    }
+}
+
 /// A node in the widget tree. The tree is backend-agnostic: layout assigns each
 /// node a rectangle, painting turns it into [`PaintOp`]s.
 #[derive(Debug, Clone, PartialEq)]
@@ -155,24 +234,43 @@ pub enum Widget {
     Screen {
         background: Option<Color>,
         children: Vec<Widget>,
+        style: StyleProps,
     },
     /// Children stacked vertically, separated by `spacing`; children fill the
     /// stack's width (text longer than the width is truncated).
-    VStack { spacing: u32, children: Vec<Widget> },
+    VStack {
+        spacing: u32,
+        children: Vec<Widget>,
+        style: StyleProps,
+    },
     /// Children laid side by side, separated by `spacing`; each child keeps its
     /// intrinsic width.
-    HStack { spacing: u32, children: Vec<Widget> },
+    HStack {
+        spacing: u32,
+        children: Vec<Widget>,
+        style: StyleProps,
+    },
     /// A single line of text, optionally tinted (falls back to the theme).
-    Text { text: String, color: Option<Color> },
-    /// A tappable boxed label. Interaction (click handling) is not wired up
-    /// yet; this round only the visuals render.
-    Button { label: String },
+    Text {
+        text: String,
+        color: Option<Color>,
+        style: StyleProps,
+    },
+    /// A tappable boxed label.
+    Button {
+        label: String,
+        style: StyleProps,
+    },
     /// A single-line text field.
     Input {
         value: String,
         width: Option<u32>,
         placeholder: String,
+        style: StyleProps,
     },
     /// A widget the UI layer does not recognize yet; rendered as a labeled box.
-    Unknown { kind: String },
+    Unknown {
+        kind: String,
+        style: StyleProps,
+    },
 }

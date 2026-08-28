@@ -82,16 +82,16 @@ impl Grid {
                         row.fill(Some(*color));
                     }
                 }
-                PaintOp::FillRect { rect, color } => {
+                PaintOp::FillRect { rect, color, .. } => {
                     grid.fill_rect(*rect, *color);
                 }
                 PaintOp::DrawText { rect, text, color } => {
                     grid.draw_text(*rect, text, *color);
                 }
-                PaintOp::DrawBorder { rect, color } => {
+                PaintOp::DrawBorder { rect, color, .. } => {
                     grid.draw_border(*rect, *color);
                 }
-                PaintOp::Input { rect, text, placeholder: _, color, focused } => {
+                PaintOp::Input { rect, text, placeholder, color, focused, .. } => {
                     grid.draw_border(*rect, Color::GRAY);
                     let inner = Rect::new(
                         rect.x + 1,
@@ -99,12 +99,14 @@ impl Grid {
                         rect.width.saturating_sub(2),
                         rect.height.saturating_sub(2),
                     );
-                    grid.draw_text(inner, text, *color);
+                    let display = if text.is_empty() { *placeholder } else { *text };
+                    let display_color = if text.is_empty() { Color::GRAY } else { *color };
+                    grid.draw_text(inner, display, display_color);
                     // Show cursor indicator when focused
                     if *focused {
-                        let cursor_x = inner.x + text.chars().count() as u32;
+                        let cursor_x = inner.x + display.chars().count() as u32;
                         if cursor_x < rect.right().saturating_sub(1) {
-                            grid.set_char(cursor_x, inner.y, '▏', *color);
+                            grid.set_char(cursor_x, inner.y, '▏', display_color);
                         }
                     }
                 }

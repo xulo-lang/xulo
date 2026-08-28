@@ -1,7 +1,7 @@
 //! Layout integration tests using a character-cell font metric.
 
 use xulo_ui::layout::layout;
-use xulo_ui::{Color, FontMetrics, Rect, Size, Widget};
+use xulo_ui::{StyleProps, Color, FontMetrics, Rect, Size, Widget};
 
 /// One layout unit per character: the terminal backend's metric.
 struct CharMetrics;
@@ -28,14 +28,17 @@ fn metrics() -> CharMetrics {
 fn vstack_stacks_children_top_to_bottom_with_spacing() {
     let root = Widget::VStack {
         spacing: 2,
+        style: StyleProps::default(),
         children: vec![
             Widget::Text {
                 text: "aaa".into(),
                 color: None,
+                style: StyleProps::default(),
             },
             Widget::Text {
                 text: "bb".into(),
                 color: None,
+                style: StyleProps::default(),
             },
         ],
     };
@@ -53,9 +56,11 @@ fn vstack_children_fill_container_width() {
     // later siblings align on the left edge of the same column.
     let root = Widget::VStack {
         spacing: 0,
+        style: StyleProps::default(),
         children: vec![Widget::Text {
             text: "x".into(),
             color: None,
+            style: StyleProps::default(),
         }],
     };
     let placed = layout(&root, SURFACE, &metrics());
@@ -68,14 +73,17 @@ fn vstack_children_fill_container_width() {
 fn hstack_places_children_side_by_side() {
     let root = Widget::HStack {
         spacing: 1,
+        style: StyleProps::default(),
         children: vec![
             Widget::Text {
                 text: "a".into(),
                 color: None,
+                style: StyleProps::default(),
             },
             Widget::Text {
                 text: "b".into(),
                 color: None,
+                style: StyleProps::default(),
             },
         ],
     };
@@ -89,9 +97,10 @@ fn hstack_places_children_side_by_side() {
 fn button_gets_horizontal_padding() {
     let root = Widget::HStack {
         spacing: 2,
+        style: StyleProps::default(),
         children: vec![
-            Widget::Button { label: "+".into() },
-            Widget::Button { label: "-".into() },
+            Widget::Button { label: "+".into(), style: StyleProps::default() },
+            Widget::Button { label: "-".into(), style: StyleProps::default() },
         ],
     };
     let placed = layout(&root, SURFACE, &metrics());
@@ -107,23 +116,28 @@ fn nested_vstack_in_hstack_shrinks_to_widest_child() {
     // its widest child ("hello" = 5), letting the trailing Text sit beside it.
     let root = Widget::HStack {
         spacing: 1,
+        style: StyleProps::default(),
         children: vec![
             Widget::VStack {
                 spacing: 0,
+                style: StyleProps::default(),
                 children: vec![
                     Widget::Text {
                         text: "hello".into(),
                         color: None,
+                        style: StyleProps::default(),
                     },
                     Widget::Text {
                         text: "x".into(),
                         color: None,
+                        style: StyleProps::default(),
                     },
                 ],
             },
             Widget::Text {
                 text: "!".into(),
                 color: None,
+                style: StyleProps::default(),
             },
         ],
     };
@@ -140,14 +154,17 @@ fn nested_vstack_in_hstack_shrinks_to_widest_child() {
 fn text_truncates_to_container_width() {
     let root = Widget::VStack {
         spacing: 0,
+        style: StyleProps::default(),
         children: vec![Widget::Text {
             text: "a_very_long_line".into(),
             color: None,
+            style: StyleProps::default(),
         }],
     };
     // Give the layout a narrow bound via a Screen, whose width is the surface.
     let screen = Widget::Screen {
         background: None,
+        style: StyleProps::default(),
         children: vec![root],
     };
     let narrow = Size {
@@ -163,9 +180,11 @@ fn text_truncates_to_container_width() {
 fn screen_fills_surface() {
     let root = Widget::Screen {
         background: Some(Color::new(1, 2, 3)),
+        style: StyleProps::default(),
         children: vec![Widget::Text {
             text: "hi".into(),
             color: None,
+            style: StyleProps::default(),
         }],
     };
     let placed = layout(&root, SURFACE, &metrics());
@@ -177,6 +196,7 @@ fn screen_fills_surface() {
 fn unknown_renders_as_box() {
     let root = Widget::Unknown {
         kind: "SomeWidget".into(),
+        style: StyleProps::default(),
     };
     let placed = layout(&root, SURFACE, &metrics());
     assert_eq!(placed.rect, Rect::new(0, 0, 12, 3));

@@ -1,7 +1,7 @@
 //! Terminal backend integration tests.
 
 use xulo_renderer_terminal::{render_ansi, render_plain, CharMetrics, TerminalSize};
-use xulo_ui::{Color, PaintOp, Rect, Size, Widget};
+use xulo_ui::{StyleProps, Color, PaintOp, Rect, Size, Widget};
 
 const SIZE: TerminalSize = TerminalSize { cols: 40, rows: 12 };
 
@@ -24,12 +24,15 @@ fn renders_text_rows_plain() {
             Widget::Text {
                 text: "hello".into(),
                 color: None,
+                style: StyleProps::default(),
             },
             Widget::Text {
                 text: "world".into(),
                 color: None,
+                style: StyleProps::default(),
             },
         ],
+        style: StyleProps::default(),
     };
     let ops = paint(&root);
     assert_eq!(render_plain(&ops, SIZE), "hello\n\nworld");
@@ -37,7 +40,7 @@ fn renders_text_rows_plain() {
 
 #[test]
 fn button_draws_border_and_label() {
-    let root = Widget::Button { label: "+".into() };
+    let root = Widget::Button { label: "+".into(), style: StyleProps::default() };
     let ops = paint(&root);
     assert_eq!(render_plain(&ops, SIZE), "┌─┐\n│+│\n└─┘");
 }
@@ -47,9 +50,10 @@ fn hstack_places_buttons_next_to_each_other() {
     let root = Widget::HStack {
         spacing: 2,
         children: vec![
-            Widget::Button { label: "+".into() },
-            Widget::Button { label: "-".into() },
+            Widget::Button { label: "+".into(), style: StyleProps::default() },
+            Widget::Button { label: "-".into(), style: StyleProps::default() },
         ],
+        style: StyleProps::default(),
     };
     let ops = paint(&root);
     assert_eq!(render_plain(&ops, SIZE), "┌─┐  ┌─┐\n│+│  │-│\n└─┘  └─┘");
@@ -63,7 +67,9 @@ fn long_text_is_clipped_at_screen_edge() {
         children: vec![Widget::Text {
             text: "abcdefghijklmnopqrstuvwxyz".into(),
             color: None,
+            style: StyleProps::default(),
         }],
+        style: StyleProps::default(),
     };
     let small = TerminalSize { cols: 5, rows: 3 };
     let ctx = xulo_ui::UiContext::new(
@@ -82,6 +88,7 @@ fn ansi_output_carries_truecolor_escapes() {
     let root = Widget::Text {
         text: "hi".into(),
         color: None,
+        style: StyleProps::default(),
     };
     let ops = paint(&root);
     let ansi = render_ansi(&ops, SIZE);
@@ -93,6 +100,7 @@ fn fill_rect_sets_cell_background() {
     let ops = vec![PaintOp::FillRect {
         rect: Rect::new(0, 0, 3, 2),
         color: Color::new(1, 2, 3),
+        border_radius: 0,
     }];
     let ansi = render_ansi(&ops, SIZE);
     assert!(ansi.contains("\x1b[48;2;1;2;3m"));

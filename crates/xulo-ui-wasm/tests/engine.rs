@@ -1,6 +1,6 @@
 //! Host-side tests of the wasm engine's pure core (`layout_tree`, `hit_index`).
 
-use xulo_ui::{PaintOp, Widget};
+use xulo_ui::{StyleProps, PaintOp, Widget};
 use xulo_ui_wasm::{hit_index, layout_tree};
 
 #[test]
@@ -11,10 +11,12 @@ fn lays_out_a_stack_and_collects_buttons() {
             Widget::Text {
                 text: "Count: 0".into(),
                 color: None,
+                style: StyleProps::default(),
             },
-            Widget::Button { label: "+".into() },
-            Widget::Button { label: "-".into() },
+            Widget::Button { label: "+".into(), style: StyleProps::default() },
+            Widget::Button { label: "-".into(), style: StyleProps::default() },
         ],
+        style: StyleProps::default(),
     };
     // Pixel surface: 40 cols x 12 rows of 8x16 cells.
     let (ops, buttons, _inputs) = layout_tree(&tree, 320, 192);
@@ -38,9 +40,10 @@ fn hit_test_finds_buttons_by_position() {
     let tree = Widget::HStack {
         spacing: 2,
         children: vec![
-            Widget::Button { label: "+".into() },
-            Widget::Button { label: "-".into() },
+            Widget::Button { label: "+".into(), style: StyleProps::default() },
+            Widget::Button { label: "-".into(), style: StyleProps::default() },
         ],
+        style: StyleProps::default(),
     };
     let (_, buttons, _) = layout_tree(&tree, 320, 192);
     // "+" at x=0 (w=10), "-" at x=10+2=12.
@@ -61,9 +64,11 @@ fn widget_tree_round_trips_through_json() {
             Widget::Text {
                 text: "hi".into(),
                 color: None,
+                style: StyleProps::default(),
             },
-            Widget::Button { label: "+".into() },
+            Widget::Button { label: "+".into(), style: StyleProps::default() },
         ],
+        style: StyleProps::default(),
     };
     let json = serde_json::to_string(&tree).unwrap();
     let back: Widget = serde_json::from_str(&json).unwrap();

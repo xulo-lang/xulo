@@ -145,7 +145,7 @@ fn main(): View {
 "#,
     );
     use xulo_renderer_terminal::{render_plain, CharMetrics, TerminalSize};
-    use xulo_ui::{Size, UiContext};
+    use xulo_ui::{StyleProps, Size, UiContext};
 
     let surface = Size {
         width: 40,
@@ -201,6 +201,10 @@ fn text_color_prop_becomes_widget_color() {
         xulo_ui::Widget::Text {
             text: "hello".into(),
             color: Some(xulo_ui::Color::new(255, 0, 0)),
+            style: xulo_ui::StyleProps {
+                color: Some(xulo_ui::Color::new(255, 0, 0)),
+                ..xulo_ui::StyleProps::default()
+            },
         }
     );
 }
@@ -215,5 +219,262 @@ fn non_view_main_is_rejected_for_rendering() {
         err.message.contains("did not produce a `View`"),
         "{}",
         err.message
+    );
+}
+
+#[test]
+fn multiple_components_preserve_state_across_rerender() {
+    // When one component updates its state, other components should keep theirs.
+    let path = temp_program(
+        r#"import { Button, Text, VStack, Input } from "@xulo/ui"
+fn Counter(): View {
+    @State let count: number = 0
+    VStack(spacing: 1) {
+        Text("Count: " + str(count))
+        Button(onClick: fn() { count = count + 1 }) { Text("+") }
+    }
+}
+fn Greeting(): View {
+    @State let name: string = "World"
+    VStack(spacing: 1) {
+        Text("Hello, " + name)
+        Button(onClick: fn() { name = "Xulo" }) { Text("Change Name") }
+    }
+}
+fn main(): View {
+    VStack(spacing: 2) {
+        Counter()
+        Greeting()
+    }
+}
+"#,
+    );
+    use xulo_renderer_terminal::{render_plain, CharMetrics, TerminalSize};
+    use xulo_ui::{StyleProps, Size, UiContext};
+
+    let surface = Size {
+        width: 60,
+        height: 20,
+    };
+    let frame: xulo_framework::FrameBuilder = Box::new(|root, surface| {
+        let ctx = UiContext::new(surface, Box::new(CharMetrics));
+        let placed = ctx.layout(root);
+        let mut ops = Vec::new();
+        xulo_ui::layout::paint(&placed, &ctx.theme, &mut ops);
+        let mut buttons = Vec::new();
+        xulo_framework::collect_button_rects(&placed, &mut buttons);
+        let mut inputs = Vec::new();
+        xulo_ui::collect_input_rects(&placed, &mut inputs);
+        (ops, buttons, inputs)
+    });
+    let mut ui = xulo_framework::ReactiveUi::load(&path, surface, Some(frame)).unwrap();
+    cleanup(&path);
+
+    let size = TerminalSize { cols: 60, rows: 20 };
+    let rendered = render_plain(&ui.ops(), size);
+    println!("Initial:\n{}", rendered);
+    assert!(rendered.contains("Count: 0"), "initial count should be 0");
+    assert!(
+        rendered.contains("Hello, World"),
+        "initial greeting should be 'Hello, World'"
+    );
+
+    // Click the + button to increment Counter's state
+    let (bx, by) = (ui.buttons[0].x, ui.buttons[0].y);
+    ui.handle_click(bx, by).unwrap();
+
+    let rendered = render_plain(&ui.ops(), size);
+    println!("After clicking +:\n{}", rendered);
+    assert!(
+        rendered.contains("Count: 1"),
+        "count should be 1 after click, got:\n{}",
+        rendered
+    );
+    // Greeting should still show "Hello, World" (not reset)
+    assert!(
+        rendered.contains("Hello, World"),
+        "greeting should still be 'Hello, World' after Counter rerender, got:\n{}",
+        rendered
+    );
+
+    // Now click the "Change Name" button to update Greeting's state
+    let (bx2, by2) = (ui.buttons[1].x, ui.buttons[1].y);
+    ui.handle_click(bx2, by2).unwrap();
+
+    let rendered = render_plain(&ui.ops(), size);
+    println!("After clicking Change Name:\n{}", rendered);
+    assert!(
+        rendered.contains("Hello, Xulo"),
+        "greeting should be 'Hello, Xulo' after click, got:\n{}",
+        rendered
+    );
+    // Counter should still show 1 (not reset)
+    assert!(
+        rendered.contains("Count: 1"),
+        "count should still be 1 after Greeting rerender, got:\n{}",
+        rendered
+    );
+}
+
+#[test]
+fn input_change_preserves_state() {
+    // Typing in an Input should update @State, and re-render should keep it.
+    let path = temp_program(
+        r#"import { Button, Text, VStack, Input } from "@xulo/ui"
+fn Counter(): View {
+    @State let count: number = 0
+    VStack(spacing: 1) {
+        Text("Count: " + str(count))
+        Button(onClick: fn() { count = count + 1 }) { Text("+") }
+    }
+}
+fn NameField(): View {
+    @State let name: string = ""
+    VStack(spacing: 1) {
+        Input(value: $name, width: 200, placeholder: "Enter your name")
+        Text("Hello, " + name)
+    }
+}
+fn main(): View {
+    VStack(spacing: 2) {
+        Counter()
+        NameField()
+    }
+}
+"#,
+    );
+    use xulo_renderer_terminal::{render_plain, CharMetrics, TerminalSize};
+    use xulo_ui::{StyleProps, Size, UiContext};
+
+    let surface = Size {
+        width: 60,
+        height: 20,
+    };
+    let frame: xulo_framework::FrameBuilder = Box::new(|root, surface| {
+        let ctx = UiContext::new(surface, Box::new(CharMetrics));
+        let placed = ctx.layout(root);
+        let mut ops = Vec::new();
+        xulo_ui::layout::paint(&placed, &ctx.theme, &mut ops);
+        let mut buttons = Vec::new();
+        xulo_framework::collect_button_rects(&placed, &mut buttons);
+        let mut inputs = Vec::new();
+        xulo_ui::collect_input_rects(&placed, &mut inputs);
+        (ops, buttons, inputs)
+    });
+    let mut ui = xulo_framework::ReactiveUi::load(&path, surface, Some(frame)).unwrap();
+    cleanup(&path);
+
+    let size = TerminalSize { cols: 60, rows: 20 };
+
+    // Type "World" into the input (index 0)
+    ui.input_change(0, "World".to_string()).unwrap();
+
+    let rendered = render_plain(&ui.ops(), size);
+    println!("After typing 'World':\n{}", rendered);
+    assert!(
+        rendered.contains("Hello, World"),
+        "greeting should show 'Hello, World' after input, got:\n{}",
+        rendered
+    );
+    // Counter should still show 0
+    assert!(
+        rendered.contains("Count: 0"),
+        "count should still be 0 after NameField input, got:\n{}",
+        rendered
+    );
+
+    // Click + button
+    let (bx, by) = (ui.buttons[0].x, ui.buttons[0].y);
+    ui.handle_click(bx, by).unwrap();
+
+    let rendered = render_plain(&ui.ops(), size);
+    println!("After clicking +:\n{}", rendered);
+    assert!(
+        rendered.contains("Count: 1"),
+        "count should be 1 after click, got:\n{}",
+        rendered
+    );
+    // NameField should still show "Hello, World"
+    assert!(
+        rendered.contains("Hello, World"),
+        "greeting should still be 'Hello, World' after Counter rerender, got:\n{}",
+        rendered
+    );
+}
+
+#[test]
+fn input_state_not_reset_by_button_click() {
+    // Reproduce: type in Input, then click Button — Input should keep its value.
+    let path = temp_program(
+        "import { Screen, VStack, Text, Button, Input } from \"@xulo/ui\"\n\
+         fn Counter(): View {\n\
+         @State let count: number = 0\n\
+         VStack(spacing: 1) {\n\
+         Text(\"Count: \" + str(count))\n\
+         Button(onClick: fn() { count = count + 1 }) { Text(\"+\") }\n\
+         }\n\
+         }\n\
+         fn NameField(): View {\n\
+         @State let name: string = \"\"\n\
+         VStack(spacing: 1) {\n\
+         Input(value: $name, width: 200, placeholder: \"Enter your name\")\n\
+         Text(\"Hello, \" + name)\n\
+         }\n\
+         }\n\
+         fn main(): View {\n\
+         Screen {\n\
+         Counter()\n\
+         NameField()\n\
+         }\n\
+         }\n",
+    );
+    use xulo_renderer_terminal::{render_plain, CharMetrics, TerminalSize};
+    use xulo_ui::{StyleProps, Size, UiContext};
+
+    let surface = Size {
+        width: 60,
+        height: 24,
+    };
+    let frame: xulo_framework::FrameBuilder = Box::new(|root, surface| {
+        let ctx = UiContext::new(surface, Box::new(CharMetrics));
+        let placed = ctx.layout(root);
+        let mut ops = Vec::new();
+        xulo_ui::layout::paint(&placed, &ctx.theme, &mut ops);
+        let mut buttons = Vec::new();
+        xulo_framework::collect_button_rects(&placed, &mut buttons);
+        let mut inputs = Vec::new();
+        xulo_ui::collect_input_rects(&placed, &mut inputs);
+        (ops, buttons, inputs)
+    });
+    let mut ui = xulo_framework::ReactiveUi::load(&path, surface, Some(frame)).unwrap();
+    cleanup(&path);
+
+    let size = TerminalSize { cols: 60, rows: 24 };
+
+    // Step 1: Type "World" into the input
+    ui.input_change(0, "World".to_string()).unwrap();
+    let rendered = render_plain(&ui.ops(), size);
+    println!("Step 1 - After typing 'World':\n{}", rendered);
+    assert!(
+        rendered.contains("Hello, World"),
+        "Step 1: greeting should show 'Hello, World', got:\n{}",
+        rendered
+    );
+
+    // Step 2: Click the + button (Counter state change)
+    let (bx, by) = (ui.buttons[0].x, ui.buttons[0].y);
+    ui.handle_click(bx, by).unwrap();
+    let rendered = render_plain(&ui.ops(), size);
+    println!("Step 2 - After clicking +:\n{}", rendered);
+    assert!(
+        rendered.contains("Count: 1"),
+        "Step 2: count should be 1, got:\n{}",
+        rendered
+    );
+    // THIS IS THE CRITICAL CHECK: NameField state should survive
+    assert!(
+        rendered.contains("Hello, World"),
+        "Step 2: greeting should STILL be 'Hello, World' after Counter rerender, got:\n{}",
+        rendered
     );
 }

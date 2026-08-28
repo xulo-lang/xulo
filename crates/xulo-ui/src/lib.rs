@@ -3,12 +3,13 @@
 //! dependencies and knows nothing about pixels or the terminal — backends
 //! implement [`FontMetrics`] and turn [`PaintOp`]s into output.
 
+pub mod components;
 pub mod ctx;
 pub mod layout;
 pub mod painting;
 pub mod widgets;
-
+pub use components::{from_props, Props, PropValue, UiCallback};
 pub use ctx::UiContext;
-pub use layout::{collect_button_rects, collect_input_rects, CellMetrics, FontMetrics, Placed, Theme, PAD_X, PAD_Y};
+pub use layout::{collect_button_rects, collect_input_rects, collect_interactive_rects, CellMetrics, FontMetrics, Placed, Theme, PAD_X, PAD_Y};
 pub use painting::PaintOp;
-pub use widgets::{Color, Rect, Size, Widget, CELL_H, CELL_W};
+pub use widgets::{Alignment, Color, FontWeight, Rect, Size, StyleProps, Widget, CELL_H, CELL_W};

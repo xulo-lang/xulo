@@ -12,9 +12,9 @@ use std::rc::Rc;
 use xulo_core::ast::Program;
 use xulo_core::error::XuloError;
 use xulo_runtime::interpreter::Interpreter;
-use xulo_ui::{PaintOp, Rect, Size, Widget};
+use xulo_ui::{PaintOp, Rect, Size, StyleProps, Widget, UiCallback};
 
-use crate::convert::{widget_tree_with_callbacks, UiCallback};
+use crate::convert::widget_tree_with_callbacks;
 use crate::run::execute_in;
 
 /// Builds one frame (paint commands + button/input rectangles) for a widget
@@ -63,6 +63,7 @@ impl ReactiveUi {
             widget: Widget::Screen {
                 background: None,
                 children: Vec::new(),
+                style: StyleProps::default(),
             },
             buttons: Vec::new(),
             inputs: Vec::new(),
@@ -95,17 +96,18 @@ impl ReactiveUi {
         let (widget, callbacks) = widget_tree_with_callbacks(&view, &self.interp);
         self.widget = widget;
         self.callbacks = callbacks;
+        // Build the input → callback index mapping (needed by all backends,
+        // including the webview where frame is None).
+        self.input_callback_indices.clear();
+        for cb_idx in 0..self.callbacks.len() {
+            if self.callbacks[cb_idx].on_change.is_some() {
+                self.input_callback_indices.push(cb_idx);
+            }
+        }
         if let Some(frame) = &self.frame {
             let (_, buttons, inputs) = frame(&self.widget, self.surface);
             self.buttons = buttons;
             self.inputs = inputs;
-            // Build the input → callback index mapping.
-            self.input_callback_indices.clear();
-            for cb_idx in 0..self.callbacks.len() {
-                if self.callbacks[cb_idx].on_change.is_some() {
-                    self.input_callback_indices.push(cb_idx);
-                }
-            }
         }
         Ok(())
     }

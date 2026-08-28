@@ -80,7 +80,16 @@ function draw(ops) {
   for (const op of ops) {
     switch (op.op) {
       case 'clear': ctx.fillStyle = col(op.color); ctx.fillRect(0, 0, W, H); break;
-      case 'fill': ctx.fillStyle = col(op.color); ctx.fillRect(op.x, op.y, op.w, op.h); break;
+      case 'fill':
+        ctx.fillStyle = col(op.color);
+        if (op.borderRadius && op.borderRadius > 0) {
+          ctx.beginPath();
+          ctx.roundRect(op.x, op.y, op.w, op.h, op.borderRadius);
+          ctx.fill();
+        } else {
+          ctx.fillRect(op.x, op.y, op.w, op.h);
+        }
+        break;
       case 'text':
         ctx.fillStyle = col(op.color);
         ctx.font = '12px monospace';
@@ -89,14 +98,31 @@ function draw(ops) {
         break;
       case 'border':
         ctx.strokeStyle = col(op.color); ctx.lineWidth = 1;
-        ctx.strokeRect(op.x + 0.5, op.y + 0.5, op.w - 1, op.h - 1); break;
+        if (op.borderRadius && op.borderRadius > 0) {
+          ctx.beginPath();
+          ctx.roundRect(op.x + 0.5, op.y + 0.5, op.w - 1, op.h - 1, op.borderRadius);
+          ctx.stroke();
+        } else {
+          ctx.strokeRect(op.x + 0.5, op.y + 0.5, op.w - 1, op.h - 1);
+        }
+        break;
       case 'input':
         // Draw input border and background on canvas; the actual text editing
         // happens in an HTML <input> element synced by syncInputs().
         ctx.strokeStyle = col(op.color); ctx.lineWidth = 1;
-        ctx.strokeRect(op.x + 0.5, op.y + 0.5, op.w - 1, op.h - 1);
-        ctx.fillStyle = 'rgba(255,255,255,0.95)';
-        ctx.fillRect(op.x + 1, op.y + 1, op.w - 2, op.h - 2);
+        if (op.borderRadius && op.borderRadius > 0) {
+          ctx.beginPath();
+          ctx.roundRect(op.x + 0.5, op.y + 0.5, op.w - 1, op.h - 1, op.borderRadius);
+          ctx.stroke();
+          ctx.fillStyle = 'rgba(255,255,255,0.95)';
+          ctx.beginPath();
+          ctx.roundRect(op.x + 1, op.y + 1, op.w - 2, op.h - 2, op.borderRadius);
+          ctx.fill();
+        } else {
+          ctx.strokeRect(op.x + 0.5, op.y + 0.5, op.w - 1, op.h - 1);
+          ctx.fillStyle = 'rgba(255,255,255,0.95)';
+          ctx.fillRect(op.x + 1, op.y + 1, op.w - 2, op.h - 2);
+        }
         break;
     }
   }
@@ -150,8 +176,6 @@ function syncInputs() {
       el.style.top = y + 'px';
       el.style.width = w + 'px';
       el.style.height = h + 'px';
-      // Read current text from the canvas ops — for now, keep the input
-      // value in sync by reading from the value set during the last draw.
     }
   }
   wasm.xulo_dealloc(bufPtr, 32);
@@ -177,11 +201,13 @@ function redraw(tree) {
     requestAnimationFrame(() => {
       draw(ops);
       syncInputs();
-      // Sync input text values from ops
+      // Sync input text values and placeholders from ops
+      const inputOps = ops.filter(o => o.op === 'input');
       for (let i = 0; i < inputEls.length; i++) {
-        const op = ops.find(o => o.op === 'input' && ops.indexOf(o) === ops.indexOf(ops.filter(x => x.op === 'input')[i]));
+        const op = inputOps[i];
         if (op && document.activeElement !== inputEls[i]) {
           inputEls[i].value = op.text || '';
+          inputEls[i].placeholder = op.placeholder || '';
         }
       }
       if (!window.__perf) {

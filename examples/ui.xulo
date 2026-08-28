@@ -1,18 +1,22 @@
-// UI 组件示例：@State / @Effect / 组件块 / $ 绑定
+// UI 组件示例：样式系统 — color / backgroundColor / padding / margin / borderRadius / alignment
 import { Screen, VStack, HStack, Text, Button, Input } from "@xulo/ui"
 
 fn Counter(): View {
     @State let count: number = 0
     @Effect fn() { print("mounted") }
 
-    VStack(spacing: 1) {
-        Text("Count: " + str(count))
-        HStack(spacing: 2) {
-            Button(onClick: fn() { count = count + 1 }) {
+    VStack(spacing: 2, padding: 4, backgroundColor: "#1a1a2e", borderRadius: 4) {
+        Text("Counter", color: "#8892b0", fontSize: 14)
+        Text("Count: " + str(count), color: "#ccd6f6", fontSize: 18)
+        HStack(spacing: 3, alignment: "center") {
+            Button(onClick: fn() { count = count + 1 }, backgroundColor: "#4a90d9", color: "#ffffff", borderRadius: 3, padding: 2, width: 70) {
                 Text("+")
             }
-            Button(onClick: fn() { count = count - 1 }) {
+            Button(onClick: fn() { count = count - 1 }, backgroundColor: "#d94a4a", color: "#ffffff", borderRadius: 3, padding: 2) {
                 Text("-")
+            }
+            Button(onClick: fn() { count = 0 }, backgroundColor: "#555555", color: "#aaaaaa", borderRadius: 3, padding: 2) {
+                Text("Reset")
             }
         }
     }
@@ -21,16 +25,31 @@ fn Counter(): View {
 fn NameField(): View {
     @State let name: string = ""
 
-    VStack(spacing: 1) {
-        Input(value: $name,width: 200, placeholder: "Enter your name")
-        Text("Hello, " + name)
+    VStack(spacing: 2, padding: 4, backgroundColor: "#16213e", borderRadius: 4) {
+        Text("Name", color: "#8892b0", fontSize: 14)
+        Input(value: $name, width: 200, placeholder: "Enter your name", backgroundColor: "#0f3460", borderColor: "#4a90d9", borderRadius: 2, padding: 2)
+        Text("Hello, " + name, color: "#e94560", fontSize: 16)
+    }
+}
+
+fn Header(): View {
+    VStack(spacing: 1, padding: 6, backgroundColor: "#0a0a1a") {
+        Text("Xulo UI Demo", color: "#e94560", fontSize: 20)
+        Text("Component Styling Showcase", color: "#533483", fontSize: 12)
+    }
+}
+
+fn Footer(): View {
+    VStack(spacing: 1, padding: 3, backgroundColor: "#0a0a1a", alignment: "center") {
+        Text("Built with Xulo", color: "#555555", fontSize: 10)
     }
 }
 
 fn main(): View {
-    Screen(backgroundColor: "#101010") {
+    Screen(backgroundColor: "#0a0a1a") {
+        Header()
         Counter()
         NameField()
-        Text("Welcome!", color: "#ff6b6b")
+        Footer()
     }
 }
