@@ -50,11 +50,12 @@ impl Default for TerminalSize {
     }
 }
 
-/// The screen, rendered as a grid of cells with per-cell fg/bg colors.
+/// The screen, rendered as a grid of cells with per-cell fg/bg colors and bold.
 pub struct Grid {
     chars: Vec<Vec<char>>,
     fg: Vec<Vec<Option<Color>>>,
     bg: Vec<Vec<Option<Color>>>,
+    bold: Vec<Vec<bool>>,
     cols: usize,
     rows: usize,
 }
@@ -67,6 +68,7 @@ impl Grid {
             chars: vec![vec![' '; cols]; rows],
             fg: vec![vec![None; cols]; rows],
             bg: vec![vec![None; cols]; rows],
+            bold: vec![vec![false; cols]; rows],
             cols,
             rows,
         }
@@ -85,14 +87,15 @@ impl Grid {
                 PaintOp::FillRect { rect, color, .. } => {
                     grid.fill_rect(*rect, *color);
                 }
-                PaintOp::DrawText { rect, text, color } => {
-                    grid.draw_text(*rect, text, *color);
+                PaintOp::DrawText { rect, text, color, bold, .. } => {
+                    grid.draw_text(*rect, text, *color, *bold);
                 }
                 PaintOp::DrawBorder { rect, color, .. } => {
                     grid.draw_border(*rect, *color);
                 }
-                PaintOp::Input { rect, text, placeholder, color, focused, .. } => {
-                    grid.draw_border(*rect, Color::GRAY);
+                PaintOp::Input { rect, text, placeholder, color, focused, border_color, .. } => {
+                    let border = border_color.unwrap_or(Color::GRAY);
+                    grid.draw_border(*rect, border);
                     let inner = Rect::new(
                         rect.x + 1,
                         rect.y + 1,
@@ -101,7 +104,7 @@ impl Grid {
                     );
                     let display = if text.is_empty() { *placeholder } else { *text };
                     let display_color = if text.is_empty() { Color::GRAY } else { *color };
-                    grid.draw_text(inner, display, display_color);
+                    grid.draw_text(inner, display, display_color, false);
                     // Show cursor indicator when focused
                     if *focused {
                         let cursor_x = inner.x + display.chars().count() as u32;
@@ -126,7 +129,7 @@ impl Grid {
         }
     }
 
-    fn draw_text(&mut self, rect: Rect, text: &str, color: Color) {
+    fn draw_text(&mut self, rect: Rect, text: &str, color: Color, bold: bool) {
         let y = rect.y;
         if y >= self.rows as u32 {
             return;
@@ -142,6 +145,7 @@ impl Grid {
                 // Non-blank cells (e.g. a border character) win over text.
                 self.chars[row][col] = ch;
                 self.fg[row][col] = Some(color);
+                self.bold[row][col] = bold;
             }
         }
     }
@@ -204,17 +208,22 @@ impl Grid {
     }
 
     /// ANSI true-color output: full grid (blanks keep their background), with
-    /// per-cell foreground/background escapes emitted only on color changes.
+    /// per-cell foreground/background escapes emitted only on color/bold changes.
     pub fn to_ansi(&self) -> String {
         let mut out = String::new();
         let mut prev_fg: Option<Color> = None;
         let mut prev_bg: Option<Color> = None;
+        let mut prev_bold = false;
         for row in 0..self.rows {
             for col in 0..self.cols {
                 let fg = self.fg[row][col];
                 let bg = self.bg[row][col];
-                if fg != prev_fg || bg != prev_bg {
+                let bold = self.bold[row][col];
+                if fg != prev_fg || bg != prev_bg || bold != prev_bold {
                     out.push_str("\x1b[0m");
+                    if bold {
+                        out.push_str("\x1b[1m");
+                    }
                     if let Some(color) = bg {
                         out.push_str(&format!("\x1b[48;2;{};{};{}m", color.r, color.g, color.b));
                     }
@@ -223,6 +232,7 @@ impl Grid {
                     }
                     prev_fg = fg;
                     prev_bg = bg;
+                    prev_bold = bold;
                 }
                 out.push(self.chars[row][col]);
             }

@@ -14,13 +14,43 @@
 //! [`PaintOp`]s using a [`Theme`].
 
 use crate::painting::PaintOp;
-use crate::widgets::{Color, Rect, Size, StyleProps, Widget};
+use crate::widgets::{Alignment, Color, FontWeight, Justify, Rect, Size, StyleProps, Widget};
 
 /// Horizontal padding inside buttons and inputs, in layout units.
 pub const PAD_X: u32 = 1;
 
 /// Vertical padding inside buttons and inputs (border rows), in layout units.
 pub const PAD_Y: u32 = 1;
+
+/// Default font size in pixels for text rendering.
+pub const DEFAULT_FONT_SIZE: u32 = 12;
+
+/// Compute the starting offset and gap between children for justify-content.
+///
+/// Returns `(offset, gap)` where `offset` is the space before the first child
+/// and `gap` is the space between consecutive children.
+fn justify_offsets(justify: Option<Justify>, free_space: u32, n: u32) -> (u32, u32) {
+    match justify {
+        Some(Justify::Start) | None => (0, 0),
+        Some(Justify::Center) => (free_space / 2, 0),
+        Some(Justify::End) => (free_space, 0),
+        Some(Justify::SpaceBetween) => {
+            if n <= 1 {
+                (0, 0)
+            } else {
+                (0, free_space / (n - 1))
+            }
+        }
+        Some(Justify::SpaceAround) => {
+            let gap = free_space / n;
+            (gap / 2, gap)
+        }
+        Some(Justify::SpaceEvenly) => {
+            let gap = free_space / (n + 1);
+            (gap, gap)
+        }
+    }
+}
 
 /// Measures text the way the backend renders it. The terminal backend measures
 /// in character cells (`text_width` = displayed columns, `line_height` = 1).
@@ -147,16 +177,30 @@ pub fn paint<'a>(placed: &Placed<'a>, theme: &Theme, ops: &mut Vec<PaintOp<'a>>)
         }
         Widget::Text { text, color, style } => {
             let text_color = style.color.or(*color).unwrap_or(theme.text);
+            let font_size = style.font_size.unwrap_or(DEFAULT_FONT_SIZE);
+            let bold = matches!(style.font_weight, Some(FontWeight::Bold));
+            let br = style.border_radius.unwrap_or(0);
+            if let Some(bg) = style.background_color {
+                ops.push(PaintOp::FillRect {
+                    rect: placed.rect,
+                    color: bg,
+                    border_radius: br,
+                });
+            }
             ops.push(PaintOp::DrawText {
                 rect: placed.rect,
                 text,
                 color: text_color,
+                font_size,
+                bold,
             });
         }
         Widget::Button { label, style } => {
             let border_color = style.border_color.unwrap_or(theme.border);
             let label_color = style.color.unwrap_or(theme.accent);
             let br = style.border_radius.unwrap_or(0);
+            let font_size = style.font_size.unwrap_or(DEFAULT_FONT_SIZE);
+            let bold = matches!(style.font_weight, Some(FontWeight::Bold));
             if let Some(bg) = style.background_color {
                 ops.push(PaintOp::FillRect {
                     rect: placed.rect,
@@ -173,6 +217,8 @@ pub fn paint<'a>(placed: &Placed<'a>, theme: &Theme, ops: &mut Vec<PaintOp<'a>>)
                 rect: inset(placed.rect, style),
                 text: label,
                 color: label_color,
+                font_size,
+                bold,
             });
         }
         Widget::Input {
@@ -208,12 +254,16 @@ pub fn paint<'a>(placed: &Placed<'a>, theme: &Theme, ops: &mut Vec<PaintOp<'a>>)
                 color: text_color,
                 focused: false,
                 border_radius: br,
+                background_color: style.background_color,
+                border_color: style.border_color,
             });
         }
         Widget::Unknown { kind, style } => {
             let border_color = style.border_color.unwrap_or(theme.border);
             let text_color = style.color.unwrap_or(theme.text);
             let br = style.border_radius.unwrap_or(0);
+            let font_size = style.font_size.unwrap_or(DEFAULT_FONT_SIZE);
+            let bold = matches!(style.font_weight, Some(FontWeight::Bold));
             if let Some(bg) = style.background_color {
                 ops.push(PaintOp::FillRect {
                     rect: placed.rect,
@@ -230,6 +280,8 @@ pub fn paint<'a>(placed: &Placed<'a>, theme: &Theme, ops: &mut Vec<PaintOp<'a>>)
                 rect: placed.rect,
                 text: kind,
                 color: text_color,
+                font_size,
+                bold,
             });
         }
     }
@@ -450,19 +502,56 @@ fn place<'a>(
             let inner_x = x + margin;
             let inner_y = y + margin;
             let inner_width = width.saturating_sub(margin * 2).saturating_sub(pad * 2);
-            let mut cursor_y = inner_y + pad;
+
+            // First pass: measure all children to compute total content height
+            let mut child_sizes: Vec<Size> = Vec::with_capacity(children.len());
+            let mut total_content_h = 0u32;
+            for (i, child) in children.iter().enumerate() {
+                if i > 0 {
+                    total_content_h = total_content_h.saturating_add(*spacing);
+                }
+                let child_size = measure(child, inner_width, metrics);
+                total_content_h = total_content_h.saturating_add(child_size.height);
+                child_sizes.push(child_size);
+            }
+
+            // Compute justify offsets along the main (vertical) axis
+            let container_h = style.height.unwrap_or(0);
+            let available_h = container_h.max(total_content_h);
+            let free_space = available_h.saturating_sub(total_content_h);
+            let (offset, gap) = justify_offsets(style.justify, free_space, children.len() as u32);
+
+            // Second pass: place children at computed positions
+            let mut cursor_y = inner_y + pad + offset;
             let mut max_bottom = inner_y + pad;
             let mut placed_children = Vec::with_capacity(children.len());
             for (i, child) in children.iter().enumerate() {
                 if i > 0 {
-                    cursor_y = cursor_y.saturating_add(*spacing);
+                    cursor_y = cursor_y.saturating_add(gap).saturating_add(*spacing);
                 }
                 let child_placed = place(child, (inner_x + pad, cursor_y), inner_width, metrics);
-                cursor_y = cursor_y.saturating_add(child_placed.rect.height);
+                // Apply horizontal alignment within the container width (cross axis)
+                let child_x = match style.alignment {
+                    Some(Alignment::Center) => {
+                        inner_x + pad + (inner_width.saturating_sub(child_placed.rect.width)) / 2
+                    }
+                    Some(Alignment::End) => {
+                        inner_x + pad + inner_width.saturating_sub(child_placed.rect.width)
+                    }
+                    _ => inner_x + pad, // Start (default)
+                };
+                // Update the child's rect with the aligned x position
+                let mut aligned_placed = child_placed;
+                aligned_placed.rect.x = child_x;
+                cursor_y = cursor_y.saturating_add(aligned_placed.rect.height);
                 max_bottom = max_bottom.max(cursor_y);
-                placed_children.push(child_placed);
+                placed_children.push(aligned_placed);
             }
-            let total_h = max_bottom + pad - y - margin;
+            let total_h = if let Some(h) = style.height {
+                h
+            } else {
+                max_bottom + pad - y - margin
+            };
             let total_w = style.width.unwrap_or(width);
             Placed {
                 widget,
@@ -499,13 +588,35 @@ fn place<'a>(
             let inner_x = x + margin + pad;
             let inner_y = y + margin + pad;
             let inner_width = width.saturating_sub(margin * 2).saturating_sub(pad * 2);
-            let mut cursor_x = inner_x;
-            let mut max_right = inner_x;
-            let mut max_height = 0u32;
+
+            // First pass: measure all children to compute total content width
+            let mut child_sizes: Vec<Size> = Vec::with_capacity(children.len());
+            let mut total_content_w = 0u32;
+            let mut max_child_h = 0u32;
+            for (i, child) in children.iter().enumerate() {
+                if i > 0 {
+                    total_content_w = total_content_w.saturating_add(*spacing);
+                }
+                let child_size = measure(child, inner_width, metrics);
+                total_content_w = total_content_w.saturating_add(child_size.width);
+                max_child_h = max_child_h.max(child_size.height);
+                child_sizes.push(child_size);
+            }
+
+            // Compute justify offsets along the main (horizontal) axis
+            let container_w = style.width.unwrap_or(inner_width);
+            let available_w = container_w.max(total_content_w);
+            let free_space = available_w.saturating_sub(total_content_w);
+            let (offset, gap) = justify_offsets(style.justify, free_space, children.len() as u32);
+
+            // Second pass: place children at computed positions
+            let container_h = style.height.unwrap_or(0);
+            let mut cursor_x = inner_x + offset;
+            let mut max_right = inner_x + offset;
             let mut placed_children = Vec::with_capacity(children.len());
             for (i, child) in children.iter().enumerate() {
                 if i > 0 {
-                    cursor_x = cursor_x.saturating_add(*spacing);
+                    cursor_x = cursor_x.saturating_add(gap).saturating_add(*spacing);
                 }
                 let remaining = inner_width.saturating_sub(cursor_x - inner_x);
                 let child_width = match child {
@@ -516,13 +627,26 @@ fn place<'a>(
                 };
                 let (child_placed, child_size) =
                     place_sized(child, (cursor_x, inner_y), child_width, metrics);
+                // Apply vertical alignment within the container height (cross axis)
+                let align_height = container_h.max(max_child_h);
+                let child_y = match style.alignment {
+                    Some(Alignment::Center) => {
+                        inner_y + (align_height.saturating_sub(child_size.height)) / 2
+                    }
+                    Some(Alignment::End) => {
+                        inner_y + align_height.saturating_sub(child_size.height)
+                    }
+                    _ => inner_y, // Start (default)
+                };
+                // Update the child's rect with the aligned y position
+                let mut aligned_placed = child_placed;
+                aligned_placed.rect.y = child_y;
                 cursor_x = cursor_x.saturating_add(child_size.width);
                 max_right = max_right.max(cursor_x);
-                max_height = max_height.max(child_size.height);
-                placed_children.push(child_placed);
+                placed_children.push(aligned_placed);
             }
             let total_w = style.width.unwrap_or(max_right - x + pad + margin);
-            let total_h = style.height.unwrap_or(max_height.saturating_add(pad * 2));
+            let total_h = style.height.unwrap_or(max_child_h.saturating_add(pad * 2));
             Placed {
                 widget,
                 rect: Rect::new(x + margin, y + margin, total_w.saturating_sub(margin * 2), total_h),

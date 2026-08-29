@@ -61,7 +61,7 @@ pub fn ops_to_json(ops: &[PaintOp<'_>]) -> String {
                     rect.x, rect.y, rect.width, rect.height, color.r, color.g, color.b, border_radius
                 );
             }
-            PaintOp::DrawText { rect, text, color } => {
+            PaintOp::DrawText { rect, text, color, font_size, bold } => {
                 let _ = write!(
                     out,
                     "{{\"op\":\"text\",\"x\":{},\"y\":{},\"w\":{},\"h\":{},\"text\":\"",
@@ -70,8 +70,10 @@ pub fn ops_to_json(ops: &[PaintOp<'_>]) -> String {
                 write_escaped_json_str(&mut out, text);
                 let _ = write!(
                     out,
-                    "\",\"color\":{{\"r\":{},\"g\":{},\"b\":{}}}}}",
-                    color.r, color.g, color.b
+                    "\",\"color\":{{\"r\":{},\"g\":{},\"b\":{}}},\"fontSize\":{},\"bold\":{}}}",
+                    color.r, color.g, color.b,
+                    font_size,
+                    if *bold { "true" } else { "false" }
                 );
             }
             PaintOp::DrawBorder { rect, color, border_radius } => {
@@ -81,7 +83,7 @@ pub fn ops_to_json(ops: &[PaintOp<'_>]) -> String {
                     rect.x, rect.y, rect.width, rect.height, color.r, color.g, color.b, border_radius
                 );
             }
-            PaintOp::Input { rect, text, placeholder, color, focused, border_radius } => {
+            PaintOp::Input { rect, text, placeholder, color, focused, border_radius, background_color, border_color } => {
                 let _ = write!(
                     out,
                     "{{\"op\":\"input\",\"x\":{},\"y\":{},\"w\":{},\"h\":{},\"text\":\"",
@@ -92,11 +94,18 @@ pub fn ops_to_json(ops: &[PaintOp<'_>]) -> String {
                 write_escaped_json_str(&mut out, placeholder);
                 let _ = write!(
                     out,
-                    "\",\"color\":{{\"r\":{},\"g\":{},\"b\":{}}},\"focused\":{},\"borderRadius\":{}}}",
+                    "\",\"color\":{{\"r\":{},\"g\":{},\"b\":{}}},\"focused\":{},\"borderRadius\":{}",
                     color.r, color.g, color.b,
                     if *focused { "true" } else { "false" },
                     border_radius
                 );
+                if let Some(bg) = background_color {
+                    let _ = write!(out, ",\"backgroundColor\":{{\"r\":{},\"g\":{},\"b\":{}}}", bg.r, bg.g, bg.b);
+                }
+                if let Some(bc) = border_color {
+                    let _ = write!(out, ",\"borderColor\":{{\"r\":{},\"g\":{},\"b\":{}}}", bc.r, bc.g, bc.b);
+                }
+                out.push('}');
             }
         }
     }

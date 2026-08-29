@@ -92,7 +92,7 @@ function draw(ops) {
         break;
       case 'text':
         ctx.fillStyle = col(op.color);
-        ctx.font = '12px monospace';
+        ctx.font = (op.bold ? 'bold ' : '') + (op.fontSize || 12) + 'px monospace';
         ctx.save(); ctx.beginPath(); ctx.rect(op.x, op.y, op.w, op.h); ctx.clip();
         ctx.fillText(op.text, op.x, op.y); ctx.restore();
         break;
@@ -109,18 +109,19 @@ function draw(ops) {
       case 'input':
         // Draw input border and background on canvas; the actual text editing
         // happens in an HTML <input> element synced by syncInputs().
-        ctx.strokeStyle = col(op.color); ctx.lineWidth = 1;
+        ctx.strokeStyle = op.borderColor ? col(op.borderColor) : col(op.color);
+        ctx.lineWidth = 1;
         if (op.borderRadius && op.borderRadius > 0) {
           ctx.beginPath();
           ctx.roundRect(op.x + 0.5, op.y + 0.5, op.w - 1, op.h - 1, op.borderRadius);
           ctx.stroke();
-          ctx.fillStyle = 'rgba(255,255,255,0.95)';
+          ctx.fillStyle = op.backgroundColor ? col(op.backgroundColor) : 'rgba(255,255,255,0.95)';
           ctx.beginPath();
           ctx.roundRect(op.x + 1, op.y + 1, op.w - 2, op.h - 2, op.borderRadius);
           ctx.fill();
         } else {
           ctx.strokeRect(op.x + 0.5, op.y + 0.5, op.w - 1, op.h - 1);
-          ctx.fillStyle = 'rgba(255,255,255,0.95)';
+          ctx.fillStyle = op.backgroundColor ? col(op.backgroundColor) : 'rgba(255,255,255,0.95)';
           ctx.fillRect(op.x + 1, op.y + 1, op.w - 2, op.h - 2);
         }
         break;

@@ -3,7 +3,7 @@
 //! the internal `Widget` structure — the framework calls [`from_props`]
 //! and gets back a ready-to-render `Widget`.
 
-use crate::{Alignment, Color, FontWeight, StyleProps, Widget};
+use crate::{Alignment, Color, FontWeight, Justify, StyleProps, Widget};
 
 /// A simple key-value property bag. Framework converts interpreter values
 /// into this type, avoiding a direct dependency on `xulo-runtime`.
@@ -128,6 +128,14 @@ impl Props {
             "end" => Alignment::End,
             _ => Alignment::Start,
         });
+        let justify = self.get_string("justify").map(|s| match s {
+            "center" => Justify::Center,
+            "end" => Justify::End,
+            "space-between" => Justify::SpaceBetween,
+            "space-around" => Justify::SpaceAround,
+            "space-evenly" => Justify::SpaceEvenly,
+            _ => Justify::Start,
+        });
         StyleProps {
             color,
             background_color,
@@ -141,6 +149,7 @@ impl Props {
             border_radius,
             opacity,
             alignment,
+            justify,
         }
     }
 }

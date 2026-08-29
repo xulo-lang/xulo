@@ -304,5 +304,8 @@ fn extract_style(fields: &[(String, Value)], mut props: Props) -> Props {
     if let Some(s) = get(fields, "alignment").and_then(|v| string_of(v)) {
         props = props.string("alignment", s);
     }
+    if let Some(s) = get(fields, "justify").and_then(|v| string_of(v)) {
+        props = props.string("justify", s);
+    }
     props
 }

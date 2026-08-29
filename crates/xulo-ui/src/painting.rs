@@ -24,6 +24,10 @@ pub enum PaintOp<'a> {
         rect: Rect,
         text: &'a str,
         color: Color,
+        /// Font size in pixels (default 12).
+        font_size: u32,
+        /// Whether to render bold text.
+        bold: bool,
     },
     /// Outline `rect` with `color`.
     DrawBorder {
@@ -42,5 +46,9 @@ pub enum PaintOp<'a> {
         focused: bool,
         /// Corner radius in layout units (0 = sharp corners).
         border_radius: u32,
+        /// Background color (if set).
+        background_color: Option<Color>,
+        /// Border color (if set).
+        border_color: Option<Color>,
     },
 }

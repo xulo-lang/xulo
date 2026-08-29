@@ -1,7 +1,7 @@
 //! Layout integration tests using a character-cell font metric.
 
 use xulo_ui::layout::layout;
-use xulo_ui::{StyleProps, Color, FontMetrics, Rect, Size, Widget};
+use xulo_ui::{StyleProps, Color, FontMetrics, Justify, Rect, Size, Widget};
 
 /// One layout unit per character: the terminal backend's metric.
 struct CharMetrics;
@@ -210,4 +210,680 @@ impl IntoRect for Size {
     fn into_dimensions(self) -> Rect {
         Rect::new(0, 0, self.width, self.height)
     }
+}
+
+// ── Alignment tests ─────────────────────────────────────────────────────────
+
+#[test]
+fn vstack_center_alignment() {
+    let root = Widget::VStack {
+        spacing: 0,
+        style: StyleProps {
+            alignment: Some(xulo_ui::Alignment::Center),
+            ..StyleProps::default()
+        },
+        children: vec![
+            Widget::Text {
+                text: "a".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
+            Widget::Text {
+                text: "bbb".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
+        ],
+    };
+    let placed = layout(&root, SURFACE, &metrics());
+    // "a" (1) centered in 80-width: x = (80-1)/2 = 39
+    assert_eq!(placed.children[0].rect.x, 39);
+    // "bbb" (3) centered in 80-width: x = (80-3)/2 = 38
+    assert_eq!(placed.children[1].rect.x, 38);
+}
+
+#[test]
+fn vstack_end_alignment() {
+    let root = Widget::VStack {
+        spacing: 0,
+        style: StyleProps {
+            alignment: Some(xulo_ui::Alignment::End),
+            ..StyleProps::default()
+        },
+        children: vec![
+            Widget::Text {
+                text: "short".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
+            Widget::Text {
+                text: "longer".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
+        ],
+    };
+    let placed = layout(&root, SURFACE, &metrics());
+    // "short" (5) right-aligned: x = 80-5 = 75
+    assert_eq!(placed.children[0].rect.x, 75);
+    // "longer" (6) right-aligned: x = 80-6 = 74
+    assert_eq!(placed.children[1].rect.x, 74);
+}
+
+#[test]
+fn vstack_start_alignment_is_default() {
+    let root = Widget::VStack {
+        spacing: 0,
+        style: StyleProps::default(),
+        children: vec![Widget::Text {
+            text: "hi".into(),
+            color: None,
+            style: StyleProps::default(),
+        }],
+    };
+    let placed = layout(&root, SURFACE, &metrics());
+    // Default alignment = Start, x = 0
+    assert_eq!(placed.children[0].rect.x, 0);
+}
+
+#[test]
+fn hstack_center_alignment() {
+    let root = Widget::HStack {
+        spacing: 0,
+        style: StyleProps {
+            alignment: Some(xulo_ui::Alignment::Center),
+            height: Some(5),
+            ..StyleProps::default()
+        },
+        children: vec![
+            Widget::Text {
+                text: "hi".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
+            Widget::Text {
+                text: "x".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
+        ],
+    };
+    let placed = layout(&root, SURFACE, &metrics());
+    // HStack height=5, children centered vertically
+    // "hi" (height 1): y = (5-1)/2 = 2
+    assert_eq!(placed.children[0].rect.y, 2);
+    // "x" (height 1): y = (5-1)/2 = 2
+    assert_eq!(placed.children[1].rect.y, 2);
+}
+
+#[test]
+fn hstack_end_alignment() {
+    let root = Widget::HStack {
+        spacing: 0,
+        style: StyleProps {
+            alignment: Some(xulo_ui::Alignment::End),
+            height: Some(5),
+            ..StyleProps::default()
+        },
+        children: vec![
+            Widget::Text {
+                text: "a".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
+            Widget::Text {
+                text: "b".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
+        ],
+    };
+    let placed = layout(&root, SURFACE, &metrics());
+    // HStack height=5, children bottom-aligned
+    // "a" (height 1): y = 5-1 = 4
+    assert_eq!(placed.children[0].rect.y, 4);
+    // "b" (height 1): y = 5-1 = 4
+    assert_eq!(placed.children[1].rect.y, 4);
+}
+
+#[test]
+fn hstack_start_alignment_is_default() {
+    let root = Widget::HStack {
+        spacing: 0,
+        style: StyleProps {
+            height: Some(5),
+            ..StyleProps::default()
+        },
+        children: vec![Widget::Text {
+            text: "hi".into(),
+            color: None,
+            style: StyleProps::default(),
+        }],
+    };
+    let placed = layout(&root, SURFACE, &metrics());
+    // Default alignment = Start, y = 0
+    assert_eq!(placed.children[0].rect.y, 0);
+}
+
+// ── effective_padding tests ─────────────────────────────────────────────────
+
+#[test]
+fn effective_padding_returns_padding_when_set() {
+    let style = StyleProps {
+        padding: Some(3),
+        ..StyleProps::default()
+    };
+    let (px, py) = style.effective_padding();
+    assert_eq!(px, 3);
+    assert_eq!(py, 3);
+}
+
+#[test]
+fn effective_padding_returns_default_when_unset() {
+    let style = StyleProps::default();
+    let (px, py) = style.effective_padding();
+    assert_eq!(px, 1); // PAD_X
+    assert_eq!(py, 1); // PAD_Y
+}
+
+// ── collect_interactive_rects tests ─────────────────────────────────────────
+
+#[test]
+fn collect_interactive_rects_finds_buttons_and_inputs() {
+    let root = Widget::VStack {
+        spacing: 0,
+        style: StyleProps::default(),
+        children: vec![
+            Widget::Button {
+                label: "+".into(),
+                style: StyleProps::default(),
+            },
+            Widget::Input {
+                value: "".into(),
+                width: None,
+                placeholder: "name".into(),
+                style: StyleProps::default(),
+            },
+            Widget::Button {
+                label: "-".into(),
+                style: StyleProps::default(),
+            },
+        ],
+    };
+    let placed = layout(&root, SURFACE, &metrics());
+    let (buttons, inputs) = xulo_ui::layout::collect_interactive_rects(&placed);
+    assert_eq!(buttons.len(), 2);
+    assert_eq!(inputs.len(), 1);
+}
+
+#[test]
+fn collect_interactive_rects_nested_structure() {
+    let root = Widget::VStack {
+        spacing: 0,
+        style: StyleProps::default(),
+        children: vec![
+            Widget::HStack {
+                spacing: 0,
+                style: StyleProps::default(),
+                children: vec![
+                    Widget::Button {
+                        label: "A".into(),
+                        style: StyleProps::default(),
+                    },
+                    Widget::Button {
+                        label: "B".into(),
+                        style: StyleProps::default(),
+                    },
+                ],
+            },
+            Widget::Input {
+                value: "".into(),
+                width: None,
+                placeholder: "".into(),
+                style: StyleProps::default(),
+            },
+        ],
+    };
+    let placed = layout(&root, SURFACE, &metrics());
+    let (buttons, inputs) = xulo_ui::layout::collect_interactive_rects(&placed);
+    assert_eq!(buttons.len(), 2);
+    assert_eq!(inputs.len(), 1);
+}
+
+#[test]
+fn collect_interactive_rects_no_interactive() {
+    let root = Widget::VStack {
+        spacing: 0,
+        style: StyleProps::default(),
+        children: vec![
+            Widget::Text {
+                text: "hello".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
+            Widget::Text {
+                text: "world".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
+        ],
+    };
+    let placed = layout(&root, SURFACE, &metrics());
+    let (buttons, inputs) = xulo_ui::layout::collect_interactive_rects(&placed);
+    assert_eq!(buttons.len(), 0);
+    assert_eq!(inputs.len(), 0);
+}
+
+// ── VStack justify-content tests ────────────────────────────────────────────
+
+#[test]
+fn vstack_justify_start_is_default() {
+    // Two 1-height children in a 10-height VStack: both should start at top
+    let root = Widget::VStack {
+        spacing: 0,
+        style: StyleProps {
+            height: Some(10),
+            ..StyleProps::default()
+        },
+        children: vec![
+            Widget::Text {
+                text: "a".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
+            Widget::Text {
+                text: "b".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
+        ],
+    };
+    let placed = layout(&root, SURFACE, &metrics());
+    // No justify = Start: children at y=0, y=1
+    assert_eq!(placed.children[0].rect.y, 0);
+    assert_eq!(placed.children[1].rect.y, 1);
+}
+
+#[test]
+fn vstack_justify_center() {
+    // Two 1-height children in a 10-height VStack: centered vertically
+    let root = Widget::VStack {
+        spacing: 0,
+        style: StyleProps {
+            height: Some(10),
+            justify: Some(Justify::Center),
+            ..StyleProps::default()
+        },
+        children: vec![
+            Widget::Text {
+                text: "a".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
+            Widget::Text {
+                text: "b".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
+        ],
+    };
+    let placed = layout(&root, SURFACE, &metrics());
+    // Free space = 10 - 2 = 8, offset = 8/2 = 4
+    assert_eq!(placed.children[0].rect.y, 4);
+    assert_eq!(placed.children[1].rect.y, 5);
+}
+
+#[test]
+fn vstack_justify_end() {
+    // Two 1-height children in a 10-height VStack: bottom-aligned
+    let root = Widget::VStack {
+        spacing: 0,
+        style: StyleProps {
+            height: Some(10),
+            justify: Some(Justify::End),
+            ..StyleProps::default()
+        },
+        children: vec![
+            Widget::Text {
+                text: "a".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
+            Widget::Text {
+                text: "b".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
+        ],
+    };
+    let placed = layout(&root, SURFACE, &metrics());
+    // Free space = 10 - 2 = 8, offset = 8
+    assert_eq!(placed.children[0].rect.y, 8);
+    assert_eq!(placed.children[1].rect.y, 9);
+}
+
+#[test]
+fn vstack_justify_space_between() {
+    // Three 1-height children in a 10-height VStack
+    let root = Widget::VStack {
+        spacing: 0,
+        style: StyleProps {
+            height: Some(10),
+            justify: Some(Justify::SpaceBetween),
+            ..StyleProps::default()
+        },
+        children: vec![
+            Widget::Text {
+                text: "a".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
+            Widget::Text {
+                text: "b".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
+            Widget::Text {
+                text: "c".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
+        ],
+    };
+    let placed = layout(&root, SURFACE, &metrics());
+    // Free space = 10 - 3 = 7, gap = 7/(3-1) = 3 (integer division)
+    // y: 0, 0+1+3=4, 4+1+3=8
+    assert_eq!(placed.children[0].rect.y, 0);
+    assert_eq!(placed.children[1].rect.y, 4);
+    assert_eq!(placed.children[2].rect.y, 8);
+}
+
+#[test]
+fn vstack_justify_space_around() {
+    // Two 1-height children in a 10-height VStack
+    let root = Widget::VStack {
+        spacing: 0,
+        style: StyleProps {
+            height: Some(10),
+            justify: Some(Justify::SpaceAround),
+            ..StyleProps::default()
+        },
+        children: vec![
+            Widget::Text {
+                text: "a".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
+            Widget::Text {
+                text: "b".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
+        ],
+    };
+    let placed = layout(&root, SURFACE, &metrics());
+    // Free space = 10 - 2 = 8, gap = 8/2 = 4, offset = 4/2 = 2
+    // y: 2, 2+1+4=7
+    assert_eq!(placed.children[0].rect.y, 2);
+    assert_eq!(placed.children[1].rect.y, 7);
+}
+
+#[test]
+fn vstack_justify_space_evenly() {
+    // Two 1-height children in a 10-height VStack
+    let root = Widget::VStack {
+        spacing: 0,
+        style: StyleProps {
+            height: Some(10),
+            justify: Some(Justify::SpaceEvenly),
+            ..StyleProps::default()
+        },
+        children: vec![
+            Widget::Text {
+                text: "a".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
+            Widget::Text {
+                text: "b".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
+        ],
+    };
+    let placed = layout(&root, SURFACE, &metrics());
+    // Free space = 10 - 2 = 8, gap = 8/(2+1) = 2 (integer division)
+    // y: 2, 2+1+2=5
+    assert_eq!(placed.children[0].rect.y, 2);
+    assert_eq!(placed.children[1].rect.y, 5);
+}
+
+#[test]
+fn vstack_justify_with_spacing() {
+    // justify and spacing both apply
+    let root = Widget::VStack {
+        spacing: 1,
+        style: StyleProps {
+            height: Some(10),
+            justify: Some(Justify::SpaceBetween),
+            ..StyleProps::default()
+        },
+        children: vec![
+            Widget::Text {
+                text: "a".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
+            Widget::Text {
+                text: "b".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
+            Widget::Text {
+                text: "c".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
+        ],
+    };
+    let placed = layout(&root, SURFACE, &metrics());
+    // Total content = 1*3 + spacing*2 = 5, free = 10-5 = 5
+    // gap = 5/2 = 2, actual spacing between = justify_gap + widget_spacing = 2+1=3
+    // y: 0, 0+1+3=4, 4+1+3=8
+    assert_eq!(placed.children[0].rect.y, 0);
+    assert_eq!(placed.children[1].rect.y, 4);
+    assert_eq!(placed.children[2].rect.y, 8);
+}
+
+// ── HStack justify-content tests ────────────────────────────────────────────
+
+#[test]
+fn hstack_justify_center() {
+    // Two 1-width children in a 20-width HStack: centered horizontally
+    let root = Widget::HStack {
+        spacing: 0,
+        style: StyleProps {
+            width: Some(20),
+            justify: Some(Justify::Center),
+            ..StyleProps::default()
+        },
+        children: vec![
+            Widget::Text {
+                text: "a".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
+            Widget::Text {
+                text: "b".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
+        ],
+    };
+    let placed = layout(&root, Size { width: 80, height: 24 }, &metrics());
+    // Free space = 20 - 2 = 18, offset = 18/2 = 9
+    assert_eq!(placed.children[0].rect.x, 9);
+    assert_eq!(placed.children[1].rect.x, 10);
+}
+
+#[test]
+fn hstack_justify_end() {
+    // Two 1-width children in a 20-width HStack: right-aligned
+    let root = Widget::HStack {
+        spacing: 0,
+        style: StyleProps {
+            width: Some(20),
+            justify: Some(Justify::End),
+            ..StyleProps::default()
+        },
+        children: vec![
+            Widget::Text {
+                text: "a".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
+            Widget::Text {
+                text: "b".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
+        ],
+    };
+    let placed = layout(&root, Size { width: 80, height: 24 }, &metrics());
+    // Free space = 20 - 2 = 18, offset = 18
+    assert_eq!(placed.children[0].rect.x, 18);
+    assert_eq!(placed.children[1].rect.x, 19);
+}
+
+#[test]
+fn hstack_justify_space_between() {
+    // Three 1-width children in a 10-width HStack
+    let root = Widget::HStack {
+        spacing: 0,
+        style: StyleProps {
+            width: Some(10),
+            justify: Some(Justify::SpaceBetween),
+            ..StyleProps::default()
+        },
+        children: vec![
+            Widget::Text {
+                text: "a".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
+            Widget::Text {
+                text: "b".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
+            Widget::Text {
+                text: "c".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
+        ],
+    };
+    let placed = layout(&root, Size { width: 80, height: 24 }, &metrics());
+    // Free space = 10 - 3 = 7, gap = 7/(3-1) = 3
+    // x: 0, 0+1+3=4, 4+1+3=8
+    assert_eq!(placed.children[0].rect.x, 0);
+    assert_eq!(placed.children[1].rect.x, 4);
+    assert_eq!(placed.children[2].rect.x, 8);
+}
+
+#[test]
+fn hstack_justify_space_around() {
+    // Two 1-width children in a 10-width HStack
+    let root = Widget::HStack {
+        spacing: 0,
+        style: StyleProps {
+            width: Some(10),
+            justify: Some(Justify::SpaceAround),
+            ..StyleProps::default()
+        },
+        children: vec![
+            Widget::Text {
+                text: "a".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
+            Widget::Text {
+                text: "b".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
+        ],
+    };
+    let placed = layout(&root, Size { width: 80, height: 24 }, &metrics());
+    // Free space = 10 - 2 = 8, gap = 8/2 = 4, offset = 4/2 = 2
+    // x: 2, 2+1+4=7
+    assert_eq!(placed.children[0].rect.x, 2);
+    assert_eq!(placed.children[1].rect.x, 7);
+}
+
+#[test]
+fn hstack_justify_space_evenly() {
+    // Two 1-width children in a 10-width HStack
+    let root = Widget::HStack {
+        spacing: 0,
+        style: StyleProps {
+            width: Some(10),
+            justify: Some(Justify::SpaceEvenly),
+            ..StyleProps::default()
+        },
+        children: vec![
+            Widget::Text {
+                text: "a".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
+            Widget::Text {
+                text: "b".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
+        ],
+    };
+    let placed = layout(&root, Size { width: 80, height: 24 }, &metrics());
+    // Free space = 10 - 2 = 8, gap = 8/(2+1) = 2
+    // x: 2, 2+1+2=5
+    assert_eq!(placed.children[0].rect.x, 2);
+    assert_eq!(placed.children[1].rect.x, 5);
+}
+
+#[test]
+fn hstack_justify_with_spacing() {
+    // justify and spacing both apply
+    let root = Widget::HStack {
+        spacing: 1,
+        style: StyleProps {
+            width: Some(20),
+            justify: Some(Justify::SpaceBetween),
+            ..StyleProps::default()
+        },
+        children: vec![
+            Widget::Text {
+                text: "a".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
+            Widget::Text {
+                text: "b".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
+            Widget::Text {
+                text: "c".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
+        ],
+    };
+    let placed = layout(&root, Size { width: 80, height: 24 }, &metrics());
+    // Total content = 1*3 + spacing*2 = 5, free = 20-5 = 15
+    // gap = 15/2 = 7, actual spacing between = justify_gap + widget_spacing = 7+1=8
+    // x: 0, 0+1+8=9, 9+1+8=18
+    assert_eq!(placed.children[0].rect.x, 0);
+    assert_eq!(placed.children[1].rect.x, 9);
+    assert_eq!(placed.children[2].rect.x, 18);
 }

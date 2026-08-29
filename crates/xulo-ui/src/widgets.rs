@@ -163,6 +163,24 @@ pub enum Alignment {
     End,
 }
 
+/// How children are distributed along the main axis of a container.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum Justify {
+    /// Children packed at the start (default).
+    Start,
+    /// Children centered in the middle.
+    Center,
+    /// Children packed at the end.
+    End,
+    /// Equal spacing between children; no spacing at edges.
+    SpaceBetween,
+    /// Equal spacing between children; half-size spacing at edges.
+    SpaceAround,
+    /// Equal spacing everywhere (between and at edges).
+    SpaceEvenly,
+}
+
 /// A bag of optional CSS-like style properties. Every field is `None` by
 /// default; the layout / paint engines fall back to theme values or hardcoded
 /// defaults when a field is absent.
@@ -193,8 +211,10 @@ pub struct StyleProps {
     pub border_radius: Option<u32>,
     /// Opacity multiplier (0.0 – 1.0). `None` means fully opaque.
     pub opacity: Option<f32>,
-    /// Child alignment inside a container.
+    /// Child alignment on the **cross** axis (VStack: horizontal, HStack: vertical).
     pub alignment: Option<Alignment>,
+    /// Child distribution along the **main** axis (VStack: vertical, HStack: horizontal).
+    pub justify: Option<Justify>,
 }
 
 impl StyleProps {
@@ -212,6 +232,7 @@ impl StyleProps {
             && self.border_radius.is_none()
             && self.opacity.is_none()
             && self.alignment.is_none()
+            && self.justify.is_none()
     }
 
     /// Returns `(horizontal_padding, vertical_padding)`. If a custom `padding`
