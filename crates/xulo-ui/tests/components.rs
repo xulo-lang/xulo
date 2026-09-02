@@ -1,7 +1,7 @@
 //! Component conversion tests: verify `from_props` produces the expected
 //! `Widget` values for all built-in components.
 
-use xulo_ui::{from_props, Props, Widget, Color, StyleProps};
+use xulo_ui::{from_props, Props, Widget, Color, Dimension, StyleProps};
 
 #[test]
 fn text_from_string_prop() {
@@ -83,7 +83,7 @@ fn input_basic() {
             value: "hello".into(),
             width: Some(200),
             placeholder: "Enter text".into(),
-            style: StyleProps { width: Some(200), ..StyleProps::default() },
+            style: StyleProps { width: Some(Dimension::Pixels(200)), ..StyleProps::default() },
         }
     );
 }

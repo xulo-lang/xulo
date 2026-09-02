@@ -58,17 +58,27 @@ fn widget_with(
             // Extract common props based on component name
             match name.as_str() {
                 "Screen" => {
-                    if let Some(bg) = get(&props_obj, "backgroundColor")
+                    if let Some(bg) = get(&props_obj, "bg")
+                        .or_else(|| get(&props_obj, "backgroundColor"))
                         .and_then(|v| string_of(v))
                     {
-                        props = props.string("backgroundColor", bg);
+                        props = props.string("bg", bg);
                     }
                     let children = children_with(get(&props_obj, "children"), interp, callbacks);
                     props = props.children(children);
                 }
-                "VStack" | "HStack" => {
+                "VStack" | "HStack" | "Fill" => {
                     if let Some(Value::Number(spacing)) = get(&props_obj, "spacing") {
                         props = props.number("spacing", *spacing);
+                    }
+                    let children = children_with(get(&props_obj, "children"), interp, callbacks);
+                    props = props.children(children);
+                }
+                "ScrollView" => {
+                    if let Some(axes) = get(&props_obj, "axes")
+                        .and_then(|v| string_of(v))
+                    {
+                        props = props.string("axes", axes);
                     }
                     let children = children_with(get(&props_obj, "children"), interp, callbacks);
                     props = props.children(children);
@@ -145,7 +155,7 @@ fn widget_with(
                 }
             }
 
-            // Extract style props (color, backgroundColor, padding, margin, etc.)
+            // Extract style props (color, bg, padding, margin, etc.)
             props = extract_style(&props_obj, props);
 
             // Use the unified entry point
@@ -266,22 +276,39 @@ fn extract_on_change(value: &Value) -> Option<Value> {
 /// to the Props bag. Called for every component so `from_props` can build
 /// a complete `StyleProps`.
 fn extract_style(fields: &[(String, Value)], mut props: Props) -> Props {
-    // Color props
+    // Color props (short aliases: bg, border)
     if let Some(s) = get(fields, "color").and_then(|v| string_of(v)) {
         props = props.string("color", s);
     }
-    if let Some(s) = get(fields, "backgroundColor").and_then(|v| string_of(v)) {
-        props = props.string("backgroundColor", s);
+    if let Some(s) = get(fields, "bg")
+        .or_else(|| get(fields, "backgroundColor"))
+        .and_then(|v| string_of(v))
+    {
+        props = props.string("bg", s);
     }
-    if let Some(s) = get(fields, "borderColor").and_then(|v| string_of(v)) {
-        props = props.string("borderColor", s);
+    if let Some(s) = get(fields, "bgImage")
+        .or_else(|| get(fields, "backgroundImage"))
+        .and_then(|v| string_of(v))
+    {
+        props = props.string("bgImage", s);
     }
-    // Numeric style props
-    if let Some(Value::Number(n)) = get(fields, "fontSize") {
-        props = props.number("fontSize", *n);
+    if let Some(s) = get(fields, "border")
+        .or_else(|| get(fields, "borderColor"))
+        .and_then(|v| string_of(v))
+    {
+        props = props.string("border", s);
     }
-    if let Some(s) = get(fields, "fontWeight").and_then(|v| string_of(v)) {
-        props = props.string("fontWeight", s);
+    // Numeric style props (short aliases: size, weight, radius)
+    if let Some(Value::Number(n)) = get(fields, "size")
+        .or_else(|| get(fields, "fontSize"))
+    {
+        props = props.number("size", *n);
+    }
+    if let Some(s) = get(fields, "weight")
+        .or_else(|| get(fields, "fontWeight"))
+        .and_then(|v| string_of(v))
+    {
+        props = props.string("weight", s);
     }
     if let Some(Value::Number(n)) = get(fields, "padding") {
         props = props.number("padding", *n);
@@ -289,14 +316,20 @@ fn extract_style(fields: &[(String, Value)], mut props: Props) -> Props {
     if let Some(Value::Number(n)) = get(fields, "margin") {
         props = props.number("margin", *n);
     }
-    if let Some(Value::Number(n)) = get(fields, "width") {
-        props = props.number("width", *n);
+    if let Some(s) = get(fields, "width").and_then(|v| string_of(v)) {
+        props = props.string("width", s);
+    } else if let Some(Value::Number(n)) = get(fields, "width") {
+        props = props.string("width", &n.to_string());
     }
-    if let Some(Value::Number(n)) = get(fields, "height") {
-        props = props.number("height", *n);
+    if let Some(s) = get(fields, "height").and_then(|v| string_of(v)) {
+        props = props.string("height", s);
+    } else if let Some(Value::Number(n)) = get(fields, "height") {
+        props = props.string("height", &n.to_string());
     }
-    if let Some(Value::Number(n)) = get(fields, "borderRadius") {
-        props = props.number("borderRadius", *n);
+    if let Some(Value::Number(n)) = get(fields, "radius")
+        .or_else(|| get(fields, "borderRadius"))
+    {
+        props = props.number("radius", *n);
     }
     if let Some(Value::Number(n)) = get(fields, "opacity") {
         props = props.number("opacity", *n);
@@ -306,6 +339,49 @@ fn extract_style(fields: &[(String, Value)], mut props: Props) -> Props {
     }
     if let Some(s) = get(fields, "justify").and_then(|v| string_of(v)) {
         props = props.string("justify", s);
+    }
+    // Flex layout properties (yoga-layout compatible)
+    if let Some(Value::Number(n)) = get(fields, "flexGrow")
+        .or_else(|| get(fields, "flex_grow"))
+    {
+        props = props.number("flexGrow", *n);
+    }
+    if let Some(Value::Number(n)) = get(fields, "flexShrink")
+        .or_else(|| get(fields, "flex_shrink"))
+    {
+        props = props.number("flexShrink", *n);
+    }
+    if let Some(Value::Number(n)) = get(fields, "flexBasis")
+        .or_else(|| get(fields, "flex_basis"))
+    {
+        props = props.number("flexBasis", *n);
+    }
+    if let Some(s) = get(fields, "alignSelf")
+        .or_else(|| get(fields, "align_self"))
+        .and_then(|v| string_of(v))
+    {
+        props = props.string("alignSelf", s);
+    }
+    // Min/max size constraints
+    if let Some(Value::Number(n)) = get(fields, "minWidth")
+        .or_else(|| get(fields, "min_width"))
+    {
+        props = props.number("minWidth", *n);
+    }
+    if let Some(Value::Number(n)) = get(fields, "maxWidth")
+        .or_else(|| get(fields, "max_width"))
+    {
+        props = props.number("maxWidth", *n);
+    }
+    if let Some(Value::Number(n)) = get(fields, "minHeight")
+        .or_else(|| get(fields, "min_height"))
+    {
+        props = props.number("minHeight", *n);
+    }
+    if let Some(Value::Number(n)) = get(fields, "maxHeight")
+        .or_else(|| get(fields, "max_height"))
+    {
+        props = props.number("maxHeight", *n);
     }
     props
 }

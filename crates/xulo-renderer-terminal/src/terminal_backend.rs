@@ -113,6 +113,9 @@ impl Grid {
                         }
                     }
                 }
+                // ScrollStart/ScrollEnd are no-ops for the terminal backend
+                // (terminal rendering doesn't support scrolling regions).
+                PaintOp::ScrollStart { .. } | PaintOp::ScrollEnd => {}
             }
         }
         grid

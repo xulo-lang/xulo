@@ -74,6 +74,11 @@ T | U          // 联合类型（TS 风格）
 T & U          // 交叉类型（TS 风格）
 ```
 
+### UI 原生类型
+
+- `View`：Xulo 中的顶层 UI 节点类型。所有组件（`VStack`、`Text`、自定义组件）的返回值都必须兼容 `View`。
+- 编译器将 `View` 视为抽象句柄，在转译时映射为目标平台（React 的 `ReactNode`、SwiftUI 的 `some View`、Flutter 的 `Widget`）。
+
 ---
 
 ## 4. 类型别名（统一使用 `type`，无 `interface`）
@@ -234,6 +239,35 @@ Button(variant: "outline", label: "Submit")  // ✅ 命名参数
 - 可选参数 `name: string?` 与带默认值的参数一样，调用时可省略（返回 `null`/默认值）
 - 调用时可用命名参数 `greet(name: "X")`；一旦使用命名参数，所有实参都须命名，且可乱序
 - 字符串字面量联合类型（`type Status = "active" | "inactive"`）在实参处接受对应字面量
+
+### 隐式主参数（Implicit Primary Argument）
+
+为了优化 UI 描述的简洁性与 AI 生成效率，Xulo 允许**调用时第一个参数省略标签**。
+
+- 省略标签时，该值自动映射到组件的**首参**（通常是 `label`、`content` 或 `src`）。
+- **约束**：仅限第一个参数。后续参数若传递，**必须**显式携带标签。
+- **映射表**（标准库）：
+
+| 组件 | 省略写法 | 等价写法 |
+|------|---------|---------|
+| `Text("Hello")` | 首参 → `content` | `Text(content: "Hello")` |
+| `Button("Submit")` | 首参 → `label` | `Button(label: "Submit")` |
+| `Input("Enter name")` | 首参 → `placeholder` | `Input(placeholder: "Enter name")` |
+| `Image("logo.png")` | 首参 → `src` | `Image(src: "logo.png")` |
+
+```
+// ✅ 省略标签
+Text("Hello")
+Button("Submit")
+Input("Enter name")
+
+// ✅ 省略标签 + 命名后续参数
+Button("Submit", variant: "outline")
+Text("Hello", color: "blue")
+
+// ❌ 错误：中间省略标签
+Button(variant: "outline", "Submit")  // 错误：第二个参数不能省略标签
+```
 
 ### 匿名函数 / 闭包（Function Values）
 
@@ -709,6 +743,7 @@ fn UserProfile(id: string): View {
 
 ```
 VStack, HStack, ZStack  // 布局容器
+Fill                     // 弹性填充（flex:1）
 Center                   // 居中容器
 Text                     // 文本
 Button                   // 按钮
@@ -718,6 +753,40 @@ Link                     // 链接
 Divider                  // 分割线
 Card, CardHeader, ...   // 卡片组件
 Screen                   // 根容器
+```
+
+### Fill（弹性填充）
+
+`Fill` 是一个零固有尺寸的容器，会**撑满父容器的剩余空间**。多个 `Fill` 平分剩余空间。
+
+- 语义等价于 CSS Flexbox 的 `flex: 1`（`flex-grow: 1`）。
+- 放在 `VStack` 中时，撑满**垂直方向**剩余空间。
+- 放在 `HStack` 中时，撑满**水平方向**剩余空间。
+- 自身无边框、无背景（除非显式设置 `bg`）。
+- 可包含子元素，子元素在其内部正常布局。
+
+```
+// 基本用法：Header + Fill(弹性) + Footer
+VStack {
+  Text("Header")        // 固定高度
+  Fill {
+    VStack {
+      Text("Content")   // 在 Fill 内部，占满剩余空间
+    }
+  }
+  Text("Footer")        // 固定高度
+}
+
+// 多个 Fill 平分剩余空间
+HStack {
+  Fill { Text("Left") }     // 占 50%
+  Fill { Text("Right") }    // 占 50%
+}
+
+// 带背景色的 Fill（可视调试）
+Fill(bg: "#ff000020") {
+  Text("可见的填充区域")
+}
 ```
 
 ### 组件使用
@@ -778,6 +847,122 @@ if isLoggedIn {
 ```
 for item in items {
   Text(item)
+}
+```
+
+### 条件与循环渲染（UI 上下文）
+
+在 UI Block（即 `Component { ... }` 内部）中，`if` 和 `for` **不是普通语句**，而是 **内置的 UI 逻辑节点（Logic Nodes）**。
+
+- 这里的 `if` 不会返回通用值，而是返回 `View` 或 `null`。
+- 这里的 `for` 不会产生副作用，而是将迭代体映射为 `list<View>`。
+- **解析器规则**：在 UI Block 上下文中，`if` / `for` 的 `{ }` 内部**只能包含 UI 元素**（不能包含 `let` 变量声明或普通赋值语句，除非使用 `{{ }}` 插值）。
+
+```
+VStack {
+  // ✅ UI Block 中的 if — 条件渲染节点
+  if isLoggedIn {
+    Text("Welcome back!")
+  } else {
+    Button(onClick: login) { Text("Sign in") }
+  }
+
+  // ✅ UI Block 中的 for — 列表渲染节点
+  for item in items {
+    Text(item)
+  }
+
+  // ❌ 错误：UI Block 中不能有普通语句
+  VStack {
+    let x = 5        // 错误：UI Block 不允许变量声明
+    x = x + 1        // 错误：UI Block 不允许赋值语句
+    Text("hello")
+  }
+}
+```
+
+### 布局尺寸字面量（Layout Size Literals）
+
+在 Xulo 的原子属性（`width`、`height`、`maxWidth` 等）中，除了数字（逻辑像素）和带引号的百分比字符串（`"100%"`）外，**保留以下全局关键字（作为字符串字面量）**：
+
+- `"fill"`：撑满父容器主轴剩余空间（等价于使用 `Fill` 组件，对应 Flex: 1 / SwiftUI: .infinity）。
+- `"auto"`：根据子元素内容自适应（对应 SwiftUI: .intrinsic / CSS: auto）。
+
+**AI 生成约束**：禁止生成裸词 `fill`（不加引号），必须写作 `width: "fill"`。
+
+> **与 Fill 组件的关系**：`width: "fill"` 和 `Fill { ... }` 都表达"撑满剩余空间"，但用法不同：
+> - `width: "fill"` 作为属性设在组件上，不创建新节点。
+> - `Fill { ... }` 作为独立容器，可包含子元素并控制其布局。
+
+```
+// ✅ 正确用法
+VStack(height: "fill") {
+  Text("Hello")
+}
+HStack(width: "fill") {
+  Text("Left")
+  Spacer()
+  Text("Right")
+}
+VStack(width: "fill", height: "auto") {
+  Text("Auto height")
+}
+
+// ❌ 错误用法
+VStack(height: fill)   // 错误：缺少引号
+VStack(width: 100%)    // 错误：百分比需要引号
+```
+
+### 样式属性速查（Style Props）
+
+Xulo 使用**简短**的样式属性名，避免冗长的 CSS 风格命名：
+
+| 属性 | 类型 | 说明 | 示例 |
+|------|------|------|------|
+| `color` | `string` | 文字颜色 | `color: "#ff0000"` |
+| `bg` | `string` | 背景颜色 | `bg: "#1a1a2e"` |
+| `bgImage` | `string` | 背景图片 URL | `bgImage: "/img/hero.png"` |
+| `border` | `string` | 边框颜色 | `border: "#4a90d9"` |
+| `size` | `number` | 字体大小（像素） | `size: 16` |
+| `weight` | `string` | 字体粗细 | `weight: "bold"` |
+| `padding` | `number` | 内边距 | `padding: 8` |
+| `margin` | `number` | 外边距 | `margin: 4` |
+| `width` | `number` | 宽度 | `width: 200` |
+| `height` | `number` | 高度 | `height: 24` |
+| `radius` | `number` | 圆角半径 | `radius: 4` |
+| `opacity` | `number` | 透明度（0.0–1.0） | `opacity: 0.8` |
+| `alignment` | `string` | 交叉轴对齐 | `alignment: "center"` |
+| `justify` | `string` | 主轴分布 | `justify: "space-between"` |
+
+> **向后兼容**：长名称（`backgroundColor`、`fontSize`、`fontWeight`、`borderRadius`、`borderColor`）仍然可用，但新代码请使用短名称。
+
+### AI 生成硬性约束
+
+> **`bg`（颜色）与 `bgImage`（图片）严格分离。**
+
+| 字段 | 接受值 | 拒绝值 |
+|------|--------|--------|
+| `bg` | HEX（`#fff`）、RGB（`rgb(255,0,0)`）、主题引用（`$theme.surface`） | 图片 URL、`url(...)` |
+| `bgImage` | 图片 URL（`"/img/hero.png"`） | 颜色值、主题引用 |
+
+**编译器行为**：
+- 若将图片 URL 赋给 `bg`，编译器报错：`Type mismatch: expected Color, found string`。
+- 背景图片**必须**使用 `bgImage` 字段。
+
+```
+// ✅ 正确：颜色和图片分离
+VStack(bg: "#1a1a2e", bgImage: "/img/hero.png") {
+  Text("Hello")
+}
+
+// ❌ 错误：图片 URL 不能赋给 bg
+VStack(bg: "/img/hero.png") {   // 编译错误
+  Text("Hello")
+}
+
+// ✅ 正确：纯颜色
+VStack(bg: "$theme.surface") {
+  Text("Hello")
 }
 ```
 
@@ -1343,4 +1528,7 @@ fn main(): View {
 | 块语法 `{ ... }` | SwiftUI |
 | 应用入口 `main` | Rust/Go |
 | 对象字面量 `({ ... })` | 自定义（消除歧义） |
+| `Fill` 弹性填充容器 | CSS Flexbox / SwiftUI |
+| 布局尺寸字面量 `"fill"` / `"auto"` | CSS Flexbox |
+| `bg`（颜色）+ `bgImage`（图片）分离 | 自设计（类型安全） |
 | `@State/@Store/@Effect` 使用限制 | 自定义 |

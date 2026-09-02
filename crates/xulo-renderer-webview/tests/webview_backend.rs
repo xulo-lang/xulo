@@ -18,6 +18,10 @@ fn page_embeds_tree_wasm_and_rasterizer() {
         html.contains("WebAssembly.instantiate(bytes, {})"),
         "raw instantiation"
     );
+    assert!(
+        html.contains("wasm.xulo_set_engine(1)"),
+        "engine selection"
+    );
     // The tree reaches the wasm engine through its raw ABI.
     assert!(
         html.contains(r#"const TREE = {"VStack":{"spacing":1,"children":[]}};"#),
@@ -32,8 +36,8 @@ fn page_embeds_tree_wasm_and_rasterizer() {
     assert!(html.contains("const idx = wasm ? wasm.xulo_hit_test(x, y) : -1;"));
     assert!(html.contains("window.ipc.postMessage('click ' + idx);"));
     // Canvas sized to cells x CELL px.
-    assert!(html.contains("const W = 320;"));
-    assert!(html.contains("const H = 192;"));
+    assert!(html.contains("let W = 320;"));
+    assert!(html.contains("let H = 192;"));
 }
 
 #[test]

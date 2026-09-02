@@ -1,0 +1,28 @@
+import { Screen, VStack, HStack, Fill, Text } from "@xulo/ui"
+
+fn main(): View {
+    Screen(bg: "#0a0a1a") {
+        VStack(spacing: 0, justify: "space-between", height: "full", bg: "#3939db") {
+            HStack(width: "full", padding: 2, bg: "#e94560") {
+                Text("Top", color: "#ffffff")
+            }
+            Fill(bg: "#1da96f") {
+                VStack(spacing: 1, padding: 2) {
+                    HStack(spacing: 2, bg: "#be4219", height: 200) {
+                        Text("A", color: "#ccd6f6", bg: "#4a90d9", padding: 1,height: 100)
+                        Text("B", color: "#ccd6f6", bg: "#d94a4a", padding: 1)
+                        Text("C", color: "#ccd6f6", bg: "#555555", padding: 1)
+                    }
+                    HStack(padding: 2, bg: "#0f3460", justify: "space-between") {
+                        Text("Left", color: "#ccd6f6")
+                        Text("Center", color: "#ccd6f6")
+                        Text("Right", color: "#ccd6f6")
+                    }
+                }
+            }
+            HStack(padding: 2, bg: "#555555") {
+                Text("Bottom", color: "#ffffff")
+            }
+        }
+    }
+}

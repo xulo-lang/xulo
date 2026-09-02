@@ -50,6 +50,7 @@ fn screen_clears_with_its_background() {
             color: Color::WHITE,
             font_size: 12,
             bold: false,
+            opacity: 1.0,
         }
     );
 }
@@ -64,6 +65,7 @@ fn button_paints_border_and_accent_text() {
             rect: Rect::new(0, 0, 3, 3),
             color: Color::GRAY,
             border_radius: 0,
+            opacity: 1.0,
         }
     );
     assert_eq!(
@@ -74,6 +76,7 @@ fn button_paints_border_and_accent_text() {
             color: Color::ACCENT,
             font_size: 12,
             bold: false,
+            opacity: 1.0,
         }
     );
 }
@@ -94,6 +97,7 @@ fn text_honors_its_color() {
             color: Color::new(1, 2, 3),
             font_size: 12,
             bold: false,
+            opacity: 1.0,
         }
     );
 }
@@ -114,6 +118,7 @@ fn text_without_color_uses_theme() {
             color: Color::WHITE,
             font_size: 12,
             bold: false,
+            opacity: 1.0,
         }
     );
 }
@@ -146,6 +151,7 @@ fn vstack_paints_children_in_order() {
                 color: Color::WHITE,
                 font_size: 12,
                 bold: false,
+                opacity: 1.0,
             },
             PaintOp::DrawText {
                 rect: Rect::new(0, 2, 1, 1),
@@ -153,6 +159,7 @@ fn vstack_paints_children_in_order() {
                 color: Color::WHITE,
                 font_size: 12,
                 bold: false,
+                opacity: 1.0,
             },
         ]
     );
@@ -205,6 +212,7 @@ fn text_with_custom_font_size() {
             color: Color::WHITE,
             font_size: 16,
             bold: false,
+            opacity: 1.0,
         }
     );
 }
@@ -239,6 +247,7 @@ fn text_default_font_size() {
             color: Color::WHITE,
             font_size: 12,
             bold: false,
+            opacity: 1.0,
         }
     );
 }
@@ -264,6 +273,7 @@ fn text_with_bold_weight() {
             color: Color::WHITE,
             font_size: 12,
             bold: true,
+            opacity: 1.0,
         }
     );
 }
@@ -287,6 +297,7 @@ fn text_with_normal_weight() {
             color: Color::WHITE,
             font_size: 12,
             bold: false,
+            opacity: 1.0,
         }
     );
 }
@@ -421,4 +432,179 @@ fn input_with_value_shows_text_color() {
     } else {
         panic!("Expected Input paint op");
     }
+}
+
+// ── opacity tests ─────────────────────────────────────────────────────────
+
+#[test]
+fn text_with_opacity() {
+    let root = Widget::Text {
+        text: "hi".into(),
+        color: None,
+        style: StyleProps {
+            opacity: Some(0.5),
+            ..StyleProps::default()
+        },
+    };
+    let ops = paint(&root);
+    assert_eq!(
+        ops[0],
+        PaintOp::DrawText {
+            rect: Rect::new(0, 0, 2, 1),
+            text: "hi",
+            color: Color::WHITE,
+            font_size: 12,
+            bold: false,
+            opacity: 0.5,
+        }
+    );
+}
+
+#[test]
+fn text_default_opacity_is_one() {
+    let root = Widget::Text {
+        text: "hi".into(),
+        color: None,
+        style: StyleProps::default(),
+    };
+    let ops = paint(&root);
+    assert_eq!(
+        ops[0],
+        PaintOp::DrawText {
+            rect: Rect::new(0, 0, 2, 1),
+            text: "hi",
+            color: Color::WHITE,
+            font_size: 12,
+            bold: false,
+            opacity: 1.0,
+        }
+    );
+}
+
+#[test]
+fn button_with_opacity() {
+    let root = Widget::Button {
+        label: "OK".into(),
+        style: StyleProps {
+            opacity: Some(0.3),
+            ..StyleProps::default()
+        },
+    };
+    let ops = paint(&root);
+    assert!(ops.iter().any(|op| matches!(op, PaintOp::DrawBorder { opacity: 0.3, .. })));
+    assert!(ops.iter().any(|op| matches!(op, PaintOp::DrawText { opacity: 0.3, .. })));
+}
+
+#[test]
+fn fill_rect_with_opacity() {
+    let root = Widget::Text {
+        text: "x".into(),
+        color: None,
+        style: StyleProps {
+            background_color: Some(Color::new(0, 0, 0)),
+            opacity: Some(0.7),
+            ..StyleProps::default()
+        },
+    };
+    let ops = paint(&root);
+    assert!(matches!(&ops[0], PaintOp::FillRect { opacity: 0.7, .. }));
+}
+
+#[test]
+fn fill_children_produce_paint_ops() {
+    use xulo_ui::layout::CellMetrics;
+    let metrics = CellMetrics;
+    let surface = Size { width: 320, height: 192 };
+    let root = Widget::Screen {
+        background: None,
+        style: StyleProps::default(),
+        children: vec![
+            Widget::VStack {
+                spacing: 0,
+                style: StyleProps::default(),
+                children: vec![
+                    Widget::Text {
+                        text: "top".into(),
+                        color: None,
+                        style: StyleProps::default(),
+                    },
+                    Widget::Fill {
+                        children: vec![
+                            Widget::Text {
+                                text: "inside".into(),
+                                color: None,
+                                style: StyleProps::default(),
+                            },
+                        ],
+                        style: StyleProps::default(),
+                    },
+                    Widget::Text {
+                        text: "bottom".into(),
+                        color: None,
+                        style: StyleProps::default(),
+                    },
+                ],
+            },
+        ],
+    };
+    let placed = xulo_ui::layout::layout(&root, surface, &metrics);
+    let mut ops = Vec::new();
+    xulo_ui::layout::paint(&placed, &xulo_ui::Theme::default(), &mut ops);
+    let texts: Vec<_> = ops.iter().filter_map(|op| match op {
+        PaintOp::DrawText { text, rect, .. } => Some((*text, rect.clone())),
+        _ => None,
+    }).collect();
+    assert_eq!(texts.len(), 3);
+    assert_eq!(texts[0].0, "top");
+    assert_eq!(texts[0].1.y, 0);
+    assert_eq!(texts[1].0, "inside");
+    assert_eq!(texts[1].1.y, 16);
+    assert_eq!(texts[2].0, "bottom");
+    assert_eq!(texts[2].1.y, 176);
+}
+
+#[test]
+fn fill_with_background_produces_fillrect_op() {
+    let root = Widget::Screen {
+        background: None,
+        style: StyleProps::default(),
+        children: vec![
+            Widget::Fill {
+                children: vec![],
+                style: StyleProps {
+                    background_color: Some(Color::parse_hex("#ff0000").unwrap()),
+                    ..StyleProps::default()
+                },
+            },
+        ],
+    };
+    let ops = paint(&root);
+    let rects: Vec<_> = ops.iter().filter_map(|op| match op {
+        PaintOp::FillRect { rect, color, .. } => Some((rect.clone(), color.clone())),
+        _ => None,
+    }).collect();
+    assert_eq!(rects.len(), 1);
+    assert_eq!(rects[0].1, Color::parse_hex("#ff0000").unwrap());
+}
+
+#[test]
+fn scrollview_emits_scrollstart_and_scrollend() {
+    xulo_ui::layout::reset_scroll_state();
+    let root = Widget::ScrollView {
+        axes: xulo_ui::widgets::Axes::Vertical,
+        children: vec![
+            Widget::Text { text: "item1".into(), color: None, style: StyleProps::default() },
+            Widget::Text { text: "item2".into(), color: None, style: StyleProps::default() },
+        ],
+        style: StyleProps {
+            width: Some(xulo_ui::widgets::Dimension::Pixels(200)),
+            height: Some(xulo_ui::widgets::Dimension::Pixels(100)),
+            ..StyleProps::default()
+        },
+    };
+    let ops = paint(&root);
+    let has_scroll_start = ops.iter().any(|op| matches!(op, PaintOp::ScrollStart { .. }));
+    let has_scroll_end = ops.iter().any(|op| matches!(op, PaintOp::ScrollEnd));
+    assert!(has_scroll_start, "ScrollView should emit ScrollStart");
+    assert!(has_scroll_end, "ScrollView should emit ScrollEnd");
 }

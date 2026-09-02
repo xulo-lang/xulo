@@ -101,6 +101,7 @@ fn fill_rect_sets_cell_background() {
         rect: Rect::new(0, 0, 3, 2),
         color: Color::new(1, 2, 3),
         border_radius: 0,
+        opacity: 1.0,
     }];
     let ansi = render_ansi(&ops, SIZE);
     assert!(ansi.contains("\x1b[48;2;1;2;3m"));

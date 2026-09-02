@@ -60,8 +60,8 @@ pub fn build_html(
 <script>
 const t0 = performance.now();
 const TREE = __TREE__;
-const W = __W__;
-const H = __H__;
+let W = __W__;
+let H = __H__;
 const canvas = document.getElementById('screen');
 const dpr = window.devicePixelRatio || 1;
 canvas.width = W * dpr;
@@ -76,7 +76,12 @@ ctx.textBaseline = 'top';
 ctx.fillStyle = '__BG__';
 ctx.fillRect(0, 0, W, H);
 const col = (c) => `rgb(${c.r},${c.g},${c.b})`;
+// --- Scroll state ---
+const __scrollOffsets = [];
+const __scrollViewports = [];
 function draw(ops) {
+  __scrollViewports.length = 0;
+  let __scrollIdx = 0;
   for (const op of ops) {
     switch (op.op) {
       case 'clear': ctx.fillStyle = col(op.color); ctx.fillRect(0, 0, W, H); break;
@@ -105,6 +110,18 @@ function draw(ops) {
         } else {
           ctx.strokeRect(op.x + 0.5, op.y + 0.5, op.w - 1, op.h - 1);
         }
+        break;
+      case 'scrollStart':
+        __scrollViewports.push({x:op.x, y:op.y, w:op.w, h:op.h, idx:__scrollIdx});
+        __scrollIdx++;
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(op.x, op.y, op.w, op.h);
+        ctx.clip();
+        ctx.translate(op.offsetX, op.offsetY);
+        break;
+      case 'scrollEnd':
+        ctx.restore();
         break;
       case 'input':
         // Draw input border and background on canvas; the actual text editing
@@ -186,7 +203,11 @@ const bytes = new Uint8Array(bin.length);
 for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
 let wasm = null;
 WebAssembly.instantiate(bytes, {})
-  .then(({ instance }) => { wasm = instance.exports; redraw(TREE); })
+  .then(({ instance }) => {
+    wasm = instance.exports;
+    wasm.xulo_set_engine(1);
+    redraw(TREE);
+  })
   .catch((e) => window.ipc.postMessage('BOOTERR ' + (e && e.message ? e.message : String(e))));
 function redraw(tree) {
   if (!wasm) return;
@@ -221,6 +242,40 @@ function redraw(tree) {
   }
 }
 window.redraw = redraw;
+// --- Resize: debounce(150ms) + throttle(rAF) + clamp(1×1) ---
+let __resizeTimer = null;
+let __resizeRaf = 0;
+const CELL_W = 8, CELL_H = 16;
+function resize(w, h) {
+  clearTimeout(__resizeTimer);
+  __resizeTimer = setTimeout(() => {
+    w = Math.max(1, w);
+    h = Math.max(1, h);
+    const cols = Math.floor(w / CELL_W) || 1;
+    const rows = Math.floor(h / CELL_H) || 1;
+    const snappedW = cols * CELL_W;
+    const snappedH = rows * CELL_H;
+    if (snappedW === W && snappedH === H) return;
+    if (__resizeRaf) cancelAnimationFrame(__resizeRaf);
+    __resizeRaf = requestAnimationFrame(() => {
+      W = snappedW;
+      H = snappedH;
+      canvas.width = W * dpr;
+      canvas.height = H * dpr;
+      canvas.style.width = W + 'px';
+      canvas.style.height = H + 'px';
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.textBaseline = 'top';
+      redraw(TREE);
+      __resizeRaf = 0;
+    });
+  }, 150);
+}
+window.resize = resize;
+new ResizeObserver(() => {
+  const rect = document.body.getBoundingClientRect();
+  resize(rect.width, rect.height);
+}).observe(document.body);
 canvas.addEventListener('click', (e) => {
   const r = canvas.getBoundingClientRect();
   const x = e.clientX - r.left;
@@ -244,6 +299,30 @@ canvas.addEventListener('click', (e) => {
     wasm.xulo_dealloc(bufPtr, 32);
   }
 });
+// --- Wheel scrolling for ScrollView ---
+canvas.addEventListener('wheel', (e) => {
+  if (!wasm) return;
+  const r = canvas.getBoundingClientRect();
+  const mx = e.clientX - r.left;
+  const my = e.clientY - r.top;
+  // Find which ScrollView viewport the cursor is over (last match wins,
+  // since inner viewports are painted after outer ones).
+  for (let i = __scrollViewports.length - 1; i >= 0; i--) {
+    const vp = __scrollViewports[i];
+    if (mx >= vp.x && mx < vp.x + vp.w && my >= vp.y && my < vp.y + vp.h) {
+      e.preventDefault();
+      if (!__scrollOffsets[vp.idx]) __scrollOffsets[vp.idx] = [0, 0];
+      const cur = __scrollOffsets[vp.idx];
+      cur[0] -= e.deltaX;
+      cur[1] -= e.deltaY;
+      cur[0] = Math.max(0, cur[0]);
+      cur[1] = Math.max(0, cur[1]);
+      wasm.xulo_scroll(vp.idx, cur[0], cur[1]);
+      redraw(TREE);
+      return;
+    }
+  }
+}, {passive: false});
 </script>
 </body>
 </html>"#;
@@ -309,6 +388,8 @@ fn build_webview(
                 && let Some(webview) = slot.borrow().as_ref()
             {
                 let _ = webview.evaluate_script(&js);
+            } else if body.starts_with("resize") {
+                // JS 端已自行处理 relayout，无需原生干预
             } else if body.starts_with("PERF")
                 || body.starts_with("BOOTERR")
                 || body.starts_with("RENDERERR")
@@ -383,6 +464,18 @@ fn run_linux(
     *slot.borrow_mut() = Some(webview);
 
     window.show_all();
+    {
+        let slot = slot.clone();
+        window.connect_size_allocate(move |_, alloc| {
+            if let Some(webview) = slot.borrow().as_ref() {
+                let cols = (alloc.width() as u32 / CELL_W).max(1);
+                let rows = (alloc.height() as u32 / CELL_H).max(1);
+                let px_w = cols * CELL_W;
+                let px_h = rows * CELL_H;
+                let _ = webview.evaluate_script(&format!("window.resize({px_w},{px_h})"));
+            }
+        });
+    }
     window.connect_delete_event(|_, _| {
         gtk::main_quit();
         gtk::glib::Propagation::Proceed
@@ -461,8 +554,20 @@ fn run_winit(
             _id: winit::window::WindowId,
             event: WindowEvent,
         ) {
-            if matches!(event, WindowEvent::CloseRequested) {
-                event_loop.exit();
+            match event {
+                WindowEvent::CloseRequested => event_loop.exit(),
+                WindowEvent::Resized(size) => {
+                    if let Some(webview) = self.webview_slot.borrow().as_ref() {
+                        let cols = (size.width / CELL_W).max(1);
+                        let rows = (size.height / CELL_H).max(1);
+                        let px_w = cols * CELL_W;
+                        let px_h = rows * CELL_H;
+                        let _ = webview.evaluate_script(
+                            &format!("window.resize({px_w},{px_h})"),
+                        );
+                    }
+                }
+                _ => {}
             }
         }
     }

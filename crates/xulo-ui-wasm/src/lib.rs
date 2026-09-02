@@ -11,6 +11,25 @@ use std::cell::RefCell;
 
 use xulo_ui::{PaintOp, Rect, Size, Widget};
 
+use xulo_ui::layout::set_scroll_offset;
+
+/// The layout engine to use: 0 = handwritten (default), 1 = taffy.
+thread_local! {
+    static ENGINE: RefCell<u8> = const { RefCell::new(0) };
+}
+
+/// Set the layout engine: 0 = handwritten, 1 = taffy.
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_set_engine(engine: u8) {
+    ENGINE.with(|e| *e.borrow_mut() = engine);
+}
+
+/// Set the scroll offset for a ScrollView by its index and trigger a redraw.
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_scroll(index: usize, x: i32, y: i32) {
+    set_scroll_offset(index, x, y);
+}
+
 /// Lay a widget tree out against a pixel surface: paint commands, button
 /// rectangles, and input field rectangles (in the same pre-order the framework
 /// keeps callbacks). Pure, so it is testable on the host.
@@ -19,7 +38,16 @@ pub fn layout_tree(
     width: u32,
     height: u32,
 ) -> (Vec<PaintOp<'_>>, Vec<Rect>, Vec<Rect>) {
-    let ctx = xulo_ui::UiContext::new(Size { width, height }, Box::new(xulo_ui::CellMetrics));
+    let engine_id = ENGINE.with(|e| *e.borrow());
+    let surface = Size { width, height };
+    let metrics = Box::new(xulo_ui::CellMetrics);
+
+    let ctx = if engine_id == 1 {
+        xulo_ui::UiContext::with_engine(surface, metrics, Box::new(xulo_ui::TaffyLayout))
+    } else {
+        xulo_ui::UiContext::new(surface, metrics)
+    };
+
     let placed = ctx.layout(tree);
     let mut ops = Vec::new();
     xulo_ui::layout::paint(&placed, &ctx.theme, &mut ops);
@@ -54,14 +82,14 @@ pub fn ops_to_json(ops: &[PaintOp<'_>]) -> String {
                     color.r, color.g, color.b
                 );
             }
-            PaintOp::FillRect { rect, color, border_radius } => {
+            PaintOp::FillRect { rect, color, border_radius, opacity } => {
                 let _ = write!(
                     out,
-                    "{{\"op\":\"fill\",\"x\":{},\"y\":{},\"w\":{},\"h\":{},\"color\":{{\"r\":{},\"g\":{},\"b\":{}}},\"borderRadius\":{}}}",
-                    rect.x, rect.y, rect.width, rect.height, color.r, color.g, color.b, border_radius
+                    "{{\"op\":\"fill\",\"x\":{},\"y\":{},\"w\":{},\"h\":{},\"color\":{{\"r\":{},\"g\":{},\"b\":{}}},\"borderRadius\":{},\"opacity\":{}}}",
+                    rect.x, rect.y, rect.width, rect.height, color.r, color.g, color.b, border_radius, opacity
                 );
             }
-            PaintOp::DrawText { rect, text, color, font_size, bold } => {
+            PaintOp::DrawText { rect, text, color, font_size, bold, opacity } => {
                 let _ = write!(
                     out,
                     "{{\"op\":\"text\",\"x\":{},\"y\":{},\"w\":{},\"h\":{},\"text\":\"",
@@ -70,20 +98,21 @@ pub fn ops_to_json(ops: &[PaintOp<'_>]) -> String {
                 write_escaped_json_str(&mut out, text);
                 let _ = write!(
                     out,
-                    "\",\"color\":{{\"r\":{},\"g\":{},\"b\":{}}},\"fontSize\":{},\"bold\":{}}}",
+                    "\",\"color\":{{\"r\":{},\"g\":{},\"b\":{}}},\"fontSize\":{},\"bold\":{},\"opacity\":{}}}",
                     color.r, color.g, color.b,
                     font_size,
-                    if *bold { "true" } else { "false" }
+                    if *bold { "true" } else { "false" },
+                    opacity
                 );
             }
-            PaintOp::DrawBorder { rect, color, border_radius } => {
+            PaintOp::DrawBorder { rect, color, border_radius, opacity } => {
                 let _ = write!(
                     out,
-                    "{{\"op\":\"border\",\"x\":{},\"y\":{},\"w\":{},\"h\":{},\"color\":{{\"r\":{},\"g\":{},\"b\":{}}},\"borderRadius\":{}}}",
-                    rect.x, rect.y, rect.width, rect.height, color.r, color.g, color.b, border_radius
+                    "{{\"op\":\"border\",\"x\":{},\"y\":{},\"w\":{},\"h\":{},\"color\":{{\"r\":{},\"g\":{},\"b\":{}}},\"borderRadius\":{},\"opacity\":{}}}",
+                    rect.x, rect.y, rect.width, rect.height, color.r, color.g, color.b, border_radius, opacity
                 );
             }
-            PaintOp::Input { rect, text, placeholder, color, focused, border_radius, background_color, border_color } => {
+            PaintOp::Input { rect, text, placeholder, color, focused, border_radius, background_color, border_color, opacity } => {
                 let _ = write!(
                     out,
                     "{{\"op\":\"input\",\"x\":{},\"y\":{},\"w\":{},\"h\":{},\"text\":\"",
@@ -94,10 +123,11 @@ pub fn ops_to_json(ops: &[PaintOp<'_>]) -> String {
                 write_escaped_json_str(&mut out, placeholder);
                 let _ = write!(
                     out,
-                    "\",\"color\":{{\"r\":{},\"g\":{},\"b\":{}}},\"focused\":{},\"borderRadius\":{}",
+                    "\",\"color\":{{\"r\":{},\"g\":{},\"b\":{}}},\"focused\":{},\"borderRadius\":{},\"opacity\":{}",
                     color.r, color.g, color.b,
                     if *focused { "true" } else { "false" },
-                    border_radius
+                    border_radius,
+                    opacity
                 );
                 if let Some(bg) = background_color {
                     let _ = write!(out, ",\"backgroundColor\":{{\"r\":{},\"g\":{},\"b\":{}}}", bg.r, bg.g, bg.b);
@@ -106,6 +136,16 @@ pub fn ops_to_json(ops: &[PaintOp<'_>]) -> String {
                     let _ = write!(out, ",\"borderColor\":{{\"r\":{},\"g\":{},\"b\":{}}}", bc.r, bc.g, bc.b);
                 }
                 out.push('}');
+            }
+            PaintOp::ScrollStart { viewport, offset_x, offset_y } => {
+                let _ = write!(
+                    out,
+                    "{{\"op\":\"scrollStart\",\"x\":{},\"y\":{},\"w\":{},\"h\":{},\"offsetX\":{},\"offsetY\":{}}}",
+                    viewport.x, viewport.y, viewport.width, viewport.height, offset_x, offset_y
+                );
+            }
+            PaintOp::ScrollEnd => {
+                out.push_str("{\"op\":\"scrollEnd\"}");
             }
         }
     }
