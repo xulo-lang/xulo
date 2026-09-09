@@ -19,6 +19,12 @@ pub struct CodeGen {
     string_field_ptrs: HashMap<String, *const u8>,
 }
 
+impl Default for CodeGen {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// 引用 xulo-runtime，确保链接器包含运行时库
 fn _ensure_runtime_linked() {
     let _ = xulo_runtime::runtime::xulo_print as *const u8;
@@ -85,12 +91,11 @@ impl CodeGen {
         for func in &ir_module.functions {
             for instr in &func.instructions {
                 match instr {
-                    Instruction::GetField { field, .. } | Instruction::SetField { field, .. } => {
-                        if !self.string_field_ptrs.contains_key(field) {
+                    Instruction::GetField { field, .. } | Instruction::SetField { field, .. }
+                        if !self.string_field_ptrs.contains_key(field) => {
                             let ptr = self.get_or_create_string_ptr(field);
                             self.string_field_ptrs.insert(field.clone(), ptr);
                         }
-                    }
                     Instruction::NewObject { fields, .. } => {
                         for (field_name, _, _) in fields {
                             if !self.string_field_ptrs.contains_key(field_name) {
@@ -128,7 +133,7 @@ impl CodeGen {
         self.module.finalize_definitions()
             .map_err(|e| XuloError::new(ErrorKind::Codegen, format!("failed to finalize: {}", e)))?;
 
-        let entry_id = func_ids[ir_module.entry_point.0 as usize];
+        let entry_id = func_ids[ir_module.entry_point.0];
         let entry_fn = self.module.get_finalized_function(entry_id);
         Ok(entry_fn)
     }
@@ -224,7 +229,7 @@ impl CodeGen {
 
         // 注册所有字符串指针到运行时（用于自动类型检测）
         if let Some(&reg_id) = self.runtime_func_ids.get("xulo_register_string") {
-            let fref = self.module.declare_func_in_func(reg_id, &mut builder.func);
+            let fref = self.module.declare_func_in_func(reg_id, builder.func);
             for ptr in &self.string_ptrs {
                 let ptr_val = builder.ins().iconst(I64, *ptr as i64);
                 builder.ins().call(fref, &[ptr_val]);
@@ -238,11 +243,10 @@ impl CodeGen {
 
         // 声明所有变量的类型
         for (idx, (local_id, _ty)) in ir_func.locals.iter().enumerate() {
-            if let Some(&var) = vars.get(local_id) {
-                if idx < var_types.len() {
+            if let Some(&var) = vars.get(local_id)
+                && idx < var_types.len() {
                     builder.declare_var(var, var_types[idx]);
                 }
-            }
         }
 
         // 声明参数变量
@@ -275,7 +279,7 @@ impl CodeGen {
                             let v = builder.ins().f64const(*n);
                             // 注册浮点数位模式，用于自动检测
                             if let Some(&reg_id) = self.runtime_func_ids.get("xulo_register_float") {
-                                let fref = self.module.declare_func_in_func(reg_id, &mut builder.func);
+                                let fref = self.module.declare_func_in_func(reg_id, builder.func);
                                 let bits_val = builder.ins().iconst(I64, bits);
                                 builder.ins().call(fref, &[bits_val]);
                             }
@@ -481,7 +485,7 @@ impl CodeGen {
                     };
 
                     // xulo_print_value 期望 (i64, i64)，需要将 f64 参数 bitcast 到 i64
-                    let final_args = if *func == RuntimeFn::PrintValue && arg_vals.len() >= 1 {
+                    let final_args = if *func == RuntimeFn::PrintValue && !arg_vals.is_empty() {
                         let val_ty = builder.func.dfg.value_type(arg_vals[0]);
                         if val_ty == cranelift::codegen::ir::types::F64 {
                             let bitcasted = builder.ins().bitcast(I64, cranelift::codegen::ir::MemFlags::new(), arg_vals[0]);
@@ -496,15 +500,14 @@ impl CodeGen {
                     };
 
                     if let Some(&func_id) = self.runtime_func_ids.get(fn_name) {
-                        let fref = self.module.declare_func_in_func(func_id, &mut builder.func);
+                        let fref = self.module.declare_func_in_func(func_id, builder.func);
                         let call = builder.ins().call(fref, &final_args);
-                        if let Some(d) = dst {
-                            if let Some(&var) = vars.get(d) {
+                        if let Some(d) = dst
+                            && let Some(&var) = vars.get(d) {
                                 if let Some(result) = builder.inst_results(call).first() {
                                     builder.def_var(var, *result);
                                 }
                             }
-                        }
                     }
                 }
                 Instruction::Call { dst, func, args } => {
@@ -513,25 +516,24 @@ impl CodeGen {
                         .collect();
 
                     if let Some(call_id) = all_func_ids.get(func.0) {
-                        let func_ref = self.module.declare_func_in_func(*call_id, &mut builder.func);
+                        let func_ref = self.module.declare_func_in_func(*call_id, builder.func);
                         let call = builder.ins().call(func_ref, &arg_vals);
 
-                        if let Some(d) = dst {
-                            if let Some(&var) = vars.get(d) {
+                        if let Some(d) = dst
+                            && let Some(&var) = vars.get(d) {
                                 if let Some(result) = builder.inst_results(call).first() {
                                     builder.def_var(var, *result);
                                 }
                             }
-                        }
                     }
                 }
                 Instruction::NewObject { dst, fields } => {
                     let size_val = builder.ins().iconst(I64, 0);
                     if let Some(&func_id) = self.runtime_func_ids.get("xulo_alloc_object") {
-                        let fref = self.module.declare_func_in_func(func_id, &mut builder.func);
+                        let fref = self.module.declare_func_in_func(func_id, builder.func);
                         let call = builder.ins().call(fref, &[size_val]);
-                        if let Some(&var) = vars.get(dst) {
-                            if let Some(result) = builder.inst_results(call).first() {
+                        if let Some(&var) = vars.get(dst)
+                            && let Some(result) = builder.inst_results(call).first() {
                                 builder.def_var(var, *result);
                                 for (field_name, field_val, tag) in fields.iter() {
                                     let obj_val = builder.use_var(var);
@@ -540,34 +542,32 @@ impl CodeGen {
                                     if let Some(&field_ptr) = self.string_field_ptrs.get(field_name) {
                                         let field_v = builder.ins().iconst(I64, field_ptr as i64);
                                         if let Some(&set_id) = self.runtime_func_ids.get("xulo_object_set") {
-                                            let fref2 = self.module.declare_func_in_func(set_id, &mut builder.func);
+                                            let fref2 = self.module.declare_func_in_func(set_id, builder.func);
                                             builder.ins().call(fref2, &[obj_val, field_v, val, tag_val]);
                                         }
                                     }
                                 }
                             }
-                        }
                     }
                 }
                 Instruction::NewArray { dst, elements } => {
                     let size_val = builder.ins().iconst(I64, 0);
                     if let Some(&func_id) = self.runtime_func_ids.get("xulo_alloc_array") {
-                        let fref = self.module.declare_func_in_func(func_id, &mut builder.func);
+                        let fref = self.module.declare_func_in_func(func_id, builder.func);
                         let call = builder.ins().call(fref, &[size_val]);
-                        if let Some(&var) = vars.get(dst) {
-                            if let Some(result) = builder.inst_results(call).first() {
+                        if let Some(&var) = vars.get(dst)
+                            && let Some(result) = builder.inst_results(call).first() {
                                 builder.def_var(var, *result);
                                 for (elem, tag) in elements.iter() {
                                     let arr_val = builder.use_var(var);
                                     let elem_val = resolve_operand(&mut builder, elem, &vars);
                                     let tag_val = builder.ins().iconst(I64, *tag);
                                     if let Some(&push_id) = self.runtime_func_ids.get("xulo_array_push") {
-                                        let fref2 = self.module.declare_func_in_func(push_id, &mut builder.func);
+                                        let fref2 = self.module.declare_func_in_func(push_id, builder.func);
                                         builder.ins().call(fref2, &[arr_val, elem_val, tag_val]);
                                     }
                                 }
                             }
-                        }
                     }
                 }
                 Instruction::GetField { dst, object, field } => {
@@ -575,13 +575,12 @@ impl CodeGen {
                     if let Some(&field_ptr) = self.string_field_ptrs.get(field) {
                         let field_val = builder.ins().iconst(I64, field_ptr as i64);
                         if let Some(&func_id) = self.runtime_func_ids.get("xulo_object_get") {
-                            let fref = self.module.declare_func_in_func(func_id, &mut builder.func);
+                            let fref = self.module.declare_func_in_func(func_id, builder.func);
                             let call = builder.ins().call(fref, &[obj_val, field_val]);
-                            if let Some(&var) = vars.get(dst) {
-                                if let Some(result) = builder.inst_results(call).first() {
+                            if let Some(&var) = vars.get(dst)
+                                && let Some(result) = builder.inst_results(call).first() {
                                     builder.def_var(var, *result);
                                 }
-                            }
                         }
                     }
                 }
@@ -592,7 +591,7 @@ impl CodeGen {
                         let val = resolve_operand(&mut builder, value, &vars);
                         let tag_val = builder.ins().iconst(I64, *tag);
                         if let Some(&func_id) = self.runtime_func_ids.get("xulo_object_set") {
-                            let fref = self.module.declare_func_in_func(func_id, &mut builder.func);
+                            let fref = self.module.declare_func_in_func(func_id, builder.func);
                             builder.ins().call(fref, &[obj_val, field_val, val, tag_val]);
                         }
                     }
@@ -601,13 +600,12 @@ impl CodeGen {
                     let arr_val = resolve_operand(&mut builder, array, &vars);
                     let idx_val = resolve_operand(&mut builder, index, &vars);
                     if let Some(&func_id) = self.runtime_func_ids.get("xulo_array_get") {
-                        let fref = self.module.declare_func_in_func(func_id, &mut builder.func);
+                        let fref = self.module.declare_func_in_func(func_id, builder.func);
                         let call = builder.ins().call(fref, &[arr_val, idx_val]);
-                        if let Some(&var) = vars.get(dst) {
-                            if let Some(result) = builder.inst_results(call).first() {
-                                builder.def_var(var, *result);
-                            }
-                        }
+                        if let Some(&var) = vars.get(dst)
+                            && let Some(result) = builder.inst_results(call).first() {
+                                    builder.def_var(var, *result);
+                                }
                     }
                 }
                 Instruction::SetIndex { array, index, value, tag } => {
@@ -616,7 +614,7 @@ impl CodeGen {
                     let val = resolve_operand(&mut builder, value, &vars);
                     let tag_val = builder.ins().iconst(I64, *tag);
                     if let Some(&func_id) = self.runtime_func_ids.get("xulo_array_set") {
-                        let fref = self.module.declare_func_in_func(func_id, &mut builder.func);
+                        let fref = self.module.declare_func_in_func(func_id, builder.func);
                         builder.ins().call(fref, &[arr_val, idx_val, val, tag_val]);
                     }
                 }
@@ -636,14 +634,13 @@ impl CodeGen {
 
     fn get_or_create_string_ptr(&mut self, s: &str) -> *const u8 {
         // Check if string already exists
-        for (_i, ptr) in self.string_ptrs.iter().enumerate() {
+        for ptr in self.string_ptrs.iter() {
             unsafe {
                 let c_str = std::ffi::CStr::from_ptr(*ptr as *const std::os::raw::c_char);
-                if let Ok(existing) = c_str.to_str() {
-                    if existing == s {
+                if let Ok(existing) = c_str.to_str()
+                    && existing == s {
                         return *ptr;
                     }
-                }
             }
         }
 

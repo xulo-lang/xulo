@@ -8,3 +8,4 @@ crate-type = ["lib"]
 
 [dependencies]
 xulo-ui = { workspace = true }
+xulo-render-core = { workspace = true }

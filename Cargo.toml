@@ -14,7 +14,9 @@ lsp-types = "0.94"
 lsp-server = "0.7"
 serde = "1"
 serde_json = "1"
+thiserror = "2"
 xulo-core = { path = "crates/xulo-core" }
+xulo-render-core = { path = "crates/xulo-render-core" }
 xulo-lexer = { path = "crates/xulo-lexer" }
 xulo-parser = { path = "crates/xulo-parser" }
 xulo-semantic = { path = "crates/xulo-semantic" }
@@ -28,4 +30,5 @@ xulo-ui = { path = "crates/xulo-ui" }
 xulo-ui-wasm = { path = "crates/xulo-ui-wasm" }
 xulo-renderer-terminal = { path = "crates/xulo-renderer-terminal" }
 xulo-renderer-webview = { path = "crates/xulo-renderer-webview" }
+xulo-renderer-skia = { path = "crates/xulo-renderer-skia" }
 xulo-framework = { path = "crates/xulo-framework" }

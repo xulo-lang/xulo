@@ -178,7 +178,7 @@ impl Grid {
         self.set_char(x1, y1, '┘', color);
     }
 
-    fn set_char(&mut self, x: u32, y: u32, ch: char, color: Color) {
+    pub fn set_char(&mut self, x: u32, y: u32, ch: char, color: Color) {
         if !self.in_bounds(x, y) {
             return;
         }
@@ -188,7 +188,15 @@ impl Grid {
         self.fg[row][col] = Some(color);
     }
 
-    fn in_bounds(&self, x: u32, y: u32) -> bool {
+    /// Set the background color of a cell.
+    pub fn set_bg(&mut self, x: u32, y: u32, color: Option<Color>) {
+        if !self.in_bounds(x, y) {
+            return;
+        }
+        self.bg[y as usize][x as usize] = color;
+    }
+
+    pub fn in_bounds(&self, x: u32, y: u32) -> bool {
         x < self.cols as u32 && y < self.rows as u32
     }
 

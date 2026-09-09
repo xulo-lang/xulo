@@ -21,6 +21,9 @@ pub enum Backend {
     /// A native webview window (wry) that rasterizes the layout onto a canvas.
     #[cfg(feature = "webview")]
     Webview,
+    /// Skia CPU rendering backend — renders to RGBA bitmap for webview display.
+    #[cfg(feature = "skia")]
+    Skia,
 }
 
 /// The outcome of executing a program.
@@ -113,6 +116,8 @@ pub fn run(entry: &Path, backend: Backend) -> Result<(), XuloError> {
         Backend::Terminal => run_terminal_interactive(entry),
         #[cfg(feature = "webview")]
         Backend::Webview => run_webview_interactive(entry),
+        #[cfg(feature = "skia")]
+        Backend::Skia => run_skia_interactive(entry),
     }
 }
 
@@ -186,15 +191,15 @@ fn run_terminal_interactive(entry: &Path) -> Result<(), XuloError> {
     Ok(())
 }
 
-/// Interactive webview session: the page instantiates the embedded `xulo-ui`
-/// wasm engine, which lays the widget tree out and draws it to a canvas. Mouse
-/// clicks are hit-tested in wasm; each hit runs the button's `onClick`, the
-/// tree is re-rendered, and `window.redraw(<tree-json>)` redraws it.
+/// Interactive webview session: the page renders the widget tree using a pure
+/// JS Canvas2D renderer (no WASM). Mouse clicks are reported over IPC; each
+/// hit runs the button's `onClick`, the tree is re-rendered, and
+/// `window.redraw(<tree-json>)` redraws it.
 #[cfg(feature = "webview")]
 fn run_webview_interactive(entry: &Path) -> Result<(), XuloError> {
     use std::cell::RefCell;
 
-    use xulo_renderer_webview::{build_html, run, ClickHandler, InputHandler};
+    use xulo_renderer_webview::{build_html_with_context, run, ClickHandler, InputHandler};
     use xulo_ui::Size;
 
     let size = webview_size();
@@ -212,7 +217,82 @@ fn run_webview_interactive(entry: &Path) -> Result<(), XuloError> {
     let tree_json = serde_json::to_string(&ui.borrow().widget)
         .map_err(|e| XuloError::new(xulo_core::error::ErrorKind::Runtime, e.to_string()))?;
     let background = screen_background(&ui.borrow().widget);
-    let html = build_html(&tree_json, size, crate::wasm_assets::WASM_B64, background);
+    let html = build_html_with_context(&tree_json, size, background);
+    let on_click: ClickHandler = {
+        let ui = ui.clone();
+        Box::new(move |index| {
+            let mut ui = ui.borrow_mut();
+            match ui.click_button(index as usize) {
+                Ok(()) => match serde_json::to_string(&ui.widget) {
+                    Ok(json) => Some(format!("window.redraw({json})")),
+                    Err(_) => None,
+                },
+                Err(err) => {
+                    eprintln!("runtime error: {}", err.message);
+                    None
+                }
+            }
+        })
+    };
+    let on_input: InputHandler = {
+        let ui = ui.clone();
+        Box::new(move |index, new_value| {
+            let mut ui = ui.borrow_mut();
+            match ui.input_change(index as usize, new_value) {
+                Ok(()) => match serde_json::to_string(&ui.widget) {
+                    Ok(json) => Some(format!("window.redraw({json})")),
+                    Err(_) => None,
+                },
+                Err(err) => {
+                    eprintln!("runtime error: {}", err.message);
+                    None
+                }
+            }
+        })
+    };
+    run(html, "xulo".into(), size, background, on_click, on_input)
+        .map_err(|e| XuloError::new(xulo_core::error::ErrorKind::Runtime, e))
+}
+
+/// Interactive Skia session: renders the widget tree to a CPU bitmap via
+/// Skia, then displays it in a webview window. Mouse clicks are reported
+/// over IPC; each hit runs the button's `onClick`, the tree is re-rendered,
+/// and the new bitmap is sent to the webview.
+#[cfg(all(feature = "skia", feature = "webview"))]
+fn run_skia_interactive(entry: &Path) -> Result<(), XuloError> {
+    use std::cell::RefCell;
+
+    use xulo_renderer_webview::{run, ClickHandler, InputHandler};
+    use xulo_ui::Size;
+
+    let size = webview_size();
+    let ui = Rc::new(RefCell::new(ReactiveUi::load(
+        entry,
+        Size::default(),
+        None,
+    )?));
+    {
+        let ui = ui.borrow();
+        if !ui.output.is_empty() {
+            println!("{}", ui.output.join("\n"));
+        }
+    }
+
+    let background = {
+        let ui = ui.borrow();
+        screen_background(&ui.widget)
+    };
+
+    // Use the JS Canvas2D renderer for interactive mode — it handles
+    // window.redraw() and window.resize() natively.  Skia is used for
+    // the static `render_to_string` path instead.
+    let html = {
+        let ui = ui.borrow();
+        let tree_json = serde_json::to_string(&ui.widget)
+            .map_err(|e| XuloError::new(xulo_core::error::ErrorKind::Runtime, e.to_string()))?;
+        xulo_renderer_webview::build_html_with_context(&tree_json, size, background)
+    };
+
     let on_click: ClickHandler = {
         let ui = ui.clone();
         Box::new(move |index| {
@@ -270,6 +350,8 @@ fn render_view(view: &Value, backend: Backend) -> Result<String, XuloError> {
         Backend::Terminal => render_terminal(&root),
         #[cfg(feature = "webview")]
         Backend::Webview => webview_html(&root),
+        #[cfg(feature = "skia")]
+        Backend::Skia => skia_html(&root),
     }
 }
 
@@ -278,19 +360,43 @@ fn webview_size() -> xulo_renderer_webview::WebviewSize {
     xulo_renderer_webview::WebviewSize::new(80, 24)
 }
 
-/// Build the webview page HTML for `root`: the embedded `xulo-ui` wasm engine
-/// will lay the tree out and draw it.
+/// Build the webview page HTML for `root` using the pure JS Canvas2D renderer.
 #[cfg(feature = "webview")]
 fn webview_html(root: &xulo_ui::Widget) -> Result<String, XuloError> {
     let size = webview_size();
     let tree_json = serde_json::to_string(root)
         .map_err(|e| XuloError::new(xulo_core::error::ErrorKind::Runtime, e.to_string()))?;
-    Ok(xulo_renderer_webview::build_html(
+    Ok(xulo_renderer_webview::build_html_with_context(
         &tree_json,
         size,
-        crate::wasm_assets::WASM_B64,
         screen_background(root),
     ))
+}
+
+/// Build an HTML page for `root` using Skia CPU rendering.
+#[cfg(feature = "skia")]
+fn skia_html(root: &xulo_ui::Widget) -> Result<String, XuloError> {
+    use xulo_renderer_skia::SkiaBitmapBridge;
+
+    let cols = 80u32;
+    let rows = 24u32;
+    let w = cols * xulo_ui::CELL_W;
+    let h = rows * xulo_ui::CELL_H;
+    let mut bridge = SkiaBitmapBridge::new(w as i32, h as i32)
+        .ok_or_else(|| XuloError::new(xulo_core::error::ErrorKind::Runtime, "failed to create Skia surface"))?;
+
+    {
+        let ctx = bridge.context_mut();
+        crate::render_context_bridge::render_with_context(
+            ctx,
+            root,
+            w as f64,
+            h as f64,
+        );
+    }
+
+    bridge.to_html_page()
+        .ok_or_else(|| XuloError::new(xulo_core::error::ErrorKind::Runtime, "Skia PNG encoding failed"))
 }
 
 /// The `Screen` root's background color, or a neutral dark gray when the tree

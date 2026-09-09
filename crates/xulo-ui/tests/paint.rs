@@ -551,7 +551,7 @@ fn fill_children_produce_paint_ops() {
     let mut ops = Vec::new();
     xulo_ui::layout::paint(&placed, &xulo_ui::Theme::default(), &mut ops);
     let texts: Vec<_> = ops.iter().filter_map(|op| match op {
-        PaintOp::DrawText { text, rect, .. } => Some((*text, rect.clone())),
+        PaintOp::DrawText { text, rect, .. } => Some((*text, *rect)),
         _ => None,
     }).collect();
     assert_eq!(texts.len(), 3);
@@ -580,7 +580,7 @@ fn fill_with_background_produces_fillrect_op() {
     };
     let ops = paint(&root);
     let rects: Vec<_> = ops.iter().filter_map(|op| match op {
-        PaintOp::FillRect { rect, color, .. } => Some((rect.clone(), color.clone())),
+        PaintOp::FillRect { rect, color, .. } => Some((*rect, *color)),
         _ => None,
     }).collect();
     assert_eq!(rects.len(), 1);

@@ -17,14 +17,14 @@ pub struct XuloArray {
 }
 
 thread_local! {
-    static OBJECTS: RefCell<Vec<*mut XuloObject>> = RefCell::new(Vec::new());
-    static ARRAYS: RefCell<Vec<*mut XuloArray>> = RefCell::new(Vec::new());
-    static STRINGS: RefCell<Vec<CString>> = RefCell::new(Vec::new());
-    static FLOATS: RefCell<Vec<i64>> = RefCell::new(Vec::new());
+    static OBJECTS: RefCell<Vec<*mut XuloObject>> = const { RefCell::new(Vec::new()) };
+    static ARRAYS: RefCell<Vec<*mut XuloArray>> = const { RefCell::new(Vec::new()) };
+    static STRINGS: RefCell<Vec<CString>> = const { RefCell::new(Vec::new()) };
+    static FLOATS: RefCell<Vec<i64>> = const { RefCell::new(Vec::new()) };
     /// JIT 嵌入的字符串指针（仅记录地址，不拥有所有权）
-    static JIT_STRINGS: RefCell<Vec<*const c_char>> = RefCell::new(Vec::new());
+    static JIT_STRINGS: RefCell<Vec<*const c_char>> = const { RefCell::new(Vec::new()) };
     /// 输出缓冲区（用于测试捕获 print 输出）
-    static OUTPUT: RefCell<Vec<String>> = RefCell::new(Vec::new());
+    static OUTPUT: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
 }
 
 /// 取走输出缓冲区（测试用）
@@ -75,6 +75,7 @@ pub extern "C" fn xulo_register_string(ptr: *const c_char) {
 
 /// 打印函数
 #[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn xulo_print(ptr: *const c_char) {
     unsafe {
         if ptr.is_null() {
@@ -204,7 +205,7 @@ pub extern "C" fn xulo_detect_tag(value: i64) -> i64 {
     
     // 检查是否是已知浮点数
     found = FLOATS.with(|floats| {
-        floats.borrow().iter().any(|f| *f == value)
+        floats.borrow().contains(&value)
     });
     if found { return 2; }
     
@@ -214,6 +215,7 @@ pub extern "C" fn xulo_detect_tag(value: i64) -> i64 {
 
 /// panic 函数
 #[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn xulo_panic(ptr: *const c_char) {
     unsafe {
         if !ptr.is_null() {
@@ -262,6 +264,7 @@ pub extern "C" fn xulo_alloc_array(size: usize) -> *mut XuloArray {
 
 /// 字符串连接
 #[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn xulo_string_concat(a: *const c_char, b: *const c_char) -> *const c_char {
     unsafe {
         let str_a = if a.is_null() {
@@ -310,6 +313,7 @@ pub extern "C" fn xulo_to_string(value: i64) -> *const c_char {
 /// 数组 push（带类型标签）
 /// tag: 0=string, 1=int, 2=float, 3=array, 4=object, 5=bool, 6=null, -1=自动检测
 #[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn xulo_array_push(arr: *mut XuloArray, value: i64, tag: i64) {
     unsafe {
         if !arr.is_null() {
@@ -322,6 +326,7 @@ pub extern "C" fn xulo_array_push(arr: *mut XuloArray, value: i64, tag: i64) {
 
 /// 数组获取标签
 #[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn xulo_array_get_tag(arr: *const XuloArray, index: usize) -> i64 {
     unsafe {
         if arr.is_null() || index >= (*arr).tags.len() {
@@ -334,6 +339,7 @@ pub extern "C" fn xulo_array_get_tag(arr: *const XuloArray, index: usize) -> i64
 
 /// 数组连接：返回一个新数组，包含 a 的所有元素后跟 b 的所有元素
 #[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn xulo_array_concat(a: *const XuloArray, b: *const XuloArray) -> *mut XuloArray {
     unsafe {
         let len_a = if a.is_null() { 0 } else { (*a).elements.len() };
@@ -361,6 +367,7 @@ pub extern "C" fn xulo_array_concat(a: *const XuloArray, b: *const XuloArray) ->
 
 /// 数组长度
 #[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn xulo_array_len(arr: *const XuloArray) -> usize {
     unsafe {
         if arr.is_null() {
@@ -373,6 +380,7 @@ pub extern "C" fn xulo_array_len(arr: *const XuloArray) -> usize {
 
 /// 数组获取
 #[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn xulo_array_get(arr: *const XuloArray, index: usize) -> i64 {
     unsafe {
         if arr.is_null() || index >= (*arr).elements.len() {
@@ -385,6 +393,7 @@ pub extern "C" fn xulo_array_get(arr: *const XuloArray, index: usize) -> i64 {
 
 /// 数组设置（带类型标签）
 #[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn xulo_array_set(arr: *mut XuloArray, index: usize, value: i64, tag: i64) {
     unsafe {
         if !arr.is_null() && index < (*arr).elements.len() {
@@ -399,6 +408,7 @@ pub extern "C" fn xulo_array_set(arr: *mut XuloArray, index: usize, value: i64, 
 
 /// 对象获取字段
 #[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn xulo_object_get(obj: *const XuloObject, field: *const c_char) -> i64 {
     unsafe {
         if obj.is_null() || field.is_null() {
@@ -420,6 +430,7 @@ pub extern "C" fn xulo_object_get(obj: *const XuloObject, field: *const c_char) 
 
 /// 对象设置字段（带类型标签）
 #[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn xulo_object_set(obj: *mut XuloObject, field: *const c_char, value: i64, tag: i64) {
     unsafe {
         if obj.is_null() || field.is_null() {

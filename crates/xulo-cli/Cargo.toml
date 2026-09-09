@@ -22,5 +22,6 @@ xulo-framework = { workspace = true }
 [features]
 default = []
 webview = ["xulo-framework/webview"]
+skia = ["xulo-framework/skia", "xulo-framework/webview"]
 
 [dev-dependencies]

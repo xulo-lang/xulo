@@ -1,0 +1,12 @@
+[package]
+name = "xulo-parser-pest"
+version.workspace = true
+edition.workspace = true
+description = "pest.rs-based parser for Xulo (POC)"
+
+[dependencies]
+pest = "2.7"
+pest_derive = "2.7"
+xulo-core = { workspace = true }
+
+[dev-dependencies]

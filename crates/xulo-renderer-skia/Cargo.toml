@@ -1,0 +1,23 @@
+[package]
+name = "xulo-renderer-skia"
+version.workspace = true
+edition.workspace = true
+description = "Skia-based rendering backend for Xulo"
+
+[lib]
+crate-type = ["lib"]
+
+[dependencies]
+xulo-render-core = { workspace = true }
+skia-safe = { version = "0.87", features = ["binary-cache", "embed-icudtl"] }
+thiserror = { workspace = true }
+
+[features]
+default = ["cpu"]
+cpu = []
+gl = ["skia-safe/gl"]
+vulkan = ["skia-safe/vulkan"]
+metal = ["skia-safe/metal"]
+textlayout = ["skia-safe/textlayout"]
+
+[dev-dependencies]

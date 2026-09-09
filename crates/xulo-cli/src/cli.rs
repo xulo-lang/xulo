@@ -56,6 +56,9 @@ pub enum RenderBackend {
     /// Render to a native webview window (requires the `webview` feature)
     #[cfg(feature = "webview")]
     Webview,
+    /// Render via Skia CPU backend to a webview window (requires the `skia` feature)
+    #[cfg(feature = "skia")]
+    Skia,
 }
 
 pub fn run() -> ExitCode {
@@ -76,6 +79,8 @@ fn run_command(command: Commands) -> ExitCode {
             Some(RenderBackend::Terminal) => rendered_run(&file, xulo_framework::Backend::Terminal),
             #[cfg(feature = "webview")]
             Some(RenderBackend::Webview) => rendered_run(&file, xulo_framework::Backend::Webview),
+            #[cfg(feature = "skia")]
+            Some(RenderBackend::Skia) => rendered_run(&file, xulo_framework::Backend::Skia),
             None => native_run(&file),
         },
         Commands::Check { file } => check_file(&file),

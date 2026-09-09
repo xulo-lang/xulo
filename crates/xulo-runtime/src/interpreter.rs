@@ -489,16 +489,16 @@ impl Interpreter {
                         Ok(())
                     }
                     crate::value::PromiseState::Rejected(e) => {
-                        return Err(match e {
+                        Err(match e {
                             RunError::Err(e) => e.clone(),
                             RunError::Throw(v) => self.uncaught(v),
-                        });
+                        })
                     }
                     crate::value::PromiseState::Pending => {
-                        return Err(XuloError::new(
+                        Err(XuloError::new(
                             ErrorKind::Runtime,
                             "async `main` did not complete",
-                        ));
+                        ))
                     }
                 }
             }
@@ -2429,7 +2429,7 @@ impl Interpreter {
                 let l = list.borrow();
                 let mut out = Vec::new();
                 for item in l.iter() {
-                    let keep = self.call_value_with_values(&f_val, &[item.clone()])?;
+                    let keep = self.call_value_with_values(&f_val, std::slice::from_ref(item))?;
                     if is_truthy(&keep) {
                         out.push(item.clone());
                     }
@@ -2464,7 +2464,7 @@ impl Interpreter {
                 let f_val = self.eval(&args[0].value, env)?;
                 let l = list.borrow();
                 for item in l.iter() {
-                    let found = self.call_value_with_values(&f_val, &[item.clone()])?;
+                    let found = self.call_value_with_values(&f_val, std::slice::from_ref(item))?;
                     if is_truthy(&found) {
                         return Ok(item.clone());
                     }
@@ -2478,7 +2478,7 @@ impl Interpreter {
                 let f_val = self.eval(&args[0].value, env)?;
                 let l = list.borrow();
                 for item in l.iter() {
-                    let result = self.call_value_with_values(&f_val, &[item.clone()])?;
+                    let result = self.call_value_with_values(&f_val, std::slice::from_ref(item))?;
                     if is_truthy(&result) {
                         return Ok(Value::Boolean(true));
                     }
@@ -2492,7 +2492,7 @@ impl Interpreter {
                 let f_val = self.eval(&args[0].value, env)?;
                 let l = list.borrow();
                 for item in l.iter() {
-                    let result = self.call_value_with_values(&f_val, &[item.clone()])?;
+                    let result = self.call_value_with_values(&f_val, std::slice::from_ref(item))?;
                     if !is_truthy(&result) {
                         return Ok(Value::Boolean(false));
                     }

@@ -9,6 +9,7 @@
 
 pub mod convert;
 pub mod interactive;
+pub mod render_context_bridge;
 pub mod run;
 
 #[cfg(feature = "webview")]
@@ -22,5 +23,6 @@ pub mod wasm_assets {
 
 pub use convert::{widget_from_value, widget_tree_with_callbacks};
 pub use interactive::{FrameBuilder, ReactiveUi};
+pub use render_context_bridge::render_with_context;
 pub use run::{execute, render_to_string, run, Backend, ExecuteResult};
 pub use xulo_ui::collect_button_rects;

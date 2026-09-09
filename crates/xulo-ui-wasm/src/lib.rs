@@ -13,7 +13,6 @@ use xulo_ui::{PaintOp, Rect, Size, Widget};
 
 use xulo_ui::layout::set_scroll_offset;
 
-/// The layout engine to use: 0 = handwritten (default), 1 = taffy.
 thread_local! {
     static ENGINE: RefCell<u8> = const { RefCell::new(0) };
 }

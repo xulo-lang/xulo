@@ -1,7 +1,7 @@
 //! Test: height property handling.
 
 use xulo_ui::{
-    FontMetrics, HandwrittenLayout, LayoutEngine, Size, StyleProps, TaffyLayout, Widget,
+    FontMetrics, LayoutEngine, Size, StyleProps, TaffyLayout, Widget,
 };
 
 struct TestMetrics;

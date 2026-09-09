@@ -524,3 +524,31 @@ fn fill_children_preserved_through_framework() {
     assert!(texts.contains(&"inside fill"), "should have 'inside fill', got: {:?}", texts);
     assert!(texts.contains(&"bottom"), "should have 'bottom', got: {:?}", texts);
 }
+
+#[cfg(feature = "webview")]
+#[test]
+fn dump_webview_html_for_layout_example() {
+    let entry = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent().unwrap()
+        .parent().unwrap()
+        .join("examples/layout.xulo");
+    let result = xulo_framework::execute(&entry).unwrap();
+    let view = result.root_view.unwrap();
+    let interp = std::rc::Rc::new(xulo_runtime::interpreter::Interpreter::new());
+    let (widget, _cbs) = xulo_framework::widget_tree_with_callbacks(&view, &interp);
+    let json = serde_json::to_string(&widget).unwrap();
+    let html = xulo_renderer_webview::build_html_with_context(
+        &json,
+        xulo_renderer_webview::WebviewSize::new(80, 24),
+        (10, 10, 26),
+    );
+    std::fs::write("/tmp/xulo_test.html", &html).unwrap();
+    eprintln!("Widget JSON: {}", &json);
+    eprintln!("HTML length: {} bytes", html.len());
+    // Print the JS function section
+    if let Some(start) = html.find("function render(") {
+        let end = (start + 2000).min(html.len());
+        let chunk = &html[start..end];
+        eprintln!("JS render function:\n{}", chunk);
+    }
+}

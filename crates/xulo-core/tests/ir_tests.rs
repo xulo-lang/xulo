@@ -29,7 +29,7 @@ fn test_ir_value_display() {
     assert_eq!(IrValue::Bool(false).to_string(), "false");
     assert_eq!(IrValue::I64(42).to_string(), "42");
     assert_eq!(IrValue::I64(-1).to_string(), "-1");
-    assert_eq!(IrValue::F64(3.14).to_string(), "3.14");
+    assert_eq!(IrValue::F64(2.5).to_string(), "2.5");
     assert_eq!(IrValue::String(0).to_string(), "str[0]");
     assert_eq!(IrValue::String(5).to_string(), "str[5]");
     assert_eq!(IrValue::Null.to_string(), "null");

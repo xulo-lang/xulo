@@ -1,0 +1,14 @@
+[package]
+name = "xulo-render-core"
+version.workspace = true
+edition.workspace = true
+description = "Core render context traits and platform abstraction for Xulo"
+
+[lib]
+crate-type = ["lib"]
+
+[dependencies]
+thiserror = { workspace = true }
+
+[features]
+default = []
