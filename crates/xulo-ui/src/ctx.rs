@@ -25,7 +25,11 @@ impl UiContext {
     }
 
     /// Create a context with a specific layout engine.
-    pub fn with_engine(surface: Size, metrics: Box<dyn FontMetrics>, engine: Box<dyn LayoutEngine>) -> Self {
+    pub fn with_engine(
+        surface: Size,
+        metrics: Box<dyn FontMetrics>,
+        engine: Box<dyn LayoutEngine>,
+    ) -> Self {
         Self {
             surface,
             metrics,
@@ -41,7 +45,8 @@ impl UiContext {
 
     /// Lay `root` out against the surface and return the placed tree.
     pub fn layout<'a>(&self, root: &'a Widget) -> Placed<'a> {
-        self.engine.layout(root, self.surface, self.metrics.as_ref())
+        self.engine
+            .layout(root, self.surface, self.metrics.as_ref())
     }
 
     /// Lay `root` out and flatten it into paint commands.

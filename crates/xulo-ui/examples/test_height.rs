@@ -1,8 +1,6 @@
 //! Test: height property handling.
 
-use xulo_ui::{
-    FontMetrics, LayoutEngine, Size, StyleProps, TaffyLayout, Widget,
-};
+use xulo_ui::{FontMetrics, LayoutEngine, Size, StyleProps, TaffyLayout, Widget};
 
 struct TestMetrics;
 
@@ -50,7 +48,10 @@ fn main() {
         style: StyleProps::default(),
     };
 
-    let surface = Size { width: 40, height: 20 };
+    let surface = Size {
+        width: 40,
+        height: 20,
+    };
     let metrics = TestMetrics;
 
     println!("=== Test 1: height=full ===");
@@ -71,12 +72,18 @@ fn print_placed(p: &xulo_ui::Placed<'_>, indent: usize) {
         Widget::HStack { .. } => "HStack",
         Widget::Fill { .. } => "Fill",
         Widget::Text { text, .. } => {
-            println!("{}Text \"{}\" @ ({}, {}) {}×{}", pad, text, p.rect.x, p.rect.y, p.rect.width, p.rect.height);
+            println!(
+                "{}Text \"{}\" @ ({}, {}) {}×{}",
+                pad, text, p.rect.x, p.rect.y, p.rect.width, p.rect.height
+            );
             return;
         }
         _ => "Other",
     };
-    println!("{}{} @ ({}, {}) {}×{}", pad, name, p.rect.x, p.rect.y, p.rect.width, p.rect.height);
+    println!(
+        "{}{} @ ({}, {}) {}×{}",
+        pad, name, p.rect.x, p.rect.y, p.rect.width, p.rect.height
+    );
     for child in &p.children {
         print_placed(child, indent + 1);
     }

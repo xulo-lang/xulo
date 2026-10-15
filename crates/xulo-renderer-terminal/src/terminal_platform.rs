@@ -1,7 +1,7 @@
 //! Terminal platform backend — reads input events from stdin.
 
 use xulo_render_core::{
-    PlatformBackend, PlatformEvent, SystemIntegration, WindowConfig, WindowId, PlatformError,
+    PlatformBackend, PlatformError, PlatformEvent, SystemIntegration, WindowConfig, WindowId,
 };
 
 /// Terminal platform backend. Implements [`PlatformBackend`] for stdin-based

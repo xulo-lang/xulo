@@ -154,10 +154,7 @@ fn each_test_gets_a_fresh_interpreter() {
     );
     assert_eq!(
         outcomes,
-        vec![
-            ("first".to_string(), None),
-            ("second".to_string(), None),
-        ]
+        vec![("first".to_string(), None), ("second".to_string(), None),]
     );
 }
 
@@ -175,7 +172,10 @@ fn assert_intrinsic_fails_from_plain_run() {
     xulo_semantic::analyze(&program).unwrap();
     let interp = Interpreter::new();
     let err = interp.run(&program).unwrap_err();
-    assert_eq!(err.message, "uncaught exception: assertion failed at runtime");
+    assert_eq!(
+        err.message,
+        "uncaught exception: assertion failed at runtime"
+    );
 }
 
 #[test]

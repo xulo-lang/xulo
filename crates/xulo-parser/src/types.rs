@@ -156,7 +156,6 @@ fn literal_type(pair: Pair<'_, Rule>) -> R<Type> {
     }
 }
 
-
 pub(crate) fn single(pair: Pair<'_, Rule>) -> Pair<'_, Rule> {
     pair.into_inner()
         .next()

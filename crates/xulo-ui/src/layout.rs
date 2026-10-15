@@ -14,7 +14,9 @@
 //! [`PaintOp`]s using a [`Theme`].
 
 use crate::painting::PaintOp;
-use crate::widgets::{Alignment, Axes, Color, Dimension, FontWeight, Justify, Rect, Size, StyleProps, Widget};
+use crate::widgets::{
+    Alignment, Axes, Color, Dimension, FontWeight, Justify, Rect, Size, StyleProps, Widget,
+};
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -84,7 +86,11 @@ fn resolve_dim(dim: Option<Dimension>, parent_size: u32, fallback: u32) -> u32 {
 /// For containers (VStack, HStack, Screen): resolve height/width with
 /// constraint support. `None` means use the constraint (parent size),
 /// falling back to content size only when no constraint is set.
-fn resolve_container_dim(dim: Option<Dimension>, constraint: Option<u32>, content_size: u32) -> u32 {
+fn resolve_container_dim(
+    dim: Option<Dimension>,
+    constraint: Option<u32>,
+    content_size: u32,
+) -> u32 {
     match dim {
         Some(Dimension::Pixels(n)) => n,
         Some(Dimension::Full) => constraint.unwrap_or(content_size),
@@ -287,24 +293,14 @@ impl Default for Theme {
 /// - [`HandwrittenLayout`] — the original hand-written Flexbox (default).
 /// - [`crate::taffy_layout::TaffyLayout`] — Taffy-backed CSS Flexbox.
 pub trait LayoutEngine {
-    fn layout<'a>(
-        &self,
-        root: &'a Widget,
-        surface: Size,
-        metrics: &dyn FontMetrics,
-    ) -> Placed<'a>;
+    fn layout<'a>(&self, root: &'a Widget, surface: Size, metrics: &dyn FontMetrics) -> Placed<'a>;
 }
 
 /// The original hand-written Flexbox layout engine.
 pub struct HandwrittenLayout;
 
 impl LayoutEngine for HandwrittenLayout {
-    fn layout<'a>(
-        &self,
-        root: &'a Widget,
-        surface: Size,
-        metrics: &dyn FontMetrics,
-    ) -> Placed<'a> {
+    fn layout<'a>(&self, root: &'a Widget, surface: Size, metrics: &dyn FontMetrics) -> Placed<'a> {
         layout(root, surface, metrics)
     }
 }
@@ -329,8 +325,13 @@ pub fn layout<'a>(root: &'a Widget, surface: Size, metrics: &dyn FontMetrics) ->
 /// Flatten a placed tree into paint commands.
 pub fn paint<'a>(placed: &Placed<'a>, theme: &Theme, ops: &mut Vec<PaintOp<'a>>) {
     match placed.widget {
-        Widget::Screen { background, style, .. } => {
-            let bg = style.background_color.or(*background).unwrap_or(theme.background);
+        Widget::Screen {
+            background, style, ..
+        } => {
+            let bg = style
+                .background_color
+                .or(*background)
+                .unwrap_or(theme.background);
             ops.push(PaintOp::Clear { color: bg });
             for child in &placed.children {
                 paint(child, theme, ops);
@@ -571,24 +572,37 @@ fn measure(widget: &Widget, width_bound: u32, metrics: &dyn FontMetrics) -> Size
                 let w = metrics.text_width(text).saturating_add(pad * 2);
                 let h = metrics.line_height().saturating_add(pad * 2);
                 Size {
-                    width: style.width.map(|d| d.resolve(width_bound)).unwrap_or(w).min(width_bound),
+                    width: style
+                        .width
+                        .map(|d| d.resolve(width_bound))
+                        .unwrap_or(w)
+                        .min(width_bound),
                     height: style.height.map(|d| d.resolve(h)).unwrap_or(h),
                 }
             } else {
                 Size {
-                    width: style.width.map(|d| d.resolve(width_bound)).unwrap_or(metrics.text_width(text)).min(width_bound),
-                    height: style.height.map(|d| d.resolve(metrics.line_height())).unwrap_or(metrics.line_height()),
+                    width: style
+                        .width
+                        .map(|d| d.resolve(width_bound))
+                        .unwrap_or(metrics.text_width(text))
+                        .min(width_bound),
+                    height: style
+                        .height
+                        .map(|d| d.resolve(metrics.line_height()))
+                        .unwrap_or(metrics.line_height()),
                 }
             }
         }
         Widget::Button { label, style } => {
             let (px, py) = style.effective_padding();
-            let w = metrics
-                .text_width(label)
-                .saturating_add(px * 2);
+            let w = metrics.text_width(label).saturating_add(px * 2);
             let h = metrics.line_height().saturating_add(py * 2);
             Size {
-                width: style.width.map(|d| d.resolve(width_bound)).unwrap_or(w).min(width_bound),
+                width: style
+                    .width
+                    .map(|d| d.resolve(width_bound))
+                    .unwrap_or(w)
+                    .min(width_bound),
                 height: style.height.map(|d| d.resolve(h)).unwrap_or(h),
             }
         }
@@ -606,11 +620,7 @@ fn measure(widget: &Widget, width_bound: u32, metrics: &dyn FontMetrics) -> Size
             let (px, py) = style.effective_padding();
             let w = input_width
                 .or(style.width.map(|d| d.resolve(width_bound)))
-                .unwrap_or_else(|| {
-                    metrics
-                        .text_width(display)
-                        .saturating_add(px * 2)
-                });
+                .unwrap_or_else(|| metrics.text_width(display).saturating_add(px * 2));
             let h = metrics.line_height().saturating_add(py * 2);
             Size {
                 width: w.min(width_bound),
@@ -619,34 +629,60 @@ fn measure(widget: &Widget, width_bound: u32, metrics: &dyn FontMetrics) -> Size
         }
         Widget::Unknown { kind, style } => {
             let (px, py) = style.effective_padding();
-            let w = metrics
-                .text_width(kind)
-                .saturating_add(px * 2);
+            let w = metrics.text_width(kind).saturating_add(px * 2);
             let h = metrics.line_height().saturating_add(py * 2);
             Size {
-                width: style.width.map(|d| d.resolve(width_bound)).unwrap_or(w).min(width_bound),
+                width: style
+                    .width
+                    .map(|d| d.resolve(width_bound))
+                    .unwrap_or(w)
+                    .min(width_bound),
                 height: style.height.map(|d| d.resolve(h)).unwrap_or(h),
             }
         }
-        Widget::VStack { spacing, children, style } => {
+        Widget::VStack {
+            spacing,
+            children,
+            style,
+        } => {
             let mut size = measure_stack(children, *spacing, width_bound, metrics);
             let pad = style.padding.unwrap_or(0);
             size.width = size.width.saturating_add(pad * 2);
             size.height = size.height.saturating_add(pad * 2);
-            size.width = style.width.map(|d| d.resolve(width_bound)).unwrap_or(size.width).min(width_bound);
-            size.height = style.height.map(|d| d.resolve(size.height)).unwrap_or(size.height);
+            size.width = style
+                .width
+                .map(|d| d.resolve(width_bound))
+                .unwrap_or(size.width)
+                .min(width_bound);
+            size.height = style
+                .height
+                .map(|d| d.resolve(size.height))
+                .unwrap_or(size.height);
             size
         }
-        Widget::Screen { children, style, .. } => {
+        Widget::Screen {
+            children, style, ..
+        } => {
             let mut size = measure_stack(children, 0, width_bound, metrics);
             let pad = style.padding.unwrap_or(0);
             size.width = size.width.saturating_add(pad * 2);
             size.height = size.height.saturating_add(pad * 2);
-            size.width = style.width.map(|d| d.resolve(width_bound)).unwrap_or(size.width).min(width_bound);
-            size.height = style.height.map(|d| d.resolve(size.height)).unwrap_or(size.height);
+            size.width = style
+                .width
+                .map(|d| d.resolve(width_bound))
+                .unwrap_or(size.width)
+                .min(width_bound);
+            size.height = style
+                .height
+                .map(|d| d.resolve(size.height))
+                .unwrap_or(size.height);
             size
         }
-        Widget::HStack { spacing, children, style } => {
+        Widget::HStack {
+            spacing,
+            children,
+            style,
+        } => {
             let mut width = 0u32;
             let mut height = 0u32;
             for (i, child) in children.iter().enumerate() {
@@ -662,7 +698,11 @@ fn measure(widget: &Widget, width_bound: u32, metrics: &dyn FontMetrics) -> Size
             width = width.saturating_add(pad * 2);
             height = height.saturating_add(pad * 2);
             Size {
-                width: style.width.map(|d| d.resolve(width_bound)).unwrap_or(width).min(width_bound),
+                width: style
+                    .width
+                    .map(|d| d.resolve(width_bound))
+                    .unwrap_or(width)
+                    .min(width_bound),
                 height: style.height.map(|d| d.resolve(height)).unwrap_or(height),
             }
         }
@@ -676,7 +716,9 @@ fn measure(widget: &Widget, width_bound: u32, metrics: &dyn FontMetrics) -> Size
                 height: style.height.map(|d| d.resolve(0)).unwrap_or(0),
             }
         }
-        Widget::ScrollView { children, style, .. } => {
+        Widget::ScrollView {
+            children, style, ..
+        } => {
             // ScrollView is like VStack: children measured at full intrinsic
             // height, but the container clips to its viewport (height from
             // style or parent constraint).
@@ -684,8 +726,15 @@ fn measure(widget: &Widget, width_bound: u32, metrics: &dyn FontMetrics) -> Size
             let pad = style.padding.unwrap_or(0);
             size.width = size.width.saturating_add(pad * 2);
             size.height = size.height.saturating_add(pad * 2);
-            size.width = style.width.map(|d| d.resolve(width_bound)).unwrap_or(size.width).min(width_bound);
-            size.height = style.height.map(|d| d.resolve(size.height)).unwrap_or(size.height);
+            size.width = style
+                .width
+                .map(|d| d.resolve(width_bound))
+                .unwrap_or(size.width)
+                .min(width_bound);
+            size.height = style
+                .height
+                .map(|d| d.resolve(size.height))
+                .unwrap_or(size.height);
             size
         }
     }
@@ -734,7 +783,12 @@ fn place<'a>(
                 let text_h = metrics.line_height().saturating_add(pad * 2);
                 let w = resolve_dim(style.width, width, text_w);
                 let h = resolve_dim(style.height, text_h, text_h);
-                let rect = Rect::new(x + margin, y + margin, w.min(width.saturating_sub(margin * 2)), h);
+                let rect = Rect::new(
+                    x + margin,
+                    y + margin,
+                    w.min(width.saturating_sub(margin * 2)),
+                    h,
+                );
                 Placed {
                     widget,
                     rect: apply_size_constraints(rect, style),
@@ -746,7 +800,12 @@ fn place<'a>(
                 let text_h = metrics.line_height();
                 let w = resolve_dim(style.width, width, text_w);
                 let h = resolve_dim(style.height, text_h, text_h);
-                let rect = Rect::new(x + margin, y + margin, w.min(width.saturating_sub(margin * 2)), h);
+                let rect = Rect::new(
+                    x + margin,
+                    y + margin,
+                    w.min(width.saturating_sub(margin * 2)),
+                    h,
+                );
                 Placed {
                     widget,
                     rect: apply_size_constraints(rect, style),
@@ -758,13 +817,16 @@ fn place<'a>(
         Widget::Button { label, style } => {
             let margin = style.margin.unwrap_or(0);
             let (px, py) = style.effective_padding();
-            let w = metrics
-                .text_width(label)
-                .saturating_add(px * 2);
+            let w = metrics.text_width(label).saturating_add(px * 2);
             let h = metrics.line_height().saturating_add(py * 2);
             let w = resolve_dim(style.width, width, w);
             let h = resolve_dim(style.height, h, h);
-            let rect = Rect::new(x + margin, y + margin, w.min(width.saturating_sub(margin * 2)), h);
+            let rect = Rect::new(
+                x + margin,
+                y + margin,
+                w.min(width.saturating_sub(margin * 2)),
+                h,
+            );
             Placed {
                 widget,
                 rect: apply_size_constraints(rect, style),
@@ -787,13 +849,14 @@ fn place<'a>(
             let (px, py) = style.effective_padding();
             let w = input_width
                 .or(style.width.map(|d| d.resolve(width)))
-                .unwrap_or_else(|| {
-                    metrics
-                        .text_width(display)
-                        .saturating_add(px * 2)
-                });
+                .unwrap_or_else(|| metrics.text_width(display).saturating_add(px * 2));
             let h = metrics.line_height().saturating_add(py * 2);
-            let rect = Rect::new(x + margin, y + margin, w.min(width.saturating_sub(margin * 2)), resolve_dim(style.height, h, h));
+            let rect = Rect::new(
+                x + margin,
+                y + margin,
+                w.min(width.saturating_sub(margin * 2)),
+                resolve_dim(style.height, h, h),
+            );
             Placed {
                 widget,
                 rect: apply_size_constraints(rect, style),
@@ -804,13 +867,16 @@ fn place<'a>(
         Widget::Unknown { kind, style } => {
             let margin = style.margin.unwrap_or(0);
             let (px, py) = style.effective_padding();
-            let w = metrics
-                .text_width(kind)
-                .saturating_add(px * 2);
+            let w = metrics.text_width(kind).saturating_add(px * 2);
             let h = metrics.line_height().saturating_add(py * 2);
             let w = resolve_dim(style.width, width, w);
             let h = resolve_dim(style.height, h, h);
-            let rect = Rect::new(x + margin, y + margin, w.min(width.saturating_sub(margin * 2)), h);
+            let rect = Rect::new(
+                x + margin,
+                y + margin,
+                w.min(width.saturating_sub(margin * 2)),
+                h,
+            );
             Placed {
                 widget,
                 rect: apply_size_constraints(rect, style),
@@ -818,7 +884,11 @@ fn place<'a>(
                 scroll_index: None,
             }
         }
-        Widget::VStack { spacing, children, style } => {
+        Widget::VStack {
+            spacing,
+            children,
+            style,
+        } => {
             let margin = style.margin.unwrap_or(0);
             let pad = style.padding.unwrap_or(0);
             let inner_x = x + margin;
@@ -846,11 +916,8 @@ fn place<'a>(
 
             // Container height: explicit style wins; otherwise use Screen's
             // constraint, falling back to intrinsic content height.
-            let container_h = resolve_container_dim(
-                style.height,
-                constraints.max_height,
-                total_content_h,
-            );
+            let container_h =
+                resolve_container_dim(style.height, constraints.max_height, total_content_h);
             let available_h = container_h.max(total_content_h);
             let free_space = available_h.saturating_sub(total_content_h);
 
@@ -861,14 +928,17 @@ fn place<'a>(
                 let (o, g) = (0u32, 0u32);
                 let remaining = free_space;
                 // Distribute proportionally by flex_grow.
-                let heights: Vec<u32> = children.iter().map(|child| {
-                    let fg = widget_flex_grow(child);
-                    if fg > 0.0 && total_flex_grow > 0.0 && remaining > 0 {
-                        (remaining as f32 * fg / total_flex_grow).floor().max(1.0) as u32
-                    } else {
-                        0
-                    }
-                }).collect();
+                let heights: Vec<u32> = children
+                    .iter()
+                    .map(|child| {
+                        let fg = widget_flex_grow(child);
+                        if fg > 0.0 && total_flex_grow > 0.0 && remaining > 0 {
+                            (remaining as f32 * fg / total_flex_grow).floor().max(1.0) as u32
+                        } else {
+                            0
+                        }
+                    })
+                    .collect();
                 (o, g, heights)
             } else {
                 let (o, g) = justify_offsets(style.justify, free_space, children.len() as u32);
@@ -896,7 +966,13 @@ fn place<'a>(
                 } else {
                     Constraints::width(inner_width)
                 };
-                let mut child_placed = place(child, (inner_x + pad, cursor_y), inner_width, metrics, child_constraints);
+                let mut child_placed = place(
+                    child,
+                    (inner_x + pad, cursor_y),
+                    inner_width,
+                    metrics,
+                    child_constraints,
+                );
                 // Flex children get the allocated height.
                 if is_flex {
                     child_placed.rect.height = flex_heights[i];
@@ -906,15 +982,16 @@ fn place<'a>(
                     child_placed.rect.width = inner_width;
                 }
                 let (child_x, child_w) = match style.alignment {
-                    Some(Alignment::Stretch) => {
-                        (inner_x + pad, inner_width)
-                    }
+                    Some(Alignment::Stretch) => (inner_x + pad, inner_width),
                     Some(Alignment::Center) => {
-                        let cx = inner_x + pad + (inner_width.saturating_sub(child_placed.rect.width)) / 2;
+                        let cx = inner_x
+                            + pad
+                            + (inner_width.saturating_sub(child_placed.rect.width)) / 2;
                         (cx, child_placed.rect.width)
                     }
                     Some(Alignment::End) => {
-                        let ex = inner_x + pad + inner_width.saturating_sub(child_placed.rect.width);
+                        let ex =
+                            inner_x + pad + inner_width.saturating_sub(child_placed.rect.width);
                         (ex, child_placed.rect.width)
                     }
                     _ => (inner_x + pad, child_placed.rect.width),
@@ -932,7 +1009,12 @@ fn place<'a>(
                 max_bottom + pad - y - margin
             };
             let total_w = resolve_dim(style.width, width, width);
-            let rect = Rect::new(x + margin, y + margin, total_w.saturating_sub(margin * 2), total_h);
+            let rect = Rect::new(
+                x + margin,
+                y + margin,
+                total_w.saturating_sub(margin * 2),
+                total_h,
+            );
             Placed {
                 widget,
                 rect: apply_size_constraints(rect, style),
@@ -940,7 +1022,9 @@ fn place<'a>(
                 scroll_index: None,
             }
         }
-        Widget::Screen { children, style, .. } => {
+        Widget::Screen {
+            children, style, ..
+        } => {
             let margin = style.margin.unwrap_or(0);
             let pad = style.padding.unwrap_or(0);
             let inner_x = x + margin + pad;
@@ -950,14 +1034,25 @@ fn place<'a>(
             let mut max_bottom = inner_y;
             let mut placed_children = Vec::with_capacity(children.len());
             for child in children.iter() {
-                let child_placed = place(child, (inner_x, cursor_y), inner_width, metrics, constraints);
+                let child_placed = place(
+                    child,
+                    (inner_x, cursor_y),
+                    inner_width,
+                    metrics,
+                    constraints,
+                );
                 cursor_y = cursor_y.saturating_add(child_placed.rect.height);
                 max_bottom = max_bottom.max(cursor_y);
                 placed_children.push(child_placed);
             }
             let total_h = max_bottom + pad - y - margin;
             let total_w = resolve_dim(style.width, width, width);
-            let rect = Rect::new(x + margin, y + margin, total_w.saturating_sub(margin * 2), total_h);
+            let rect = Rect::new(
+                x + margin,
+                y + margin,
+                total_w.saturating_sub(margin * 2),
+                total_h,
+            );
             Placed {
                 widget,
                 rect: apply_size_constraints(rect, style),
@@ -965,7 +1060,11 @@ fn place<'a>(
                 scroll_index: None,
             }
         }
-        Widget::HStack { spacing, children, style } => {
+        Widget::HStack {
+            spacing,
+            children,
+            style,
+        } => {
             let margin = style.margin.unwrap_or(0);
             let pad = style.padding.unwrap_or(0);
             let inner_x = x + margin + pad;
@@ -1005,16 +1104,21 @@ fn place<'a>(
                 // — all free space goes to flex children.
                 let (o, g) = (0u32, 0u32);
                 let remaining = free_space;
-                let widths: Vec<u32> = children.iter().map(|child| {
-                    let fg = widget_flex_grow(child);
-                    let is_flex_child = fg > 0.0 || is_flex_text(child);
-                    let effective_fg = if fg > 0.0 { fg } else { 1.0 };
-                    if is_flex_child && total_flex_grow > 0.0 && remaining > 0 {
-                        (remaining as f32 * effective_fg / total_flex_grow).floor().max(1.0) as u32
-                    } else {
-                        0
-                    }
-                }).collect();
+                let widths: Vec<u32> = children
+                    .iter()
+                    .map(|child| {
+                        let fg = widget_flex_grow(child);
+                        let is_flex_child = fg > 0.0 || is_flex_text(child);
+                        let effective_fg = if fg > 0.0 { fg } else { 1.0 };
+                        if is_flex_child && total_flex_grow > 0.0 && remaining > 0 {
+                            (remaining as f32 * effective_fg / total_flex_grow)
+                                .floor()
+                                .max(1.0) as u32
+                        } else {
+                            0
+                        }
+                    })
+                    .collect();
                 (o, g, widths)
             } else {
                 let (o, g) = justify_offsets(style.justify, free_space, children.len() as u32);
@@ -1022,11 +1126,8 @@ fn place<'a>(
             };
 
             // Pass 2: place children sequentially
-            let container_h = resolve_container_dim(
-                style.height,
-                constraints.max_height,
-                max_child_h,
-            );
+            let container_h =
+                resolve_container_dim(style.height, constraints.max_height, max_child_h);
             let mut cursor_x = inner_x + offset;
             let mut max_right = inner_x + offset;
             let mut placed_children = Vec::with_capacity(children.len());
@@ -1058,8 +1159,13 @@ fn place<'a>(
                 } else {
                     Constraints::width(child_width)
                 };
-                let (mut child_placed, child_size) =
-                    place_sized(child, (cursor_x, inner_y), child_width, metrics, child_constraints);
+                let (mut child_placed, child_size) = place_sized(
+                    child,
+                    (cursor_x, inner_y),
+                    child_width,
+                    metrics,
+                    child_constraints,
+                );
                 // Override flex children width and height
                 if is_flex {
                     child_placed.rect.width = flex_widths[i];
@@ -1081,8 +1187,17 @@ fn place<'a>(
                 placed_children.push(child_placed);
             }
             let total_w = resolve_dim(style.width, width, max_right - x + pad + margin);
-            let total_h = resolve_dim(style.height, container_h, max_child_h.saturating_add(pad * 2));
-            let rect = Rect::new(x + margin, y + margin, total_w.saturating_sub(margin * 2), total_h);
+            let total_h = resolve_dim(
+                style.height,
+                container_h,
+                max_child_h.saturating_add(pad * 2),
+            );
+            let rect = Rect::new(
+                x + margin,
+                y + margin,
+                total_w.saturating_sub(margin * 2),
+                total_h,
+            );
             Placed {
                 widget,
                 rect: apply_size_constraints(rect, style),
@@ -1103,14 +1218,29 @@ fn place<'a>(
             let mut max_bottom = inner_y;
             let mut placed_children = Vec::with_capacity(children.len());
             for child in children.iter() {
-                let child_placed = place(child, (inner_x, cursor_y), inner_width, metrics, constraints);
+                let child_placed = place(
+                    child,
+                    (inner_x, cursor_y),
+                    inner_width,
+                    metrics,
+                    constraints,
+                );
                 cursor_y = cursor_y.saturating_add(child_placed.rect.height);
                 max_bottom = max_bottom.max(cursor_y);
                 placed_children.push(child_placed);
             }
-            let total_h = resolve_dim(style.height, constraints.max_height.unwrap_or(0), max_bottom + pad - y - margin);
+            let total_h = resolve_dim(
+                style.height,
+                constraints.max_height.unwrap_or(0),
+                max_bottom + pad - y - margin,
+            );
             let total_w = resolve_dim(style.width, width, width);
-            let rect = Rect::new(x + margin, y + margin, total_w.saturating_sub(margin * 2), total_h);
+            let rect = Rect::new(
+                x + margin,
+                y + margin,
+                total_w.saturating_sub(margin * 2),
+                total_h,
+            );
             Placed {
                 widget,
                 rect: apply_size_constraints(rect, style),
@@ -1118,7 +1248,9 @@ fn place<'a>(
                 scroll_index: None,
             }
         }
-        Widget::ScrollView { children, style, .. } => {
+        Widget::ScrollView {
+            children, style, ..
+        } => {
             let margin = style.margin.unwrap_or(0);
             let pad = style.padding.unwrap_or(0);
             let inner_x = x + margin;
@@ -1136,25 +1268,37 @@ fn place<'a>(
             }
 
             // Container height: explicit style wins; otherwise content size.
-            let container_h = resolve_container_dim(
-                style.height,
-                constraints.max_height,
-                total_content_h,
-            );
+            let container_h =
+                resolve_container_dim(style.height, constraints.max_height, total_content_h);
 
             // Place children sequentially at full intrinsic positions (not
             // clipped — clipping happens at paint time via ScrollStart).
             let mut cursor_y = inner_y + pad;
             let mut placed_children = Vec::with_capacity(children.len());
             for child in children.iter() {
-                let child_placed = place(child, (inner_x + pad, cursor_y), inner_width, metrics, Constraints::width(inner_width));
+                let child_placed = place(
+                    child,
+                    (inner_x + pad, cursor_y),
+                    inner_width,
+                    metrics,
+                    Constraints::width(inner_width),
+                );
                 cursor_y = cursor_y.saturating_add(child_placed.rect.height);
                 placed_children.push(child_placed);
             }
 
-            let total_h = resolve_dim(style.height, container_h, total_content_h.saturating_add(pad * 2));
+            let total_h = resolve_dim(
+                style.height,
+                container_h,
+                total_content_h.saturating_add(pad * 2),
+            );
             let total_w = resolve_dim(style.width, width, width);
-            let rect = Rect::new(x + margin, y + margin, total_w.saturating_sub(margin * 2), total_h);
+            let rect = Rect::new(
+                x + margin,
+                y + margin,
+                total_w.saturating_sub(margin * 2),
+                total_h,
+            );
 
             let scroll_idx = next_scroll_index();
             Placed {

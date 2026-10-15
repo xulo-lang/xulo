@@ -101,9 +101,7 @@ fn tokenizes_reserved_words() {
     let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
     assert_eq!(
         kinds,
-        vec![
-            Reserved, Reserved, Reserved, Reserved, Reserved, Ident, EOF
-        ]
+        vec![Reserved, Reserved, Reserved, Reserved, Reserved, Ident, EOF]
     );
     assert_eq!(tokens[0].text, "class");
 }

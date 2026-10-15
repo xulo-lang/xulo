@@ -128,7 +128,9 @@ fn format_value(value: i64, tag: i64) -> String {
                 } else {
                     let elements = &(*arr).elements;
                     let tags = &(*arr).tags;
-                    let strs: Vec<String> = elements.iter().enumerate()
+                    let strs: Vec<String> = elements
+                        .iter()
+                        .enumerate()
                         .map(|(i, v)| {
                             let t = if i < tags.len() { tags[i] } else { 1 };
                             format_value(*v, t)
@@ -146,9 +148,15 @@ fn format_value(value: i64, tag: i64) -> String {
                 } else {
                     let fields = &(*obj).fields;
                     let field_tags = &(*obj).field_tags;
-                    let strs: Vec<String> = fields.iter().enumerate()
+                    let strs: Vec<String> = fields
+                        .iter()
+                        .enumerate()
                         .map(|(i, (k, v))| {
-                            let t = if i < field_tags.len() { field_tags[i] } else { 0 };
+                            let t = if i < field_tags.len() {
+                                field_tags[i]
+                            } else {
+                                0
+                            };
                             format!("{}: {}", k, format_value(*v, t))
                         })
                         .collect();
@@ -166,7 +174,11 @@ fn format_value(value: i64, tag: i64) -> String {
 /// tag: 0=string, 1=int, 2=float, 3=array, 4=object, 5=bool, 6=null, -1=自动检测
 #[unsafe(no_mangle)]
 pub extern "C" fn xulo_print_value(value: i64, tag: i64) {
-    let tag = if tag == -1 { xulo_detect_tag(value) } else { tag };
+    let tag = if tag == -1 {
+        xulo_detect_tag(value)
+    } else {
+        tag
+    };
     let line = format_value(value, tag);
     push_output(line.clone());
     println!("{}", line);
@@ -178,37 +190,52 @@ pub extern "C" fn xulo_print_value(value: i64, tag: i64) {
 #[unsafe(no_mangle)]
 pub extern "C" fn xulo_detect_tag(value: i64) -> i64 {
     let ptr = value as *const c_char;
-    
+
     // 检查是否是已知字符串（运行时创建）
     let mut found = STRINGS.with(|strings| {
-        strings.borrow().iter().any(|s| std::ptr::eq(s.as_ptr(), ptr))
+        strings
+            .borrow()
+            .iter()
+            .any(|s| std::ptr::eq(s.as_ptr(), ptr))
     });
-    if found { return 0; }
-    
+    if found {
+        return 0;
+    }
+
     // 检查是否是已知字符串（JIT 嵌入）
-    found = JIT_STRINGS.with(|strings| {
-        strings.borrow().iter().any(|s| std::ptr::eq(*s, ptr))
-    });
-    if found { return 0; }
-    
+    found = JIT_STRINGS.with(|strings| strings.borrow().iter().any(|s| std::ptr::eq(*s, ptr)));
+    if found {
+        return 0;
+    }
+
     // 检查是否是已知数组
     found = ARRAYS.with(|arrays| {
-        arrays.borrow().iter().any(|a| std::ptr::eq(*a as *const c_char, ptr))
+        arrays
+            .borrow()
+            .iter()
+            .any(|a| std::ptr::eq(*a as *const c_char, ptr))
     });
-    if found { return 3; }
-    
+    if found {
+        return 3;
+    }
+
     // 检查是否是已知对象
     found = OBJECTS.with(|objects| {
-        objects.borrow().iter().any(|o| std::ptr::eq(*o as *const c_char, ptr))
+        objects
+            .borrow()
+            .iter()
+            .any(|o| std::ptr::eq(*o as *const c_char, ptr))
     });
-    if found { return 4; }
-    
+    if found {
+        return 4;
+    }
+
     // 检查是否是已知浮点数
-    found = FLOATS.with(|floats| {
-        floats.borrow().contains(&value)
-    });
-    if found { return 2; }
-    
+    found = FLOATS.with(|floats| floats.borrow().contains(&value));
+    if found {
+        return 2;
+    }
+
     // 默认为整数
     1
 }
@@ -238,11 +265,11 @@ pub extern "C" fn xulo_alloc_object(size: usize) -> *mut XuloObject {
         field_tags: Vec::with_capacity(size),
     });
     let ptr = Box::into_raw(obj);
-    
+
     OBJECTS.with(|objects| {
         objects.borrow_mut().push(ptr);
     });
-    
+
     ptr
 }
 
@@ -254,11 +281,11 @@ pub extern "C" fn xulo_alloc_array(size: usize) -> *mut XuloArray {
         tags: Vec::with_capacity(size),
     });
     let ptr = Box::into_raw(arr);
-    
+
     ARRAYS.with(|arrays| {
         arrays.borrow_mut().push(ptr);
     });
-    
+
     ptr
 }
 
@@ -272,21 +299,21 @@ pub extern "C" fn xulo_string_concat(a: *const c_char, b: *const c_char) -> *con
         } else {
             CStr::from_ptr(a).to_str().unwrap_or("")
         };
-        
+
         let str_b = if b.is_null() {
             ""
         } else {
             CStr::from_ptr(b).to_str().unwrap_or("")
         };
-        
+
         let result = format!("{}{}", str_a, str_b);
         let c_str = CString::new(result).unwrap();
         let ptr = c_str.as_ptr();
-        
+
         STRINGS.with(|strings| {
             strings.borrow_mut().push(c_str);
         });
-        
+
         ptr
     }
 }
@@ -299,14 +326,14 @@ pub extern "C" fn xulo_to_string(value: i64) -> *const c_char {
     } else {
         value.to_string()
     };
-    
+
     let c_str = CString::new(result).unwrap();
     let ptr = c_str.as_ptr();
-    
+
     STRINGS.with(|strings| {
         strings.borrow_mut().push(c_str);
     });
-    
+
     ptr
 }
 
@@ -317,7 +344,11 @@ pub extern "C" fn xulo_to_string(value: i64) -> *const c_char {
 pub extern "C" fn xulo_array_push(arr: *mut XuloArray, value: i64, tag: i64) {
     unsafe {
         if !arr.is_null() {
-            let tag = if tag == -1 { xulo_detect_tag(value) } else { tag };
+            let tag = if tag == -1 {
+                xulo_detect_tag(value)
+            } else {
+                tag
+            };
             (*arr).elements.push(value);
             (*arr).tags.push(tag);
         }
@@ -349,14 +380,22 @@ pub extern "C" fn xulo_array_concat(a: *const XuloArray, b: *const XuloArray) ->
             if !a.is_null() {
                 for i in 0..len_a {
                     let val = (&(*a).elements)[i];
-                    let tag = if i < (*a).tags.len() { (&(*a).tags)[i] } else { 1 };
+                    let tag = if i < (*a).tags.len() {
+                        (&(*a).tags)[i]
+                    } else {
+                        1
+                    };
                     xulo_array_push(result, val, tag);
                 }
             }
             if !b.is_null() {
                 for i in 0..len_b {
                     let val = (&(*b).elements)[i];
-                    let tag = if i < (*b).tags.len() { (&(*b).tags)[i] } else { 1 };
+                    let tag = if i < (*b).tags.len() {
+                        (&(*b).tags)[i]
+                    } else {
+                        1
+                    };
                     xulo_array_push(result, val, tag);
                 }
             }
@@ -397,7 +436,11 @@ pub extern "C" fn xulo_array_get(arr: *const XuloArray, index: usize) -> i64 {
 pub extern "C" fn xulo_array_set(arr: *mut XuloArray, index: usize, value: i64, tag: i64) {
     unsafe {
         if !arr.is_null() && index < (*arr).elements.len() {
-            let tag = if tag == -1 { xulo_detect_tag(value) } else { tag };
+            let tag = if tag == -1 {
+                xulo_detect_tag(value)
+            } else {
+                tag
+            };
             (&mut (*arr).elements)[index] = value;
             if index < (*arr).tags.len() {
                 (&mut (*arr).tags)[index] = tag;
@@ -414,13 +457,14 @@ pub extern "C" fn xulo_object_get(obj: *const XuloObject, field: *const c_char) 
         if obj.is_null() || field.is_null() {
             return 0;
         }
-        
+
         let field_name = match CStr::from_ptr(field).to_str() {
             Ok(s) => s,
             Err(_) => return 0,
         };
-        
-        (*obj).fields
+
+        (*obj)
+            .fields
             .iter()
             .find(|(name, _)| name == field_name)
             .map(|(_, value)| *value)
@@ -431,20 +475,33 @@ pub extern "C" fn xulo_object_get(obj: *const XuloObject, field: *const c_char) 
 /// 对象设置字段（带类型标签）
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn xulo_object_set(obj: *mut XuloObject, field: *const c_char, value: i64, tag: i64) {
+pub extern "C" fn xulo_object_set(
+    obj: *mut XuloObject,
+    field: *const c_char,
+    value: i64,
+    tag: i64,
+) {
     unsafe {
         if obj.is_null() || field.is_null() {
             return;
         }
-        
+
         let field_name = match CStr::from_ptr(field).to_str() {
             Ok(s) => s.to_string(),
             Err(_) => return,
         };
-        
-        let tag = if tag == -1 { xulo_detect_tag(value) } else { tag };
+
+        let tag = if tag == -1 {
+            xulo_detect_tag(value)
+        } else {
+            tag
+        };
         let obj_mut = &mut *obj;
-        if let Some(idx) = obj_mut.fields.iter().position(|(name, _)| name == &field_name) {
+        if let Some(idx) = obj_mut
+            .fields
+            .iter()
+            .position(|(name, _)| name == &field_name)
+        {
             obj_mut.fields[idx].1 = value;
             if idx < obj_mut.field_tags.len() {
                 obj_mut.field_tags[idx] = tag;
@@ -466,7 +523,7 @@ pub extern "C" fn xulo_cleanup() {
             }
         }
     });
-    
+
     ARRAYS.with(|arrays| {
         for ptr in arrays.borrow_mut().drain(..) {
             unsafe {
@@ -474,7 +531,7 @@ pub extern "C" fn xulo_cleanup() {
             }
         }
     });
-    
+
     STRINGS.with(|strings| {
         strings.borrow_mut().clear();
     });

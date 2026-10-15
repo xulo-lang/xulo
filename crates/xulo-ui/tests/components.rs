@@ -1,50 +1,66 @@
 //! Component conversion tests: verify `from_props` produces the expected
 //! `Widget` values for all built-in components.
 
-use xulo_ui::{from_props, Props, Widget, Color, Dimension, StyleProps};
+use xulo_ui::{Color, Dimension, Props, StyleProps, Widget, from_props};
 
 #[test]
 fn text_from_string_prop() {
     let props = Props::new().string("0", "hello");
     let widget = from_props("Text", &props, &mut Vec::new());
-    assert_eq!(widget, Widget::Text { text: "hello".into(), color: None, style: StyleProps::default() });
+    assert_eq!(
+        widget,
+        Widget::Text {
+            text: "hello".into(),
+            color: None,
+            style: StyleProps::default()
+        }
+    );
 }
 
 #[test]
 fn text_with_explicit_name() {
     let props = Props::new().string("text", "world");
     let widget = from_props("Text", &props, &mut Vec::new());
-    assert_eq!(widget, Widget::Text { text: "world".into(), color: None, style: StyleProps::default() });
+    assert_eq!(
+        widget,
+        Widget::Text {
+            text: "world".into(),
+            color: None,
+            style: StyleProps::default()
+        }
+    );
 }
 
 #[test]
 fn text_with_color() {
-    let props = Props::new()
-        .string("0", "error")
-        .string("color", "#ff0000");
+    let props = Props::new().string("0", "error").string("color", "#ff0000");
     let widget = from_props("Text", &props, &mut Vec::new());
     assert_eq!(
         widget,
         Widget::Text {
             text: "error".into(),
             color: Some(Color { r: 255, g: 0, b: 0 }),
-            style: StyleProps { color: Some(Color { r: 255, g: 0, b: 0 }), ..StyleProps::default() },
+            style: StyleProps {
+                color: Some(Color { r: 255, g: 0, b: 0 }),
+                ..StyleProps::default()
+            },
         }
     );
 }
 
 #[test]
 fn text_with_short_hex_color() {
-    let props = Props::new()
-        .string("0", "red")
-        .string("color", "#f00");
+    let props = Props::new().string("0", "red").string("color", "#f00");
     let widget = from_props("Text", &props, &mut Vec::new());
     assert_eq!(
         widget,
         Widget::Text {
             text: "red".into(),
             color: Some(Color { r: 255, g: 0, b: 0 }),
-            style: StyleProps { color: Some(Color { r: 255, g: 0, b: 0 }), ..StyleProps::default() },
+            style: StyleProps {
+                color: Some(Color { r: 255, g: 0, b: 0 }),
+                ..StyleProps::default()
+            },
         }
     );
 }
@@ -53,21 +69,40 @@ fn text_with_short_hex_color() {
 fn text_empty_defaults() {
     let props = Props::new();
     let widget = from_props("Text", &props, &mut Vec::new());
-    assert_eq!(widget, Widget::Text { text: String::new(), color: None, style: StyleProps::default() });
+    assert_eq!(
+        widget,
+        Widget::Text {
+            text: String::new(),
+            color: None,
+            style: StyleProps::default()
+        }
+    );
 }
 
 #[test]
 fn button_with_label() {
     let props = Props::new().string("0", "OK");
     let widget = from_props("Button", &props, &mut Vec::new());
-    assert_eq!(widget, Widget::Button { label: "OK".into(), style: StyleProps::default() });
+    assert_eq!(
+        widget,
+        Widget::Button {
+            label: "OK".into(),
+            style: StyleProps::default()
+        }
+    );
 }
 
 #[test]
 fn button_empty_label() {
     let props = Props::new();
     let widget = from_props("Button", &props, &mut Vec::new());
-    assert_eq!(widget, Widget::Button { label: String::new(), style: StyleProps::default() });
+    assert_eq!(
+        widget,
+        Widget::Button {
+            label: String::new(),
+            style: StyleProps::default()
+        }
+    );
 }
 
 #[test]
@@ -83,7 +118,10 @@ fn input_basic() {
             value: "hello".into(),
             width: Some(200),
             placeholder: "Enter text".into(),
-            style: StyleProps { width: Some(Dimension::Pixels(200)), ..StyleProps::default() },
+            style: StyleProps {
+                width: Some(Dimension::Pixels(200)),
+                ..StyleProps::default()
+            },
         }
     );
 }
@@ -122,20 +160,34 @@ fn input_empty_defaults() {
 
 #[test]
 fn vstack_with_spacing() {
-    let props = Props::new()
-        .number("spacing", 2.0)
-        .children(vec![
-            Widget::Text { text: "a".into(), color: None, style: StyleProps::default() },
-            Widget::Text { text: "b".into(), color: None, style: StyleProps::default() },
-        ]);
+    let props = Props::new().number("spacing", 2.0).children(vec![
+        Widget::Text {
+            text: "a".into(),
+            color: None,
+            style: StyleProps::default(),
+        },
+        Widget::Text {
+            text: "b".into(),
+            color: None,
+            style: StyleProps::default(),
+        },
+    ]);
     let widget = from_props("VStack", &props, &mut Vec::new());
     assert_eq!(
         widget,
         Widget::VStack {
             spacing: 2,
             children: vec![
-                Widget::Text { text: "a".into(), color: None, style: StyleProps::default() },
-                Widget::Text { text: "b".into(), color: None, style: StyleProps::default() },
+                Widget::Text {
+                    text: "a".into(),
+                    color: None,
+                    style: StyleProps::default()
+                },
+                Widget::Text {
+                    text: "b".into(),
+                    color: None,
+                    style: StyleProps::default()
+                },
             ],
             style: StyleProps::default(),
         }
@@ -144,14 +196,21 @@ fn vstack_with_spacing() {
 
 #[test]
 fn vstack_no_spacing() {
-    let props = Props::new()
-        .children(vec![Widget::Text { text: "x".into(), color: None, style: StyleProps::default() }]);
+    let props = Props::new().children(vec![Widget::Text {
+        text: "x".into(),
+        color: None,
+        style: StyleProps::default(),
+    }]);
     let widget = from_props("VStack", &props, &mut Vec::new());
     assert_eq!(
         widget,
         Widget::VStack {
             spacing: 0,
-            children: vec![Widget::Text { text: "x".into(), color: None, style: StyleProps::default() }],
+            children: vec![Widget::Text {
+                text: "x".into(),
+                color: None,
+                style: StyleProps::default()
+            }],
             style: StyleProps::default(),
         }
     );
@@ -159,20 +218,34 @@ fn vstack_no_spacing() {
 
 #[test]
 fn hstack_with_spacing() {
-    let props = Props::new()
-        .number("spacing", 3.0)
-        .children(vec![
-            Widget::Text { text: "left".into(), color: None, style: StyleProps::default() },
-            Widget::Text { text: "right".into(), color: None, style: StyleProps::default() },
-        ]);
+    let props = Props::new().number("spacing", 3.0).children(vec![
+        Widget::Text {
+            text: "left".into(),
+            color: None,
+            style: StyleProps::default(),
+        },
+        Widget::Text {
+            text: "right".into(),
+            color: None,
+            style: StyleProps::default(),
+        },
+    ]);
     let widget = from_props("HStack", &props, &mut Vec::new());
     assert_eq!(
         widget,
         Widget::HStack {
             spacing: 3,
             children: vec![
-                Widget::Text { text: "left".into(), color: None, style: StyleProps::default() },
-                Widget::Text { text: "right".into(), color: None, style: StyleProps::default() },
+                Widget::Text {
+                    text: "left".into(),
+                    color: None,
+                    style: StyleProps::default()
+                },
+                Widget::Text {
+                    text: "right".into(),
+                    color: None,
+                    style: StyleProps::default()
+                },
             ],
             style: StyleProps::default(),
         }
@@ -183,30 +256,54 @@ fn hstack_with_spacing() {
 fn screen_with_background() {
     let props = Props::new()
         .string("backgroundColor", "#101010")
-        .children(vec![
-            Widget::Text { text: "hi".into(), color: None, style: StyleProps::default() },
-        ]);
+        .children(vec![Widget::Text {
+            text: "hi".into(),
+            color: None,
+            style: StyleProps::default(),
+        }]);
     let widget = from_props("Screen", &props, &mut Vec::new());
     assert_eq!(
         widget,
         Widget::Screen {
-            background: Some(Color { r: 16, g: 16, b: 16 }),
-            children: vec![Widget::Text { text: "hi".into(), color: None, style: StyleProps::default() }],
-            style: StyleProps { background_color: Some(Color { r: 16, g: 16, b: 16 }), ..StyleProps::default() },
+            background: Some(Color {
+                r: 16,
+                g: 16,
+                b: 16
+            }),
+            children: vec![Widget::Text {
+                text: "hi".into(),
+                color: None,
+                style: StyleProps::default()
+            }],
+            style: StyleProps {
+                background_color: Some(Color {
+                    r: 16,
+                    g: 16,
+                    b: 16
+                }),
+                ..StyleProps::default()
+            },
         }
     );
 }
 
 #[test]
 fn screen_without_background() {
-    let props = Props::new()
-        .children(vec![Widget::Text { text: "test".into(), color: None, style: StyleProps::default() }]);
+    let props = Props::new().children(vec![Widget::Text {
+        text: "test".into(),
+        color: None,
+        style: StyleProps::default(),
+    }]);
     let widget = from_props("Screen", &props, &mut Vec::new());
     assert_eq!(
         widget,
         Widget::Screen {
             background: None,
-            children: vec![Widget::Text { text: "test".into(), color: None, style: StyleProps::default() }],
+            children: vec![Widget::Text {
+                text: "test".into(),
+                color: None,
+                style: StyleProps::default()
+            }],
             style: StyleProps::default(),
         }
     );
@@ -216,36 +313,60 @@ fn screen_without_background() {
 fn unknown_component() {
     let props = Props::new();
     let widget = from_props("MyCustomWidget", &props, &mut Vec::new());
-    assert_eq!(widget, Widget::Unknown { kind: "MyCustomWidget".into(), style: StyleProps::default() });
+    assert_eq!(
+        widget,
+        Widget::Unknown {
+            kind: "MyCustomWidget".into(),
+            style: StyleProps::default()
+        }
+    );
 }
 
 #[test]
 fn nested_components() {
-    let props = Props::new()
-        .number("spacing", 1.0)
-        .children(vec![
-            Widget::Text { text: "title".into(), color: None, style: StyleProps::default() },
-            Widget::HStack {
-                spacing: 2,
-                children: vec![
-                    Widget::Button { label: "OK".into(), style: StyleProps::default() },
-                    Widget::Button { label: "Cancel".into(), style: StyleProps::default() },
-                ],
-                style: StyleProps::default(),
-            },
-        ]);
+    let props = Props::new().number("spacing", 1.0).children(vec![
+        Widget::Text {
+            text: "title".into(),
+            color: None,
+            style: StyleProps::default(),
+        },
+        Widget::HStack {
+            spacing: 2,
+            children: vec![
+                Widget::Button {
+                    label: "OK".into(),
+                    style: StyleProps::default(),
+                },
+                Widget::Button {
+                    label: "Cancel".into(),
+                    style: StyleProps::default(),
+                },
+            ],
+            style: StyleProps::default(),
+        },
+    ]);
     let widget = from_props("VStack", &props, &mut Vec::new());
     assert_eq!(
         widget,
         Widget::VStack {
             spacing: 1,
             children: vec![
-                Widget::Text { text: "title".into(), color: None, style: StyleProps::default() },
+                Widget::Text {
+                    text: "title".into(),
+                    color: None,
+                    style: StyleProps::default()
+                },
                 Widget::HStack {
                     spacing: 2,
                     children: vec![
-                        Widget::Button { label: "OK".into(), style: StyleProps::default() },
-                        Widget::Button { label: "Cancel".into(), style: StyleProps::default() },
+                        Widget::Button {
+                            label: "OK".into(),
+                            style: StyleProps::default()
+                        },
+                        Widget::Button {
+                            label: "Cancel".into(),
+                            style: StyleProps::default()
+                        },
                     ],
                     style: StyleProps::default(),
                 },
@@ -272,8 +393,16 @@ fn props_builder_chain() {
 #[test]
 fn props_children() {
     let children = vec![
-        Widget::Text { text: "a".into(), color: None, style: StyleProps::default() },
-        Widget::Text { text: "b".into(), color: None, style: StyleProps::default() },
+        Widget::Text {
+            text: "a".into(),
+            color: None,
+            style: StyleProps::default(),
+        },
+        Widget::Text {
+            text: "b".into(),
+            color: None,
+            style: StyleProps::default(),
+        },
     ];
     let props = Props::new().children(children.clone());
     assert_eq!(props.get_children(), &children);

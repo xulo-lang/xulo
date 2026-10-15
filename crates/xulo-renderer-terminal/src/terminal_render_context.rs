@@ -5,7 +5,7 @@
 //! characters directly.
 
 use xulo_render_core::{
-    Effects, Masking, Painter, RenderContext, TextBaseline, TextMetrics, TextAlign, TextRenderer,
+    Effects, Masking, Painter, RenderContext, TextAlign, TextBaseline, TextMetrics, TextRenderer,
 };
 
 use crate::terminal_backend::{Grid, TerminalSize};
@@ -139,7 +139,7 @@ impl TerminalRenderContext {
     fn apply_translate(&self, x: f64, y: f64) -> (u32, u32) {
         let tx = (x + self.translate_x).round() as i32;
         let ty = (y + self.translate_y).round() as i32;
-    (tx.max(0) as u32, ty.max(0) as u32)
+        (tx.max(0) as u32, ty.max(0) as u32)
     }
 
     /// Rasterize the current path as a filled region into the grid.
@@ -187,7 +187,9 @@ impl TerminalRenderContext {
                     max_y = max_y.max(py);
                     has_non_rect = true;
                 }
-                _ => { has_non_rect = true; }
+                _ => {
+                    has_non_rect = true;
+                }
             }
         }
 
@@ -533,15 +535,7 @@ impl Painter for TerminalRenderContext {
         self.current_y = y;
     }
 
-    fn bezier_curve_to(
-        &mut self,
-        _cp1x: f64,
-        _cp1y: f64,
-        _cp2x: f64,
-        _cp2y: f64,
-        x: f64,
-        y: f64,
-    ) {
+    fn bezier_curve_to(&mut self, _cp1x: f64, _cp1y: f64, _cp2x: f64, _cp2y: f64, x: f64, y: f64) {
         self.path.push(PathOp::LineTo { x, y });
         self.current_x = x;
         self.current_y = y;

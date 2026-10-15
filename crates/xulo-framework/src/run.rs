@@ -126,7 +126,7 @@ pub fn run(entry: &Path, backend: Backend) -> Result<(), XuloError> {
 /// re-render, `q` to quit.
 #[cfg(feature = "terminal")]
 fn run_terminal_interactive(entry: &Path) -> Result<(), XuloError> {
-    use xulo_renderer_terminal::{render_stdout, CharMetrics, TerminalSize};
+    use xulo_renderer_terminal::{CharMetrics, TerminalSize, render_stdout};
     use xulo_ui::{Size, UiContext};
 
     let size = TerminalSize::default();
@@ -154,7 +154,9 @@ fn run_terminal_interactive(entry: &Path) -> Result<(), XuloError> {
         let bcount = ui.buttons.len();
         let icount = ui.inputs.len();
         if icount > 0 {
-            eprint!("buttons 1..{bcount}, inputs i1=<text>..i{icount}=<text>, r=refresh, q=quit > ");
+            eprint!(
+                "buttons 1..{bcount}, inputs i1=<text>..i{icount}=<text>, r=refresh, q=quit > "
+            );
         } else {
             eprint!("buttons 1..{bcount}, r=refresh, q=quit > ");
         }
@@ -199,7 +201,7 @@ fn run_terminal_interactive(entry: &Path) -> Result<(), XuloError> {
 fn run_webview_interactive(entry: &Path) -> Result<(), XuloError> {
     use std::cell::RefCell;
 
-    use xulo_renderer_webview::{build_html_with_context, run, ClickHandler, InputHandler};
+    use xulo_renderer_webview::{ClickHandler, InputHandler, build_html_with_context, run};
     use xulo_ui::Size;
 
     let size = webview_size();
@@ -262,7 +264,7 @@ fn run_webview_interactive(entry: &Path) -> Result<(), XuloError> {
 fn run_skia_interactive(entry: &Path) -> Result<(), XuloError> {
     use std::cell::RefCell;
 
-    use xulo_renderer_webview::{run, ClickHandler, InputHandler};
+    use xulo_renderer_webview::{ClickHandler, InputHandler, run};
     use xulo_ui::Size;
 
     let size = webview_size();
@@ -382,21 +384,24 @@ fn skia_html(root: &xulo_ui::Widget) -> Result<String, XuloError> {
     let rows = 24u32;
     let w = cols * xulo_ui::CELL_W;
     let h = rows * xulo_ui::CELL_H;
-    let mut bridge = SkiaBitmapBridge::new(w as i32, h as i32)
-        .ok_or_else(|| XuloError::new(xulo_core::error::ErrorKind::Runtime, "failed to create Skia surface"))?;
+    let mut bridge = SkiaBitmapBridge::new(w as i32, h as i32).ok_or_else(|| {
+        XuloError::new(
+            xulo_core::error::ErrorKind::Runtime,
+            "failed to create Skia surface",
+        )
+    })?;
 
     {
         let ctx = bridge.context_mut();
-        crate::render_context_bridge::render_with_context(
-            ctx,
-            root,
-            w as f64,
-            h as f64,
-        );
+        crate::render_context_bridge::render_with_context(ctx, root, w as f64, h as f64);
     }
 
-    bridge.to_html_page()
-        .ok_or_else(|| XuloError::new(xulo_core::error::ErrorKind::Runtime, "Skia PNG encoding failed"))
+    bridge.to_html_page().ok_or_else(|| {
+        XuloError::new(
+            xulo_core::error::ErrorKind::Runtime,
+            "Skia PNG encoding failed",
+        )
+    })
 }
 
 /// The `Screen` root's background color, or a neutral dark gray when the tree
@@ -415,7 +420,7 @@ fn screen_background(root: &xulo_ui::Widget) -> (u8, u8, u8) {
 
 #[cfg(feature = "terminal")]
 fn render_terminal(root: &xulo_ui::Widget) -> Result<String, XuloError> {
-    use xulo_renderer_terminal::{render_plain, CharMetrics, TerminalSize};
+    use xulo_renderer_terminal::{CharMetrics, TerminalSize, render_plain};
     use xulo_ui::{Size, UiContext};
 
     // Deterministic size for the string-rendering API: embedders and tests

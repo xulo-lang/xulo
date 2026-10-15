@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use xulo_core::ast::*;
+use xulo_core::error::{ErrorKind, XuloError};
 use xulo_core::ir::*;
-use xulo_core::error::{XuloError, ErrorKind};
 
 /// IR 生成器
 pub struct IrGenerator {
@@ -61,37 +61,43 @@ impl IrGenerator {
 
         // 查找 main 函数索引
         let main_idx = self.module.functions.iter().position(|f| f.name == "main");
-        
+
         if main_idx.is_none() {
             // 没有 main 函数，创建一个空的
-            let main_func = IrFunction::new(
-                "main".to_string(),
-                Vec::new(),
-                IrType::Void,
-            );
+            let main_func = IrFunction::new("main".to_string(), Vec::new(), IrType::Void);
             self.module.add_function(main_func);
         }
 
         self.module.entry_point = FuncId(main_idx.unwrap_or(self.module.functions.len() - 1));
 
         // Generate IR for ALL functions
-        let func_defs: Vec<(usize, FnDef)> = program.statements.iter().filter_map(|stmt| {
-            match stmt {
+        let func_defs: Vec<(usize, FnDef)> = program
+            .statements
+            .iter()
+            .filter_map(|stmt| match stmt {
                 Statement::Fn(f) => {
-                    let idx = self.module.functions.iter().position(|ir_f| ir_f.name == f.name);
+                    let idx = self
+                        .module
+                        .functions
+                        .iter()
+                        .position(|ir_f| ir_f.name == f.name);
                     idx.map(|i| (i, f.clone()))
                 }
                 Statement::Export(export) => {
                     if let ExportItem::Fn(f) = &export.item {
-                        let idx = self.module.functions.iter().position(|ir_f| ir_f.name == f.name);
+                        let idx = self
+                            .module
+                            .functions
+                            .iter()
+                            .position(|ir_f| ir_f.name == f.name);
                         idx.map(|i| (i, f.clone()))
                     } else {
                         None
                     }
                 }
                 _ => None,
-            }
-        }).collect();
+            })
+            .collect();
 
         for (idx, func_def) in func_defs {
             self.current_func = Some(idx);
@@ -106,7 +112,8 @@ impl IrGenerator {
     }
 
     fn register_function(&mut self, f: &FnDef) -> Result<FuncId, XuloError> {
-        let params: Vec<(LocalId, IrType)> = f.params
+        let params: Vec<(LocalId, IrType)> = f
+            .params
             .iter()
             .enumerate()
             .map(|(i, p)| {
@@ -115,12 +122,15 @@ impl IrGenerator {
             })
             .collect();
 
-        let return_type = f.return_type.as_ref()
+        let return_type = f
+            .return_type
+            .as_ref()
             .map(|t| self.type_to_ir(Some(t)))
             .unwrap_or(IrType::Void);
 
         // 保存 AST 返回类型注解（用于泛型函数推断）
-        self.func_return_types.insert(f.name.clone(), f.return_type.clone());
+        self.func_return_types
+            .insert(f.name.clone(), f.return_type.clone());
 
         let func = IrFunction::new(f.name.clone(), params, return_type);
         Ok(self.module.add_function(func))
@@ -128,7 +138,7 @@ impl IrGenerator {
 
     fn generate_function_body(&mut self, f: &FnDef) -> Result<(), XuloError> {
         let func_idx = self.current_func.unwrap();
-        
+
         // 使用 register_function 中已创建的参数 LocalId
         for (i, param) in f.params.iter().enumerate() {
             let local_id = self.module.functions[func_idx].params[i].0;
@@ -138,7 +148,7 @@ impl IrGenerator {
                 self.source_types.insert(param.name.clone(), ann.clone());
             }
         }
-        
+
         // 注册函数体中定义的函数
         for stmt in &f.body.statements {
             if let Statement::Fn(inner_f) = stmt {
@@ -147,7 +157,7 @@ impl IrGenerator {
                 self.locals.insert(inner_f.name.clone(), local);
             }
         }
-        
+
         // 生成函数体语句
         let last_stmt_is_return = matches!(f.body.statements.last(), Some(Statement::Return(_)));
         for stmt in &f.body.statements {
@@ -155,7 +165,7 @@ impl IrGenerator {
                 self.generate_statement(stmt)?;
             }
         }
-        
+
         // 如果没有显式的 return，根据返回类型处理
         if !last_stmt_is_return {
             // Check if last instruction is already a terminator (e.g. from if/else returning in both branches)
@@ -168,16 +178,22 @@ impl IrGenerator {
                 if !ret_type.is_void() {
                     if let Some(Statement::Expr(expr_stmt)) = f.body.statements.last() {
                         let operand = self.generate_expression(&expr_stmt.expr)?;
-                        self.module.functions[func_idx].instructions.push(Instruction::Return(Some(operand)));
+                        self.module.functions[func_idx]
+                            .instructions
+                            .push(Instruction::Return(Some(operand)));
                     } else {
-                        self.module.functions[func_idx].instructions.push(Instruction::Return(None));
+                        self.module.functions[func_idx]
+                            .instructions
+                            .push(Instruction::Return(None));
                     }
                 } else {
-                    self.module.functions[func_idx].instructions.push(Instruction::Return(None));
+                    self.module.functions[func_idx]
+                        .instructions
+                        .push(Instruction::Return(None));
                 }
             }
         }
-        
+
         Ok(())
     }
 
@@ -196,19 +212,23 @@ impl IrGenerator {
             Statement::For(for_stmt) => self.generate_for(for_stmt),
             Statement::While(while_stmt) => self.generate_while(while_stmt),
             Statement::Assign(assign) => self.generate_assign(assign),
-            Statement::Fn(_) => Ok(()), // 已处理
+            Statement::Fn(_) => Ok(()),     // 已处理
             Statement::Export(_) => Ok(()), // 已处理
             Statement::Break => {
                 if let Some(ctx) = self.loop_stack.last() {
                     let func_idx = self.current_func.unwrap();
-                    self.module.functions[func_idx].instructions.push(Instruction::Jump(ctx.break_label));
+                    self.module.functions[func_idx]
+                        .instructions
+                        .push(Instruction::Jump(ctx.break_label));
                 }
                 Ok(())
             }
             Statement::Continue => {
                 if let Some(ctx) = self.loop_stack.last() {
                     let func_idx = self.current_func.unwrap();
-                    self.module.functions[func_idx].instructions.push(Instruction::Jump(ctx.continue_label));
+                    self.module.functions[func_idx]
+                        .instructions
+                        .push(Instruction::Jump(ctx.continue_label));
                 }
                 Ok(())
             }
@@ -218,7 +238,7 @@ impl IrGenerator {
 
     fn generate_let(&mut self, binding: &LetBinding) -> Result<(), XuloError> {
         let func_idx = self.current_func.unwrap();
-        
+
         // 在生成表达式之前，先记录源级类型
         if let Some(ann) = &binding.type_annotation {
             self.source_types.insert(binding.name.clone(), ann.clone());
@@ -234,7 +254,7 @@ impl IrGenerator {
         } else {
             Operand::Const(IrValue::Null)
         };
-        
+
         // 推断类型
         let ty = if let Some(ann) = &binding.type_annotation {
             self.type_to_ir(Some(ann))
@@ -246,29 +266,33 @@ impl IrGenerator {
         let local = self.module.functions[func_idx].add_local(ty.clone());
         self.locals.insert(binding.name.clone(), local);
         self.local_types.insert(local, ty.clone());
-        
-        self.module.functions[func_idx].instructions.push(Instruction::SetLocal {
-            dst: local,
-            src: init_val,
-        });
-        
+
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::SetLocal {
+                dst: local,
+                src: init_val,
+            });
+
         Ok(())
     }
 
     fn infer_type_from_operand(&self, operand: &Operand, func_idx: usize) -> IrType {
         match operand {
-            Operand::Const(val) => {
-                match val {
-                    IrValue::I64(_) => IrType::I64,
-                    IrValue::F64(_) => IrType::F64,
-                    IrValue::Bool(_) => IrType::Bool,
-                    IrValue::String(_) => IrType::Pointer,
-                    IrValue::Null => IrType::Pointer,
-                }
-            }
+            Operand::Const(val) => match val {
+                IrValue::I64(_) => IrType::I64,
+                IrValue::F64(_) => IrType::F64,
+                IrValue::Bool(_) => IrType::Bool,
+                IrValue::String(_) => IrType::Pointer,
+                IrValue::Null => IrType::Pointer,
+            },
             Operand::Local(local_id) => {
                 // 查找局部变量的类型
-                if let Some((_, ty)) = self.module.functions[func_idx].locals.iter().find(|(id, _)| id == local_id) {
+                if let Some((_, ty)) = self.module.functions[func_idx]
+                    .locals
+                    .iter()
+                    .find(|(id, _)| id == local_id)
+                {
                     ty.clone()
                 } else {
                     IrType::Pointer
@@ -294,9 +318,21 @@ impl IrGenerator {
                 for instr in &func.instructions {
                     match instr {
                         Instruction::NewArray { dst, .. } if dst == local_id => return true,
-                        Instruction::RuntimeCall { dst: Some(d), func: RuntimeFn::ArrayConcat, .. } if d == local_id => return true,
-                        Instruction::RuntimeCall { dst: Some(d), func: RuntimeFn::ArrayPush, .. } if d == local_id => return true,
-                        Instruction::RuntimeCall { dst: Some(d), func: RuntimeFn::AllocArray, .. } if d == local_id => return true,
+                        Instruction::RuntimeCall {
+                            dst: Some(d),
+                            func: RuntimeFn::ArrayConcat,
+                            ..
+                        } if d == local_id => return true,
+                        Instruction::RuntimeCall {
+                            dst: Some(d),
+                            func: RuntimeFn::ArrayPush,
+                            ..
+                        } if d == local_id => return true,
+                        Instruction::RuntimeCall {
+                            dst: Some(d),
+                            func: RuntimeFn::AllocArray,
+                            ..
+                        } if d == local_id => return true,
                         _ => {}
                     }
                 }
@@ -319,7 +355,8 @@ impl IrGenerator {
             }
             Expression::BinaryOp(binop) => {
                 matches!(binop.operator, BinaryOperator::Add)
-                    && (self.is_array_like_expr(&binop.left) || self.is_array_like_expr(&binop.right))
+                    && (self.is_array_like_expr(&binop.left)
+                        || self.is_array_like_expr(&binop.right))
             }
             Expression::Call(call) => {
                 // 方法调用返回数组的情况
@@ -338,7 +375,6 @@ impl IrGenerator {
         }
     }
 
-
     /// 从 AST 表达式直接推断源级类型（不依赖已生成的 IR）
     fn infer_source_type_from_expr(&self, expr: &Expression) -> Option<Type> {
         match expr {
@@ -351,24 +387,26 @@ impl IrGenerator {
                     Literal::List(elems) => {
                         // 推断元素类型
                         if let Some(first) = elems.first() {
-                            let elem_ty = self.infer_source_type_from_expr(first)
-                                .unwrap_or(Type::Any);
+                            let elem_ty =
+                                self.infer_source_type_from_expr(first).unwrap_or(Type::Any);
                             Some(Type::List(Box::new(elem_ty)))
                         } else {
                             Some(Type::List(Box::new(Type::Any)))
                         }
                     }
                     Literal::Object(fields) => {
-                        let field_types: Vec<(String, Type)> = fields.iter().filter_map(|f| {
-                            match f {
+                        let field_types: Vec<(String, Type)> = fields
+                            .iter()
+                            .filter_map(|f| match f {
                                 ObjectField::Field { name, value } => {
-                                    let ty = self.infer_source_type_from_expr(value)
+                                    let ty = self
+                                        .infer_source_type_from_expr(value)
                                         .unwrap_or(Type::Any);
                                     Some((name.clone(), ty))
                                 }
                                 _ => None,
-                            }
-                        }).collect();
+                            })
+                            .collect();
                         Some(Type::ObjectType(field_types))
                     }
                 }
@@ -387,9 +425,7 @@ impl IrGenerator {
                 }
                 None
             }
-            Expression::Identifier { name, .. } => {
-                self.source_types.get(name).cloned()
-            }
+            Expression::Identifier { name, .. } => self.source_types.get(name).cloned(),
             Expression::Call(call) => {
                 // 查找被调用函数的返回类型
                 for func in &self.module.functions {
@@ -412,7 +448,6 @@ impl IrGenerator {
         }
     }
 
-
     /// 确定表达式的类型标签（用于数组/对象元素存储）
     /// tag: 0=string, 1=int, 2=float, 3=array, 4=object, 5=bool, 6=null
     fn determine_element_tag(&self, expr: &Expression) -> i64 {
@@ -420,7 +455,11 @@ impl IrGenerator {
             Expression::Literal { value, .. } => match value {
                 Literal::String(_) => 0,
                 Literal::Number(n) => {
-                    if n.fract() == 0.0 { 1 } else { 2 }
+                    if n.fract() == 0.0 {
+                        1
+                    } else {
+                        2
+                    }
                 }
                 Literal::Boolean(_) => 5,
                 Literal::Null => 6,
@@ -443,7 +482,9 @@ impl IrGenerator {
                 } else if let Some(local_id) = self.locals.get(name) {
                     // 从 IR 本地变量类型推断
                     if let Some(func_idx) = self.current_func {
-                        if let Some((_, ir_ty)) = self.module.functions[func_idx].locals.iter()
+                        if let Some((_, ir_ty)) = self.module.functions[func_idx]
+                            .locals
+                            .iter()
                             .find(|(id, _)| id == local_id)
                         {
                             match ir_ty {
@@ -467,39 +508,55 @@ impl IrGenerator {
                 match &binop.operator {
                     BinaryOperator::Add => {
                         // 检查是否是数组拼接
-                        if self.is_array_like_expr(&binop.left) || self.is_array_like_expr(&binop.right) {
+                        if self.is_array_like_expr(&binop.left)
+                            || self.is_array_like_expr(&binop.right)
+                        {
                             3 // array
-                        } else if self.has_float_operand(&binop.left) || self.has_float_operand(&binop.right) {
+                        } else if self.has_float_operand(&binop.left)
+                            || self.has_float_operand(&binop.right)
+                        {
                             2
                         } else {
                             1
                         }
                     }
                     BinaryOperator::Sub
-                    | BinaryOperator::Mul | BinaryOperator::Div
-                    | BinaryOperator::Mod | BinaryOperator::Pow
-                    | BinaryOperator::BitAnd | BinaryOperator::BitOr
-                    | BinaryOperator::Xor | BinaryOperator::Shl
+                    | BinaryOperator::Mul
+                    | BinaryOperator::Div
+                    | BinaryOperator::Mod
+                    | BinaryOperator::Pow
+                    | BinaryOperator::BitAnd
+                    | BinaryOperator::BitOr
+                    | BinaryOperator::Xor
+                    | BinaryOperator::Shl
                     | BinaryOperator::Shr => {
-                        if self.has_float_operand(&binop.left) || self.has_float_operand(&binop.right) {
+                        if self.has_float_operand(&binop.left)
+                            || self.has_float_operand(&binop.right)
+                        {
                             2
                         } else {
                             1
                         }
                     }
-                    BinaryOperator::Eq | BinaryOperator::Neq
-                    | BinaryOperator::Lt | BinaryOperator::Gt
-                    | BinaryOperator::Lte | BinaryOperator::Gte
-                    | BinaryOperator::And | BinaryOperator::Or => 5,
+                    BinaryOperator::Eq
+                    | BinaryOperator::Neq
+                    | BinaryOperator::Lt
+                    | BinaryOperator::Gt
+                    | BinaryOperator::Lte
+                    | BinaryOperator::Gte
+                    | BinaryOperator::And
+                    | BinaryOperator::Or => 5,
                 }
             }
-            Expression::Unary(unop) => {
-                match &unop.operator {
-                    UnaryOperator::Not => 5,
-                    UnaryOperator::Neg | UnaryOperator::BitNot => self.determine_element_tag(&unop.operand),
-                    UnaryOperator::Move | UnaryOperator::Copy => self.determine_element_tag(&unop.operand),
+            Expression::Unary(unop) => match &unop.operator {
+                UnaryOperator::Not => 5,
+                UnaryOperator::Neg | UnaryOperator::BitNot => {
+                    self.determine_element_tag(&unop.operand)
                 }
-            }
+                UnaryOperator::Move | UnaryOperator::Copy => {
+                    self.determine_element_tag(&unop.operand)
+                }
+            },
             Expression::Call(call) => {
                 // 优先使用 AST 返回类型注解推断 tag
                 if let Some(Some(ast_ret)) = self.func_return_types.get(&call.callee) {
@@ -518,7 +575,12 @@ impl IrGenerator {
                     }
                 } else {
                     // 退化到 IR 类型
-                    if let Some(func_idx) = self.module.functions.iter().position(|f| f.name == call.callee) {
+                    if let Some(func_idx) = self
+                        .module
+                        .functions
+                        .iter()
+                        .position(|f| f.name == call.callee)
+                    {
                         match self.module.functions[func_idx].return_type {
                             IrType::I64 => 1,
                             IrType::F64 => 2,
@@ -542,21 +604,29 @@ impl IrGenerator {
 
     fn has_float_operand(&self, expr: &Expression) -> bool {
         match expr {
-            Expression::Literal { value, .. } => matches!(value, Literal::Number(n) if n.fract() != 0.0),
+            Expression::Literal { value, .. } => {
+                matches!(value, Literal::Number(n) if n.fract() != 0.0)
+            }
             Expression::Unary(unop) => self.has_float_operand(&unop.operand),
-            Expression::BinaryOp(binop) => self.has_float_operand(&binop.left) || self.has_float_operand(&binop.right),
+            Expression::BinaryOp(binop) => {
+                self.has_float_operand(&binop.left) || self.has_float_operand(&binop.right)
+            }
             _ => false,
         }
     }
 
     fn generate_return(&mut self, r: &ReturnStmt) -> Result<(), XuloError> {
         let func_idx = self.current_func.unwrap();
-        
+
         if let Some(value) = &r.value {
             let operand = self.generate_expression(value)?;
-            self.module.functions[func_idx].instructions.push(Instruction::Return(Some(operand)));
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::Return(Some(operand)));
         } else {
-            self.module.functions[func_idx].instructions.push(Instruction::Return(None));
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::Return(None));
         }
 
         Ok(())
@@ -569,7 +639,10 @@ impl IrGenerator {
                 if let Some(local) = self.locals.get(name) {
                     Ok(Operand::Local(*local))
                 } else {
-                    Err(XuloError::new(ErrorKind::Semantic, format!("undefined variable: {}", name)))
+                    Err(XuloError::new(
+                        ErrorKind::Semantic,
+                        format!("undefined variable: {}", name),
+                    ))
                 }
             }
             Expression::BinaryOp(binop) => self.generate_binary_op(binop),
@@ -582,10 +655,12 @@ impl IrGenerator {
                 // 其他表达式返回 null
                 let func_idx = self.current_func.unwrap();
                 let local = self.module.functions[func_idx].add_local(IrType::Pointer);
-                self.module.functions[func_idx].instructions.push(Instruction::Const {
-                    dst: local,
-                    value: IrValue::Null,
-                });
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::Const {
+                        dst: local,
+                        value: IrValue::Null,
+                    });
                 Ok(Operand::Local(local))
             }
         }
@@ -615,10 +690,12 @@ impl IrGenerator {
                     element_ops.push((self.generate_expression(elem)?, tag));
                 }
                 let local = self.module.functions[func_idx].add_local(IrType::Pointer);
-                self.module.functions[func_idx].instructions.push(Instruction::NewArray {
-                    dst: local,
-                    elements: element_ops,
-                });
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::NewArray {
+                        dst: local,
+                        elements: element_ops,
+                    });
                 return Ok(Operand::Local(local));
             }
             Literal::Object(fields) => {
@@ -636,19 +713,20 @@ impl IrGenerator {
                     }
                 }
                 let local = self.module.functions[func_idx].add_local(IrType::Pointer);
-                self.module.functions[func_idx].instructions.push(Instruction::NewObject {
-                    dst: local,
-                    fields: field_ops,
-                });
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::NewObject {
+                        dst: local,
+                        fields: field_ops,
+                    });
                 return Ok(Operand::Local(local));
             }
         };
 
         let local = self.module.functions[func_idx].add_local(ty);
-        self.module.functions[func_idx].instructions.push(Instruction::Const {
-            dst: local,
-            value,
-        });
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Const { dst: local, value });
         Ok(Operand::Local(local))
     }
 
@@ -656,68 +734,151 @@ impl IrGenerator {
         let func_idx = self.current_func.unwrap();
         let left = self.generate_expression(&binop.left)?;
         let right = self.generate_expression(&binop.right)?;
-        
+
         // Check if this is a string concatenation or array concatenation
         let left_ty = self.infer_type_from_operand(&left, func_idx);
         let right_ty = self.infer_type_from_operand(&right, func_idx);
-        let is_pointer_op = matches!(binop.operator, BinaryOperator::Add) 
+        let is_pointer_op = matches!(binop.operator, BinaryOperator::Add)
             && (matches!(left_ty, IrType::Pointer) || matches!(right_ty, IrType::Pointer));
-        
+
         if is_pointer_op {
             // 检查是否是数组拼接
             let left_is_array = self.is_array_operand(&left, func_idx);
             let right_is_array = self.is_array_operand(&right, func_idx);
-            
+
             if left_is_array || right_is_array {
                 // Array concatenation: call runtime function
                 let local = self.module.functions[func_idx].add_local(IrType::Pointer);
-                self.module.functions[func_idx].instructions.push(Instruction::RuntimeCall {
-                    dst: Some(local),
-                    func: RuntimeFn::ArrayConcat,
-                    args: vec![left, right],
-                });
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::RuntimeCall {
+                        dst: Some(local),
+                        func: RuntimeFn::ArrayConcat,
+                        args: vec![left, right],
+                    });
                 return Ok(Operand::Local(local));
             } else {
                 // String concatenation: call runtime function
                 let local = self.module.functions[func_idx].add_local(IrType::Pointer);
-                self.module.functions[func_idx].instructions.push(Instruction::RuntimeCall {
-                    dst: Some(local),
-                    func: RuntimeFn::StringConcat,
-                    args: vec![left, right],
-                });
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::RuntimeCall {
+                        dst: Some(local),
+                        func: RuntimeFn::StringConcat,
+                        args: vec![left, right],
+                    });
                 return Ok(Operand::Local(local));
             }
         }
-        
+
         let ty = match binop.operator {
-            BinaryOperator::Add | BinaryOperator::Sub | 
-            BinaryOperator::Mul | BinaryOperator::Div |
-            BinaryOperator::Mod | BinaryOperator::Pow => IrType::I64,
+            BinaryOperator::Add
+            | BinaryOperator::Sub
+            | BinaryOperator::Mul
+            | BinaryOperator::Div
+            | BinaryOperator::Mod
+            | BinaryOperator::Pow => IrType::I64,
             _ => IrType::Bool,
         };
 
         let local = self.module.functions[func_idx].add_local(ty);
-        
+
         let instr = match binop.operator {
-            BinaryOperator::Add => Instruction::Add { dst: local, left, right },
-            BinaryOperator::Sub => Instruction::Sub { dst: local, left, right },
-            BinaryOperator::Mul => Instruction::Mul { dst: local, left, right },
-            BinaryOperator::Div => Instruction::Div { dst: local, left, right },
-            BinaryOperator::Mod => Instruction::Mod { dst: local, left, right },
-            BinaryOperator::Pow => Instruction::Pow { dst: local, left, right },
-            BinaryOperator::Eq => Instruction::Eq { dst: local, left, right },
-            BinaryOperator::Neq => Instruction::Neq { dst: local, left, right },
-            BinaryOperator::Lt => Instruction::Lt { dst: local, left, right },
-            BinaryOperator::Gt => Instruction::Gt { dst: local, left, right },
-            BinaryOperator::Lte => Instruction::Lte { dst: local, left, right },
-            BinaryOperator::Gte => Instruction::Gte { dst: local, left, right },
-            BinaryOperator::And => Instruction::And { dst: local, left, right },
-            BinaryOperator::Or => Instruction::Or { dst: local, left, right },
-            BinaryOperator::BitAnd => Instruction::BitAnd { dst: local, left, right },
-            BinaryOperator::BitOr => Instruction::BitOr { dst: local, left, right },
-            BinaryOperator::Xor => Instruction::Xor { dst: local, left, right },
-            BinaryOperator::Shl => Instruction::Shl { dst: local, left, right },
-            BinaryOperator::Shr => Instruction::Shr { dst: local, left, right },
+            BinaryOperator::Add => Instruction::Add {
+                dst: local,
+                left,
+                right,
+            },
+            BinaryOperator::Sub => Instruction::Sub {
+                dst: local,
+                left,
+                right,
+            },
+            BinaryOperator::Mul => Instruction::Mul {
+                dst: local,
+                left,
+                right,
+            },
+            BinaryOperator::Div => Instruction::Div {
+                dst: local,
+                left,
+                right,
+            },
+            BinaryOperator::Mod => Instruction::Mod {
+                dst: local,
+                left,
+                right,
+            },
+            BinaryOperator::Pow => Instruction::Pow {
+                dst: local,
+                left,
+                right,
+            },
+            BinaryOperator::Eq => Instruction::Eq {
+                dst: local,
+                left,
+                right,
+            },
+            BinaryOperator::Neq => Instruction::Neq {
+                dst: local,
+                left,
+                right,
+            },
+            BinaryOperator::Lt => Instruction::Lt {
+                dst: local,
+                left,
+                right,
+            },
+            BinaryOperator::Gt => Instruction::Gt {
+                dst: local,
+                left,
+                right,
+            },
+            BinaryOperator::Lte => Instruction::Lte {
+                dst: local,
+                left,
+                right,
+            },
+            BinaryOperator::Gte => Instruction::Gte {
+                dst: local,
+                left,
+                right,
+            },
+            BinaryOperator::And => Instruction::And {
+                dst: local,
+                left,
+                right,
+            },
+            BinaryOperator::Or => Instruction::Or {
+                dst: local,
+                left,
+                right,
+            },
+            BinaryOperator::BitAnd => Instruction::BitAnd {
+                dst: local,
+                left,
+                right,
+            },
+            BinaryOperator::BitOr => Instruction::BitOr {
+                dst: local,
+                left,
+                right,
+            },
+            BinaryOperator::Xor => Instruction::Xor {
+                dst: local,
+                left,
+                right,
+            },
+            BinaryOperator::Shl => Instruction::Shl {
+                dst: local,
+                left,
+                right,
+            },
+            BinaryOperator::Shr => Instruction::Shr {
+                dst: local,
+                left,
+                right,
+            },
         };
 
         self.module.functions[func_idx].instructions.push(instr);
@@ -727,7 +888,7 @@ impl IrGenerator {
     fn generate_unary(&mut self, unary: &UnaryOp) -> Result<Operand, XuloError> {
         let func_idx = self.current_func.unwrap();
         let operand = self.generate_expression(&unary.operand)?;
-        
+
         let ty = match unary.operator {
             UnaryOperator::Not => IrType::Bool,
             UnaryOperator::Neg => IrType::I64,
@@ -736,11 +897,20 @@ impl IrGenerator {
         };
 
         let local = self.module.functions[func_idx].add_local(ty);
-        
+
         let instr = match unary.operator {
-            UnaryOperator::Not => Instruction::Not { dst: local, operand },
-            UnaryOperator::Neg => Instruction::Neg { dst: local, operand },
-            UnaryOperator::BitNot => Instruction::BitNot { dst: local, operand },
+            UnaryOperator::Not => Instruction::Not {
+                dst: local,
+                operand,
+            },
+            UnaryOperator::Neg => Instruction::Neg {
+                dst: local,
+                operand,
+            },
+            UnaryOperator::BitNot => Instruction::BitNot {
+                dst: local,
+                operand,
+            },
             UnaryOperator::Move | UnaryOperator::Copy => {
                 // `move`/`copy` are alias copies at the IR level: materialize
                 // the operand into a fresh local.
@@ -752,7 +922,10 @@ impl IrGenerator {
                             // Non-local operand (const/index): fall back to a
                             // no-op copy through SetLocal.
                             self.module.functions[func_idx].instructions.push(
-                                Instruction::SetLocal { dst: local, src: operand },
+                                Instruction::SetLocal {
+                                    dst: local,
+                                    src: operand,
+                                },
                             );
                             return Ok(Operand::Local(local));
                         }
@@ -819,23 +992,35 @@ impl IrGenerator {
 
         if let Some(rf) = runtime_fn {
             // PrintValue 和 Print 不返回值，不需要 dst
-            let no_return = matches!(rf, RuntimeFn::PrintValue | RuntimeFn::Print | RuntimeFn::Panic | RuntimeFn::ArrayPush | RuntimeFn::ArraySet | RuntimeFn::ObjectSet);
+            let no_return = matches!(
+                rf,
+                RuntimeFn::PrintValue
+                    | RuntimeFn::Print
+                    | RuntimeFn::Panic
+                    | RuntimeFn::ArrayPush
+                    | RuntimeFn::ArraySet
+                    | RuntimeFn::ObjectSet
+            );
             if no_return {
-                self.module.functions[func_idx].instructions.push(Instruction::RuntimeCall {
-                    dst: None,
-                    func: rf,
-                    args,
-                });
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::RuntimeCall {
+                        dst: None,
+                        func: rf,
+                        args,
+                    });
                 // 返回一个虚拟值（不会被使用）
                 let local = self.module.functions[func_idx].add_local(IrType::Pointer);
                 Ok(Operand::Local(local))
             } else {
                 let local = self.module.functions[func_idx].add_local(IrType::Pointer);
-                self.module.functions[func_idx].instructions.push(Instruction::RuntimeCall {
-                    dst: Some(local),
-                    func: rf,
-                    args,
-                });
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::RuntimeCall {
+                        dst: Some(local),
+                        func: rf,
+                        args,
+                    });
                 Ok(Operand::Local(local))
             }
         } else {
@@ -845,15 +1030,26 @@ impl IrGenerator {
             } else {
                 &call.callee
             };
-            let callee_idx = self.module.functions.iter().position(|f| f.name == callee_name)
-                .ok_or_else(|| XuloError::new(ErrorKind::Semantic, format!("undefined function: {}", callee_name)))?;
+            let callee_idx = self
+                .module
+                .functions
+                .iter()
+                .position(|f| f.name == callee_name)
+                .ok_or_else(|| {
+                    XuloError::new(
+                        ErrorKind::Semantic,
+                        format!("undefined function: {}", callee_name),
+                    )
+                })?;
             let ret_type = self.module.functions[callee_idx].return_type.clone();
             let local = self.module.functions[func_idx].add_local(ret_type);
-            self.module.functions[func_idx].instructions.push(Instruction::Call {
-                dst: Some(local),
-                func: FuncId(callee_idx),
-                args,
-            });
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::Call {
+                    dst: Some(local),
+                    func: FuncId(callee_idx),
+                    args,
+                });
             Ok(Operand::Local(local))
         }
     }
@@ -861,18 +1057,22 @@ impl IrGenerator {
     fn generate_if(&mut self, if_expr: &IfExpr) -> Result<(), XuloError> {
         let func_idx = self.current_func.unwrap();
         let condition = self.generate_expression(&if_expr.condition)?;
-        
+
         let then_label = self.module.functions[func_idx].add_label();
         let else_label = self.module.functions[func_idx].add_label();
         let end_label = self.module.functions[func_idx].add_label();
 
-        self.module.functions[func_idx].instructions.push(Instruction::Branch {
-            condition,
-            then_label,
-            else_label,
-        });
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Branch {
+                condition,
+                then_label,
+                else_label,
+            });
 
-        self.module.functions[func_idx].instructions.push(Instruction::Label(then_label));
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Label(then_label));
         for stmt in &if_expr.then_branch.statements {
             self.generate_statement(stmt)?;
         }
@@ -881,10 +1081,14 @@ impl IrGenerator {
             Some(Instruction::Return(_))
         );
         if !then_has_return {
-            self.module.functions[func_idx].instructions.push(Instruction::Jump(end_label));
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::Jump(end_label));
         }
 
-        self.module.functions[func_idx].instructions.push(Instruction::Label(else_label));
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Label(else_label));
         if let Some(else_branch) = &if_expr.else_branch {
             for stmt in &else_branch.statements {
                 self.generate_statement(stmt)?;
@@ -895,20 +1099,30 @@ impl IrGenerator {
             Some(Instruction::Return(_))
         );
         if !else_has_return {
-            self.module.functions[func_idx].instructions.push(Instruction::Jump(end_label));
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::Jump(end_label));
         }
 
         // Only emit end_label if at least one branch jumps to it
         if !then_has_return || !else_has_return {
-            self.module.functions[func_idx].instructions.push(Instruction::Label(end_label));
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::Label(end_label));
         } else {
             // Both branches returned - emit end_label with a dead return so it's not empty
             let is_void = self.module.functions[func_idx].return_type.is_void();
-            self.module.functions[func_idx].instructions.push(Instruction::Label(end_label));
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::Label(end_label));
             if !is_void {
-                self.module.functions[func_idx].instructions.push(Instruction::Return(Some(Operand::Const(IrValue::I64(0)))));
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::Return(Some(Operand::Const(IrValue::I64(0)))));
             } else {
-                self.module.functions[func_idx].instructions.push(Instruction::Return(None));
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::Return(None));
             }
         }
 
@@ -918,47 +1132,61 @@ impl IrGenerator {
     fn generate_if_expr(&mut self, if_expr: &IfExpr) -> Result<Operand, XuloError> {
         let func_idx = self.current_func.unwrap();
         let condition = self.generate_expression(&if_expr.condition)?;
-        
+
         let then_label = self.module.functions[func_idx].add_label();
         let else_label = self.module.functions[func_idx].add_label();
         let end_label = self.module.functions[func_idx].add_label();
         let result_local = self.module.functions[func_idx].add_local(IrType::Pointer);
 
-        self.module.functions[func_idx].instructions.push(Instruction::Branch {
-            condition,
-            then_label,
-            else_label,
-        });
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Branch {
+                condition,
+                then_label,
+                else_label,
+            });
 
-        self.module.functions[func_idx].instructions.push(Instruction::Label(then_label));
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Label(then_label));
         // 简化处理：只取最后一个表达式
         if let Some(Statement::Expr(e)) = if_expr.then_branch.statements.last() {
             let val = self.generate_expression(&e.expr)?;
-            self.module.functions[func_idx].instructions.push(Instruction::SetLocal {
-                dst: result_local,
-                src: val,
-            });
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::SetLocal {
+                    dst: result_local,
+                    src: val,
+                });
         }
-        self.module.functions[func_idx].instructions.push(Instruction::Jump(end_label));
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Jump(end_label));
 
-        self.module.functions[func_idx].instructions.push(Instruction::Label(else_label));
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Label(else_label));
         if let Some(else_branch) = &if_expr.else_branch
             && let Some(Statement::Expr(e)) = else_branch.statements.last()
         {
             let val = self.generate_expression(&e.expr)?;
-            self.module.functions[func_idx].instructions.push(Instruction::SetLocal {
-                dst: result_local,
-                src: val,
-            });
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::SetLocal {
+                    dst: result_local,
+                    src: val,
+                });
         }
-        self.module.functions[func_idx].instructions.push(Instruction::Label(end_label));
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Label(end_label));
 
         Ok(Operand::Local(result_local))
     }
 
     fn generate_for(&mut self, for_stmt: &ForStmt) -> Result<(), XuloError> {
         let func_idx = self.current_func.unwrap();
-        
+
         // 创建循环变量
         let iter_local = self.module.functions[func_idx].add_local(IrType::I64);
         self.locals.insert(for_stmt.iter_var.clone(), iter_local);
@@ -982,148 +1210,206 @@ impl IrGenerator {
         if let Expression::Range(range) = &for_stmt.iterable {
             let start = self.generate_expression(&range.start)?;
             let end = self.generate_expression(&range.end)?;
-            
+
             // 初始化循环变量
-            self.module.functions[func_idx].instructions.push(Instruction::SetLocal {
-                dst: iter_local,
-                src: start,
-            });
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::SetLocal {
+                    dst: iter_local,
+                    src: start,
+                });
 
             // 跳转到循环开始
-            self.module.functions[func_idx].instructions.push(Instruction::Jump(start_label));
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::Jump(start_label));
 
             // 循环开始
-            self.module.functions[func_idx].instructions.push(Instruction::Label(start_label));
-            
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::Label(start_label));
+
             // 检查条件
             let cond_local = self.module.functions[func_idx].add_local(IrType::Bool);
             if range.end_inclusive {
-                self.module.functions[func_idx].instructions.push(Instruction::Lte {
-                    dst: cond_local,
-                    left: Operand::Local(iter_local),
-                    right: end,
-                });
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::Lte {
+                        dst: cond_local,
+                        left: Operand::Local(iter_local),
+                        right: end,
+                    });
             } else {
-                self.module.functions[func_idx].instructions.push(Instruction::Lt {
-                    dst: cond_local,
-                    left: Operand::Local(iter_local),
-                    right: end,
-                });
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::Lt {
+                        dst: cond_local,
+                        left: Operand::Local(iter_local),
+                        right: end,
+                    });
             }
 
-            self.module.functions[func_idx].instructions.push(Instruction::Branch {
-                condition: Operand::Local(cond_local),
-                then_label: body_label,
-                else_label: end_label,
-            });
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::Branch {
+                    condition: Operand::Local(cond_local),
+                    then_label: body_label,
+                    else_label: end_label,
+                });
 
             // 循环体
-            self.module.functions[func_idx].instructions.push(Instruction::Label(body_label));
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::Label(body_label));
             for stmt in &for_stmt.body.statements {
                 self.generate_statement(stmt)?;
             }
 
             // 跳转到 continue 标签
-            self.module.functions[func_idx].instructions.push(Instruction::Jump(continue_label));
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::Jump(continue_label));
 
             // continue 标签
-            self.module.functions[func_idx].instructions.push(Instruction::Label(continue_label));
-            
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::Label(continue_label));
+
             // 递增
             let one = self.module.functions[func_idx].add_local(IrType::I64);
-            self.module.functions[func_idx].instructions.push(Instruction::Const {
-                dst: one,
-                value: IrValue::I64(1),
-            });
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::Const {
+                    dst: one,
+                    value: IrValue::I64(1),
+                });
             let new_val = self.module.functions[func_idx].add_local(IrType::I64);
-            self.module.functions[func_idx].instructions.push(Instruction::Add {
-                dst: new_val,
-                left: Operand::Local(iter_local),
-                right: Operand::Local(one),
-            });
-            self.module.functions[func_idx].instructions.push(Instruction::SetLocal {
-                dst: iter_local,
-                src: Operand::Local(new_val),
-            });
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::Add {
+                    dst: new_val,
+                    left: Operand::Local(iter_local),
+                    right: Operand::Local(one),
+                });
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::SetLocal {
+                    dst: iter_local,
+                    src: Operand::Local(new_val),
+                });
 
-            self.module.functions[func_idx].instructions.push(Instruction::Jump(start_label));
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::Jump(start_label));
         } else {
             // Generic iteration over any expression (array or variable)
             let array_operand = self.generate_expression(&for_stmt.iterable)?;
             let array_local = self.module.functions[func_idx].add_local(IrType::Pointer);
-            self.module.functions[func_idx].instructions.push(Instruction::SetLocal {
-                dst: array_local,
-                src: array_operand,
-            });
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::SetLocal {
+                    dst: array_local,
+                    src: array_operand,
+                });
 
             // Get array length
             let len_local = self.module.functions[func_idx].add_local(IrType::I64);
-            self.module.functions[func_idx].instructions.push(Instruction::RuntimeCall {
-                dst: Some(len_local),
-                func: RuntimeFn::ArrayLen,
-                args: vec![Operand::Local(array_local)],
-            });
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::RuntimeCall {
+                    dst: Some(len_local),
+                    func: RuntimeFn::ArrayLen,
+                    args: vec![Operand::Local(array_local)],
+                });
 
             // index = 0
             let index_local = self.module.functions[func_idx].add_local(IrType::I64);
-            self.module.functions[func_idx].instructions.push(Instruction::Const {
-                dst: index_local,
-                value: IrValue::I64(0),
-            });
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::Const {
+                    dst: index_local,
+                    value: IrValue::I64(0),
+                });
 
             // Jump to start
-            self.module.functions[func_idx].instructions.push(Instruction::Jump(start_label));
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::Jump(start_label));
 
             // Loop start: check index < len
-            self.module.functions[func_idx].instructions.push(Instruction::Label(start_label));
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::Label(start_label));
             let cond_local = self.module.functions[func_idx].add_local(IrType::Bool);
-            self.module.functions[func_idx].instructions.push(Instruction::Lt {
-                dst: cond_local,
-                left: Operand::Local(index_local),
-                right: Operand::Local(len_local),
-            });
-            self.module.functions[func_idx].instructions.push(Instruction::Branch {
-                condition: Operand::Local(cond_local),
-                then_label: body_label,
-                else_label: end_label,
-            });
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::Lt {
+                    dst: cond_local,
+                    left: Operand::Local(index_local),
+                    right: Operand::Local(len_local),
+                });
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::Branch {
+                    condition: Operand::Local(cond_local),
+                    then_label: body_label,
+                    else_label: end_label,
+                });
 
             // Body
-            self.module.functions[func_idx].instructions.push(Instruction::Label(body_label));
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::Label(body_label));
             // iter_var = array[index]
-            self.module.functions[func_idx].instructions.push(Instruction::GetIndex {
-                dst: iter_local,
-                array: Operand::Local(array_local),
-                index: Operand::Local(index_local),
-            });
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::GetIndex {
+                    dst: iter_local,
+                    array: Operand::Local(array_local),
+                    index: Operand::Local(index_local),
+                });
             for stmt in &for_stmt.body.statements {
                 self.generate_statement(stmt)?;
             }
 
             // Jump to continue
-            self.module.functions[func_idx].instructions.push(Instruction::Jump(continue_label));
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::Jump(continue_label));
 
             // Continue: index++
-            self.module.functions[func_idx].instructions.push(Instruction::Label(continue_label));
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::Label(continue_label));
             let one = self.module.functions[func_idx].add_local(IrType::I64);
-            self.module.functions[func_idx].instructions.push(Instruction::Const {
-                dst: one,
-                value: IrValue::I64(1),
-            });
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::Const {
+                    dst: one,
+                    value: IrValue::I64(1),
+                });
             let new_index = self.module.functions[func_idx].add_local(IrType::I64);
-            self.module.functions[func_idx].instructions.push(Instruction::Add {
-                dst: new_index,
-                left: Operand::Local(index_local),
-                right: Operand::Local(one),
-            });
-            self.module.functions[func_idx].instructions.push(Instruction::SetLocal {
-                dst: index_local,
-                src: Operand::Local(new_index),
-            });
-            self.module.functions[func_idx].instructions.push(Instruction::Jump(start_label));
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::Add {
+                    dst: new_index,
+                    left: Operand::Local(index_local),
+                    right: Operand::Local(one),
+                });
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::SetLocal {
+                    dst: index_local,
+                    src: Operand::Local(new_index),
+                });
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::Jump(start_label));
         }
 
-        self.module.functions[func_idx].instructions.push(Instruction::Label(end_label));
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Label(end_label));
         self.loop_stack.pop();
 
         Ok(())
@@ -1131,7 +1417,7 @@ impl IrGenerator {
 
     fn generate_while(&mut self, while_stmt: &WhileStmt) -> Result<(), XuloError> {
         let func_idx = self.current_func.unwrap();
-        
+
         let start_label = self.module.functions[func_idx].add_label();
         let body_label = self.module.functions[func_idx].add_label();
         let end_label = self.module.functions[func_idx].add_label();
@@ -1143,27 +1429,39 @@ impl IrGenerator {
         });
 
         // 循环开始
-        self.module.functions[func_idx].instructions.push(Instruction::Label(start_label));
-        
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Label(start_label));
+
         // 检查条件
         let condition = self.generate_expression(&while_stmt.condition)?;
-        self.module.functions[func_idx].instructions.push(Instruction::Branch {
-            condition,
-            then_label: body_label,
-            else_label: end_label,
-        });
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Branch {
+                condition,
+                then_label: body_label,
+                else_label: end_label,
+            });
 
         // 循环体
-        self.module.functions[func_idx].instructions.push(Instruction::Label(body_label));
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Label(body_label));
         for stmt in &while_stmt.body.statements {
             self.generate_statement(stmt)?;
         }
 
         // continue 标签
-        self.module.functions[func_idx].instructions.push(Instruction::Label(continue_label));
-        self.module.functions[func_idx].instructions.push(Instruction::Jump(start_label));
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Label(continue_label));
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Jump(start_label));
 
-        self.module.functions[func_idx].instructions.push(Instruction::Label(end_label));
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Label(end_label));
         self.loop_stack.pop();
 
         Ok(())
@@ -1176,32 +1474,38 @@ impl IrGenerator {
         match &assign.target {
             AssignTarget::Name(name) => {
                 if let Some(local) = self.locals.get(name) {
-                    self.module.functions[func_idx].instructions.push(Instruction::SetLocal {
-                        dst: *local,
-                        src: value,
-                    });
+                    self.module.functions[func_idx]
+                        .instructions
+                        .push(Instruction::SetLocal {
+                            dst: *local,
+                            src: value,
+                        });
                 }
             }
             AssignTarget::Member(obj, field) => {
                 let obj_operand = self.generate_expression(obj)?;
                 let tag = self.determine_element_tag(&assign.value);
-                self.module.functions[func_idx].instructions.push(Instruction::SetField {
-                    object: obj_operand,
-                    field: field.clone(),
-                    value,
-                    tag,
-                });
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::SetField {
+                        object: obj_operand,
+                        field: field.clone(),
+                        value,
+                        tag,
+                    });
             }
             AssignTarget::Index(obj, idx) => {
                 let obj_operand = self.generate_expression(obj)?;
                 let idx_operand = self.generate_expression(idx)?;
                 let tag = self.determine_element_tag(&assign.value);
-                self.module.functions[func_idx].instructions.push(Instruction::SetIndex {
-                    array: obj_operand,
-                    index: idx_operand,
-                    value,
-                    tag,
-                });
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::SetIndex {
+                        array: obj_operand,
+                        index: idx_operand,
+                        value,
+                        tag,
+                    });
             }
         }
 
@@ -1212,12 +1516,14 @@ impl IrGenerator {
         let func_idx = self.current_func.unwrap();
         let object = self.generate_expression(&member.object)?;
         let local = self.module.functions[func_idx].add_local(IrType::Pointer);
-        
-        self.module.functions[func_idx].instructions.push(Instruction::GetField {
-            dst: local,
-            object,
-            field: member.property.clone(),
-        });
+
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::GetField {
+                dst: local,
+                object,
+                field: member.property.clone(),
+            });
 
         Ok(Operand::Local(local))
     }
@@ -1227,12 +1533,14 @@ impl IrGenerator {
         let array = self.generate_expression(&index.object)?;
         let idx = self.generate_expression(&index.index)?;
         let local = self.module.functions[func_idx].add_local(IrType::Pointer);
-        
-        self.module.functions[func_idx].instructions.push(Instruction::GetIndex {
-            dst: local,
-            array,
-            index: idx,
-        });
+
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::GetIndex {
+                dst: local,
+                array,
+                index: idx,
+            });
 
         Ok(Operand::Local(local))
     }
@@ -1242,10 +1550,19 @@ impl IrGenerator {
             None => IrType::Void,
             Some(t) => match t {
                 Type::Boolean => IrType::Bool,
-                Type::String | Type::Null | Type::Object | Type::List(_)
-                | Type::Named(_) | Type::Literal(_) | Type::Optional(_)
-                | Type::Union(_) | Type::Intersection(_) | Type::ObjectType(_)
-                | Type::FnSig { .. } | Type::Async(_) | Type::Any
+                Type::String
+                | Type::Null
+                | Type::Object
+                | Type::List(_)
+                | Type::Named(_)
+                | Type::Literal(_)
+                | Type::Optional(_)
+                | Type::Union(_)
+                | Type::Intersection(_)
+                | Type::ObjectType(_)
+                | Type::FnSig { .. }
+                | Type::Async(_)
+                | Type::Any
                 | Type::Tuple(_) => IrType::Pointer,
                 Type::Number => IrType::I64,
             },

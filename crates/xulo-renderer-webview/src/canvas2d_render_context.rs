@@ -5,7 +5,7 @@
 //! embedded in an HTML page and executed inside a webview.
 
 use xulo_render_core::{
-    Effects, Masking, Painter, RenderContext, TextBaseline, TextMetrics, TextAlign, TextRenderer,
+    Effects, Masking, Painter, RenderContext, TextAlign, TextBaseline, TextMetrics, TextRenderer,
 };
 
 /// Saved painter state for the `save`/`restore` stack.
@@ -210,15 +210,7 @@ impl Painter for Canvas2dRenderContext {
         self.emit(&format!("ctx.quadraticCurveTo({cpx}, {cpy}, {x}, {y});"));
     }
 
-    fn bezier_curve_to(
-        &mut self,
-        cp1x: f64,
-        cp1y: f64,
-        cp2x: f64,
-        cp2y: f64,
-        x: f64,
-        y: f64,
-    ) {
+    fn bezier_curve_to(&mut self, cp1x: f64, cp1y: f64, cp2x: f64, cp2y: f64, x: f64, y: f64) {
         self.emit(&format!(
             "ctx.bezierCurveTo({cp1x}, {cp1y}, {cp2x}, {cp2y}, {x}, {y});"
         ));
@@ -263,10 +255,7 @@ impl TextRenderer for Canvas2dRenderContext {
     }
 
     fn fill_text(&mut self, text: &str, x: f64, y: f64) {
-        self.emit(&format!(
-            "ctx.fillText({}, {x}, {y});",
-            Self::js_str(text)
-        ));
+        self.emit(&format!("ctx.fillText({}, {x}, {y});", Self::js_str(text)));
     }
 
     fn stroke_text(&mut self, text: &str, x: f64, y: f64) {
@@ -310,7 +299,9 @@ impl Masking for Canvas2dRenderContext {
 
 impl Effects for Canvas2dRenderContext {
     fn set_shadow_offset(&mut self, x: f64, y: f64) {
-        self.emit(&format!("ctx.shadowOffsetX = {x}; ctx.shadowOffsetY = {y};"));
+        self.emit(&format!(
+            "ctx.shadowOffsetX = {x}; ctx.shadowOffsetY = {y};"
+        ));
     }
 
     fn set_shadow_blur(&mut self, radius: f64) {

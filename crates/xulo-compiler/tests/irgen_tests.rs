@@ -20,7 +20,12 @@ fn test_compile_empty_main() {
     assert_eq!(module.functions.len(), 1);
     assert_eq!(module.functions[0].name, "main");
     // 空函数体也会生成 Return(None)
-    assert!(module.functions[0].instructions.iter().any(|i| matches!(i, Instruction::Return(None))));
+    assert!(
+        module.functions[0]
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::Return(None)))
+    );
 }
 
 #[test]
@@ -28,49 +33,77 @@ fn test_compile_let_binding() {
     let module = compile_to_ir_helper(r#"fn main() { let x = 42 }"#);
     let func = &module.functions[0];
     assert!(!func.locals.is_empty());
-    assert!(func.instructions.iter().any(|i| matches!(i, Instruction::SetLocal { .. })));
+    assert!(
+        func.instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::SetLocal { .. }))
+    );
 }
 
 #[test]
 fn test_compile_arithmetic() {
     let module = compile_to_ir_helper(r#"fn main() { let x = 1 + 2 }"#);
     let func = &module.functions[0];
-    assert!(func.instructions.iter().any(|i| matches!(i, Instruction::Add { .. })));
+    assert!(
+        func.instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::Add { .. }))
+    );
 }
 
 #[test]
 fn test_compile_subtraction() {
     let module = compile_to_ir_helper(r#"fn main() { let x = 10 - 3 }"#);
     let func = &module.functions[0];
-    assert!(func.instructions.iter().any(|i| matches!(i, Instruction::Sub { .. })));
+    assert!(
+        func.instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::Sub { .. }))
+    );
 }
 
 #[test]
 fn test_compile_multiplication() {
     let module = compile_to_ir_helper(r#"fn main() { let x = 4 * 5 }"#);
     let func = &module.functions[0];
-    assert!(func.instructions.iter().any(|i| matches!(i, Instruction::Mul { .. })));
+    assert!(
+        func.instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::Mul { .. }))
+    );
 }
 
 #[test]
 fn test_compile_division() {
     let module = compile_to_ir_helper(r#"fn main() { let x = 20 / 4 }"#);
     let func = &module.functions[0];
-    assert!(func.instructions.iter().any(|i| matches!(i, Instruction::Div { .. })));
+    assert!(
+        func.instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::Div { .. }))
+    );
 }
 
 #[test]
 fn test_compile_comparison() {
     let module = compile_to_ir_helper(r#"fn main() { let x = 1 < 2 }"#);
     let func = &module.functions[0];
-    assert!(func.instructions.iter().any(|i| matches!(i, Instruction::Lt { .. })));
+    assert!(
+        func.instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::Lt { .. }))
+    );
 }
 
 #[test]
 fn test_compile_equality() {
     let module = compile_to_ir_helper(r#"fn main() { let x = 1 == 1 }"#);
     let func = &module.functions[0];
-    assert!(func.instructions.iter().any(|i| matches!(i, Instruction::Eq { .. })));
+    assert!(
+        func.instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::Eq { .. }))
+    );
 }
 
 #[test]
@@ -87,8 +120,16 @@ fn main() {
 "#;
     let module = compile_to_ir_helper(source);
     let func = &module.functions[0];
-    assert!(func.instructions.iter().any(|i| matches!(i, Instruction::Branch { .. })));
-    assert!(func.instructions.iter().any(|i| matches!(i, Instruction::Label(_))));
+    assert!(
+        func.instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::Branch { .. }))
+    );
+    assert!(
+        func.instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::Label(_)))
+    );
 }
 
 #[test]
@@ -103,7 +144,11 @@ fn main() {
 "#;
     let module = compile_to_ir_helper(source);
     let func = &module.functions[0];
-    assert!(func.instructions.iter().any(|i| matches!(i, Instruction::Branch { .. })));
+    assert!(
+        func.instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::Branch { .. }))
+    );
 }
 
 #[test]
@@ -161,21 +206,37 @@ fn main() {
 fn test_compile_negative_number() {
     let module = compile_to_ir_helper(r#"fn main() { let x = -5 }"#);
     let func = &module.functions[0];
-    assert!(func.instructions.iter().any(|i| matches!(i, Instruction::Neg { .. })));
+    assert!(
+        func.instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::Neg { .. }))
+    );
 }
 
 #[test]
 fn test_compile_boolean_literal() {
     let module = compile_to_ir_helper(r#"fn main() { let x = true }"#);
     let func = &module.functions[0];
-    assert!(func.instructions.iter().any(|i| matches!(i, Instruction::Const { value: IrValue::Bool(true), .. })));
+    assert!(func.instructions.iter().any(|i| matches!(
+        i,
+        Instruction::Const {
+            value: IrValue::Bool(true),
+            ..
+        }
+    )));
 }
 
 #[test]
 fn test_compile_null_literal() {
     let module = compile_to_ir_helper(r#"fn main() { let x = null }"#);
     let func = &module.functions[0];
-    assert!(func.instructions.iter().any(|i| matches!(i, Instruction::Const { value: IrValue::Null, .. })));
+    assert!(func.instructions.iter().any(|i| matches!(
+        i,
+        Instruction::Const {
+            value: IrValue::Null,
+            ..
+        }
+    )));
 }
 
 #[test]
@@ -183,7 +244,11 @@ fn test_compile_print_int() {
     let module = compile_to_ir_helper(r#"fn main() { print(42) }"#);
     let func = &module.functions[0];
     assert!(func.instructions.iter().any(|i| matches!(
-        i, Instruction::RuntimeCall { func: RuntimeFn::PrintValue, .. }
+        i,
+        Instruction::RuntimeCall {
+            func: RuntimeFn::PrintValue,
+            ..
+        }
     )));
 }
 
@@ -192,7 +257,11 @@ fn test_compile_print_string() {
     let module = compile_to_ir_helper(r#"fn main() { print("hi") }"#);
     let func = &module.functions[0];
     assert!(func.instructions.iter().any(|i| matches!(
-        i, Instruction::RuntimeCall { func: RuntimeFn::PrintValue, .. }
+        i,
+        Instruction::RuntimeCall {
+            func: RuntimeFn::PrintValue,
+            ..
+        }
     )));
 }
 
@@ -209,14 +278,22 @@ fn test_compile_entry_point() {
 fn test_compile_new_array_with_tag() {
     let module = compile_to_ir_helper(r#"fn main() { let arr = [1, 2, 3] }"#);
     let func = &module.functions[0];
-    assert!(func.instructions.iter().any(|i| matches!(i, Instruction::NewArray { .. })));
+    assert!(
+        func.instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::NewArray { .. }))
+    );
 }
 
 #[test]
 fn test_compile_new_object_with_tag() {
     let module = compile_to_ir_helper(r#"fn main() { let obj = {a: 1, b: 2} }"#);
     let func = &module.functions[0];
-    assert!(func.instructions.iter().any(|i| matches!(i, Instruction::NewObject { .. })));
+    assert!(
+        func.instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::NewObject { .. }))
+    );
 }
 
 #[test]
@@ -224,7 +301,11 @@ fn test_compile_array_concat_generates_runtime_call() {
     let module = compile_to_ir_helper(r#"fn main() { print([1] + [2]) }"#);
     let func = &module.functions[0];
     assert!(func.instructions.iter().any(|i| matches!(
-        i, Instruction::RuntimeCall { func: RuntimeFn::ArrayConcat, .. }
+        i,
+        Instruction::RuntimeCall {
+            func: RuntimeFn::ArrayConcat,
+            ..
+        }
     )));
 }
 
@@ -233,7 +314,11 @@ fn test_compile_print_value_for_int() {
     let module = compile_to_ir_helper(r#"fn main() { print(42) }"#);
     let func = &module.functions[0];
     assert!(func.instructions.iter().any(|i| matches!(
-        i, Instruction::RuntimeCall { func: RuntimeFn::PrintValue, .. }
+        i,
+        Instruction::RuntimeCall {
+            func: RuntimeFn::PrintValue,
+            ..
+        }
     )));
 }
 
@@ -242,7 +327,11 @@ fn test_compile_print_value_for_string() {
     let module = compile_to_ir_helper(r#"fn main() { print("hi") }"#);
     let func = &module.functions[0];
     assert!(func.instructions.iter().any(|i| matches!(
-        i, Instruction::RuntimeCall { func: RuntimeFn::PrintValue, .. }
+        i,
+        Instruction::RuntimeCall {
+            func: RuntimeFn::PrintValue,
+            ..
+        }
     )));
 }
 
@@ -251,7 +340,11 @@ fn test_compile_print_value_for_bool() {
     let module = compile_to_ir_helper(r#"fn main() { print(true) }"#);
     let func = &module.functions[0];
     assert!(func.instructions.iter().any(|i| matches!(
-        i, Instruction::RuntimeCall { func: RuntimeFn::PrintValue, .. }
+        i,
+        Instruction::RuntimeCall {
+            func: RuntimeFn::PrintValue,
+            ..
+        }
     )));
 }
 
@@ -260,7 +353,11 @@ fn test_compile_print_value_for_array() {
     let module = compile_to_ir_helper(r#"fn main() { print([1, 2]) }"#);
     let func = &module.functions[0];
     assert!(func.instructions.iter().any(|i| matches!(
-        i, Instruction::RuntimeCall { func: RuntimeFn::PrintValue, .. }
+        i,
+        Instruction::RuntimeCall {
+            func: RuntimeFn::PrintValue,
+            ..
+        }
     )));
 }
 
@@ -276,7 +373,11 @@ fn main() {
     let module = compile_to_ir_helper(source);
     let func = &module.functions[0];
     // for 循环应该生成 GetIndex 指令来迭代
-    assert!(func.instructions.iter().any(|i| matches!(i, Instruction::GetIndex { .. })));
+    assert!(
+        func.instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::GetIndex { .. }))
+    );
 }
 
 #[test]
@@ -293,7 +394,12 @@ fn main() {
     assert!(module.functions.len() >= 2);
     // main 应该生成 Call 指令
     let main_func = module.functions.iter().find(|f| f.name == "main").unwrap();
-    assert!(main_func.instructions.iter().any(|i| matches!(i, Instruction::Call { .. })));
+    assert!(
+        main_func
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::Call { .. }))
+    );
 }
 
 #[test]
@@ -308,7 +414,11 @@ fn main() {
     let module = compile_to_ir_helper(source);
     let func = &module.functions[0];
     assert!(func.instructions.iter().any(|i| matches!(
-        i, Instruction::RuntimeCall { func: RuntimeFn::ArrayConcat, .. }
+        i,
+        Instruction::RuntimeCall {
+            func: RuntimeFn::ArrayConcat,
+            ..
+        }
     )));
 }
 
@@ -325,6 +435,10 @@ fn main() {
     let func = &module.functions[0];
     // for 循环对 list 应该生成 ArrayLen
     assert!(func.instructions.iter().any(|i| matches!(
-        i, Instruction::RuntimeCall { func: RuntimeFn::ArrayLen, .. }
+        i,
+        Instruction::RuntimeCall {
+            func: RuntimeFn::ArrayLen,
+            ..
+        }
     )));
 }

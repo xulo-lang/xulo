@@ -36,12 +36,12 @@ fn test_ir_function_add_multiple_labels() {
 fn test_ir_module_entry_point() {
     let mut module = IrModule::new();
     assert_eq!(module.entry_point, FuncId(0));
-    
+
     let func1 = IrFunction::new("main".to_string(), vec![], IrType::Void);
     let func2 = IrFunction::new("helper".to_string(), vec![], IrType::I64);
     module.add_function(func1);
     module.add_function(func2);
-    
+
     module.entry_point = FuncId(0);
     assert_eq!(module.entry_point.0, 0);
 }

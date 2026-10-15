@@ -737,7 +737,8 @@ fn nullish_and_optional_access() {
         "#,
     );
     assert_eq!(out, vec!["fallback", "null", "5"]);
-}#[test]
+}
+#[test]
 fn call_function_value_from_member() {
     let out = run_ok(
         r#"
@@ -875,9 +876,11 @@ fn view_main_captures_render_tree() {
         panic!("props must be an object");
     };
     let props = props.borrow();
-    assert!(props
-        .iter()
-        .any(|(k, v)| k == "spacing" && xulo_runtime::value::equal(v, &Value::Number(8.0))));
+    assert!(
+        props
+            .iter()
+            .any(|(k, v)| k == "spacing" && xulo_runtime::value::equal(v, &Value::Number(8.0)))
+    );
     let children = props
         .iter()
         .find(|(k, _)| k == "children")
@@ -973,7 +976,10 @@ fn node_prop(v: &Value, kind: &str, prop: &str) -> Option<Value> {
         return None;
     };
     let props = props.borrow();
-    props.iter().find(|(k, _)| k == prop).map(|(_, v)| v.clone())
+    props
+        .iter()
+        .find(|(k, _)| k == prop)
+        .map(|(_, v)| v.clone())
 }
 
 #[test]
@@ -1002,7 +1008,10 @@ fn onclick_mutates_state_across_rerender() {
     let view = interp.take_root_view().expect("initial view");
     let mut strings = Vec::new();
     collect_strings(&view, &mut strings);
-    assert!(strings.iter().any(|s| s.contains("Count: 0")), "{strings:?}");
+    assert!(
+        strings.iter().any(|s| s.contains("Count: 0")),
+        "{strings:?}"
+    );
 
     let on_click = find_prop(&view, "Button", "onClick").expect("button onClick");
     unwrap_run(interp.invoke(&on_click));
@@ -1428,7 +1437,7 @@ fn missing_object_member_reads_null() {
 
     let out = run_ok(r#"fn main() { let o: object = {} print(o["missing"]) }"#);
     assert_eq!(out, vec!["null"]);
-}// ── break / continue ──────────────────────────────────────────────────────
+} // ── break / continue ──────────────────────────────────────────────────────
 
 #[test]
 fn break_exits_for_loop() {
@@ -1650,42 +1659,66 @@ fn shift_higher_than_add() {
 
 #[test]
 fn list_length_property() {
-    assert_eq!(run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.length) }"#), vec!["3"]);
+    assert_eq!(
+        run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.length) }"#),
+        vec!["3"]
+    );
 }
 
 #[test]
 fn list_capacity_property() {
-    assert_eq!(run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.capacity >= 3) }"#), vec!["true"]);
+    assert_eq!(
+        run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.capacity >= 3) }"#),
+        vec!["true"]
+    );
 }
 
 #[test]
 fn list_is_empty_true() {
-    assert_eq!(run_ok(r#"fn main() { let a = []; print(a.isEmpty()) }"#), vec!["true"]);
+    assert_eq!(
+        run_ok(r#"fn main() { let a = []; print(a.isEmpty()) }"#),
+        vec!["true"]
+    );
 }
 
 #[test]
 fn list_is_empty_false() {
-    assert_eq!(run_ok(r#"fn main() { let a = [1]; print(a.isEmpty()) }"#), vec!["false"]);
+    assert_eq!(
+        run_ok(r#"fn main() { let a = [1]; print(a.isEmpty()) }"#),
+        vec!["false"]
+    );
 }
 
 #[test]
 fn list_first() {
-    assert_eq!(run_ok(r#"fn main() { let a = [10, 20, 30]; print(a.first()) }"#), vec!["10"]);
+    assert_eq!(
+        run_ok(r#"fn main() { let a = [10, 20, 30]; print(a.first()) }"#),
+        vec!["10"]
+    );
 }
 
 #[test]
 fn list_first_empty() {
-    assert_eq!(run_ok(r#"fn main() { let a: list<number> = []; print(a.first()) }"#), vec!["null"]);
+    assert_eq!(
+        run_ok(r#"fn main() { let a: list<number> = []; print(a.first()) }"#),
+        vec!["null"]
+    );
 }
 
 #[test]
 fn list_last() {
-    assert_eq!(run_ok(r#"fn main() { let a = [10, 20, 30]; print(a.last()) }"#), vec!["30"]);
+    assert_eq!(
+        run_ok(r#"fn main() { let a = [10, 20, 30]; print(a.last()) }"#),
+        vec!["30"]
+    );
 }
 
 #[test]
 fn list_last_empty() {
-    assert_eq!(run_ok(r#"fn main() { let a: list<number> = []; print(a.last()) }"#), vec!["null"]);
+    assert_eq!(
+        run_ok(r#"fn main() { let a: list<number> = []; print(a.last()) }"#),
+        vec!["null"]
+    );
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -1694,22 +1727,34 @@ fn list_last_empty() {
 
 #[test]
 fn list_get_safe() {
-    assert_eq!(run_ok(r#"fn main() { let a = [10, 20]; print(a.get(1)) }"#), vec!["20"]);
+    assert_eq!(
+        run_ok(r#"fn main() { let a = [10, 20]; print(a.get(1)) }"#),
+        vec!["20"]
+    );
 }
 
 #[test]
 fn list_get_out_of_bounds_returns_null() {
-    assert_eq!(run_ok(r#"fn main() { let a = [10, 20]; print(a.get(5)) }"#), vec!["null"]);
+    assert_eq!(
+        run_ok(r#"fn main() { let a = [10, 20]; print(a.get(5)) }"#),
+        vec!["null"]
+    );
 }
 
 #[test]
 fn list_set_returns_self() {
-    assert_eq!(run_ok(r#"fn main() { let a = [1, 2, 3]; a.set(1, 99); print(a) }"#), vec!["[1, 99, 3]"]);
+    assert_eq!(
+        run_ok(r#"fn main() { let a = [1, 2, 3]; a.set(1, 99); print(a) }"#),
+        vec!["[1, 99, 3]"]
+    );
 }
 
 #[test]
 fn list_push_returns_self() {
-    assert_eq!(run_ok(r#"fn main() { let a = [1, 2]; a.push(3); print(a) }"#), vec!["[1, 2, 3]"]);
+    assert_eq!(
+        run_ok(r#"fn main() { let a = [1, 2]; a.push(3); print(a) }"#),
+        vec!["[1, 2, 3]"]
+    );
 }
 
 #[test]
@@ -1722,33 +1767,52 @@ fn list_push_chain() {
 
 #[test]
 fn list_pop() {
-    assert_eq!(run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.pop()) }"#), vec!["3"]);
+    assert_eq!(
+        run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.pop()) }"#),
+        vec!["3"]
+    );
 }
 
 #[test]
 fn list_pop_empty_errors() {
     let err = run(r#"fn main() { let a: list<number> = []; a.pop() }"#).unwrap_err();
-    assert!(err.message.contains("empty list"), "unexpected: {}", err.message);
+    assert!(
+        err.message.contains("empty list"),
+        "unexpected: {}",
+        err.message
+    );
 }
 
 #[test]
 fn list_insert() {
-    assert_eq!(run_ok(r#"fn main() { let a = [1, 3]; a.insert(1, 2); print(a) }"#), vec!["[1, 2, 3]"]);
+    assert_eq!(
+        run_ok(r#"fn main() { let a = [1, 3]; a.insert(1, 2); print(a) }"#),
+        vec!["[1, 2, 3]"]
+    );
 }
 
 #[test]
 fn list_remove() {
-    assert_eq!(run_ok(r#"fn main() { let a = [10, 20, 30]; print(a.remove(1)) }"#), vec!["20"]);
+    assert_eq!(
+        run_ok(r#"fn main() { let a = [10, 20, 30]; print(a.remove(1)) }"#),
+        vec!["20"]
+    );
 }
 
 #[test]
 fn list_remove_value_found() {
-    assert_eq!(run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.removeValue(2)) }"#), vec!["true"]);
+    assert_eq!(
+        run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.removeValue(2)) }"#),
+        vec!["true"]
+    );
 }
 
 #[test]
 fn list_remove_value_not_found() {
-    assert_eq!(run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.removeValue(9)) }"#), vec!["false"]);
+    assert_eq!(
+        run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.removeValue(9)) }"#),
+        vec!["false"]
+    );
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -1757,52 +1821,82 @@ fn list_remove_value_not_found() {
 
 #[test]
 fn list_slice() {
-    assert_eq!(run_ok(r#"fn main() { let a = [1, 2, 3, 4, 5]; print(a.slice(1, 4)) }"#), vec!["[2, 3, 4]"]);
+    assert_eq!(
+        run_ok(r#"fn main() { let a = [1, 2, 3, 4, 5]; print(a.slice(1, 4)) }"#),
+        vec!["[2, 3, 4]"]
+    );
 }
 
 #[test]
 fn list_slice_no_args() {
-    assert_eq!(run_ok(r#"fn main() { let a = [1, 2]; print(a.slice()) }"#), vec!["[1, 2]"]);
+    assert_eq!(
+        run_ok(r#"fn main() { let a = [1, 2]; print(a.slice()) }"#),
+        vec!["[1, 2]"]
+    );
 }
 
 #[test]
 fn list_index_of() {
-    assert_eq!(run_ok(r#"fn main() { let a = [10, 20, 30]; print(a.indexOf(20)) }"#), vec!["1"]);
+    assert_eq!(
+        run_ok(r#"fn main() { let a = [10, 20, 30]; print(a.indexOf(20)) }"#),
+        vec!["1"]
+    );
 }
 
 #[test]
 fn list_index_of_not_found() {
-    assert_eq!(run_ok(r#"fn main() { let a = [10, 20]; print(a.indexOf(99)) }"#), vec!["-1"]);
+    assert_eq!(
+        run_ok(r#"fn main() { let a = [10, 20]; print(a.indexOf(99)) }"#),
+        vec!["-1"]
+    );
 }
 
 #[test]
 fn list_contains() {
-    assert_eq!(run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.contains(2)) }"#), vec!["true"]);
+    assert_eq!(
+        run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.contains(2)) }"#),
+        vec!["true"]
+    );
 }
 
 #[test]
 fn list_contains_not() {
-    assert_eq!(run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.contains(9)) }"#), vec!["false"]);
+    assert_eq!(
+        run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.contains(9)) }"#),
+        vec!["false"]
+    );
 }
 
 #[test]
 fn list_join() {
-    assert_eq!(run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.join(", ")) }"#), vec!["1, 2, 3"]);
+    assert_eq!(
+        run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.join(", ")) }"#),
+        vec!["1, 2, 3"]
+    );
 }
 
 #[test]
 fn list_join_no_sep() {
-    assert_eq!(run_ok(r#"fn main() { let a = ["a", "b"]; print(a.join()) }"#), vec!["ab"]);
+    assert_eq!(
+        run_ok(r#"fn main() { let a = ["a", "b"]; print(a.join()) }"#),
+        vec!["ab"]
+    );
 }
 
 #[test]
 fn list_reverse() {
-    assert_eq!(run_ok(r#"fn main() { let a = [1, 2, 3]; a.reverse(); print(a) }"#), vec!["[3, 2, 1]"]);
+    assert_eq!(
+        run_ok(r#"fn main() { let a = [1, 2, 3]; a.reverse(); print(a) }"#),
+        vec!["[3, 2, 1]"]
+    );
 }
 
 #[test]
 fn list_sort_numbers() {
-    assert_eq!(run_ok(r#"fn main() { let a = [3, 1, 2]; a.sort(); print(a) }"#), vec!["[1, 2, 3]"]);
+    assert_eq!(
+        run_ok(r#"fn main() { let a = [3, 1, 2]; a.sort(); print(a) }"#),
+        vec!["[1, 2, 3]"]
+    );
 }
 
 #[test]
@@ -1867,8 +1961,13 @@ fn list_reduce_without_init() {
 
 #[test]
 fn list_reduce_empty_without_init_errors() {
-    let err = run(r#"fn main() { let a: list<number> = []; a.reduce(fn(acc, x) { acc + x }) }"#).unwrap_err();
-    assert!(err.message.contains("empty list"), "unexpected: {}", err.message);
+    let err = run(r#"fn main() { let a: list<number> = []; a.reduce(fn(acc, x) { acc + x }) }"#)
+        .unwrap_err();
+    assert!(
+        err.message.contains("empty list"),
+        "unexpected: {}",
+        err.message
+    );
 }
 
 #[test]
@@ -1922,7 +2021,9 @@ fn list_every_false() {
 #[test]
 fn list_for_each() {
     assert_eq!(
-        run_ok(r#"fn main() { let a = [10, 20]; let mut s = 0; a.forEach(fn(v, i) { s = s + v }); print(s) }"#),
+        run_ok(
+            r#"fn main() { let a = [10, 20]; let mut s = 0; a.forEach(fn(v, i) { s = s + v }); print(s) }"#
+        ),
         vec!["30"]
     );
 }
@@ -1933,28 +2034,43 @@ fn list_for_each() {
 
 #[test]
 fn array_new_with_fill() {
-    assert_eq!(run_raw(r#"fn main() { print(Array.create(3, 0)) }"#).unwrap(), vec!["[0, 0, 0]"]);
+    assert_eq!(
+        run_raw(r#"fn main() { print(Array.create(3, 0)) }"#).unwrap(),
+        vec!["[0, 0, 0]"]
+    );
 }
 
 #[test]
 fn array_new_without_fill() {
-    assert_eq!(run_raw(r#"fn main() { print(Array.create(2)) }"#).unwrap(), vec!["[null, null]"]);
+    assert_eq!(
+        run_raw(r#"fn main() { print(Array.create(2)) }"#).unwrap(),
+        vec!["[null, null]"]
+    );
 }
 
 #[test]
 fn array_fill() {
-    assert_eq!(run_raw(r#"fn main() { print(Array.fill(4, "x")) }"#).unwrap(), vec!["[x, x, x, x]"]);
+    assert_eq!(
+        run_raw(r#"fn main() { print(Array.fill(4, "x")) }"#).unwrap(),
+        vec!["[x, x, x, x]"]
+    );
 }
 
 #[test]
 fn array_from() {
-    assert_eq!(run_raw(r#"fn main() { let a = [1, 2]; let b = Array.clone(a); print(b) }"#).unwrap(), vec!["[1, 2]"]);
+    assert_eq!(
+        run_raw(r#"fn main() { let a = [1, 2]; let b = Array.clone(a); print(b) }"#).unwrap(),
+        vec!["[1, 2]"]
+    );
 }
 
 #[test]
 fn array_from_copies() {
     assert_eq!(
-        run_raw(r#"fn main() { let a = [1, 2]; let b = Array.clone(a); b.push(3); print(a); print(b) }"#).unwrap(),
+        run_raw(
+            r#"fn main() { let a = [1, 2]; let b = Array.clone(a); b.push(3); print(a); print(b) }"#
+        )
+        .unwrap(),
         vec!["[1, 2]", "[1, 2, 3]"]
     );
 }
@@ -2066,8 +2182,10 @@ fn tuple_destructure_two() {
 #[test]
 fn tuple_destructure_with_function() {
     assert_eq!(
-        run_ok(r#"fn pair() { return [100, 200] }
-fn main() { let (a, b) = pair(); print(a); print(b) }"#),
+        run_ok(
+            r#"fn pair() { return [100, 200] }
+fn main() { let (a, b) = pair(); print(a); print(b) }"#
+        ),
         vec!["100", "200"]
     );
 }
@@ -2075,13 +2193,21 @@ fn main() { let (a, b) = pair(); print(a); print(b) }"#),
 #[test]
 fn tuple_destructure_count_mismatch_errors() {
     let err = run(r#"fn main() { let (a, b) = [1, 2, 3] }"#).unwrap_err();
-    assert!(err.message.contains("expected 2 elements"), "unexpected: {}", err.message);
+    assert!(
+        err.message.contains("expected 2 elements"),
+        "unexpected: {}",
+        err.message
+    );
 }
 
 #[test]
 fn tuple_destructure_not_a_list_errors() {
     let err = run(r#"fn main() { let (a, b) = 42 }"#).unwrap_err();
-    assert!(err.message.contains("expected a list"), "unexpected: {}", err.message);
+    assert!(
+        err.message.contains("expected a list"),
+        "unexpected: {}",
+        err.message
+    );
 }
 
 // Struct runtime tests
@@ -2089,14 +2215,16 @@ fn tuple_destructure_not_a_list_errors() {
 #[test]
 fn struct_literal_and_field_access() {
     assert_eq!(
-        run_ok(r#"
+        run_ok(
+            r#"
             struct User { name: string, age: number }
             fn main() {
                 let u = { name: "Alice", age: 30 }
                 print(u.name)
                 print(u.age)
             }
-        "#),
+        "#
+        ),
         vec!["Alice", "30"]
     );
 }
@@ -2104,27 +2232,34 @@ fn struct_literal_and_field_access() {
 #[test]
 fn object_destructure_runtime() {
     assert_eq!(
-        run_ok(r#"
+        run_ok(
+            r#"
             fn main() {
                 let obj = { name: "Alice", age: 30 }
                 let { name, age } = obj
                 print(name)
                 print(age)
             }
-        "#),
+        "#
+        ),
         vec!["Alice", "30"]
     );
 }
 #[test]
 fn object_destructure_not_an_object_errors() {
     let err = run(r#"fn main() { let { name } = 42 }"#).unwrap_err();
-    assert!(err.message.contains("expected an object"), "unexpected: {}", err.message);
+    assert!(
+        err.message.contains("expected an object"),
+        "unexpected: {}",
+        err.message
+    );
 }
 
 #[test]
 fn inherent_impl_methods() {
     assert_eq!(
-        run_ok(r#"
+        run_ok(
+            r#"
             struct User { name: string, age: number }
             impl User {
                 fn create(name: string, age: number): User {
@@ -2135,7 +2270,8 @@ fn inherent_impl_methods() {
                 let u = User.create("Bob", 25)
                 print(u.name)
             }
-        "#),
+        "#
+        ),
         vec!["Bob"]
     );
 }
@@ -2143,12 +2279,14 @@ fn inherent_impl_methods() {
 #[test]
 fn struct_name_accessible_in_main() {
     assert_eq!(
-        run_ok(r#"
+        run_ok(
+            r#"
             struct User { name: string }
             fn main() {
                 print(User)
             }
-        "#),
+        "#
+        ),
         vec!["{  }"]
     );
 }
@@ -2156,7 +2294,8 @@ fn struct_name_accessible_in_main() {
 #[test]
 fn struct_instance_method_dispatch() {
     assert_eq!(
-        run_ok(r#"
+        run_ok(
+            r#"
             struct User { name: string, age: number }
             impl User {
                 fn create(name: string, age: number): User {
@@ -2170,7 +2309,8 @@ fn struct_instance_method_dispatch() {
                 let u = User.create("Bob", 25)
                 print(u.greet())
             }
-        "#),
+        "#
+        ),
         vec!["Hi Bob"]
     );
 }

@@ -19,7 +19,11 @@ fn render_widget(
     available_h: f64,
 ) {
     match widget {
-        Widget::Screen { background, children, .. } => {
+        Widget::Screen {
+            background,
+            children,
+            ..
+        } => {
             if let Some(bg) = background {
                 ctx.set_fill_color(&color_to_hex(*bg));
                 ctx.begin_path();
@@ -28,7 +32,11 @@ fn render_widget(
             }
             render_children(ctx, children, x, y, available_w, available_h);
         }
-        Widget::VStack { spacing, children, style } => {
+        Widget::VStack {
+            spacing,
+            children,
+            style,
+        } => {
             let pad = style.padding.unwrap_or(0) as f64;
             let inner_x = x + pad;
             let inner_y = y + pad;
@@ -40,7 +48,11 @@ fn render_widget(
                 child_y += child_h + *spacing as f64;
             }
         }
-        Widget::HStack { spacing, children, style } => {
+        Widget::HStack {
+            spacing,
+            children,
+            style,
+        } => {
             let pad = style.padding.unwrap_or(0) as f64;
             let inner_x = x + pad;
             let inner_y = y + pad;
@@ -63,7 +75,11 @@ fn render_widget(
         Widget::Text { text, color, style } => {
             let font_size = style.font_size.unwrap_or(12);
             let bold = style.font_weight == Some(FontWeight::Bold);
-            let font = if bold { format!("bold {font_size}px monospace") } else { format!("{font_size}px monospace") };
+            let font = if bold {
+                format!("bold {font_size}px monospace")
+            } else {
+                format!("{font_size}px monospace")
+            };
             ctx.set_font(&font);
             let text_color = color.unwrap_or(Color::WHITE);
             ctx.set_fill_color(&color_to_hex(text_color));
@@ -87,7 +103,12 @@ fn render_widget(
             ctx.set_font("12px monospace");
             ctx.fill_text(label, x + 8.0, y + 4.0);
         }
-        Widget::Input { value, placeholder, style, .. } => {
+        Widget::Input {
+            value,
+            placeholder,
+            style,
+            ..
+        } => {
             let bg = style.background_color.unwrap_or(Color::new(255, 255, 255));
             ctx.set_fill_color(&color_to_hex(bg));
             ctx.begin_path();
@@ -100,14 +121,27 @@ fn render_widget(
             ctx.rect(x, y, available_w, available_h);
             ctx.stroke();
             let display = if value.is_empty() { placeholder } else { value };
-            let text_color = if value.is_empty() { Color::GRAY } else { style.color.unwrap_or(Color::BLACK) };
+            let text_color = if value.is_empty() {
+                Color::GRAY
+            } else {
+                style.color.unwrap_or(Color::BLACK)
+            };
             ctx.set_fill_color(&color_to_hex(text_color));
             ctx.set_font("12px monospace");
             ctx.fill_text(display, x + 4.0, y + 4.0);
         }
-        Widget::ScrollView { children, style, .. } => {
+        Widget::ScrollView {
+            children, style, ..
+        } => {
             let pad = style.padding.unwrap_or(0) as f64;
-            render_children(ctx, children, x + pad, y + pad, available_w - pad * 2.0, available_h - pad * 2.0);
+            render_children(
+                ctx,
+                children,
+                x + pad,
+                y + pad,
+                available_w - pad * 2.0,
+                available_h - pad * 2.0,
+            );
         }
         Widget::Unknown { kind, .. } => {
             ctx.set_fill_color("#404040");
@@ -121,7 +155,14 @@ fn render_widget(
     }
 }
 
-fn render_children(ctx: &mut dyn RenderContext, children: &[Widget], x: f64, y: f64, w: f64, h: f64) {
+fn render_children(
+    ctx: &mut dyn RenderContext,
+    children: &[Widget],
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+) {
     for child in children {
         render_widget(ctx, child, x, y, w, h);
     }
@@ -132,16 +173,23 @@ pub fn estimate_height(widget: &Widget, _available_w: f64) -> f64 {
         Widget::Text { style, .. } => style.font_size.unwrap_or(12) as f64 + 4.0,
         Widget::Button { .. } => 28.0,
         Widget::Input { .. } => 24.0,
-        Widget::VStack { children, spacing, .. } => {
-            children.iter().map(|c| estimate_height(c, _available_w)).sum::<f64>()
+        Widget::VStack {
+            children, spacing, ..
+        } => {
+            children
+                .iter()
+                .map(|c| estimate_height(c, _available_w))
+                .sum::<f64>()
                 + (*spacing as f64 * children.len().saturating_sub(1) as f64)
         }
-        Widget::HStack { children, .. } => {
-            children.iter().map(|c| estimate_height(c, _available_w)).fold(0.0, f64::max)
-        }
-        Widget::Fill { children, .. } => {
-            children.iter().map(|c| estimate_height(c, _available_w)).sum::<f64>()
-        }
+        Widget::HStack { children, .. } => children
+            .iter()
+            .map(|c| estimate_height(c, _available_w))
+            .fold(0.0, f64::max),
+        Widget::Fill { children, .. } => children
+            .iter()
+            .map(|c| estimate_height(c, _available_w))
+            .sum::<f64>(),
         _ => 20.0,
     }
 }

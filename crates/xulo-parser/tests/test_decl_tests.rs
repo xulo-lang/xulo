@@ -70,8 +70,10 @@ test fn body_works() {
 }
 "#;
     let program = parse_program(src).unwrap();
-    assert!(program
-        .statements
-        .iter()
-        .any(|s| matches!(s, Statement::Test(f) if f.name == "body_works")));
+    assert!(
+        program
+            .statements
+            .iter()
+            .any(|s| matches!(s, Statement::Test(f) if f.name == "body_works"))
+    );
 }

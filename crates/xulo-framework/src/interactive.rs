@@ -12,7 +12,7 @@ use std::rc::Rc;
 use xulo_core::ast::Program;
 use xulo_core::error::XuloError;
 use xulo_runtime::interpreter::Interpreter;
-use xulo_ui::{PaintOp, Rect, Size, StyleProps, Widget, UiCallback};
+use xulo_ui::{PaintOp, Rect, Size, StyleProps, UiCallback, Widget};
 
 use crate::convert::widget_tree_with_callbacks;
 use crate::run::execute_in;
@@ -20,8 +20,7 @@ use crate::run::execute_in;
 /// Builds one frame (paint commands + button/input rectangles) for a widget
 /// tree against a surface, using a backend's metrics. `None` for backends
 /// (webview) that let the wasm engine do layout.
-pub type FrameBuilder =
-    Box<dyn Fn(&Widget, Size) -> (Vec<PaintOp<'_>>, Vec<Rect>, Vec<Rect>)>;
+pub type FrameBuilder = Box<dyn Fn(&Widget, Size) -> (Vec<PaintOp<'_>>, Vec<Rect>, Vec<Rect>)>;
 
 /// A live, re-renderable UI session.
 pub struct ReactiveUi {

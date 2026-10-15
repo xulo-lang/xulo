@@ -33,7 +33,5 @@ pub use painter::Painter;
 pub use platform::{MockPlatform, PlatformBackend, SystemIntegration};
 pub use render_context::RenderContext;
 pub use text_metrics::{TextBounds, TextMetrics};
-pub use text_renderer::{TextBaseline, TextRenderer, TextAlign};
-pub use types::{
-    EventResult, PlatformError, RenderBackend, WindowConfig, WindowId, PlatformEvent,
-};
+pub use text_renderer::{TextAlign, TextBaseline, TextRenderer};
+pub use types::{EventResult, PlatformError, PlatformEvent, RenderBackend, WindowConfig, WindowId};

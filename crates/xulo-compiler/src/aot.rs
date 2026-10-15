@@ -1,18 +1,18 @@
 use std::collections::HashMap;
 
-use cranelift::codegen::ir::types::I64;
-use cranelift::codegen::ir::{Signature, InstBuilder};
 use cranelift::codegen::ir::condcodes::*;
-use cranelift::frontend::{FunctionBuilder, Variable, FunctionBuilderContext};
+use cranelift::codegen::ir::entities::Block;
+use cranelift::codegen::ir::types::I64;
+use cranelift::codegen::ir::{InstBuilder, Signature};
 use cranelift::codegen::isa::CallConv;
 use cranelift::codegen::settings;
 use cranelift::codegen::verify_function;
+use cranelift::frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
+use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module};
 use cranelift_object::{ObjectBuilder, ObjectModule, ObjectProduct};
-use cranelift_module::{Module, FuncId, Linkage, DataId, DataDescription};
-use cranelift::codegen::ir::entities::Block;
 
+use xulo_core::error::{ErrorKind, XuloError};
 use xulo_core::ir::*;
-use xulo_core::error::{XuloError, ErrorKind};
 
 fn block_has_terminator(func: &cranelift::codegen::ir::Function, block: Block) -> bool {
     if let Some(inst) = func.layout.last_inst(block) {
@@ -32,19 +32,31 @@ pub struct AotCodeGen {
 
 impl AotCodeGen {
     pub fn new() -> Result<Self, XuloError> {
-        let isa_builder = cranelift_native::builder()
-            .map_err(|e| XuloError::new(ErrorKind::Codegen, format!("failed to get ISA builder: {}", e)))?;
+        let isa_builder = cranelift_native::builder().map_err(|e| {
+            XuloError::new(
+                ErrorKind::Codegen,
+                format!("failed to get ISA builder: {}", e),
+            )
+        })?;
 
         let flag_builder = settings::builder();
-        let isa = isa_builder.finish(settings::Flags::new(flag_builder))
-            .map_err(|e| XuloError::new(ErrorKind::Codegen, format!("failed to create ISA: {}", e)))?;
+        let isa = isa_builder
+            .finish(settings::Flags::new(flag_builder))
+            .map_err(|e| {
+                XuloError::new(ErrorKind::Codegen, format!("failed to create ISA: {}", e))
+            })?;
 
         let obj_builder = ObjectBuilder::new(
             isa,
             "xulo_program".to_string(),
             cranelift_module::default_libcall_names(),
         )
-        .map_err(|e| XuloError::new(ErrorKind::Codegen, format!("failed to create ObjectBuilder: {}", e)))?;
+        .map_err(|e| {
+            XuloError::new(
+                ErrorKind::Codegen,
+                format!("failed to create ObjectBuilder: {}", e),
+            )
+        })?;
 
         let module = ObjectModule::new(obj_builder);
 
@@ -61,16 +73,31 @@ impl AotCodeGen {
         // Embed strings into .rodata
         self.string_data_ids.clear();
         for s in ir_module.strings.iter() {
-            let data_id = self.module
-                .declare_data(&format!("str_{}", self.string_data_ids.len()), Linkage::Local, false, false)
-                .map_err(|e| XuloError::new(ErrorKind::Codegen, format!("failed to declare string data: {}", e)))?;
+            let data_id = self
+                .module
+                .declare_data(
+                    &format!("str_{}", self.string_data_ids.len()),
+                    Linkage::Local,
+                    false,
+                    false,
+                )
+                .map_err(|e| {
+                    XuloError::new(
+                        ErrorKind::Codegen,
+                        format!("failed to declare string data: {}", e),
+                    )
+                })?;
 
             let mut data_desc = DataDescription::new();
             let mut bytes = s.as_bytes().to_vec();
             bytes.push(0); // null terminator
             data_desc.define(bytes.into_boxed_slice());
-            self.module.define_data(data_id, &data_desc)
-                .map_err(|e| XuloError::new(ErrorKind::Codegen, format!("failed to define string data: {}", e)))?;
+            self.module.define_data(data_id, &data_desc).map_err(|e| {
+                XuloError::new(
+                    ErrorKind::Codegen,
+                    format!("failed to define string data: {}", e),
+                )
+            })?;
 
             self.string_data_ids.push(data_id);
         }
@@ -81,10 +108,11 @@ impl AotCodeGen {
             for instr in &func.instructions {
                 match instr {
                     Instruction::GetField { field, .. } | Instruction::SetField { field, .. }
-                        if !self.string_field_ids.contains_key(field) => {
-                            let data_id = self.get_or_create_string_id(field);
-                            self.string_field_ids.insert(field.clone(), data_id);
-                        }
+                        if !self.string_field_ids.contains_key(field) =>
+                    {
+                        let data_id = self.get_or_create_string_id(field);
+                        self.string_field_ids.insert(field.clone(), data_id);
+                    }
                     Instruction::NewObject { fields, .. } => {
                         for (field_name, _, _) in fields.iter() {
                             if !self.string_field_ids.contains_key(field_name) {
@@ -102,9 +130,15 @@ impl AotCodeGen {
         let mut func_ids = Vec::new();
         for func in &ir_module.functions {
             let sig = self.create_signature(func);
-            let func_id = self.module
+            let func_id = self
+                .module
                 .declare_function(&func.name, Linkage::Export, &sig)
-                .map_err(|e| XuloError::new(ErrorKind::Codegen, format!("failed to declare function {}: {}", func.name, e)))?;
+                .map_err(|e| {
+                    XuloError::new(
+                        ErrorKind::Codegen,
+                        format!("failed to declare function {}: {}", func.name, e),
+                    )
+                })?;
             func_ids.push(func_id);
         }
 
@@ -123,7 +157,11 @@ impl AotCodeGen {
         let rt = [
             ("xulo_print", vec![I64], true),
             ("xulo_print_int", vec![I64], true),
-            ("xulo_print_float", vec![cranelift::codegen::ir::types::F64], true),
+            (
+                "xulo_print_float",
+                vec![cranelift::codegen::ir::types::F64],
+                true,
+            ),
             ("xulo_print_value", vec![I64, I64], false),
             ("xulo_panic", vec![I64], true),
             ("xulo_string_concat", vec![I64, I64], true),
@@ -149,7 +187,9 @@ impl AotCodeGen {
             if has_return {
                 sig.returns.push(cranelift::codegen::ir::AbiParam::new(I64));
             }
-            let id = self.module.declare_function(name, Linkage::Import, &sig)
+            let id = self
+                .module
+                .declare_function(name, Linkage::Import, &sig)
                 .map_err(|e| XuloError::new(ErrorKind::Codegen, format!("{}: {}", name, e)))?;
             self.runtime_func_ids.insert(name.to_string(), id);
         }
@@ -227,9 +267,10 @@ impl AotCodeGen {
 
         for (idx, (local_id, _ty)) in ir_func.locals.iter().enumerate() {
             if let Some(&var) = vars.get(local_id)
-                && idx < var_types.len() {
-                    builder.declare_var(var, var_types[idx]);
-                }
+                && idx < var_types.len()
+            {
+                builder.declare_var(var, var_types[idx]);
+            }
         }
 
         // 声明参数变量
@@ -253,10 +294,10 @@ impl AotCodeGen {
                         // If previous block is now empty, add dummy instruction
                         if let Some(cur) = builder.current_block()
                             && builder.func.layout.last_inst(cur).is_none()
-                                && cur != entry_block
-                            {
-                                builder.ins().iconst(I64, 0);
-                            }
+                            && cur != entry_block
+                        {
+                            builder.ins().iconst(I64, 0);
+                        }
                         builder.switch_to_block(block);
                     }
                 }
@@ -268,7 +309,8 @@ impl AotCodeGen {
                             let bits = n.to_bits() as i64;
                             let v = builder.ins().f64const(*n);
                             // 注册浮点数位模式，用于自动检测
-                            if let Some(&reg_id) = self.runtime_func_ids.get("xulo_register_float") {
+                            if let Some(&reg_id) = self.runtime_func_ids.get("xulo_register_float")
+                            {
                                 let fref = self.module.declare_func_in_func(reg_id, builder.func);
                                 let bits_val = builder.ins().iconst(I64, bits);
                                 builder.ins().call(fref, &[bits_val]);
@@ -293,31 +335,41 @@ impl AotCodeGen {
                     let l = resolve_operand(&mut builder, left, &vars);
                     let r = resolve_operand(&mut builder, right, &vars);
                     let val = builder.ins().iadd(l, r);
-                    if let Some(&var) = vars.get(dst) { builder.def_var(var, val); }
+                    if let Some(&var) = vars.get(dst) {
+                        builder.def_var(var, val);
+                    }
                 }
                 Instruction::Sub { dst, left, right } => {
                     let l = resolve_operand(&mut builder, left, &vars);
                     let r = resolve_operand(&mut builder, right, &vars);
                     let val = builder.ins().isub(l, r);
-                    if let Some(&var) = vars.get(dst) { builder.def_var(var, val); }
+                    if let Some(&var) = vars.get(dst) {
+                        builder.def_var(var, val);
+                    }
                 }
                 Instruction::Mul { dst, left, right } => {
                     let l = resolve_operand(&mut builder, left, &vars);
                     let r = resolve_operand(&mut builder, right, &vars);
                     let val = builder.ins().imul(l, r);
-                    if let Some(&var) = vars.get(dst) { builder.def_var(var, val); }
+                    if let Some(&var) = vars.get(dst) {
+                        builder.def_var(var, val);
+                    }
                 }
                 Instruction::Div { dst, left, right } => {
                     let l = resolve_operand(&mut builder, left, &vars);
                     let r = resolve_operand(&mut builder, right, &vars);
                     let val = builder.ins().sdiv(l, r);
-                    if let Some(&var) = vars.get(dst) { builder.def_var(var, val); }
+                    if let Some(&var) = vars.get(dst) {
+                        builder.def_var(var, val);
+                    }
                 }
                 Instruction::Mod { dst, left, right } => {
                     let l = resolve_operand(&mut builder, left, &vars);
                     let r = resolve_operand(&mut builder, right, &vars);
                     let val = builder.ins().srem(l, r);
-                    if let Some(&var) = vars.get(dst) { builder.def_var(var, val); }
+                    if let Some(&var) = vars.get(dst) {
+                        builder.def_var(var, val);
+                    }
                 }
                 Instruction::Pow { .. } => {
                     // Pow not natively supported in Cranelift; handled by runtime interpreter
@@ -325,108 +377,146 @@ impl AotCodeGen {
                 Instruction::Neg { dst, operand } => {
                     let o = resolve_operand(&mut builder, operand, &vars);
                     let val = builder.ins().ineg(o);
-                    if let Some(&var) = vars.get(dst) { builder.def_var(var, val); }
+                    if let Some(&var) = vars.get(dst) {
+                        builder.def_var(var, val);
+                    }
                 }
                 Instruction::BitAnd { dst, left, right } => {
                     let l = resolve_operand(&mut builder, left, &vars);
                     let r = resolve_operand(&mut builder, right, &vars);
                     let val = builder.ins().band(l, r);
-                    if let Some(&var) = vars.get(dst) { builder.def_var(var, val); }
+                    if let Some(&var) = vars.get(dst) {
+                        builder.def_var(var, val);
+                    }
                 }
                 Instruction::BitOr { dst, left, right } => {
                     let l = resolve_operand(&mut builder, left, &vars);
                     let r = resolve_operand(&mut builder, right, &vars);
                     let val = builder.ins().bor(l, r);
-                    if let Some(&var) = vars.get(dst) { builder.def_var(var, val); }
+                    if let Some(&var) = vars.get(dst) {
+                        builder.def_var(var, val);
+                    }
                 }
                 Instruction::Xor { dst, left, right } => {
                     let l = resolve_operand(&mut builder, left, &vars);
                     let r = resolve_operand(&mut builder, right, &vars);
                     let val = builder.ins().bxor(l, r);
-                    if let Some(&var) = vars.get(dst) { builder.def_var(var, val); }
+                    if let Some(&var) = vars.get(dst) {
+                        builder.def_var(var, val);
+                    }
                 }
                 Instruction::Shl { dst, left, right } => {
                     let l = resolve_operand(&mut builder, left, &vars);
                     let r = resolve_operand(&mut builder, right, &vars);
                     let val = builder.ins().ishl(l, r);
-                    if let Some(&var) = vars.get(dst) { builder.def_var(var, val); }
+                    if let Some(&var) = vars.get(dst) {
+                        builder.def_var(var, val);
+                    }
                 }
                 Instruction::Shr { dst, left, right } => {
                     let l = resolve_operand(&mut builder, left, &vars);
                     let r = resolve_operand(&mut builder, right, &vars);
                     let val = builder.ins().sshr(l, r);
-                    if let Some(&var) = vars.get(dst) { builder.def_var(var, val); }
+                    if let Some(&var) = vars.get(dst) {
+                        builder.def_var(var, val);
+                    }
                 }
                 Instruction::BitNot { dst, operand } => {
                     let o = resolve_operand(&mut builder, operand, &vars);
                     let val = builder.ins().bnot(o);
-                    if let Some(&var) = vars.get(dst) { builder.def_var(var, val); }
+                    if let Some(&var) = vars.get(dst) {
+                        builder.def_var(var, val);
+                    }
                 }
                 Instruction::Eq { dst, left, right } => {
                     let l = resolve_operand(&mut builder, left, &vars);
                     let r = resolve_operand(&mut builder, right, &vars);
                     let cmp = builder.ins().icmp(IntCC::Equal, l, r);
                     let val = builder.ins().uextend(I64, cmp);
-                    if let Some(&var) = vars.get(dst) { builder.def_var(var, val); }
+                    if let Some(&var) = vars.get(dst) {
+                        builder.def_var(var, val);
+                    }
                 }
                 Instruction::Neq { dst, left, right } => {
                     let l = resolve_operand(&mut builder, left, &vars);
                     let r = resolve_operand(&mut builder, right, &vars);
                     let cmp = builder.ins().icmp(IntCC::NotEqual, l, r);
                     let val = builder.ins().uextend(I64, cmp);
-                    if let Some(&var) = vars.get(dst) { builder.def_var(var, val); }
+                    if let Some(&var) = vars.get(dst) {
+                        builder.def_var(var, val);
+                    }
                 }
                 Instruction::Lt { dst, left, right } => {
                     let l = resolve_operand(&mut builder, left, &vars);
                     let r = resolve_operand(&mut builder, right, &vars);
                     let cmp = builder.ins().icmp(IntCC::SignedLessThan, l, r);
                     let val = builder.ins().uextend(I64, cmp);
-                    if let Some(&var) = vars.get(dst) { builder.def_var(var, val); }
+                    if let Some(&var) = vars.get(dst) {
+                        builder.def_var(var, val);
+                    }
                 }
                 Instruction::Gt { dst, left, right } => {
                     let l = resolve_operand(&mut builder, left, &vars);
                     let r = resolve_operand(&mut builder, right, &vars);
                     let cmp = builder.ins().icmp(IntCC::SignedGreaterThan, l, r);
                     let val = builder.ins().uextend(I64, cmp);
-                    if let Some(&var) = vars.get(dst) { builder.def_var(var, val); }
+                    if let Some(&var) = vars.get(dst) {
+                        builder.def_var(var, val);
+                    }
                 }
                 Instruction::Lte { dst, left, right } => {
                     let l = resolve_operand(&mut builder, left, &vars);
                     let r = resolve_operand(&mut builder, right, &vars);
                     let cmp = builder.ins().icmp(IntCC::SignedLessThanOrEqual, l, r);
                     let val = builder.ins().uextend(I64, cmp);
-                    if let Some(&var) = vars.get(dst) { builder.def_var(var, val); }
+                    if let Some(&var) = vars.get(dst) {
+                        builder.def_var(var, val);
+                    }
                 }
                 Instruction::Gte { dst, left, right } => {
                     let l = resolve_operand(&mut builder, left, &vars);
                     let r = resolve_operand(&mut builder, right, &vars);
                     let cmp = builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, l, r);
                     let val = builder.ins().uextend(I64, cmp);
-                    if let Some(&var) = vars.get(dst) { builder.def_var(var, val); }
+                    if let Some(&var) = vars.get(dst) {
+                        builder.def_var(var, val);
+                    }
                 }
                 Instruction::And { dst, left, right } => {
                     let l = resolve_operand(&mut builder, left, &vars);
                     let r = resolve_operand(&mut builder, right, &vars);
                     let val = builder.ins().band(l, r);
-                    if let Some(&var) = vars.get(dst) { builder.def_var(var, val); }
+                    if let Some(&var) = vars.get(dst) {
+                        builder.def_var(var, val);
+                    }
                 }
                 Instruction::Or { dst, left, right } => {
                     let l = resolve_operand(&mut builder, left, &vars);
                     let r = resolve_operand(&mut builder, right, &vars);
                     let val = builder.ins().bor(l, r);
-                    if let Some(&var) = vars.get(dst) { builder.def_var(var, val); }
+                    if let Some(&var) = vars.get(dst) {
+                        builder.def_var(var, val);
+                    }
                 }
                 Instruction::Not { dst, operand } => {
                     let o = resolve_operand(&mut builder, operand, &vars);
                     let val = builder.ins().bnot(o);
-                    if let Some(&var) = vars.get(dst) { builder.def_var(var, val); }
+                    if let Some(&var) = vars.get(dst) {
+                        builder.def_var(var, val);
+                    }
                 }
-                Instruction::Branch { condition, then_label, else_label } => {
+                Instruction::Branch {
+                    condition,
+                    then_label,
+                    else_label,
+                } => {
                     let cond = resolve_operand(&mut builder, condition, &vars);
                     let cond_bool = builder.ins().icmp_imm(IntCC::NotEqual, cond, 0);
                     let then_block = block_map[then_label];
                     let else_block = block_map[else_label];
-                    builder.ins().brif(cond_bool, then_block, &[], else_block, &[]);
+                    builder
+                        .ins()
+                        .brif(cond_bool, then_block, &[], else_block, &[]);
                 }
                 Instruction::Jump(label) => {
                     let block = block_map[label];
@@ -442,16 +532,21 @@ impl AotCodeGen {
                 }
                 Instruction::SetLocal { dst, src } => {
                     let val = resolve_operand(&mut builder, src, &vars);
-                    if let Some(&var) = vars.get(dst) { builder.def_var(var, val); }
+                    if let Some(&var) = vars.get(dst) {
+                        builder.def_var(var, val);
+                    }
                 }
                 Instruction::GetLocal { dst, src } => {
                     if let Some(&src_var) = vars.get(src) {
                         let val = builder.use_var(src_var);
-                        if let Some(&dst_var) = vars.get(dst) { builder.def_var(dst_var, val); }
+                        if let Some(&dst_var) = vars.get(dst) {
+                            builder.def_var(dst_var, val);
+                        }
                     }
                 }
                 Instruction::RuntimeCall { dst, func, args } => {
-                    let arg_vals: Vec<_> = args.iter()
+                    let arg_vals: Vec<_> = args
+                        .iter()
                         .map(|a| resolve_operand(&mut builder, a, &vars))
                         .collect();
 
@@ -479,7 +574,11 @@ impl AotCodeGen {
                     let final_args = if *func == RuntimeFn::PrintValue && !arg_vals.is_empty() {
                         let val_ty = builder.func.dfg.value_type(arg_vals[0]);
                         if val_ty == cranelift::codegen::ir::types::F64 {
-                            let bitcasted = builder.ins().bitcast(I64, cranelift::codegen::ir::MemFlags::new(), arg_vals[0]);
+                            let bitcasted = builder.ins().bitcast(
+                                I64,
+                                cranelift::codegen::ir::MemFlags::new(),
+                                arg_vals[0],
+                            );
                             let mut new_args = vec![bitcasted];
                             new_args.extend_from_slice(&arg_vals[1..]);
                             new_args
@@ -502,7 +601,8 @@ impl AotCodeGen {
                     }
                 }
                 Instruction::Call { dst, func, args } => {
-                    let arg_vals: Vec<_> = args.iter()
+                    let arg_vals: Vec<_> = args
+                        .iter()
                         .map(|a| resolve_operand(&mut builder, a, &vars))
                         .collect();
 
@@ -524,22 +624,29 @@ impl AotCodeGen {
                         let fref = self.module.declare_func_in_func(func_id, builder.func);
                         let call = builder.ins().call(fref, &[size_val]);
                         if let Some(&var) = vars.get(dst)
-                            && let Some(result) = builder.inst_results(call).first() {
-                                builder.def_var(var, *result);
-                                for (field_name, field_val, tag) in fields.iter() {
-                                    let obj_val = builder.use_var(var);
-                                    let val = resolve_operand(&mut builder, field_val, &vars);
-                                    let tag_val = builder.ins().iconst(I64, *tag);
-                                    if let Some(&data_id) = self.string_field_ids.get(field_name) {
-                                        let gv = self.module.declare_data_in_func(data_id, builder.func);
-                                        let field_ptr = builder.ins().global_value(I64, gv);
-                                        if let Some(&set_id) = self.runtime_func_ids.get("xulo_object_set") {
-                                            let fref2 = self.module.declare_func_in_func(set_id, builder.func);
-                                            builder.ins().call(fref2, &[obj_val, field_ptr, val, tag_val]);
-                                        }
+                            && let Some(result) = builder.inst_results(call).first()
+                        {
+                            builder.def_var(var, *result);
+                            for (field_name, field_val, tag) in fields.iter() {
+                                let obj_val = builder.use_var(var);
+                                let val = resolve_operand(&mut builder, field_val, &vars);
+                                let tag_val = builder.ins().iconst(I64, *tag);
+                                if let Some(&data_id) = self.string_field_ids.get(field_name) {
+                                    let gv =
+                                        self.module.declare_data_in_func(data_id, builder.func);
+                                    let field_ptr = builder.ins().global_value(I64, gv);
+                                    if let Some(&set_id) =
+                                        self.runtime_func_ids.get("xulo_object_set")
+                                    {
+                                        let fref2 =
+                                            self.module.declare_func_in_func(set_id, builder.func);
+                                        builder
+                                            .ins()
+                                            .call(fref2, &[obj_val, field_ptr, val, tag_val]);
                                     }
                                 }
                             }
+                        }
                     }
                 }
                 Instruction::NewArray { dst, elements } => {
@@ -548,18 +655,21 @@ impl AotCodeGen {
                         let fref = self.module.declare_func_in_func(func_id, builder.func);
                         let call = builder.ins().call(fref, &[size_val]);
                         if let Some(&var) = vars.get(dst)
-                            && let Some(result) = builder.inst_results(call).first() {
-                                builder.def_var(var, *result);
-                                for (elem, tag) in elements.iter() {
-                                    let arr_val = builder.use_var(var);
-                                    let elem_val = resolve_operand(&mut builder, elem, &vars);
-                                    let tag_val = builder.ins().iconst(I64, *tag);
-                                    if let Some(&push_id) = self.runtime_func_ids.get("xulo_array_push") {
-                                        let fref2 = self.module.declare_func_in_func(push_id, builder.func);
-                                        builder.ins().call(fref2, &[arr_val, elem_val, tag_val]);
-                                    }
+                            && let Some(result) = builder.inst_results(call).first()
+                        {
+                            builder.def_var(var, *result);
+                            for (elem, tag) in elements.iter() {
+                                let arr_val = builder.use_var(var);
+                                let elem_val = resolve_operand(&mut builder, elem, &vars);
+                                let tag_val = builder.ins().iconst(I64, *tag);
+                                if let Some(&push_id) = self.runtime_func_ids.get("xulo_array_push")
+                                {
+                                    let fref2 =
+                                        self.module.declare_func_in_func(push_id, builder.func);
+                                    builder.ins().call(fref2, &[arr_val, elem_val, tag_val]);
                                 }
                             }
+                        }
                     }
                 }
                 Instruction::GetField { dst, object, field } => {
@@ -571,13 +681,19 @@ impl AotCodeGen {
                             let fref = self.module.declare_func_in_func(func_id, builder.func);
                             let call = builder.ins().call(fref, &[obj_val, field_val]);
                             if let Some(&var) = vars.get(dst)
-                                && let Some(result) = builder.inst_results(call).first() {
-                                    builder.def_var(var, *result);
-                                }
+                                && let Some(result) = builder.inst_results(call).first()
+                            {
+                                builder.def_var(var, *result);
+                            }
                         }
                     }
                 }
-                Instruction::SetField { object, field, value, tag } => {
+                Instruction::SetField {
+                    object,
+                    field,
+                    value,
+                    tag,
+                } => {
                     let obj_val = resolve_operand(&mut builder, object, &vars);
                     let val = resolve_operand(&mut builder, value, &vars);
                     let tag_val = builder.ins().iconst(I64, *tag);
@@ -586,7 +702,9 @@ impl AotCodeGen {
                         let field_val = builder.ins().global_value(I64, gv);
                         if let Some(&func_id) = self.runtime_func_ids.get("xulo_object_set") {
                             let fref = self.module.declare_func_in_func(func_id, builder.func);
-                            builder.ins().call(fref, &[obj_val, field_val, val, tag_val]);
+                            builder
+                                .ins()
+                                .call(fref, &[obj_val, field_val, val, tag_val]);
                         }
                     }
                 }
@@ -597,12 +715,18 @@ impl AotCodeGen {
                         let fref = self.module.declare_func_in_func(func_id, builder.func);
                         let call = builder.ins().call(fref, &[arr_val, idx_val]);
                         if let Some(&var) = vars.get(dst)
-                            && let Some(result) = builder.inst_results(call).first() {
-                                    builder.def_var(var, *result);
-                                }
+                            && let Some(result) = builder.inst_results(call).first()
+                        {
+                            builder.def_var(var, *result);
+                        }
                     }
                 }
-                Instruction::SetIndex { array, index, value, tag } => {
+                Instruction::SetIndex {
+                    array,
+                    index,
+                    value,
+                    tag,
+                } => {
                     let arr_val = resolve_operand(&mut builder, array, &vars);
                     let idx_val = resolve_operand(&mut builder, index, &vars);
                     let val = resolve_operand(&mut builder, value, &vars);
@@ -619,14 +743,15 @@ impl AotCodeGen {
         // Ensure ALL blocks have terminators
         // First, ensure current block (last label block) has a terminator
         if let Some(current_block) = builder.current_block()
-            && !block_has_terminator(builder.func, current_block) {
-                if !ir_func.return_type.is_void() {
-                    let zero = builder.ins().iconst(I64, 0);
-                    builder.ins().return_(&[zero]);
-                } else {
-                    builder.ins().return_(&[]);
-                }
+            && !block_has_terminator(builder.func, current_block)
+        {
+            if !ir_func.return_type.is_void() {
+                let zero = builder.ins().iconst(I64, 0);
+                builder.ins().return_(&[zero]);
+            } else {
+                builder.ins().return_(&[]);
             }
+        }
         // Also ensure entry_block has a terminator (it may have been switched away from)
         if !block_has_terminator(builder.func, entry_block) {
             if let Some(&first_label) = ir_func.labels.first() {
@@ -651,11 +776,20 @@ impl AotCodeGen {
         // Run verifier to get detailed error messages
         if let Err(errors) = verify_function(&ctx.func, self.module.isa()) {
             eprintln!("Verifier errors for {}:\n{}", ir_func.name, errors);
-            return Err(XuloError::new(ErrorKind::Codegen, format!("verifier errors for {}: {}", ir_func.name, errors)));
+            return Err(XuloError::new(
+                ErrorKind::Codegen,
+                format!("verifier errors for {}: {}", ir_func.name, errors),
+            ));
         }
 
-        self.module.define_function(func_id, &mut ctx)
-            .map_err(|e| XuloError::new(ErrorKind::Codegen, format!("failed to define function {}: {}", ir_func.name, e)))?;
+        self.module
+            .define_function(func_id, &mut ctx)
+            .map_err(|e| {
+                XuloError::new(
+                    ErrorKind::Codegen,
+                    format!("failed to define function {}: {}", ir_func.name, e),
+                )
+            })?;
 
         Ok(())
     }
@@ -665,15 +799,22 @@ impl AotCodeGen {
             return data_id;
         }
 
-        let data_id = self.module
-            .declare_data(&format!("str_{}", self.string_data_ids.len()), Linkage::Local, false, false)
+        let data_id = self
+            .module
+            .declare_data(
+                &format!("str_{}", self.string_data_ids.len()),
+                Linkage::Local,
+                false,
+                false,
+            )
             .expect("failed to declare string data");
 
         let mut data_desc = DataDescription::new();
         let mut bytes = s.as_bytes().to_vec();
         bytes.push(0); // null terminator
         data_desc.define(bytes.into_boxed_slice());
-        self.module.define_data(data_id, &data_desc)
+        self.module
+            .define_data(data_id, &data_desc)
             .expect("failed to define string data");
 
         self.string_data_ids.push(data_id);
@@ -692,9 +833,7 @@ fn resolve_operand(
         Operand::Const(IrValue::I64(n)) => builder.ins().iconst(I64, *n),
         Operand::Const(IrValue::F64(n)) => builder.ins().f64const(*n),
         Operand::Const(IrValue::Null) => builder.ins().iconst(I64, 0),
-        Operand::Const(IrValue::String(_idx)) => {
-            builder.ins().iconst(I64, 0)
-        }
+        Operand::Const(IrValue::String(_idx)) => builder.ins().iconst(I64, 0),
         Operand::Local(local_id) => {
             if let Some(&var) = vars.get(local_id) {
                 builder.use_var(var)

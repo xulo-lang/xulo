@@ -848,7 +848,8 @@ impl Analyzer {
                         let field_type = if let Type::Named(type_name) = &inner_type {
                             if let Some(entry) = self.type_table.get(type_name) {
                                 if let TypeEntryKind::Struct(fields) = &entry.kind {
-                                    fields.iter()
+                                    fields
+                                        .iter()
                                         .find(|(n, _, _)| n == field_name)
                                         .map(|(_, t, _)| t.clone())
                                         .unwrap_or(Type::Any)
@@ -1055,17 +1056,15 @@ impl Analyzer {
             Statement::Component(component) => self.check_component(component),
             Statement::Break => {
                 if self.in_loop == 0 {
-                    return Err(self.err(
-                        "`break` may only be used inside a `for` or `while` loop",
-                    ));
+                    return Err(self.err("`break` may only be used inside a `for` or `while` loop"));
                 }
                 Ok(())
             }
             Statement::Continue => {
                 if self.in_loop == 0 {
-                    return Err(self.err(
-                        "`continue` may only be used inside a `for` or `while` loop",
-                    ));
+                    return Err(
+                        self.err("`continue` may only be used inside a `for` or `while` loop")
+                    );
                 }
                 Ok(())
             }
@@ -1076,9 +1075,7 @@ impl Analyzer {
     fn check_defer(&mut self, d: &xulo_core::ast::DeferStmt) -> SResult<()> {
         match &d.body {
             xulo_core::ast::DeferBody::Block(b) => self.check_block(b),
-            xulo_core::ast::DeferBody::Expr(e) => {
-                self.check_expression(e).map(|_| ())
-            }
+            xulo_core::ast::DeferBody::Expr(e) => self.check_expression(e).map(|_| ()),
         }
     }
 
@@ -1533,9 +1530,9 @@ impl Analyzer {
                     );
                 }
                 if !sym.is_mutable {
-                    return Err(
-                        self.err(format!("cannot assign to `{name}`: variable is not declared `mut`"))
-                    );
+                    return Err(self.err(format!(
+                        "cannot assign to `{name}`: variable is not declared `mut`"
+                    )));
                 }
                 match &sym.kind {
                     SymbolKind::Variable | SymbolKind::State => Ok(sym.type_.clone()),
@@ -1968,7 +1965,11 @@ impl Analyzer {
                 )));
             }
             self.check_type(&field.type_)?;
-            fields.push((field.name.clone(), field.type_.clone(), field.default.clone()));
+            fields.push((
+                field.name.clone(),
+                field.type_.clone(),
+                field.default.clone(),
+            ));
         }
         self.generics
             .truncate(self.generics.len().saturating_sub(s.type_params.len()));
@@ -2569,9 +2570,7 @@ impl Analyzer {
                 }
                 let ret = match &arrow.body {
                     xulo_core::ast::ArrowBody::Expr(e) => Some(Box::new(self.check_expression(e)?)),
-                    xulo_core::ast::ArrowBody::Block(b) => {
-                        self.check_block_tail(b)?.map(Box::new)
-                    }
+                    xulo_core::ast::ArrowBody::Block(b) => self.check_block_tail(b)?.map(Box::new),
                 };
                 let ret = match ret {
                     Some(r) if arrow.is_async => Some(Box::new(Type::Async(r))),
@@ -3048,7 +3047,9 @@ impl Analyzer {
     fn check_match_body(&mut self, body: &xulo_core::ast::MatchBody) -> SResult<Type> {
         match body {
             xulo_core::ast::MatchBody::Expr(e) => self.check_expression(e),
-            xulo_core::ast::MatchBody::Block(b) => Ok(self.check_block_tail(b)?.unwrap_or(Type::Any)),
+            xulo_core::ast::MatchBody::Block(b) => {
+                Ok(self.check_block_tail(b)?.unwrap_or(Type::Any))
+            }
         }
     }
 
@@ -3081,7 +3082,11 @@ impl Analyzer {
                         .at(bin.span.clone()))
                 }
             }
-            BinaryOperator::Sub | BinaryOperator::Mul | BinaryOperator::Div | BinaryOperator::Mod | BinaryOperator::Pow => {
+            BinaryOperator::Sub
+            | BinaryOperator::Mul
+            | BinaryOperator::Div
+            | BinaryOperator::Mod
+            | BinaryOperator::Pow => {
                 if self.assignable(&left, &Type::Number) && self.assignable(&right, &Type::Number) {
                     Ok(Type::Number)
                 } else {
@@ -3095,7 +3100,11 @@ impl Analyzer {
                         .at(bin.span.clone()))
                 }
             }
-            BinaryOperator::BitAnd | BinaryOperator::BitOr | BinaryOperator::Xor | BinaryOperator::Shl | BinaryOperator::Shr => {
+            BinaryOperator::BitAnd
+            | BinaryOperator::BitOr
+            | BinaryOperator::Xor
+            | BinaryOperator::Shl
+            | BinaryOperator::Shr => {
                 if self.assignable(&left, &Type::Number) && self.assignable(&right, &Type::Number) {
                     Ok(Type::Number)
                 } else {

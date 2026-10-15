@@ -81,14 +81,34 @@ pub fn ops_to_json(ops: &[PaintOp<'_>]) -> String {
                     color.r, color.g, color.b
                 );
             }
-            PaintOp::FillRect { rect, color, border_radius, opacity } => {
+            PaintOp::FillRect {
+                rect,
+                color,
+                border_radius,
+                opacity,
+            } => {
                 let _ = write!(
                     out,
                     "{{\"op\":\"fill\",\"x\":{},\"y\":{},\"w\":{},\"h\":{},\"color\":{{\"r\":{},\"g\":{},\"b\":{}}},\"borderRadius\":{},\"opacity\":{}}}",
-                    rect.x, rect.y, rect.width, rect.height, color.r, color.g, color.b, border_radius, opacity
+                    rect.x,
+                    rect.y,
+                    rect.width,
+                    rect.height,
+                    color.r,
+                    color.g,
+                    color.b,
+                    border_radius,
+                    opacity
                 );
             }
-            PaintOp::DrawText { rect, text, color, font_size, bold, opacity } => {
+            PaintOp::DrawText {
+                rect,
+                text,
+                color,
+                font_size,
+                bold,
+                opacity,
+            } => {
                 let _ = write!(
                     out,
                     "{{\"op\":\"text\",\"x\":{},\"y\":{},\"w\":{},\"h\":{},\"text\":\"",
@@ -98,20 +118,45 @@ pub fn ops_to_json(ops: &[PaintOp<'_>]) -> String {
                 let _ = write!(
                     out,
                     "\",\"color\":{{\"r\":{},\"g\":{},\"b\":{}}},\"fontSize\":{},\"bold\":{},\"opacity\":{}}}",
-                    color.r, color.g, color.b,
+                    color.r,
+                    color.g,
+                    color.b,
                     font_size,
                     if *bold { "true" } else { "false" },
                     opacity
                 );
             }
-            PaintOp::DrawBorder { rect, color, border_radius, opacity } => {
+            PaintOp::DrawBorder {
+                rect,
+                color,
+                border_radius,
+                opacity,
+            } => {
                 let _ = write!(
                     out,
                     "{{\"op\":\"border\",\"x\":{},\"y\":{},\"w\":{},\"h\":{},\"color\":{{\"r\":{},\"g\":{},\"b\":{}}},\"borderRadius\":{},\"opacity\":{}}}",
-                    rect.x, rect.y, rect.width, rect.height, color.r, color.g, color.b, border_radius, opacity
+                    rect.x,
+                    rect.y,
+                    rect.width,
+                    rect.height,
+                    color.r,
+                    color.g,
+                    color.b,
+                    border_radius,
+                    opacity
                 );
             }
-            PaintOp::Input { rect, text, placeholder, color, focused, border_radius, background_color, border_color, opacity } => {
+            PaintOp::Input {
+                rect,
+                text,
+                placeholder,
+                color,
+                focused,
+                border_radius,
+                background_color,
+                border_color,
+                opacity,
+            } => {
                 let _ = write!(
                     out,
                     "{{\"op\":\"input\",\"x\":{},\"y\":{},\"w\":{},\"h\":{},\"text\":\"",
@@ -123,20 +168,34 @@ pub fn ops_to_json(ops: &[PaintOp<'_>]) -> String {
                 let _ = write!(
                     out,
                     "\",\"color\":{{\"r\":{},\"g\":{},\"b\":{}}},\"focused\":{},\"borderRadius\":{},\"opacity\":{}",
-                    color.r, color.g, color.b,
+                    color.r,
+                    color.g,
+                    color.b,
                     if *focused { "true" } else { "false" },
                     border_radius,
                     opacity
                 );
                 if let Some(bg) = background_color {
-                    let _ = write!(out, ",\"backgroundColor\":{{\"r\":{},\"g\":{},\"b\":{}}}", bg.r, bg.g, bg.b);
+                    let _ = write!(
+                        out,
+                        ",\"backgroundColor\":{{\"r\":{},\"g\":{},\"b\":{}}}",
+                        bg.r, bg.g, bg.b
+                    );
                 }
                 if let Some(bc) = border_color {
-                    let _ = write!(out, ",\"borderColor\":{{\"r\":{},\"g\":{},\"b\":{}}}", bc.r, bc.g, bc.b);
+                    let _ = write!(
+                        out,
+                        ",\"borderColor\":{{\"r\":{},\"g\":{},\"b\":{}}}",
+                        bc.r, bc.g, bc.b
+                    );
                 }
                 out.push('}');
             }
-            PaintOp::ScrollStart { viewport, offset_x, offset_y } => {
+            PaintOp::ScrollStart {
+                viewport,
+                offset_x,
+                offset_y,
+            } => {
                 let _ = write!(
                     out,
                     "{{\"op\":\"scrollStart\",\"x\":{},\"y\":{},\"w\":{},\"h\":{},\"offsetX\":{},\"offsetY\":{}}}",

@@ -12,8 +12,8 @@ mod types;
 
 use std::ops::Range;
 
-use pest::error::{Error as PestError, ErrorVariant, LineColLocation};
 use pest::Parser;
+use pest::error::{Error as PestError, ErrorVariant, LineColLocation};
 use pest_derive::Parser;
 
 use xulo_core::ast::Program;

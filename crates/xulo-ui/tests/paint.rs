@@ -1,6 +1,6 @@
 //! Painting (paint-command emission) and color parsing tests.
 
-use xulo_ui::{StyleProps, Color, PaintOp, Rect, Size, Widget};
+use xulo_ui::{Color, PaintOp, Rect, Size, StyleProps, Widget};
 
 struct CharMetrics;
 
@@ -57,7 +57,10 @@ fn screen_clears_with_its_background() {
 
 #[test]
 fn button_paints_border_and_accent_text() {
-    let root = Widget::Button { label: "+".into(), style: StyleProps::default() };
+    let root = Widget::Button {
+        label: "+".into(),
+        style: StyleProps::default(),
+    };
     let ops = paint(&root);
     assert_eq!(
         ops[0],
@@ -228,7 +231,10 @@ fn button_with_custom_font_size() {
     };
     let ops = paint(&root);
     // Button has 3 ops: DrawBorder, DrawText
-    assert!(ops.iter().any(|op| matches!(op, PaintOp::DrawText { font_size: 20, .. })));
+    assert!(
+        ops.iter()
+            .any(|op| matches!(op, PaintOp::DrawText { font_size: 20, .. }))
+    );
 }
 
 #[test]
@@ -312,7 +318,10 @@ fn button_with_bold_label() {
         },
     };
     let ops = paint(&root);
-    assert!(ops.iter().any(|op| matches!(op, PaintOp::DrawText { bold: true, .. })));
+    assert!(
+        ops.iter()
+            .any(|op| matches!(op, PaintOp::DrawText { bold: true, .. }))
+    );
 }
 
 // ── Text backgroundColor tests ──────────────────────────────────────────────
@@ -330,7 +339,13 @@ fn text_with_background_color() {
     let ops = paint(&root);
     // Should have FillRect + DrawText
     assert_eq!(ops.len(), 2);
-    assert!(matches!(&ops[0], PaintOp::FillRect { color: Color { r: 255, g: 0, b: 0 }, .. }));
+    assert!(matches!(
+        &ops[0],
+        PaintOp::FillRect {
+            color: Color { r: 255, g: 0, b: 0 },
+            ..
+        }
+    ));
     assert!(matches!(&ops[1], PaintOp::DrawText { .. }));
 }
 
@@ -359,7 +374,13 @@ fn text_with_background_and_border_radius() {
         },
     };
     let ops = paint(&root);
-    assert!(matches!(&ops[0], PaintOp::FillRect { border_radius: 5, .. }));
+    assert!(matches!(
+        &ops[0],
+        PaintOp::FillRect {
+            border_radius: 5,
+            ..
+        }
+    ));
 }
 
 // ── Input style props tests ─────────────────────────────────────────────────
@@ -377,7 +398,13 @@ fn input_with_border_color() {
     };
     let ops = paint(&root);
     // Should have DrawBorder + Input
-    assert!(ops.iter().any(|op| matches!(op, PaintOp::DrawBorder { color: Color { r: 255, g: 0, b: 0 }, .. })));
+    assert!(ops.iter().any(|op| matches!(
+        op,
+        PaintOp::DrawBorder {
+            color: Color { r: 255, g: 0, b: 0 },
+            ..
+        }
+    )));
 }
 
 #[test]
@@ -393,7 +420,17 @@ fn input_with_background_color() {
     };
     let ops = paint(&root);
     // Should have FillRect + Input
-    assert!(ops.iter().any(|op| matches!(op, PaintOp::FillRect { color: Color { r: 240, g: 240, b: 240 }, .. })));
+    assert!(ops.iter().any(|op| matches!(
+        op,
+        PaintOp::FillRect {
+            color: Color {
+                r: 240,
+                g: 240,
+                b: 240
+            },
+            ..
+        }
+    )));
 }
 
 #[test]
@@ -491,8 +528,14 @@ fn button_with_opacity() {
         },
     };
     let ops = paint(&root);
-    assert!(ops.iter().any(|op| matches!(op, PaintOp::DrawBorder { opacity: 0.3, .. })));
-    assert!(ops.iter().any(|op| matches!(op, PaintOp::DrawText { opacity: 0.3, .. })));
+    assert!(
+        ops.iter()
+            .any(|op| matches!(op, PaintOp::DrawBorder { opacity: 0.3, .. }))
+    );
+    assert!(
+        ops.iter()
+            .any(|op| matches!(op, PaintOp::DrawText { opacity: 0.3, .. }))
+    );
 }
 
 #[test]
@@ -514,46 +557,48 @@ fn fill_rect_with_opacity() {
 fn fill_children_produce_paint_ops() {
     use xulo_ui::layout::CellMetrics;
     let metrics = CellMetrics;
-    let surface = Size { width: 320, height: 192 };
+    let surface = Size {
+        width: 320,
+        height: 192,
+    };
     let root = Widget::Screen {
         background: None,
         style: StyleProps::default(),
-        children: vec![
-            Widget::VStack {
-                spacing: 0,
-                style: StyleProps::default(),
-                children: vec![
-                    Widget::Text {
-                        text: "top".into(),
+        children: vec![Widget::VStack {
+            spacing: 0,
+            style: StyleProps::default(),
+            children: vec![
+                Widget::Text {
+                    text: "top".into(),
+                    color: None,
+                    style: StyleProps::default(),
+                },
+                Widget::Fill {
+                    children: vec![Widget::Text {
+                        text: "inside".into(),
                         color: None,
                         style: StyleProps::default(),
-                    },
-                    Widget::Fill {
-                        children: vec![
-                            Widget::Text {
-                                text: "inside".into(),
-                                color: None,
-                                style: StyleProps::default(),
-                            },
-                        ],
-                        style: StyleProps::default(),
-                    },
-                    Widget::Text {
-                        text: "bottom".into(),
-                        color: None,
-                        style: StyleProps::default(),
-                    },
-                ],
-            },
-        ],
+                    }],
+                    style: StyleProps::default(),
+                },
+                Widget::Text {
+                    text: "bottom".into(),
+                    color: None,
+                    style: StyleProps::default(),
+                },
+            ],
+        }],
     };
     let placed = xulo_ui::layout::layout(&root, surface, &metrics);
     let mut ops = Vec::new();
     xulo_ui::layout::paint(&placed, &xulo_ui::Theme::default(), &mut ops);
-    let texts: Vec<_> = ops.iter().filter_map(|op| match op {
-        PaintOp::DrawText { text, rect, .. } => Some((*text, *rect)),
-        _ => None,
-    }).collect();
+    let texts: Vec<_> = ops
+        .iter()
+        .filter_map(|op| match op {
+            PaintOp::DrawText { text, rect, .. } => Some((*text, *rect)),
+            _ => None,
+        })
+        .collect();
     assert_eq!(texts.len(), 3);
     assert_eq!(texts[0].0, "top");
     assert_eq!(texts[0].1.y, 0);
@@ -568,21 +613,22 @@ fn fill_with_background_produces_fillrect_op() {
     let root = Widget::Screen {
         background: None,
         style: StyleProps::default(),
-        children: vec![
-            Widget::Fill {
-                children: vec![],
-                style: StyleProps {
-                    background_color: Some(Color::parse_hex("#ff0000").unwrap()),
-                    ..StyleProps::default()
-                },
+        children: vec![Widget::Fill {
+            children: vec![],
+            style: StyleProps {
+                background_color: Some(Color::parse_hex("#ff0000").unwrap()),
+                ..StyleProps::default()
             },
-        ],
+        }],
     };
     let ops = paint(&root);
-    let rects: Vec<_> = ops.iter().filter_map(|op| match op {
-        PaintOp::FillRect { rect, color, .. } => Some((*rect, *color)),
-        _ => None,
-    }).collect();
+    let rects: Vec<_> = ops
+        .iter()
+        .filter_map(|op| match op {
+            PaintOp::FillRect { rect, color, .. } => Some((*rect, *color)),
+            _ => None,
+        })
+        .collect();
     assert_eq!(rects.len(), 1);
     assert_eq!(rects[0].1, Color::parse_hex("#ff0000").unwrap());
 }
@@ -593,8 +639,16 @@ fn scrollview_emits_scrollstart_and_scrollend() {
     let root = Widget::ScrollView {
         axes: xulo_ui::widgets::Axes::Vertical,
         children: vec![
-            Widget::Text { text: "item1".into(), color: None, style: StyleProps::default() },
-            Widget::Text { text: "item2".into(), color: None, style: StyleProps::default() },
+            Widget::Text {
+                text: "item1".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
+            Widget::Text {
+                text: "item2".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
         ],
         style: StyleProps {
             width: Some(xulo_ui::widgets::Dimension::Pixels(200)),
@@ -603,7 +657,9 @@ fn scrollview_emits_scrollstart_and_scrollend() {
         },
     };
     let ops = paint(&root);
-    let has_scroll_start = ops.iter().any(|op| matches!(op, PaintOp::ScrollStart { .. }));
+    let has_scroll_start = ops
+        .iter()
+        .any(|op| matches!(op, PaintOp::ScrollStart { .. }));
     let has_scroll_end = ops.iter().any(|op| matches!(op, PaintOp::ScrollEnd));
     assert!(has_scroll_start, "ScrollView should emit ScrollStart");
     assert!(has_scroll_end, "ScrollView should emit ScrollEnd");

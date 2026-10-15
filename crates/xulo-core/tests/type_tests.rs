@@ -18,26 +18,14 @@ fn test_type_name_named() {
 
 #[test]
 fn test_type_name_literal() {
-    assert_eq!(
-        Type::Literal("active".to_string()).name(),
-        "\"active\""
-    );
-    assert_eq!(
-        Type::Literal("draft".to_string()).name(),
-        "\"draft\""
-    );
+    assert_eq!(Type::Literal("active".to_string()).name(), "\"active\"");
+    assert_eq!(Type::Literal("draft".to_string()).name(), "\"draft\"");
 }
 
 #[test]
 fn test_type_name_list() {
-    assert_eq!(
-        Type::List(Box::new(Type::Number)).name(),
-        "list<number>"
-    );
-    assert_eq!(
-        Type::List(Box::new(Type::String)).name(),
-        "list<string>"
-    );
+    assert_eq!(Type::List(Box::new(Type::Number)).name(), "list<number>");
+    assert_eq!(Type::List(Box::new(Type::String)).name(), "list<string>");
 }
 
 #[test]
@@ -50,14 +38,8 @@ fn test_type_name_nested_list() {
 
 #[test]
 fn test_type_name_optional() {
-    assert_eq!(
-        Type::Optional(Box::new(Type::String)).name(),
-        "string?"
-    );
-    assert_eq!(
-        Type::Optional(Box::new(Type::Number)).name(),
-        "number?"
-    );
+    assert_eq!(Type::Optional(Box::new(Type::String)).name(), "string?");
+    assert_eq!(Type::Optional(Box::new(Type::Number)).name(), "number?");
 }
 
 #[test]
@@ -125,8 +107,5 @@ fn test_type_name_fn_sig_no_params() {
 
 #[test]
 fn test_type_name_async() {
-    assert_eq!(
-        Type::Async(Box::new(Type::String)).name(),
-        "async"
-    );
+    assert_eq!(Type::Async(Box::new(Type::String)).name(), "async");
 }

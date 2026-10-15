@@ -144,7 +144,7 @@ fn main(): View {
 }
 "#,
     );
-    use xulo_renderer_terminal::{render_plain, CharMetrics, TerminalSize};
+    use xulo_renderer_terminal::{CharMetrics, TerminalSize, render_plain};
     use xulo_ui::{Size, UiContext};
 
     let surface = Size {
@@ -249,7 +249,7 @@ fn main(): View {
 }
 "#,
     );
-    use xulo_renderer_terminal::{render_plain, CharMetrics, TerminalSize};
+    use xulo_renderer_terminal::{CharMetrics, TerminalSize, render_plain};
     use xulo_ui::{Size, UiContext};
 
     let surface = Size {
@@ -343,7 +343,7 @@ fn main(): View {
 }
 "#,
     );
-    use xulo_renderer_terminal::{render_plain, CharMetrics, TerminalSize};
+    use xulo_renderer_terminal::{CharMetrics, TerminalSize, render_plain};
     use xulo_ui::{Size, UiContext};
 
     let surface = Size {
@@ -428,7 +428,7 @@ fn input_state_not_reset_by_button_click() {
          }\n\
          }\n",
     );
-    use xulo_renderer_terminal::{render_plain, CharMetrics, TerminalSize};
+    use xulo_renderer_terminal::{CharMetrics, TerminalSize, render_plain};
     use xulo_ui::{Size, UiContext};
 
     let surface = Size {
@@ -500,7 +500,10 @@ fn fill_children_preserved_through_framework() {
     let path = temp_program(FILL_UI_SRC);
     let ui = xulo_framework::ReactiveUi::load(
         &path,
-        xulo_ui::Size { width: 320, height: 192 },
+        xulo_ui::Size {
+            width: 320,
+            height: 192,
+        },
         None,
     )
     .unwrap();
@@ -508,29 +511,49 @@ fn fill_children_preserved_through_framework() {
 
     // Render through the layout engine to check paint ops
     let ctx = xulo_ui::UiContext::new(
-        xulo_ui::Size { width: 320, height: 192 },
+        xulo_ui::Size {
+            width: 320,
+            height: 192,
+        },
         Box::new(xulo_ui::CellMetrics),
     );
     let placed = ctx.layout(&ui.widget);
     let mut ops = Vec::new();
     xulo_ui::layout::paint(&placed, &xulo_ui::Theme::default(), &mut ops);
 
-    let texts: Vec<&str> = ops.iter().filter_map(|op| match op {
-        xulo_ui::PaintOp::DrawText { text, .. } => Some(*text),
-        _ => None,
-    }).collect();
+    let texts: Vec<&str> = ops
+        .iter()
+        .filter_map(|op| match op {
+            xulo_ui::PaintOp::DrawText { text, .. } => Some(*text),
+            _ => None,
+        })
+        .collect();
 
-    assert!(texts.contains(&"top"), "should have 'top', got: {:?}", texts);
-    assert!(texts.contains(&"inside fill"), "should have 'inside fill', got: {:?}", texts);
-    assert!(texts.contains(&"bottom"), "should have 'bottom', got: {:?}", texts);
+    assert!(
+        texts.contains(&"top"),
+        "should have 'top', got: {:?}",
+        texts
+    );
+    assert!(
+        texts.contains(&"inside fill"),
+        "should have 'inside fill', got: {:?}",
+        texts
+    );
+    assert!(
+        texts.contains(&"bottom"),
+        "should have 'bottom', got: {:?}",
+        texts
+    );
 }
 
 #[cfg(feature = "webview")]
 #[test]
 fn dump_webview_html_for_layout_example() {
     let entry = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent().unwrap()
-        .parent().unwrap()
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
         .join("examples/layout.xulo");
     let result = xulo_framework::execute(&entry).unwrap();
     let view = result.root_view.unwrap();

@@ -384,10 +384,7 @@ pub enum Widget {
         style: StyleProps,
     },
     /// A tappable boxed label.
-    Button {
-        label: String,
-        style: StyleProps,
-    },
+    Button { label: String, style: StyleProps },
     /// A single-line text field.
     Input {
         value: String,
@@ -396,10 +393,7 @@ pub enum Widget {
         style: StyleProps,
     },
     /// A widget the UI layer does not recognize yet; rendered as a labeled box.
-    Unknown {
-        kind: String,
-        style: StyleProps,
-    },
+    Unknown { kind: String, style: StyleProps },
     /// A scrollable container. Clips children to its bounds and allows
     /// scrolling via wheel/drag. `axes` controls which directions can scroll.
     ScrollView {
@@ -462,12 +456,15 @@ pub struct UiCallback {
 impl Props {
     /// Create an empty `Props`.
     pub fn new() -> Self {
-        Self { entries: Vec::new() }
+        Self {
+            entries: Vec::new(),
+        }
     }
 
     /// Add a string property.
     pub fn string(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
-        self.entries.push((key.into(), PropValue::String(value.into())));
+        self.entries
+            .push((key.into(), PropValue::String(value.into())));
         self
     }
 
@@ -485,13 +482,15 @@ impl Props {
 
     /// Add a children property.
     pub fn children(mut self, value: Vec<Widget>) -> Self {
-        self.entries.push(("children".into(), PropValue::Children(value)));
+        self.entries
+            .push(("children".into(), PropValue::Children(value)));
         self
     }
 
     /// Get a string property by key.
     pub fn get_string(&self, key: &str) -> Option<&str> {
-        self.entries.iter()
+        self.entries
+            .iter()
             .find(|(k, _)| k == key)
             .and_then(|(_, v)| match v {
                 PropValue::String(s) => Some(s.as_str()),
@@ -501,7 +500,8 @@ impl Props {
 
     /// Get a numeric property by key.
     pub fn get_number(&self, key: &str) -> Option<f64> {
-        self.entries.iter()
+        self.entries
+            .iter()
             .find(|(k, _)| k == key)
             .and_then(|(_, v)| match v {
                 PropValue::Number(n) => Some(*n),
@@ -511,7 +511,8 @@ impl Props {
 
     /// Get a boolean property by key.
     pub fn get_boolean(&self, key: &str) -> Option<bool> {
-        self.entries.iter()
+        self.entries
+            .iter()
             .find(|(k, _)| k == key)
             .and_then(|(_, v)| match v {
                 PropValue::Boolean(b) => Some(*b),
@@ -521,7 +522,8 @@ impl Props {
 
     /// Get the children property.
     pub fn get_children(&self) -> &[Widget] {
-        self.entries.iter()
+        self.entries
+            .iter()
             .find(|(k, _)| k == "children")
             .and_then(|(_, v)| match v {
                 PropValue::Children(c) => Some(c.as_slice()),
@@ -533,19 +535,24 @@ impl Props {
     /// Extract a [`StyleProps`] from the style-related entries in this bag.
     pub fn get_style(&self) -> StyleProps {
         let color = self.get_string("color").and_then(Color::parse_hex);
-        let background_color = self.get_string("bg")
+        let background_color = self
+            .get_string("bg")
             .or_else(|| self.get_string("backgroundColor"))
             .and_then(Color::parse_hex);
-        let bg_image = self.get_string("bgImage")
+        let bg_image = self
+            .get_string("bgImage")
             .or_else(|| self.get_string("backgroundImage"))
             .map(|s| s.to_string());
-        let border_color = self.get_string("border")
+        let border_color = self
+            .get_string("border")
             .or_else(|| self.get_string("borderColor"))
             .and_then(Color::parse_hex);
-        let font_size = self.get_number("size")
+        let font_size = self
+            .get_number("size")
             .or_else(|| self.get_number("fontSize"))
             .map(|n| n.max(0.0) as u32);
-        let font_weight = self.get_string("weight")
+        let font_weight = self
+            .get_string("weight")
             .or_else(|| self.get_string("fontWeight"))
             .map(|s| match s {
                 "bold" => FontWeight::Bold,
@@ -553,22 +560,33 @@ impl Props {
             });
         let padding = self.get_number("padding").map(|n| n.max(0.0) as u32);
         let margin = self.get_number("margin").map(|n| n.max(0.0) as u32);
-        let width = self.get_string("width")
+        let width = self
+            .get_string("width")
             .map(|s| match s {
                 "full" => Dimension::Full,
                 _ => Dimension::Pixels(s.parse::<u32>().unwrap_or(0)),
             })
-            .or_else(|| self.get_number("width").map(|n| Dimension::Pixels(n.max(0.0) as u32)));
-        let height = self.get_string("height")
+            .or_else(|| {
+                self.get_number("width")
+                    .map(|n| Dimension::Pixels(n.max(0.0) as u32))
+            });
+        let height = self
+            .get_string("height")
             .map(|s| match s {
                 "full" => Dimension::Full,
                 _ => Dimension::Pixels(s.parse::<u32>().unwrap_or(0)),
             })
-            .or_else(|| self.get_number("height").map(|n| Dimension::Pixels(n.max(0.0) as u32)));
-        let border_radius = self.get_number("radius")
+            .or_else(|| {
+                self.get_number("height")
+                    .map(|n| Dimension::Pixels(n.max(0.0) as u32))
+            });
+        let border_radius = self
+            .get_number("radius")
             .or_else(|| self.get_number("borderRadius"))
             .map(|n| n.max(0.0) as u32);
-        let opacity = self.get_number("opacity").map(|n| (n as f32).clamp(0.0, 1.0));
+        let opacity = self
+            .get_number("opacity")
+            .map(|n| (n as f32).clamp(0.0, 1.0));
         let alignment = self.get_string("alignment").map(|s| match s {
             "center" => Alignment::Center,
             "end" => Alignment::End,
@@ -583,16 +601,20 @@ impl Props {
             "space-evenly" => Justify::SpaceEvenly,
             _ => Justify::Start,
         });
-        let flex_grow = self.get_number("flexGrow")
+        let flex_grow = self
+            .get_number("flexGrow")
             .or_else(|| self.get_number("flex_grow"))
             .map(|n| n.max(0.0) as f32);
-        let flex_shrink = self.get_number("flexShrink")
+        let flex_shrink = self
+            .get_number("flexShrink")
             .or_else(|| self.get_number("flex_shrink"))
             .map(|n| n.max(0.0) as f32);
-        let flex_basis = self.get_number("flexBasis")
+        let flex_basis = self
+            .get_number("flexBasis")
             .or_else(|| self.get_number("flex_basis"))
             .map(|n| n.max(0.0) as u32);
-        let align_self = self.get_string("alignSelf")
+        let align_self = self
+            .get_string("alignSelf")
             .or_else(|| self.get_string("align_self"))
             .map(|s| match s {
                 "center" => Alignment::Center,
@@ -600,16 +622,20 @@ impl Props {
                 "stretch" => Alignment::Stretch,
                 _ => Alignment::Start,
             });
-        let min_width = self.get_number("minWidth")
+        let min_width = self
+            .get_number("minWidth")
             .or_else(|| self.get_number("min_width"))
             .map(|n| n.max(0.0) as u32);
-        let max_width = self.get_number("maxWidth")
+        let max_width = self
+            .get_number("maxWidth")
             .or_else(|| self.get_number("max_width"))
             .map(|n| n.max(0.0) as u32);
-        let min_height = self.get_number("minHeight")
+        let min_height = self
+            .get_number("minHeight")
             .or_else(|| self.get_number("min_height"))
             .map(|n| n.max(0.0) as u32);
-        let max_height = self.get_number("maxHeight")
+        let max_height = self
+            .get_number("maxHeight")
             .or_else(|| self.get_number("max_height"))
             .map(|n| n.max(0.0) as u32);
         StyleProps {
@@ -652,11 +678,7 @@ impl Props {
 /// Interactive components (`Button`, `Input`) may produce callbacks. The
 /// caller must provide a mutable `Vec<UiCallback>` to collect them — the
 /// renderer later maps screen coordinates back to these callbacks.
-pub fn from_props(
-    name: &str,
-    props: &Props,
-    callbacks: &mut Vec<UiCallback>,
-) -> Widget {
+pub fn from_props(name: &str, props: &Props, callbacks: &mut Vec<UiCallback>) -> Widget {
     let style = props.get_style();
     match name {
         "Text" => props_to_text(props, style),
@@ -667,18 +689,26 @@ pub fn from_props(
         "Fill" => props_to_fill(props, callbacks, style),
         "ScrollView" => props_to_scrollview(props, callbacks, style),
         "Screen" => props_to_screen(props, callbacks, style),
-        other => Widget::Unknown { kind: other.to_string(), style },
+        other => Widget::Unknown {
+            kind: other.to_string(),
+            style,
+        },
     }
 }
 
 // ── Built-in component factories ────────────────────────────────────────────
 
 fn props_to_text(props: &Props, style: StyleProps) -> Widget {
-    let text = props.get_string("0")
+    let text = props
+        .get_string("0")
         .or_else(|| props.get_string("text"))
         .unwrap_or_default()
         .to_string();
-    Widget::Text { text, color: style.color, style }
+    Widget::Text {
+        text,
+        color: style.color,
+        style,
+    }
 }
 
 fn props_to_button(props: &Props, callbacks: &mut Vec<UiCallback>, style: StyleProps) -> Widget {
@@ -689,23 +719,21 @@ fn props_to_button(props: &Props, callbacks: &mut Vec<UiCallback>, style: StyleP
             on_change: None,
         });
     }
-    let label = props.get_string("0")
-        .unwrap_or_default()
-        .to_string();
+    let label = props.get_string("0").unwrap_or_default().to_string();
     Widget::Button { label, style }
 }
 
 fn props_to_input(props: &Props, callbacks: &mut Vec<UiCallback>, style: StyleProps) -> Widget {
-    let value = props.get_string("value")
-        .unwrap_or_default()
-        .to_string();
-    let width = props.get_number("width")
+    let value = props.get_string("value").unwrap_or_default().to_string();
+    let width = props
+        .get_number("width")
         .map(|n| n.max(0.0) as u32)
         .or(style.width.and_then(|d| match d {
             Dimension::Pixels(n) => Some(n),
             _ => None,
         }));
-    let placeholder = props.get_string("placeholder")
+    let placeholder = props
+        .get_string("placeholder")
         .unwrap_or_default()
         .to_string();
     let on_change: Option<Box<dyn Fn(String)>> = None;
@@ -715,25 +743,40 @@ fn props_to_input(props: &Props, callbacks: &mut Vec<UiCallback>, style: StylePr
             on_change,
         });
     }
-    Widget::Input { value, width, placeholder, style }
+    Widget::Input {
+        value,
+        width,
+        placeholder,
+        style,
+    }
 }
 
 fn props_to_vstack(props: &Props, callbacks: &mut Vec<UiCallback>, style: StyleProps) -> Widget {
-    let spacing = props.get_number("spacing")
+    let spacing = props
+        .get_number("spacing")
         .map(|n| n.max(0.0) as u32)
         .unwrap_or(0);
     let children = props.get_children().to_vec();
     let _ = callbacks;
-    Widget::VStack { spacing, children, style }
+    Widget::VStack {
+        spacing,
+        children,
+        style,
+    }
 }
 
 fn props_to_hstack(props: &Props, callbacks: &mut Vec<UiCallback>, style: StyleProps) -> Widget {
-    let spacing = props.get_number("spacing")
+    let spacing = props
+        .get_number("spacing")
         .map(|n| n.max(0.0) as u32)
         .unwrap_or(0);
     let children = props.get_children().to_vec();
     let _ = callbacks;
-    Widget::HStack { spacing, children, style }
+    Widget::HStack {
+        spacing,
+        children,
+        style,
+    }
 }
 
 fn props_to_fill(props: &Props, callbacks: &mut Vec<UiCallback>, mut style: StyleProps) -> Widget {
@@ -746,8 +789,13 @@ fn props_to_fill(props: &Props, callbacks: &mut Vec<UiCallback>, mut style: Styl
     Widget::Fill { children, style }
 }
 
-fn props_to_scrollview(props: &Props, callbacks: &mut Vec<UiCallback>, style: StyleProps) -> Widget {
-    let axes = props.get_string("axes")
+fn props_to_scrollview(
+    props: &Props,
+    callbacks: &mut Vec<UiCallback>,
+    style: StyleProps,
+) -> Widget {
+    let axes = props
+        .get_string("axes")
         .map(|s| match s {
             "horizontal" | "Horizontal" => Axes::Horizontal,
             "both" | "Both" => Axes::Both,
@@ -756,14 +804,22 @@ fn props_to_scrollview(props: &Props, callbacks: &mut Vec<UiCallback>, style: St
         .unwrap_or(Axes::Vertical);
     let children = props.get_children().to_vec();
     let _ = callbacks;
-    Widget::ScrollView { axes, children, style }
+    Widget::ScrollView {
+        axes,
+        children,
+        style,
+    }
 }
 
 fn props_to_screen(props: &Props, callbacks: &mut Vec<UiCallback>, style: StyleProps) -> Widget {
     let background = style.background_color;
     let children = props.get_children().to_vec();
     let _ = callbacks;
-    Widget::Screen { background, children, style }
+    Widget::Screen {
+        background,
+        children,
+        style,
+    }
 }
 
 #[cfg(test)]
@@ -774,37 +830,63 @@ mod tests {
     fn text_with_string_prop() {
         let props = Props::new().string("0", "hello");
         let widget = from_props("Text", &props, &mut Vec::new());
-        assert_eq!(widget, Widget::Text { text: "hello".into(), color: None, style: StyleProps::default() });
+        assert_eq!(
+            widget,
+            Widget::Text {
+                text: "hello".into(),
+                color: None,
+                style: StyleProps::default()
+            }
+        );
     }
 
     #[test]
     fn text_with_color() {
-        let props = Props::new()
-            .string("0", "error")
-            .string("color", "#ff0000");
+        let props = Props::new().string("0", "error").string("color", "#ff0000");
         let widget = from_props("Text", &props, &mut Vec::new());
         assert_eq!(
             widget,
-            Widget::Text { text: "error".into(), color: Some(Color { r: 255, g: 0, b: 0 }), style: StyleProps { color: Some(Color { r: 255, g: 0, b: 0 }), ..StyleProps::default() } }
+            Widget::Text {
+                text: "error".into(),
+                color: Some(Color { r: 255, g: 0, b: 0 }),
+                style: StyleProps {
+                    color: Some(Color { r: 255, g: 0, b: 0 }),
+                    ..StyleProps::default()
+                }
+            }
         );
     }
 
     #[test]
     fn vstack_with_spacing() {
-        let props = Props::new()
-            .number("spacing", 2.0)
-            .children(vec![
-                Widget::Text { text: "a".into(), color: None, style: StyleProps::default() },
-                Widget::Text { text: "b".into(), color: None, style: StyleProps::default() },
-            ]);
+        let props = Props::new().number("spacing", 2.0).children(vec![
+            Widget::Text {
+                text: "a".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
+            Widget::Text {
+                text: "b".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
+        ]);
         let widget = from_props("VStack", &props, &mut Vec::new());
         assert_eq!(
             widget,
             Widget::VStack {
                 spacing: 2,
                 children: vec![
-                    Widget::Text { text: "a".into(), color: None, style: StyleProps::default() },
-                    Widget::Text { text: "b".into(), color: None, style: StyleProps::default() },
+                    Widget::Text {
+                        text: "a".into(),
+                        color: None,
+                        style: StyleProps::default()
+                    },
+                    Widget::Text {
+                        text: "b".into(),
+                        color: None,
+                        style: StyleProps::default()
+                    },
                 ],
                 style: StyleProps::default(),
             }
@@ -815,16 +897,33 @@ mod tests {
     fn screen_with_background() {
         let props = Props::new()
             .string("backgroundColor", "#101010")
-            .children(vec![
-                Widget::Text { text: "hi".into(), color: None, style: StyleProps::default() },
-            ]);
+            .children(vec![Widget::Text {
+                text: "hi".into(),
+                color: None,
+                style: StyleProps::default(),
+            }]);
         let widget = from_props("Screen", &props, &mut Vec::new());
         assert_eq!(
             widget,
             Widget::Screen {
-                background: Some(Color { r: 16, g: 16, b: 16 }),
-                children: vec![Widget::Text { text: "hi".into(), color: None, style: StyleProps::default() }],
-                style: StyleProps { background_color: Some(Color { r: 16, g: 16, b: 16 }), ..StyleProps::default() },
+                background: Some(Color {
+                    r: 16,
+                    g: 16,
+                    b: 16
+                }),
+                children: vec![Widget::Text {
+                    text: "hi".into(),
+                    color: None,
+                    style: StyleProps::default()
+                }],
+                style: StyleProps {
+                    background_color: Some(Color {
+                        r: 16,
+                        g: 16,
+                        b: 16
+                    }),
+                    ..StyleProps::default()
+                },
             }
         );
     }
@@ -833,7 +932,13 @@ mod tests {
     fn unknown_component() {
         let props = Props::new();
         let widget = from_props("MyCustomWidget", &props, &mut Vec::new());
-        assert_eq!(widget, Widget::Unknown { kind: "MyCustomWidget".into(), style: StyleProps::default() });
+        assert_eq!(
+            widget,
+            Widget::Unknown {
+                kind: "MyCustomWidget".into(),
+                style: StyleProps::default()
+            }
+        );
     }
 
     #[test]
@@ -868,9 +973,30 @@ mod tests {
         match widget {
             Widget::Button { label, style } => {
                 assert_eq!(label, "Click me");
-                assert_eq!(style.background_color, Some(Color { r: 74, g: 144, b: 217 }));
-                assert_eq!(style.color, Some(Color { r: 255, g: 255, b: 255 }));
-                assert_eq!(style.border_color, Some(Color { r: 51, g: 51, b: 51 }));
+                assert_eq!(
+                    style.background_color,
+                    Some(Color {
+                        r: 74,
+                        g: 144,
+                        b: 217
+                    })
+                );
+                assert_eq!(
+                    style.color,
+                    Some(Color {
+                        r: 255,
+                        g: 255,
+                        b: 255
+                    })
+                );
+                assert_eq!(
+                    style.border_color,
+                    Some(Color {
+                        r: 51,
+                        g: 51,
+                        b: 51
+                    })
+                );
                 assert_eq!(style.border_radius, Some(4));
                 assert_eq!(style.padding, Some(8));
             }
@@ -888,12 +1014,31 @@ mod tests {
             .number("padding", 4.0);
         let widget = from_props("Input", &props, &mut Vec::new());
         match widget {
-            Widget::Input { value, width, placeholder, style } => {
+            Widget::Input {
+                value,
+                width,
+                placeholder,
+                style,
+            } => {
                 assert_eq!(value, "hello");
                 assert_eq!(width, Some(300));
                 assert_eq!(placeholder, "");
-                assert_eq!(style.background_color, Some(Color { r: 26, g: 26, b: 26 }));
-                assert_eq!(style.border_color, Some(Color { r: 68, g: 68, b: 68 }));
+                assert_eq!(
+                    style.background_color,
+                    Some(Color {
+                        r: 26,
+                        g: 26,
+                        b: 26
+                    })
+                );
+                assert_eq!(
+                    style.border_color,
+                    Some(Color {
+                        r: 68,
+                        g: 68,
+                        b: 68
+                    })
+                );
                 assert_eq!(style.padding, Some(4));
             }
             _ => panic!("expected Input widget"),

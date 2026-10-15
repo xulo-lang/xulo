@@ -108,18 +108,11 @@ pub enum PlatformEvent {
     /// The window was resized.
     Resized { width: u32, height: u32 },
     /// A mouse button was pressed or released.
-    MouseInput {
-        x: f64,
-        y: f64,
-        pressed: bool,
-    },
+    MouseInput { x: f64, y: f64, pressed: bool },
     /// The mouse cursor moved.
     MouseMove { x: f64, y: f64 },
     /// Scroll wheel input.
-    Wheel {
-        delta_x: f64,
-        delta_y: f64,
-    },
+    Wheel { delta_x: f64, delta_y: f64 },
     /// Text input (from keyboard).
     TextInput(String),
     /// A key was pressed (key name string).

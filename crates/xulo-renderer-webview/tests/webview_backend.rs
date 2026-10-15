@@ -1,7 +1,7 @@
 //! WebView backend tests: the page built around the embedded raw wasm layout
 //! engine (pure functions; the windowing path needs a display server).
 
-use xulo_renderer_webview::{build_html, WebviewSize, CELL_W};
+use xulo_renderer_webview::{CELL_W, WebviewSize, build_html};
 use xulo_ui::FontMetrics;
 
 const SIZE: WebviewSize = WebviewSize::new(40, 12);
@@ -18,10 +18,7 @@ fn page_embeds_tree_wasm_and_rasterizer() {
         html.contains("WebAssembly.instantiate(bytes, {})"),
         "raw instantiation"
     );
-    assert!(
-        html.contains("wasm.xulo_set_engine(1)"),
-        "engine selection"
-    );
+    assert!(html.contains("wasm.xulo_set_engine(1)"), "engine selection");
     // The tree reaches the wasm engine through its raw ABI.
     assert!(
         html.contains(r#"const TREE = {"VStack":{"spacing":1,"children":[]}};"#),

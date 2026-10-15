@@ -4,14 +4,12 @@
 //! Anti-aliasing, sub-pixel text, and GPU acceleration are handled
 //! automatically by Skia.
 
-use skia_safe::{
-    Canvas, Color, Font, Paint, Path, Rect, Surface,
-};
+use skia_safe::{Canvas, Color, Font, Paint, Path, Rect, Surface};
+use xulo_render_core::TextAlign;
+use xulo_render_core::TextBaseline;
 use xulo_render_core::{
     Effects, Masking, Painter, RenderContext, TextBounds, TextMetrics, TextRenderer,
 };
-use xulo_render_core::TextBaseline;
-use xulo_render_core::TextAlign;
 
 // ── Saved state for save/restore ────────────────────────────────────────────
 
@@ -52,7 +50,7 @@ impl SkiaRenderContext {
             skia_safe::AlphaType::Premul,
             None,
         );
-#[allow(deprecated)]
+        #[allow(deprecated)]
         let surface = Surface::new_raster(&info, None, None)?;
 
         Some(Self {
@@ -99,7 +97,10 @@ impl SkiaRenderContext {
         let info = self.surface.image_info();
         let row_bytes = info.width() as usize * 4;
         let mut pixels = vec![0u8; info.compute_byte_size(row_bytes)];
-        if self.surface.read_pixels(&info, &mut pixels, row_bytes, (0, 0)) {
+        if self
+            .surface
+            .read_pixels(&info, &mut pixels, row_bytes, (0, 0))
+        {
             Some(pixels)
         } else {
             None
@@ -188,7 +189,9 @@ fn parse_font_size(font_str: &str) -> f32 {
 
 impl Painter for SkiaRenderContext {
     fn save(&mut self) {
-        self.with_canvas(|c| { c.save(); });
+        self.with_canvas(|c| {
+            c.save();
+        });
         self.state_stack.push(SavedState {
             fill_color: self.fill_color,
             stroke_color: self.stroke_color,
@@ -201,7 +204,9 @@ impl Painter for SkiaRenderContext {
     }
 
     fn restore(&mut self) {
-        self.with_canvas(|c| { c.restore(); });
+        self.with_canvas(|c| {
+            c.restore();
+        });
         if let Some(state) = self.state_stack.pop() {
             self.fill_color = state.fill_color;
             self.stroke_color = state.stroke_color;
@@ -214,15 +219,21 @@ impl Painter for SkiaRenderContext {
     }
 
     fn translate(&mut self, x: f64, y: f64) {
-        self.with_canvas(|c| { c.translate((x as f32, y as f32)); });
+        self.with_canvas(|c| {
+            c.translate((x as f32, y as f32));
+        });
     }
 
     fn rotate(&mut self, angle: f64) {
-        self.with_canvas(|c| { c.rotate(angle.to_degrees() as f32, None); });
+        self.with_canvas(|c| {
+            c.rotate(angle.to_degrees() as f32, None);
+        });
     }
 
     fn scale(&mut self, x: f64, y: f64) {
-        self.with_canvas(|c| { c.scale((x as f32, y as f32)); });
+        self.with_canvas(|c| {
+            c.scale((x as f32, y as f32));
+        });
     }
 
     fn set_fill_color(&mut self, color: &str) {
@@ -246,19 +257,27 @@ impl Painter for SkiaRenderContext {
     // For begin_path/move_to/line_to etc., we use a thread-local path.
 
     fn begin_path(&mut self) {
-        PATH.with(|p| { *p.borrow_mut() = Path::new(); });
+        PATH.with(|p| {
+            *p.borrow_mut() = Path::new();
+        });
     }
 
     fn move_to(&mut self, x: f64, y: f64) {
-        PATH.with(|p| { p.borrow_mut().move_to((x as f32, y as f32)); });
+        PATH.with(|p| {
+            p.borrow_mut().move_to((x as f32, y as f32));
+        });
     }
 
     fn line_to(&mut self, x: f64, y: f64) {
-        PATH.with(|p| { p.borrow_mut().line_to((x as f32, y as f32)); });
+        PATH.with(|p| {
+            p.borrow_mut().line_to((x as f32, y as f32));
+        });
     }
 
     fn close_path(&mut self) {
-        PATH.with(|p| { p.borrow_mut().close(); });
+        PATH.with(|p| {
+            p.borrow_mut().close();
+        });
     }
 
     fn rect(&mut self, x: f64, y: f64, w: f64, h: f64) {
@@ -302,15 +321,7 @@ impl Painter for SkiaRenderContext {
         });
     }
 
-    fn bezier_curve_to(
-        &mut self,
-        cp1x: f64,
-        cp1y: f64,
-        cp2x: f64,
-        cp2y: f64,
-        x: f64,
-        y: f64,
-    ) {
+    fn bezier_curve_to(&mut self, cp1x: f64, cp1y: f64, cp2x: f64, cp2y: f64, x: f64, y: f64) {
         PATH.with(|p| {
             p.borrow_mut().cubic_to(
                 (cp1x as f32, cp1y as f32),
@@ -525,10 +536,7 @@ mod tests {
     #[test]
     fn parse_hex_variants() {
         assert_eq!(parse_hex_color("#f00"), Color::from_argb(255, 255, 0, 0));
-        assert_eq!(
-            parse_hex_color("#00ff00"),
-            Color::from_argb(255, 0, 255, 0)
-        );
+        assert_eq!(parse_hex_color("#00ff00"), Color::from_argb(255, 0, 255, 0));
         assert_eq!(
             parse_hex_color("#0000ff80"),
             Color::from_argb(128, 0, 0, 255)

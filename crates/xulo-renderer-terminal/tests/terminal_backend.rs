@@ -1,7 +1,7 @@
 //! Terminal backend integration tests.
 
-use xulo_renderer_terminal::{render_ansi, render_plain, CharMetrics, TerminalSize};
-use xulo_ui::{StyleProps, Color, PaintOp, Rect, Size, Widget};
+use xulo_renderer_terminal::{CharMetrics, TerminalSize, render_ansi, render_plain};
+use xulo_ui::{Color, PaintOp, Rect, Size, StyleProps, Widget};
 
 const SIZE: TerminalSize = TerminalSize { cols: 40, rows: 12 };
 
@@ -40,7 +40,10 @@ fn renders_text_rows_plain() {
 
 #[test]
 fn button_draws_border_and_label() {
-    let root = Widget::Button { label: "+".into(), style: StyleProps::default() };
+    let root = Widget::Button {
+        label: "+".into(),
+        style: StyleProps::default(),
+    };
     let ops = paint(&root);
     assert_eq!(render_plain(&ops, SIZE), "┌─┐\n│+│\n└─┘");
 }
@@ -50,8 +53,14 @@ fn hstack_places_buttons_next_to_each_other() {
     let root = Widget::HStack {
         spacing: 2,
         children: vec![
-            Widget::Button { label: "+".into(), style: StyleProps::default() },
-            Widget::Button { label: "-".into(), style: StyleProps::default() },
+            Widget::Button {
+                label: "+".into(),
+                style: StyleProps::default(),
+            },
+            Widget::Button {
+                label: "-".into(),
+                style: StyleProps::default(),
+            },
         ],
         style: StyleProps::default(),
     };

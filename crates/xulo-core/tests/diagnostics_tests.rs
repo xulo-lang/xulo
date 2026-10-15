@@ -1,5 +1,5 @@
 use xulo_core::diagnostics;
-use xulo_core::error::{XuloError, ErrorKind};
+use xulo_core::error::{ErrorKind, XuloError};
 
 #[test]
 fn test_locate_first_line() {
@@ -68,8 +68,7 @@ fn test_render_warning_no_span() {
 #[test]
 fn test_render_error_with_span_and_source() {
     diagnostics::use_color(false);
-    let err = XuloError::new(ErrorKind::Semantic, "undefined variable 'x'")
-        .at(15..16);
+    let err = XuloError::new(ErrorKind::Semantic, "undefined variable 'x'").at(15..16);
     let source = "fn main() {\n  print(x)\n}";
     let rendered = diagnostics::render(&err, Some(source));
     assert!(rendered.contains("error"));

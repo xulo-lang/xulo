@@ -10,9 +10,7 @@ fn test_fn_def_basic() {
         type_params: vec![],
         bounds: vec![],
         is_async: false,
-        body: Block {
-            statements: vec![],
-        },
+        body: Block { statements: vec![] },
         span: 0..10,
     };
     assert_eq!(fn_def.name, "main");
@@ -46,9 +44,7 @@ fn test_fn_def_with_params() {
         type_params: vec![],
         bounds: vec![],
         is_async: false,
-        body: Block {
-            statements: vec![],
-        },
+        body: Block { statements: vec![] },
         span: 0..15,
     };
     assert_eq!(fn_def.params.len(), 2);
@@ -65,9 +61,7 @@ fn test_fn_def_async() {
         type_params: vec![],
         bounds: vec![],
         is_async: true,
-        body: Block {
-            statements: vec![],
-        },
+        body: Block { statements: vec![] },
         span: 0..20,
     };
     assert!(fn_def.is_async);
@@ -92,9 +86,7 @@ fn test_fn_def_generic() {
             traits: vec!["Clone".to_string()],
         }],
         is_async: false,
-        body: Block {
-            statements: vec![],
-        },
+        body: Block { statements: vec![] },
         span: 0..20,
     };
     assert_eq!(fn_def.type_params, vec!["T".to_string()]);

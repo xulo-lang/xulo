@@ -73,60 +73,190 @@ pub enum RuntimeFn {
 #[derive(Debug, Clone)]
 pub enum Instruction {
     // 常量加载
-    Const { dst: LocalId, value: IrValue },
+    Const {
+        dst: LocalId,
+        value: IrValue,
+    },
 
     // 算术运算
-    Add { dst: LocalId, left: Operand, right: Operand },
-    Sub { dst: LocalId, left: Operand, right: Operand },
-    Mul { dst: LocalId, left: Operand, right: Operand },
-    Div { dst: LocalId, left: Operand, right: Operand },
-    Mod { dst: LocalId, left: Operand, right: Operand },
-    Pow { dst: LocalId, left: Operand, right: Operand },
-    Neg { dst: LocalId, operand: Operand },
+    Add {
+        dst: LocalId,
+        left: Operand,
+        right: Operand,
+    },
+    Sub {
+        dst: LocalId,
+        left: Operand,
+        right: Operand,
+    },
+    Mul {
+        dst: LocalId,
+        left: Operand,
+        right: Operand,
+    },
+    Div {
+        dst: LocalId,
+        left: Operand,
+        right: Operand,
+    },
+    Mod {
+        dst: LocalId,
+        left: Operand,
+        right: Operand,
+    },
+    Pow {
+        dst: LocalId,
+        left: Operand,
+        right: Operand,
+    },
+    Neg {
+        dst: LocalId,
+        operand: Operand,
+    },
 
     // 位运算
-    BitAnd { dst: LocalId, left: Operand, right: Operand },
-    BitOr { dst: LocalId, left: Operand, right: Operand },
-    Xor { dst: LocalId, left: Operand, right: Operand },
-    Shl { dst: LocalId, left: Operand, right: Operand },
-    Shr { dst: LocalId, left: Operand, right: Operand },
-    BitNot { dst: LocalId, operand: Operand },
+    BitAnd {
+        dst: LocalId,
+        left: Operand,
+        right: Operand,
+    },
+    BitOr {
+        dst: LocalId,
+        left: Operand,
+        right: Operand,
+    },
+    Xor {
+        dst: LocalId,
+        left: Operand,
+        right: Operand,
+    },
+    Shl {
+        dst: LocalId,
+        left: Operand,
+        right: Operand,
+    },
+    Shr {
+        dst: LocalId,
+        left: Operand,
+        right: Operand,
+    },
+    BitNot {
+        dst: LocalId,
+        operand: Operand,
+    },
 
     // 比较运算
-    Eq { dst: LocalId, left: Operand, right: Operand },
-    Neq { dst: LocalId, left: Operand, right: Operand },
-    Lt { dst: LocalId, left: Operand, right: Operand },
-    Gt { dst: LocalId, left: Operand, right: Operand },
-    Lte { dst: LocalId, left: Operand, right: Operand },
-    Gte { dst: LocalId, left: Operand, right: Operand },
+    Eq {
+        dst: LocalId,
+        left: Operand,
+        right: Operand,
+    },
+    Neq {
+        dst: LocalId,
+        left: Operand,
+        right: Operand,
+    },
+    Lt {
+        dst: LocalId,
+        left: Operand,
+        right: Operand,
+    },
+    Gt {
+        dst: LocalId,
+        left: Operand,
+        right: Operand,
+    },
+    Lte {
+        dst: LocalId,
+        left: Operand,
+        right: Operand,
+    },
+    Gte {
+        dst: LocalId,
+        left: Operand,
+        right: Operand,
+    },
 
     // 逻辑运算
-    And { dst: LocalId, left: Operand, right: Operand },
-    Or { dst: LocalId, left: Operand, right: Operand },
-    Not { dst: LocalId, operand: Operand },
+    And {
+        dst: LocalId,
+        left: Operand,
+        right: Operand,
+    },
+    Or {
+        dst: LocalId,
+        left: Operand,
+        right: Operand,
+    },
+    Not {
+        dst: LocalId,
+        operand: Operand,
+    },
 
     // 控制流
-    Branch { condition: Operand, then_label: Label, else_label: Label },
+    Branch {
+        condition: Operand,
+        then_label: Label,
+        else_label: Label,
+    },
     Jump(Label),
     Return(Option<Operand>),
 
     // 函数调用
-    Call { dst: Option<LocalId>, func: FuncId, args: Vec<Operand> },
-    RuntimeCall { dst: Option<LocalId>, func: RuntimeFn, args: Vec<Operand> },
+    Call {
+        dst: Option<LocalId>,
+        func: FuncId,
+        args: Vec<Operand>,
+    },
+    RuntimeCall {
+        dst: Option<LocalId>,
+        func: RuntimeFn,
+        args: Vec<Operand>,
+    },
 
     // 局部变量
-    GetLocal { dst: LocalId, src: LocalId },
-    SetLocal { dst: LocalId, src: Operand },
+    GetLocal {
+        dst: LocalId,
+        src: LocalId,
+    },
+    SetLocal {
+        dst: LocalId,
+        src: Operand,
+    },
 
     // 对象操作
-    NewObject { dst: LocalId, fields: Vec<(String, Operand, i64)> },
-    GetField { dst: LocalId, object: Operand, field: String },
-    SetField { object: Operand, field: String, value: Operand, tag: i64 },
+    NewObject {
+        dst: LocalId,
+        fields: Vec<(String, Operand, i64)>,
+    },
+    GetField {
+        dst: LocalId,
+        object: Operand,
+        field: String,
+    },
+    SetField {
+        object: Operand,
+        field: String,
+        value: Operand,
+        tag: i64,
+    },
 
     // 数组操作
-    NewArray { dst: LocalId, elements: Vec<(Operand, i64)> },
-    GetIndex { dst: LocalId, array: Operand, index: Operand },
-    SetIndex { array: Operand, index: Operand, value: Operand, tag: i64 },
+    NewArray {
+        dst: LocalId,
+        elements: Vec<(Operand, i64)>,
+    },
+    GetIndex {
+        dst: LocalId,
+        array: Operand,
+        index: Operand,
+    },
+    SetIndex {
+        array: Operand,
+        index: Operand,
+        value: Operand,
+        tag: i64,
+    },
 
     // 标签
     Label(Label),

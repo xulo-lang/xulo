@@ -8,5 +8,5 @@ pub mod webview_backend;
 pub use canvas2d_render_context::Canvas2dRenderContext;
 pub use html_builder::build_html_with_context;
 pub use webview_backend::{
-    build_html, run, CellMetrics, ClickHandler, InputHandler, WebviewSize, CELL_H, CELL_W,
+    CELL_H, CELL_W, CellMetrics, ClickHandler, InputHandler, WebviewSize, build_html, run,
 };

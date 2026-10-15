@@ -1,8 +1,6 @@
 //! Test: layout.xulo rendered with TaffyLayout engine.
 
-use xulo_ui::{
-    CellMetrics, LayoutEngine, Size, StyleProps, TaffyLayout, Widget,
-};
+use xulo_ui::{CellMetrics, LayoutEngine, Size, StyleProps, TaffyLayout, Widget};
 
 fn main() {
     // Recreate the layout.xulo structure

@@ -51,9 +51,7 @@ fn test_statement_for() {
             name: "xs".to_string(),
             span: 9..11,
         },
-        body: Block {
-            statements: vec![],
-        },
+        body: Block { statements: vec![] },
     });
     assert!(matches!(stmt, Statement::For(_)));
 }
@@ -65,9 +63,7 @@ fn test_statement_while() {
             value: Literal::Boolean(true),
             span: 6..10,
         },
-        body: Block {
-            statements: vec![],
-        },
+        body: Block { statements: vec![] },
     });
     assert!(matches!(stmt, Statement::While(_)));
 }
@@ -75,14 +71,10 @@ fn test_statement_while() {
 #[test]
 fn test_statement_try_catch() {
     let stmt = Statement::Try(TryStmt {
-        try_block: Block {
-            statements: vec![],
-        },
+        try_block: Block { statements: vec![] },
         catch_var: "e".to_string(),
         catch_var_span: 15..16,
-        catch_block: Block {
-            statements: vec![],
-        },
+        catch_block: Block { statements: vec![] },
     });
     assert!(matches!(stmt, Statement::Try(_)));
 }

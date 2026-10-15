@@ -6,16 +6,14 @@
 use crate::layout::{FontMetrics, LayoutEngine, Placed};
 use crate::widgets::{Alignment, Dimension, Justify, Rect, Size, StyleProps, Widget};
 use std::sync::Arc;
-use taffy::prelude::TaffyAuto;
 use taffy::TaffyTree;
+use taffy::prelude::TaffyAuto;
 
 /// Metadata stored alongside each Taffy node so the measure function can
 /// compute intrinsic sizes for leaf widgets.
 #[derive(Debug, Clone)]
 enum NodeContext {
-    Leaf {
-        widget: Arc<Widget>,
-    },
+    Leaf { widget: Arc<Widget> },
 }
 
 /// Convert an `Option<u32>` to a taffy `LengthPercentageAuto`.
@@ -37,38 +35,55 @@ fn style_to_taffy(
     let padding = style.padding.unwrap_or(0) as f32;
     let margin = style.margin.unwrap_or(0) as f32;
 
-    let justify_content = style.justify.map(|j| match j {
-        Justify::Start => taffy::JustifyContent::FLEX_START,
-        Justify::Center => taffy::JustifyContent::CENTER,
-        Justify::End => taffy::JustifyContent::FLEX_END,
-        Justify::SpaceBetween => taffy::JustifyContent::SPACE_BETWEEN,
-        Justify::SpaceAround => taffy::JustifyContent::SPACE_AROUND,
-        Justify::SpaceEvenly => taffy::JustifyContent::SPACE_EVENLY,
-    }).unwrap_or(taffy::JustifyContent::FLEX_START);
+    let justify_content = style
+        .justify
+        .map(|j| match j {
+            Justify::Start => taffy::JustifyContent::FLEX_START,
+            Justify::Center => taffy::JustifyContent::CENTER,
+            Justify::End => taffy::JustifyContent::FLEX_END,
+            Justify::SpaceBetween => taffy::JustifyContent::SPACE_BETWEEN,
+            Justify::SpaceAround => taffy::JustifyContent::SPACE_AROUND,
+            Justify::SpaceEvenly => taffy::JustifyContent::SPACE_EVENLY,
+        })
+        .unwrap_or(taffy::JustifyContent::FLEX_START);
 
-    let align_items = style.alignment.map(|a| match a {
-        Alignment::Start => taffy::AlignItems::FLEX_START,
-        Alignment::Center => taffy::AlignItems::CENTER,
-        Alignment::End => taffy::AlignItems::FLEX_END,
-        Alignment::Stretch => taffy::AlignItems::STRETCH,
-    }).unwrap_or(taffy::AlignItems::FLEX_START);
+    let align_items = style
+        .alignment
+        .map(|a| match a {
+            Alignment::Start => taffy::AlignItems::FLEX_START,
+            Alignment::Center => taffy::AlignItems::CENTER,
+            Alignment::End => taffy::AlignItems::FLEX_END,
+            Alignment::Stretch => taffy::AlignItems::STRETCH,
+        })
+        .unwrap_or(taffy::AlignItems::FLEX_START);
 
     let flex_grow = style.flex_grow.unwrap_or(0.0);
     let flex_shrink = style.flex_shrink.unwrap_or(1.0);
 
     // Containers (VStack/HStack/Screen) default to 100% width when unset
-    let size_width = style.width.map(|d| match d {
-        Dimension::Pixels(n) => taffy::Dimension::length(n as f32),
-        Dimension::Full => taffy::Dimension::percent(1.0),
-    }).unwrap_or(if is_container { taffy::Dimension::percent(1.0) } else { taffy::Dimension::AUTO });
+    let size_width = style
+        .width
+        .map(|d| match d {
+            Dimension::Pixels(n) => taffy::Dimension::length(n as f32),
+            Dimension::Full => taffy::Dimension::percent(1.0),
+        })
+        .unwrap_or(if is_container {
+            taffy::Dimension::percent(1.0)
+        } else {
+            taffy::Dimension::AUTO
+        });
 
-    let size_height = style.height.map(|d| match d {
-        Dimension::Pixels(n) => taffy::Dimension::length(n as f32),
-        Dimension::Full => taffy::Dimension::percent(1.0),
-    }).unwrap_or(taffy::Dimension::AUTO);
+    let size_height = style
+        .height
+        .map(|d| match d {
+            Dimension::Pixels(n) => taffy::Dimension::length(n as f32),
+            Dimension::Full => taffy::Dimension::percent(1.0),
+        })
+        .unwrap_or(taffy::Dimension::AUTO);
 
     // flex_basis: explicit basis wins, otherwise fall back to size
-    let flex_basis = style.flex_basis
+    let flex_basis = style
+        .flex_basis
         .map(|b| taffy::Dimension::length(b as f32))
         .unwrap_or(taffy::Dimension::AUTO);
 
@@ -113,12 +128,11 @@ fn style_to_taffy(
 }
 
 /// Build a `TaffyTree` from the `Widget` tree, returning the root `NodeId`.
-fn build_taffy_tree(
-    taffy: &mut TaffyTree<NodeContext>,
-    widget: &Widget,
-) -> taffy::NodeId {
+fn build_taffy_tree(taffy: &mut TaffyTree<NodeContext>, widget: &Widget) -> taffy::NodeId {
     match widget {
-        Widget::Screen { children, style, .. } => {
+        Widget::Screen {
+            children, style, ..
+        } => {
             let s = style_to_taffy(style, taffy::FlexDirection::Column, 0, true);
             // Screen children fill the available height via flex_grow,
             // unless they have an explicit height set.
@@ -128,17 +142,22 @@ fn build_taffy_tree(
                     let child_id = build_taffy_tree(taffy, c);
                     // Only set flex_grow if child doesn't have explicit height
                     if c.style().height.is_none()
-                        && let Ok(child_style) = taffy.style(child_id) {
-                            let mut child_style = child_style.clone();
-                            child_style.flex_grow = 1.0;
-                            let _ = taffy.set_style(child_id, child_style);
-                        }
+                        && let Ok(child_style) = taffy.style(child_id)
+                    {
+                        let mut child_style = child_style.clone();
+                        child_style.flex_grow = 1.0;
+                        let _ = taffy.set_style(child_id, child_style);
+                    }
                     child_id
                 })
                 .collect();
             taffy.new_with_children(s, &child_ids).unwrap()
         }
-        Widget::VStack { children, style, spacing } => {
+        Widget::VStack {
+            children,
+            style,
+            spacing,
+        } => {
             let s = style_to_taffy(style, taffy::FlexDirection::Column, *spacing, true);
             let child_ids: Vec<taffy::NodeId> = children
                 .iter()
@@ -146,7 +165,11 @@ fn build_taffy_tree(
                 .collect();
             taffy.new_with_children(s, &child_ids).unwrap()
         }
-        Widget::HStack { children, style, spacing } => {
+        Widget::HStack {
+            children,
+            style,
+            spacing,
+        } => {
             let s = style_to_taffy(style, taffy::FlexDirection::Row, *spacing, true);
             let child_ids: Vec<taffy::NodeId> = children
                 .iter()
@@ -163,7 +186,9 @@ fn build_taffy_tree(
                 .collect();
             taffy.new_with_children(s, &child_ids).unwrap()
         }
-        Widget::ScrollView { children, style, .. } => {
+        Widget::ScrollView {
+            children, style, ..
+        } => {
             let mut s = style_to_taffy(style, taffy::FlexDirection::Column, 0, true);
             s.overflow = taffy::Point {
                 x: taffy::Overflow::Hidden,
@@ -201,10 +226,19 @@ fn build_taffy_tree(
                 s.max_size.height = v;
             }
             // Decorated text should expand in flex containers
-            if matches!(widget, Widget::Text { style, .. } if style.is_text_decorated()) && s.flex_grow == 0.0 {
+            if matches!(widget, Widget::Text { style, .. } if style.is_text_decorated())
+                && s.flex_grow == 0.0
+            {
                 s.flex_grow = 1.0;
             }
-            taffy.new_leaf_with_context(s, NodeContext::Leaf { widget: Arc::new(widget.clone()) }).unwrap()
+            taffy
+                .new_leaf_with_context(
+                    s,
+                    NodeContext::Leaf {
+                        widget: Arc::new(widget.clone()),
+                    },
+                )
+                .unwrap()
         }
     }
 }
@@ -221,45 +255,81 @@ fn measure_leaf(
                 let pad = style.padding.unwrap_or(0) as f32;
                 let text_w = metrics.text_width(text) as f32 + pad * 2.0;
                 let text_h = metrics.line_height() as f32 + pad * 2.0;
-                let w = style.width.map(|d| match d {
-                    Dimension::Pixels(n) => n as f32,
-                    Dimension::Full => known_width.unwrap_or(text_w),
-                }).unwrap_or(text_w);
-                let h = style.height.map(|d| match d {
-                    Dimension::Pixels(n) => n as f32,
-                    Dimension::Full => text_h,
-                }).unwrap_or(text_h);
-                taffy::Size { width: w, height: h }
+                let w = style
+                    .width
+                    .map(|d| match d {
+                        Dimension::Pixels(n) => n as f32,
+                        Dimension::Full => known_width.unwrap_or(text_w),
+                    })
+                    .unwrap_or(text_w);
+                let h = style
+                    .height
+                    .map(|d| match d {
+                        Dimension::Pixels(n) => n as f32,
+                        Dimension::Full => text_h,
+                    })
+                    .unwrap_or(text_h);
+                taffy::Size {
+                    width: w,
+                    height: h,
+                }
             } else {
                 let text_w = metrics.text_width(text) as f32;
                 let text_h = metrics.line_height() as f32;
-                let w = style.width.map(|d| match d {
-                    Dimension::Pixels(n) => n as f32,
-                    Dimension::Full => known_width.unwrap_or(text_w),
-                }).unwrap_or(text_w);
-                let h = style.height.map(|d| match d {
-                    Dimension::Pixels(n) => n as f32,
-                    Dimension::Full => text_h,
-                }).unwrap_or(text_h);
-                taffy::Size { width: w, height: h }
+                let w = style
+                    .width
+                    .map(|d| match d {
+                        Dimension::Pixels(n) => n as f32,
+                        Dimension::Full => known_width.unwrap_or(text_w),
+                    })
+                    .unwrap_or(text_w);
+                let h = style
+                    .height
+                    .map(|d| match d {
+                        Dimension::Pixels(n) => n as f32,
+                        Dimension::Full => text_h,
+                    })
+                    .unwrap_or(text_h);
+                taffy::Size {
+                    width: w,
+                    height: h,
+                }
             }
         }
         Widget::Button { label, style } => {
             let (px, py) = style.effective_padding();
             let w = metrics.text_width(label) as f32 + px as f32 * 2.0;
             let h = metrics.line_height() as f32 + py as f32 * 2.0;
-            let w = style.width.map(|d| match d {
-                Dimension::Pixels(n) => n as f32,
-                Dimension::Full => known_width.unwrap_or(w),
-            }).unwrap_or(w);
-            let h = style.height.map(|d| match d {
-                Dimension::Pixels(n) => n as f32,
-                Dimension::Full => h,
-            }).unwrap_or(h);
-            taffy::Size { width: w, height: h }
+            let w = style
+                .width
+                .map(|d| match d {
+                    Dimension::Pixels(n) => n as f32,
+                    Dimension::Full => known_width.unwrap_or(w),
+                })
+                .unwrap_or(w);
+            let h = style
+                .height
+                .map(|d| match d {
+                    Dimension::Pixels(n) => n as f32,
+                    Dimension::Full => h,
+                })
+                .unwrap_or(h);
+            taffy::Size {
+                width: w,
+                height: h,
+            }
         }
-        Widget::Input { value, width: input_width, placeholder, style } => {
-            let display = if value.is_empty() { placeholder.as_str() } else { value.as_str() };
+        Widget::Input {
+            value,
+            width: input_width,
+            placeholder,
+            style,
+        } => {
+            let display = if value.is_empty() {
+                placeholder.as_str()
+            } else {
+                value.as_str()
+            };
             let (px, py) = style.effective_padding();
             let w = input_width
                 .or(style.width.and_then(|d| match d {
@@ -269,27 +339,45 @@ fn measure_leaf(
                 .map(|n| n as f32)
                 .unwrap_or_else(|| metrics.text_width(display) as f32 + px as f32 * 2.0);
             let h = metrics.line_height() as f32 + py as f32 * 2.0;
-            let h = style.height.map(|d| match d {
-                Dimension::Pixels(n) => n as f32,
-                Dimension::Full => h,
-            }).unwrap_or(h);
-            taffy::Size { width: w.min(known_width.unwrap_or(f32::MAX)), height: h }
+            let h = style
+                .height
+                .map(|d| match d {
+                    Dimension::Pixels(n) => n as f32,
+                    Dimension::Full => h,
+                })
+                .unwrap_or(h);
+            taffy::Size {
+                width: w.min(known_width.unwrap_or(f32::MAX)),
+                height: h,
+            }
         }
         Widget::Unknown { kind, style } => {
             let (px, py) = style.effective_padding();
             let w = metrics.text_width(kind) as f32 + px as f32 * 2.0;
             let h = metrics.line_height() as f32 + py as f32 * 2.0;
-            let w = style.width.map(|d| match d {
-                Dimension::Pixels(n) => n as f32,
-                Dimension::Full => known_width.unwrap_or(w),
-            }).unwrap_or(w);
-            let h = style.height.map(|d| match d {
-                Dimension::Pixels(n) => n as f32,
-                Dimension::Full => h,
-            }).unwrap_or(h);
-            taffy::Size { width: w, height: h }
+            let w = style
+                .width
+                .map(|d| match d {
+                    Dimension::Pixels(n) => n as f32,
+                    Dimension::Full => known_width.unwrap_or(w),
+                })
+                .unwrap_or(w);
+            let h = style
+                .height
+                .map(|d| match d {
+                    Dimension::Pixels(n) => n as f32,
+                    Dimension::Full => h,
+                })
+                .unwrap_or(h);
+            taffy::Size {
+                width: w,
+                height: h,
+            }
         }
-        _ => taffy::Size { width: 0.0, height: 0.0 },
+        _ => taffy::Size {
+            width: 0.0,
+            height: 0.0,
+        },
     }
 }
 
@@ -372,25 +460,30 @@ pub fn layout_taffy<'a>(
         height: taffy::AvailableSpace::Definite(surface.height as f32),
     };
 
-    taffy.compute_layout_with_measure(
-        root_id,
-        available,
-        |inputs, _node_id, node_context, _style| {
-            taffy::compute_leaf_layout(
-                inputs,
-                _style,
-                |_, _| 0.0,
-                |known_dimensions, _available| {
-                    if let Some(NodeContext::Leaf { widget }) = node_context {
-                        let known_w = known_dimensions.width;
-                        measure_leaf(widget, known_w, metrics)
-                    } else {
-                        taffy::Size { width: 0.0, height: 0.0 }
-                    }
-                },
-            )
-        },
-    ).unwrap();
+    taffy
+        .compute_layout_with_measure(
+            root_id,
+            available,
+            |inputs, _node_id, node_context, _style| {
+                taffy::compute_leaf_layout(
+                    inputs,
+                    _style,
+                    |_, _| 0.0,
+                    |known_dimensions, _available| {
+                        if let Some(NodeContext::Leaf { widget }) = node_context {
+                            let known_w = known_dimensions.width;
+                            measure_leaf(widget, known_w, metrics)
+                        } else {
+                            taffy::Size {
+                                width: 0.0,
+                                height: 0.0,
+                            }
+                        }
+                    },
+                )
+            },
+        )
+        .unwrap();
 
     let mut placed = read_layout(&taffy, root_id, root, (0, 0), metrics);
     // Force root to surface size (Screen always fills)
@@ -403,12 +496,7 @@ pub fn layout_taffy<'a>(
 pub struct TaffyLayout;
 
 impl LayoutEngine for TaffyLayout {
-    fn layout<'a>(
-        &self,
-        root: &'a Widget,
-        surface: Size,
-        metrics: &dyn FontMetrics,
-    ) -> Placed<'a> {
+    fn layout<'a>(&self, root: &'a Widget, surface: Size, metrics: &dyn FontMetrics) -> Placed<'a> {
         layout_taffy(root, surface, metrics)
     }
 }

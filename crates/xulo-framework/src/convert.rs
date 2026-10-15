@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use xulo_runtime::interpreter::Interpreter;
 use xulo_runtime::value::Value;
-use xulo_ui::{Widget, from_props, Props, UiCallback, StyleProps};
+use xulo_ui::{Props, StyleProps, UiCallback, Widget, from_props};
 
 /// Convert a render value into a widget, dropping any click callbacks.
 /// Strings become text; objects with a `name`/`props` shape are matched by
@@ -44,11 +44,21 @@ fn widget_with(
             let fields = fields.borrow();
             let name = match get(&fields, "name") {
                 Some(Value::String(n)) => n.to_string(),
-                _ => return Widget::Unknown { kind: "?".into(), style: StyleProps::default() },
+                _ => {
+                    return Widget::Unknown {
+                        kind: "?".into(),
+                        style: StyleProps::default(),
+                    };
+                }
             };
             let props_obj = match get(&fields, "props") {
                 Some(Value::Object(p)) => p,
-                _ => return Widget::Unknown { kind: name, style: StyleProps::default() },
+                _ => {
+                    return Widget::Unknown {
+                        kind: name,
+                        style: StyleProps::default(),
+                    };
+                }
             };
             let props_obj = props_obj.borrow();
 
@@ -75,9 +85,7 @@ fn widget_with(
                     props = props.children(children);
                 }
                 "ScrollView" => {
-                    if let Some(axes) = get(&props_obj, "axes")
-                        .and_then(string_of)
-                    {
+                    if let Some(axes) = get(&props_obj, "axes").and_then(string_of) {
                         props = props.string("axes", axes);
                     }
                     let children = children_with(get(&props_obj, "children"), interp, callbacks);
@@ -89,9 +97,7 @@ fn widget_with(
                         .and_then(string_of)
                         .unwrap_or_default();
                     props = props.string("0", text);
-                    if let Some(color) = get(&props_obj, "color")
-                        .and_then(string_of)
-                    {
+                    if let Some(color) = get(&props_obj, "color").and_then(string_of) {
                         props = props.string("color", color);
                     }
                 }
@@ -122,15 +128,12 @@ fn widget_with(
                     if let Some(Value::Number(width)) = get(&props_obj, "width") {
                         props = props.number("width", *width);
                     }
-                    if let Some(placeholder) = get(&props_obj, "placeholder")
-                        .and_then(string_of)
-                    {
+                    if let Some(placeholder) = get(&props_obj, "placeholder").and_then(string_of) {
                         props = props.string("placeholder", placeholder);
                     }
                     // Extract onChange callback from $binding
                     if let Some(interp) = interp {
-                        let on_change = get(&props_obj, "value")
-                            .and_then(extract_on_change);
+                        let on_change = get(&props_obj, "value").and_then(extract_on_change);
                         if let Some(on_change) = on_change {
                             let interp = interp.clone();
                             callbacks.push(UiCallback {
@@ -212,10 +215,7 @@ fn button_label(
         return value;
     }
     children_with(
-        props
-            .iter()
-            .find(|(k, _)| k == "children")
-            .map(|(_, v)| v),
+        props.iter().find(|(k, _)| k == "children").map(|(_, v)| v),
         interp,
         callbacks,
     )
@@ -299,9 +299,7 @@ fn extract_style(fields: &[(String, Value)], mut props: Props) -> Props {
         props = props.string("border", s);
     }
     // Numeric style props (short aliases: size, weight, radius)
-    if let Some(Value::Number(n)) = get(fields, "size")
-        .or_else(|| get(fields, "fontSize"))
-    {
+    if let Some(Value::Number(n)) = get(fields, "size").or_else(|| get(fields, "fontSize")) {
         props = props.number("size", *n);
     }
     if let Some(s) = get(fields, "weight")
@@ -326,9 +324,7 @@ fn extract_style(fields: &[(String, Value)], mut props: Props) -> Props {
     } else if let Some(Value::Number(n)) = get(fields, "height") {
         props = props.string("height", n.to_string());
     }
-    if let Some(Value::Number(n)) = get(fields, "radius")
-        .or_else(|| get(fields, "borderRadius"))
-    {
+    if let Some(Value::Number(n)) = get(fields, "radius").or_else(|| get(fields, "borderRadius")) {
         props = props.number("radius", *n);
     }
     if let Some(Value::Number(n)) = get(fields, "opacity") {
@@ -341,19 +337,14 @@ fn extract_style(fields: &[(String, Value)], mut props: Props) -> Props {
         props = props.string("justify", s);
     }
     // Flex layout properties (yoga-layout compatible)
-    if let Some(Value::Number(n)) = get(fields, "flexGrow")
-        .or_else(|| get(fields, "flex_grow"))
-    {
+    if let Some(Value::Number(n)) = get(fields, "flexGrow").or_else(|| get(fields, "flex_grow")) {
         props = props.number("flexGrow", *n);
     }
-    if let Some(Value::Number(n)) = get(fields, "flexShrink")
-        .or_else(|| get(fields, "flex_shrink"))
+    if let Some(Value::Number(n)) = get(fields, "flexShrink").or_else(|| get(fields, "flex_shrink"))
     {
         props = props.number("flexShrink", *n);
     }
-    if let Some(Value::Number(n)) = get(fields, "flexBasis")
-        .or_else(|| get(fields, "flex_basis"))
-    {
+    if let Some(Value::Number(n)) = get(fields, "flexBasis").or_else(|| get(fields, "flex_basis")) {
         props = props.number("flexBasis", *n);
     }
     if let Some(s) = get(fields, "alignSelf")
@@ -363,24 +354,16 @@ fn extract_style(fields: &[(String, Value)], mut props: Props) -> Props {
         props = props.string("alignSelf", s);
     }
     // Min/max size constraints
-    if let Some(Value::Number(n)) = get(fields, "minWidth")
-        .or_else(|| get(fields, "min_width"))
-    {
+    if let Some(Value::Number(n)) = get(fields, "minWidth").or_else(|| get(fields, "min_width")) {
         props = props.number("minWidth", *n);
     }
-    if let Some(Value::Number(n)) = get(fields, "maxWidth")
-        .or_else(|| get(fields, "max_width"))
-    {
+    if let Some(Value::Number(n)) = get(fields, "maxWidth").or_else(|| get(fields, "max_width")) {
         props = props.number("maxWidth", *n);
     }
-    if let Some(Value::Number(n)) = get(fields, "minHeight")
-        .or_else(|| get(fields, "min_height"))
-    {
+    if let Some(Value::Number(n)) = get(fields, "minHeight").or_else(|| get(fields, "min_height")) {
         props = props.number("minHeight", *n);
     }
-    if let Some(Value::Number(n)) = get(fields, "maxHeight")
-        .or_else(|| get(fields, "max_height"))
-    {
+    if let Some(Value::Number(n)) = get(fields, "maxHeight").or_else(|| get(fields, "max_height")) {
         props = props.number("maxHeight", *n);
     }
     props

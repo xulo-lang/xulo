@@ -13,7 +13,7 @@ use std::rc::Rc;
 
 /// Cell size in pixels: the webview's monospace glyph grid (shared with the
 /// wasm engine via `xulo-ui`).
-pub use xulo_ui::{CellMetrics, CELL_H, CELL_W};
+pub use xulo_ui::{CELL_H, CELL_W, CellMetrics};
 
 /// A webview surface sized in character cells.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -534,16 +534,17 @@ fn run_winit(
             let on_click = self.on_click.take().expect("click handler consumed once");
             let on_input = self.on_input.take().expect("input handler consumed once");
             let slot = self.webview_slot.clone();
-            let webview = match build_webview(&html, self.background, on_click, on_input, slot.clone())
-                .build(&window)
-            {
-                Ok(webview) => webview,
-                Err(err) => {
-                    eprintln!("webview: cannot create webview: {err}");
-                    event_loop.exit();
-                    return;
-                }
-            };
+            let webview =
+                match build_webview(&html, self.background, on_click, on_input, slot.clone())
+                    .build(&window)
+                {
+                    Ok(webview) => webview,
+                    Err(err) => {
+                        eprintln!("webview: cannot create webview: {err}");
+                        event_loop.exit();
+                        return;
+                    }
+                };
             *self.webview_slot.borrow_mut() = Some(webview);
             self.window = Some(window);
         }
@@ -562,9 +563,7 @@ fn run_winit(
                         let rows = (size.height / CELL_H).max(1);
                         let px_w = cols * CELL_W;
                         let px_h = rows * CELL_H;
-                        let _ = webview.evaluate_script(
-                            &format!("window.resize({px_w},{px_h})"),
-                        );
+                        let _ = webview.evaluate_script(&format!("window.resize({px_w},{px_h})"));
                     }
                 }
                 _ => {}

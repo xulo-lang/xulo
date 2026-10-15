@@ -87,13 +87,27 @@ impl Grid {
                 PaintOp::FillRect { rect, color, .. } => {
                     grid.fill_rect(*rect, *color);
                 }
-                PaintOp::DrawText { rect, text, color, bold, .. } => {
+                PaintOp::DrawText {
+                    rect,
+                    text,
+                    color,
+                    bold,
+                    ..
+                } => {
                     grid.draw_text(*rect, text, *color, *bold);
                 }
                 PaintOp::DrawBorder { rect, color, .. } => {
                     grid.draw_border(*rect, *color);
                 }
-                PaintOp::Input { rect, text, placeholder, color, focused, border_color, .. } => {
+                PaintOp::Input {
+                    rect,
+                    text,
+                    placeholder,
+                    color,
+                    focused,
+                    border_color,
+                    ..
+                } => {
                     let border = border_color.unwrap_or(Color::GRAY);
                     grid.draw_border(*rect, border);
                     let inner = Rect::new(

@@ -634,7 +634,6 @@ fn check_reports_circular_import() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-
 #[test]
 fn type_only_enum_import_still_binds_the_value() {
     let (dir, entry) = temp_dir(
@@ -1707,7 +1706,6 @@ fn pub_bare_enum_name_imports_on_both_paths() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-
 #[test]
 fn native_run_semantic_rejects_missing_export() {
     let (ok, stdout, stderr) = native_run(
@@ -1982,11 +1980,13 @@ fn main() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(out.status.code(), Some(1), "stderr: {stderr}");
-    assert!(stdout.contains("test addition_works ... ok"), "stdout: {stdout}");
+    assert!(
+        stdout.contains("test addition_works ... ok"),
+        "stdout: {stdout}"
+    );
     assert!(stdout.contains("1 passed, 1 failed"), "stdout: {stdout}");
     assert!(
-        stderr.contains("test failing_test ... FAILED")
-            && stderr.contains("one plus one is three"),
+        stderr.contains("test failing_test ... FAILED") && stderr.contains("one plus one is three"),
         "stderr: {stderr}"
     );
     assert!(
@@ -2012,7 +2012,11 @@ test fn second() {
     );
     let out = Command::new(BIN).arg("test").arg(&file).output().unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert!(stdout.contains("test first ... ok"), "stdout: {stdout}");
     assert!(stdout.contains("test second ... ok"), "stdout: {stdout}");
     assert!(stdout.contains("2 passed, 0 failed"), "stdout: {stdout}");
@@ -2034,8 +2038,15 @@ test async fn async_works() {
     );
     let out = Command::new(BIN).arg("test").arg(&file).output().unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
-    assert!(stdout.contains("test async_works ... ok"), "stdout: {stdout}");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        stdout.contains("test async_works ... ok"),
+        "stdout: {stdout}"
+    );
     let _ = std::fs::remove_file(&file);
 }
 
@@ -2061,13 +2072,14 @@ fn main() {
 
 #[test]
 fn test_command_with_no_tests_exits_zero() {
-    let file = temp_file(
-        "tests_none.xulo",
-        "fn main() { print(\"hi\") }",
-    );
+    let file = temp_file("tests_none.xulo", "fn main() { print(\"hi\") }");
     let out = Command::new(BIN).arg("test").arg(&file).output().unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert!(stdout.contains("no tests found"), "stdout: {stdout}");
     let _ = std::fs::remove_file(&file);
 }

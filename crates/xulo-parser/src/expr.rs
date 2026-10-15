@@ -6,12 +6,12 @@ use xulo_core::ast::{
     ArrowBody, ArrowClosure, AssignTarget, BinaryOp, BinaryOperator, Block, Call, CallArg,
     CallValue, ComponentStmt, EnumRef, ExprStmt, Expression, FnExpr, IfExpr, IndexExpr, IsExpr,
     Literal, LockExpr, MatchArm, MatchBody, MatchExpr, MatchPattern, MemberAccess, NullishExpr,
-    Param, ObjectField, PatternBinder, RangeExpr, SpawnBody, SpawnExpr, SpawnField, SpawnTarget,
+    ObjectField, Param, PatternBinder, RangeExpr, SpawnBody, SpawnExpr, SpawnField, SpawnTarget,
     Statement, TernaryExpr, Type, TypedMap, TypedMapEntry, UnaryOp, UnaryOperator,
 };
 
 use super::build::{block, to_ui_elements};
-use super::types::{check_rule, single, type_expr, R};
+use super::types::{R, check_rule, single, type_expr};
 use super::{Rule, err, span_of};
 
 pub(crate) fn expression(pair: Pair<'_, Rule>) -> R<Expression> {
@@ -313,12 +313,14 @@ fn apply_postfix(expr: Expression, op: Pair<'_, Rule>, span_start: usize) -> R<E
                 span,
             })))
         }
-        Rule::identifier | Rule::integer_literal => Ok(Expression::Member(Box::new(MemberAccess {
-            object: expr,
-            property: inner.as_str().to_string(),
-            optional: is_optional_member,
-            span,
-        }))),
+        Rule::identifier | Rule::integer_literal => {
+            Ok(Expression::Member(Box::new(MemberAccess {
+                object: expr,
+                property: inner.as_str().to_string(),
+                optional: is_optional_member,
+                span,
+            })))
+        }
         Rule::propagation_q => Ok(Expression::Propagate {
             expr: Box::new(expr),
             span,
@@ -1045,14 +1047,14 @@ pub(crate) fn assign_target(pair: Pair<'_, Rule>) -> R<AssignTarget> {
                 let inner = single(p);
                 let span = span_start..inner.as_span().end();
                 let next_expr = match inner.as_rule() {
-                    Rule::ident_raw | Rule::integer_literal => Expression::Member(Box::new(
-                        MemberAccess {
+                    Rule::ident_raw | Rule::integer_literal => {
+                        Expression::Member(Box::new(MemberAccess {
                             object: base,
                             property: inner.as_str().to_string(),
                             optional: false,
                             span,
-                        },
-                    )),
+                        }))
+                    }
                     Rule::expression => {
                         let index = expression(inner)?;
                         Expression::Index(Box::new(IndexExpr {
@@ -1083,14 +1085,12 @@ fn target_to_expr(target: AssignTarget, span: usize) -> Expression {
             name,
             span: span..span,
         },
-        AssignTarget::Member(object, property) => {
-            Expression::Member(Box::new(MemberAccess {
-                object: *object,
-                property,
-                optional: false,
-                span: span..span,
-            }))
-        }
+        AssignTarget::Member(object, property) => Expression::Member(Box::new(MemberAccess {
+            object: *object,
+            property,
+            optional: false,
+            span: span..span,
+        })),
         AssignTarget::Index(object, index) => Expression::Index(Box::new(IndexExpr {
             object,
             index,
@@ -1184,7 +1184,12 @@ fn variant_pattern(pair: Pair<'_, Rule>, span: Range<usize>) -> R<MatchPattern> 
 
 fn payload_binding(pair: Pair<'_, Rule>) -> R<String> {
     let span = span_of(&pair);
-    let bad = || err("enum payload patterns support only names and `_`", span.clone());
+    let bad = || {
+        err(
+            "enum payload patterns support only names and `_`",
+            span.clone(),
+        )
+    };
     let mut inner = pair.into_inner();
     let first = inner.next().ok_or_else(bad)?;
     if inner.next().is_some() {
@@ -1223,7 +1228,9 @@ fn type_pattern(pair: Pair<'_, Rule>, span: Range<usize>) -> R<MatchPattern> {
     let mut inner = pair.into_inner();
     let designator = next(&mut inner, Rule::pattern_type);
     let type_name = designator.as_str().trim().to_string();
-    let optional = type_name.split('|').any(|part| part.trim_end().ends_with('?'));
+    let optional = type_name
+        .split('|')
+        .any(|part| part.trim_end().ends_with('?'));
     let binder = match inner.next() {
         None => PatternBinder::Wildcard,
         Some(b) => {

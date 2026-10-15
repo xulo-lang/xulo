@@ -745,10 +745,11 @@ fn repl_execute(buffer: &str, render_source: &str) -> Result<(), bool> {
     xulo_semantic::apply_list_concat(&mut ast, &concat);
     let interp = Interpreter::new();
     if repl_color() {
-        interp
-            .root_env()
-            .borrow_mut()
-            .define("repl_echo", Value::Native(repl_echo_native()), false);
+        interp.root_env().borrow_mut().define(
+            "repl_echo",
+            Value::Native(repl_echo_native()),
+            false,
+        );
     }
     match interp.run(&ast) {
         Ok(out) => {
@@ -1088,11 +1089,17 @@ fn build_native(file: &Path, output: Option<PathBuf>) -> ExitCode {
 
     // 查找 libxulo_runtime.a
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let workspace_root = manifest_dir.parent().and_then(|p| p.parent()).unwrap_or(Path::new("."));
+    let workspace_root = manifest_dir
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap_or(Path::new("."));
     let runtime_lib = workspace_root.join("target/release/libxulo_runtime.a");
 
     if !runtime_lib.exists() {
-        eprintln!("error: runtime library not found at {}", runtime_lib.display());
+        eprintln!(
+            "error: runtime library not found at {}",
+            runtime_lib.display()
+        );
         eprintln!("hint: run `cargo build --release -p xulo-runtime` first");
         return ExitCode::from(1);
     }
@@ -1101,7 +1108,8 @@ fn build_native(file: &Path, output: Option<PathBuf>) -> ExitCode {
     let exe_path = output_path.with_extension("");
     let link_status = std::process::Command::new("cc")
         .arg("-no-pie")
-        .arg("-o").arg(&exe_path)
+        .arg("-o")
+        .arg(&exe_path)
         .arg(&obj_path)
         .arg(&runtime_lib)
         .arg("-lpthread")

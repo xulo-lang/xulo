@@ -11,10 +11,8 @@ use xulo_core::ast::{
 };
 use xulo_core::error::XuloError;
 
-use super::expr::{
-    assign_target, component_call, decode_string, expression, ternary_entry,
-};
-use super::types::{check_rule, single, type_expr, R};
+use super::expr::{assign_target, component_call, decode_string, expression, ternary_entry};
+use super::types::{R, check_rule, single, type_expr};
 use super::{Rule, err, span_of};
 
 pub fn program(root: Pair<'_, Rule>) -> Result<xulo_core::ast::Program, XuloError> {
@@ -295,7 +293,11 @@ fn where_clause(pair: Pair<'_, Rule>) -> R<Vec<FnBound>> {
         }
         check_rule(&item, Rule::where_item)?;
         let mut inner = item.into_inner();
-        let name = inner.next().expect("where_item has a name").as_str().to_string();
+        let name = inner
+            .next()
+            .expect("where_item has a name")
+            .as_str()
+            .to_string();
         let tb = inner.next().expect("where_item has a bound");
         check_rule(&tb, Rule::trait_bound)?;
         bounds.push(FnBound {
@@ -417,7 +419,11 @@ fn variant_payload(pair: Pair<'_, Rule>) -> R<Vec<EnumPayloadParam>> {
             for np in inner.into_inner() {
                 check_rule(&np, Rule::named_payload)?;
                 let mut parts = np.into_inner();
-                let name = parts.next().expect("named_payload has a name").as_str().to_string();
+                let name = parts
+                    .next()
+                    .expect("named_payload has a name")
+                    .as_str()
+                    .to_string();
                 let ty = type_expr(parts.next().expect("named_payload has a type"))?;
                 params.push(EnumPayloadParam {
                     name: Some(name),
@@ -671,12 +677,12 @@ fn destructuring_binding(pair: Pair<'_, Rule>) -> R<LetBinding> {
     let mut inner = pair.into_inner();
     let id_list = next(&mut inner, Rule::identifier_list);
     let value = expression(next(&mut inner, Rule::expression))?;
-    let names: Vec<String> = id_list.into_inner().map(|p| p.as_str().to_string()).collect();
+    let names: Vec<String> = id_list
+        .into_inner()
+        .map(|p| p.as_str().to_string())
+        .collect();
     let (tuple_names, object_destructuring) = if is_object {
-        (
-            None,
-            Some(names.into_iter().map(|n| (n, None)).collect()),
-        )
+        (None, Some(names.into_iter().map(|n| (n, None)).collect()))
     } else {
         (Some(names), None)
     };
@@ -1085,10 +1091,7 @@ fn named_import_parts(pair: Pair<'_, Rule>) -> R<(Vec<ImportName>, String)> {
                             _ => unreachable!("import_entry child {:?}", e.as_rule()),
                         }
                     }
-                    names.push((
-                        name.expect("import_entry has a name"),
-                        alias,
-                    ));
+                    names.push((name.expect("import_entry has a name"), alias));
                 }
             }
             Rule::string_literal => source = decode_string(p.as_str()),
@@ -1165,11 +1168,7 @@ fn statement_to_ui(stmt: &Statement) -> R<UiElement> {
             Expression::If(i) => Ok(UiElement::If {
                 condition: i.condition.clone(),
                 then_branch: statements_to_ui(&i.then_branch)?,
-                else_branch: i
-                    .else_branch
-                    .as_ref()
-                    .map(statements_to_ui)
-                    .transpose()?,
+                else_branch: i.else_branch.as_ref().map(statements_to_ui).transpose()?,
             }),
             e if is_upper_plain_call(e) => Ok(UiElement::Component(component_from_call(e.clone()))),
             e => Ok(UiElement::Expr(e.clone())),

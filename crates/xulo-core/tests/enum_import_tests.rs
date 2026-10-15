@@ -106,10 +106,7 @@ fn test_import_named() {
         ImportSpec::Named(bindings) => {
             assert_eq!(bindings.len(), 3);
             assert_eq!(bindings[0], ("sin".to_string(), None));
-            assert_eq!(
-                bindings[2],
-                ("PI".to_string(), Some("pi".to_string()))
-            );
+            assert_eq!(bindings[2], ("PI".to_string(), Some("pi".to_string())));
         }
         _ => panic!("expected named"),
     }
@@ -146,9 +143,7 @@ fn test_export_fn() {
             type_params: vec![],
             bounds: vec![],
             is_async: false,
-            body: Block {
-                statements: vec![],
-            },
+            body: Block { statements: vec![] },
             span: 0..20,
         }),
     };
@@ -158,10 +153,7 @@ fn test_export_fn() {
 #[test]
 fn test_export_names() {
     let export = ExportStmt {
-        item: ExportItem::Names(vec![
-            "foo".to_string(),
-            "bar".to_string(),
-        ]),
+        item: ExportItem::Names(vec!["foo".to_string(), "bar".to_string()]),
     };
     match export.item {
         ExportItem::Names(names) => assert_eq!(names, vec!["foo", "bar"]),
@@ -241,9 +233,7 @@ fn test_impl_decl() {
             type_params: vec![],
             bounds: vec![],
             is_async: false,
-            body: Block {
-                statements: vec![],
-            },
+            body: Block { statements: vec![] },
             span: 0..20,
         }],
         span: 0..25,

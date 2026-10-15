@@ -218,15 +218,25 @@ fn native_array_new(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunE
         }
         Some(other) => {
             return Err(RunError::err(
-                format!("Array.new() size must be a number, found {}", other.kind_name()),
+                format!(
+                    "Array.new() size must be a number, found {}",
+                    other.kind_name()
+                ),
                 0..0,
             ));
         }
         None => {
-            return Err(RunError::err("Array.new() requires at least 1 argument", 0..0));
+            return Err(RunError::err(
+                "Array.new() requires at least 1 argument",
+                0..0,
+            ));
         }
     };
-    let fill = if args.len() > 1 { args[1].clone() } else { Value::Null };
+    let fill = if args.len() > 1 {
+        args[1].clone()
+    } else {
+        Value::Null
+    };
     Ok(Value::List(Rc::new(RefCell::new(vec![fill; size]))))
 }
 
@@ -243,7 +253,10 @@ fn native_array_fill(_interp: &Interpreter, args: &[Value]) -> Result<Value, Run
         }
         Some(other) => {
             return Err(RunError::err(
-                format!("Array.fill() count must be a number, found {}", other.kind_name()),
+                format!(
+                    "Array.fill() count must be a number, found {}",
+                    other.kind_name()
+                ),
                 0..0,
             ));
         }
@@ -380,11 +393,10 @@ fn expr_has_closure(expr: &Expression) -> bool {
                 || c.children.iter().any(ui_has_closure)
         }
         Expression::Tuple { items, .. } => items.iter().any(expr_has_closure),
-        Expression::TypedMap(tm) => {
-            tm.entries
-                .iter()
-                .any(|e| expr_has_closure(&e.key) || expr_has_closure(&e.value))
-        }
+        Expression::TypedMap(tm) => tm
+            .entries
+            .iter()
+            .any(|e| expr_has_closure(&e.key) || expr_has_closure(&e.value)),
         Expression::Is(is) => expr_has_closure(&is.expr),
         Expression::Panic { expr, .. } => expr_has_closure(expr),
         Expression::Propagate { expr, .. } => expr_has_closure(expr),
@@ -454,13 +466,24 @@ impl Interpreter {
             .define("assert", Value::Native(Rc::new(native_assert)), false);
         // Array global: Array.new(size, fill?), Array.fill(n, v), Array.clone(iter)
         let array_methods = vec![
-            ("create".to_string(), Value::Native(Rc::new(native_array_new))),
-            ("fill".to_string(), Value::Native(Rc::new(native_array_fill))),
-            ("clone".to_string(), Value::Native(Rc::new(native_array_from))),
+            (
+                "create".to_string(),
+                Value::Native(Rc::new(native_array_new)),
+            ),
+            (
+                "fill".to_string(),
+                Value::Native(Rc::new(native_array_fill)),
+            ),
+            (
+                "clone".to_string(),
+                Value::Native(Rc::new(native_array_from)),
+            ),
         ];
-        global
-            .borrow_mut()
-            .define("Array", Value::Object(Rc::new(RefCell::new(array_methods))), false);
+        global.borrow_mut().define(
+            "Array",
+            Value::Object(Rc::new(RefCell::new(array_methods))),
+            false,
+        );
         Interpreter {
             out: RefCell::new(Vec::new()),
             global,
@@ -550,18 +573,14 @@ impl Interpreter {
                         }
                         Ok(())
                     }
-                    crate::value::PromiseState::Rejected(e) => {
-                        Err(match e {
-                            RunError::Err(e) => e.clone(),
-                            RunError::Throw(v) => self.uncaught(v),
-                        })
-                    }
-                    crate::value::PromiseState::Pending => {
-                        Err(XuloError::new(
-                            ErrorKind::Runtime,
-                            "async `main` did not complete",
-                        ))
-                    }
+                    crate::value::PromiseState::Rejected(e) => Err(match e {
+                        RunError::Err(e) => e.clone(),
+                        RunError::Throw(v) => self.uncaught(v),
+                    }),
+                    crate::value::PromiseState::Pending => Err(XuloError::new(
+                        ErrorKind::Runtime,
+                        "async `main` did not complete",
+                    )),
                 }
             }
             Ok(view) => {
@@ -650,12 +669,10 @@ impl Interpreter {
         imports: &[(String, Value)],
         test: &FnDef,
     ) -> Result<Vec<String>, XuloError> {
-        let global = self
-            .setup_module(program, imports)
-            .map_err(|e| match e {
-                RunError::Err(e) => e,
-                RunError::Throw(v) => self.uncaught(&v),
-            })?;
+        let global = self.setup_module(program, imports).map_err(|e| match e {
+            RunError::Err(e) => e,
+            RunError::Throw(v) => self.uncaught(&v),
+        })?;
         *self.entry_env.borrow_mut() = Some(global.clone());
         let result = self.call_fn(test, &[], &global);
         self.drive();
@@ -971,7 +988,8 @@ impl Interpreter {
                                 ));
                             }
                             for (name, item) in tuple_names.iter().zip(l.iter()) {
-                                env.borrow_mut().define(name, item.clone(), binding.is_mutable);
+                                env.borrow_mut()
+                                    .define(name, item.clone(), binding.is_mutable);
                             }
                         }
                         other => {
@@ -991,7 +1009,8 @@ impl Interpreter {
                             let o = obj.borrow();
                             for (field_name, alias) in fields {
                                 let bind_name = alias.as_deref().unwrap_or(field_name);
-                                let val = o.iter()
+                                let val = o
+                                    .iter()
                                     .find(|(k, _)| k == field_name)
                                     .map(|(_, v)| v.clone())
                                     .unwrap_or(Value::Null);
@@ -1009,7 +1028,8 @@ impl Interpreter {
                         }
                     }
                 } else {
-                    env.borrow_mut().define(&binding.name, value, binding.is_mutable);
+                    env.borrow_mut()
+                        .define(&binding.name, value, binding.is_mutable);
                 }
                 Ok(Flow::Continue)
             }
@@ -1449,7 +1469,9 @@ impl Interpreter {
             if recycle {
                 let child = Env::child(env);
                 while self.range_has_next(i, end, r.end_inclusive) {
-                    child.borrow_mut().reset(&f.iter_var, Value::Number(i), true);
+                    child
+                        .borrow_mut()
+                        .reset(&f.iter_var, Value::Number(i), true);
                     match self.exec_stmts(&f.body.statements, &child)? {
                         Flow::Continue | Flow::LoopContinue => {}
                         Flow::Break => break,
@@ -1460,7 +1482,9 @@ impl Interpreter {
             } else {
                 while self.range_has_next(i, end, r.end_inclusive) {
                     let child = Env::child(env);
-                    child.borrow_mut().define(&f.iter_var, Value::Number(i), true);
+                    child
+                        .borrow_mut()
+                        .define(&f.iter_var, Value::Number(i), true);
                     match self.exec_block(&f.body, &child)? {
                         Flow::Continue | Flow::LoopContinue => {}
                         Flow::Break => break,
@@ -2021,11 +2045,21 @@ impl Interpreter {
                     BinaryOperator::Div => self.arith(left, right, bin, "`/`", |a, b| a / b),
                     BinaryOperator::Mod => self.arith(left, right, bin, "`%`", |a, b| a % b),
                     BinaryOperator::Pow => self.arith(left, right, bin, "`**`", |a, b| a.powf(b)),
-                    BinaryOperator::BitAnd => self.arith(left, right, bin, "`&`", |a, b| (a as i64 & b as i64) as f64),
-                    BinaryOperator::BitOr => self.arith(left, right, bin, "`|`", |a, b| (a as i64 | b as i64) as f64),
-                    BinaryOperator::Xor => self.arith(left, right, bin, "`^`", |a, b| (a as i64 ^ b as i64) as f64),
-                    BinaryOperator::Shl => self.arith(left, right, bin, "`<<`", |a, b| ((a as i64) << (b as i64)) as f64),
-                    BinaryOperator::Shr => self.arith(left, right, bin, "`>>`", |a, b| ((a as i64) >> (b as i64)) as f64),
+                    BinaryOperator::BitAnd => {
+                        self.arith(left, right, bin, "`&`", |a, b| (a as i64 & b as i64) as f64)
+                    }
+                    BinaryOperator::BitOr => {
+                        self.arith(left, right, bin, "`|`", |a, b| (a as i64 | b as i64) as f64)
+                    }
+                    BinaryOperator::Xor => {
+                        self.arith(left, right, bin, "`^`", |a, b| (a as i64 ^ b as i64) as f64)
+                    }
+                    BinaryOperator::Shl => self.arith(left, right, bin, "`<<`", |a, b| {
+                        ((a as i64) << (b as i64)) as f64
+                    }),
+                    BinaryOperator::Shr => self.arith(left, right, bin, "`>>`", |a, b| {
+                        ((a as i64) >> (b as i64)) as f64
+                    }),
                     BinaryOperator::Eq => Ok(Value::Boolean(equal(&left, &right))),
                     BinaryOperator::Neq => Ok(Value::Boolean(!equal(&left, &right))),
                     BinaryOperator::Lt => self.compare(left, right, bin, "<"),
@@ -2413,7 +2447,10 @@ impl Interpreter {
             // ── safe access & mutation ──
             "get" => {
                 if args.len() != 1 {
-                    return Err(RunError::err("get() requires exactly 1 argument", span.clone()));
+                    return Err(RunError::err(
+                        "get() requires exactly 1 argument",
+                        span.clone(),
+                    ));
                 }
                 let idx = self.eval_number_arg(&args[0], env)?;
                 if idx.is_nan() || idx < 0.0 || idx.fract() != 0.0 {
@@ -2431,7 +2468,10 @@ impl Interpreter {
             }
             "set" => {
                 if args.len() != 2 {
-                    return Err(RunError::err("set() requires exactly 2 arguments", span.clone()));
+                    return Err(RunError::err(
+                        "set() requires exactly 2 arguments",
+                        span.clone(),
+                    ));
                 }
                 let idx = self.eval_number_arg(&args[0], env)?;
                 let val = self.eval(&args[1].value, env)?;
@@ -2441,7 +2481,10 @@ impl Interpreter {
             }
             "push" => {
                 if args.len() != 1 {
-                    return Err(RunError::err("push() requires exactly 1 argument", span.clone()));
+                    return Err(RunError::err(
+                        "push() requires exactly 1 argument",
+                        span.clone(),
+                    ));
                 }
                 let val = self.eval(&args[0].value, env)?;
                 list.borrow_mut().push(val);
@@ -2451,14 +2494,18 @@ impl Interpreter {
                 if !args.is_empty() {
                     return Err(RunError::err("pop() takes no arguments", span.clone()));
                 }
-                let val = list.borrow_mut().pop().ok_or_else(|| {
-                    RunError::err("pop() called on an empty list", span.clone())
-                })?;
+                let val = list
+                    .borrow_mut()
+                    .pop()
+                    .ok_or_else(|| RunError::err("pop() called on an empty list", span.clone()))?;
                 Ok(val)
             }
             "insert" => {
                 if args.len() != 2 {
-                    return Err(RunError::err("insert() requires exactly 2 arguments", span.clone()));
+                    return Err(RunError::err(
+                        "insert() requires exactly 2 arguments",
+                        span.clone(),
+                    ));
                 }
                 let idx = self.eval_number_arg(&args[0], env)?;
                 let val = self.eval(&args[1].value, env)?;
@@ -2468,7 +2515,10 @@ impl Interpreter {
             }
             "remove" => {
                 if args.len() != 1 {
-                    return Err(RunError::err("remove() requires exactly 1 argument", span.clone()));
+                    return Err(RunError::err(
+                        "remove() requires exactly 1 argument",
+                        span.clone(),
+                    ));
                 }
                 let idx = self.eval_number_arg(&args[0], env)?;
                 let i = self.list_index_bound(idx, list.borrow().len(), span)?;
@@ -2476,7 +2526,10 @@ impl Interpreter {
             }
             "removeValue" => {
                 if args.len() != 1 {
-                    return Err(RunError::err("removeValue() requires exactly 1 argument", span.clone()));
+                    return Err(RunError::err(
+                        "removeValue() requires exactly 1 argument",
+                        span.clone(),
+                    ));
                 }
                 let val = self.eval(&args[0].value, env)?;
                 let mut l = list.borrow_mut();
@@ -2491,7 +2544,10 @@ impl Interpreter {
             // ── slicing & views ──
             "slice" => {
                 if args.len() > 2 {
-                    return Err(RunError::err("slice() takes at most 2 arguments", span.clone()));
+                    return Err(RunError::err(
+                        "slice() takes at most 2 arguments",
+                        span.clone(),
+                    ));
                 }
                 let l = list.borrow();
                 let len = l.len() as i64;
@@ -2511,7 +2567,10 @@ impl Interpreter {
             }
             "indexOf" => {
                 if args.len() != 1 {
-                    return Err(RunError::err("indexOf() requires exactly 1 argument", span.clone()));
+                    return Err(RunError::err(
+                        "indexOf() requires exactly 1 argument",
+                        span.clone(),
+                    ));
                 }
                 let val = self.eval(&args[0].value, env)?;
                 let l = list.borrow();
@@ -2522,7 +2581,10 @@ impl Interpreter {
             }
             "contains" => {
                 if args.len() != 1 {
-                    return Err(RunError::err("contains() requires exactly 1 argument", span.clone()));
+                    return Err(RunError::err(
+                        "contains() requires exactly 1 argument",
+                        span.clone(),
+                    ));
                 }
                 let val = self.eval(&args[0].value, env)?;
                 let l = list.borrow();
@@ -2530,7 +2592,10 @@ impl Interpreter {
             }
             "join" => {
                 if args.len() > 1 {
-                    return Err(RunError::err("join() takes at most 1 argument", span.clone()));
+                    return Err(RunError::err(
+                        "join() takes at most 1 argument",
+                        span.clone(),
+                    ));
                 }
                 let sep = if args.is_empty() {
                     String::new()
@@ -2555,18 +2620,21 @@ impl Interpreter {
                 if !args.is_empty() {
                     return Err(RunError::err("sort() takes no arguments", span.clone()));
                 }
-                list.borrow_mut().sort_by(|a, b| {
-                    match (a, b) {
-                        (Value::Number(x), Value::Number(y)) => x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal),
-                        (Value::String(x), Value::String(y)) => x.cmp(y),
-                        _ => std::cmp::Ordering::Equal,
+                list.borrow_mut().sort_by(|a, b| match (a, b) {
+                    (Value::Number(x), Value::Number(y)) => {
+                        x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal)
                     }
+                    (Value::String(x), Value::String(y)) => x.cmp(y),
+                    _ => std::cmp::Ordering::Equal,
                 });
                 Ok(Value::List(list))
             }
             "concat" => {
                 if args.len() != 1 {
-                    return Err(RunError::err("concat() requires exactly 1 argument", span.clone()));
+                    return Err(RunError::err(
+                        "concat() requires exactly 1 argument",
+                        span.clone(),
+                    ));
                 }
                 let other = self.eval(&args[0].value, env)?;
                 match other {
@@ -2614,20 +2682,27 @@ impl Interpreter {
             // ── higher-order functions ──
             "map" => {
                 if args.len() != 1 {
-                    return Err(RunError::err("map() requires exactly 1 argument (a function)", span.clone()));
+                    return Err(RunError::err(
+                        "map() requires exactly 1 argument (a function)",
+                        span.clone(),
+                    ));
                 }
                 let f_val = self.eval(&args[0].value, env)?;
                 let l = list.borrow();
                 let mut out = Vec::with_capacity(l.len());
                 for (i, item) in l.iter().enumerate() {
-                    let result = self.call_value_with_values(&f_val, &[item.clone(), Value::Number(i as f64)])?;
+                    let result = self
+                        .call_value_with_values(&f_val, &[item.clone(), Value::Number(i as f64)])?;
                     out.push(result);
                 }
                 Ok(Value::List(Rc::new(RefCell::new(out))))
             }
             "filter" => {
                 if args.len() != 1 {
-                    return Err(RunError::err("filter() requires exactly 1 argument (a function)", span.clone()));
+                    return Err(RunError::err(
+                        "filter() requires exactly 1 argument (a function)",
+                        span.clone(),
+                    ));
                 }
                 let f_val = self.eval(&args[0].value, env)?;
                 let l = list.borrow();
@@ -2642,7 +2717,10 @@ impl Interpreter {
             }
             "reduce" => {
                 if args.is_empty() || args.len() > 2 {
-                    return Err(RunError::err("reduce() requires 1 or 2 arguments", span.clone()));
+                    return Err(RunError::err(
+                        "reduce() requires 1 or 2 arguments",
+                        span.clone(),
+                    ));
                 }
                 let f_val = self.eval(&args[0].value, env)?;
                 let l = list.borrow();
@@ -2650,7 +2728,10 @@ impl Interpreter {
                 let mut acc = if has_init {
                     self.eval(&args[1].value, env)?
                 } else if l.is_empty() {
-                    return Err(RunError::err("reduce() called on an empty list without initial value", span.clone()));
+                    return Err(RunError::err(
+                        "reduce() called on an empty list without initial value",
+                        span.clone(),
+                    ));
                 } else {
                     l[0].clone()
                 };
@@ -2663,7 +2744,10 @@ impl Interpreter {
             }
             "find" => {
                 if args.len() != 1 {
-                    return Err(RunError::err("find() requires exactly 1 argument (a function)", span.clone()));
+                    return Err(RunError::err(
+                        "find() requires exactly 1 argument (a function)",
+                        span.clone(),
+                    ));
                 }
                 let f_val = self.eval(&args[0].value, env)?;
                 let l = list.borrow();
@@ -2677,7 +2761,10 @@ impl Interpreter {
             }
             "some" => {
                 if args.len() != 1 {
-                    return Err(RunError::err("some() requires exactly 1 argument (a function)", span.clone()));
+                    return Err(RunError::err(
+                        "some() requires exactly 1 argument (a function)",
+                        span.clone(),
+                    ));
                 }
                 let f_val = self.eval(&args[0].value, env)?;
                 let l = list.borrow();
@@ -2691,7 +2778,10 @@ impl Interpreter {
             }
             "every" => {
                 if args.len() != 1 {
-                    return Err(RunError::err("every() requires exactly 1 argument (a function)", span.clone()));
+                    return Err(RunError::err(
+                        "every() requires exactly 1 argument (a function)",
+                        span.clone(),
+                    ));
                 }
                 let f_val = self.eval(&args[0].value, env)?;
                 let l = list.borrow();
@@ -2705,7 +2795,10 @@ impl Interpreter {
             }
             "forEach" => {
                 if args.len() != 1 {
-                    return Err(RunError::err("forEach() requires exactly 1 argument (a function)", span.clone()));
+                    return Err(RunError::err(
+                        "forEach() requires exactly 1 argument (a function)",
+                        span.clone(),
+                    ));
                 }
                 let f_val = self.eval(&args[0].value, env)?;
                 let l = list.borrow();
@@ -2722,7 +2815,11 @@ impl Interpreter {
         }
     }
 
-    fn eval_number_arg(&self, arg: &CallArg, env: &Rc<RefCell<crate::env::Env>>) -> Result<f64, RunError> {
+    fn eval_number_arg(
+        &self,
+        arg: &CallArg,
+        env: &Rc<RefCell<crate::env::Env>>,
+    ) -> Result<f64, RunError> {
         let val = self.eval(&arg.value, env)?;
         match val {
             Value::Number(n) => Ok(n),
@@ -2733,7 +2830,12 @@ impl Interpreter {
         }
     }
 
-    fn list_index_bound(&self, n: f64, len: usize, span: &std::ops::Range<usize>) -> Result<usize, RunError> {
+    fn list_index_bound(
+        &self,
+        n: f64,
+        len: usize,
+        span: &std::ops::Range<usize>,
+    ) -> Result<usize, RunError> {
         if n.is_nan() || n < 0.0 || n.fract() != 0.0 {
             return Err(RunError::err(
                 format!("index must be a non-negative integer, found {n}"),
@@ -3218,9 +3320,7 @@ fn pattern_matches(
         } => {
             let ok = value_is_named_type(scrutinee, type_name)
                 || (*optional && matches!(scrutinee, Value::Null));
-            if ok
-                && let xulo_core::ast::PatternBinder::Binding(b) = binder
-            {
+            if ok && let xulo_core::ast::PatternBinder::Binding(b) = binder {
                 env.borrow_mut().define(b, scrutinee.clone(), true);
             }
             ok
@@ -3233,13 +3333,9 @@ fn pattern_matches(
             }
             false
         }
-        xulo_core::ast::MatchPattern::Struct {
-            name, bindings, ..
-        } => {
+        xulo_core::ast::MatchPattern::Struct { name, bindings, .. } => {
             if let Value::Enum {
-                enum_name,
-                payload,
-                ..
+                enum_name, payload, ..
             } = scrutinee
                 && enum_name == name
             {
@@ -3281,9 +3377,7 @@ fn type_matches_value(type_: &Type, value: &Value) -> bool {
         Type::List(_) => matches!(value, Value::List(_)),
         Type::Object | Type::ObjectType(_) => matches!(value, Value::Object(_)),
         Type::Named(name) => value_is_named_type(value, name),
-        Type::Optional(inner) => {
-            matches!(value, Value::Null) || type_matches_value(inner, value)
-        }
+        Type::Optional(inner) => matches!(value, Value::Null) || type_matches_value(inner, value),
         Type::Union(parts) => parts.iter().any(|p| type_matches_value(p, value)),
         Type::Intersection(parts) => parts.iter().all(|p| type_matches_value(p, value)),
         Type::Literal(s) => match value {

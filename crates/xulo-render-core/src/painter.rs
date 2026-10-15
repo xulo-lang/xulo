@@ -83,15 +83,7 @@ pub trait Painter {
     fn quadratic_curve_to(&mut self, cpx: f64, cpy: f64, x: f64, y: f64);
 
     /// Append a cubic Bézier curve to the current path.
-    fn bezier_curve_to(
-        &mut self,
-        cp1x: f64,
-        cp1y: f64,
-        cp2x: f64,
-        cp2y: f64,
-        x: f64,
-        y: f64,
-    );
+    fn bezier_curve_to(&mut self, cp1x: f64, cp1y: f64, cp2x: f64, cp2y: f64, x: f64, y: f64);
 
     // ── Commit ─────────────────────────────────────────────────────────────
 

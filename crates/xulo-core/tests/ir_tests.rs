@@ -1,5 +1,5 @@
+use xulo_core::error::{ErrorKind, XuloError};
 use xulo_core::ir::*;
-use xulo_core::error::{XuloError, ErrorKind};
 
 // ========== IrType tests ==========
 
@@ -82,10 +82,7 @@ fn test_ir_module_add_string() {
 
 #[test]
 fn test_ir_function_new() {
-    let params = vec![
-        (LocalId(0), IrType::I64),
-        (LocalId(1), IrType::Bool),
-    ];
+    let params = vec![(LocalId(0), IrType::I64), (LocalId(1), IrType::Bool)];
     let func = IrFunction::new("add".to_string(), params.clone(), IrType::I64);
     assert_eq!(func.name, "add");
     assert_eq!(func.params, params);
@@ -137,13 +134,32 @@ fn test_instruction_const() {
 fn test_instruction_arithmetic() {
     let left = Operand::Local(LocalId(0));
     let right = Operand::Const(IrValue::I64(10));
-    
-    let add = Instruction::Add { dst: LocalId(1), left: left.clone(), right: right.clone() };
-    let sub = Instruction::Sub { dst: LocalId(1), left: left.clone(), right: right.clone() };
-    let mul = Instruction::Mul { dst: LocalId(1), left: left.clone(), right: right.clone() };
-    let div = Instruction::Div { dst: LocalId(1), left: left.clone(), right: right.clone() };
-    let neg = Instruction::Neg { dst: LocalId(1), operand: left.clone() };
-    
+
+    let add = Instruction::Add {
+        dst: LocalId(1),
+        left: left.clone(),
+        right: right.clone(),
+    };
+    let sub = Instruction::Sub {
+        dst: LocalId(1),
+        left: left.clone(),
+        right: right.clone(),
+    };
+    let mul = Instruction::Mul {
+        dst: LocalId(1),
+        left: left.clone(),
+        right: right.clone(),
+    };
+    let div = Instruction::Div {
+        dst: LocalId(1),
+        left: left.clone(),
+        right: right.clone(),
+    };
+    let neg = Instruction::Neg {
+        dst: LocalId(1),
+        operand: left.clone(),
+    };
+
     assert!(matches!(add, Instruction::Add { .. }));
     assert!(matches!(sub, Instruction::Sub { .. }));
     assert!(matches!(mul, Instruction::Mul { .. }));
@@ -155,14 +171,38 @@ fn test_instruction_arithmetic() {
 fn test_instruction_comparison() {
     let left = Operand::Local(LocalId(0));
     let right = Operand::Const(IrValue::I64(10));
-    
-    let eq = Instruction::Eq { dst: LocalId(1), left: left.clone(), right: right.clone() };
-    let neq = Instruction::Neq { dst: LocalId(1), left: left.clone(), right: right.clone() };
-    let lt = Instruction::Lt { dst: LocalId(1), left: left.clone(), right: right.clone() };
-    let gt = Instruction::Gt { dst: LocalId(1), left: left.clone(), right: right.clone() };
-    let lte = Instruction::Lte { dst: LocalId(1), left: left.clone(), right: right.clone() };
-    let gte = Instruction::Gte { dst: LocalId(1), left: left.clone(), right: right.clone() };
-    
+
+    let eq = Instruction::Eq {
+        dst: LocalId(1),
+        left: left.clone(),
+        right: right.clone(),
+    };
+    let neq = Instruction::Neq {
+        dst: LocalId(1),
+        left: left.clone(),
+        right: right.clone(),
+    };
+    let lt = Instruction::Lt {
+        dst: LocalId(1),
+        left: left.clone(),
+        right: right.clone(),
+    };
+    let gt = Instruction::Gt {
+        dst: LocalId(1),
+        left: left.clone(),
+        right: right.clone(),
+    };
+    let lte = Instruction::Lte {
+        dst: LocalId(1),
+        left: left.clone(),
+        right: right.clone(),
+    };
+    let gte = Instruction::Gte {
+        dst: LocalId(1),
+        left: left.clone(),
+        right: right.clone(),
+    };
+
     assert!(matches!(eq, Instruction::Eq { .. }));
     assert!(matches!(neq, Instruction::Neq { .. }));
     assert!(matches!(lt, Instruction::Lt { .. }));
@@ -175,11 +215,22 @@ fn test_instruction_comparison() {
 fn test_instruction_logic() {
     let left = Operand::Local(LocalId(0));
     let right = Operand::Const(IrValue::Bool(true));
-    
-    let and = Instruction::And { dst: LocalId(1), left: left.clone(), right: right.clone() };
-    let or = Instruction::Or { dst: LocalId(1), left: left.clone(), right: right.clone() };
-    let not = Instruction::Not { dst: LocalId(1), operand: left.clone() };
-    
+
+    let and = Instruction::And {
+        dst: LocalId(1),
+        left: left.clone(),
+        right: right.clone(),
+    };
+    let or = Instruction::Or {
+        dst: LocalId(1),
+        left: left.clone(),
+        right: right.clone(),
+    };
+    let not = Instruction::Not {
+        dst: LocalId(1),
+        operand: left.clone(),
+    };
+
     assert!(matches!(and, Instruction::And { .. }));
     assert!(matches!(or, Instruction::Or { .. }));
     assert!(matches!(not, Instruction::Not { .. }));
@@ -195,7 +246,7 @@ fn test_instruction_control_flow() {
     let jump = Instruction::Jump(Label(0));
     let return_none = Instruction::Return(None);
     let return_some = Instruction::Return(Some(Operand::Const(IrValue::I64(42))));
-    
+
     assert!(matches!(branch, Instruction::Branch { .. }));
     assert!(matches!(jump, Instruction::Jump(_)));
     assert!(matches!(return_none, Instruction::Return(None)));
@@ -209,7 +260,13 @@ fn test_instruction_runtime_call() {
         func: RuntimeFn::Print,
         args: vec![Operand::Local(LocalId(1))],
     };
-    assert!(matches!(call, Instruction::RuntimeCall { func: RuntimeFn::Print, .. }));
+    assert!(matches!(
+        call,
+        Instruction::RuntimeCall {
+            func: RuntimeFn::Print,
+            ..
+        }
+    ));
 }
 
 #[test]
@@ -244,7 +301,7 @@ fn test_runtime_fn_equality() {
     assert_eq!(RuntimeFn::ArraySet, RuntimeFn::ArraySet);
     assert_eq!(RuntimeFn::ObjectGet, RuntimeFn::ObjectGet);
     assert_eq!(RuntimeFn::ObjectSet, RuntimeFn::ObjectSet);
-    
+
     assert_ne!(RuntimeFn::Print, RuntimeFn::PrintInt);
     assert_ne!(RuntimeFn::Panic, RuntimeFn::ToString);
 }
@@ -262,16 +319,14 @@ fn test_xulo_error_new() {
 
 #[test]
 fn test_xulo_error_at() {
-    let err = XuloError::new(ErrorKind::Lex, "unexpected character")
-        .at(5..10);
+    let err = XuloError::new(ErrorKind::Lex, "unexpected character").at(5..10);
     assert_eq!(err.span, Some(5..10));
 }
 
 #[test]
 fn test_xulo_error_with_file() {
     use std::path::PathBuf;
-    let err = XuloError::new(ErrorKind::Io, "file not found")
-        .with_file(PathBuf::from("test.xulo"));
+    let err = XuloError::new(ErrorKind::Io, "file not found").with_file(PathBuf::from("test.xulo"));
     assert_eq!(err.file, Some(PathBuf::from("test.xulo")));
 }
 
@@ -313,7 +368,7 @@ fn test_xulo_error_is_std_error() {
 #[test]
 fn test_build_simple_function() {
     let mut module = IrModule::new();
-    
+
     // Create a simple main function that returns 42
     let mut func = IrFunction::new("main".to_string(), vec![], IrType::I64);
     let local = func.add_local(IrType::I64);
@@ -321,11 +376,12 @@ fn test_build_simple_function() {
         dst: local,
         value: IrValue::I64(42),
     });
-    func.instructions.push(Instruction::Return(Some(Operand::Local(local))));
-    
+    func.instructions
+        .push(Instruction::Return(Some(Operand::Local(local))));
+
     let func_id = module.add_function(func);
     module.entry_point = func_id;
-    
+
     assert_eq!(module.functions.len(), 1);
     assert_eq!(module.functions[0].instructions.len(), 2);
 }
@@ -333,23 +389,21 @@ fn test_build_simple_function() {
 #[test]
 fn test_build_function_with_params() {
     let mut module = IrModule::new();
-    
-    let params = vec![
-        (LocalId(0), IrType::I64),
-        (LocalId(1), IrType::I64),
-    ];
+
+    let params = vec![(LocalId(0), IrType::I64), (LocalId(1), IrType::I64)];
     let mut func = IrFunction::new("add".to_string(), params, IrType::I64);
-    
+
     let result = func.add_local(IrType::I64);
     func.instructions.push(Instruction::Add {
         dst: result,
         left: Operand::Local(LocalId(0)),
         right: Operand::Local(LocalId(1)),
     });
-    func.instructions.push(Instruction::Return(Some(Operand::Local(result))));
-    
+    func.instructions
+        .push(Instruction::Return(Some(Operand::Local(result))));
+
     module.add_function(func);
-    
+
     assert_eq!(module.functions[0].params.len(), 2);
     assert_eq!(module.functions[0].locals.len(), 1);
     assert_eq!(module.functions[0].instructions.len(), 2);
@@ -358,15 +412,15 @@ fn test_build_function_with_params() {
 #[test]
 fn test_build_function_with_control_flow() {
     let mut module = IrModule::new();
-    
+
     let mut func = IrFunction::new("if_else".to_string(), vec![], IrType::I64);
-    
+
     let cond = func.add_local(IrType::Bool);
     let result = func.add_local(IrType::I64);
     let then_label = func.add_label();
     let else_label = func.add_label();
     let end_label = func.add_label();
-    
+
     // if (true) { result = 1 } else { result = 0 }
     func.instructions.push(Instruction::Const {
         dst: cond,
@@ -389,10 +443,11 @@ fn test_build_function_with_control_flow() {
         value: IrValue::I64(0),
     });
     func.instructions.push(Instruction::Label(end_label));
-    func.instructions.push(Instruction::Return(Some(Operand::Local(result))));
-    
+    func.instructions
+        .push(Instruction::Return(Some(Operand::Local(result))));
+
     module.add_function(func);
-    
+
     assert_eq!(module.functions[0].labels.len(), 3);
     assert_eq!(module.functions[0].instructions.len(), 9);
 }

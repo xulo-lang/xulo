@@ -4,7 +4,7 @@
 use xulo_core::ast::{
     Expression, ImportSpec, Literal, MatchBody, MatchPattern, Statement, Type, UiElement,
 };
-use xulo_parser::{parse_program, MAX_NEST_DEPTH};
+use xulo_parser::{MAX_NEST_DEPTH, parse_program};
 
 fn parse_ok(src: &str) -> xulo_core::ast::Program {
     parse_program(src).unwrap_or_else(|e| panic!("expected OK for {src:?}: {}", e.message))
@@ -169,9 +169,7 @@ fn type_import() {
 
 #[test]
 fn namespace_and_side_effect_imports() {
-    let p = parse_ok(
-        "import * as ns from \"./m.xulo\"\nimport \"./side.xulo\"",
-    );
+    let p = parse_ok("import * as ns from \"./m.xulo\"\nimport \"./side.xulo\"");
     assert!(matches!(
         &p.statements[0],
         Statement::Import(i) if i.spec == ImportSpec::Namespace("ns".to_string())
@@ -188,7 +186,8 @@ fn namespace_and_side_effect_imports() {
 
 #[test]
 fn let_variants() {
-    let p = parse_ok("let x = 1 let mut y = 2 let z: string = \"a\" let w = shared [1] const K = 5");
+    let p =
+        parse_ok("let x = 1 let mut y = 2 let z: string = \"a\" let w = shared [1] const K = 5");
     assert_eq!(p.statements.len(), 5);
     let x = match &p.statements[0] {
         Statement::Let(l) => l,
@@ -254,7 +253,12 @@ fn assignment_forms() {
         panic!();
     };
     assert_eq!(f.body.statements.len(), 3);
-    assert!(f.body.statements.iter().all(|s| matches!(s, Statement::Assign(_))));
+    assert!(
+        f.body
+            .statements
+            .iter()
+            .all(|s| matches!(s, Statement::Assign(_)))
+    );
 }
 
 #[test]
@@ -270,7 +274,12 @@ fn defer_expr_and_block() {
         panic!();
     };
     assert_eq!(f.body.statements.len(), 2);
-    assert!(f.body.statements.iter().all(|s| matches!(s, Statement::Defer(_))));
+    assert!(
+        f.body
+            .statements
+            .iter()
+            .all(|s| matches!(s, Statement::Defer(_)))
+    );
 }
 
 #[test]
@@ -345,7 +354,10 @@ fn power_is_right_assoc() {
     let Expression::BinaryOp(inner) = &b.right else {
         panic!("right-assoc: right side must be another pow");
     };
-    assert!(matches!(inner.operator, xulo_core::ast::BinaryOperator::Pow));
+    assert!(matches!(
+        inner.operator,
+        xulo_core::ast::BinaryOperator::Pow
+    ));
 }
 
 #[test]
@@ -551,7 +563,9 @@ fn optional_and_fn_and_literal_types() {
 
 #[test]
 fn match_arms_or_guard_wildcard() {
-    let p = parse_ok("fn f(x: number): number { match x { 0 | 1 => 2, 2...5 => 3, n if n > 5 => 4, _ => 5 } }");
+    let p = parse_ok(
+        "fn f(x: number): number { match x { 0 | 1 => 2, 2...5 => 3, n if n > 5 => 4, _ => 5 } }",
+    );
     let Statement::Fn(f) = &p.statements[0] else {
         panic!();
     };
@@ -599,7 +613,10 @@ fn match_type_pattern_with_binder() {
             type_name, binder, ..
         } => {
             assert_eq!(type_name, "String");
-            assert_eq!(*binder, xulo_core::ast::PatternBinder::Binding("s".to_string()));
+            assert_eq!(
+                *binder,
+                xulo_core::ast::PatternBinder::Binding("s".to_string())
+            );
         }
         other => panic!("expected type pattern, got {other:?}"),
     }
@@ -836,5 +853,8 @@ fn optional_type_postfix() {
     let Statement::Let(l) = &p.statements[0] else {
         panic!("expected let");
     };
-    assert_eq!(l.type_annotation, Some(Type::Optional(Box::new(Type::Number))));
+    assert_eq!(
+        l.type_annotation,
+        Some(Type::Optional(Box::new(Type::Number)))
+    );
 }

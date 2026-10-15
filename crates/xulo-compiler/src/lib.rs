@@ -1,11 +1,11 @@
+pub mod aot;
+pub mod codegen;
+pub mod irgen;
 /// JavaScript generation has been retired: programs run on the native
 /// interpreter (`xulo_runtime`). This crate handles the front end
 /// (tokenize -> parse -> semantic check) and multi-file module loading for the
 /// native runner.
 pub mod module;
-pub mod irgen;
-pub mod codegen;
-pub mod aot;
 
 use std::path::Path;
 
@@ -27,12 +27,12 @@ pub fn compile_to_ir(source: &str, file: &Path) -> Result<IrModule, XuloError> {
     let program =
         xulo_parser::parse_program(source).map_err(|e| e.with_file(file.to_path_buf()))?;
     let result = xulo_semantic::analyze_with(&program, &[], &[], &[])?;
-    
+
     // 应用语义分析的修改
     let mut ast = program;
     xulo_semantic::apply_trait_dispatch(&mut ast, &result.trait_dispatch);
     xulo_semantic::apply_list_concat(&mut ast, &result.list_concat);
-    
+
     // 生成 IR
     irgen::generate_ir(&ast)
 }

@@ -1732,7 +1732,8 @@ fn store_destructure_binds_fields() {
     // `@Store let { n } = …` binds each destructured field; the binding is
     // usable inside the component body (its shape is statically `Any`).
     assert!(
-        analyze_src("fn main(): View { @Store let { n } = { n: 5 } VStack { Text(str(n + 1)) } }").is_ok()
+        analyze_src("fn main(): View { @Store let { n } = { n: 5 } VStack { Text(str(n + 1)) } }")
+            .is_ok()
     );
 }
 
@@ -2291,7 +2292,10 @@ fn break_requires_loop() {
         }
     "#;
     let err = analyze_src(src).unwrap_err();
-    assert!(err.message.contains("`break` may only be used inside a `for` or `while` loop"));
+    assert!(
+        err.message
+            .contains("`break` may only be used inside a `for` or `while` loop")
+    );
 }
 
 #[test]
@@ -2302,7 +2306,10 @@ fn continue_requires_loop() {
         }
     "#;
     let err = analyze_src(src).unwrap_err();
-    assert!(err.message.contains("`continue` may only be used inside a `for` or `while` loop"));
+    assert!(
+        err.message
+            .contains("`continue` may only be used inside a `for` or `while` loop")
+    );
 }
 
 #[test]
@@ -2365,7 +2372,10 @@ fn break_rejected_in_if_not_loop() {
         }
     "#;
     let err = analyze_src(src).unwrap_err();
-    assert!(err.message.contains("`break` may only be used inside a `for` or `while` loop"));
+    assert!(
+        err.message
+            .contains("`break` may only be used inside a `for` or `while` loop")
+    );
 }
 
 #[test]
@@ -2473,7 +2483,10 @@ fn bitwise_not_requires_number() {
         }
     "#;
     let err = analyze_src(src).unwrap_err();
-    assert!(err.message.contains("unary `~` requires a `number` operand"));
+    assert!(
+        err.message
+            .contains("unary `~` requires a `number` operand")
+    );
 }
 
 #[test]
@@ -3133,7 +3146,8 @@ fn assert_rejects_wrong_arity() {
     "#;
     let err = analyze_src(src).unwrap_err();
     assert!(
-        err.message.contains("`assert` expects exactly two arguments"),
+        err.message
+            .contains("`assert` expects exactly two arguments"),
         "unexpected message: {}",
         err.message
     );
@@ -3148,7 +3162,8 @@ fn assert_rejects_non_boolean_condition() {
     "#;
     let err = analyze_src(src).unwrap_err();
     assert!(
-        err.message.contains("`assert` condition must be a `boolean`"),
+        err.message
+            .contains("`assert` condition must be a `boolean`"),
         "unexpected message: {}",
         err.message
     );

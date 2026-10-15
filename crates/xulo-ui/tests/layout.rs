@@ -1,7 +1,7 @@
 //! Layout integration tests using a character-cell font metric.
 
 use xulo_ui::layout::layout;
-use xulo_ui::{StyleProps, Color, Dimension, FontMetrics, Justify, Rect, Size, Widget};
+use xulo_ui::{Color, Dimension, FontMetrics, Justify, Rect, Size, StyleProps, Widget};
 
 /// One layout unit per character: the terminal backend's metric.
 struct CharMetrics;
@@ -99,8 +99,14 @@ fn button_gets_horizontal_padding() {
         spacing: 2,
         style: StyleProps::default(),
         children: vec![
-            Widget::Button { label: "+".into(), style: StyleProps::default() },
-            Widget::Button { label: "-".into(), style: StyleProps::default() },
+            Widget::Button {
+                label: "+".into(),
+                style: StyleProps::default(),
+            },
+            Widget::Button {
+                label: "-".into(),
+                style: StyleProps::default(),
+            },
         ],
     };
     let placed = layout(&root, SURFACE, &metrics());
@@ -720,7 +726,14 @@ fn hstack_justify_center() {
             },
         ],
     };
-    let placed = layout(&root, Size { width: 80, height: 24 }, &metrics());
+    let placed = layout(
+        &root,
+        Size {
+            width: 80,
+            height: 24,
+        },
+        &metrics(),
+    );
     // Free space = 20 - 2 = 18, offset = 18/2 = 9
     assert_eq!(placed.children[0].rect.x, 9);
     assert_eq!(placed.children[1].rect.x, 10);
@@ -749,7 +762,14 @@ fn hstack_justify_end() {
             },
         ],
     };
-    let placed = layout(&root, Size { width: 80, height: 24 }, &metrics());
+    let placed = layout(
+        &root,
+        Size {
+            width: 80,
+            height: 24,
+        },
+        &metrics(),
+    );
     // Free space = 20 - 2 = 18, offset = 18
     assert_eq!(placed.children[0].rect.x, 18);
     assert_eq!(placed.children[1].rect.x, 19);
@@ -783,7 +803,14 @@ fn hstack_justify_space_between() {
             },
         ],
     };
-    let placed = layout(&root, Size { width: 80, height: 24 }, &metrics());
+    let placed = layout(
+        &root,
+        Size {
+            width: 80,
+            height: 24,
+        },
+        &metrics(),
+    );
     // Free space = 10 - 3 = 7, gap = 7/(3-1) = 3
     // x: 0, 0+1+3=4, 4+1+3=8
     assert_eq!(placed.children[0].rect.x, 0);
@@ -814,7 +841,14 @@ fn hstack_justify_space_around() {
             },
         ],
     };
-    let placed = layout(&root, Size { width: 80, height: 24 }, &metrics());
+    let placed = layout(
+        &root,
+        Size {
+            width: 80,
+            height: 24,
+        },
+        &metrics(),
+    );
     // Free space = 10 - 2 = 8, gap = 8/2 = 4, offset = 4/2 = 2
     // x: 2, 2+1+4=7
     assert_eq!(placed.children[0].rect.x, 2);
@@ -844,7 +878,14 @@ fn hstack_justify_space_evenly() {
             },
         ],
     };
-    let placed = layout(&root, Size { width: 80, height: 24 }, &metrics());
+    let placed = layout(
+        &root,
+        Size {
+            width: 80,
+            height: 24,
+        },
+        &metrics(),
+    );
     // Free space = 10 - 2 = 8, gap = 8/(2+1) = 2
     // x: 2, 2+1+2=5
     assert_eq!(placed.children[0].rect.x, 2);
@@ -879,7 +920,14 @@ fn hstack_justify_with_spacing() {
             },
         ],
     };
-    let placed = layout(&root, Size { width: 80, height: 24 }, &metrics());
+    let placed = layout(
+        &root,
+        Size {
+            width: 80,
+            height: 24,
+        },
+        &metrics(),
+    );
     // Total content = 1*3 + spacing*2 = 5, free = 20-5 = 15
     // gap = 15/2 = 7, actual spacing between = justify_gap + widget_spacing = 7+1=8
     // x: 0, 0+1+8=9, 9+1+8=18
@@ -952,7 +1000,14 @@ fn fill_in_hstack_fills_remaining_width() {
             },
         ],
     };
-    let placed = layout(&root, Size { width: 80, height: 24 }, &metrics());
+    let placed = layout(
+        &root,
+        Size {
+            width: 80,
+            height: 24,
+        },
+        &metrics(),
+    );
     // Text("a") at x=0, width=1
     assert_eq!(placed.children[0].rect.x, 0);
     assert_eq!(placed.children[0].rect.width, 1);
@@ -1110,7 +1165,14 @@ fn fill_in_hstack_multiple() {
             },
         ],
     };
-    let placed = layout(&root, Size { width: 80, height: 24 }, &metrics());
+    let placed = layout(
+        &root,
+        Size {
+            width: 80,
+            height: 24,
+        },
+        &metrics(),
+    );
     // remaining = 10 - 1 = 9, two fills share: 9/2 = 4 each
     assert_eq!(placed.children[0].rect.x, 0);
     assert_eq!(placed.children[0].rect.width, 4);
@@ -1122,8 +1184,8 @@ fn fill_in_hstack_multiple() {
 
 #[test]
 fn fill_painted_ops_empty() {
-    use xulo_ui::layout::paint;
     use xulo_ui::Theme;
+    use xulo_ui::layout::paint;
 
     let root = Widget::Fill {
         children: vec![],
@@ -1155,19 +1217,24 @@ fn fill_painted_with_background() {
     paint(&placed, &theme, &mut ops);
     // Fill with background produces a FillRect
     assert_eq!(ops.len(), 1);
-    assert!(matches!(&ops[0], PaintOp::FillRect { color: Color { r: 255, g: 0, b: 0 }, .. }));
+    assert!(matches!(
+        &ops[0],
+        PaintOp::FillRect {
+            color: Color { r: 255, g: 0, b: 0 },
+            ..
+        }
+    ));
 }
 
 #[test]
 fn fill_component_from_props() {
     use xulo_ui::from_props;
 
-    let props = xulo_ui::Props::new()
-        .children(vec![Widget::Text {
-            text: "inside".into(),
-            color: None,
-            style: StyleProps::default(),
-        }]);
+    let props = xulo_ui::Props::new().children(vec![Widget::Text {
+        text: "inside".into(),
+        color: None,
+        style: StyleProps::default(),
+    }]);
     let widget = from_props("Fill", &props, &mut Vec::new());
     assert!(matches!(widget, Widget::Fill { children, .. } if children.len() == 1));
 }
@@ -1178,7 +1245,10 @@ fn fill_component_from_props() {
 fn fill_in_vstack_with_cell_metrics() {
     use xulo_ui::layout::CellMetrics;
     let metrics = CellMetrics;
-    let surface = Size { width: 320, height: 192 };
+    let surface = Size {
+        width: 320,
+        height: 192,
+    };
     // VStack(height: 24) { Text("a"), Fill{}, Text("b") }
     // CellMetrics: text_width("a")=8, line_height()=16
     // Text("a"): w=8, h=16; Text("b"): w=8, h=16
@@ -1248,35 +1318,36 @@ fn fill_in_vstack_with_cell_metrics() {
 fn fill_inside_screen_with_cell_metrics() {
     use xulo_ui::layout::CellMetrics;
     let metrics = CellMetrics;
-    let surface = Size { width: 320, height: 192 };
+    let surface = Size {
+        width: 320,
+        height: 192,
+    };
     // Screen { VStack { Header, Fill{}, Footer } } — no explicit height, so
     // VStack inherits the Screen's surface height via override_h.
     // CellMetrics: line_height=16, so Header=16px, Footer=16px
     let root = Widget::Screen {
         background: None,
         style: StyleProps::default(),
-        children: vec![
-            Widget::VStack {
-                spacing: 0,
-                style: StyleProps::default(),
-                children: vec![
-                    Widget::Text {
-                        text: "Header".into(),
-                        color: None,
-                        style: StyleProps::default(),
-                    },
-                    Widget::Fill {
-                        children: vec![],
-                        style: StyleProps::default(),
-                    },
-                    Widget::Text {
-                        text: "Footer".into(),
-                        color: None,
-                        style: StyleProps::default(),
-                    },
-                ],
-            },
-        ],
+        children: vec![Widget::VStack {
+            spacing: 0,
+            style: StyleProps::default(),
+            children: vec![
+                Widget::Text {
+                    text: "Header".into(),
+                    color: None,
+                    style: StyleProps::default(),
+                },
+                Widget::Fill {
+                    children: vec![],
+                    style: StyleProps::default(),
+                },
+                Widget::Text {
+                    text: "Footer".into(),
+                    color: None,
+                    style: StyleProps::default(),
+                },
+            ],
+        }],
     };
     let placed = layout(&root, surface, &metrics);
     // Screen fills surface (192)
@@ -1296,39 +1367,38 @@ fn fill_inside_screen_with_cell_metrics() {
 fn fill_children_are_placed_inside_fill_rect() {
     use xulo_ui::layout::CellMetrics;
     let metrics = CellMetrics;
-    let surface = Size { width: 320, height: 192 };
+    let surface = Size {
+        width: 320,
+        height: 192,
+    };
     // Screen { VStack { Text("top"), Fill { Text("inside") }, Text("bottom") } }
     let root = Widget::Screen {
         background: None,
         style: StyleProps::default(),
-        children: vec![
-            Widget::VStack {
-                spacing: 0,
-                style: StyleProps::default(),
-                children: vec![
-                    Widget::Text {
-                        text: "top".into(),
+        children: vec![Widget::VStack {
+            spacing: 0,
+            style: StyleProps::default(),
+            children: vec![
+                Widget::Text {
+                    text: "top".into(),
+                    color: None,
+                    style: StyleProps::default(),
+                },
+                Widget::Fill {
+                    children: vec![Widget::Text {
+                        text: "inside".into(),
                         color: None,
                         style: StyleProps::default(),
-                    },
-                    Widget::Fill {
-                        children: vec![
-                            Widget::Text {
-                                text: "inside".into(),
-                                color: None,
-                                style: StyleProps::default(),
-                            },
-                        ],
-                        style: StyleProps::default(),
-                    },
-                    Widget::Text {
-                        text: "bottom".into(),
-                        color: None,
-                        style: StyleProps::default(),
-                    },
-                ],
-            },
-        ],
+                    }],
+                    style: StyleProps::default(),
+                },
+                Widget::Text {
+                    text: "bottom".into(),
+                    color: None,
+                    style: StyleProps::default(),
+                },
+            ],
+        }],
     };
     let placed = layout(&root, surface, &metrics);
     let vstack = &placed.children[0];
@@ -1343,8 +1413,16 @@ fn fill_children_are_placed_inside_fill_rect() {
     let inside_text = &fill.children[0];
     assert_eq!(inside_text.rect.y, 16);
     assert_eq!(inside_text.rect.height, 16);
-    assert!(inside_text.rect.x < 320, "inside text x={} should be < 320", inside_text.rect.x);
-    assert!(inside_text.rect.width > 0, "inside text width={} should be > 0", inside_text.rect.width);
+    assert!(
+        inside_text.rect.x < 320,
+        "inside text x={} should be < 320",
+        inside_text.rect.x
+    );
+    assert!(
+        inside_text.rect.width > 0,
+        "inside text width={} should be > 0",
+        inside_text.rect.width
+    );
     // bottom: y=176, h=16
     assert_eq!(vstack.children[2].rect, Rect::new(0, 176, 48, 16));
 }
@@ -1355,27 +1433,26 @@ fn fill_children_are_placed_inside_fill_rect() {
 fn vstack_explicit_height_overrides_screen_override() {
     use xulo_ui::layout::CellMetrics;
     let metrics = CellMetrics;
-    let surface = Size { width: 320, height: 192 };
+    let surface = Size {
+        width: 320,
+        height: 192,
+    };
     // Screen { VStack(height: 48) { Fill{} } }
     // VStack has explicit height: 48, which should win over Screen's override_h (192)
     let root = Widget::Screen {
         background: None,
         style: StyleProps::default(),
-        children: vec![
-            Widget::VStack {
-                spacing: 0,
-                style: StyleProps {
-                    height: Some(Dimension::Pixels(48)),
-                    ..StyleProps::default()
-                },
-                children: vec![
-                    Widget::Fill {
-                        children: vec![],
-                        style: StyleProps::default(),
-                    },
-                ],
+        children: vec![Widget::VStack {
+            spacing: 0,
+            style: StyleProps {
+                height: Some(Dimension::Pixels(48)),
+                ..StyleProps::default()
             },
-        ],
+            children: vec![Widget::Fill {
+                children: vec![],
+                style: StyleProps::default(),
+            }],
+        }],
     };
     let placed = layout(&root, surface, &metrics);
     let vstack = &placed.children[0];
@@ -1389,24 +1466,23 @@ fn vstack_explicit_height_overrides_screen_override() {
 fn vstack_no_explicit_height_uses_screen_override() {
     use xulo_ui::layout::CellMetrics;
     let metrics = CellMetrics;
-    let surface = Size { width: 320, height: 192 };
+    let surface = Size {
+        width: 320,
+        height: 192,
+    };
     // Screen { VStack { Fill{} } }
     // VStack has no explicit height, so it should use Screen's override_h (192)
     let root = Widget::Screen {
         background: None,
         style: StyleProps::default(),
-        children: vec![
-            Widget::VStack {
-                spacing: 0,
+        children: vec![Widget::VStack {
+            spacing: 0,
+            style: StyleProps::default(),
+            children: vec![Widget::Fill {
+                children: vec![],
                 style: StyleProps::default(),
-                children: vec![
-                    Widget::Fill {
-                        children: vec![],
-                        style: StyleProps::default(),
-                    },
-                ],
-            },
-        ],
+            }],
+        }],
     };
     let placed = layout(&root, surface, &metrics);
     let vstack = &placed.children[0];
@@ -1450,16 +1526,14 @@ fn text_decorated_mode_with_bg_in_hstack() {
     let root = Widget::HStack {
         spacing: 0,
         style: StyleProps::default(),
-        children: vec![
-            Widget::Text {
-                text: "hi".into(),
-                color: None,
-                style: StyleProps {
-                    background_color: Some(Color::new(255, 0, 0)),
-                    ..StyleProps::default()
-                },
+        children: vec![Widget::Text {
+            text: "hi".into(),
+            color: None,
+            style: StyleProps {
+                background_color: Some(Color::new(255, 0, 0)),
+                ..StyleProps::default()
             },
-        ],
+        }],
     };
     let placed = layout(&root, SURFACE, &metrics());
     // Single decorated text fills the full HStack width
@@ -1472,17 +1546,15 @@ fn text_decorated_mode_with_padding_in_hstack() {
     let root = Widget::HStack {
         spacing: 0,
         style: StyleProps::default(),
-        children: vec![
-            Widget::Text {
-                text: "hi".into(),
-                color: None,
-                style: StyleProps {
-                    background_color: Some(Color::new(255, 0, 0)),
-                    padding: Some(1),
-                    ..StyleProps::default()
-                },
+        children: vec![Widget::Text {
+            text: "hi".into(),
+            color: None,
+            style: StyleProps {
+                background_color: Some(Color::new(255, 0, 0)),
+                padding: Some(1),
+                ..StyleProps::default()
             },
-        ],
+        }],
     };
     let placed = layout(&root, SURFACE, &metrics());
     // Single decorated text fills the full HStack width (height includes padding)
@@ -1496,16 +1568,14 @@ fn text_decorated_mode_with_width_in_hstack() {
     let root = Widget::HStack {
         spacing: 0,
         style: StyleProps::default(),
-        children: vec![
-            Widget::Text {
-                text: "hi".into(),
-                color: None,
-                style: StyleProps {
-                    width: Some(Dimension::Pixels(50)),
-                    ..StyleProps::default()
-                },
+        children: vec![Widget::Text {
+            text: "hi".into(),
+            color: None,
+            style: StyleProps {
+                width: Some(Dimension::Pixels(50)),
+                ..StyleProps::default()
             },
-        ],
+        }],
     };
     let placed = layout(&root, SURFACE, &metrics());
     // Single decorated text fills the full HStack width
@@ -1564,13 +1634,11 @@ fn text_pure_mode_in_vstack() {
     let root = Widget::VStack {
         spacing: 0,
         style: StyleProps::default(),
-        children: vec![
-            Widget::Text {
-                text: "hi".into(),
-                color: None,
-                style: StyleProps::default(),
-            },
-        ],
+        children: vec![Widget::Text {
+            text: "hi".into(),
+            color: None,
+            style: StyleProps::default(),
+        }],
     };
     let placed = layout(&root, SURFACE, &metrics());
     // Pure text: intrinsic width = 2, height = 1
@@ -1583,16 +1651,14 @@ fn text_decorated_mode_in_vstack() {
     let root = Widget::VStack {
         spacing: 0,
         style: StyleProps::default(),
-        children: vec![
-            Widget::Text {
-                text: "hi".into(),
-                color: None,
-                style: StyleProps {
-                    background_color: Some(Color::new(255, 0, 0)),
-                    ..StyleProps::default()
-                },
+        children: vec![Widget::Text {
+            text: "hi".into(),
+            color: None,
+            style: StyleProps {
+                background_color: Some(Color::new(255, 0, 0)),
+                ..StyleProps::default()
             },
-        ],
+        }],
     };
     let placed = layout(&root, SURFACE, &metrics());
     // Decorated text in VStack fills container width (80)
@@ -1605,17 +1671,15 @@ fn text_decorated_mode_with_explicit_width_in_vstack() {
     let root = Widget::VStack {
         spacing: 0,
         style: StyleProps::default(),
-        children: vec![
-            Widget::Text {
-                text: "hi".into(),
-                color: None,
-                style: StyleProps {
-                    background_color: Some(Color::new(255, 0, 0)),
-                    width: Some(Dimension::Pixels(50)),
-                    ..StyleProps::default()
-                },
+        children: vec![Widget::Text {
+            text: "hi".into(),
+            color: None,
+            style: StyleProps {
+                background_color: Some(Color::new(255, 0, 0)),
+                width: Some(Dimension::Pixels(50)),
+                ..StyleProps::default()
             },
-        ],
+        }],
     };
     let placed = layout(&root, SURFACE, &metrics());
     // Decorated text in VStack fills container width (80), explicit width overridden
@@ -1629,34 +1693,46 @@ fn is_text_decorated_false_for_default() {
 
 #[test]
 fn is_text_decorated_true_for_bg() {
-    assert!(StyleProps {
-        background_color: Some(Color::new(255, 0, 0)),
-        ..StyleProps::default()
-    }.is_text_decorated());
+    assert!(
+        StyleProps {
+            background_color: Some(Color::new(255, 0, 0)),
+            ..StyleProps::default()
+        }
+        .is_text_decorated()
+    );
 }
 
 #[test]
 fn is_text_decorated_true_for_padding() {
-    assert!(StyleProps {
-        padding: Some(2),
-        ..StyleProps::default()
-    }.is_text_decorated());
+    assert!(
+        StyleProps {
+            padding: Some(2),
+            ..StyleProps::default()
+        }
+        .is_text_decorated()
+    );
 }
 
 #[test]
 fn is_text_decorated_true_for_width() {
-    assert!(StyleProps {
-        width: Some(Dimension::Pixels(50)),
-        ..StyleProps::default()
-    }.is_text_decorated());
+    assert!(
+        StyleProps {
+            width: Some(Dimension::Pixels(50)),
+            ..StyleProps::default()
+        }
+        .is_text_decorated()
+    );
 }
 
 #[test]
 fn is_text_decorated_true_for_height() {
-    assert!(StyleProps {
-        height: Some(Dimension::Pixels(20)),
-        ..StyleProps::default()
-    }.is_text_decorated());
+    assert!(
+        StyleProps {
+            height: Some(Dimension::Pixels(20)),
+            ..StyleProps::default()
+        }
+        .is_text_decorated()
+    );
 }
 
 // ── Min/Max size constraint tests ──────────────────────────────────────────
@@ -1760,9 +1836,11 @@ fn vstack_min_height_enforced() {
             min_height: Some(10),
             ..StyleProps::default()
         },
-        children: vec![
-            Widget::Text { text: "a".into(), color: None, style: StyleProps::default() },
-        ],
+        children: vec![Widget::Text {
+            text: "a".into(),
+            color: None,
+            style: StyleProps::default(),
+        }],
     };
     let placed = layout(&root, SURFACE, &metrics());
     assert_eq!(placed.rect.height, 10);
@@ -1778,8 +1856,16 @@ fn hstack_max_width_enforced() {
             ..StyleProps::default()
         },
         children: vec![
-            Widget::Text { text: "a".into(), color: None, style: StyleProps::default() },
-            Widget::Text { text: "b".into(), color: None, style: StyleProps::default() },
+            Widget::Text {
+                text: "a".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
+            Widget::Text {
+                text: "b".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
         ],
     };
     let placed = layout(&root, SURFACE, &metrics());
@@ -1799,8 +1885,19 @@ fn flex_grow_in_vstack() {
             ..StyleProps::default()
         },
         children: vec![
-            Widget::Text { text: "a".into(), color: None, style: StyleProps::default() },
-            Widget::Text { text: "b".into(), color: None, style: StyleProps { flex_grow: Some(1.0), ..StyleProps::default() } },
+            Widget::Text {
+                text: "a".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
+            Widget::Text {
+                text: "b".into(),
+                color: None,
+                style: StyleProps {
+                    flex_grow: Some(1.0),
+                    ..StyleProps::default()
+                },
+            },
         ],
     };
     let placed = layout(&root, SURFACE, &metrics());
@@ -1821,9 +1918,27 @@ fn flex_grow_proportional_in_vstack() {
             ..StyleProps::default()
         },
         children: vec![
-            Widget::Text { text: "a".into(), color: None, style: StyleProps::default() },
-            Widget::Text { text: "b".into(), color: None, style: StyleProps { flex_grow: Some(1.0), ..StyleProps::default() } },
-            Widget::Text { text: "c".into(), color: None, style: StyleProps { flex_grow: Some(3.0), ..StyleProps::default() } },
+            Widget::Text {
+                text: "a".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
+            Widget::Text {
+                text: "b".into(),
+                color: None,
+                style: StyleProps {
+                    flex_grow: Some(1.0),
+                    ..StyleProps::default()
+                },
+            },
+            Widget::Text {
+                text: "c".into(),
+                color: None,
+                style: StyleProps {
+                    flex_grow: Some(3.0),
+                    ..StyleProps::default()
+                },
+            },
         ],
     };
     let placed = layout(&root, SURFACE, &metrics());
@@ -1844,11 +1959,29 @@ fn flex_grow_in_hstack() {
             ..StyleProps::default()
         },
         children: vec![
-            Widget::Text { text: "a".into(), color: None, style: StyleProps::default() },
-            Widget::Text { text: "b".into(), color: None, style: StyleProps { flex_grow: Some(1.0), ..StyleProps::default() } },
+            Widget::Text {
+                text: "a".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
+            Widget::Text {
+                text: "b".into(),
+                color: None,
+                style: StyleProps {
+                    flex_grow: Some(1.0),
+                    ..StyleProps::default()
+                },
+            },
         ],
     };
-    let placed = layout(&root, Size { width: 80, height: 24 }, &metrics());
+    let placed = layout(
+        &root,
+        Size {
+            width: 80,
+            height: 24,
+        },
+        &metrics(),
+    );
     assert_eq!(placed.children[0].rect.x, 0);
     assert_eq!(placed.children[0].rect.width, 1);
     assert_eq!(placed.children[1].rect.x, 1);
@@ -1865,9 +1998,14 @@ fn flex_grow_zero_does_not_expand() {
             height: Some(Dimension::Pixels(5)),
             ..StyleProps::default()
         },
-        children: vec![
-            Widget::Text { text: "a".into(), color: None, style: StyleProps { flex_grow: Some(0.0), ..StyleProps::default() } },
-        ],
+        children: vec![Widget::Text {
+            text: "a".into(),
+            color: None,
+            style: StyleProps {
+                flex_grow: Some(0.0),
+                ..StyleProps::default()
+            },
+        }],
     };
     let placed = layout(&root, SURFACE, &metrics());
     assert_eq!(placed.children[0].rect.height, 1);
@@ -1883,8 +2021,15 @@ fn fill_is_flex_grow_1_by_default() {
             ..StyleProps::default()
         },
         children: vec![
-            Widget::Text { text: "a".into(), color: None, style: StyleProps::default() },
-            Widget::Fill { children: vec![], style: StyleProps::default() },
+            Widget::Text {
+                text: "a".into(),
+                color: None,
+                style: StyleProps::default(),
+            },
+            Widget::Fill {
+                children: vec![],
+                style: StyleProps::default(),
+            },
         ],
     };
     let placed = layout(&root, SURFACE, &metrics());
