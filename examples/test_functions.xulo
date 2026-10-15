@@ -1,0 +1,40 @@
+// `test fn`：测试函数形式（spec testing.md）
+//
+// - `test fn` / `test async fn` 声明固定：无参数、无返回类型，文件作用域
+// - 测试体总是被检查（和 `fn(): Unit` 一样），但惰性：`xulo run` 不会执行它，
+//   名字也不绑定任何值（引用它会报 E0107）
+// - `assert(cond, msg)` 是内建断言：条件为假时以 `panic(msg)` 终止
+//
+// 运行：xulo test examples/test_functions.xulo
+
+fn add(a: number, b: number): number {
+    return a + b
+}
+
+async fn double(x: number): number {
+    return x * 2
+}
+
+test fn addition_works() {
+    assert(add(2, 3) == 5, "2 + 3 = 5")
+    assert(add(-1, 1) == 0, "negation cancels")
+}
+
+test fn addition_is_commutative() {
+    assert(add(4, 7) == add(7, 4), "commutative")
+}
+
+// 故意失败的测试：演示 FAILED 输出（`xulo test` 退出码为 1）
+test fn addition_works_sometimes() {
+    assert(add(1, 1) == 3, "one plus one is three")
+}
+
+// 异步测试：`test async fn` 的主体可以 `await`；任务正常完成即通过
+test async fn double_works() {
+    let v = await double(21)
+    assert(v == 42, "the answer")
+}
+
+fn main() {
+    print(add(2, 3))
+}
