@@ -60,7 +60,7 @@ fn widget_with(
                 "Screen" => {
                     if let Some(bg) = get(&props_obj, "bg")
                         .or_else(|| get(&props_obj, "backgroundColor"))
-                        .and_then(|v| string_of(v))
+                        .and_then(string_of)
                     {
                         props = props.string("bg", bg);
                     }
@@ -76,7 +76,7 @@ fn widget_with(
                 }
                 "ScrollView" => {
                     if let Some(axes) = get(&props_obj, "axes")
-                        .and_then(|v| string_of(v))
+                        .and_then(string_of)
                     {
                         props = props.string("axes", axes);
                     }
@@ -86,11 +86,11 @@ fn widget_with(
                 "Text" => {
                     let text = get(&props_obj, "0")
                         .or_else(|| get(&props_obj, "text"))
-                        .and_then(|v| string_of(v))
+                        .and_then(string_of)
                         .unwrap_or_default();
                     props = props.string("0", text);
                     if let Some(color) = get(&props_obj, "color")
-                        .and_then(|v| string_of(v))
+                        .and_then(string_of)
                     {
                         props = props.string("color", color);
                     }
@@ -99,17 +99,17 @@ fn widget_with(
                     // Extract onClick callback before converting props
                     if let Some(interp) = interp {
                         let on_click = get(&props_obj, "onClick");
-                        if let Some(on_click) = on_click {
-                            if matches!(on_click, Value::Function(_) | Value::Native(_)) {
-                                let interp = interp.clone();
-                                let on_click = on_click.clone();
-                                callbacks.push(UiCallback {
-                                    on_click: Some(Box::new(move || {
-                                        let _ = interp.invoke(&on_click);
-                                    })),
-                                    on_change: None,
-                                });
-                            }
+                        if let Some(on_click) = on_click
+                            && matches!(on_click, Value::Function(_) | Value::Native(_))
+                        {
+                            let interp = interp.clone();
+                            let on_click = on_click.clone();
+                            callbacks.push(UiCallback {
+                                on_click: Some(Box::new(move || {
+                                    let _ = interp.invoke(&on_click);
+                                })),
+                                on_change: None,
+                            });
                         }
                     }
                     // Extract label from "0" prop or children
@@ -123,14 +123,14 @@ fn widget_with(
                         props = props.number("width", *width);
                     }
                     if let Some(placeholder) = get(&props_obj, "placeholder")
-                        .and_then(|v| string_of(v))
+                        .and_then(string_of)
                     {
                         props = props.string("placeholder", placeholder);
                     }
                     // Extract onChange callback from $binding
                     if let Some(interp) = interp {
                         let on_change = get(&props_obj, "value")
-                            .and_then(|v| extract_on_change(v));
+                            .and_then(extract_on_change);
                         if let Some(on_change) = on_change {
                             let interp = interp.clone();
                             callbacks.push(UiCallback {
@@ -181,8 +181,8 @@ fn children_with(
     out
 }
 
-fn collect_children<'a>(
-    value: Option<&'a Value>,
+fn collect_children(
+    value: Option<&Value>,
     interp: Option<&Rc<Interpreter>>,
     callbacks: &mut Vec<UiCallback>,
     out: &mut Vec<Widget>,
@@ -197,7 +197,7 @@ fn collect_children<'a>(
         Some(Value::Signal(cell)) => {
             collect_children(Some(&cell.borrow()), interp, callbacks, out);
         }
-        Some(other) => out.push(widget_with(&other, interp, callbacks)),
+        Some(other) => out.push(widget_with(other, interp, callbacks)),
     }
 }
 
@@ -208,7 +208,7 @@ fn button_label(
     interp: Option<&Rc<Interpreter>>,
     callbacks: &mut Vec<UiCallback>,
 ) -> String {
-    if let Some(value) = first.and_then(|v| string_of(v)) {
+    if let Some(value) = first.and_then(string_of) {
         return value;
     }
     children_with(
@@ -277,24 +277,24 @@ fn extract_on_change(value: &Value) -> Option<Value> {
 /// a complete `StyleProps`.
 fn extract_style(fields: &[(String, Value)], mut props: Props) -> Props {
     // Color props (short aliases: bg, border)
-    if let Some(s) = get(fields, "color").and_then(|v| string_of(v)) {
+    if let Some(s) = get(fields, "color").and_then(string_of) {
         props = props.string("color", s);
     }
     if let Some(s) = get(fields, "bg")
         .or_else(|| get(fields, "backgroundColor"))
-        .and_then(|v| string_of(v))
+        .and_then(string_of)
     {
         props = props.string("bg", s);
     }
     if let Some(s) = get(fields, "bgImage")
         .or_else(|| get(fields, "backgroundImage"))
-        .and_then(|v| string_of(v))
+        .and_then(string_of)
     {
         props = props.string("bgImage", s);
     }
     if let Some(s) = get(fields, "border")
         .or_else(|| get(fields, "borderColor"))
-        .and_then(|v| string_of(v))
+        .and_then(string_of)
     {
         props = props.string("border", s);
     }
@@ -306,7 +306,7 @@ fn extract_style(fields: &[(String, Value)], mut props: Props) -> Props {
     }
     if let Some(s) = get(fields, "weight")
         .or_else(|| get(fields, "fontWeight"))
-        .and_then(|v| string_of(v))
+        .and_then(string_of)
     {
         props = props.string("weight", s);
     }
@@ -316,15 +316,15 @@ fn extract_style(fields: &[(String, Value)], mut props: Props) -> Props {
     if let Some(Value::Number(n)) = get(fields, "margin") {
         props = props.number("margin", *n);
     }
-    if let Some(s) = get(fields, "width").and_then(|v| string_of(v)) {
+    if let Some(s) = get(fields, "width").and_then(string_of) {
         props = props.string("width", s);
     } else if let Some(Value::Number(n)) = get(fields, "width") {
-        props = props.string("width", &n.to_string());
+        props = props.string("width", n.to_string());
     }
-    if let Some(s) = get(fields, "height").and_then(|v| string_of(v)) {
+    if let Some(s) = get(fields, "height").and_then(string_of) {
         props = props.string("height", s);
     } else if let Some(Value::Number(n)) = get(fields, "height") {
-        props = props.string("height", &n.to_string());
+        props = props.string("height", n.to_string());
     }
     if let Some(Value::Number(n)) = get(fields, "radius")
         .or_else(|| get(fields, "borderRadius"))
@@ -334,10 +334,10 @@ fn extract_style(fields: &[(String, Value)], mut props: Props) -> Props {
     if let Some(Value::Number(n)) = get(fields, "opacity") {
         props = props.number("opacity", *n);
     }
-    if let Some(s) = get(fields, "alignment").and_then(|v| string_of(v)) {
+    if let Some(s) = get(fields, "alignment").and_then(string_of) {
         props = props.string("alignment", s);
     }
-    if let Some(s) = get(fields, "justify").and_then(|v| string_of(v)) {
+    if let Some(s) = get(fields, "justify").and_then(string_of) {
         props = props.string("justify", s);
     }
     // Flex layout properties (yoga-layout compatible)
@@ -358,7 +358,7 @@ fn extract_style(fields: &[(String, Value)], mut props: Props) -> Props {
     }
     if let Some(s) = get(fields, "alignSelf")
         .or_else(|| get(fields, "align_self"))
-        .and_then(|v| string_of(v))
+        .and_then(string_of)
     {
         props = props.string("alignSelf", s);
     }

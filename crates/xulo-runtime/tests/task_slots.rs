@@ -6,7 +6,6 @@
 //! churning many short-lived async calls accumulated a slot (and a stale
 //! yielder pointer) per call. These tests pin the recycling behaviour.
 
-use xulo_lexer::tokenize;
 use xulo_parser::parse_program;
 use xulo_runtime::interpreter::Interpreter;
 
@@ -14,8 +13,7 @@ use xulo_runtime::interpreter::Interpreter;
 /// return the printed lines plus the task-slot count afterwards.
 fn run_raw(src: &str) -> (Vec<String>, usize) {
     let interp = Interpreter::new();
-    let tokens = tokenize(src).unwrap();
-    let program = parse_program(&tokens).unwrap();
+    let program = parse_program(src).unwrap();
     let out = interp.run(&program).unwrap();
     let slots = interp.debug_task_slot_count();
     (out, slots)
@@ -29,8 +27,8 @@ fn run_raw(src: &str) -> (Vec<String>, usize) {
 fn sequential_async_calls_recycle_task_slots() {
     let (out, slots) = run_raw(
         r#"
-        fn work(n: number): async number { n }
-        fn main(): async {
+        async fn work(n: number): number { n }
+        async fn main() {
             for i in 0..<200 {
                 print(str(await work(i)))
             }
@@ -60,8 +58,8 @@ fn sequential_async_calls_recycle_task_slots() {
 fn fire_and_forget_calls_recycle_task_slots() {
     let (out, slots) = run_raw(
         r#"
-        fn work(n: number): async { print(str(n)) }
-        fn main(): async {
+        async fn work(n: number) { print(str(n)) }
+        async fn main() {
             for i in 0..<100 {
                 work(i)
             }

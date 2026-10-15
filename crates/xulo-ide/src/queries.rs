@@ -343,6 +343,14 @@ fn find_fn<'a>(
                     return Some(found);
                 }
             }
+            xulo_core::ast::Statement::Test(f) => {
+                if &f.name_span == span {
+                    return Some(f);
+                }
+                if let Some(found) = find_fn(&f.body.statements, span) {
+                    return Some(found);
+                }
+            }
             xulo_core::ast::Statement::Expr(e) => {
                 if let Some(found) = find_fn_expr(&e.expr, span) {
                     return Some(found);
@@ -383,8 +391,17 @@ fn find_fn_expr<'a>(
         }
         xulo_core::ast::Expression::Match(m) => {
             for arm in &m.arms {
-                if let Some(found) = find_fn_expr(&arm.value, span) {
-                    return Some(found);
+                match &arm.value {
+                    xulo_core::ast::MatchBody::Expr(e) => {
+                        if let Some(found) = find_fn_expr(e, span) {
+                            return Some(found);
+                        }
+                    }
+                    xulo_core::ast::MatchBody::Block(b) => {
+                        if let Some(found) = find_fn(&b.statements, span) {
+                            return Some(found);
+                        }
+                    }
                 }
             }
             None
@@ -401,6 +418,14 @@ fn find_fn_covering(
     for statement in statements {
         match statement {
             xulo_core::ast::Statement::Fn(f) => {
+                if f.name_span.contains(&byte) {
+                    return Some(f);
+                }
+                if let Some(found) = find_fn_covering(&f.body.statements, byte) {
+                    return Some(found);
+                }
+            }
+            xulo_core::ast::Statement::Test(f) => {
                 if f.name_span.contains(&byte) {
                     return Some(f);
                 }
@@ -446,8 +471,17 @@ fn find_fn_expr_covering(
         }
         xulo_core::ast::Expression::Match(m) => {
             for arm in &m.arms {
-                if let Some(found) = find_fn_expr_covering(&arm.value, byte) {
-                    return Some(found);
+                match &arm.value {
+                    xulo_core::ast::MatchBody::Expr(e) => {
+                        if let Some(found) = find_fn_expr_covering(e, byte) {
+                            return Some(found);
+                        }
+                    }
+                    xulo_core::ast::MatchBody::Block(b) => {
+                        if let Some(found) = find_fn_covering(&b.statements, byte) {
+                            return Some(found);
+                        }
+                    }
                 }
             }
             None

@@ -61,19 +61,7 @@ impl Analysis {
 /// (cross-module seeding is the workspace layer's job).
 pub fn analyze_source(source: &str) -> Analysis {
     let line_index = LineIndex::new(source);
-    let tokens = match xulo_lexer::tokenize(source) {
-        Err(err) => {
-            return Analysis {
-                source: source.to_string(),
-                program: None,
-                result: None,
-                error: Some(err),
-                line_index,
-            };
-        }
-        Ok(tokens) => tokens,
-    };
-    let program = match xulo_parser::parse_program(&tokens) {
+    let program = match xulo_parser::parse_program(source) {
         Err(err) => {
             return Analysis {
                 source: source.to_string(),

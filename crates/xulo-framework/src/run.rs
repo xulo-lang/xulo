@@ -172,18 +172,18 @@ fn run_terminal_interactive(entry: &Path) -> Result<(), XuloError> {
                 if let Some(eq_pos) = trimmed.find('=') {
                     let idx_part = &trimmed[1..eq_pos];
                     let value = &trimmed[eq_pos + 1..];
-                    if let Ok(k) = idx_part.parse::<usize>() {
-                        if (1..=icount).contains(&k) {
-                            ui.input_change(k - 1, value.to_string())?;
-                        }
+                    if let Ok(k) = idx_part.parse::<usize>()
+                        && (1..=icount).contains(&k)
+                    {
+                        ui.input_change(k - 1, value.to_string())?;
                     }
                 }
             }
             _ => {
-                if let Ok(k) = trimmed.parse::<usize>() {
-                    if (1..=bcount).contains(&k) {
-                        ui.click_button(k - 1)?;
-                    }
+                if let Ok(k) = trimmed.parse::<usize>()
+                    && (1..=bcount).contains(&k)
+                {
+                    ui.click_button(k - 1)?;
                 }
             }
         }
@@ -415,12 +415,16 @@ fn screen_background(root: &xulo_ui::Widget) -> (u8, u8, u8) {
 
 #[cfg(feature = "terminal")]
 fn render_terminal(root: &xulo_ui::Widget) -> Result<String, XuloError> {
-    use xulo_renderer_terminal::{render_ansi, render_plain, CharMetrics, TerminalSize};
+    use xulo_renderer_terminal::{render_plain, CharMetrics, TerminalSize};
     use xulo_ui::{Size, UiContext};
 
-    let size = TerminalSize::default();
-    let colored = std::env::var_os("NO_COLOR").is_none()
-        && std::io::IsTerminal::is_terminal(&std::io::stdout());
+    // Deterministic size for the string-rendering API: embedders and tests
+    // compare exact output, which ambient `COLUMNS`/`LINES` would make
+    // machine-dependent. The interactive `run` path reads the real terminal.
+    let size = TerminalSize { cols: 80, rows: 24 };
+    // Always plain text: this API returns a String, so TTY-based coloring
+    // (which embedders can't opt out of) would make output non-deterministic.
+    // The interactive `run` path colorizes via `render_stdout` instead.
     let ctx = UiContext::new(
         Size {
             width: size.cols,
@@ -429,11 +433,7 @@ fn render_terminal(root: &xulo_ui::Widget) -> Result<String, XuloError> {
         Box::new(CharMetrics),
     );
     let ops = ctx.paint(root);
-    Ok(if colored {
-        render_ansi(&ops, size)
-    } else {
-        render_plain(&ops, size)
-    })
+    Ok(render_plain(&ops, size))
 }
 
 /// Names an `import` statement binds (namespace or named bindings with their

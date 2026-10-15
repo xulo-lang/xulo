@@ -109,8 +109,7 @@ impl Loader {
                 format!("cannot read {}: {e}", file.display()),
             )
         })?;
-        let tokens = xulo_lexer::tokenize(&source).map_err(|e| e.with_file(file.clone()))?;
-        let program = xulo_parser::parse_program(&tokens).map_err(|e| e.with_file(file.clone()))?;
+        let program = xulo_parser::parse_program(&source).map_err(|e| e.with_file(file.clone()))?;
 
         self.loading.insert(file.clone());
         let base = file.parent().map(Path::to_path_buf).unwrap_or_default();

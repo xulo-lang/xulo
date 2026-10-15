@@ -103,6 +103,11 @@ pub struct Analyzer {
     /// arms compile to a plain (non-`async`) function, so `await` is
     /// rejected there regardless of the enclosing `async_depth`.
     no_await_depth: usize,
+    /// Names of `test fn` declarations in this module (spec testing.md): the
+    /// identifier is declared but binds no value, so any reference to it is a
+    /// compile-time error (E0107). Pre-scanned before checking so the ban is
+    /// order-independent.
+    test_names: std::collections::HashSet<String>,
     /// Imported names available to this module (name -> symbol).
     imports: HashMap<String, Symbol>,
     /// Names imported from an unseeded external package (no module graph): the
@@ -279,6 +284,7 @@ fn run_analysis(
         component_depth: 0,
         block_depth: 0,
         no_await_depth: 0,
+        test_names: std::collections::HashSet::new(),
         imports: imports
             .iter()
             .map(|s| (s.name.clone(), s.clone()))
@@ -298,6 +304,13 @@ fn run_analysis(
         expr_types: Vec::new(),
         resolutions: Vec::new(),
     };
+    // Pre-scan `test fn` names so any reference to one — before or after its
+    // declaration — fails with E0107 instead of "undefined variable".
+    for statement in &program.statements {
+        if let Statement::Test(f) = statement {
+            analyzer.test_names.insert(f.name.clone());
+        }
+    }
     if lenient {
         for statement in &program.statements {
             analyzer.check_statement_lenient(statement);
@@ -365,7 +378,7 @@ fn walk_program(program: &mut Program, f: &mut dyn FnMut(&mut Expression)) {
 
 fn walk_stmt(stmt: &mut Statement, f: &mut dyn FnMut(&mut Expression)) {
     match stmt {
-        Statement::Fn(fd) => walk_block(&mut fd.body, f),
+        Statement::Fn(fd) | Statement::Test(fd) => walk_block(&mut fd.body, f),
         Statement::Let(l) => {
             if let Some(value) = &mut l.value {
                 walk_expr(value, f);
@@ -397,6 +410,10 @@ fn walk_stmt(stmt: &mut Statement, f: &mut dyn FnMut(&mut Expression)) {
         }
         Statement::Expr(e) => walk_expr(&mut e.expr, f),
         Statement::Block(b) => walk_block(b, f),
+        Statement::Defer(d) => match &mut d.body {
+            xulo_core::ast::DeferBody::Block(b) => walk_block(b, f),
+            xulo_core::ast::DeferBody::Expr(e) => walk_expr(e, f),
+        },
         Statement::Try(t) => {
             walk_block(&mut t.try_block, f);
             walk_block(&mut t.catch_block, f);
@@ -539,7 +556,13 @@ fn walk_expr(expr: &mut Expression, f: &mut dyn FnMut(&mut Expression)) {
         Expression::Match(m) => {
             walk_expr(&mut m.value, f);
             for arm in &mut m.arms {
-                walk_expr(&mut arm.value, f);
+                if let Some(guard) = &mut arm.guard {
+                    walk_expr(guard, f);
+                }
+                match &mut arm.value {
+                    xulo_core::ast::MatchBody::Expr(e) => walk_expr(e, f),
+                    xulo_core::ast::MatchBody::Block(b) => walk_block(b, f),
+                }
             }
         }
         Expression::Member(m) => walk_expr(&mut m.object, f),
@@ -564,6 +587,39 @@ fn walk_expr(expr: &mut Expression, f: &mut dyn FnMut(&mut Expression)) {
                 walk_expr(&mut arg.value, f);
             }
         }
+        Expression::Component(c) => {
+            for arg in &mut c.args {
+                walk_expr(&mut arg.value, f);
+            }
+            walk_ui_elements(&mut c.children, f);
+        }
+        Expression::Tuple { items, .. } => {
+            for item in items {
+                walk_expr(item, f);
+            }
+        }
+        Expression::TypedMap(tm) => {
+            for entry in &mut tm.entries {
+                walk_expr(&mut entry.key, f);
+                walk_expr(&mut entry.value, f);
+            }
+        }
+        Expression::Is(is) => walk_expr(&mut is.expr, f),
+        Expression::Panic { expr: inner, .. } => walk_expr(inner, f),
+        Expression::Propagate { expr: inner, .. } => walk_expr(inner, f),
+        Expression::Arrow(arrow) => match &mut arrow.body {
+            xulo_core::ast::ArrowBody::Expr(e) => walk_expr(e, f),
+            xulo_core::ast::ArrowBody::Block(b) => walk_block(b, f),
+        },
+        Expression::Spawn(spawn) => match &mut spawn.body {
+            xulo_core::ast::SpawnBody::Async(b) => walk_block(b, f),
+            xulo_core::ast::SpawnBody::Service { fields, .. } => {
+                for field in fields {
+                    walk_expr(&mut field.value, f);
+                }
+            }
+        },
+        Expression::Lock(lock) => walk_block(&mut lock.body, f),
         Expression::Identifier { .. } | Expression::EnumRef(_) | Expression::Binding { .. } => {}
     }
 }
@@ -646,7 +702,8 @@ impl Analyzer {
     /// Resolve a name to its symbol, rejecting references from inside an
     /// `@Effect` closure to bindings that live only in the component's render
     /// code: those are hoisted above the render closure and are not in scope
-    /// when the effect runs.
+    /// when the effect runs. A `test fn`'s identifier is declared but binds no
+    /// value, so mentioning it is the E0107 reference ban (spec testing.md).
     fn lookup_symbol(&self, name: &str) -> SResult<Symbol> {
         let render_scoped = self
             .render_locals
@@ -657,10 +714,15 @@ impl Analyzer {
                 "`@Effect` closures cannot reference `{name}`: it is declared inside the component body and is out of scope when the effect runs"
             )));
         }
-        self.table
-            .lookup(name)
-            .cloned()
-            .ok_or_else(|| self.err(format!("undefined variable `{name}`")))
+        if let Some(sym) = self.table.lookup(name) {
+            return Ok(sym.clone());
+        }
+        if self.test_names.contains(name) {
+            return Err(self.err(format!(
+                "`{name}` is a test function and cannot be referenced"
+            )));
+        }
+        Err(self.err(format!("undefined variable `{name}`")))
     }
 }
 
@@ -685,6 +747,7 @@ impl Analyzer {
                     .truncate(self.generics.len().saturating_sub(f.type_params.len()));
                 result
             }
+            Statement::Test(f) => self.check_test(f),
             Statement::Let(binding) => {
                 if binding.memo {
                     self.require_fn_body_top_level("@Memo")?;
@@ -1006,6 +1069,16 @@ impl Analyzer {
                 }
                 Ok(())
             }
+            Statement::Defer(d) => self.check_defer(d),
+        }
+    }
+
+    fn check_defer(&mut self, d: &xulo_core::ast::DeferStmt) -> SResult<()> {
+        match &d.body {
+            xulo_core::ast::DeferBody::Block(b) => self.check_block(b),
+            xulo_core::ast::DeferBody::Expr(e) => {
+                self.check_expression(e).map(|_| ())
+            }
         }
     }
 
@@ -1038,13 +1111,20 @@ impl Analyzer {
         }
         let return_type = f.return_type.clone().unwrap_or(Type::Any);
         self.check_type(&return_type)?;
+        // Callers see an async function's result as `async T` (`await`
+        // unwraps it); inside the body `return`/trailing expressions stay `T`.
+        let symbol_return = if f.is_async {
+            Type::Async(Box::new(return_type.clone()))
+        } else {
+            return_type.clone()
+        };
         let symbol = Symbol {
             name: f.name.clone(),
-            type_: return_type.clone(),
+            type_: symbol_return.clone(),
             kind: SymbolKind::Function(
                 f.type_params.clone(),
                 f.params.clone(),
-                return_type.clone(),
+                symbol_return,
                 f.bounds.clone(),
             ),
             is_const: true,
@@ -1131,6 +1211,41 @@ impl Analyzer {
         Ok(())
     }
 
+    /// Check a `test [async] fn` body (spec testing.md): exactly as an
+    /// implicit `fn(): Unit` body — no parameters, no return type, so a
+    /// trailing expression is a statement, not an implicit return, and
+    /// `return e` checks `e` against the unit result. The identifier binds no
+    /// value: it is never declared in the symbol table (any reference is the
+    /// E0107 ban, enforced by [`Analyzer::lookup_symbol`] and
+    /// [`Analyzer::check_call`] via the pre-scanned `test_names`), and two
+    /// tests may share a name. The optional `async` marker opens an `async`
+    /// context exactly as on `fn(): Unit` (`await` legal; E0501 without it).
+    fn check_test(&mut self, f: &xulo_core::ast::FnDef) -> SResult<()> {
+        self.table.push_scope();
+        // No declared return type: `current_return` is the unit stand-in
+        // (`Any`, matching how every other unit-returning form is checked),
+        // and `declared_return` stays false so a trailing expression is not an
+        // implicit return.
+        let saved = self.current_return.replace(Type::Any);
+        let saved_declared = self.declared_return;
+        self.declared_return = false;
+        let saved_async = self.async_depth;
+        self.async_depth = if f.is_async { saved_async + 1 } else { 0 };
+        let saved_no_await = self.no_await_depth;
+        self.no_await_depth = 0;
+        let saved_block = self.block_depth;
+        self.block_depth = 0;
+        let result = self.check_block_implicit(&f.body);
+        self.block_depth = saved_block;
+        self.no_await_depth = saved_no_await;
+        self.async_depth = saved_async;
+        self.current_return = saved;
+        self.declared_return = saved_declared;
+        result?;
+        self.table.pop_scope();
+        Ok(())
+    }
+
     /// Validate a parameter list and declare each parameter in scope, one at a
     /// time. A parameter's default value is checked *before* the parameter
     /// itself enters scope but *after* every earlier one, so `fn f(a, b = a)`
@@ -1207,9 +1322,14 @@ impl Analyzer {
         result?;
         self.table.pop_scope();
 
+        let ret = if f.is_async {
+            Type::Async(Box::new(return_type))
+        } else {
+            return_type
+        };
         Ok(Type::FnSig {
             params: param_types,
-            ret: Some(Box::new(return_type)),
+            ret: Some(Box::new(ret)),
         })
     }
 
@@ -2183,10 +2303,12 @@ impl Analyzer {
             .iter()
             .map(|m| {
                 let params = m.params.clone();
-                let ret: Option<Box<Type>> = match &m.return_type {
-                    Type::Async(inner) => Some(inner.clone()),
-                    other => Some(Box::new(other.clone())),
-                };
+                let bare = m.return_type.clone();
+                let ret: Option<Box<Type>> = Some(Box::new(if m.is_async {
+                    Type::Async(Box::new(bare))
+                } else {
+                    bare
+                }));
                 (m.name.clone(), Type::FnSig { params, ret })
             })
             .collect();
@@ -2399,6 +2521,80 @@ impl Analyzer {
                     ))),
                 }
             }
+            Expression::Component(c) => {
+                for arg in &c.args {
+                    self.check_expression(&arg.value)?;
+                }
+                for el in &c.children {
+                    self.check_ui_element(el)?;
+                }
+                Ok(Type::Named("View".to_string()))
+            }
+            Expression::Tuple { items, .. } => {
+                let mut types = Vec::with_capacity(items.len());
+                for item in items {
+                    types.push(self.check_expression(item)?);
+                }
+                Ok(Type::Tuple(types))
+            }
+            Expression::TypedMap(tm) => {
+                for entry in &tm.entries {
+                    self.check_expression(&entry.key)?;
+                    self.check_expression(&entry.value)?;
+                }
+                Ok(Type::Named("Map".to_string()))
+            }
+            Expression::Is(is) => {
+                self.check_expression(&is.expr)?;
+                self.check_type(&is.type_)?;
+                Ok(Type::Boolean)
+            }
+            Expression::Panic { expr: inner, .. } => {
+                self.check_expression(inner)?;
+                Ok(Type::Any)
+            }
+            Expression::Propagate { expr: inner, .. } => {
+                self.check_expression(inner)?;
+                Ok(Type::Any)
+            }
+            Expression::Arrow(arrow) => {
+                let mut params = Vec::with_capacity(arrow.params.len());
+                for p in &arrow.params {
+                    if let Some(annotation) = &p.type_annotation {
+                        self.check_type(annotation)?;
+                        params.push(annotation.clone());
+                    } else {
+                        params.push(Type::Any);
+                    }
+                }
+                let ret = match &arrow.body {
+                    xulo_core::ast::ArrowBody::Expr(e) => Some(Box::new(self.check_expression(e)?)),
+                    xulo_core::ast::ArrowBody::Block(b) => {
+                        self.check_block_tail(b)?.map(Box::new)
+                    }
+                };
+                let ret = match ret {
+                    Some(r) if arrow.is_async => Some(Box::new(Type::Async(r))),
+                    other => other,
+                };
+                Ok(Type::FnSig { params, ret })
+            }
+            Expression::Spawn(spawn) => match &spawn.body {
+                xulo_core::ast::SpawnBody::Async(b) => {
+                    self.check_block(b)?;
+                    Ok(Type::Named("Task".to_string()))
+                }
+                xulo_core::ast::SpawnBody::Service { fields, .. } => {
+                    for field in fields {
+                        self.check_expression(&field.value)?;
+                    }
+                    Ok(Type::Named("Service".to_string()))
+                }
+            },
+            Expression::Lock(lock) => {
+                self.check_block(&lock.body)?;
+                Ok(Type::Named("Lock".to_string()))
+            }
         }
     }
 
@@ -2552,6 +2748,9 @@ impl Analyzer {
                     )))
                 }
             }
+            xulo_core::ast::UnaryOperator::Move | xulo_core::ast::UnaryOperator::Copy => {
+                Ok(operand)
+            }
         }
     }
 
@@ -2674,6 +2873,50 @@ impl Analyzer {
                         )));
                     }
                 }
+                xulo_core::ast::MatchPattern::Range { .. } => {
+                    if !self.assignable(&value_type, &Type::Number)
+                        && !self.assignable(&value_type, &Type::String)
+                    {
+                        return Err(self.err(format!(
+                            "match arm range pattern does not match value of type `{}` (expected `number` or `string`)",
+                            value_type.name()
+                        )));
+                    }
+                }
+                xulo_core::ast::MatchPattern::Binding { name, span } => {
+                    self.table.declare_with_def(
+                        Symbol {
+                            name: name.clone(),
+                            type_: value_type.clone(),
+                            kind: SymbolKind::Variable,
+                            is_const: true,
+                            is_mutable: false,
+                        },
+                        Some(span.clone()),
+                    );
+                }
+                xulo_core::ast::MatchPattern::TypePattern {
+                    type_name,
+                    binder,
+                    span,
+                    ..
+                } => {
+                    self.check_type(&Type::Named(type_name.clone()))?;
+                    if let xulo_core::ast::PatternBinder::Binding(b) = binder {
+                        self.table.declare_with_def(
+                            Symbol {
+                                name: b.clone(),
+                                type_: Type::Named(type_name.clone()),
+                                kind: SymbolKind::Variable,
+                                is_const: true,
+                                is_mutable: false,
+                            },
+                            Some(span.clone()),
+                        );
+                    }
+                }
+                xulo_core::ast::MatchPattern::Or { .. } => {}
+                xulo_core::ast::MatchPattern::Struct { .. } => {}
                 xulo_core::ast::MatchPattern::Enum(r) => {
                     let enum_type = self.check_enum_ref(r.enum_name.clone(), &r.variant)?;
                     if !self.assignable(&value_type, &enum_type) {
@@ -2740,7 +2983,18 @@ impl Analyzer {
                                     Some(span.clone()),
                                 );
                             }
-                            let t = self.check_expression(&arm.value)?;
+                            let t = {
+                                if let Some(guard) = &arm.guard {
+                                    let guard_type = self.check_expression(guard)?;
+                                    if !self.assignable(&guard_type, &Type::Boolean) {
+                                        return Err(self.err(format!(
+                                            "match guard must be a `boolean`, found `{}`",
+                                            guard_type.name()
+                                        )));
+                                    }
+                                }
+                                self.check_match_body(&arm.value)?
+                            };
                             self.table.pop_scope();
                             self.generics.truncate(
                                 self.generics.len().saturating_sub(entry.type_params.len()),
@@ -2756,7 +3010,16 @@ impl Analyzer {
                     }
                 }
             }
-            arm_types.push(self.check_expression(&arm.value)?);
+            if let Some(guard) = &arm.guard {
+                let guard_type = self.check_expression(guard)?;
+                if !self.assignable(&guard_type, &Type::Boolean) {
+                    return Err(self.err(format!(
+                        "match guard must be a `boolean`, found `{}`",
+                        guard_type.name()
+                    )));
+                }
+            }
+            arm_types.push(self.check_match_body(&arm.value)?);
         }
         if arm_types.is_empty() {
             return Ok(Type::Any);
@@ -2777,6 +3040,16 @@ impl Analyzer {
             }
         }
         Ok(first.clone())
+    }
+
+    /// Check a match arm body: an expression checks as an expression; a block
+    /// checks as a block whose value is its trailing type (or `Unit`-less
+    /// `Type::Any` when it has no trailing expression).
+    fn check_match_body(&mut self, body: &xulo_core::ast::MatchBody) -> SResult<Type> {
+        match body {
+            xulo_core::ast::MatchBody::Expr(e) => self.check_expression(e),
+            xulo_core::ast::MatchBody::Block(b) => Ok(self.check_block_tail(b)?.unwrap_or(Type::Any)),
+        }
     }
 
     fn check_binary(&mut self, bin: &xulo_core::ast::BinaryOp) -> SResult<Type> {
@@ -2980,6 +3253,43 @@ impl Analyzer {
             }
             self.check_expression(&call.arguments[0].value)?;
             return Ok(Type::String);
+        }
+        if call.callee == "assert" {
+            if call.arguments.len() != 2 {
+                return Err(self
+                    .err(format!(
+                        "`assert` expects exactly two arguments (condition, message), got {}",
+                        call.arguments.len()
+                    ))
+                    .at(call.span.clone()));
+            }
+            let cond = self.check_expression(&call.arguments[0].value)?;
+            if !self.assignable(&cond, &Type::Boolean) {
+                return Err(self
+                    .err(format!(
+                        "`assert` condition must be a `boolean`, found `{}`",
+                        cond.name()
+                    ))
+                    .at(call.arguments[0].value.span().clone()));
+            }
+            let message = self.check_expression(&call.arguments[1].value)?;
+            if !self.assignable(&message, &Type::String) {
+                return Err(self
+                    .err(format!(
+                        "`assert` message must be a `string`, found `{}`",
+                        message.name()
+                    ))
+                    .at(call.arguments[1].value.span().clone()));
+            }
+            return Ok(Type::Any);
+        }
+        if self.test_names.contains(&call.callee) {
+            return Err(self
+                .err(format!(
+                    "`{}` is a test function and cannot be referenced",
+                    call.callee
+                ))
+                .at(call.span.clone()));
         }
         let Some(sym) = self.table.lookup(&call.callee).cloned() else {
             return Err(self.err(format!("unknown function `{}`", call.callee)));
@@ -3832,5 +4142,17 @@ fn pattern_name(arm: &xulo_core::ast::MatchArm) -> String {
             enum_name, variant, ..
         } => format!("{enum_name}::{variant}"),
         xulo_core::ast::MatchPattern::Wildcard => "_".into(),
+        xulo_core::ast::MatchPattern::Range { start, end, .. } => {
+            format!("{}..{}", start, end)
+        }
+        xulo_core::ast::MatchPattern::Binding { name, .. } => name.clone(),
+        xulo_core::ast::MatchPattern::TypePattern {
+            type_name, binder, ..
+        } => match binder {
+            xulo_core::ast::PatternBinder::Wildcard => type_name.clone(),
+            xulo_core::ast::PatternBinder::Binding(b) => format!("{type_name} {b}"),
+        },
+        xulo_core::ast::MatchPattern::Or { .. } => ".. | ..".into(),
+        xulo_core::ast::MatchPattern::Struct { name, .. } => format!("{name} {{ .. }}"),
     }
 }

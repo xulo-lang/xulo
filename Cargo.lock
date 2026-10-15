@@ -4141,15 +4141,6 @@ dependencies = [
 name = "xulo-parser"
 version = "0.1.0"
 dependencies = [
- "winnow 1.0.4",
- "xulo-core",
- "xulo-lexer",
-]
-
-[[package]]
-name = "xulo-parser-pest"
-version = "0.1.0"
-dependencies = [
  "pest",
  "pest_derive",
  "xulo-core",

@@ -11,7 +11,6 @@
 
 use std::rc::Rc;
 
-use xulo_lexer::tokenize;
 use xulo_parser::parse_program;
 use xulo_runtime::interpreter::Interpreter;
 
@@ -21,20 +20,18 @@ use xulo_runtime::interpreter::Interpreter;
 fn root_alive_after_drop(src: &str) -> bool {
     let interp = Interpreter::new();
     let weak = Rc::downgrade(&interp.root_env());
-    let tokens = tokenize(src).unwrap();
-    let program = parse_program(&tokens).unwrap();
+    let program = parse_program(src).unwrap();
     interp.run(&program).unwrap();
     drop(interp);
     weak.upgrade().is_some()
 }
 
-/// Same shape as the D11 leak, minus the cycle: a bare top-level `print`
-/// registers no function, so the root env is reclaimed on drop. Guards the
-/// `#[ignore]`d D11 test's premise — that a cycle, not interpreter lifetime, is
-/// the cause.
+/// Same shape as the D11 leak, minus the cycle: a top-level `const` registers
+/// no function, so the root env is reclaimed on drop. Guards the `#[ignore]`d
+/// D11 test's premise — that a cycle, not interpreter lifetime, is the cause.
 #[test]
 fn dropping_interpreter_releases_global_env_without_cycle() {
-    assert!(!root_alive_after_drop("print(1)"));
+    assert!(!root_alive_after_drop("const X = 1"));
 }
 
 /// Known D11: registering any top-level `fn` ties its captured closure env

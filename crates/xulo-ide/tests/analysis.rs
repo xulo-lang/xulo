@@ -314,7 +314,6 @@ impl Area for Rectangle {
 fn main() {
     let a = 1
 }
-@Environment let dark: boolean
 ";
     let analysis = analyze_source(src);
     // Outline works off the AST even when semantic analysis reports errors.
@@ -334,7 +333,6 @@ fn main() {
             .any(|s| s.kind == OutlineKind::Impl && s.children.len() == 1)
     );
     assert!(kinds.contains(&("main", OutlineKind::Function, 0)));
-    assert!(kinds.contains(&("dark", OutlineKind::Variable, 0)));
 
     let color = symbols.iter().find(|s| s.name == "Color").unwrap();
     assert_eq!(color.children[0].name, "Red");
@@ -393,10 +391,11 @@ fn diagnostics_map_errors_and_warnings() {
     assert_eq!(diags[0].code.as_deref(), Some("E0002"));
     assert_eq!(diags[0].severity, Severity::Error);
 
+    // There is no separate lexer pass: an invalid character is a parse error.
     let lex = analyze_source("let # = 1");
     let diags = lex.diagnostics();
     assert_eq!(diags.len(), 1);
-    assert_eq!(diags[0].code.as_deref(), Some("E0001"));
+    assert_eq!(diags[0].code.as_deref(), Some("E0002"));
 
     // A trailing `expr;` in a typed function warns instead of erroring.
     let warning_src = "\

@@ -99,6 +99,10 @@ fn collect_decls(statements: &[Statement], tokens: &mut Vec<SemanticToken>) {
                 decl(tokens, fn_def.name_span.clone(), TokenType::Function);
                 collect_decls(&fn_def.body.statements, tokens);
             }
+            Statement::Test(test_def) => {
+                decl(tokens, test_def.name_span.clone(), TokenType::Function);
+                collect_decls(&test_def.body.statements, tokens);
+            }
             Statement::Let(binding) => decl(
                 tokens,
                 binding.name_span.clone(),
@@ -164,6 +168,10 @@ fn collect_decls(statements: &[Statement], tokens: &mut Vec<SemanticToken>) {
                 collect_decls(&try_stmt.catch_block.statements, tokens);
             }
             Statement::Block(block) => collect_decls(&block.statements, tokens),
+            Statement::Defer(d) => match &d.body {
+                xulo_core::ast::DeferBody::Block(b) => collect_decls(&b.statements, tokens),
+                xulo_core::ast::DeferBody::Expr(_) => {}
+            },
             Statement::Return(_)
             | Statement::Assign(_)
             | Statement::Expr(_)

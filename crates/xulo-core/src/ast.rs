@@ -8,6 +8,10 @@ pub struct Program {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Statement {
     Fn(FnDef),
+    /// `test [async] fn name() { … }` — an always-checked, inert test body
+    /// (spec testing.md). The `FnDef` carries the fixed shape: empty params,
+    /// no return type, no generics; `is_async` is the optional marker.
+    Test(FnDef),
     Let(LetBinding),
     Return(ReturnStmt),
     For(ForStmt),
@@ -31,6 +35,9 @@ pub enum Statement {
     Impl(ImplDecl),
     Break,
     Continue,
+    /// `defer <block|expression>`: runs its operand when the enclosing block
+    /// exits (spec: statements/return-and-block.md).
+    Defer(DeferStmt),
 }
 
 /// An expression used as a statement. `has_semicolon` records whether it ended
@@ -65,7 +72,18 @@ pub struct Param {
     pub name: String,
     pub type_annotation: Option<Type>,
     pub default: Option<Expression>,
+    /// Parameter mode: `mut T` / `shared T` (spec: types/function-types.md).
+    /// `None` for the ordinary (default) mode.
+    pub mode: Option<ParamMode>,
     pub span: Range<usize>,
+}
+
+/// A parameter mode: `mut T` (exclusive mutable access) or `shared T`
+/// (concurrent read access). Modes are exact — they do not coerce.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParamMode {
+    Mut,
+    Shared,
 }
 
 /// A `let` or `const` binding. `const` bindings may not be reassigned.
@@ -81,6 +99,9 @@ pub struct LetBinding {
     pub is_const: bool,
     /// When true, the variable can be reassigned after declaration.
     pub is_mutable: bool,
+    /// `let x = shared expr`: the initializer is a shared (concurrently
+    /// accessible) value (spec: concurrency.md).
+    pub is_shared: bool,
     /// `@Memo` value memoization: `@Memo([deps]) let x = expr`. The native
     /// interpreter caches the computed value per (site, deps) and reuses it
     /// when the deps are unchanged; the JS target recomputes on every render
@@ -145,6 +166,8 @@ pub struct ComponentStmt {
     pub name_span: Range<usize>,
     pub args: Vec<CallArg>,
     pub children: Vec<UiElement>,
+    /// Source span of the whole invocation (name through children block).
+    pub span: Range<usize>,
 }
 
 /// A single element in a UI block (component, text, expression, if, for, or grouping).
@@ -331,7 +354,8 @@ pub struct Block {
     pub statements: Vec<Statement>,
 }
 
-/// A `try { ... } catch (e) { ... }` statement.
+/// A `try { ... } catch (e) { ... }` statement. (Removed from the language by
+/// the current spec — kept so legacy ASTs still round-trip through tooling.)
 #[derive(Debug, Clone, PartialEq)]
 pub struct TryStmt {
     pub try_block: Block,
@@ -339,6 +363,21 @@ pub struct TryStmt {
     /// Source span of the catch-variable name (for name-related diagnostics).
     pub catch_var_span: Range<usize>,
     pub catch_block: Block,
+}
+
+/// A `defer <block|expression>` statement: the operand runs when control
+/// leaves the enclosing block (spec: statements/return-and-block.md).
+#[derive(Debug, Clone, PartialEq)]
+pub struct DeferStmt {
+    pub body: DeferBody,
+}
+
+/// The operand of a `defer`: a block or an expression. An operand beginning
+/// with `{` is always a block, never a map literal.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DeferBody {
+    Block(Block),
+    Expr(Expression),
 }
 
 /// An `import` statement.
@@ -419,6 +458,35 @@ pub enum Expression {
         name: String,
         span: Range<usize>,
     },
+    /// A UI component invocation with a children block, used as a value:
+    /// `VStack { Text("a") }`. In statement and child position the parser
+    /// lowers this to `Statement::Component` / `UiElement::Component`.
+    Component(ComponentStmt),
+    /// A tuple literal: `(a, b, c)` (at least two elements).
+    Tuple {
+        items: Vec<Expression>,
+        span: Range<usize>,
+    },
+    /// A typed map literal: `Map<K, V>{ key: value, … }`.
+    TypedMap(Box<TypedMap>),
+    /// A type test: `x is T` / `x is not T`.
+    Is(Box<IsExpr>),
+    /// The `panic(expr)` expression: stops the program with an error.
+    Panic {
+        expr: Box<Expression>,
+        span: Range<usize>,
+    },
+    /// The postfix failure-propagation operator `expr?`.
+    Propagate {
+        expr: Box<Expression>,
+        span: Range<usize>,
+    },
+    /// An arrow closure: `(a, b) => expr`, `x => { … }`, `async x => expr`.
+    Arrow(Box<ArrowClosure>),
+    /// A `spawn` expression: starts a task, thread, process, or service.
+    Spawn(Box<SpawnExpr>),
+    /// A `lock` expression: runs a block over a shared binding.
+    Lock(Box<LockExpr>),
 }
 
 impl Expression {
@@ -443,6 +511,15 @@ impl Expression {
             Expression::Range(r) => &r.span,
             Expression::FnExpr(f) => &f.span,
             Expression::CallValue(c) => &c.span,
+            Expression::Component(c) => &c.span,
+            Expression::Tuple { span, .. } => span,
+            Expression::TypedMap(t) => &t.span,
+            Expression::Is(i) => &i.span,
+            Expression::Panic { span, .. } => span,
+            Expression::Propagate { span, .. } => span,
+            Expression::Arrow(a) => &a.span,
+            Expression::Spawn(s) => &s.span,
+            Expression::Lock(l) => &l.span,
         }
     }
 }
@@ -456,6 +533,98 @@ pub struct FnExpr {
     pub return_type: Option<Type>,
     pub body: Block,
     pub is_async: bool,
+    pub span: Range<usize>,
+}
+
+/// An arrow closure: `(a, b) => expr`, `x => { … }`, or the async forms.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArrowClosure {
+    pub params: Vec<Param>,
+    pub return_type: Option<Type>,
+    pub body: ArrowBody,
+    pub is_async: bool,
+    pub span: Range<usize>,
+}
+
+/// The body of an arrow closure: an expression or a block.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ArrowBody {
+    Expr(Expression),
+    Block(Block),
+}
+
+/// A typed map literal: `Map<K, V>{ key: value, … }`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypedMap {
+    pub key_type: Type,
+    pub value_type: Type,
+    pub entries: Vec<TypedMapEntry>,
+    pub span: Range<usize>,
+}
+
+/// One `key: value` entry of a typed map literal.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypedMapEntry {
+    pub key: Expression,
+    pub value: Expression,
+}
+
+/// A type test: `expr is Type` / `expr is not Type`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct IsExpr {
+    pub expr: Box<Expression>,
+    pub negated: bool,
+    pub type_: Type,
+    pub span: Range<usize>,
+}
+
+/// A `spawn` expression (spec: concurrency.md).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SpawnExpr {
+    pub target: SpawnTarget,
+    pub body: SpawnBody,
+    pub span: Range<usize>,
+}
+
+/// The dispatch target of a `spawn` task form.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SpawnTarget {
+    /// `spawn async { … }`
+    Default,
+    /// `spawn .thread async { … }`
+    Thread,
+    /// `spawn .process async { … }` (task form; the service form uses
+    /// `SpawnBody::Service`).
+    Process,
+    /// `spawn .on(expr) async { … }`
+    On(Box<Expression>),
+}
+
+/// The body of a `spawn` expression: an async block, or the service form
+/// `spawn .process Type { fields }`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SpawnBody {
+    Async(Block),
+    Service {
+        type_name: String,
+        fields: Vec<SpawnField>,
+    },
+}
+
+/// One `name: value` field initializer of a spawn service.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SpawnField {
+    pub name: String,
+    pub value: Expression,
+}
+
+/// A `lock name { … }` expression: a critical section over a shared binding.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LockExpr {
+    pub name: String,
+    /// Source span of the locked binding name.
+    pub name_span: Range<usize>,
+    pub body: Block,
     pub span: Range<usize>,
 }
 
@@ -512,13 +681,25 @@ pub struct MatchExpr {
 #[derive(Debug, Clone, PartialEq)]
 pub struct MatchArm {
     pub pattern: MatchPattern,
-    pub value: Expression,
+    /// Optional guard: `pattern if condition => body` (spec: control-flow.md).
+    /// Evaluated only when the pattern has matched.
+    pub guard: Option<Expression>,
+    /// The arm body: an expression or a block.
+    pub value: MatchBody,
     /// Source span of the whole arm (pattern through value).
     pub span: Range<usize>,
 }
 
-/// A `match` arm pattern: literal, enum member, enum member with a payload
-/// binding, or the `_` wildcard.
+/// The body of a `match` arm: `pattern => Expression` or `pattern => { … }`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum MatchBody {
+    Expr(Expression),
+    Block(Block),
+}
+
+/// A `match` arm pattern: literal, range, enum member, enum member with a
+/// payload binding, struct pattern, type pattern, binding name, or-pattern,
+/// parenthesized alternative, or the `_` wildcard.
 #[derive(Debug, Clone, PartialEq)]
 pub enum MatchPattern {
     Literal(Literal),
@@ -527,10 +708,50 @@ pub enum MatchPattern {
         enum_name: String,
         variant: String,
         /// One binding per payload parameter, in order; `_` discards a slot.
+        /// Only plain identifiers and `_` are supported in payload slots.
         bindings: Vec<String>,
         span: Range<usize>,
     },
+    /// A numeric range pattern: `0..<5` or `1...3`.
+    Range {
+        start: f64,
+        end: f64,
+        end_inclusive: bool,
+        span: Range<usize>,
+    },
+    /// A struct pattern: `Rect(w, h)` (positional bindings).
+    Struct {
+        name: String,
+        bindings: Vec<MatchPattern>,
+        span: Range<usize>,
+    },
+    /// A type pattern: `String s`, `Unknown _`, or `String? p`; with a union
+    /// designator `String | Int v`. `type_name` is the (possibly rendered
+    /// union) designator text.
+    TypePattern {
+        type_name: String,
+        optional: bool,
+        binder: PatternBinder,
+        span: Range<usize>,
+    },
+    /// A binding pattern: a bare identifier binds the matched value.
+    Binding {
+        name: String,
+        span: Range<usize>,
+    },
+    /// An or-pattern: `0 | 1`, `Shape::Circle(_) | Shape::Dot(_)`.
+    Or {
+        patterns: Vec<MatchPattern>,
+        span: Range<usize>,
+    },
     Wildcard,
+}
+
+/// The binder of a type pattern: `_` (discard) or a name.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PatternBinder {
+    Wildcard,
+    Binding(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -659,8 +880,12 @@ pub enum Type {
     Optional(Box<Type>),
     Union(Vec<Type>),
     Intersection(Vec<Type>),
-    /// A structural object type: `{ width: number }`.
+    /// A structural object type: `{ width: number }`. (Removed from the
+    /// language by the current spec — maps replaced object types; kept for
+    /// legacy ASTs.)
     ObjectType(Vec<(String, Type)>),
+    /// A positional tuple type: `(Int, String)` (at least two elements).
+    Tuple(Vec<Type>),
     /// A function *type*: `fn(a: string): boolean`.
     FnSig {
         params: Vec<Type>,
@@ -701,6 +926,14 @@ impl Type {
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
+            Type::Tuple(parts) => format!(
+                "({})",
+                parts
+                    .iter()
+                    .map(|p| p.name())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
             Type::FnSig { params, ret } => format!(
                 "fn({}){}",
                 params
@@ -723,6 +956,10 @@ pub enum UnaryOperator {
     Not,
     Neg,
     BitNot,
+    /// `move expr`: transfer ownership out of a binding.
+    Move,
+    /// `copy expr`: deep-copy the value.
+    Copy,
 }
 
 impl UnaryOperator {
@@ -731,6 +968,8 @@ impl UnaryOperator {
             UnaryOperator::Not => "!",
             UnaryOperator::Neg => "-",
             UnaryOperator::BitNot => "~",
+            UnaryOperator::Move => "move",
+            UnaryOperator::Copy => "copy",
         }
     }
 }

@@ -92,7 +92,7 @@ fn test_runtime_fn_all_variants() {
 
 #[test]
 fn test_ir_type_all_variants() {
-    let types = vec![
+    let types = [
         IrType::Void,
         IrType::Bool,
         IrType::I64,

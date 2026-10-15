@@ -6,9 +6,9 @@ use std::rc::Rc;
 
 use clap::{Parser, Subcommand};
 
-use xulo_core::ast::ImportSpec;
+use xulo_core::ast::{FnDef, ImportSpec, Statement};
 use xulo_core::diagnostics;
-use xulo_core::error::XuloError;
+use xulo_core::error::{ErrorKind, XuloError};
 use xulo_runtime::interpreter::{Interpreter, NativeFn, RunError};
 use xulo_runtime::value::Value;
 
@@ -34,6 +34,8 @@ pub enum Commands {
     },
     /// Only run lexical + syntax + semantic checks
     Check { file: PathBuf },
+    /// Run the file's `test fn` declarations and report pass/fail per test
+    Test { file: PathBuf },
     /// Format a .xulo file in place (comments are not preserved)
     Fmt { file: PathBuf },
     /// Start an interactive REPL
@@ -84,6 +86,7 @@ fn run_command(command: Commands) -> ExitCode {
             None => native_run(&file),
         },
         Commands::Check { file } => check_file(&file),
+        Commands::Test { file } => test_file(&file),
         Commands::Fmt { file } => fmt_file(&file),
         Commands::Repl => repl(),
         Commands::Build { file, output } => build_native(&file, output),
@@ -300,11 +303,169 @@ fn check_file(file: &Path) -> ExitCode {
     }
 }
 
+/// Run the entry module's `test fn` declarations (spec testing.md).
+///
+/// Each test runs in a fresh interpreter with its dependencies re-executed,
+/// so module-level state cannot leak between tests. A test passes when its
+/// body completes (an async test: its task settles fulfilled) and fails on a
+/// panic, a failed `assert`, or a rejected async task. Prints one line per
+/// test and a summary; exits non-zero if any test failed.
+fn test_file(file: &Path) -> ExitCode {
+    let mut loaded = match xulo_compiler::module::load(file) {
+        Ok(l) => l,
+        Err(err) => {
+            let src_file = err.file.clone().unwrap_or_else(|| file.to_path_buf());
+            let source = std::fs::read_to_string(&src_file).unwrap_or_default();
+            print_compile_error(&err, &source, &src_file);
+            return ExitCode::from(1);
+        }
+    };
+    let warnings = match xulo_compiler::module::analyze(&mut loaded) {
+        Ok(w) => w,
+        Err(err) => {
+            let src_file = err.file.clone().unwrap_or_else(|| file.to_path_buf());
+            let source = std::fs::read_to_string(&src_file).unwrap_or_default();
+            print_compile_error(&err, &source, &src_file);
+            return ExitCode::from(1);
+        }
+    };
+    xulo_compiler::module::apply_trait_dispatch(&mut loaded);
+    print_warnings(&warnings, None);
+
+    let entry = &loaded.modules[loaded.entry];
+    let tests: Vec<&FnDef> = entry
+        .program
+        .statements
+        .iter()
+        .filter_map(|s| match s {
+            Statement::Test(f) => Some(f),
+            _ => None,
+        })
+        .collect();
+    if tests.is_empty() {
+        println!("no tests found in {}", entry.file.display());
+        return ExitCode::SUCCESS;
+    }
+
+    // External (`@xulo/ui`) imports bind to `null` placeholders, as in
+    // `native_run`.
+    let placeholders: Vec<(String, Value)> = loaded
+        .external_imports
+        .iter()
+        .filter(|i| !i.type_only)
+        .flat_map(|i| import_binding_names(&i.spec))
+        .map(|name| (name, Value::Null))
+        .collect();
+
+    let mut passed = 0usize;
+    let mut failed = 0usize;
+    for test in tests {
+        // Fresh interpreter per test: re-execute dependencies (never `main`),
+        // then run the entry module and invoke this one test body.
+        let interp = Interpreter::new();
+        let mut export_maps: Vec<HashMap<String, Value>> = Vec::with_capacity(loaded.modules.len());
+        let mut setup_err: Option<XuloError> = None;
+        for (idx, module) in loaded.modules.iter().enumerate() {
+            if idx == loaded.entry {
+                break;
+            }
+            let mut imports: Vec<(String, Value)> = Vec::new();
+            let mut resolve_err: Option<String> = None;
+            for binding in &module.imports {
+                if binding.type_only {
+                    continue;
+                }
+                match resolve_import(binding, &export_maps, &loaded) {
+                    Ok(mut pairs) => imports.append(&mut pairs),
+                    Err(msg) => {
+                        resolve_err = Some(msg);
+                        break;
+                    }
+                }
+            }
+            imports.extend_from_slice(&placeholders);
+            let result = match resolve_err {
+                Some(msg) => Err(XuloError::new(ErrorKind::Runtime, msg)),
+                None => interp
+                    .exec_module(&module.program, &imports, false)
+                    .map_err(|e| match e {
+                        RunError::Err(e) => e,
+                        RunError::Throw(v) => XuloError::new(
+                            ErrorKind::Runtime,
+                            format!("uncaught exception: {}", v.format()),
+                        ),
+                    }),
+            };
+            match result {
+                Ok(exports) => {
+                    let mut map = HashMap::new();
+                    for (name, value) in exports.bindings {
+                        map.insert(name, value);
+                    }
+                    export_maps.push(map);
+                }
+                Err(err) => {
+                    setup_err = Some(err);
+                    break;
+                }
+            }
+        }
+        if let Some(err) = setup_err {
+            eprintln!("test {} ... FAILED", test.name);
+            let src_file = err.file.clone().unwrap_or_else(|| entry.file.clone());
+            let source = std::fs::read_to_string(&src_file).unwrap_or_default();
+            print_compile_error(&err, &source, &src_file);
+            failed += 1;
+            continue;
+        }
+        let mut imports: Vec<(String, Value)> = Vec::new();
+        let mut entry_import_err: Option<String> = None;
+        for binding in &entry.imports {
+            if binding.type_only {
+                continue;
+            }
+            match resolve_import(binding, &export_maps, &loaded) {
+                Ok(mut pairs) => imports.append(&mut pairs),
+                Err(msg) => {
+                    entry_import_err = Some(msg);
+                    break;
+                }
+            }
+        }
+        if let Some(msg) = entry_import_err {
+            eprintln!("test {} ... FAILED", test.name);
+            eprintln!("error: {msg}");
+            failed += 1;
+            continue;
+        }
+        imports.extend_from_slice(&placeholders);
+        match interp.run_test(&entry.program, &imports, test) {
+            Ok(_printed) => {
+                println!("test {} ... ok", test.name);
+                passed += 1;
+            }
+            Err(err) => {
+                eprintln!("test {} ... FAILED", test.name);
+                let src_file = err.file.clone().unwrap_or_else(|| entry.file.clone());
+                let source = std::fs::read_to_string(&src_file).unwrap_or_default();
+                print_compile_error(&err, &source, &src_file);
+                failed += 1;
+            }
+        }
+    }
+    println!("{passed} passed, {failed} failed");
+    if failed > 0 {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
 /// Keywords, type names, and REPL commands offered by `Tab` completion.
 const REPL_CANDIDATES: &[&str] = &[
     "exit", "clear", "run", "fn", "let", "const", "return", "if", "else", "for", "in", "while",
     "match", "print", "type", "enum", "null", "true", "false", "and", "or", "await", "async",
-    "try", "catch", "throw", "import", "pub", "use", "from", "as",
+    "try", "catch", "throw", "import", "pub", "use", "from", "as", "test",
 ];
 
 /// Completion/history helper for the REPL line editor.
@@ -563,14 +724,7 @@ fn repl_run(session: &mut String, pending: &str) -> bool {
 /// buffer failed to compile (the entry must be rolled back), or `Err(false)`
 /// when it compiled but raised a runtime error (the entry is kept).
 fn repl_execute(buffer: &str, render_source: &str) -> Result<(), bool> {
-    let tokens = match xulo_lexer::tokenize(buffer) {
-        Ok(t) => t,
-        Err(err) => {
-            print_compile_error(&err, render_source, Path::new("<repl>"));
-            return Err(true);
-        }
-    };
-    let mut ast = match xulo_parser::parse_program(&tokens) {
+    let mut ast = match xulo_parser::parse_program(buffer) {
         Ok(p) => p,
         Err(err) => {
             print_compile_error(&err, render_source, Path::new("<repl>"));

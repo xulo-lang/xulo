@@ -2,10 +2,11 @@
 name = "xulo-parser"
 version.workspace = true
 edition.workspace = true
+description = "pest.rs-based parser for Xulo, implementing the spec grammar"
 
 [dependencies]
-winnow = { workspace = true }
+pest = "2.7"
+pest_derive = "2.7"
 xulo-core = { workspace = true }
-xulo-lexer = { workspace = true }
 
 [dev-dependencies]

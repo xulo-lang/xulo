@@ -23,6 +23,12 @@ struct LoopContext {
     continue_label: Label,
 }
 
+impl Default for IrGenerator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl IrGenerator {
     pub fn new() -> Self {
         IrGenerator {
@@ -39,13 +45,9 @@ impl IrGenerator {
 
     pub fn generate(&mut self, program: &Program) -> Result<IrModule, XuloError> {
         // 首先注册所有函数（但不生成函数体）
-        let mut main_fn_def: Option<FnDef> = None;
         for stmt in &program.statements {
             match stmt {
                 Statement::Fn(f) => {
-                    if f.name == "main" {
-                        main_fn_def = Some(f.clone());
-                    }
                     let _func_id = self.register_function(f)?;
                 }
                 Statement::Export(export) => {
@@ -179,42 +181,6 @@ impl IrGenerator {
         Ok(())
     }
 
-    fn generate_program_body(&mut self, program: &Program) -> Result<(), XuloError> {
-        let func_idx = self.current_func.unwrap();
-        
-        // 注册所有函数定义
-        for stmt in &program.statements {
-            if let Statement::Fn(f) = stmt {
-                let _func_id = self.register_function(f)?;
-                let local = self.module.functions[func_idx].add_local(IrType::Pointer);
-                self.locals.insert(f.name.clone(), local);
-            }
-        }
-
-        // 生成语句
-        for stmt in &program.statements {
-            match stmt {
-                Statement::Fn(_) => {} // 已经注册过了
-                Statement::Export(export) => {
-                    if let ExportItem::Fn(f) = &export.item {
-                        let _func_id = self.register_function(f)?;
-                        let local = self.module.functions[func_idx].add_local(IrType::Pointer);
-                        self.locals.insert(f.name.clone(), local);
-                    }
-                }
-                _ => {
-                    self.generate_statement(stmt)?;
-                }
-            }
-        }
-
-        // 添加默认返回
-        let func = &mut self.module.functions[func_idx];
-        func.instructions.push(Instruction::Return(None));
-
-        Ok(())
-    }
-
     fn generate_statement(&mut self, stmt: &Statement) -> Result<(), XuloError> {
         match stmt {
             Statement::Let(binding) => self.generate_let(binding),
@@ -256,10 +222,10 @@ impl IrGenerator {
         // 在生成表达式之前，先记录源级类型
         if let Some(ann) = &binding.type_annotation {
             self.source_types.insert(binding.name.clone(), ann.clone());
-        } else if let Some(ref expr) = binding.value {
-            if let Some(src_ty) = self.infer_source_type_from_expr(expr) {
-                self.source_types.insert(binding.name.clone(), src_ty);
-            }
+        } else if let Some(ref expr) = binding.value
+            && let Some(src_ty) = self.infer_source_type_from_expr(expr)
+        {
+            self.source_types.insert(binding.name.clone(), src_ty);
         }
 
         // 先生成表达式以获取实际类型
@@ -317,10 +283,10 @@ impl IrGenerator {
             Operand::Local(local_id) => {
                 // 从 source_types 查找变量名
                 for (name, lid) in &self.locals {
-                    if lid == local_id {
-                        if let Some(src_ty) = self.source_types.get(name) {
-                            return matches!(src_ty, Type::List(_));
-                        }
+                    if lid == local_id
+                        && let Some(src_ty) = self.source_types.get(name)
+                    {
+                        return matches!(src_ty, Type::List(_));
                     }
                 }
                 // 检查是否是 NewArray 指令的结果
@@ -372,38 +338,13 @@ impl IrGenerator {
         }
     }
 
-    /// 从操作数推断源级类型（用于 print 类型标签）
-    fn infer_source_type(&self, operand: &Operand) -> Option<Type> {
-        match operand {
-            Operand::Const(val) => {
-                match val {
-                    IrValue::I64(_) => Some(Type::Number),
-                    IrValue::F64(_) => Some(Type::Number),
-                    IrValue::Bool(_) => Some(Type::Boolean),
-                    IrValue::String(_) => Some(Type::String),
-                    IrValue::Null => Some(Type::Null),
-                }
-            }
-            Operand::Local(local_id) => {
-                // 从 source_types 查找
-                for (name, lid) in &self.locals {
-                    if lid == local_id {
-                        return self.source_types.get(name).cloned();
-                    }
-                }
-                None
-            }
-        }
-    }
 
     /// 从 AST 表达式直接推断源级类型（不依赖已生成的 IR）
     fn infer_source_type_from_expr(&self, expr: &Expression) -> Option<Type> {
         match expr {
             Expression::Literal { value, .. } => {
                 match value {
-                    Literal::Number(n) => {
-                        if n.fract() == 0.0 { Some(Type::Number) } else { Some(Type::Number) }
-                    }
+                    Literal::Number(_) => Some(Type::Number),
                     Literal::Boolean(_) => Some(Type::Boolean),
                     Literal::String(_) => Some(Type::String),
                     Literal::Null => Some(Type::Null),
@@ -462,10 +403,8 @@ impl IrGenerator {
             }
             Expression::If(if_expr) => {
                 // 取 then 分支的类型
-                if let Some(last) = if_expr.then_branch.statements.last() {
-                    if let Statement::Expr(e) = last {
-                        return self.infer_source_type_from_expr(&e.expr);
-                    }
+                if let Some(Statement::Expr(e)) = if_expr.then_branch.statements.last() {
+                    return self.infer_source_type_from_expr(&e.expr);
                 }
                 None
             }
@@ -473,51 +412,6 @@ impl IrGenerator {
         }
     }
 
-    /// 确定 print 的类型标签
-    /// tag: 0=string, 1=int, 2=float, 3=array, 4=object, 5=bool, 6=null
-    fn determine_print_tag(&self, operand: &Operand, func_idx: usize) -> i64 {
-        match operand {
-            Operand::Const(val) => {
-                match val {
-                    IrValue::String(_) => 0,
-                    IrValue::I64(_) => 1,
-                    IrValue::F64(_) => 2,
-                    IrValue::Bool(_) => 5,
-                    IrValue::Null => 6,
-                }
-            }
-            Operand::Local(local_id) => {
-                // 先检查 IR 类型
-                let ir_ty = self.module.functions[func_idx].locals.iter()
-                    .find(|(id, _)| id == local_id)
-                    .map(|(_, ty)| ty.clone());
-                match ir_ty {
-                    Some(IrType::I64) => 1,
-                    Some(IrType::F64) => 2,
-                    Some(IrType::Bool) => 5,
-                    Some(IrType::Pointer) => {
-                        // Pointer 类型 - 需要区分 string/array/object
-                        // 从 source_types 查找
-                        for (name, lid) in &self.locals {
-                            if lid == local_id {
-                                if let Some(src_ty) = self.source_types.get(name) {
-                                    return match src_ty {
-                                        Type::List(_) => 3,
-                                        Type::Object | Type::ObjectType(_) => 4,
-                                        Type::Named(_) => -1, // 泛型参数，运行时自动检测
-                                        _ => 0, // 默认为 string
-                                    };
-                                }
-                            }
-                        }
-                        // 无法确定，运行时自动检测
-                        -1
-                    }
-                    _ => 0,
-                }
-            }
-        }
-    }
 
     /// 确定表达式的类型标签（用于数组/对象元素存储）
     /// tag: 0=string, 1=int, 2=float, 3=array, 4=object, 5=bool, 6=null
@@ -603,6 +497,7 @@ impl IrGenerator {
                 match &unop.operator {
                     UnaryOperator::Not => 5,
                     UnaryOperator::Neg | UnaryOperator::BitNot => self.determine_element_tag(&unop.operand),
+                    UnaryOperator::Move | UnaryOperator::Copy => self.determine_element_tag(&unop.operand),
                 }
             }
             Expression::Call(call) => {
@@ -837,6 +732,7 @@ impl IrGenerator {
             UnaryOperator::Not => IrType::Bool,
             UnaryOperator::Neg => IrType::I64,
             UnaryOperator::BitNot => IrType::I64,
+            UnaryOperator::Move | UnaryOperator::Copy => IrType::Pointer,
         };
 
         let local = self.module.functions[func_idx].add_local(ty);
@@ -845,6 +741,24 @@ impl IrGenerator {
             UnaryOperator::Not => Instruction::Not { dst: local, operand },
             UnaryOperator::Neg => Instruction::Neg { dst: local, operand },
             UnaryOperator::BitNot => Instruction::BitNot { dst: local, operand },
+            UnaryOperator::Move | UnaryOperator::Copy => {
+                // `move`/`copy` are alias copies at the IR level: materialize
+                // the operand into a fresh local.
+                Instruction::GetLocal {
+                    dst: local,
+                    src: match operand {
+                        Operand::Local(id) => id,
+                        _ => {
+                            // Non-local operand (const/index): fall back to a
+                            // no-op copy through SetLocal.
+                            self.module.functions[func_idx].instructions.push(
+                                Instruction::SetLocal { dst: local, src: operand },
+                            );
+                            return Ok(Operand::Local(local));
+                        }
+                    },
+                }
+            }
         };
 
         self.module.functions[func_idx].instructions.push(instr);
@@ -1018,28 +932,24 @@ impl IrGenerator {
 
         self.module.functions[func_idx].instructions.push(Instruction::Label(then_label));
         // 简化处理：只取最后一个表达式
-        if let Some(last_stmt) = if_expr.then_branch.statements.last() {
-            if let Statement::Expr(e) = last_stmt {
-                let val = self.generate_expression(&e.expr)?;
-                self.module.functions[func_idx].instructions.push(Instruction::SetLocal {
-                    dst: result_local,
-                    src: val,
-                });
-            }
+        if let Some(Statement::Expr(e)) = if_expr.then_branch.statements.last() {
+            let val = self.generate_expression(&e.expr)?;
+            self.module.functions[func_idx].instructions.push(Instruction::SetLocal {
+                dst: result_local,
+                src: val,
+            });
         }
         self.module.functions[func_idx].instructions.push(Instruction::Jump(end_label));
 
         self.module.functions[func_idx].instructions.push(Instruction::Label(else_label));
-        if let Some(else_branch) = &if_expr.else_branch {
-            if let Some(last_stmt) = else_branch.statements.last() {
-                if let Statement::Expr(e) = last_stmt {
-                    let val = self.generate_expression(&e.expr)?;
-                    self.module.functions[func_idx].instructions.push(Instruction::SetLocal {
-                        dst: result_local,
-                        src: val,
-                    });
-                }
-            }
+        if let Some(else_branch) = &if_expr.else_branch
+            && let Some(Statement::Expr(e)) = else_branch.statements.last()
+        {
+            let val = self.generate_expression(&e.expr)?;
+            self.module.functions[func_idx].instructions.push(Instruction::SetLocal {
+                dst: result_local,
+                src: val,
+            });
         }
         self.module.functions[func_idx].instructions.push(Instruction::Label(end_label));
 
@@ -1054,13 +964,8 @@ impl IrGenerator {
         self.locals.insert(for_stmt.iter_var.clone(), iter_local);
 
         // 推断迭代变量的源级类型
-        if let Some(iterable_ty) = self.infer_source_type_from_expr(&for_stmt.iterable) {
-            match iterable_ty {
-                Type::List(inner) => {
-                    self.source_types.insert(for_stmt.iter_var.clone(), *inner);
-                }
-                _ => {}
-            }
+        if let Some(Type::List(inner)) = self.infer_source_type_from_expr(&for_stmt.iterable) {
+            self.source_types.insert(for_stmt.iter_var.clone(), *inner);
         }
 
         let start_label = self.module.functions[func_idx].add_label();
@@ -1340,7 +1245,8 @@ impl IrGenerator {
                 Type::String | Type::Null | Type::Object | Type::List(_)
                 | Type::Named(_) | Type::Literal(_) | Type::Optional(_)
                 | Type::Union(_) | Type::Intersection(_) | Type::ObjectType(_)
-                | Type::FnSig { .. } | Type::Async(_) | Type::Any => IrType::Pointer,
+                | Type::FnSig { .. } | Type::Async(_) | Type::Any
+                | Type::Tuple(_) => IrType::Pointer,
                 Type::Number => IrType::I64,
             },
         }

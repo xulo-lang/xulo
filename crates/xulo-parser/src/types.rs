@@ -1,35 +1,25 @@
+use pest::iterators::Pair;
+
 use xulo_core::ast::Type;
-use xulo_lexer::token::Token;
+use xulo_core::error::XuloError;
 
-use super::expression::decode_string;
-use super::{In, Pr, backtrack_p, enter_nest, ident_name, opt_tk, tk, verified_tk};
+use super::expr::decode_string;
+use super::{Rule, err, span_of};
 
-/// A full type expression:
-///
-/// ```text
-/// type_expr       = union
-/// union           = intersection { "|" intersection }
-/// intersection    = postfix { "&" postfix }
-/// postfix         = primary [ "?" ]
-/// primary         = "string" | "number" | "boolean" | "null" | "object"
-///                 | "list" "<" type_expr ">"
-///                 | "fn" "(" [ fn_param { "," fn_param } ] ")" [ ":" type_expr ]
-///                 | "{" [ field { "," field } [ "," ] ] "}"
-///                 | string_literal
-///                 | identifier
-///                 | "(" type_expr ")"
-/// field           = identifier ":" type_expr
-/// fn_param        = [ identifier ":" ] type_expr
-/// ```
-pub fn type_expr(input: &mut In<'_>) -> Pr<Type> {
-    let _guard = enter_nest(input)?;
-    union(input)
+pub(crate) type R<T> = Result<T, XuloError>;
+
+/// Lower a `type_expr` pair (spec: `Type`).
+pub(crate) fn type_expr(pair: Pair<'_, Rule>) -> R<Type> {
+    let inner = single(pair);
+    check_rule(&inner, Rule::union_type)?;
+    union_type(inner)
 }
 
-fn union(input: &mut In<'_>) -> Pr<Type> {
-    let mut parts = vec![intersection(input)?];
-    while opt_tk(input, Token::Pipe) {
-        parts.push(intersection(input)?);
+fn union_type(pair: Pair<'_, Rule>) -> R<Type> {
+    let mut parts = Vec::new();
+    for inner in pair.into_inner() {
+        check_rule(&inner, Rule::intersection_type)?;
+        parts.push(intersection_type(inner)?);
     }
     if parts.len() == 1 {
         Ok(parts.pop().unwrap())
@@ -38,10 +28,11 @@ fn union(input: &mut In<'_>) -> Pr<Type> {
     }
 }
 
-fn intersection(input: &mut In<'_>) -> Pr<Type> {
-    let mut parts = vec![postfix(input)?];
-    while opt_tk(input, Token::Amp) {
-        parts.push(postfix(input)?);
+fn intersection_type(pair: Pair<'_, Rule>) -> R<Type> {
+    let mut parts = Vec::new();
+    for inner in pair.into_inner() {
+        check_rule(&inner, Rule::postfix_type)?;
+        parts.push(postfix_type(inner)?);
     }
     if parts.len() == 1 {
         Ok(parts.pop().unwrap())
@@ -50,117 +41,135 @@ fn intersection(input: &mut In<'_>) -> Pr<Type> {
     }
 }
 
-fn postfix(input: &mut In<'_>) -> Pr<Type> {
-    let ty = primary(input)?;
-    if opt_tk(input, Token::Question) {
+fn postfix_type(pair: Pair<'_, Rule>) -> R<Type> {
+    let mut inner = pair.into_inner();
+    let primary = inner.next().expect("postfix_type always has a primary");
+    check_rule(&primary, Rule::primary_type)?;
+    let ty = primary_type(primary)?;
+    let optional = inner.any(|p| p.as_rule() == Rule::opt_question);
+    if optional {
         Ok(Type::Optional(Box::new(ty)))
     } else {
         Ok(ty)
     }
 }
 
-fn primary(input: &mut In<'_>) -> Pr<Type> {
-    match input.first().map(|t| t.kind) {
-        Some(Token::Null) => {
-            tk(input, Token::Null)?;
-            Ok(Type::Null)
-        }
-        Some(Token::Fn) => fn_type(input),
-        Some(Token::LBrace) => object_type(input),
-        Some(Token::String) => {
-            let t = verified_tk(input, Token::String)?;
-            Ok(Type::Literal(decode_string(&t.text)))
-        }
-        Some(Token::Ident) => {
-            let t = verified_tk(input, Token::Ident)?;
-            Ok(match t.text.as_str() {
-                "string" => Type::String,
-                "number" => Type::Number,
-                "boolean" => Type::Boolean,
-                "object" => Type::Object,
-                "list" => {
-                    if opt_tk(input, Token::Lt) {
-                        let inner = type_expr(input)?;
-                        tk(input, Token::Gt)?;
-                        Type::List(Box::new(inner))
-                    } else {
-                        Type::List(Box::new(Type::Any))
-                    }
-                }
-                name => {
-                    // Generic named type: `Result<T>` erases to the named type.
-                    if opt_tk(input, Token::Lt) {
-                        if !matches!(input.first().map(|t| t.kind), Some(Token::Gt)) {
-                            loop {
-                                type_expr(input)?;
-                                if !opt_tk(input, Token::Comma) {
-                                    break;
-                                }
-                            }
-                        }
-                        tk(input, Token::Gt)?;
-                    }
-                    Type::Named(name.to_string())
-                }
-            })
-        }
-        Some(Token::LParen) => {
-            tk(input, Token::LParen)?;
-            let ty = type_expr(input)?;
-            tk(input, Token::RParen)?;
-            Ok(ty)
-        }
-        _ => Err(backtrack_p(input)),
-    }
-}
-
-fn object_type(input: &mut In<'_>) -> Pr<Type> {
-    tk(input, Token::LBrace)?;
-    let mut fields = Vec::new();
-    loop {
-        if matches!(input.first().map(|t| t.kind), Some(Token::RBrace)) {
-            break;
-        }
-        let name = ident_name(input)?;
-        tk(input, Token::Colon)?;
-        let ty = type_expr(input)?;
-        fields.push((name, ty));
-        opt_tk(input, Token::Comma);
-    }
-    tk(input, Token::RBrace)?;
-    Ok(Type::ObjectType(fields))
-}
-
-fn fn_type(input: &mut In<'_>) -> Pr<Type> {
-    tk(input, Token::Fn)?;
-    tk(input, Token::LParen)?;
-    let mut params = Vec::new();
-    if !matches!(input.first().map(|t| t.kind), Some(Token::RParen)) {
-        loop {
-            params.push(fn_param(input)?);
-            if !opt_tk(input, Token::Comma) {
-                break;
+fn primary_type(pair: Pair<'_, Rule>) -> R<Type> {
+    let inner = single(pair);
+    match inner.as_rule() {
+        Rule::named_type => named_type(inner),
+        Rule::function_type => function_type(inner),
+        Rule::literal_type => literal_type(inner),
+        Rule::paren_or_tuple_type => {
+            let mut parts = Vec::new();
+            for t in inner.into_inner() {
+                check_rule(&t, Rule::type_expr)?;
+                parts.push(type_expr(t)?);
+            }
+            if parts.len() == 1 {
+                Ok(parts.pop().expect("one type"))
+            } else {
+                Ok(Type::Tuple(parts))
             }
         }
+        _ => unreachable!("primary_type alternative {:?}", inner.as_rule()),
     }
-    tk(input, Token::RParen)?;
-    let ret = if opt_tk(input, Token::Colon) {
-        Some(Box::new(type_expr(input)?))
-    } else {
-        None
-    };
+}
+
+fn named_type(pair: Pair<'_, Rule>) -> R<Type> {
+    let mut inner = pair.into_inner();
+    let name_pair = inner.next().expect("named_type has an identifier");
+    check_rule(&name_pair, Rule::identifier)?;
+    let name = name_pair.as_str().to_string();
+    let args = inner.next();
+
+    match name.as_str() {
+        "string" => Ok(Type::String),
+        "number" => Ok(Type::Number),
+        "boolean" => Ok(Type::Boolean),
+        "object" => Ok(Type::Object),
+        "list" | "List" => {
+            let Some(type_list) = args else {
+                return Ok(Type::List(Box::new(Type::Any)));
+            };
+            check_rule(&type_list, Rule::type_args)?;
+            let mut items = Vec::new();
+            for t in single(type_list).into_inner() {
+                check_rule(&t, Rule::type_expr)?;
+                items.push(type_expr(t)?);
+            }
+            let inner_ty = items.into_iter().next().unwrap_or(Type::Any);
+            Ok(Type::List(Box::new(inner_ty)))
+        }
+        _ => {
+            // Generic named type: `Result<T>` erases its arguments.
+            if let Some(type_list) = args {
+                check_rule(&type_list, Rule::type_args)?;
+                for t in single(type_list).into_inner() {
+                    check_rule(&t, Rule::type_expr)?;
+                    type_expr(t)?;
+                }
+            }
+            Ok(Type::Named(name))
+        }
+    }
+}
+
+fn function_type(pair: Pair<'_, Rule>) -> R<Type> {
+    let mut params = Vec::new();
+    let mut ret = None;
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::kw_async | Rule::kw_fn => {}
+            Rule::fn_type_params => {
+                for p in inner.into_inner() {
+                    check_rule(&p, Rule::fn_type_param)?;
+                    params.push(fn_type_param(p)?);
+                }
+            }
+            Rule::type_expr => ret = Some(Box::new(type_expr(inner)?)),
+            _ => unreachable!("function_type child {:?}", inner.as_rule()),
+        }
+    }
     Ok(Type::FnSig { params, ret })
 }
 
-/// A function-type parameter: either a bare type or a `name: type` pair.
-fn fn_param(input: &mut In<'_>) -> Pr<Type> {
-    let is_named = matches!(input.first().map(|t| t.kind), Some(Token::Ident))
-        && matches!(input.get(1).map(|t| t.kind), Some(Token::Colon));
-    if is_named {
-        let _name = ident_name(input)?;
-        tk(input, Token::Colon)?;
-        type_expr(input)
+fn fn_type_param(pair: Pair<'_, Rule>) -> R<Type> {
+    let mut ty = None;
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::ident_raw | Rule::param_mode => {}
+            Rule::type_expr => ty = Some(type_expr(inner)?),
+            _ => unreachable!("fn_type_param child {:?}", inner.as_rule()),
+        }
+    }
+    Ok(ty.unwrap_or(Type::Any))
+}
+
+fn literal_type(pair: Pair<'_, Rule>) -> R<Type> {
+    let inner = single(pair);
+    match inner.as_rule() {
+        Rule::string_literal => Ok(Type::Literal(decode_string(inner.as_str()))),
+        Rule::number_literal => Ok(Type::Literal(inner.as_str().to_string())),
+        Rule::boolean_literal => Ok(Type::Boolean),
+        _ => unreachable!("literal_type alternative {:?}", inner.as_rule()),
+    }
+}
+
+
+pub(crate) fn single(pair: Pair<'_, Rule>) -> Pair<'_, Rule> {
+    pair.into_inner()
+        .next()
+        .expect("expected exactly one inner pair")
+}
+
+pub(crate) fn check_rule(pair: &Pair<'_, Rule>, expected: Rule) -> R<()> {
+    if pair.as_rule() == expected {
+        Ok(())
     } else {
-        type_expr(input)
+        Err(err(
+            format!("expected {expected:?}, found {:?}", pair.as_rule()),
+            span_of(pair),
+        ))
     }
 }

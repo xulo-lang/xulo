@@ -1,11 +1,11 @@
 // Trait 显式派发：`Trait::method(recv)` 静态解析到 `impl` 方法。
 trait Area {
-    fn area(self): number
+    fn area(self): number;
     fn perimeter(self): number
 }
 
-type Rectangle = { w: number, h: number }
-type Circle = { r: number }
+type Rectangle = object
+type Circle = object
 
 impl Area for Rectangle {
     fn area(self): number { self.w * self.h }

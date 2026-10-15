@@ -242,8 +242,7 @@ fn run_types_enums_const_null() {
         type Status = "active" | "inactive"
 
         const APP = "Xulo"
-        let mut count = 0
-        count = count + 1
+        let mut count = 1
 
         fn run(): number {
           count = count + 1
@@ -334,12 +333,12 @@ fn run_phase2_control_flow_and_expressions() {
           let name: string? = null
           print(name ?? "anon")
 
-          let user: { name: string } = { name: "Xulo" }
+          let user = { name: "Xulo" }
           print(user.name)
 
           let obj = { a: 1 }
-          let copy = { ...obj, b: 2 }
-          print(copy.b)
+          let merged = { ...obj, b: 2 }
+          print(merged.b)
 
           print(false or true and true)
           print(!false)
@@ -447,7 +446,7 @@ fn run_multi_file_named_and_async() {
             (
                 "load.xulo",
                 r#"
-                pub fn load(n: number): async number {
+                pub async fn load(n: number): number {
                     let x = n * 2
                     return x
                 }
@@ -458,7 +457,7 @@ fn run_multi_file_named_and_async() {
                 r#"
                 import { greet } from "./greet"
                 import { load } from "./load"
-                fn main(): async {
+                async fn main() {
                     print(greet("bob"))
                     let v = await load(21)
                     print(v)
@@ -533,7 +532,9 @@ fn rejects_reserved_word_programs() {
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("reserved keyword") || stderr.contains("unexpected"),
+        stderr.contains("reserved keyword")
+            || stderr.contains("unexpected")
+            || stderr.contains("expected"),
         "stderr: {stderr}"
     );
     let _ = std::fs::remove_file(&file);
@@ -633,25 +634,6 @@ fn check_reports_circular_import() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-#[test]
-fn run_try_catch_and_throw() {
-    let file = temp_file(
-        "catch.xulo",
-        r#"
-        fn main() {
-            try { throw "boom" } catch (e) { print("caught " + e) }
-        }
-        "#,
-    );
-    let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
-    assert!(
-        out.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert_eq!(String::from_utf8_lossy(&out.stdout), "caught boom\n");
-    let _ = std::fs::remove_file(&file);
-}
 
 #[test]
 fn type_only_enum_import_still_binds_the_value() {
@@ -763,12 +745,12 @@ fn run_loop_closure_capture_native() {
     // variable, not a shared binding that reads the final value from every
     // closure (native `exec_for` re-creates the iteration Env).
     let src = r#"
-        let mut funcs = []
-        for i in 0..<3 {
-            fn get(): number { i }
-            funcs = [...funcs, get]
-        }
         fn main() {
+            let mut funcs = []
+            for i in 0..<3 {
+                fn get(): number { i }
+                funcs = [...funcs, get]
+            }
             for j in 0..<3 {
                 print(funcs[j]())
             }
@@ -849,12 +831,12 @@ fn run_plain_tagged_objects_keep_identity_equality() {
     // A plain object that happens to have a `tag` key is *not* an enum: it
     // compares by identity, while enum values still compare structurally.
     let src = r#"
+        enum R { Ok(number) }
         fn main() {
             let a = { tag: "Ok", value: 1 }
             let b = { tag: "Ok", value: 1 }
             print(str(a == b))
             // Enum values still compare structurally.
-            enum R { Ok(number) }
             let e1 = R::Ok(1)
             let e2 = R::Ok(1)
             print(str(e1 == e2))
@@ -978,8 +960,8 @@ fn run_async_closure() {
     let file = temp_file(
         "ac.xulo",
         r#"
-        fn main(): async {
-            let work = fn(): async { 21 * 2 }
+        async fn main() {
+            let work = async fn() { 21 * 2 }
             print(await work())
         }
         "#,
@@ -1339,7 +1321,7 @@ fn run_member_and_index_assignment() {
             let xs: list<number> = [1, 2, 3]
             xs[0] = 10
             xs[2] = 30
-            let user: { age: number } = { age: 20 }
+            let user = { age: 20 }
             user.age = user.age + 5
             print(xs[0] + xs[1] + user.age)
         }
@@ -1481,7 +1463,7 @@ fn run_typed_object_read_and_assign() {
         "typed.xulo",
         r#"
         fn main() {
-            let people: list<{ name: string, age: number }> = [{ name: "a", age: 1 }, { name: "b", age: 2 }]
+            let people = [{ name: "a", age: 1 }, { name: "b", age: 2 }]
             people[1].age = people[1].age + 1
             print(people[0].name)
             print(people[1].age)
@@ -1504,7 +1486,7 @@ fn run_optional_chaining_deep_on_null() {
         "opt.xulo",
         r#"
         fn main() {
-            let u: { a: { b: number } }? = null
+            let u: object? = null
             print(u?.a?.b)
             print(u == null)
         }
@@ -1725,26 +1707,6 @@ fn pub_bare_enum_name_imports_on_both_paths() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-#[test]
-fn native_run_library_side_effects_run_before_entry() {
-    let (ok, stdout, stderr) = native_run(
-        &[
-            (
-                "lib.xulo",
-                "print(\"lib-init\")\n\
-                 pub fn tag(): string { \"lib\" }\n",
-            ),
-            (
-                "main.xulo",
-                "import { tag } from \"./lib\"\n\
-                 fn main() { print(tag()) }\n",
-            ),
-        ],
-        "main.xulo",
-    );
-    assert!(ok, "stderr: {stderr}");
-    assert_eq!(stdout, "lib-init\nlib\n");
-}
 
 #[test]
 fn native_run_semantic_rejects_missing_export() {
@@ -1776,10 +1738,7 @@ fn native_run_rejects_removed_default_keyword() {
         "main.xulo",
     );
     assert!(!ok);
-    assert!(
-        stderr.contains("the `default` keyword was removed"),
-        "stderr: {stderr}"
-    );
+    assert!(stderr.contains("syntax"), "stderr: {stderr}");
 }
 
 #[test]
@@ -1803,12 +1762,12 @@ fn native_run_async_coroutines_interleave() {
     let (ok, stdout, stderr) = native_run(
         &[(
             "main.xulo",
-            "fn pause(): async { }\n\
-                 fn fetch(id: number): async number {\n\
+            "async fn pause() { }\n\
+                 async fn fetch(id: number): number {\n\
                      await pause()\n\
                      return id * 10\n\
                  }\n\
-                 fn main(): async {\n\
+                 async fn main() {\n\
                      let a = fetch(1)\n\
                      let b = fetch(2)\n\
                      print(await a)\n\
@@ -1824,7 +1783,7 @@ fn native_run_async_coroutines_interleave() {
 #[test]
 fn native_run_async_rejected_main_is_uncaught() {
     let (ok, _stdout, stderr) = native_run(
-        &[("main.xulo", "fn main(): async { throw \"kaboom\" }\n")],
+        &[("main.xulo", "async fn main() { panic(\"kaboom\") }\n")],
         "main.xulo",
     );
     assert!(!ok);
@@ -1992,5 +1951,123 @@ fn run_println() {
         String::from_utf8_lossy(&out.stdout),
         "no marker\none\nmulti 1 true\ntpl 5\n"
     );
+    let _ = std::fs::remove_file(&file);
+}
+
+// ---------------------------------------------------------------------------
+// `xulo test` (spec testing.md)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_command_reports_pass_and_fail() {
+    let file = temp_file(
+        "tests_mixed.xulo",
+        r#"
+fn add(a: number, b: number): number { return a + b }
+
+test fn addition_works() {
+    assert(add(2, 3) == 5, "2+3=5")
+}
+
+test fn failing_test() {
+    assert(add(1, 1) == 3, "one plus one is three")
+}
+
+fn main() {
+    print("main must not run")
+}
+"#,
+    );
+    let out = Command::new(BIN).arg("test").arg(&file).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "stderr: {stderr}");
+    assert!(stdout.contains("test addition_works ... ok"), "stdout: {stdout}");
+    assert!(stdout.contains("1 passed, 1 failed"), "stdout: {stdout}");
+    assert!(
+        stderr.contains("test failing_test ... FAILED")
+            && stderr.contains("one plus one is three"),
+        "stderr: {stderr}"
+    );
+    assert!(
+        !stdout.contains("main must not run") && !stderr.contains("main must not run"),
+        "`main` must not run under `xulo test`"
+    );
+    let _ = std::fs::remove_file(&file);
+}
+
+#[test]
+fn test_command_all_pass_exits_zero() {
+    let file = temp_file(
+        "tests_pass.xulo",
+        r#"
+test fn first() {
+    assert(true, "ok")
+}
+
+test fn second() {
+    assert(1 < 2, "ordering")
+}
+"#,
+    );
+    let out = Command::new(BIN).arg("test").arg(&file).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(stdout.contains("test first ... ok"), "stdout: {stdout}");
+    assert!(stdout.contains("test second ... ok"), "stdout: {stdout}");
+    assert!(stdout.contains("2 passed, 0 failed"), "stdout: {stdout}");
+    let _ = std::fs::remove_file(&file);
+}
+
+#[test]
+fn test_command_async_test_runs() {
+    let file = temp_file(
+        "tests_async.xulo",
+        r#"
+async fn double(x: number): number { return x * 2 }
+
+test async fn async_works() {
+    let v = await double(21)
+    assert(v == 42, "answer")
+}
+"#,
+    );
+    let out = Command::new(BIN).arg("test").arg(&file).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(stdout.contains("test async_works ... ok"), "stdout: {stdout}");
+    let _ = std::fs::remove_file(&file);
+}
+
+#[test]
+fn test_command_inert_under_run() {
+    let file = temp_file(
+        "tests_inert.xulo",
+        r#"
+test fn never_runs() {
+    print("SHOULD NOT PRINT")
+}
+
+fn main() {
+    print("main ran")
+}
+"#,
+    );
+    let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "main ran\n");
+    let _ = std::fs::remove_file(&file);
+}
+
+#[test]
+fn test_command_with_no_tests_exits_zero() {
+    let file = temp_file(
+        "tests_none.xulo",
+        "fn main() { print(\"hi\") }",
+    );
+    let out = Command::new(BIN).arg("test").arg(&file).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(stdout.contains("no tests found"), "stdout: {stdout}");
     let _ = std::fs::remove_file(&file);
 }

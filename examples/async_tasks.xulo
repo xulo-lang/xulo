@@ -1,11 +1,11 @@
-fn pause(): async { }
+async fn pause() { }
 
-fn fetch(id: number): async number {
+async fn fetch(id: number): number {
     await pause()
     id * 10
 }
 
-fn main(): async {
+async fn main() {
     let a = fetch(1)
     let b = fetch(2)
     print(await a)

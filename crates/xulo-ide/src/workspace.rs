@@ -214,9 +214,8 @@ impl Builder<'_> {
                 format!("no such file in workspace: {}", file.display()),
             )
         })?;
-        let tokens = xulo_lexer::tokenize(&source).map_err(|e| e.with_file(file.to_path_buf()))?;
         let program =
-            xulo_parser::parse_program(&tokens).map_err(|e| e.with_file(file.to_path_buf()))?;
+            xulo_parser::parse_program(&source).map_err(|e| e.with_file(file.to_path_buf()))?;
 
         let mut imports = Vec::new();
         self.visiting.insert(file.to_path_buf());

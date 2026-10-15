@@ -188,6 +188,23 @@ fn native_str(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> 
     })
 }
 
+/// `assert(condition, message)`: a falsy condition stops the program with
+/// `panic(message)` (an uncaught throw of the message string), mirroring
+/// `Expression::Panic`. Semantic checking already enforced the
+/// `Boolean`/`String` signature; the runtime check is defensive.
+fn native_assert(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    let condition = args.first().cloned().unwrap_or(Value::Null);
+    if is_truthy(&condition) {
+        return Ok(Value::Null);
+    }
+    let message = match args.get(1) {
+        Some(Value::String(s)) => Value::String(s.clone()),
+        Some(v) => Value::String(v.format().into()),
+        None => Value::String("assertion failed".into()),
+    };
+    Err(RunError::Throw(message))
+}
+
 fn native_array_new(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     let size = match args.first() {
         Some(Value::Number(n)) => {
@@ -242,10 +259,10 @@ fn native_array_from(_interp: &Interpreter, args: &[Value]) -> Result<Value, Run
     match args.first() {
         Some(Value::List(list)) => Ok(Value::List(Rc::new(RefCell::new(list.borrow().clone())))),
         Some(other) => Err(RunError::err(
-            format!("Array.from() expected a list, found {}", other.kind_name()),
+            format!("Array.clone() expected a list, found {}", other.kind_name()),
             0..0,
         )),
-        None => Err(RunError::err("Array.from() requires 1 argument", 0..0)),
+        None => Err(RunError::err("Array.clone() requires 1 argument", 0..0)),
     }
 }
 
@@ -256,6 +273,9 @@ fn block_has_closure(block: &Block) -> bool {
 fn stmt_has_closure(stmt: &Statement) -> bool {
     match stmt {
         Statement::Fn(_) => true,
+        // A `test fn` body is inert: nothing can reach it, so its closures
+        // never exist at run time.
+        Statement::Test(_) => false,
         Statement::Let(l) => {
             l.value.as_ref().is_some_and(expr_has_closure)
                 || l.memo_deps.iter().flatten().any(expr_has_closure)
@@ -283,6 +303,10 @@ fn stmt_has_closure(stmt: &Statement) -> bool {
         | Statement::Continue => false,
         Statement::Expr(e) => expr_has_closure(&e.expr),
         Statement::Block(b) => block_has_closure(b),
+        Statement::Defer(d) => match &d.body {
+            xulo_core::ast::DeferBody::Block(b) => block_has_closure(b),
+            xulo_core::ast::DeferBody::Expr(e) => expr_has_closure(e),
+        },
         Statement::Try(t) => block_has_closure(&t.try_block) || block_has_closure(&t.catch_block),
         Statement::Throw(e) => expr_has_closure(e),
         Statement::Export(e) => match &e.item {
@@ -335,7 +359,11 @@ fn expr_has_closure(expr: &Expression) -> bool {
                 || expr_has_closure(&t.else_value)
         }
         Expression::Match(m) => {
-            expr_has_closure(&m.value) || m.arms.iter().any(|arm| expr_has_closure(&arm.value))
+            expr_has_closure(&m.value)
+                || m.arms.iter().any(|arm| {
+                    arm.guard.as_ref().is_some_and(expr_has_closure)
+                        || match_body_has_closure(&arm.value)
+                })
         }
         Expression::Member(m) => expr_has_closure(&m.object),
         Expression::Index(i) => expr_has_closure(&i.object) || expr_has_closure(&i.index),
@@ -347,6 +375,34 @@ fn expr_has_closure(expr: &Expression) -> bool {
         Expression::CallValue(c) => {
             expr_has_closure(&c.callee) || c.arguments.iter().any(|a| expr_has_closure(&a.value))
         }
+        Expression::Component(c) => {
+            c.args.iter().any(|a| expr_has_closure(&a.value))
+                || c.children.iter().any(ui_has_closure)
+        }
+        Expression::Tuple { items, .. } => items.iter().any(expr_has_closure),
+        Expression::TypedMap(tm) => {
+            tm.entries
+                .iter()
+                .any(|e| expr_has_closure(&e.key) || expr_has_closure(&e.value))
+        }
+        Expression::Is(is) => expr_has_closure(&is.expr),
+        Expression::Panic { expr, .. } => expr_has_closure(expr),
+        Expression::Propagate { expr, .. } => expr_has_closure(expr),
+        Expression::Arrow(_) => true,
+        Expression::Spawn(s) => match &s.body {
+            xulo_core::ast::SpawnBody::Async(b) => block_has_closure(b),
+            xulo_core::ast::SpawnBody::Service { fields, .. } => {
+                fields.iter().any(|f| expr_has_closure(&f.value))
+            }
+        },
+        Expression::Lock(l) => block_has_closure(&l.body),
+    }
+}
+
+fn match_body_has_closure(body: &xulo_core::ast::MatchBody) -> bool {
+    match body {
+        xulo_core::ast::MatchBody::Expr(e) => expr_has_closure(e),
+        xulo_core::ast::MatchBody::Block(b) => block_has_closure(b),
     }
 }
 
@@ -390,11 +446,17 @@ impl Interpreter {
         global
             .borrow_mut()
             .define("str", Value::Native(Rc::new(native_str)), false);
-        // Array global: Array.new(size, fill?), Array.fill(n, v), Array.from(iter)
+        // The fourth intrinsic (spec builtins/intrinsic-functions.md):
+        // `assert(condition, message)` — false stops the program with
+        // `panic(message)`.
+        global
+            .borrow_mut()
+            .define("assert", Value::Native(Rc::new(native_assert)), false);
+        // Array global: Array.new(size, fill?), Array.fill(n, v), Array.clone(iter)
         let array_methods = vec![
             ("create".to_string(), Value::Native(Rc::new(native_array_new))),
             ("fill".to_string(), Value::Native(Rc::new(native_array_fill))),
-            ("copy".to_string(), Value::Native(Rc::new(native_array_from))),
+            ("clone".to_string(), Value::Native(Rc::new(native_array_from))),
         ];
         global
             .borrow_mut()
@@ -522,6 +584,35 @@ impl Interpreter {
         imports: &[(String, Value)],
         run_main: bool,
     ) -> Result<ModuleExports, RunError> {
+        let global = self.setup_module(program, imports)?;
+        if run_main && let Some(main) = main_fn(program) {
+            // Remember the entry scope so the UI host can re-invoke `main`
+            // later to re-render (see [`Interpreter::rerender_main`]).
+            *self.entry_env.borrow_mut() = Some(global.clone());
+            self.run_main(main, &global).map_err(RunError::Err)?;
+        } else {
+            // A module without `main` (any dependency module, or a no-main
+            // entry) still drains its async tasks, matching JS module
+            // semantics where fire-and-forget async work completes.
+            self.drive();
+        }
+        let mut bindings = Vec::new();
+        for statement in &program.statements {
+            if let Statement::Export(export) = statement {
+                collect_exports(&export.item, &global, &mut bindings);
+            }
+        }
+        Ok(ModuleExports { bindings })
+    }
+
+    /// Bind a module's imports, register its declarations, and execute its
+    /// top-level statements (skipping `import`s, which the caller pre-binds).
+    /// Shared by [`Interpreter::exec_module`] and [`Interpreter::run_test`].
+    fn setup_module(
+        &self,
+        program: &Program,
+        imports: &[(String, Value)],
+    ) -> Result<Rc<RefCell<Env>>, RunError> {
         let global = Env::child(&self.global);
         for (name, value) in imports {
             global.borrow_mut().define(name, value.clone(), false);
@@ -543,24 +634,50 @@ impl Interpreter {
                 Err(e) => return Err(e),
             }
         }
-        if run_main && let Some(main) = main_fn(program) {
-            // Remember the entry scope so the UI host can re-invoke `main`
-            // later to re-render (see [`Interpreter::rerender_main`]).
-            *self.entry_env.borrow_mut() = Some(global.clone());
-            self.run_main(main, &global).map_err(RunError::Err)?;
-        } else {
-            // A module without `main` (any dependency module, or a no-main
-            // entry) still drains its async tasks, matching JS module
-            // semantics where fire-and-forget async work completes.
-            self.drive();
-        }
-        let mut bindings = Vec::new();
-        for statement in &program.statements {
-            if let Statement::Export(export) = statement {
-                collect_exports(&export.item, &global, &mut bindings);
+        Ok(global)
+    }
+
+    /// Execute a module exactly like [`Interpreter::exec_module`] with
+    /// `run_main: false`, then invoke one `test fn` body. The test body sees
+    /// the module the same way a function body does (spec testing.md).
+    ///
+    /// Pass = the body completes; an async test passes when its task settles
+    /// fulfilled. Fail = the body panics/throws/`assert`s or the task settles
+    /// rejected. Returns the lines the test printed.
+    pub fn run_test(
+        &self,
+        program: &Program,
+        imports: &[(String, Value)],
+        test: &FnDef,
+    ) -> Result<Vec<String>, XuloError> {
+        let global = self
+            .setup_module(program, imports)
+            .map_err(|e| match e {
+                RunError::Err(e) => e,
+                RunError::Throw(v) => self.uncaught(&v),
+            })?;
+        *self.entry_env.borrow_mut() = Some(global.clone());
+        let result = self.call_fn(test, &[], &global);
+        self.drive();
+        match result {
+            Ok(Value::Promise(promise)) => {
+                let state = promise.borrow();
+                match &state.state {
+                    crate::value::PromiseState::Fulfilled(_) => Ok(self.out.take()),
+                    crate::value::PromiseState::Rejected(e) => Err(match e {
+                        RunError::Err(e) => e.clone(),
+                        RunError::Throw(v) => self.uncaught(v),
+                    }),
+                    crate::value::PromiseState::Pending => Err(XuloError::new(
+                        ErrorKind::Runtime,
+                        format!("async test `{}` did not complete", test.name),
+                    )),
+                }
             }
+            Ok(_) => Ok(self.out.take()),
+            Err(RunError::Err(e)) => Err(e),
+            Err(RunError::Throw(v)) => Err(self.uncaught(&v)),
         }
-        Ok(ModuleExports { bindings })
     }
 
     /// Take the collected `print` lines so far (e.g. across executed modules).
@@ -825,6 +942,10 @@ impl Interpreter {
                 self.register_fn(f, env);
                 Ok(Flow::Continue)
             }
+            // A `test fn` body is inert (spec testing.md): the identifier
+            // binds no value and no execution reaches the body, so the
+            // declaration is a no-op at run time.
+            Statement::Test(_) => Ok(Flow::Continue),
             Statement::Let(binding) => {
                 let value = if binding.memo {
                     self.memo_value(binding, env)?
@@ -984,6 +1105,19 @@ impl Interpreter {
             }
             Statement::Break => Ok(Flow::Break),
             Statement::Continue => Ok(Flow::LoopContinue),
+            Statement::Defer(d) => {
+                // TODO(defer): real defer runs at scope exit; until then the
+                // body executes immediately (parsed/checked, not yet queued).
+                match &d.body {
+                    xulo_core::ast::DeferBody::Block(b) => {
+                        self.exec_block(b, env)?;
+                    }
+                    xulo_core::ast::DeferBody::Expr(e) => {
+                        self.eval(e, env)?;
+                    }
+                }
+                Ok(Flow::Continue)
+            }
             Statement::Struct(_) => {
                 // Struct name was already registered in the first pass of run();
                 // skip re-registration in exec_stmt to avoid wiping out inherent
@@ -1543,6 +1677,10 @@ impl Interpreter {
                             un.span.clone(),
                         )),
                     },
+                    // `move x` yields the value (ownership transfer is a no-op
+                    // in the interpreter); `copy x` deep-copies mutable cells.
+                    UnaryOperator::Move => Ok(operand),
+                    UnaryOperator::Copy => Ok(deep_copy_value(&operand)),
                 }
             }
             Expression::Call(call) => self.call(call, env),
@@ -1684,6 +1822,79 @@ impl Interpreter {
                 let callee = self.eval(&cv.callee, env)?;
                 self.call_value(&callee, &cv.arguments, env)
             }
+            Expression::Component(c) => self.eval_component_stmt(c, env),
+            Expression::Tuple { items, .. } => {
+                let mut out = Vec::with_capacity(items.len());
+                for item in items {
+                    out.push(self.eval(item, env)?);
+                }
+                Ok(Value::List(Rc::new(RefCell::new(out))))
+            }
+            Expression::TypedMap(tm) => {
+                let mut fields = Vec::with_capacity(tm.entries.len());
+                for entry in &tm.entries {
+                    let key = self.eval(&entry.key, env)?;
+                    let key_str = match &key {
+                        Value::String(s) => s.to_string(),
+                        Value::Number(n) => n.to_string(),
+                        Value::Boolean(b) => b.to_string(),
+                        other => other.format(),
+                    };
+                    let value = self.eval(&entry.value, env)?;
+                    fields.push((key_str, value));
+                }
+                Ok(Value::Object(Rc::new(RefCell::new(fields))))
+            }
+            Expression::Is(is) => {
+                let value = self.eval(&is.expr, env)?;
+                let matched = type_matches_value(&is.type_, &value);
+                Ok(Value::Boolean(if is.negated { !matched } else { matched }))
+            }
+            Expression::Panic { expr, span: _ } => {
+                let value = self.eval(expr, env)?;
+                Err(RunError::Throw(value))
+            }
+            Expression::Propagate { expr, .. } => self.eval(expr, env),
+            Expression::Arrow(arrow) => {
+                let body = match &arrow.body {
+                    xulo_core::ast::ArrowBody::Expr(e) => Block {
+                        statements: vec![Statement::Expr(xulo_core::ast::ExprStmt {
+                            expr: e.clone(),
+                            has_semicolon: false,
+                            span: e.span().clone(),
+                        })],
+                    },
+                    xulo_core::ast::ArrowBody::Block(b) => b.clone(),
+                };
+                Ok(Value::Function(Rc::new(FunctionValue {
+                    params: arrow.params.clone(),
+                    body,
+                    return_type: arrow.return_type.clone(),
+                    is_async: arrow.is_async,
+                    closure: env.clone(),
+                })))
+            }
+            Expression::Spawn(spawn) => match &spawn.body {
+                xulo_core::ast::SpawnBody::Async(block) => {
+                    let block = block.clone();
+                    let spawn_env = env.clone();
+                    Ok(self.spawn_async(move |_yielder| {
+                        with_interp(|interp| interp.run_body(&block, &spawn_env, false))
+                    }))
+                }
+                xulo_core::ast::SpawnBody::Service { type_name, fields } => {
+                    let mut out = Vec::with_capacity(fields.len());
+                    for field in fields {
+                        out.push((field.name.clone(), self.eval(&field.value, env)?));
+                    }
+                    out.push((
+                        "__service".to_string(),
+                        Value::String(Rc::from(type_name.as_str())),
+                    ));
+                    Ok(Value::Object(Rc::new(RefCell::new(out))))
+                }
+            },
+            Expression::Lock(lock) => self.block_value(&lock.body, env),
             Expression::Binding { name, span } => {
                 // `$name` two-way binding, mirroring the JS shape
                 // `{ value: ...get(), onChange: v => ...set(v) }`. For a signal the
@@ -2045,38 +2256,31 @@ impl Interpreter {
     fn eval_match(&self, m: &MatchExpr, env: &Rc<RefCell<Env>>) -> Result<Value, RunError> {
         let scrutinee = self.eval(&m.value, env)?;
         for arm in &m.arms {
-            match &arm.pattern {
-                xulo_core::ast::MatchPattern::Wildcard => {
-                    return self.eval(&arm.value, env);
-                }
-                xulo_core::ast::MatchPattern::Literal(lit) => {
-                    if literal_matches(lit, &scrutinee) {
-                        return self.eval(&arm.value, env);
-                    }
-                }
-                xulo_core::ast::MatchPattern::Enum(r) => {
-                    if enum_ref_matches(&r.enum_name, &r.variant, &scrutinee) {
-                        return self.eval(&arm.value, env);
-                    }
-                }
-                xulo_core::ast::MatchPattern::EnumPayload {
-                    variant,
-                    bindings,
-                    span,
-                    ..
-                } => {
-                    if let Value::Enum { tag, payload, .. } = &scrutinee
-                        && tag == variant
-                        && let Some(payload) = payload
-                    {
-                        let child = Env::child(env);
-                        bind_enum_payload(&child, bindings, payload, span)?;
-                        return self.eval(&arm.value, &child);
-                    }
+            let arm_env = Env::child(env);
+            if !pattern_matches(&arm.pattern, &scrutinee, &arm_env)? {
+                continue;
+            }
+            if let Some(guard) = &arm.guard {
+                let guard_value = self.eval(guard, &arm_env)?;
+                if !is_truthy(&guard_value) {
+                    continue;
                 }
             }
+            return self.eval_match_body(&arm.value, &arm_env);
         }
         Err(RunError::err("non-exhaustive match", m.span.clone()))
+    }
+
+    /// Evaluate a match arm body in the arm's scope.
+    fn eval_match_body(
+        &self,
+        body: &xulo_core::ast::MatchBody,
+        env: &Rc<RefCell<Env>>,
+    ) -> Result<Value, RunError> {
+        match body {
+            xulo_core::ast::MatchBody::Expr(e) => self.eval(e, env),
+            xulo_core::ast::MatchBody::Block(b) => self.block_value(b, env),
+        }
     }
 
     fn call(&self, call: &Call, env: &Rc<RefCell<Env>>) -> Result<Value, RunError> {
@@ -2948,6 +3152,185 @@ fn bind_enum_payload(
         env.borrow_mut().define(name, value, false);
     }
     Ok(())
+}
+
+/// Match a scrutinee against a pattern, binding names into `env` on success.
+fn pattern_matches(
+    pattern: &xulo_core::ast::MatchPattern,
+    scrutinee: &Value,
+    env: &Rc<RefCell<Env>>,
+) -> Result<bool, RunError> {
+    Ok(match pattern {
+        xulo_core::ast::MatchPattern::Wildcard => true,
+        xulo_core::ast::MatchPattern::Literal(lit) => literal_matches(lit, scrutinee),
+        xulo_core::ast::MatchPattern::Enum(r) => {
+            enum_ref_matches(&r.enum_name, &r.variant, scrutinee)
+        }
+        xulo_core::ast::MatchPattern::EnumPayload {
+            variant,
+            bindings,
+            span,
+            ..
+        } => {
+            if let Value::Enum { tag, payload, .. } = scrutinee
+                && tag == variant
+                && let Some(payload) = payload
+            {
+                bind_enum_payload(env, bindings, payload, span)?;
+                true
+            } else {
+                false
+            }
+        }
+        xulo_core::ast::MatchPattern::Range {
+            start,
+            end,
+            end_inclusive,
+            ..
+        } => match scrutinee {
+            Value::Number(n) => {
+                if *end_inclusive {
+                    n >= start && n <= end
+                } else {
+                    n >= start && n < end
+                }
+            }
+            Value::String(s) => {
+                let lo = s.as_ref() >= start.to_string().as_str();
+                let hi = if *end_inclusive {
+                    s.as_ref() <= end.to_string().as_str()
+                } else {
+                    s.as_ref() < end.to_string().as_str()
+                };
+                lo && hi
+            }
+            _ => false,
+        },
+        xulo_core::ast::MatchPattern::Binding { name, .. } => {
+            env.borrow_mut().define(name, scrutinee.clone(), true);
+            true
+        }
+        xulo_core::ast::MatchPattern::TypePattern {
+            type_name,
+            binder,
+            optional,
+            ..
+        } => {
+            let ok = value_is_named_type(scrutinee, type_name)
+                || (*optional && matches!(scrutinee, Value::Null));
+            if ok
+                && let xulo_core::ast::PatternBinder::Binding(b) = binder
+            {
+                env.borrow_mut().define(b, scrutinee.clone(), true);
+            }
+            ok
+        }
+        xulo_core::ast::MatchPattern::Or { patterns, .. } => {
+            for p in patterns {
+                if pattern_matches(p, scrutinee, env)? {
+                    return Ok(true);
+                }
+            }
+            false
+        }
+        xulo_core::ast::MatchPattern::Struct {
+            name, bindings, ..
+        } => {
+            if let Value::Enum {
+                enum_name,
+                payload,
+                ..
+            } = scrutinee
+                && enum_name == name
+            {
+                bind_struct_payload(env, bindings, payload.as_deref());
+                true
+            } else {
+                false
+            }
+        }
+    })
+}
+
+/// Bind a struct's positional payload values to the pattern's binding names.
+fn bind_struct_payload(
+    env: &Rc<RefCell<Env>>,
+    bindings: &[xulo_core::ast::MatchPattern],
+    payload: Option<&Value>,
+) {
+    let values: Vec<Value> = match payload {
+        Some(Value::List(list)) => list.borrow().clone(),
+        Some(v) => vec![v.clone()],
+        None => Vec::new(),
+    };
+    for (i, binder) in bindings.iter().enumerate() {
+        if let xulo_core::ast::MatchPattern::Binding { name, .. } = binder {
+            let value = values.get(i).cloned().unwrap_or(Value::Null);
+            env.borrow_mut().define(name, value, true);
+        }
+    }
+}
+
+/// Coerce a full [`Type`] to a runtime test against a value.
+fn type_matches_value(type_: &Type, value: &Value) -> bool {
+    match type_ {
+        Type::String => matches!(value, Value::String(_)),
+        Type::Number => matches!(value, Value::Number(_)),
+        Type::Boolean => matches!(value, Value::Boolean(_)),
+        Type::Null => matches!(value, Value::Null),
+        Type::List(_) => matches!(value, Value::List(_)),
+        Type::Object | Type::ObjectType(_) => matches!(value, Value::Object(_)),
+        Type::Named(name) => value_is_named_type(value, name),
+        Type::Optional(inner) => {
+            matches!(value, Value::Null) || type_matches_value(inner, value)
+        }
+        Type::Union(parts) => parts.iter().any(|p| type_matches_value(p, value)),
+        Type::Intersection(parts) => parts.iter().all(|p| type_matches_value(p, value)),
+        Type::Literal(s) => match value {
+            Value::String(v) => v.as_ref() == s.as_str(),
+            _ => false,
+        },
+        Type::Tuple(_) => matches!(value, Value::List(_)),
+        Type::FnSig { .. } => matches!(value, Value::Function(_)),
+        Type::Async(_) => matches!(value, Value::Promise(_)),
+        Type::Any => true,
+    }
+}
+
+/// A coarse runtime type test for `value is Type` / type patterns.
+fn value_is_named_type(value: &Value, type_name: &str) -> bool {
+    match type_name {
+        "number" | "int" | "float" => matches!(value, Value::Number(_)),
+        "string" => matches!(value, Value::String(_)),
+        "boolean" => matches!(value, Value::Boolean(_)),
+        "null" => matches!(value, Value::Null),
+        "list" | "List" => matches!(value, Value::List(_)),
+        "object" | "Object" | "Map" => matches!(value, Value::Object(_)),
+        "any" | "Any" | "unknown" | "Unknown" => true,
+        _ => match value {
+            Value::Enum { enum_name, .. } => enum_name == type_name,
+            _ => false,
+        },
+    }
+}
+
+/// Deep-copy mutable containers so `copy x` detaches from the original.
+fn deep_copy_value(value: &Value) -> Value {
+    match value {
+        Value::List(list) => {
+            let items: Vec<Value> = list.borrow().iter().map(deep_copy_value).collect();
+            Value::List(Rc::new(RefCell::new(items)))
+        }
+        Value::Object(fields) => {
+            let items: Vec<(String, Value)> = fields
+                .borrow()
+                .iter()
+                .map(|(k, v)| (k.clone(), deep_copy_value(v)))
+                .collect();
+            Value::Object(Rc::new(RefCell::new(items)))
+        }
+        other => other.clone(),
+    }
 }
 
 /// Find the program's `main`, including `pub fn main`.

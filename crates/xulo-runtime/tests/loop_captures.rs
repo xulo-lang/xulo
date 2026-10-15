@@ -9,14 +9,12 @@
 //! tests below pin both sides: accurate per-round captures when closures exist
 //! (anywhere in the body), and correct evaluation when they are recycled.
 
-use xulo_lexer::tokenize;
 use xulo_parser::parse_program;
 use xulo_runtime::interpreter::Interpreter;
 
 fn run_raw(src: &str) -> Vec<String> {
     let interp = Interpreter::new();
-    let tokens = tokenize(src).unwrap();
-    let program = parse_program(&tokens).unwrap();
+    let program = parse_program(src).unwrap();
     interp.run(&program).unwrap()
 }
 
@@ -25,12 +23,12 @@ fn run_raw(src: &str) -> Vec<String> {
 fn ranged_loop_function_captures_its_own_iteration() {
     let out = run_raw(
         r#"
-        let mut funcs = []
-        for i in 0..<3 {
-            fn get(): number { i }
-            funcs = [...funcs, get]
-        }
         fn main() {
+            let mut funcs = []
+            for i in 0..<3 {
+                fn get(): number { i }
+                funcs = [...funcs, get]
+            }
             for j in 0..<3 {
                 print(funcs[j]())
             }
@@ -50,12 +48,12 @@ fn ranged_loop_function_captures_its_own_iteration() {
 fn list_loop_function_captures_its_own_iteration() {
     let out = run_raw(
         r#"
-        let mut funcs = []
-        for x in [10, 20, 30] {
-            fn get(): number { x }
-            funcs = [...funcs, get]
-        }
         fn main() {
+            let mut funcs = []
+            for x in [10, 20, 30] {
+                fn get(): number { x }
+                funcs = [...funcs, get]
+            }
             for j in 0..<3 {
                 print(funcs[j]())
             }
@@ -71,14 +69,14 @@ fn list_loop_function_captures_its_own_iteration() {
 fn closure_in_nested_block_captures_its_own_iteration() {
     let out = run_raw(
         r#"
-        let mut funcs = []
-        for i in 0..<3 {
-            if i < 3 {
-                fn get(): number { i }
-                funcs = [...funcs, get]
-            }
-        }
         fn main() {
+            let mut funcs = []
+            for i in 0..<3 {
+                if i < 3 {
+                    fn get(): number { i }
+                    funcs = [...funcs, get]
+                }
+            }
             for j in 0..<3 {
                 print(funcs[j]())
             }
@@ -94,12 +92,12 @@ fn closure_in_nested_block_captures_its_own_iteration() {
 fn closure_bound_by_let_captures_its_own_iteration() {
     let out = run_raw(
         r#"
-        let mut funcs = []
-        for i in 0..<3 {
-            let f = fn(): number { i }
-            funcs = [...funcs, f]
-        }
         fn main() {
+            let mut funcs = []
+            for i in 0..<3 {
+                let f = fn(): number { i }
+                funcs = [...funcs, f]
+            }
             for j in 0..<3 {
                 print(funcs[j]())
             }

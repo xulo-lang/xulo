@@ -143,10 +143,10 @@ impl ReactiveUi {
     pub fn input_change(&mut self, index: usize, new_value: String) -> Result<(), XuloError> {
         let cb_idx = self.input_callback_indices.get(index).copied();
         if let Some(cb_idx) = cb_idx {
-            if let Some(callback) = self.callbacks.get(cb_idx) {
-                if let Some(ref on_change) = callback.on_change {
-                    on_change(new_value);
-                }
+            if let Some(callback) = self.callbacks.get(cb_idx)
+                && let Some(ref on_change) = callback.on_change
+            {
+                on_change(new_value);
             }
             self.interp
                 .rerender_main(&self.program)

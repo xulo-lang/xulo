@@ -233,7 +233,7 @@ impl AotCodeGen {
         }
 
         // 声明参数变量
-        for (i, (local_id, _)) in ir_func.params.iter().enumerate() {
+        for (local_id, _) in ir_func.params.iter() {
             if let Some(&var) = vars.get(local_id) {
                 builder.declare_var(var, I64);
             }
@@ -494,11 +494,11 @@ impl AotCodeGen {
                         let fref = self.module.declare_func_in_func(func_id, builder.func);
                         let call = builder.ins().call(fref, &final_args);
                         if let Some(d) = dst
-                            && let Some(&var) = vars.get(d) {
-                                if let Some(result) = builder.inst_results(call).first() {
-                                    builder.def_var(var, *result);
-                                }
-                            }
+                            && let Some(&var) = vars.get(d)
+                            && let Some(result) = builder.inst_results(call).first()
+                        {
+                            builder.def_var(var, *result);
+                        }
                     }
                 }
                 Instruction::Call { dst, func, args } => {
@@ -511,11 +511,11 @@ impl AotCodeGen {
                         let call = builder.ins().call(func_ref, &arg_vals);
 
                         if let Some(d) = dst
-                            && let Some(&var) = vars.get(d) {
-                                if let Some(result) = builder.inst_results(call).first() {
-                                    builder.def_var(var, *result);
-                                }
-                            }
+                            && let Some(&var) = vars.get(d)
+                            && let Some(result) = builder.inst_results(call).first()
+                        {
+                            builder.def_var(var, *result);
+                        }
                     }
                 }
                 Instruction::NewObject { dst, fields } => {
@@ -628,7 +628,7 @@ impl AotCodeGen {
                 }
             }
         // Also ensure entry_block has a terminator (it may have been switched away from)
-        if !block_has_terminator(&builder.func, entry_block) {
+        if !block_has_terminator(builder.func, entry_block) {
             if let Some(&first_label) = ir_func.labels.first() {
                 if let Some(&first_block) = block_map.get(&first_label) {
                     builder.switch_to_block(entry_block);
@@ -673,7 +673,7 @@ impl AotCodeGen {
         let mut bytes = s.as_bytes().to_vec();
         bytes.push(0); // null terminator
         data_desc.define(bytes.into_boxed_slice());
-        self.module.define_data(data_id, &mut data_desc)
+        self.module.define_data(data_id, &data_desc)
             .expect("failed to define string data");
 
         self.string_data_ids.push(data_id);

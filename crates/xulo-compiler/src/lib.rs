@@ -16,18 +16,16 @@ use xulo_core::ir::IrModule;
 /// returning any non-fatal warnings raised during analysis. JS generation has
 /// been retired; executing programs is the native interpreter's job.
 pub fn compile(source: &str, file: &Path) -> Result<Vec<XuloError>, XuloError> {
-    let tokens = xulo_lexer::tokenize(source).map_err(|e| e.with_file(file.to_path_buf()))?;
     let program =
-        xulo_parser::parse_program(&tokens).map_err(|e| e.with_file(file.to_path_buf()))?;
+        xulo_parser::parse_program(source).map_err(|e| e.with_file(file.to_path_buf()))?;
     let result = xulo_semantic::analyze_with(&program, &[], &[], &[])?;
     Ok(result.warnings)
 }
 
 /// 编译源代码到 IR
 pub fn compile_to_ir(source: &str, file: &Path) -> Result<IrModule, XuloError> {
-    let tokens = xulo_lexer::tokenize(source).map_err(|e| e.with_file(file.to_path_buf()))?;
     let program =
-        xulo_parser::parse_program(&tokens).map_err(|e| e.with_file(file.to_path_buf()))?;
+        xulo_parser::parse_program(source).map_err(|e| e.with_file(file.to_path_buf()))?;
     let result = xulo_semantic::analyze_with(&program, &[], &[], &[])?;
     
     // 应用语义分析的修改

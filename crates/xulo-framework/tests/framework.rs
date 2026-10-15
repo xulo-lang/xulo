@@ -145,7 +145,7 @@ fn main(): View {
 "#,
     );
     use xulo_renderer_terminal::{render_plain, CharMetrics, TerminalSize};
-    use xulo_ui::{StyleProps, Size, UiContext};
+    use xulo_ui::{Size, UiContext};
 
     let surface = Size {
         width: 40,
@@ -250,7 +250,7 @@ fn main(): View {
 "#,
     );
     use xulo_renderer_terminal::{render_plain, CharMetrics, TerminalSize};
-    use xulo_ui::{StyleProps, Size, UiContext};
+    use xulo_ui::{Size, UiContext};
 
     let surface = Size {
         width: 60,
@@ -344,7 +344,7 @@ fn main(): View {
 "#,
     );
     use xulo_renderer_terminal::{render_plain, CharMetrics, TerminalSize};
-    use xulo_ui::{StyleProps, Size, UiContext};
+    use xulo_ui::{Size, UiContext};
 
     let surface = Size {
         width: 60,
@@ -429,7 +429,7 @@ fn input_state_not_reset_by_button_click() {
          }\n",
     );
     use xulo_renderer_terminal::{render_plain, CharMetrics, TerminalSize};
-    use xulo_ui::{StyleProps, Size, UiContext};
+    use xulo_ui::{Size, UiContext};
 
     let surface = Size {
         width: 60,

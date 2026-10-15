@@ -15,9 +15,9 @@ fn main() {
 
     // 对象
     let base = { a: 1 }
-    let copy = { ...base, b: 2 }  // 对象展开
-    print(copy.a)
-    print(copy.b)
+    let merged = { ...base, b: 2 }  // 对象展开
+    print(merged.a)
+    print(merged.b)
 
     let user = { name: "x", roles: ["admin", "dev"] }
     print(user.name)

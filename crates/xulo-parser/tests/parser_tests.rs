@@ -1,1877 +1,840 @@
-use xulo_core::ast::{BinaryOperator, Expression, Literal, Statement};
-use xulo_lexer::tokenize;
-use xulo_parser::parse_program;
+//! Integration tests for the pest-based parser: spec-conformant constructs,
+//! lowered-AST shape checks, negative cases, and the nesting-depth limit.
 
-fn parse(src: &str) -> xulo_core::ast::Program {
-    let tokens = tokenize(src).unwrap();
-    parse_program(&tokens).unwrap()
+use xulo_core::ast::{
+    Expression, ImportSpec, Literal, MatchBody, MatchPattern, Statement, Type, UiElement,
+};
+use xulo_parser::{parse_program, MAX_NEST_DEPTH};
+
+fn parse_ok(src: &str) -> xulo_core::ast::Program {
+    parse_program(src).unwrap_or_else(|e| panic!("expected OK for {src:?}: {}", e.message))
 }
 
-#[test]
-fn parses_function_definition() {
-    let p = parse(r#"fn add(a: number, b: number): number { return a + b }"#);
-    let Statement::Fn(f) = &p.statements[0] else {
-        panic!("expected fn statement");
-    };
-    assert_eq!(f.name, "add");
-    assert_eq!(f.params.len(), 2);
-    assert_eq!(f.return_type, Some(xulo_core::ast::Type::Number));
+fn parse_err(src: &str) -> xulo_core::error::XuloError {
+    parse_program(src).expect_err(&format!("expected error for {src:?}"))
 }
 
-#[test]
-fn parses_precedence() {
-    let p = parse("let x = 1 + 2 * 3");
-    let Statement::Let(b) = &p.statements[0] else {
-        panic!();
-    };
-    match &b.value {
-        Some(Expression::BinaryOp(op)) => {
-            assert_eq!(op.operator, BinaryOperator::Add);
-            assert!(
-                matches!(op.right, Expression::BinaryOp(ref m) if m.operator == BinaryOperator::Mul)
-            );
-        }
-        _ => panic!("expected binary op"),
+fn first_let(src: &str) -> xulo_core::ast::LetBinding {
+    let p = parse_ok(src);
+    match &p.statements[0] {
+        Statement::Let(l) => l.clone(),
+        other => panic!("expected let, got {other:?}"),
     }
 }
 
-#[test]
-fn range_and_comparison_share_one_precedence_level() {
-    // Both sides of the range operator accept a comparison operand: the
-    // grammar is symmetric (`a ..< b == c` used to be a parse error while
-    // `a == b ..< c` parsed — the range operator bound to whichever side had
-    // already been consumed).
-    let p = parse("let x = a == b ..< c");
-    let Statement::Let(b) = &p.statements[0] else {
-        panic!();
-    };
-    assert!(
-        matches!(b.value, Some(Expression::Range(_))),
-        "`(a == b) ..< c` must parse as a range"
-    );
-
-    let p = parse("let y = a ..< b == c");
-    let Statement::Let(b) = &p.statements[0] else {
-        panic!();
-    };
-    match &b.value {
-        Some(Expression::BinaryOp(op)) if op.operator == BinaryOperator::Eq => {
-            assert!(
-                matches!(op.left, Expression::Range(_)),
-                "`(a ..< b) == c` must parse as a comparison"
-            );
-        }
-        other => panic!("expected `(a ..< b) == c`, got {other:?}"),
-    }
-}
+// ---------------------------------------------------------------
+// Declarations
+// ---------------------------------------------------------------
 
 #[test]
-fn parses_closed_range_and_keeps_spread() {
-    use xulo_core::ast::{Expression, Statement};
-
-    // `a...b` parses as a *closed* range (end_inclusive)...
-    let p = parse("let x = a...b");
-    let Statement::Let(b) = &p.statements[0] else {
-        panic!();
-    };
-    match b.value.as_ref() {
-        Some(Expression::Range(r)) => {
-            assert!(r.end_inclusive, "`a...b` must be an inclusive range");
-        }
-        other => panic!("expected `a...b` range, got {other:?}"),
-    }
-    // ...while `a..<b` stays half-open.
-    let p = parse("let y = a..<b");
-    let Statement::Let(b) = &p.statements[0] else {
-        panic!();
-    };
-    match b.value.as_ref() {
-        Some(Expression::Range(r)) => {
-            assert!(!r.end_inclusive, "`a..<b` must stay half-open");
-        }
-        other => panic!("expected `a..<b` range, got {other:?}"),
-    }
-    // `[a, ...b]` is a list with a spread element, not a range over `b`.
-    let p = parse("let z = [a, ...b]");
-    let Statement::Let(b) = &p.statements[0] else {
-        panic!();
-    };
-    match b.value.as_ref() {
-        Some(Expression::Literal {
-            value: Literal::List(items),
-            ..
-        }) => {
-            assert_eq!(items.len(), 2);
-            assert!(matches!(items[1], Expression::Spread { .. }));
-        }
-        other => panic!("expected list with spread, got {other:?}"),
-    }
-}
-
-#[test]
-fn parses_if_else_if() {
-    let p = parse("if a { 1 } else if b { 2 } else { 3 }");
-    let Statement::Expr(es) = &p.statements[0] else {
-        panic!("expected if");
-    };
-    let Expression::If(outer) = &es.expr else {
-        panic!("expected if");
-    };
-    assert!(outer.else_branch.is_some());
-    let else_block = outer.else_branch.as_ref().unwrap();
-    assert!(
-        matches!(else_block.statements.as_slice(), [Statement::Expr(es)] if matches!(es.expr, Expression::If(_)))
-    );
-}
-
-#[test]
-fn parses_list_and_call() {
-    let p = parse(r#"let xs = [1, 2, 3] print("hi")"#);
-    assert!(matches!(&p.statements[0], Statement::Let(b)
-        if matches!(&b.value, Some(Expression::Literal { value: Literal::List(v), .. }) if v.len() == 3)));
-    assert!(
-        matches!(&p.statements[1], Statement::Expr(es) if matches!(&es.expr, Expression::Call(c) if c.callee == "print"))
-    );
-}
-
-#[test]
-fn trailing_commas_are_accepted() {
-    // `f(a, b,)`, `[1, 2,]`, `{ a: 1, }`, and enum payloads `A(number,)` all
-    // accept a trailing comma, consistent with `match` arms and enum variants.
-    let p = parse(r#"let xs = [1, 2,] print(f(1, 2,)) let o = { a: 1, }"#);
-    assert!(matches!(&p.statements[0], Statement::Let(b)
-        if matches!(&b.value, Some(Expression::Literal { value: Literal::List(v), .. }) if v.len() == 2)));
-    assert!(
-        matches!(&p.statements[1], Statement::Expr(es) if matches!(&es.expr, Expression::Call(c) if c.arguments.len() == 1 && matches!(&c.arguments[0].value, Expression::Call(inner) if inner.arguments.len() == 2)))
-    );
-    assert!(matches!(&p.statements[2], Statement::Let(b)
-        if matches!(&b.value, Some(Expression::Literal { value: Literal::Object(f), .. }) if f.len() == 1)));
-
-    let p = parse("enum E { A(number, string,) B }");
-    let Statement::Enum(e) = &p.statements[0] else {
-        panic!("expected enum");
-    };
-    let Some(payload) = &e.variants[0].payload else {
-        panic!("expected payload");
-    };
-    assert_eq!(payload.len(), 2);
-}
-
-#[test]
-fn optional_semicolons() {
-    assert_eq!(parse("let x = 1").statements.len(), 1);
-    assert_eq!(parse("let x = 1;").statements.len(), 1);
-}
-
-#[test]
-fn reports_syntax_errors() {
-    let tokens = tokenize("fn main() {").unwrap();
-    assert!(parse_program(&tokens).is_err());
-}
-
-#[test]
-fn parses_const_binding() {
-    let p = parse("const PI = 3.14");
-    let Statement::Let(b) = &p.statements[0] else {
-        panic!("expected let");
-    };
-    assert!(b.is_const);
-    assert_eq!(b.name, "PI");
-}
-
-#[test]
-fn parses_null_literal() {
-    let p = parse("let x = null");
-    let Statement::Let(b) = &p.statements[0] else {
-        panic!();
-    };
-    assert!(matches!(
-        &b.value,
-        Some(Expression::Literal {
-            value: Literal::Null,
-            ..
-        })
-    ));
-}
-
-#[test]
-fn parses_assignment() {
-    let p = parse("count = count + 1");
-    let Statement::Assign(a) = &p.statements[0] else {
-        panic!("expected assign");
-    };
-    assert_eq!(a.target, xulo_core::ast::AssignTarget::Name("count".into()));
-}
-
-#[test]
-fn parses_member_and_index_assignment() {
-    let p = parse("user.name = \"b\" xs[0] = 10");
-    let Statement::Assign(a) = &p.statements[0] else {
-        panic!("expected assign");
-    };
-    assert!(matches!(&a.target, xulo_core::ast::AssignTarget::Member(_, prop) if prop == "name"));
-    let Statement::Assign(b) = &p.statements[1] else {
-        panic!("expected assign");
-    };
-    assert!(matches!(b.target, xulo_core::ast::AssignTarget::Index(..)));
-}
-
-#[test]
-fn parses_type_alias() {
-    let p = parse("type User = { name: string }\n type Pair<T> = list<T>");
-    let Statement::TypeAlias(a) = &p.statements[0] else {
-        panic!("expected type alias");
-    };
-    assert_eq!(a.name, "User");
-    assert!(matches!(a.type_, xulo_core::ast::Type::ObjectType(_)));
-    let Statement::TypeAlias(g) = &p.statements[1] else {
-        panic!("expected generic alias");
-    };
-    assert_eq!(g.type_params, vec!["T".to_string()]);
-    assert!(matches!(g.type_, xulo_core::ast::Type::List(_)));
-}
-
-#[test]
-fn parses_enum_with_payload() {
-    let p = parse("enum Result<T> { Success(T) Error(string) }");
-    let Statement::Enum(e) = &p.statements[0] else {
-        panic!("expected enum");
-    };
-    assert_eq!(e.name, "Result");
-    assert_eq!(e.variants.len(), 2);
-    assert!(e.variants[0].payload.is_some());
-    assert!(e.variants[1].payload.is_some());
-}
-
-#[test]
-fn parses_enum_reference_and_construction() {
-    let p = parse("let t = Theme::Dark\nlet r = Result::Success(42)");
-    let Statement::Let(a) = &p.statements[0] else {
-        panic!();
-    };
-    assert!(matches!(&a.value, Some(Expression::EnumRef(r))
-        if r.enum_name == "Theme" && r.variant == "Dark"));
-    let Statement::Let(b) = &p.statements[1] else {
-        panic!();
-    };
-    assert!(matches!(&b.value, Some(Expression::Call(c))
-        if c.callee == "Result::Success"));
-}
-
-#[test]
-fn parses_complex_types() {
-    let p = parse("let a: list<number> = []\nlet b: string? = null\nlet c: number | string = 1");
-    assert!(matches!(&p.statements[0], Statement::Let(b)
-        if matches!(b.type_annotation, Some(xulo_core::ast::Type::List(_)))));
-    assert!(matches!(&p.statements[1], Statement::Let(b)
-        if matches!(b.type_annotation, Some(xulo_core::ast::Type::Optional(_)))));
-    assert!(matches!(&p.statements[2], Statement::Let(b)
-        if matches!(b.type_annotation, Some(xulo_core::ast::Type::Union(_)))));
-}
-
-#[test]
-fn parses_string_literal_type() {
-    let p = parse(r#"let x: "active" = "active""#);
-    let Statement::Let(b) = &p.statements[0] else {
-        panic!();
-    };
-    assert!(
-        matches!(b.type_annotation, Some(xulo_core::ast::Type::Literal(ref s)) if s == "active")
-    );
-}
-
-#[test]
-fn parses_fn_type() {
-    let p = parse("let h: fn(a: number, b: number): number = null");
-    let Statement::Let(b) = &p.statements[0] else {
-        panic!();
-    };
-    let Some(xulo_core::ast::Type::FnSig { params, ret }) = &b.type_annotation else {
-        panic!("expected fn sig");
-    };
-    assert_eq!(params.len(), 2);
-    assert!(ret.is_some());
-}
-
-#[test]
-fn generic_fn_params() {
-    let p = parse("fn first<T>(list: list<T>): T { list[0] }");
+fn fn_decl_with_params_and_return() {
+    let p = parse_ok("fn add(a: number, b: number): number { a + b }");
     let Statement::Fn(f) = &p.statements[0] else {
         panic!("expected fn");
     };
-    assert_eq!(f.type_params, vec!["T".to_string()]);
+    assert_eq!(f.name, "add");
+    assert_eq!(f.params.len(), 2);
+    assert_eq!(f.params[0].name, "a");
+    assert_eq!(f.return_type, Some(Type::Number));
+    assert!(!f.is_async);
+    assert!(f.type_params.is_empty());
 }
 
 #[test]
-fn parses_while_stmt() {
-    let p = parse("while x < 10 { x = x + 1 }");
-    assert!(matches!(&p.statements[0], Statement::While(w)
-        if matches!(w.condition, Expression::BinaryOp(ref b) if b.operator == BinaryOperator::Lt)));
+fn pub_fn_is_exported() {
+    let p = parse_ok("pub fn add(a: number): number { a }");
+    assert!(matches!(p.statements[0], Statement::Export(_)));
 }
 
 #[test]
-fn parses_match_expr() {
-    let p = parse("match v { 0 => \"zero\" _ => \"other\" }");
-    let Statement::Expr(es) = &p.statements[0] else {
-        panic!("expected match");
-    };
-    let Expression::Match(m) = &es.expr else {
-        panic!("expected match");
-    };
-    assert_eq!(m.arms.len(), 2);
-    assert!(matches!(
-        m.arms[0].pattern,
-        xulo_core::ast::MatchPattern::Literal(Literal::Number(0.0))
-    ));
-    assert!(matches!(
-        m.arms[1].pattern,
-        xulo_core::ast::MatchPattern::Wildcard
-    ));
-}
-
-#[test]
-fn parses_match_enum_payload() {
-    let p = parse("match r { Result::Success(v) => v Result::Error(msg) => 0 }");
-    let Statement::Expr(es) = &p.statements[0] else {
-        panic!("expected match");
-    };
-    let Expression::Match(m) = &es.expr else {
-        panic!("expected match");
-    };
-    assert!(
-        matches!(&m.arms[0].pattern, xulo_core::ast::MatchPattern::EnumPayload {
-        enum_name, variant, bindings, ..
-    } if enum_name == "Result" && variant == "Success" && bindings == &["v".to_string()])
-    );
-}
-
-#[test]
-fn parses_ternary() {
-    let p = parse("let x = a > 1 ? \"big\" : \"small\"");
-    let Statement::Let(b) = &p.statements[0] else {
-        panic!();
-    };
-    assert!(matches!(b.value, Some(Expression::Ternary(_))));
-}
-
-#[test]
-fn parses_logical_operators() {
-    let p = parse("let x = a and b or !c");
-    let Statement::Let(b) = &p.statements[0] else {
-        panic!();
-    };
-    assert!(matches!(b.value, Some(Expression::BinaryOp(ref bo))
-        if bo.operator == BinaryOperator::Or));
-}
-
-#[test]
-fn parses_member_access_and_index() {
-    let p = parse("let n = user.name\nlet v = list[0]");
-    let Statement::Let(a) = &p.statements[0] else {
-        panic!();
-    };
-    assert!(matches!(a.value, Some(Expression::Member(ref m)) if m.property == "name"));
-    let Statement::Let(b) = &p.statements[1] else {
-        panic!();
-    };
-    assert!(matches!(b.value, Some(Expression::Index(_))));
-}
-
-#[test]
-fn parses_method_call() {
-    let p = parse("store.actions.setLoading(true)");
-    let Statement::Expr(es) = &p.statements[0] else {
-        panic!("expected call");
-    };
-    let Expression::Call(c) = &es.expr else {
-        panic!("expected call");
-    };
-    assert!(c.object.is_some());
-    assert_eq!(c.method.as_deref(), Some("setLoading"));
-}
-
-#[test]
-fn parses_nullish_and_optional_member() {
-    let p = parse("let x = user?.name ?? \"anon\"");
-    let Statement::Let(b) = &p.statements[0] else {
-        panic!();
-    };
-    assert!(matches!(b.value, Some(Expression::Nullish(_))));
-}
-
-#[test]
-fn parses_object_spread() {
-    let p = parse("let o = { ...base, y: 2 }");
-    let Statement::Let(b) = &p.statements[0] else {
-        panic!();
-    };
-    let Some(Expression::Literal {
-        value: Literal::Object(fields),
-        ..
-    }) = &b.value
-    else {
-        panic!("expected object literal");
-    };
-    assert!(matches!(
-        fields[0],
-        xulo_core::ast::ObjectField::Spread { .. }
-    ));
-}
-
-#[test]
-fn parses_default_params() {
-    let p = parse("fn greet(name: string = \"x\") { }");
-    let Statement::Fn(f) = &p.statements[0] else {
-        panic!();
-    };
-    assert!(f.params[0].default.is_some());
-}
-
-#[test]
-fn parses_named_args() {
-    let p = parse("greet(label: \"Submit\", variant: \"outline\")");
-    let Statement::Expr(es) = &p.statements[0] else {
-        panic!("expected call");
-    };
-    let Expression::Call(c) = &es.expr else {
-        panic!("expected call");
-    };
-    assert_eq!(c.arguments[0].name.as_deref(), Some("label"));
-}
-
-#[test]
-fn parses_range_for_loop() {
-    let p = parse("for i in 0..<10 { print(i) }");
-    let Statement::For(f) = &p.statements[0] else {
-        panic!("expected for");
-    };
-    assert!(matches!(f.iterable, Expression::Range(_)));
-}
-
-#[test]
-fn parses_unary_not() {
-    let p = parse("let x = !flag");
-    let Statement::Let(b) = &p.statements[0] else {
-        panic!();
-    };
-    assert!(matches!(b.value, Some(Expression::Unary(ref u))
-        if u.operator == xulo_core::ast::UnaryOperator::Not));
-}
-
-#[test]
-fn parses_async_fn_and_await() {
-    let p = parse("fn load(): async number { let v = await fetch() return v }");
+fn async_fn() {
+    let p = parse_ok("async fn f(): number { await g() }");
     let Statement::Fn(f) = &p.statements[0] else {
         panic!("expected fn");
     };
     assert!(f.is_async);
-    assert_eq!(
-        f.return_type,
-        Some(xulo_core::ast::Type::Async(Box::new(
-            xulo_core::ast::Type::Number
-        )))
-    );
-    let Statement::Let(b) = &f.body.statements[0] else {
-        panic!("expected let");
-    };
-    assert!(matches!(b.value, Some(Expression::Await { .. })));
 }
 
 #[test]
-fn parses_try_catch_throw() {
-    use xulo_core::ast::{Statement, TryStmt};
-    let p = parse("try { throw \"err\" } catch (e) { print(e) }");
-    let Statement::Try(t) = &p.statements[0] else {
-        panic!("expected try");
-    };
-    let TryStmt {
-        catch_var,
-        try_block,
-        ..
-    } = t;
-    assert_eq!(catch_var, "e");
-    assert!(matches!(
-        try_block.statements.as_slice(),
-        [Statement::Throw(_)]
-    ));
-}
-
-#[test]
-fn parses_import_and_pub_forms() {
-    use xulo_core::ast::{ExportItem, ExportStmt, ImportSpec, ImportStmt, Statement};
-
-    let p =
-        parse(r#"import { a as b } from "./m" import * as ns from "./n" import t as d from "./d""#);
-    assert!(matches!(p.statements[0],
-        Statement::Import(ImportStmt { spec: ImportSpec::Named(_), ref source, type_only: false }) if source == "./m"));
-    assert!(matches!(
-        p.statements[1],
-        Statement::Import(ImportStmt {
-            spec: ImportSpec::Namespace(_),
-            ..
-        })
-    ));
-    assert!(matches!(
-        p.statements[2],
-        Statement::Import(ImportStmt {
-            spec: ImportSpec::Named(_),
-            ..
-        })
-    ));
-
-    let p = parse(
-        r#"import type { User } from "./u" pub use { a, b } pub const X = 1 pub type Y = string"#,
-    );
-    assert!(matches!(
-        p.statements[0],
-        Statement::Import(ImportStmt {
-            type_only: true,
-            ..
-        })
-    ));
-    assert!(matches!(
-        p.statements[1],
-        Statement::Export(ExportStmt {
-            item: ExportItem::Names(_)
-        })
-    ));
-    assert!(matches!(
-        p.statements[2],
-        Statement::Export(ExportStmt {
-            item: ExportItem::Let(_)
-        })
-    ));
-    assert!(matches!(
-        p.statements[3],
-        Statement::Export(ExportStmt {
-            item: ExportItem::Type(_)
-        })
-    ));
-}
-
-#[test]
-fn parses_pub_declarations_as_exports() {
-    use xulo_core::ast::{ExportItem, ExportStmt};
-    let p = parse(
-        "pub fn add(a: number): number { return a } pub const PI = 3.14 \
-         pub let x = 1 pub type User = { name: string } pub enum Status { Active }",
-    );
-    assert_eq!(p.statements.len(), 5);
-    assert!(matches!(
-        &p.statements[0],
-        Statement::Export(ExportStmt {
-            item: ExportItem::Fn(_)
-        })
-    ));
-    assert!(matches!(
-        &p.statements[1],
-        Statement::Export(ExportStmt {
-            item: ExportItem::Let(_)
-        })
-    ));
-    assert!(matches!(
-        &p.statements[2],
-        Statement::Export(ExportStmt {
-            item: ExportItem::Let(_)
-        })
-    ));
-    assert!(matches!(
-        &p.statements[3],
-        Statement::Export(ExportStmt {
-            item: ExportItem::Type(_)
-        })
-    ));
-    assert!(matches!(
-        &p.statements[4],
-        Statement::Export(ExportStmt {
-            item: ExportItem::Enum(_)
-        })
-    ));
-}
-
-#[test]
-fn parses_pub_use_names() {
-    use xulo_core::ast::{ExportItem, ExportStmt};
-    let p = parse("pub use { a, b }");
-    assert!(matches!(
-        &p.statements[0],
-        Statement::Export(ExportStmt {
-            item: ExportItem::Names(names)
-        }) if names == &vec!["a".to_string(), "b".to_string()]
-    ));
-}
-
-#[test]
-fn rejects_removed_export_keyword() {
-    let tokens = tokenize("export fn foo() {}").unwrap();
-    let err = parse_program(&tokens).unwrap_err();
-    assert!(
-        err.message.contains("removed") && err.message.contains("`pub fn`"),
-        "unexpected message: {}",
-        err.message
-    );
-    assert!(err.span.is_some(), "error must carry a span");
-}
-
-#[test]
-fn rejects_reserved_word_as_binding_name() {
-    let tokens = tokenize("let class = 1").unwrap();
-    let err = parse_program(&tokens).unwrap_err();
-    assert!(
-        err.message.contains("reserved keyword `class`"),
-        "got: {}",
-        err.message
-    );
-    assert!(err.span.is_some(), "error must carry a span");
-}
-
-#[test]
-fn rejects_reserved_word_as_function_name() {
-    let tokens = tokenize("fn new() {}").unwrap();
-    let err = parse_program(&tokens).unwrap_err();
-    assert!(
-        err.message.contains("reserved keyword `new`"),
-        "unexpected message: {}",
-        err.message
-    );
-    assert!(err.span.is_some(), "error must carry a span");
-}
-
-#[test]
-fn rejects_reserved_word_as_statement() {
-    let tokens = tokenize("yield").unwrap();
-    let err = parse_program(&tokens).unwrap_err();
-    assert!(
-        err.message.contains("reserved keyword `yield`"),
-        "unexpected message: {}",
-        err.message
-    );
-    assert!(err.span.is_some(), "error must carry a span");
-}
-
-#[test]
-fn rejects_reserved_word_in_type_position() {
-    let tokens = tokenize("let x: class = 1").unwrap();
-    let err = parse_program(&tokens).unwrap_err();
-    assert!(
-        err.message.contains("reserved keyword `class`"),
-        "unexpected message: {}",
-        err.message
-    );
-    assert!(err.span.is_some(), "error must carry a span");
-}
-
-#[test]
-fn removed_default_gets_targeted_error() {
-    let tokens = tokenize("default fn main() { print(\"hi\") }").unwrap();
-    let err = parse_program(&tokens).expect_err("default is reserved");
-    assert!(
-        err.message.contains("the `default` keyword was removed"),
-        "message: {}",
-        err.message
-    );
-}
-
-#[test]
-fn parses_anonymous_function_expression() {
-    use xulo_core::ast::{Expression, FnExpr};
-    let p = parse("let f = fn(a: number, b: number): number { a + b }");
-    let Statement::Let(b) = &p.statements[0] else {
-        panic!("expected let");
-    };
-    match &b.value {
-        Some(Expression::FnExpr(f)) => {
-            let FnExpr {
-                params,
-                return_type,
-                body,
-                is_async,
-                ..
-            } = f.as_ref();
-            assert_eq!(params.len(), 2);
-            assert_eq!(return_type, &Some(xulo_core::ast::Type::Number));
-            assert!(!body.statements.is_empty());
-            assert!(!is_async);
-        }
-        _ => panic!("expected fn expression"),
-    }
-}
-
-#[test]
-fn parses_async_anonymous_function() {
-    let p = parse("let f = fn(): async number { let v = await g() return v }");
-    let Statement::Let(b) = &p.statements[0] else {
-        panic!();
-    };
-    assert!(matches!(b.value, Some(Expression::FnExpr(ref f))
-        if f.is_async && f.return_type == Some(xulo_core::ast::Type::Async(Box::new(xulo_core::ast::Type::Number)))));
-}
-
-#[test]
-fn parses_list_spread() {
-    let p = parse("let xs = [1, ...rest, 3]");
-    let Statement::Let(b) = &p.statements[0] else {
-        panic!();
-    };
-    let Some(Expression::Literal {
-        value: Literal::List(items),
-        ..
-    }) = &b.value
-    else {
-        panic!("expected list literal");
-    };
-    assert_eq!(items.len(), 3);
-    assert!(matches!(items[1], Expression::Spread { .. }));
-}
-
-#[test]
-fn parses_list_spread_leading() {
-    let p = parse("let xs = [...head]");
-    let Statement::Let(b) = &p.statements[0] else {
-        panic!();
-    };
-    assert!(
-        matches!(b.value, Some(Expression::Literal { value: Literal::List(ref items), .. })
-        if matches!(items[0], Expression::Spread { .. }))
-    );
-}
-
-#[test]
-fn parses_match_expr_with_commas() {
-    let p = parse("match v { 0 => \"zero\", 1 => \"one\", _ => \"other\" }");
-    let Statement::Expr(es) = &p.statements[0] else {
-        panic!("expected match");
-    };
-    let Expression::Match(m) = &es.expr else {
-        panic!("expected match");
-    };
-    assert_eq!(m.arms.len(), 3);
-    assert!(matches!(
-        m.arms[0].pattern,
-        xulo_core::ast::MatchPattern::Literal(Literal::Number(0.0))
-    ));
-    assert!(matches!(
-        m.arms[2].pattern,
-        xulo_core::ast::MatchPattern::Wildcard
-    ));
-}
-
-#[test]
-fn parses_match_enum_payload_with_commas() {
-    let p = parse("match r { Result::Success(v) => v, Result::Error(msg) => 0, _ => -1 }");
-    let Statement::Expr(es) = &p.statements[0] else {
-        panic!("expected match");
-    };
-    let Expression::Match(m) = &es.expr else {
-        panic!("expected match");
-    };
-    assert_eq!(m.arms.len(), 3);
-    assert!(
-        matches!(&m.arms[1].pattern, xulo_core::ast::MatchPattern::EnumPayload {
-        variant, bindings, ..
-    } if variant == "Error" && bindings == &["msg".to_string()])
-    );
-}
-
-#[test]
-fn parses_named_enum_payload() {
-    let p = parse("enum Action { Click, Submit(data: object), Cancel }");
-    let Statement::Enum(e) = &p.statements[0] else {
-        panic!("expected enum");
-    };
-    assert_eq!(e.variants[1].name, "Submit");
-    assert_eq!(
-        e.variants[1]
-            .payload
-            .as_ref()
-            .and_then(|p| p.first())
-            .and_then(|p| p.name.as_deref()),
-        Some("data")
-    );
-    assert_eq!(e.variants[0].payload, None);
-}
-
-#[test]
-fn parses_call_on_indexed_function_value() {
-    let p = parse("let r = xs[0](10, 4)");
-    let Statement::Let(b) = &p.statements[0] else {
-        panic!();
-    };
-    assert!(matches!(b.value, Some(Expression::CallValue(_))));
-}
-
-#[test]
-fn parses_bare_fn_expression_statement() {
-    let p =
-        parse("fn makeAdder(n: number): fn(number): number { fn(v: number): number { v + n } }");
+fn generic_fn_with_inline_bound() {
+    let p = parse_ok("fn id<T: Area>(x: T): T { x }");
     let Statement::Fn(f) = &p.statements[0] else {
         panic!("expected fn");
     };
-    assert!(
-        matches!(f.body.statements.last(), Some(Statement::Expr(es)) if matches!(es.expr, Expression::FnExpr(_)))
-    );
-}
-
-#[test]
-fn parses_state_declaration() {
-    use xulo_core::ast::StateStmt;
-    let p = parse("@State let count: number = 0");
-    let Statement::State(StateStmt { binding }) = &p.statements[0] else {
-        panic!("expected state");
-    };
-    assert_eq!(binding.name, "count");
-    assert!(matches!(
-        binding.type_annotation,
-        Some(xulo_core::ast::Type::Number)
-    ));
-}
-
-#[test]
-fn parses_store_destructure() {
-    use xulo_core::ast::{BindingPattern, StoreStmt};
-    let p = parse("@Store const { user, theme: t } = useAppStore()");
-    let Statement::Store(StoreStmt { pattern, .. }) = &p.statements[0] else {
-        panic!("expected store");
-    };
-    match pattern {
-        BindingPattern::Destructure(fields) => {
-            assert_eq!(fields[0].0, "user");
-            assert_eq!(fields[1].1.as_deref(), Some("t"));
-        }
-        _ => panic!("expected destructure"),
-    }
-}
-
-#[test]
-fn parses_effect_with_deps() {
-    use xulo_core::ast::EffectStmt;
-    let p = parse("@Effect fn() { fetchUser(id) }, [id]");
-    let Statement::Effect(EffectStmt { deps, .. }) = &p.statements[0] else {
-        panic!("expected effect");
-    };
-    assert!(deps.is_some());
-    assert_eq!(deps.as_ref().unwrap().len(), 1);
-}
-
-#[test]
-fn parses_environment_declaration() {
-    use xulo_core::ast::EnvStmt;
-    let p = parse("@Environment let router: Router");
-    let Statement::Environment(EnvStmt { name, .. }) = &p.statements[0] else {
-        panic!("expected environment");
-    };
-    assert_eq!(name, "router");
-}
-
-#[test]
-fn parses_component_block() {
-    use xulo_core::ast::{ComponentStmt, UiElement};
-    let src = "VStack(spacing: 16) { Text(\"Hello\") }";
-    let p = parse(src);
-    let Statement::Component(ComponentStmt {
-        name,
-        name_span,
-        args,
-        children,
-    }) = &p.statements[0]
-    else {
-        panic!("expected component");
-    };
-    assert_eq!(name, "VStack");
-    assert!(name_span.start < name_span.end);
-    assert_eq!(&src[name_span.clone()], "VStack");
-    assert_eq!(args.len(), 1);
-    assert!(matches!(&children[0], UiElement::Component(c) if c.name == "Text"));
-}
-
-#[test]
-fn parses_component_without_args_or_children() {
-    let p = parse("Screen { }");
-    let Statement::Component(c) = &p.statements[0] else {
-        panic!("expected component");
-    };
-    assert_eq!(c.name, "Screen");
-    assert!(c.children.is_empty());
-}
-
-#[test]
-fn parses_ui_if_and_for() {
-    use xulo_core::ast::UiElement;
-    let p = parse("VStack { if ok { Text(\"a\") } else { Text(\"b\") } for x in xs { Text(x) } }");
-    let Statement::Component(c) = &p.statements[0] else {
-        panic!("expected component");
-    };
-    assert!(matches!(&c.children[0], UiElement::If { .. }));
-    assert!(matches!(&c.children[1], UiElement::For { .. }));
-}
-
-#[test]
-fn parses_unary_minus_and_double_not() {
-    let p = parse("let a = -5 let b = !!flag let c = -x");
-    let Statement::Let(a) = &p.statements[0] else {
-        panic!();
-    };
-    assert!(matches!(a.value, Some(Expression::Unary(ref u))
-        if u.operator == xulo_core::ast::UnaryOperator::Neg));
-    let Statement::Let(b) = &p.statements[1] else {
-        panic!();
-    };
-    let Some(Expression::Unary(outer)) = &b.value else {
-        panic!("expected unary");
-    };
-    assert!(matches!(&outer.operand, Expression::Unary(inner)
-        if inner.operator == xulo_core::ast::UnaryOperator::Not));
-    let Statement::Let(c) = &p.statements[2] else {
-        panic!();
-    };
-    assert!(matches!(c.value, Some(Expression::Unary(ref u))
-        if u.operator == xulo_core::ast::UnaryOperator::Neg));
-}
-
-#[test]
-fn parses_nested_object_and_list_literals() {
-    let p = parse("let o = { a: { b: [1, 2] }, c: \"x\" }");
-    let Statement::Let(b) = &p.statements[0] else {
-        panic!();
-    };
-    let Some(Expression::Literal {
-        value: Literal::Object(fields),
-        ..
-    }) = &b.value
-    else {
-        panic!("expected object literal");
-    };
-    assert_eq!(fields.len(), 2);
-    assert!(
-        matches!(&fields[0], xulo_core::ast::ObjectField::Field { name, value } if name == "a"
-        && matches!(value, Expression::Literal { value: Literal::Object(_), .. }))
-    );
-    assert!(
-        matches!(&fields[1], xulo_core::ast::ObjectField::Field { name, value } if name == "c"
-        && matches!(value, Expression::Literal { value: Literal::String(s), .. } if s == "x"))
-    );
-}
-
-#[test]
-fn parses_method_chain_through_index_and_call() {
-    let p = parse("store.actions.pick(0).items[0].label");
-    let Statement::Expr(es) = &p.statements[0] else {
-        panic!();
-    };
-    let Expression::Member(m) = &es.expr else {
-        panic!("expected member");
-    };
-    assert_eq!(m.property, "label");
-    assert!(matches!(&m.object, Expression::Index(_)));
-}
-
-#[test]
-fn parses_nested_ternary_is_right_associative() {
-    let p = parse("let x = a ? b ? c : d : e");
-    let Statement::Let(b) = &p.statements[0] else {
-        panic!();
-    };
-    let Some(Expression::Ternary(outer)) = &b.value else {
-        panic!("expected ternary");
-    };
-    assert!(matches!(&outer.then_value, Expression::Ternary(inner)
-        if matches!(&inner.else_value, Expression::Identifier { name, .. } if name == "d")));
-}
-
-#[test]
-fn parses_ternary_inside_call_and_index() {
-    let p = parse("f(cond ? 1 : 2)[0]");
-    let Statement::Expr(es) = &p.statements[0] else {
-        panic!();
-    };
-    let Expression::Index(idx) = &es.expr else {
-        panic!("expected index");
-    };
-    let Expression::Call(c) = &*idx.object else {
-        panic!("expected call");
-    };
-    assert!(matches!(&c.arguments[0].value, Expression::Ternary(_)));
-    assert!(
-        matches!(&*idx.index, Expression::Literal { value: Literal::Number(n), .. } if *n == 0.0)
-    );
-}
-
-#[test]
-fn parses_match_scalar_and_enum_patterns() {
-    let p =
-        parse("match v { 1 => \"a\" \"s\" => \"b\" true => \"c\" E::V(x) => \"d\" _ => \"e\" }");
-    let Statement::Expr(es) = &p.statements[0] else {
-        panic!("expected match");
-    };
-    let Expression::Match(m) = &es.expr else {
-        panic!("expected match expr");
-    };
-    assert_eq!(m.arms.len(), 5);
-    assert!(matches!(
-        &m.arms[0].pattern,
-        xulo_core::ast::MatchPattern::Literal(Literal::Number(_))
-    ));
-    assert!(matches!(
-        &m.arms[1].pattern,
-        xulo_core::ast::MatchPattern::Literal(Literal::String(_))
-    ));
-    assert!(matches!(
-        &m.arms[2].pattern,
-        xulo_core::ast::MatchPattern::Literal(Literal::Boolean(_))
-    ));
-    if let xulo_core::ast::MatchPattern::EnumPayload { bindings, .. } = &m.arms[3].pattern {
-        assert_eq!(bindings, &vec!["x".to_string()]);
-    } else {
-        panic!("expected enum payload pattern");
-    }
-    assert!(matches!(
-        &m.arms[4].pattern,
-        xulo_core::ast::MatchPattern::Wildcard
-    ));
-}
-
-#[test]
-fn parses_optional_and_paren_union_types() {
-    let p = parse(
-        "let a: list<number>? = null let b: (number | string) = 1 let c: { name: string }? = null",
-    );
-    let Statement::Let(a) = &p.statements[0] else {
-        panic!()
-    };
-    assert!(matches!(
-        a.type_annotation,
-        Some(xulo_core::ast::Type::Optional(_))
-    ));
-    let Statement::Let(b) = &p.statements[1] else {
-        panic!()
-    };
-    assert!(matches!(
-        b.type_annotation,
-        Some(xulo_core::ast::Type::Union(_))
-    ));
-    let Statement::Let(c) = &p.statements[2] else {
-        panic!()
-    };
-    assert!(matches!(
-        c.type_annotation,
-        Some(xulo_core::ast::Type::Optional(_))
-    ));
-}
-
-#[test]
-fn parses_enum_payload_wildcard_and_named_construction() {
-    let p = parse("E::V(_, _) E::W(data: 1, label: \"x\")");
-    let Statement::Expr(es) = &p.statements[0] else {
-        panic!("expected enum call");
-    };
-    let Expression::Call(c) = &es.expr else {
-        panic!("expected call")
-    };
-    assert!(c.is_enum());
-    assert_eq!(c.enum_parts(), Some(("E", "V")));
-    assert_eq!(c.arguments.len(), 2);
-    assert!(matches!(&c.arguments[0].value, Expression::Identifier { name, .. } if name == "_"));
-
-    let Statement::Expr(es) = &p.statements[1] else {
-        panic!()
-    };
-    let Expression::Call(c) = &es.expr else {
-        panic!("expected call")
-    };
-    assert_eq!(c.arguments[0].name.as_deref(), Some("data"));
-    assert_eq!(c.arguments[1].name.as_deref(), Some("label"));
-}
-
-#[test]
-fn parses_await_on_indexed_value() {
-    let p = parse("let x = await xs[0]");
-    let Statement::Let(b) = &p.statements[0] else {
-        panic!()
-    };
-    let Some(Expression::Await { expr, .. }) = &b.value else {
-        panic!("expected await")
-    };
-    assert!(matches!(**expr, Expression::Index(_)));
-}
-
-#[test]
-fn parses_component_nested_ui_with_args() {
-    let p = parse(
-        "VStack { HStack(spacing: 4) { Text(\"a\") } Button(onClick: fn() {}) { Text(\"b\") } }",
-    );
-    let Statement::Component(comp) = &p.statements[0] else {
-        panic!("expected component");
-    };
-    assert_eq!(comp.name, "VStack");
-    assert_eq!(comp.children.len(), 2);
-    assert!(
-        matches!(&comp.children[0], xulo_core::ast::UiElement::Component(inner)
-        if inner.name == "HStack")
-    );
-}
-
-#[test]
-fn parses_expr_child_in_component_block() {
-    use xulo_core::ast::{Expression, UiElement};
-    let p = parse("VStack { children }");
-    let Statement::Component(comp) = &p.statements[0] else {
-        panic!("expected component");
-    };
-    assert_eq!(comp.children.len(), 1);
-    assert!(
-        matches!(&comp.children[0], UiElement::Expr(Expression::Identifier { name, .. })
-        if name == "children")
-    );
-}
-
-#[test]
-fn parses_mixed_component_and_expr_children() {
-    use xulo_core::ast::UiElement;
-    let p = parse("Card(title: \"x\") { Text(\"a\") children }");
-    let Statement::Component(comp) = &p.statements[0] else {
-        panic!("expected component");
-    };
-    assert_eq!(comp.children.len(), 2);
-    assert!(matches!(&comp.children[0], UiElement::Component(c) if c.name == "Text"));
-    assert!(matches!(&comp.children[1], UiElement::Expr(_)));
-}
-
-#[test]
-fn parses_member_and_index_expr_children() {
-    use xulo_core::ast::{Expression, UiElement};
-    let p = parse("VStack { user.name items[0] }");
-    let Statement::Component(comp) = &p.statements[0] else {
-        panic!("expected component");
-    };
-    assert!(matches!(
-        &comp.children[0],
-        UiElement::Expr(Expression::Member(_))
-    ));
-    assert!(matches!(
-        &comp.children[1],
-        UiElement::Expr(Expression::Index(_))
-    ));
-}
-
-#[test]
-fn syntax_error_carries_span() {
-    let tokens = tokenize("fn main() { let x = }").unwrap();
-    let err = parse_program(&tokens).unwrap_err();
-    assert!(err.span.is_some(), "syntax error must carry a span");
-}
-
-#[test]
-fn deep_unary_chain_is_nesting_error_not_overflow() {
-    // A deep prefix-operator chain must produce a controlled nesting error
-    // instead of exhausting the stack (regression: `unary` without a guard).
-    let src = format!("fn main() {{ let x = {}1 }}", "!".repeat(200));
-    let tokens = tokenize(&src).unwrap();
-    let err = parse_program(&tokens).unwrap_err();
-    assert!(
-        err.message.contains("nesting is too deep"),
-        "unexpected message: {}",
-        err.message
-    );
-}
-
-#[test]
-fn deep_unary_chain_within_limits_parses() {
-    // A reasonable chain (well under the nest budget) still parses.
-    let src = format!("fn main() {{ let x = {}1 }}", "!".repeat(50));
-    assert!(parse(&src).statements.len() == 1);
-}
-
-#[test]
-fn deeply_nested_type_is_nesting_error_not_overflow() {
-    // `type_expr` recursion must be guarded as well (regression).
-    let deep: String = "User<".repeat(200);
-    let src = format!(
-        "fn main() {{ let x: {}number > {} = 1 }}",
-        deep,
-        ">".repeat(200)
-    );
-    let tokens = tokenize(&src).unwrap();
-    let err = parse_program(&tokens).unwrap_err();
-    assert!(
-        err.message.contains("nesting is too deep"),
-        "unexpected message: {}",
-        err.message
-    );
-}
-
-#[test]
-fn deep_else_if_chain_is_nesting_error_not_overflow() {
-    // `if ... else if ...` chains recurse via a nested `if_expr`; the
-    // `ElseIf` arm must be guarded (regression).
-    let mut src = String::from("fn main() { let v = 0 if false { 1 }");
-    for _ in 0..200 {
-        src.push_str(" else if false { 1 }");
-    }
-    src.push_str(" print(v) }");
-    let tokens = tokenize(&src).unwrap();
-    let err = parse_program(&tokens).unwrap_err();
-    assert!(
-        err.message.contains("nesting is too deep"),
-        "unexpected message: {}",
-        err.message
-    );
-}
-
-#[test]
-fn parses_dollar_binding_argument() {
-    use xulo_core::ast::Expression;
-    let p = parse("Input(value: $name)");
-    let Statement::Component(c) = &p.statements[0] else {
-        panic!("expected component");
-    };
-    assert!(matches!(&c.args[0].value, Expression::Binding { name: n, .. } if n == "name"));
-}
-
-#[test]
-fn parses_trait_declaration() {
-    use xulo_core::ast::Type;
-    let p = parse(
-        r#"
-        trait Shape {
-            fn area(self): number
-            fn scale(self, by: number): Shape;
-        }
-        "#,
-    );
-    let Statement::Trait(t) = &p.statements[0] else {
-        panic!("expected trait statement");
-    };
-    assert_eq!(t.name, "Shape");
-    assert_eq!(t.methods.len(), 2);
-    let area = &t.methods[0];
-    assert_eq!(area.name, "area");
-    assert!(area.has_self);
-    assert_eq!(area.params.len(), 0);
-    assert_eq!(area.return_type, Some(Type::Number));
-    let scale = &t.methods[1];
-    assert_eq!(scale.name, "scale");
-    assert!(scale.has_self);
-    assert_eq!(scale.params.len(), 1);
-    assert_eq!(scale.params[0].name, "by");
-    assert_eq!(scale.params[0].type_annotation, Some(Type::Number));
-    assert_eq!(scale.return_type, Some(Type::Named("Shape".into())));
-}
-
-#[test]
-fn parses_trait_method_without_self() {
-    let p = parse("trait Describable { fn describe(): string }");
-    let Statement::Trait(t) = &p.statements[0] else {
-        panic!("expected trait statement");
-    };
-    assert!(!t.methods[0].has_self);
-    assert_eq!(t.methods[0].params.len(), 0);
-}
-
-#[test]
-fn parses_impl_block() {
-    use xulo_core::ast::Type;
-    let p = parse(
-        r#"
-        impl Shape for Circle {
-            fn area(self): number { return 1 }
-            fn scale(self, by: number): Shape { return 1 }
-        }
-        "#,
-    );
-    let Statement::Impl(imp) = &p.statements[0] else {
-        panic!("expected impl statement");
-    };
-    assert_eq!(imp.trait_name, "Shape");
-    assert_eq!(imp.type_name, "Circle");
-    assert_eq!(imp.methods.len(), 2);
-    let area = &imp.methods[0];
-    assert_eq!(area.name, "area");
-    assert_eq!(area.params[0].name, "self");
-    assert_eq!(area.params.len(), 1);
-    assert_eq!(area.return_type, Some(Type::Number));
-    let scale = &imp.methods[1];
-    assert_eq!(scale.params[0].name, "self");
-    assert_eq!(scale.params[1].name, "by");
-}
-
-#[test]
-fn parses_generic_bounds_inline_and_where() {
-    let p = parse("fn paint<T: Shape>(t: T): T where T: Drawable { return t }");
-    let Statement::Fn(f) = &p.statements[0] else {
-        panic!("expected fn statement");
-    };
-    assert_eq!(f.type_params, vec!["T"]);
-    // Inline bound `<T: Shape>` plus trailing `where T: Drawable`.
-    assert_eq!(f.bounds.len(), 2);
+    assert_eq!(f.type_params, vec!["T".to_string()]);
+    assert_eq!(f.bounds.len(), 1);
     assert_eq!(f.bounds[0].param, "T");
-    assert_eq!(f.bounds[0].traits, vec!["Shape"]);
-    assert_eq!(f.bounds[1].param, "T");
-    assert_eq!(f.bounds[1].traits, vec!["Drawable"]);
 }
 
 #[test]
-fn parses_multi_trait_bound() {
-    let p = parse("fn f<U: One & Two>(u: U) { print(u) }");
+fn generic_fn_with_where_clause() {
+    let p = parse_ok("fn f<T>(x: T): T where T: Area { x }");
     let Statement::Fn(f) = &p.statements[0] else {
-        panic!("expected fn statement");
+        panic!("expected fn");
     };
     assert_eq!(f.bounds.len(), 1);
-    assert_eq!(f.bounds[0].traits, vec!["One", "Two"]);
+    assert_eq!(f.bounds[0].param, "T");
 }
 
 #[test]
-fn parses_pub_trait() {
-    let p = parse("pub trait Area { fn area(self): number }");
-    let Statement::Export(e) = &p.statements[0] else {
-        panic!("expected export statement");
+fn struct_decl() {
+    let p = parse_ok("struct User { name: string, age: number }");
+    let Statement::Struct(s) = &p.statements[0] else {
+        panic!("expected struct");
     };
-    assert!(matches!(e.item, xulo_core::ast::ExportItem::Trait(_)));
+    assert_eq!(s.name, "User");
+    assert_eq!(s.fields.len(), 2);
 }
 
 #[test]
-fn rejects_self_in_plain_function() {
-    // `self` is a reserved word; only `impl` method params may use it.
-    let tokens = tokenize("fn f(self) { print(1) }").unwrap();
-    let err = parse_program(&tokens).unwrap_err();
-    assert!(
-        err.message.contains("`self`"),
-        "unexpected message: {}",
-        err.message
+fn enum_decl_with_payloads() {
+    let p = parse_ok("enum Msg { Submit(data: string, count: number), Ping }");
+    let Statement::Enum(e) = &p.statements[0] else {
+        panic!("expected enum");
+    };
+    assert_eq!(e.name, "Msg");
+    assert_eq!(e.variants.len(), 2);
+    assert_eq!(e.variants[0].name, "Submit");
+    assert_eq!(e.variants[0].payload.as_ref().unwrap().len(), 2);
+    assert!(e.variants[1].payload.is_none());
+}
+
+#[test]
+fn trait_decl_and_impl() {
+    let p = parse_ok(
+        "trait Area { fn area(self, scale: number): number } \
+         impl Area for Rectangle { fn area(self, scale: number): number { self.w * self.h * scale } }",
     );
+    assert!(matches!(p.statements[0], Statement::Trait(_)));
+    assert!(matches!(p.statements[1], Statement::Impl(_)));
 }
 
 #[test]
-fn rejects_self_not_first_in_impl_method() {
-    // `self` binds the receiver positionally, so it is only legal as the
-    // first parameter; mid/trailing positions would mis-bind arguments.
-    let tokens =
-        tokenize("impl Shape for Circle { fn area(x, self): number { return 1 } }").unwrap();
-    let err = parse_program(&tokens).unwrap_err();
-    assert!(
-        err.message.contains("`self` must be the first parameter"),
-        "unexpected message: {}",
-        err.message
-    );
-}
-
-#[test]
-fn rejects_self_not_first_in_trait_method() {
-    let tokens = tokenize("trait Shape { fn area(x, self): number }").unwrap();
-    let err = parse_program(&tokens).unwrap_err();
-    assert!(
-        err.message.contains("`self` must be the first parameter"),
-        "unexpected message: {}",
-        err.message
-    );
-}
-
-#[test]
-fn trait_is_a_keyword_not_identifier() {
-    let tokens = tokenize("let trait = 1").unwrap();
-    let err = parse_program(&tokens).unwrap_err();
-    assert!(
-        err.message.contains("`trait`"),
-        "unexpected message: {}",
-        err.message
-    );
-}
-
-#[test]
-fn parses_effect_with_leading_deps() {
-    use xulo_core::ast::EffectStmt;
-    let p = parse("@Effect([count]) fn() { print(count) }");
-    let Statement::Effect(EffectStmt { deps, .. }) = &p.statements[0] else {
-        panic!("expected effect");
+fn inherent_impl_with_self_expressions() {
+    let p = parse_ok("impl Rectangle { fn area(self): number { self.w * self.h } }");
+    let Statement::Impl(imp) = &p.statements[0] else {
+        panic!("expected impl");
     };
-    assert_eq!(deps.as_ref().map(|d| d.len()), Some(1));
+    assert!(imp.is_inherent);
+    assert_eq!(imp.type_name, "Rectangle");
 }
 
 #[test]
-fn parses_memo_binding_with_deps() {
-    let p = parse("@Memo([a, b]) let x: number = expensive(a)");
-    let Statement::Let(binding) = &p.statements[0] else {
-        panic!("expected let binding");
+fn type_alias() {
+    let p = parse_ok("type Id = number");
+    let Statement::TypeAlias(t) = &p.statements[0] else {
+        panic!("expected type alias");
     };
-    assert!(binding.memo);
-    assert_eq!(binding.memo_deps.as_ref().map(|d| d.len()), Some(2));
-    assert_eq!(binding.name, "x");
+    assert_eq!(t.name, "Id");
 }
 
 #[test]
-fn parses_memo_binding_empty_and_bare() {
-    let p = parse("@Memo([]) let y = compute()");
-    let Statement::Let(binding) = &p.statements[0] else {
-        panic!("expected let binding");
+fn tuple_type_alias() {
+    let p = parse_ok("type Pair = (string, number)");
+    let Statement::TypeAlias(t) = &p.statements[0] else {
+        panic!("expected type alias");
     };
-    assert!(binding.memo);
-    assert_eq!(binding.memo_deps.as_ref().map(|d| d.len()), Some(0));
-
-    let p = parse("@Memo let z = simple()");
-    let Statement::Let(binding) = &p.statements[0] else {
-        panic!("expected let binding");
-    };
-    assert!(binding.memo);
-    assert_eq!(binding.memo_deps.as_ref().map(|d| d.len()), Some(0));
+    assert_eq!(t.type_, Type::Tuple(vec![Type::String, Type::Number]));
 }
 
-#[test]
-fn memo_parses_without_initializer_but_semantic_rejects() {
-    // The parser accepts it (a plain `let x: number` is legal too); the
-    // semantic checker enforces that a `@Memo` binding has an initializer.
-    let src = "@Memo let x: number";
-    let p = parse(src);
-    let Statement::Let(binding) = &p.statements[0] else {
-        panic!("expected let binding");
-    };
-    assert!(binding.memo);
-    assert!(binding.value.is_none());
-}
+// ---------------------------------------------------------------
+// Imports
+// ---------------------------------------------------------------
 
 #[test]
-fn plain_backtick_template_is_a_string_literal() {
-    let p = parse("let x = `abc`");
-    let Statement::Let(b) = &p.statements[0] else {
-        panic!();
+fn named_import_with_alias() {
+    let p = parse_ok(r#"import { a, b as c } from "./m.xulo""#);
+    let Statement::Import(i) = &p.statements[0] else {
+        panic!("expected import");
     };
+    assert_eq!(i.source, "./m.xulo");
     assert_eq!(
-        b.value,
-        Some(Expression::Literal {
-            value: Literal::String("abc".into()),
-            span: 9..12,
-        })
+        i.spec,
+        ImportSpec::Named(vec![
+            ("a".to_string(), None),
+            ("b".to_string(), Some("c".to_string()))
+        ])
     );
+    assert!(!i.type_only);
 }
 
 #[test]
-fn template_interpolation_desugars_to_concat_of_str_calls() {
-    // `a${b}c` -> "a" + str(b) + "c"
-    let p = parse(r#"let x = `a${b}c`"#);
-    let Statement::Let(b) = &p.statements[0] else {
-        panic!();
+fn type_import() {
+    let p = parse_ok(r#"import type { T } from "./t.xulo""#);
+    let Statement::Import(i) = &p.statements[0] else {
+        panic!("expected import");
     };
-    match b.value.as_ref() {
-        Some(Expression::BinaryOp(outer)) => {
-            assert_eq!(outer.operator, BinaryOperator::Add);
-            // left: "a" + str(b)
-            match &outer.left {
-                Expression::BinaryOp(l) => {
-                    assert_eq!(l.operator, BinaryOperator::Add);
-                    assert_eq!(
-                        l.left,
-                        Expression::Literal {
-                            value: Literal::String("a".into()),
-                            span: 9..10,
-                        }
-                    );
-                    assert!(
-                        matches!(&l.right, Expression::Call(c)
-                        if c.callee == "str" && c.arguments.len() == 1
-                           && matches!(&c.arguments[0].value, Expression::Identifier { name, .. } if name == "b")),
-                        "expected str(b), got {:?}",
-                        l.right
-                    );
-                }
-                other => panic!("expected nested add for `\"a\" + str(b)`, got {other:?}"),
-            }
-            // right: "c"
-            assert_eq!(
-                outer.right,
-                Expression::Literal {
-                    value: Literal::String("c".into()),
-                    span: 14..15,
-                }
-            );
-        }
-        other => panic!("expected add chain, got {other:?}"),
-    }
+    assert!(i.type_only);
 }
 
 #[test]
-fn template_double_interpolation_desugars_left_associatively() {
-    let p = parse(r#"let x = `a${b}c${2}d`"#);
-    let Statement::Let(b) = &p.statements[0] else {
-        panic!();
+fn namespace_and_side_effect_imports() {
+    let p = parse_ok(
+        "import * as ns from \"./m.xulo\"\nimport \"./side.xulo\"",
+    );
+    assert!(matches!(
+        &p.statements[0],
+        Statement::Import(i) if i.spec == ImportSpec::Namespace("ns".to_string())
+    ));
+    assert!(matches!(
+        &p.statements[1],
+        Statement::Import(i) if i.spec == ImportSpec::Bare
+    ));
+}
+
+// ---------------------------------------------------------------
+// Let / const / destructuring
+// ---------------------------------------------------------------
+
+#[test]
+fn let_variants() {
+    let p = parse_ok("let x = 1 let mut y = 2 let z: string = \"a\" let w = shared [1] const K = 5");
+    assert_eq!(p.statements.len(), 5);
+    let x = match &p.statements[0] {
+        Statement::Let(l) => l,
+        _ => panic!(),
     };
-    match b.value.as_ref() {
-        Some(Expression::BinaryOp(first)) => {
-            // first: (("a" + str(b)) + "c") + str(2)
-            let left = match &first.left {
-                Expression::BinaryOp(inner) => &inner.right,
-                other => panic!("expected nested add, got {other:?}"),
-            };
-            assert!(matches!(left, Expression::Call(c) if c.callee == "str"));
-            // right: str(2) + "d" is missing? No: full is
-            // (("a" + str(b)) + "c") ... let's verify shape structurally instead.
-            assert_eq!(
-                first.right,
-                Expression::Literal {
-                    value: Literal::String("d".into()),
-                    span: 19..20,
-                }
-            );
-        }
-        other => panic!("expected add chain, got {other:?}"),
-    }
+    assert!(!x.is_mutable);
+    let y = match &p.statements[1] {
+        Statement::Let(l) => l,
+        _ => panic!(),
+    };
+    assert!(y.is_mutable);
+    let z = match &p.statements[2] {
+        Statement::Let(l) => l,
+        _ => panic!(),
+    };
+    assert_eq!(z.type_annotation, Some(Type::String));
+    let w = match &p.statements[3] {
+        Statement::Let(l) => l,
+        _ => panic!(),
+    };
+    assert!(w.is_shared);
+    let k = match &p.statements[4] {
+        Statement::Let(l) => l,
+        _ => panic!(),
+    };
+    assert!(k.is_const);
 }
 
 #[test]
-fn template_empty_text_segments_are_skipped() {
-    // `a${b}` -> "a" + str(b)  (trailing empty chunk dropped)
-    let p = parse(r#"let x = `a${b}`"#);
-    let Statement::Let(b) = &p.statements[0] else {
-        panic!();
-    };
-    match b.value.as_ref() {
-        Some(Expression::BinaryOp(op)) => {
-            assert_eq!(op.operator, BinaryOperator::Add);
-            assert!(matches!(&op.right, Expression::Call(c) if c.callee == "str"));
-        }
-        other => panic!("expected `a` + str(b), got {other:?}"),
-    }
-
-    // `${b}c` -> str(b) + "c"  (leading empty chunk dropped)
-    let p = parse(r#"let x = `${b}c`"#);
-    let Statement::Let(b) = &p.statements[0] else {
-        panic!();
-    };
-    match b.value.as_ref() {
-        Some(Expression::BinaryOp(op)) => {
-            assert!(matches!(&op.left, Expression::Call(c) if c.callee == "str"));
-            assert_eq!(
-                op.right,
-                Expression::Literal {
-                    value: Literal::String("c".into()),
-                    span: 13..14,
-                }
-            );
-        }
-        other => panic!("expected str(b) + \"c\", got {other:?}"),
-    }
+fn walrus_sugar_is_mutable() {
+    let l = first_let("let x := 1");
+    assert!(l.is_mutable);
+    assert!(matches!(l.value, Some(Expression::Literal { .. })));
 }
 
 #[test]
-fn template_escape_sequences_decode_in_chunks() {
-    let p = parse(r#"let x = `\`\${2}&\u{1F600}`"#);
-    let Statement::Let(b) = &p.statements[0] else {
+fn object_destructure() {
+    let l = first_let("let { name, age } = user");
+    let fields = l
+        .object_destructuring
+        .as_ref()
+        .expect("expected object destructuring");
+    assert_eq!(fields.len(), 2);
+    assert_eq!(fields[0].0, "name");
+    assert!(fields[0].1.is_none());
+}
+
+#[test]
+fn tuple_destructure() {
+    let l = first_let("let (a, b) = pair");
+    let names = l.tuple_names.as_ref().expect("expected tuple names");
+    assert_eq!(names, &vec!["a".to_string(), "b".to_string()]);
+}
+
+// ---------------------------------------------------------------
+// Statements
+// ---------------------------------------------------------------
+
+#[test]
+fn assignment_forms() {
+    let p = parse_ok("fn f() { x = 1 user.name = \"a\" xs[0] = 2 }");
+    let Statement::Fn(f) = &p.statements[0] else {
         panic!();
     };
-    // The whole thing is one plain chunk (no interpolation after escapes), so
-    // it must decode into a single literal without desugaring.
-    match b.value.as_ref() {
+    assert_eq!(f.body.statements.len(), 3);
+    assert!(f.body.statements.iter().all(|s| matches!(s, Statement::Assign(_))));
+}
+
+#[test]
+fn chained_assignment_rejected() {
+    let e = parse_err("fn f() { a = b = c }");
+    assert!(e.message.contains("chained assignment"), "{}", e.message);
+}
+
+#[test]
+fn defer_expr_and_block() {
+    let p = parse_ok("fn f() { defer print(\"bye\") defer { print(\"b2\") } }");
+    let Statement::Fn(f) = &p.statements[0] else {
+        panic!();
+    };
+    assert_eq!(f.body.statements.len(), 2);
+    assert!(f.body.statements.iter().all(|s| matches!(s, Statement::Defer(_))));
+}
+
+#[test]
+fn if_else_if_chain() {
+    let p = parse_ok("fn f() { if a { x() } else if b { y() } else { z() } }");
+    let Statement::Fn(f) = &p.statements[0] else {
+        panic!();
+    };
+    assert_eq!(f.body.statements.len(), 1);
+}
+
+#[test]
+fn while_and_for() {
+    let p = parse_ok("fn f() { while x < 10 { x = x + 1 } for i in 0..<10 { print(i) } }");
+    let Statement::Fn(f) = &p.statements[0] else {
+        panic!();
+    };
+    assert!(matches!(f.body.statements[0], Statement::While(_)));
+    assert!(matches!(f.body.statements[1], Statement::For(_)));
+}
+
+#[test]
+fn return_bare_and_with_value() {
+    let p = parse_ok("fn f(): number { return } fn g(): number { return 1 }");
+    assert_eq!(p.statements.len(), 2);
+}
+
+#[test]
+fn semicolon_is_optional() {
+    let p = parse_ok("fn f() { print(1); print(2) }");
+    let Statement::Fn(f) = &p.statements[0] else {
+        panic!();
+    };
+    match &f.body.statements[0] {
+        Statement::Expr(es) => assert!(es.has_semicolon),
+        other => panic!("expected expr stmt, got {other:?}"),
+    }
+    match &f.body.statements[1] {
+        Statement::Expr(es) => assert!(!es.has_semicolon),
+        other => panic!("expected expr stmt, got {other:?}"),
+    }
+}
+
+// ---------------------------------------------------------------
+// Expressions
+// ---------------------------------------------------------------
+
+#[test]
+fn precedence_power_binds_tighter_than_mul() {
+    let l = first_let("let x = 1 + 2 * 3 ** 2");
+    let Some(Expression::BinaryOp(b)) = &l.value else {
+        panic!("expected binary op, got {:?}", l.value);
+    };
+    assert!(matches!(b.operator, xulo_core::ast::BinaryOperator::Add));
+    // right side must be 2 * 3 ** 2 → Mul with Pow inside
+    let Expression::BinaryOp(mul) = &b.right else {
+        panic!("expected mul on the right");
+    };
+    assert!(matches!(mul.operator, xulo_core::ast::BinaryOperator::Mul));
+    let Expression::BinaryOp(pow) = &mul.right else {
+        panic!("expected pow");
+    };
+    assert!(matches!(pow.operator, xulo_core::ast::BinaryOperator::Pow));
+}
+
+#[test]
+fn power_is_right_assoc() {
+    let l = first_let("let x = 2 ** 3 ** 2");
+    let Some(Expression::BinaryOp(b)) = &l.value else {
+        panic!();
+    };
+    let Expression::BinaryOp(inner) = &b.right else {
+        panic!("right-assoc: right side must be another pow");
+    };
+    assert!(matches!(inner.operator, xulo_core::ast::BinaryOperator::Pow));
+}
+
+#[test]
+fn relational_is_non_assoc() {
+    parse_err("fn f() { let x = a < b < c }");
+}
+
+#[test]
+fn nullish_and_logical() {
+    let p = parse_ok("let x = a ?? b let y = a and b or c");
+    assert_eq!(p.statements.len(), 2);
+}
+
+#[test]
+fn ternary_vs_postfix_propagation() {
+    let p = parse_ok("let x = c ? a : b let y = f()?");
+    assert_eq!(p.statements.len(), 2);
+    let y = match &p.statements[1] {
+        Statement::Let(l) => l,
+        _ => panic!(),
+    };
+    assert!(matches!(y.value, Some(Expression::Propagate { .. })));
+}
+
+#[test]
+fn is_and_is_not() {
+    let p = parse_ok("fn f(x: number): boolean { return x is number and x is not string }");
+    assert_eq!(p.statements.len(), 1);
+}
+
+#[test]
+fn unary_operators() {
+    // spec: ! - ~ await move copy (there is no `not` operator)
+    parse_ok("let a = !true let b = -1 let c = ~5 let d = move x let e = copy y");
+}
+
+#[test]
+fn member_index_and_optional_chaining() {
+    let p = parse_ok("let a = user.name let b = xs[0] let c = user?.name");
+    let c = match &p.statements[2] {
+        Statement::Let(l) => l,
+        _ => panic!(),
+    };
+    let Some(Expression::Member(m)) = &c.value else {
+        panic!("expected member, got {:?}", c.value);
+    };
+    assert!(m.optional);
+}
+
+#[test]
+fn numbers_hex_bin_oct() {
+    let _p = parse_ok("let a = 0x1f let b = 0b1010 let c = 0o17 let d = 3.14");
+    fn num(src: &str) -> f64 {
+        let Statement::Let(l) = &parse_ok(src).statements[0] else {
+            panic!();
+        };
+        match &l.value {
+            Some(Expression::Literal {
+                value: Literal::Number(n),
+                ..
+            }) => *n,
+            other => panic!("expected number, got {other:?}"),
+        }
+    }
+    assert_eq!(num("let a = 0x1f"), 31.0);
+    assert_eq!(num("let b = 0b1010"), 10.0);
+    assert_eq!(num("let c = 0o17"), 15.0);
+    assert_eq!(num("let d = 2.5"), 2.5);
+}
+
+#[test]
+fn string_escapes() {
+    let l = first_let(r#"let s = "a\nb\tA""#);
+    let Some(Expression::Literal {
+        value: Literal::String(s),
+        ..
+    }) = &l.value
+    else {
+        panic!("expected string");
+    };
+    assert_eq!(s, "a\nb\tA");
+}
+
+#[test]
+fn template_desugars_to_concat() {
+    let l = first_let("let s = `a${b}c`");
+    // old lowering: ("a" + str(b)) + "c"
+    fn adds(e: &Expression) -> usize {
+        match e {
+            Expression::BinaryOp(b) => adds(&b.left) + adds(&b.right) + 1,
+            _ => 0,
+        }
+    }
+    assert_eq!(adds(&l.value.expect("value")), 2, "two concatenations");
+}
+
+#[test]
+fn closures() {
+    let p = parse_ok(
+        "let f = fn(a: number): number { a } let g = (a, b) => a + b let h = x => { print(x) } let i = async () => 1",
+    );
+    assert_eq!(p.statements.len(), 4);
+}
+
+#[test]
+fn list_with_spread_and_trailing_comma() {
+    let l = first_let("let xs = [1, 2, ...rest, ]");
+    let Some(Expression::Literal {
+        value: Literal::List(items),
+        ..
+    }) = &l.value
+    else {
+        panic!("expected list");
+    };
+    assert_eq!(items.len(), 3);
+    assert!(matches!(items[2], Expression::Spread { .. }));
+}
+
+#[test]
+fn brace_map_with_spread() {
+    let p = parse_ok("let m = { a: 1, ...base, b: 2 }");
+    assert_eq!(p.statements.len(), 1);
+}
+
+#[test]
+fn typed_map() {
+    let p = parse_ok("let m = Map<string, number>{ \"a\": 1 }");
+    let Statement::Let(l) = &p.statements[0] else {
+        panic!();
+    };
+    assert!(matches!(l.value, Some(Expression::TypedMap(_))));
+}
+
+#[test]
+fn tuple_vs_group() {
+    let t = first_let("let t = (1, 2, 3)");
+    assert!(matches!(t.value, Some(Expression::Tuple { .. })));
+    let g = first_let("let g = (1)");
+    assert!(matches!(
+        g.value,
         Some(Expression::Literal {
-            value: Literal::String(s),
+            value: Literal::Number(_),
             ..
-        }) => {
-            assert_eq!(s, "`${2}&😀");
-        }
-        other => panic!("expected one literal, got {other:?}"),
-    }
+        })
+    ));
 }
 
 #[test]
-fn template_nested_expression_with_braces_parses() {
-    let p = parse(r#"let x = `v=${ {a:1}.a }`"#);
-    let Statement::Let(b) = &p.statements[0] else {
-        panic!();
+fn single_element_tuple_rejected() {
+    parse_err("let t = (1,)");
+}
+
+#[test]
+fn variant_paths() {
+    let p = parse_ok("let c = Color::Red let r = Result2::Ok(1)");
+    let c = match &p.statements[0] {
+        Statement::Let(l) => l,
+        _ => panic!(),
     };
-    match b.value.as_ref() {
-        Some(Expression::BinaryOp(op)) => {
-            assert_eq!(op.operator, BinaryOperator::Add);
-            assert!(
-                matches!(&op.right, Expression::Call(c)
-                if c.callee == "str"
-                   && matches!(&c.arguments[0].value, Expression::Member(m) if m.property == "a")),
-                "expected str of object member access, got {:?}",
-                op.right
-            );
-        }
-        other => panic!("expected add chain, got {other:?}"),
-    }
+    assert!(matches!(c.value, Some(Expression::EnumRef(_))));
+    let r = match &p.statements[1] {
+        Statement::Let(l) => l,
+        _ => panic!(),
+    };
+    assert!(matches!(r.value, Some(Expression::Call(_))));
 }
 
 #[test]
-fn parses_break_statement() {
-    let p = parse("fn f() { for i in list { break } }");
+fn spawn_and_lock() {
+    let p = parse_ok(
+        "fn f() { let t = spawn async { work() } let u = spawn .thread async { work() } lock counter { counter = counter + 1 } }",
+    );
     let Statement::Fn(f) = &p.statements[0] else {
         panic!();
     };
-    let Statement::For(for_stmt) = &f.body.statements[0] else {
-        panic!("expected for");
+    assert!(matches!(f.body.statements[2], Statement::Expr(_)));
+}
+
+#[test]
+fn panic_expression() {
+    parse_ok("fn f() { panic(\"boom\") }");
+}
+
+#[test]
+fn self_is_an_ordinary_expression_name() {
+    parse_ok("impl Box { fn get(self): number { self.value + 1 } }");
+}
+
+#[test]
+fn nested_generics_require_space_before_gt() {
+    parse_ok("fn f(x: List<List<number> >): List<List<number> > { x }");
+    parse_err("fn f(x: List<List<number>>): number { 1 }");
+}
+
+#[test]
+fn optional_and_fn_and_literal_types() {
+    parse_ok("fn f(x: number?, y: fn(a: number): boolean, z: \"tag\"): Unit { }");
+}
+
+// ---------------------------------------------------------------
+// Match
+// ---------------------------------------------------------------
+
+#[test]
+fn match_arms_or_guard_wildcard() {
+    let p = parse_ok("fn f(x: number): number { match x { 0 | 1 => 2, 2...5 => 3, n if n > 5 => 4, _ => 5 } }");
+    let Statement::Fn(f) = &p.statements[0] else {
+        panic!();
     };
-    assert!(
-        matches!(for_stmt.body.statements[0], Statement::Break),
-        "expected break"
+    let Statement::Expr(es) = &f.body.statements[0] else {
+        panic!();
+    };
+    let Expression::Match(m) = &es.expr else {
+        panic!("expected match, got {:?}", es.expr);
+    };
+    assert_eq!(m.arms.len(), 4);
+    assert!(m.arms[2].guard.is_some());
+    match &m.arms[3].pattern {
+        MatchPattern::Wildcard => {}
+        other => panic!("expected wildcard, got {other:?}"),
+    }
+}
+
+#[test]
+fn match_arm_body_block() {
+    parse_ok("fn f(x: number) { match x { 0 => { print(1) } _ => print(2) } }");
+}
+
+#[test]
+fn match_enum_payload_patterns() {
+    parse_ok(
+        "enum Msg { Send(to: string), Ping } fn f(m: Msg): number { match m { Msg::Send(to) => 1, Msg::Ping => 2 } }",
     );
 }
 
 #[test]
-fn parses_continue_statement() {
-    let p = parse("fn f() { for i in list { continue } }");
+fn match_type_pattern_with_binder() {
+    let p = parse_ok("fn f(x: number): number { match x { String s => 1, Int _ => 2, _ => 3 } }");
     let Statement::Fn(f) = &p.statements[0] else {
         panic!();
     };
-    let Statement::For(for_stmt) = &f.body.statements[0] else {
-        panic!("expected for");
-    };
-    assert!(
-        matches!(for_stmt.body.statements[0], Statement::Continue),
-        "expected continue"
-    );
-}
-
-#[test]
-fn parses_modulo_operator() {
-    let p = parse("let x = 10 % 3");
-    let Statement::Let(b) = &p.statements[0] else {
+    let Statement::Expr(es) = &f.body.statements[0] else {
         panic!();
     };
-    match &b.value {
-        Some(Expression::BinaryOp(op)) => {
-            assert_eq!(op.operator, BinaryOperator::Mod);
+    let Expression::Match(m) = &es.expr else {
+        panic!();
+    };
+    assert_eq!(m.arms.len(), 3);
+    match &m.arms[0].pattern {
+        MatchPattern::TypePattern {
+            type_name, binder, ..
+        } => {
+            assert_eq!(type_name, "String");
+            assert_eq!(*binder, xulo_core::ast::PatternBinder::Binding("s".to_string()));
         }
-        _ => panic!("expected binary op"),
+        other => panic!("expected type pattern, got {other:?}"),
     }
 }
 
 #[test]
-fn parses_power_operator() {
-    let p = parse("let x = 2 ** 10");
-    let Statement::Let(b) = &p.statements[0] else {
-        panic!();
-    };
-    match &b.value {
-        Some(Expression::BinaryOp(op)) => {
-            assert_eq!(op.operator, BinaryOperator::Pow);
-        }
-        _ => panic!("expected binary op"),
-    }
-}
-
-#[test]
-fn power_is_right_associative() {
-    let p = parse("let x = 2 ** 3 ** 2");
-    let Statement::Let(b) = &p.statements[0] else {
-        panic!();
-    };
-    match &b.value {
-        Some(Expression::BinaryOp(op)) => {
-            assert_eq!(op.operator, BinaryOperator::Pow);
-            match &op.right {
-                Expression::BinaryOp(right) => {
-                    assert_eq!(right.operator, BinaryOperator::Pow);
-                }
-                _ => panic!("expected right side to be power"),
-            }
-        }
-        _ => panic!("expected binary op"),
-    }
-}
-
-#[test]
-fn power_higher_precedence_than_mul() {
-    let p = parse("let x = 2 * 3 ** 2");
-    let Statement::Let(b) = &p.statements[0] else {
-        panic!();
-    };
-    match &b.value {
-        Some(Expression::BinaryOp(op)) => {
-            assert_eq!(op.operator, BinaryOperator::Mul);
-            match &op.right {
-                Expression::BinaryOp(right) => {
-                    assert_eq!(right.operator, BinaryOperator::Pow);
-                }
-                _ => panic!("expected right side to be power"),
-            }
-        }
-        _ => panic!("expected binary op"),
-    }
-}
-
-#[test]
-fn modulo_same_precedence_as_mul() {
-    let p = parse("let x = 6 * 7 % 4");
-    let Statement::Let(b) = &p.statements[0] else {
-        panic!();
-    };
-    match &b.value {
-        Some(Expression::BinaryOp(op)) => {
-            assert_eq!(op.operator, BinaryOperator::Mod);
-            match &op.left {
-                Expression::BinaryOp(left) => {
-                    assert_eq!(left.operator, BinaryOperator::Mul);
-                }
-                _ => panic!("expected left side to be multiply"),
-            }
-        }
-        _ => panic!("expected binary op"),
-    }
-}
-
-#[test]
-fn break_in_while_loop() {
-    let p = parse("fn f() { while true { break } }");
+fn match_body_shapes() {
+    let p = parse_ok("fn f(x: number) { match x { 0 => print(0), _ => { print(1) } } }");
     let Statement::Fn(f) = &p.statements[0] else {
         panic!();
     };
-    let Statement::While(w) = &f.body.statements[0] else {
-        panic!("expected while");
-    };
-    assert!(
-        matches!(w.body.statements[0], Statement::Break),
-        "expected break"
-    );
-}
-
-#[test]
-fn parses_bitwise_not() {
-    let p = parse("let x = ~a");
-    let Statement::Let(b) = &p.statements[0] else {
+    let Statement::Expr(es) = &f.body.statements[0] else {
         panic!();
     };
-    match &b.value {
-        Some(Expression::Unary(op)) => {
-            assert_eq!(op.operator, xulo_core::ast::UnaryOperator::BitNot);
+    let Expression::Match(m) = &es.expr else {
+        panic!();
+    };
+    assert!(matches!(m.arms[0].value, MatchBody::Expr(_)));
+    assert!(matches!(m.arms[1].value, MatchBody::Block(_)));
+}
+
+// ---------------------------------------------------------------
+// Components and UI
+// ---------------------------------------------------------------
+
+#[test]
+fn component_fn_with_state_and_children() {
+    let src = r#"fn Counter(): View {
+  @State let count: number = 0
+  VStack(spacing: 8) {
+    Text(str(count))
+    Button("Inc", onClick: fn() { count = count + 1 })
+  }
+}"#;
+    let p = parse_ok(src);
+    let Statement::Fn(f) = &p.statements[0] else {
+        panic!();
+    };
+    assert_eq!(f.body.statements.len(), 2);
+    assert!(matches!(f.body.statements[0], Statement::State(_)));
+    match &f.body.statements[1] {
+        Statement::Component(c) => {
+            assert_eq!(c.name, "VStack");
+            assert_eq!(c.args.len(), 1);
+            assert_eq!(c.children.len(), 2);
         }
-        _ => panic!("expected unary ~"),
+        other => panic!("expected component, got {other:?}"),
     }
 }
 
 #[test]
-fn parses_bitwise_xor() {
-    let p = parse("let x = a ^ b");
-    let Statement::Let(b) = &p.statements[0] else {
+fn ui_block_children_for_and_if() {
+    let src = "fn V(): View { VStack { for x in xs { Text(x) } if ok { Text(\"y\") } } }";
+    let p = parse_ok(src);
+    let Statement::Fn(f) = &p.statements[0] else {
         panic!();
     };
-    match &b.value {
-        Some(Expression::BinaryOp(op)) => {
-            assert_eq!(op.operator, BinaryOperator::Xor);
-        }
-        _ => panic!("expected binary ^"),
-    }
+    let Statement::Component(c) = &f.body.statements[0] else {
+        panic!("expected component body, got {:?}", f.body.statements[0]);
+    };
+    assert_eq!(c.children.len(), 2);
+    assert!(matches!(c.children[0], UiElement::For { .. }));
+    assert!(matches!(c.children[1], UiElement::If { .. }));
 }
 
 #[test]
-fn parses_shift_left() {
-    let p = parse("let x = a << b");
-    let Statement::Let(b) = &p.statements[0] else {
+fn bare_component_call_without_args() {
+    let p = parse_ok("fn V(): View { Card { Text(\"hi\") } }");
+    let Statement::Fn(f) = &p.statements[0] else {
         panic!();
     };
-    match &b.value {
-        Some(Expression::BinaryOp(op)) => {
-            assert_eq!(op.operator, BinaryOperator::Shl);
-        }
-        _ => panic!("expected binary <<"),
-    }
+    let Statement::Component(c) = &f.body.statements[0] else {
+        panic!();
+    };
+    assert_eq!(c.name, "Card");
+    assert_eq!(c.children.len(), 1);
 }
 
 #[test]
-fn parses_shift_right() {
-    let p = parse("let x = a >> b");
-    let Statement::Let(b) = &p.statements[0] else {
+fn component_decl_variants() {
+    let src = "fn V(): View { @State let n: number = 0 @Store let { count } = store @Environment let theme: string @Effect fn() { print(n) }, [n] Text(str(n)) }";
+    let p = parse_ok(src);
+    let Statement::Fn(f) = &p.statements[0] else {
         panic!();
     };
-    match &b.value {
-        Some(Expression::BinaryOp(op)) => {
-            assert_eq!(op.operator, BinaryOperator::Shr);
-        }
-        _ => panic!("expected binary >>"),
-    }
+    assert!(matches!(f.body.statements[0], Statement::State(_)));
+    assert!(matches!(f.body.statements[1], Statement::Store(_)));
+    assert!(matches!(f.body.statements[2], Statement::Environment(_)));
+    assert!(matches!(f.body.statements[3], Statement::Effect(_)));
+    assert!(matches!(f.body.statements[4], Statement::Component(_)));
 }
 
 #[test]
-fn parses_bitwise_and() {
-    let p = parse("let x = a & b");
-    let Statement::Let(b) = &p.statements[0] else {
-        panic!();
-    };
-    match &b.value {
-        Some(Expression::BinaryOp(op)) => {
-            assert_eq!(op.operator, BinaryOperator::BitAnd);
-        }
-        _ => panic!("expected binary &"),
-    }
+fn if_condition_block_is_not_swallowed_by_component_call() {
+    // regression: a bare identifier + block in a condition must be `if`'s block
+    parse_ok("fn f() { if x { g() } else { h() } }");
+}
+
+// ---------------------------------------------------------------
+// Negative cases
+// ---------------------------------------------------------------
+
+#[test]
+fn legacy_syntax_rejected() {
+    parse_err("try { f() } catch (e) { g() }");
+    parse_err("export fn f() { }");
+    parse_err("fn f(): async { }");
+    parse_err("class");
 }
 
 #[test]
-fn parses_bitwise_or() {
-    let p = parse("let x = a | b");
-    let Statement::Let(b) = &p.statements[0] else {
-        panic!();
-    };
-    match &b.value {
-        Some(Expression::BinaryOp(op)) => {
-            assert_eq!(op.operator, BinaryOperator::BitOr);
-        }
-        _ => panic!("expected binary |"),
-    }
+fn reserved_words_are_not_identifiers() {
+    parse_err("let class = 1");
+    parse_err("let protocol = 1");
 }
 
 #[test]
-fn shift_precedence_higher_than_add() {
-    let p = parse("let x = a + b << c");
-    let Statement::Let(b) = &p.statements[0] else {
-        panic!();
-    };
-    match &b.value {
-        Some(Expression::BinaryOp(op)) => {
-            assert_eq!(op.operator, BinaryOperator::Shl);
-            assert!(
-                matches!(op.left, Expression::BinaryOp(ref m) if m.operator == BinaryOperator::Add)
-            );
-        }
-        _ => panic!("expected binary op"),
-    }
+fn untyped_parameters_rejected() {
+    parse_err("fn f(x) { }");
 }
 
 #[test]
-fn bitwise_left_to_right() {
-    // All bitwise + additive operators at same precedence, left-to-right
-    let p = parse("let x = a & b ^ c");
-    let Statement::Let(b) = &p.statements[0] else {
-        panic!();
-    };
-    match &b.value {
-        Some(Expression::BinaryOp(op)) => {
-            assert_eq!(op.operator, BinaryOperator::Xor);
-            assert!(
-                matches!(op.left, Expression::BinaryOp(ref m) if m.operator == BinaryOperator::BitAnd)
-            );
-        }
-        _ => panic!("expected binary op"),
-    }
+fn parameter_mode_follows_the_colon() {
+    parse_ok("fn f(x: mut number, y: shared string) { }");
+    parse_err("fn f(mut x: number) { }");
 }
 
 #[test]
-fn bitwise_or_left_to_right() {
-    let p = parse("let x = a ^ b | c");
-    let Statement::Let(b) = &p.statements[0] else {
-        panic!();
-    };
-    match &b.value {
-        Some(Expression::BinaryOp(op)) => {
-            assert_eq!(op.operator, BinaryOperator::BitOr);
-            assert!(
-                matches!(op.left, Expression::BinaryOp(ref m) if m.operator == BinaryOperator::Xor)
-            );
-        }
-        _ => panic!("expected binary op"),
-    }
+fn expression_statement_must_not_start_with_brace() {
+    parse_err("fn f() { { a: 1 } }");
 }
 
 #[test]
-fn bitwise_same_precedence_as_add() {
-    // & has same precedence as +, left-to-right
-    let p = parse("let x = a + b & c");
-    let Statement::Let(b) = &p.statements[0] else {
-        panic!();
-    };
-    match &b.value {
-        Some(Expression::BinaryOp(op)) => {
-            assert_eq!(op.operator, BinaryOperator::BitAnd);
-            assert!(
-                matches!(op.left, Expression::BinaryOp(ref m) if m.operator == BinaryOperator::Add)
-            );
-        }
-        _ => panic!("expected binary op"),
+fn missing_initializer_rejected() {
+    parse_err("let x =");
+}
+
+// ---------------------------------------------------------------
+// Depth limit
+// ---------------------------------------------------------------
+
+#[test]
+fn depth_just_under_limit_accepted() {
+    // test threads have a small default stack; the CLI parses on the main
+    // thread (8 MiB), so give this check a comparable stack.
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            let depth = MAX_NEST_DEPTH - 28; // leave room for `let x = ` + `1`
+            let src = format!("let x = {}1{}", "(".repeat(depth), ")".repeat(depth));
+            assert!(parse_program(&src).is_ok());
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
+fn depth_way_over_limit_rejected_without_panic() {
+    let src = format!("let x = {}1{}", "(".repeat(10_000), ")".repeat(10_000));
+    let e = parse_err(&src);
+    assert_eq!(e.message, "nesting is too deep");
+}
+
+#[test]
+fn deep_adversarial_input_does_not_panic() {
+    // no panic on inputs that previously crashed naive recursive parsers
+    for src in [
+        "(".repeat(500),
+        format!("{}1{}", "(".repeat(300), ")".repeat(300)),
+        format!("{}{}", "[".repeat(400), "]".repeat(400)),
+        format!("{}{}", "{".repeat(400), "}".repeat(400)),
+    ] {
+        let _ = parse_program(&src); // must not panic
     }
+}
+
+// ---------------------------------------------------------------
+// Regressions: whitespace and token-boundary fixes
+// ---------------------------------------------------------------
+
+#[test]
+fn template_keeps_spaces_around_interpolation() {
+    // The space after `}` and after the opening backtick belongs to the
+    // template text, not to inter-token whitespace skipping.
+    let l = first_let("let s = `${i} times 5`");
+    let Some(Expression::BinaryOp(b)) = &l.value else {
+        panic!("expected concat, got {:?}", l.value);
+    };
+    let Expression::Literal {
+        value: Literal::String(right),
+        ..
+    } = &b.right
+    else {
+        panic!("expected trailing string, got {:?}", b.right);
+    };
+    assert_eq!(right, " times 5");
+
+    let l = first_let("let s = ` leading`");
+    let Some(Expression::Literal {
+        value: Literal::String(text),
+        ..
+    }) = &l.value
+    else {
+        panic!("expected plain string, got {:?}", l.value);
+    };
+    assert_eq!(text, " leading");
+}
+
+#[test]
+fn template_escaped_backtick_and_dollar_do_not_close() {
+    let l = first_let(r#"let s = `a\${not interp}\``"#);
+    let Some(Expression::Literal {
+        value: Literal::String(text),
+        ..
+    }) = &l.value
+    else {
+        panic!("expected plain string, got {:?}", l.value);
+    };
+    assert_eq!(text, "a${not interp}`");
+}
+
+#[test]
+fn variant_path_as_call_argument() {
+    // `argument`'s optional `name:` prefix must not swallow the first colon of
+    // a `::` variant path.
+    parse_ok("fn main() { print(Foo::Bar) }");
+    parse_ok("fn main() { g(Foo::Bar, 1) }");
+}
+
+#[test]
+fn optional_type_postfix() {
+    let p = parse_ok("let x: number? = null let ys: list<number>? = null");
+    let Statement::Let(l) = &p.statements[0] else {
+        panic!("expected let");
+    };
+    assert_eq!(l.type_annotation, Some(Type::Optional(Box::new(Type::Number))));
 }

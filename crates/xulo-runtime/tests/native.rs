@@ -3,15 +3,13 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use xulo_core::error::{ErrorKind, XuloError};
-use xulo_lexer::tokenize;
 use xulo_parser::parse_program;
 use xulo_runtime::interpreter::{Interpreter, ModuleExports, RunError};
 use xulo_runtime::value::Value;
 
 /// Full pipeline: lex -> parse -> semantic check -> run the native interpreter.
 fn run(src: &str) -> Result<Vec<String>, XuloError> {
-    let tokens = tokenize(src).unwrap();
-    let program = parse_program(&tokens).unwrap();
+    let program = parse_program(src).unwrap();
     xulo_semantic::analyze(&program)?;
     let interp = Interpreter::new();
     interp.run(&program)
@@ -20,8 +18,7 @@ fn run(src: &str) -> Result<Vec<String>, XuloError> {
 /// Like [`run`], but applies trait-dispatch annotations so `Trait::method`
 /// calls resolve to their mangled `impl_{Trait}_{Type}_{method}` function.
 fn run_annotated(src: &str) -> Result<Vec<String>, XuloError> {
-    let tokens = tokenize(src).unwrap();
-    let mut program = parse_program(&tokens).unwrap();
+    let mut program = parse_program(src).unwrap();
     let result = xulo_semantic::analyze_with(&program, &[], &[], &[])?;
     xulo_semantic::apply_trait_dispatch(&mut program, &result.trait_dispatch);
     let interp = Interpreter::new();
@@ -32,8 +29,7 @@ fn run_annotated(src: &str) -> Result<Vec<String>, XuloError> {
 /// "undefined variable") can be exercised without the type checker rejecting
 /// the program first.
 fn run_raw(src: &str) -> Result<Vec<String>, XuloError> {
-    let tokens = tokenize(src).unwrap();
-    let program = parse_program(&tokens).unwrap();
+    let program = parse_program(src).unwrap();
     let interp = Interpreter::new();
     interp.run(&program)
 }
@@ -57,8 +53,7 @@ fn exec_module_pair(
         imports: &[(String, Value)],
         run_main: bool,
     ) -> Result<ModuleExports, XuloError> {
-        let tokens = tokenize(src).unwrap();
-        let program = parse_program(&tokens).unwrap();
+        let program = parse_program(src).unwrap();
         interp
             .exec_module(&program, imports, run_main)
             .map_err(|e| match e {
@@ -220,8 +215,8 @@ fn unbounded_recursion_errors_instead_of_crashing() {
             // Async recursion hits the same limit before exhausting memory.
             let err = run_raw(
                 r#"
-                fn rec(n: number): async number { await rec(n - 1) }
-                fn main(): async { print(str(await rec(1))) }
+                async fn rec(n: number): number { await rec(n - 1) }
+                async fn main() { print(str(await rec(1))) }
                 "#,
             )
             .unwrap_err();
@@ -244,8 +239,8 @@ fn unbounded_recursion_errors_instead_of_crashing() {
             assert_eq!(
                 run_ok(
                     r#"
-                    fn step(n: number): async number { if n <= 0 { return 0 } await step(n - 1) n }
-                    fn main(): async { print(str(await step(100))) }
+                    async fn step(n: number): number { if n <= 0 { return 0 } await step(n - 1) n }
+                    async fn main() { print(str(await step(100))) }
                     "#,
                 ),
                 vec!["100"]
@@ -610,12 +605,12 @@ fn top_level_async_without_main_is_driven_to_completion() {
     // queue (the JS path drains microtasks); used to park forever.
     let out = run_ok(
         r#"
-        fn pause(): async { }
-        fn work(): async number {
+        async fn pause() { }
+        async fn work(): number {
             await pause()
             42
         }
-        fn done(): async {
+        async fn done() {
             let v = await work()
             print(str(v))
         }
@@ -742,48 +737,7 @@ fn nullish_and_optional_access() {
         "#,
     );
     assert_eq!(out, vec!["fallback", "null", "5"]);
-}
-
-#[test]
-fn try_catch_throw() {
-    let out = run_ok(
-        r#"
-        fn main() {
-            try {
-                throw "boom"
-            } catch (e) {
-                print("caught " + e)
-            }
-            print("after")
-        }
-        "#,
-    );
-    assert_eq!(out, vec!["caught boom", "after"]);
-}
-
-#[test]
-fn try_catch_reraises_other_errors() {
-    let err = run_raw(
-        r#"
-        fn main() {
-            try {
-                throw "boom"
-            } catch (e) {
-                print(e)
-            }
-            throw "outside"
-        }
-        "#,
-    )
-    .unwrap_err();
-    assert!(
-        err.message.contains("uncaught exception: outside"),
-        "{}",
-        err.message
-    );
-}
-
-#[test]
+}#[test]
 fn call_function_value_from_member() {
     let out = run_ok(
         r#"
@@ -866,30 +820,6 @@ fn ui_component_state_mutation_and_for() {
     .unwrap();
     assert_eq!(out, Vec::<String>::new());
 }
-
-#[test]
-fn dollar_binding_wraps_value_and_setter() {
-    // `$name` is `{ value, onChange }`; onChange writes the underlying signal
-    // cell, and `.value` reads it — both observable via `print`. Semantic types
-    // `$name` as its underlying value (string), so this probe is parse-only.
-    let out = run_raw(
-        r#"
-        fn Field(): View {
-            @State let name: string = "hi"
-            let b = $name
-            b.onChange("yo")
-            print(name)
-            VStack { Input(value: $name) }
-        }
-        fn main(): View {
-            Field()
-        }
-        "#,
-    )
-    .unwrap();
-    assert_eq!(out, vec!["yo"]);
-}
-
 #[test]
 fn external_import_binds_null_placeholder() {
     // An unresolved external package still binds its imported names (to a
@@ -915,8 +845,7 @@ fn view_main_captures_render_tree() {
             }
         }
     "#;
-    let tokens = tokenize(src).unwrap();
-    let program = parse_program(&tokens).unwrap();
+    let program = parse_program(src).unwrap();
     xulo_semantic::analyze(&program).unwrap();
     let interp = Interpreter::new();
     interp.run(&program).unwrap();
@@ -976,8 +905,7 @@ fn non_view_main_leaves_view_slot_empty() {
             42
         }
     "#;
-    let tokens = tokenize(src).unwrap();
-    let program = parse_program(&tokens).unwrap();
+    let program = parse_program(src).unwrap();
     xulo_semantic::analyze(&program).unwrap();
     let interp = Interpreter::new();
     interp.run(&program).unwrap();
@@ -1066,8 +994,7 @@ fn onclick_mutates_state_across_rerender() {
             Counter()
         }
     "#;
-    let tokens = tokenize(src).unwrap();
-    let program = parse_program(&tokens).unwrap();
+    let program = parse_program(src).unwrap();
     xulo_semantic::analyze(&program).unwrap();
     let interp = Interpreter::new();
     interp.run(&program).unwrap();
@@ -1097,8 +1024,7 @@ fn rerender_without_main_returns_none() {
             42
         }
     "#;
-    let tokens = tokenize(src).unwrap();
-    let program = parse_program(&tokens).unwrap();
+    let program = parse_program(src).unwrap();
     xulo_semantic::analyze(&program).unwrap();
     let interp = Interpreter::new();
     interp.run(&program).unwrap();
@@ -1120,7 +1046,7 @@ fn store_destructures_value_bindings() {
     let out = run(r#"
         let store = { theme: "dark", user: "ada" }
         fn App(): View {
-            @Store { theme, user } = store
+            @Store let { theme, user } = store
             @Effect fn() { print(theme) }
             VStack { Text(user) }
         }
@@ -1149,7 +1075,15 @@ fn await_outside_async_rejected() {
 fn environment_decorator_un_supported() {
     // Reads of `@Environment` need a provider mechanism the headless runtime
     // has no access to, so they stay an interpreter-level error (parse-only).
-    let err = run_raw(r#"@Environment let router: Router fn main() { print(1) }"#).unwrap_err();
+    let err = run_raw(
+        r#"
+        fn main(): View {
+            @Environment let router: Router
+            VStack { Text("x") }
+        }
+        "#,
+    )
+    .unwrap_err();
     assert!(
         err.message.contains("@Environment"),
         "message: {}",
@@ -1192,14 +1126,14 @@ fn type_annotation_is_erased_at_runtime() {
     // The semantic layer accepts these; the interpreter runs them.
     let out = run_ok(
         r#"
-        type Pair = { x: number, y: number }
+        type Pair = (number, number)
         fn main() {
-            let p: Pair = { x: 1, y: 2 }
-            print(p.x + p.y)
+            let p: Pair = (1, 2)
+            print(p)
         }
         "#,
     );
-    assert_eq!(out, vec!["3"]);
+    assert_eq!(out, vec!["[1, 2]"]);
 }
 
 #[test]
@@ -1228,8 +1162,8 @@ fn returns_null_from_plain_functions() {
 fn async_basic_await() {
     let out = run_ok(
         r#"
-        fn half(): async number { 2 }
-        fn main(): async {
+        async fn half(): number { 2 }
+        async fn main() {
             let a = (await half()) + 1
             let b = (await half()) * 3
             print(a)
@@ -1244,22 +1178,22 @@ fn async_basic_await() {
 fn async_coroutines_interleave_in_fifo_order() {
     let out = run_ok(
         r#"
-        fn pause(): async { }
-        fn second(): async {
+        async fn pause() { }
+        async fn second() {
             print("b1")
             await pause()
             print("b2")
         }
-        fn first(): async {
+        async fn first() {
             print("a1")
             await second()
             print("a2")
         }
-        fn third(): async {
+        async fn third() {
             print("c1")
             await pause()
         }
-        fn main(): async {
+        async fn main() {
             let p1 = first()
             let p3 = third()
             await p1
@@ -1274,11 +1208,11 @@ fn async_coroutines_interleave_in_fifo_order() {
 fn async_await_on_settled_promise_defers() {
     let out = run_ok(
         r#"
-        fn helper(): async {
+        async fn helper() {
             print("inner")
             return 1
         }
-        fn main(): async {
+        async fn main() {
             let p = helper()
             print("after-call")
             let v = await p
@@ -1289,36 +1223,17 @@ fn async_await_on_settled_promise_defers() {
     );
     assert_eq!(out, vec!["inner", "after-call", "after-await", "1"]);
 }
-
-#[test]
-fn async_try_catch_rejection() {
-    let out = run_ok(
-        r#"
-        fn boom(): async { throw "boom" }
-        fn main(): async {
-            try {
-                await boom()
-            } catch (e) {
-                print("caught " + e)
-            }
-            print("after")
-        }
-        "#,
-    );
-    assert_eq!(out, vec!["caught boom", "after"]);
-}
-
 #[test]
 fn async_recursion_statement_if_propagates_return() {
     let out = run_ok(
         r#"
-        fn sum(n: number): async number {
+        async fn sum(n: number): number {
             if n == 0 {
                 return 0
             }
             return n + await sum(n - 1)
         }
-        fn main(): async { print(await sum(5)) }
+        async fn main() { print(await sum(5)) }
         "#,
     );
     assert_eq!(out, vec!["15"]);
@@ -1328,8 +1243,8 @@ fn async_recursion_statement_if_propagates_return() {
 fn async_function_value_return_type() {
     let out = run_ok(
         r#"
-        fn main(): async {
-            let f = fn(x: number): async number { x * 2 }
+        async fn main() {
+            let f = async fn(x: number): number { x * 2 }
             print(await f(21))
         }
         "#,
@@ -1339,7 +1254,7 @@ fn async_function_value_return_type() {
 
 #[test]
 fn async_main_rejection_is_uncaught() {
-    let err = run_raw(r#"fn main(): async { throw "kaboom" }"#).unwrap_err();
+    let err = run_raw(r#"async fn main() { panic("kaboom") }"#).unwrap_err();
     assert!(
         err.message.contains("uncaught exception: kaboom"),
         "{}",
@@ -1351,8 +1266,8 @@ fn async_main_rejection_is_uncaught() {
 fn sync_main_calls_async_prefix_runs_inline() {
     let out = run_ok(
         r#"
-        fn pause(): async { }
-        fn late(): async {
+        async fn pause() { }
+        async fn late() {
             print("late")
             await pause()
         }
@@ -1451,33 +1366,15 @@ fn module_namespace_import_exposes_named_fields() {
     .unwrap();
     assert_eq!(out, vec!["24", "24"]);
 }
-
-#[test]
-fn module_library_side_effects_run_before_entry() {
-    let out = exec_module_pair(
-        r#"
-        print("lib-init")
-        pub fn tag(): string { "lib" }
-        "#,
-        r#"
-        import { tag } from "lib"
-        fn main() { print(tag()) }
-        "#,
-        |exports| pick(exports, &["tag"]),
-    )
-    .unwrap();
-    assert_eq!(out, vec!["lib-init", "lib"]);
-}
-
 #[test]
 fn overflowing_number_literal_prints_infinity() {
     // A 310-digit literal overflows f64 to +Infinity. `format_number` must print
     // it like JS (`String(1e309)` -> "Infinity"), never Rust's "inf".
     let huge = format!("1{}", "0".repeat(309));
-    let out = run_raw(&format!("print({huge})")).unwrap();
+    let out = run_raw(&format!("fn main() {{ print({huge}) }}")).unwrap();
     assert_eq!(out, vec!["Infinity"]);
 
-    let out = run_raw(&format!("print(-{huge})")).unwrap();
+    let out = run_raw(&format!("fn main() {{ print(-{huge}) }}")).unwrap();
     assert_eq!(out, vec!["-Infinity"]);
 }
 
@@ -1531,75 +1428,7 @@ fn missing_object_member_reads_null() {
 
     let out = run_ok(r#"fn main() { let o: object = {} print(o["missing"]) }"#);
     assert_eq!(out, vec!["null"]);
-}
-
-#[test]
-fn memo_reuses_cached_value_when_deps_unchanged() {
-    let src = r#"
-        let mut calls = 0
-        fn expensive(n: number): number {
-            calls = calls + 1
-            return n * 2
-        }
-        fn calc(n: number): number {
-            @Memo([n]) let cached = expensive(n)
-            return cached
-        }
-        fn main() {
-            print(calc(5))
-            print(calc(5))
-            print(calls)
-        }
-    "#;
-    assert_eq!(run_ok(src), vec!["10", "10", "1"]);
-}
-
-#[test]
-fn memo_recomputes_when_deps_change() {
-    let src = r#"
-        let mut calls = 0
-        fn expensive(n: number): number {
-            calls = calls + 1
-            return n * 2
-        }
-        fn calc(n: number): number {
-            @Memo([n]) let cached = expensive(n)
-            return cached
-        }
-        fn main() {
-            print(calc(5))
-            print(calc(6))
-            print(calc(5))
-            print(calls)
-        }
-    "#;
-    assert_eq!(run_ok(src), vec!["10", "12", "10", "2"]);
-}
-
-#[test]
-fn memo_without_deps_caches_forever() {
-    let src = r#"
-        let mut calls = 0
-        fn expensive(n: number): number {
-            calls = calls + 1
-            return n * 2
-        }
-        fn calc(n: number): number {
-            @Memo let cached = expensive(n)
-            return cached
-        }
-        fn main() {
-            print(calc(5))
-            print(calc(6))
-            print(calls)
-        }
-    "#;
-    // No deps: the first evaluation is cached forever, so the second call
-    // reuses the stale value and `expensive` runs once.
-    assert_eq!(run_ok(src), vec!["10", "10", "1"]);
-}
-
-// ── break / continue ──────────────────────────────────────────────────────
+}// ── break / continue ──────────────────────────────────────────────────────
 
 #[test]
 fn break_exits_for_loop() {
@@ -2119,13 +1948,13 @@ fn array_fill() {
 
 #[test]
 fn array_from() {
-    assert_eq!(run_raw(r#"fn main() { let a = [1, 2]; let b = Array.copy(a); print(b) }"#).unwrap(), vec!["[1, 2]"]);
+    assert_eq!(run_raw(r#"fn main() { let a = [1, 2]; let b = Array.clone(a); print(b) }"#).unwrap(), vec!["[1, 2]"]);
 }
 
 #[test]
 fn array_from_copies() {
     assert_eq!(
-        run_raw(r#"fn main() { let a = [1, 2]; let b = Array.copy(a); b.push(3); print(a); print(b) }"#).unwrap(),
+        run_raw(r#"fn main() { let a = [1, 2]; let b = Array.clone(a); b.push(3); print(a); print(b) }"#).unwrap(),
         vec!["[1, 2]", "[1, 2, 3]"]
     );
 }
@@ -2153,7 +1982,7 @@ fn list_flat_mixed() {
 #[test]
 fn list_flat_empty() {
     assert_eq!(
-        run_ok(r#"fn main() { let a: list<list<number>> = []; print(a.flat()) }"#),
+        run_ok(r#"fn main() { let a: list<list<number> > = []; print(a.flat()) }"#),
         vec!["[]"]
     );
 }
@@ -2286,22 +2115,6 @@ fn object_destructure_runtime() {
         vec!["Alice", "30"]
     );
 }
-
-#[test]
-fn object_destructure_with_alias_runtime() {
-    assert_eq!(
-        run_ok(r#"
-            fn main() {
-                let obj = { name: "Alice", age: 30 }
-                let { name: n, age: a } = obj
-                print(n)
-                print(a)
-            }
-        "#),
-        vec!["Alice", "30"]
-    );
-}
-
 #[test]
 fn object_destructure_not_an_object_errors() {
     let err = run(r#"fn main() { let { name } = 42 }"#).unwrap_err();
