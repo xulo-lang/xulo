@@ -1589,9 +1589,10 @@ fn trait_dispatch_generic_receiver_is_rejected() {
         impl Shape for Circle {
             fn area(self): number { return 100 }
         }
-        fn apply<T: Shape>(t: T): number {
-            // `Shape::area(t)` cannot dispatch: `T` is a generic parameter and
-            // resolves only at run time; the receiver must be a concrete type.
+        fn apply<T>(t: T): number {
+            // `Shape::area(t)` cannot dispatch: `T` is unbounded, and a
+            // parameter is a dispatch receiver only when its declaration
+            // bounds it by the trait (spec `types/generics.md`).
             return Shape::area(t)
         }
         fn main() { print(apply(5)) }
@@ -1788,6 +1789,8 @@ fn bounded_generic_refines_member_access() {
 
 #[test]
 fn bounded_generic_missing_bound_member_is_rejected() {
+    // The bound grants only the members its trait declares; a member the
+    // bound does not have is E0102 on the parameter (spec `types/traits.md`).
     let src = r#"
         trait Shape {
             fn area(self): number
@@ -1799,8 +1802,9 @@ fn bounded_generic_missing_bound_member_is_rejected() {
         fn main() { print(1) }
     "#;
     let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0102");
     assert!(
-        err.message.contains("has no member `volume`"),
+        err.message.contains("no member `volume` on `T`"),
         "unexpected: {}",
         err.message
     );
@@ -2008,10 +2012,10 @@ fn impl_missing_trait_method_is_rejected() {
 }
 
 #[test]
-fn generic_trait_bound_method_call_is_rejected() {
-    // `s.area()` inside `T: Shape` would be a trait dispatch, but impl
-    // selection needs a concrete receiver type, so it is rejected at compile
-    // time instead of crashing at run time.
+fn generic_bound_member_call_resolves() {
+    // spec `types/generics.md`: inside `T: Shape`, values of `T` expose the
+    // members declared by `Shape`, so the member form is well-formed without
+    // a concrete receiver; the call site only has to satisfy the bound.
     let src = r#"
         trait Shape {
             fn area(self): number
@@ -2019,18 +2023,35 @@ fn generic_trait_bound_method_call_is_rejected() {
         fn area_of<T: Shape>(s: T): number {
             return s.area()
         }
-        type Circle = object
+        struct Circle { r: number }
         impl Shape for Circle {
             fn area(self): number { return 5 }
         }
         fn main() {
-            let c = {}
+            let c = { r: 1 }
             print(area_of(c))
         }
     "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn generic_unbounded_member_call_is_e0102() {
+    // A type parameter has no members unless a bound grants them (spec
+    // `types/traits.md`): `s.area()` inside `fn area_of<T>` is E0102.
+    let src = r#"
+        trait Shape {
+            fn area(self): number
+        }
+        fn area_of<T>(s: T): number {
+            return s.area()
+        }
+        fn main() { print(1) }
+    "#;
     let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0102");
     assert!(
-        err.message.contains("cannot call `T`'s method `area`"),
+        err.message.contains("no member `area` on `T`"),
         "unexpected: {}",
         err.message
     );
@@ -4610,6 +4631,91 @@ fn impl_receiver_argument_count_must_match_declaration() {
     assert_eq!(err.code(), "E0230");
     assert!(
         err.message.contains("`Pair` expects 2 type arguments, found 1"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn dot_form_trait_dispatch_resolves() {
+    // spec `expressions/path-and-access.md` ("Qualified calls"):
+    // `Area.area(r)` is the explicit dispatch form — the trait name is a
+    // path namespace, not a value of its own.
+    let src = r#"
+        trait Area { fn area(self): number }
+        struct Rect { w: number, h: number }
+        impl Area for Rect {
+            fn area(self): number { return self.w * self.h }
+        }
+        fn main() {
+            let r = { w: 3, h: 4 }
+            let n: number = Area.area(r)
+            print(str(n))
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn generic_bound_explicit_dispatch_resolves() {
+    // spec `types/traits.md` example body: `Area.area(self.shape)` inside
+    // `impl<T: Area> Palette<T>` — explicit dispatch through the bound, with
+    // the member form denoting the same call (spec `types/generics.md`).
+    let src = r#"
+        trait Area { fn area(self): number }
+        struct Palette<T> { shape: T }
+        struct Rect { w: number, h: number }
+        impl Area for Rect {
+            fn area(self): number { return self.w * self.h }
+        }
+        impl<T: Area> Palette<T> {
+            fn render(self): number { return Area.area(self.shape) }
+        }
+        fn main() {
+            let ok = { shape: { w: 3, h: 4 } }
+            let n: number = ok.render()
+            print(str(n))
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn generic_dispatch_without_bound_is_rejected() {
+    // Explicit dispatch through a parameter requires that the parameter's
+    // declaration bounds it by the dispatched trait (spec `types/generics.md`).
+    let src = r#"
+        trait Area { fn area(self): number }
+        trait Show { fn show(self): string }
+        fn describe<T: Show>(t: T): number {
+            return Area.area(t)
+        }
+        fn main() { print(1) }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(
+        err.message.contains("add `T: Area`"),
+        "unexpected: {}",
+        err.message
+    );
+}
+
+#[test]
+fn member_field_missing_on_struct_is_e0102() {
+    // Field access (not a call) on a name the struct does not declare is
+    // E0102 with the receiver's type in the message (spec
+    // `expressions/path-and-access.md`).
+    let src = r#"
+        struct User { name: string }
+        fn main() {
+            let u = { name: "a" }
+            print(u.nope)
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0102");
+    assert!(
+        err.message.contains("no member `nope` on `User`"),
         "unexpected message: {}",
         err.message
     );

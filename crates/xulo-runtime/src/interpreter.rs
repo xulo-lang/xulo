@@ -1449,14 +1449,42 @@ impl Interpreter {
             if imp.is_inherent {
                 // Inherent impl: add the method to the struct object in the
                 // scope that registered the impl (module env under
-                // `exec_module`, the root env under `run`).
+                // `exec_module`, the root env under `run`). Inherent methods
+                // take precedence over trait methods of the same name (spec
+                // member resolution tries the inherent impl first), so
+                // re-registering replaces an entry instead of appending
+                // behind an earlier trait registration.
                 if let Some(Value::Object(obj)) = closure.borrow().get(&imp.type_name) {
-                    obj.borrow_mut().push((method.name.clone(), func));
+                    let mut obj = obj.borrow_mut();
+                    if let Some(slot) = obj
+                        .iter()
+                        .position(|(k, _)| k == &method.name)
+                        .map(|i| &mut obj[i])
+                    {
+                        slot.1 = func.clone();
+                    } else {
+                        obj.push((method.name.clone(), func.clone()));
+                    }
                 }
             } else {
                 // Trait impl: register as standalone function with mangled name
                 let name = impl_fn_name(&imp.trait_name, &imp.type_name, &method.name);
-                self.global.borrow_mut().define(&name, func, false);
+                self.global.borrow_mut().define(&name, func.clone(), false);
+                // The struct object also carries the method: under its bare
+                // name for member calls (`r.area()`), and under
+                // `Trait::method` for run-time resolution of dispatch through
+                // a generic parameter's bound. An inherent method of the same
+                // name keeps the bare key (member resolution prefers it).
+                if let Some(Value::Object(obj)) = closure.borrow().get(&imp.type_name) {
+                    let mut obj = obj.borrow_mut();
+                    if !obj.iter().any(|(k, _)| k == &method.name) {
+                        obj.push((method.name.clone(), func.clone()));
+                    }
+                    obj.push((
+                        format!("{}::{}", imp.trait_name, method.name),
+                        func.clone(),
+                    ));
+                }
             }
         }
     }
@@ -2902,6 +2930,44 @@ impl Interpreter {
         // Trait dispatch: call the mangled `impl_{Trait}_{Type}_{method}` free
         // function with the receiver as its first argument.
         if let Some(impl_name) = &call.trait_impl {
+            // Dispatch through a generic parameter's bound carries a `dyn:`
+            // marker instead of a mangled name: the receiver's type is not
+            // static inside the generic body, so the impl is resolved on the
+            // receiver value's struct object under `Trait::method` (the key
+            // `impl Trait for Type` registered there).
+            if let Some(rest) = impl_name.strip_prefix("dyn:") {
+                let (trait_name, method) = rest.split_once(':').ok_or_else(|| {
+                    RunError::err(format!("malformed dynamic dispatch `{impl_name}`"), call.span.clone())
+                })?;
+                let args = self.eval_args(&call.arguments, env)?;
+                let key = format!("{trait_name}::{method}");
+                let mut resolved = None;
+                for struct_name in self.struct_names.borrow().iter() {
+                    // Like `struct_method`, the struct object is found through
+                    // the calling environment: modules bind their declarations
+                    // in a child of the interpreter root.
+                    let obj = match env.borrow().get(struct_name) {
+                        Some(Value::Object(obj)) => obj.clone(),
+                        _ => continue,
+                    };
+                    if let Some(found) = obj
+                        .borrow()
+                        .iter()
+                        .find(|(k, _)| k == &key)
+                        .map(|(_, v)| v.clone())
+                    {
+                        resolved = Some(found);
+                        break;
+                    }
+                }
+                let func = resolved.ok_or_else(|| {
+                    RunError::err(
+                        format!("no impl `{trait_name}` applies to the receiver of `{method}`"),
+                        call.span.clone(),
+                    )
+                })?;
+                return self.call_value_with_values(&func, &args);
+            }
             let callee = env.borrow().get(impl_name).ok_or_else(|| {
                 RunError::err(
                     format!("undefined impl function `{impl_name}`"),
@@ -2979,10 +3045,15 @@ impl Interpreter {
         call_args: &[CallArg],
         call_env: &Rc<RefCell<Env>>,
     ) -> Option<Result<Value, RunError>> {
-        let global = self.global.borrow();
         for struct_name in self.struct_names.borrow().iter() {
-            let Some(Value::Object(struct_obj)) = global.get(struct_name) else {
-                continue;
+            // Struct declarations live in the module environment that
+            // registered them (`exec_module` binds them in a child of the
+            // interpreter root, while `run` uses the root itself), so the
+            // lookup follows the calling environment's chain instead of the
+            // root alone.
+            let struct_obj = match call_env.borrow().get(struct_name) {
+                Some(Value::Object(obj)) => obj.clone(),
+                _ => continue,
             };
             let Some(func) = struct_obj
                 .borrow()

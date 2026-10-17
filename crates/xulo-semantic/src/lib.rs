@@ -4144,6 +4144,33 @@ impl Analyzer {
         if let Some(place) = place_of(&m.object) {
             self.check_shared_contents(&place)?;
         }
+        // A type parameter's members come from its bound, and the bound is
+        // checked on the raw type: `resolve_alias` flattens `T` to the bound's
+        // shape (or to `any` when unbounded), which would erase the parameter
+        // name from the E0102 message. A member the bound does not declare —
+        // or any member of an unbounded parameter — is E0102 (spec
+        // `types/traits.md`).
+        if let Type::Named(name, _) = &object
+            && self.generics.contains(name)
+        {
+            let property = m.property.clone();
+            return match self.bound_shape_of(name) {
+                Some(Type::ObjectType(fields)) => fields
+                    .iter()
+                    .find(|(n, _)| *n == property)
+                    .map(|(_, t)| t.clone())
+                    .ok_or_else(|| {
+                        self.err_code(
+                            "E0102",
+                            format!("no member `{property}` on `{name}`"),
+                        )
+                    }),
+                _ => Err(self.err_code(
+                    "E0102",
+                    format!("no member `{property}` on `{name}`"),
+                )),
+            };
+        }
         let resolved = self.resolve_alias(&object, 0);
         let inner = match resolved {
             Type::Optional(inner) if m.optional => *inner,
@@ -4184,23 +4211,51 @@ impl Analyzer {
             },
             Type::Named(name, _) => {
                 // A declared struct's fields type their member access (`e`
-                // : `Error` has `message: string`); a field the struct does
-                // not declare keeps the loose `any` it always had.
+                // : `Error` has `message: string`); a name the struct does
+                // not declare is E0102 unless an `impl` method provides it —
+                // methods are reached by call, but the name exists (spec
+                // `expressions/path-and-access.md`).
                 if !self.generics.contains(name)
                     && let Some(TypeEntryKind::Struct(fields)) =
                         self.type_entry(name).map(|e| &e.kind)
-                    && let Some((_, field_type, _)) = fields.iter().find(|(n, _, _)| n == property)
                 {
-                    return Ok(field_type.clone());
+                    if let Some((_, field_type, _)) =
+                        fields.iter().find(|(n, _, _)| n == property)
+                    {
+                        return Ok(field_type.clone());
+                    }
+                    if self
+                        .impl_methods
+                        .get(name)
+                        .is_some_and(|ms| ms.iter().any(|m| m.name == property))
+                    {
+                        return Ok(Type::Any);
+                    }
+                    return Err(self.err_code(
+                        "E0102",
+                        format!("no member `{property}` on `{}`", ty.display()),
+                    ));
                 }
                 // A bounded generic parameter (`T: Area`) exposes its bound's
-                // members, so `t.area()` type-checks against the trait shape.
+                // members, so `t.area()` type-checks against the trait shape;
+                // a type parameter has no members at all without a bound, and
+                // a member the bound does not declare is E0102 either way
+                // (spec `types/traits.md`).
                 match self.bound_shape_of(name) {
                     Some(Type::ObjectType(fields)) => fields
                         .iter()
                         .find(|(n, _)| n == property)
                         .map(|(_, t)| t.clone())
-                        .ok_or_else(|| self.err(format!("type has no member `{property}`"))),
+                        .ok_or_else(|| {
+                            self.err_code(
+                                "E0102",
+                                format!("no member `{property}` on `{name}`"),
+                            )
+                        }),
+                    _ if self.generics.contains(name) => Err(self.err_code(
+                        "E0102",
+                        format!("no member `{property}` on `{name}`"),
+                    )),
                     _ => Ok(Type::Any),
                 }
             }
@@ -4718,16 +4773,51 @@ impl Analyzer {
             {
                 return self.check_task_utility(call, method);
             }
+            // `Area.area(recv)` is explicit trait dispatch through the dotted
+            // qualified path (spec `expressions/path-and-access.md`,
+            // "Qualified calls"): a trait name in the path's namespace
+            // position is not a value, so the path resolves to the trait's
+            // method table instead of evaluating as a receiver.
+            if let Some(method) = call.method.as_deref()
+                && let Expression::Identifier { name, .. } = object.as_ref()
+                && let Some(entry) = self.type_entry(name)
+                && matches!(entry.kind, TypeEntryKind::Trait(_))
+            {
+                if call.arguments.iter().any(|a| a.name.is_some()) {
+                    return Err(self.err(format!(
+                        "trait dispatch `{name}.{method}` takes positional arguments: the receiver is the first argument, and the method's parameters follow in the trait declaration's order"
+                    )));
+                }
+                let args: Vec<&Expression> = call.arguments.iter().map(|a| &a.value).collect();
+                let (ret, mangled) = self.check_trait_call(name.to_string(), method, &args)?;
+                self.trait_dispatch.push((call.span.clone(), mangled));
+                return Ok(ret);
+            }
             // Method call `obj.method(args)`.
             let receiver = self.check_expression(object)?;
+            // A type parameter's method members are granted by its bound
+            // (spec `types/generics.md`): the bound's declared signature types
+            // the call; without a bound — or with a method the bound does not
+            // declare — the member does not exist (E0102, spec
+            // `types/traits.md`). The raw receiver type is checked before
+            // `resolve_alias` flattens `T` to its shape or to `any`.
             if let Type::Named(name, _) = &receiver
                 && self.generics.contains(name)
             {
-                return Err(self.err(format!(
-                    "cannot call `{}`'s method `{}`: trait dispatch needs a concrete receiver type with a registered `impl Trait for Type`, and generic parameters resolve only at run time",
-                    name,
-                    call.method.as_deref().unwrap_or(&call.callee)
-                )));
+                let method = call.method.as_deref().unwrap_or(&call.callee);
+                if let Some(Type::ObjectType(fields)) = self.bound_shape_of(name)
+                    && let Some(Type::FnSig { ret, .. }) =
+                        fields.iter().find(|(n, _)| n == method).map(|(_, t)| t)
+                {
+                    for arg in &call.arguments {
+                        self.check_arg_value(&arg.value)?;
+                    }
+                    return Ok(ret.clone().map(|r| *r).unwrap_or(Type::Any));
+                }
+                return Err(self.err_code(
+                    "E0102",
+                    format!("no member `{method}` on `{name}`"),
+                ));
             }
             for arg in &call.arguments {
                 self.check_arg_value(&arg.value)?;
@@ -5483,9 +5573,31 @@ impl Analyzer {
                 }
                 Ok((sig.return_type.clone(), impl_fn_name(&trait_name, &name, method)))
             }
-            Some(name) if self.generics.contains(&name) => Err(self.err(format!(
-                "cannot dispatch `{trait_name}::{method}` on generic parameter `{name}`: dispatch requires a concrete receiver type with a registered `impl {trait_name} for Type`, and generic parameters resolve only at run time"
-            ))),
+            Some(name) if self.generics.contains(&name) => {
+                // Explicit dispatch through a parameter is well-formed when
+                // the parameter's declaration bounds it by this trait (spec
+                // `types/generics.md`, "Generic constraints and dispatch").
+                // The impl is not static here — it depends on the type the
+                // parameter is instantiated with — so the call is annotated
+                // for run-time resolution under the bound's trait instead of
+                // a mangled name.
+                let granted = self
+                    .bound_traits
+                    .iter()
+                    .rev()
+                    .find_map(|m| m.get(&name))
+                    .is_some_and(|traits| traits.iter().any(|t| t == &trait_name));
+                if granted {
+                    Ok((
+                        sig.return_type.clone(),
+                        format!("dyn:{trait_name}:{method}"),
+                    ))
+                } else {
+                    Err(self.err(format!(
+                        "cannot dispatch `{trait_name}::{method}` on generic parameter `{name}`: a parameter is a dispatch receiver only when its declaration bounds it by the trait, so add `{name}: {trait_name}` to the parameter list"
+                    )))
+                }
+            }
             Some(name) => {
                 let mut target = self.alias_target(&receiver_type);
                 while let Some(t) = &target {

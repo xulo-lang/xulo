@@ -2383,3 +2383,94 @@ fn generic_impl_dispatch_end_to_end() {
     .unwrap_or_else(|e| panic!("{}", e.message));
     assert_eq!(out, vec!["w"]);
 }
+
+#[test]
+fn trait_member_call_on_concrete_receiver_runs() {
+    // Member-call resolution step 2 reaches an applicable trait impl, and the
+    // struct object carries the impl method under its bare name for the run.
+    let out = run_ok(
+        r#"
+            trait Area { fn area(self): number }
+            struct Rect { w: number, h: number }
+            impl Area for Rect {
+                fn area(self): number { return self.w * self.h }
+            }
+            fn main() {
+                let r = { w: 3, h: 4 }
+                print(str(r.area()))
+            }
+        "#,
+    );
+    assert_eq!(out, vec!["12"]);
+}
+
+#[test]
+fn bounded_generic_member_call_runs() {
+    // `s.area()` inside `fn area_of<T: Area>` resolves from the bound; at run
+    // time the concrete receiver's impl method answers under the bare name.
+    let out = run_ok(
+        r#"
+            trait Area { fn area(self): number }
+            struct Rect { w: number, h: number }
+            impl Area for Rect {
+                fn area(self): number { return self.w * self.h }
+            }
+            fn area_of<T: Area>(s: T): number {
+                return s.area()
+            }
+            fn main() {
+                let r = { w: 3, h: 4 }
+                print(str(area_of(r)))
+            }
+        "#,
+    );
+    assert_eq!(out, vec!["12"]);
+}
+
+#[test]
+fn dot_form_dispatch_concrete_receiver_runs() {
+    // `Area.area(r)` is the dotted explicit dispatch form (spec
+    // `expressions/path-and-access.md`); the receiver type is static, so the
+    // mangled impl answers.
+    let out = run_annotated(
+        r#"
+            trait Area { fn area(self): number }
+            struct Rect { w: number, h: number }
+            impl Area for Rect {
+                fn area(self): number { return self.w * self.h }
+            }
+            fn main() {
+                let r = { w: 3, h: 4 }
+                print(str(Area.area(r)))
+            }
+        "#,
+    )
+    .unwrap_or_else(|e| panic!("{}", e.message));
+    assert_eq!(out, vec!["12"]);
+}
+
+#[test]
+fn spec_palette_example_runs() {
+    // spec `types/traits.md` example: `Area.area(self.shape)` inside
+    // `impl<T: Area> Palette<T>` resolves through the bound at run time.
+    let out = run_annotated(
+        r#"
+            trait Area { fn area(self): number }
+            struct Palette<T> { shape: T }
+            struct Rect { w: number, h: number }
+            struct Dot { r: number }
+            impl Area for Rect {
+                fn area(self): number { return self.w * self.h }
+            }
+            impl<T: Area> Palette<T> {
+                fn render(self): number { return Area.area(self.shape) }
+            }
+            fn main() {
+                let ok = { shape: { w: 3, h: 4 } }
+                print(str(ok.render()))
+            }
+        "#,
+    )
+    .unwrap_or_else(|e| panic!("{}", e.message));
+    assert_eq!(out, vec!["12"]);
+}
