@@ -117,6 +117,52 @@ fn inherent_impl_with_self_expressions() {
     };
     assert!(imp.is_inherent);
     assert_eq!(imp.type_name, "Rectangle");
+    assert!(imp.type_params.is_empty());
+    assert!(imp.type_bounds.is_empty());
+    assert!(imp.type_args.is_empty());
+}
+
+#[test]
+fn generic_impl_keeps_params_bounds_and_receiver_args() {
+    // A generic `impl` keeps its type parameter list, its inline bounds, and
+    // the receiver's written arguments — the pattern applicability decides
+    // against (spec `types/traits.md`, `types/generics.md`).
+    let p = parse_ok(
+        "trait Area { fn area(self): number } \
+         impl<T: Area> Palette<T> { fn render(self): number { 12 } }",
+    );
+    let Statement::Impl(imp) = &p.statements[1] else {
+        panic!("expected impl");
+    };
+    assert!(imp.is_inherent);
+    assert_eq!(imp.type_params, vec!["T".to_string()]);
+    assert_eq!(imp.type_bounds.len(), 1);
+    assert_eq!(imp.type_bounds[0].param, "T");
+    assert_eq!(imp.type_bounds[0].traits, vec!["Area".to_string()]);
+    assert!(
+        matches!(&imp.type_args[..], [Type::Named(n, args)] if n == "T" && args.is_empty()),
+        "receiver args: {:?}",
+        imp.type_args
+    );
+}
+
+#[test]
+fn generic_impl_for_trait_keeps_repeated_receiver_pattern() {
+    let p = parse_ok("impl<T> Show for Pair<T, T> { fn show(self): number { 1 } }");
+    let Statement::Impl(imp) = &p.statements[0] else {
+        panic!("expected impl");
+    };
+    assert!(!imp.is_inherent);
+    assert_eq!(imp.trait_name, "Show");
+    assert_eq!(imp.type_params, vec!["T".to_string()]);
+    assert_eq!(imp.type_args.len(), 2);
+    assert!(
+        imp.type_args
+            .iter()
+            .all(|a| matches!(a, Type::Named(n, _) if n == "T")),
+        "receiver args: {:?}",
+        imp.type_args
+    );
 }
 
 #[test]
@@ -857,4 +903,20 @@ fn optional_type_postfix() {
         l.type_annotation,
         Some(Type::Optional(Box::new(Type::Number)))
     );
+}
+
+/// Regression: the statement rule must parse its expression exactly once.
+/// When an expression-statement alternative and an assignment alternative
+/// each re-parsed the whole expression, a deep `if`/`else` chain backtracked
+/// exponentially (40 levels took minutes); this input now fails in
+/// milliseconds either way.
+#[test]
+fn deep_else_chain_does_not_backtrack_exponentially() {
+    let src = format!(
+        "fn main(): View {{ Screen {{ {} Text(\"x\") {} }} }}",
+        "if true { ".repeat(40),
+        " } else { ".repeat(39) + " }"
+    );
+    // Either outcome is fine; what matters is that this returns at all.
+    let _ = parse_program(&src);
 }

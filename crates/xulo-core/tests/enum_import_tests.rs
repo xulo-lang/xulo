@@ -6,6 +6,7 @@ fn test_enum_def_basic() {
         name: "Color".to_string(),
         name_span: 5..10,
         type_params: vec![],
+        type_bounds: Vec::new(),
         variants: vec![
             EnumVariant {
                 name: "Red".to_string(),
@@ -29,6 +30,7 @@ fn test_enum_def_with_payload() {
         name: "Result".to_string(),
         name_span: 5..11,
         type_params: vec![],
+        type_bounds: Vec::new(),
         variants: vec![
             EnumVariant {
                 name: "Success".to_string(),
@@ -58,13 +60,14 @@ fn test_enum_def_generic() {
         name: "Option".to_string(),
         name_span: 5..11,
         type_params: vec!["T".to_string()],
+        type_bounds: Vec::new(),
         variants: vec![
             EnumVariant {
                 name: "Some".to_string(),
                 name_span: 13..17,
                 payload: Some(vec![EnumPayloadParam {
                     name: None,
-                    type_: Type::Named("T".to_string()),
+                    type_: Type::Named("T".to_string(), Vec::new()),
                 }]),
             },
             EnumVariant {
@@ -179,6 +182,7 @@ fn test_type_alias() {
         name: "UserID".to_string(),
         name_span: 5..11,
         type_params: vec![],
+        type_bounds: Vec::new(),
         type_: Type::Number,
     };
     assert_eq!(alias.name, "UserID");
@@ -190,8 +194,9 @@ fn test_type_alias_generic() {
         name: "Predicate".to_string(),
         name_span: 5..14,
         type_params: vec!["T".to_string()],
+        type_bounds: Vec::new(),
         type_: Type::FnSig {
-            params: vec![Type::Named("T".to_string())],
+            params: vec![Type::Named("T".to_string(), Vec::new())],
             ret: Some(Box::new(Type::Boolean)),
         },
     };
@@ -225,6 +230,9 @@ fn test_impl_decl() {
     let impl_decl = ImplDecl {
         trait_name: "Display".to_string(),
         type_name: "User".to_string(),
+        type_params: vec![],
+        type_bounds: vec![],
+        type_args: vec![],
         methods: vec![FnDef {
             name: "fmt".to_string(),
             name_span: 10..13,

@@ -260,8 +260,7 @@ inner_statement = {
     | for_stmt
     | while_stmt
     | component_call
-    | assignment
-    | expression_statement
+    | expr_stmt_or_assignment
 }
 
 return_stmt = { kw_return ~ expression? }
@@ -269,10 +268,16 @@ break_stmt = { kw_break }
 continue_stmt = { kw_continue }
 defer_stmt = { kw_defer ~ (block | expression) }
 
-assignment = { place ~ assign_op ~ assignment_expression }
+// One rule, one pass: the expression is parsed once, and a following `=`
+// (if any) makes the statement an assignment — whose target accepts any
+// expression so a non-place one (`f() = 2`) is rejected as the semantic
+// `E0402` the error table promises (spec/grammar.md `Assignment` names
+// `Place`; two alternatives that each re-parse the whole expression would
+// backtrack exponentially on deeply nested input).
+expr_stmt_or_assignment = { !("{" ~ ANY) ~ ternary_expression
+    ~ (assign_op ~ assignment_expression)? }
 assignment_expression = { ternary_expression ~ (assign_op ~ assignment_expression)? }
 assign_op = @{ "=" ~ !"=" }
-expression_statement = { !("{" ~ ANY) ~ ternary_expression }
 
 block = { "{" ~ statement* ~ "}" }
 

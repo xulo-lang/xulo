@@ -220,6 +220,9 @@ pub struct TypeAlias {
     /// Source span of the alias name (for name-related diagnostics).
     pub name_span: Range<usize>,
     pub type_params: Vec<String>,
+    /// Inline bounds on `type_params`, parallel to it and no longer
+    /// (`type Params` has no `where` clause; spec `types/generics.md`).
+    pub type_bounds: Vec<FnBound>,
     pub type_: Type,
 }
 
@@ -266,6 +269,16 @@ pub struct TraitMethod {
 pub struct ImplDecl {
     pub trait_name: String,
     pub type_name: String,
+    /// Type parameters of a generic `impl` (`impl<T> …`), in order.
+    pub type_params: Vec<String>,
+    /// Inline bounds on `type_params`, parallel to it (spec `types/generics.md`).
+    pub type_bounds: Vec<FnBound>,
+    /// The receiver's written type arguments (`Pair<T, T>` in
+    /// `impl<T> Pair<T, T> { … }`), in declaration order; empty when the
+    /// receiver is written without arguments (`impl Area for Rect`). Together
+    /// with `type_params` this is the pattern applicability is decided against
+    /// (spec `types/traits.md`, "When an impl applies").
+    pub type_args: Vec<Type>,
     pub methods: Vec<FnDef>,
     pub span: Range<usize>,
     /// `true` for `impl Type { ... }` (inherent), `false` for `impl Trait for Type { ... }`.
@@ -285,6 +298,8 @@ pub struct EnumDef {
     /// Source span of the enum name (for name-related diagnostics).
     pub name_span: Range<usize>,
     pub type_params: Vec<String>,
+    /// Inline bounds on `type_params`, parallel to it (spec `types/generics.md`).
+    pub type_bounds: Vec<FnBound>,
     pub variants: Vec<EnumVariant>,
 }
 
@@ -314,6 +329,8 @@ pub struct StructDef {
     /// Source span of the struct name (for name-related diagnostics).
     pub name_span: Range<usize>,
     pub type_params: Vec<String>,
+    /// Inline bounds on `type_params`, parallel to it (spec `types/generics.md`).
+    pub type_bounds: Vec<FnBound>,
     pub fields: Vec<StructField>,
     pub span: Range<usize>,
 }
@@ -864,7 +881,7 @@ pub struct IfExpr {
     pub span: Range<usize>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum Type {
     String,
     Number,
@@ -872,8 +889,13 @@ pub enum Type {
     Null,
     /// The loose, dynamic `object` type (object literals).
     Object,
-    /// A named type: an alias, an enum, or a stdlib type (`User`, `View`).
-    Named(String),
+    /// A named type: an alias, an enum, a generic application, or a stdlib
+    /// type (`User`, `View`). The second field carries the written type
+    /// arguments of an application — `Map<String, Int>` is
+    /// `Named("Map", [String, Number])` — and is empty when no argument list
+    /// was written. Argument well-formedness (count, bare names, bounds) is
+    /// checked by the semantic analyzer (spec `types/generics.md`).
+    Named(String, Vec<Type>),
     /// A string literal type: `"active"`.
     Literal(String),
     List(Box<Type>),
@@ -896,6 +918,44 @@ pub enum Type {
     Any,
 }
 
+/// Two named types are the same type when their *names* are: the written type
+/// arguments do not take part in type identity, because they are validated
+/// separately (arity and bounds, spec E0230/E0801) and because a value's type
+/// carries no arguments — `Palette<Int>` and the `Palette` a value of it has
+/// must still compare equal.
+impl PartialEq for Type {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Type::String, Type::String) => true,
+            (Type::Number, Type::Number) => true,
+            (Type::Boolean, Type::Boolean) => true,
+            (Type::Null, Type::Null) => true,
+            (Type::Object, Type::Object) => true,
+            (Type::Any, Type::Any) => true,
+            (Type::Named(a, _), Type::Named(b, _)) => a == b,
+            (Type::Literal(a), Type::Literal(b)) => a == b,
+            (Type::List(a), Type::List(b)) => a == b,
+            (Type::Optional(a), Type::Optional(b)) => a == b,
+            (Type::Union(a), Type::Union(b)) => a == b,
+            (Type::Intersection(a), Type::Intersection(b)) => a == b,
+            (Type::ObjectType(a), Type::ObjectType(b)) => a == b,
+            (Type::Tuple(a), Type::Tuple(b)) => a == b,
+            (
+                Type::FnSig {
+                    params: ap,
+                    ret: ar,
+                },
+                Type::FnSig {
+                    params: bp,
+                    ret: br,
+                },
+            ) => ap == bp && ar == br,
+            (Type::Async(a), Type::Async(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+
 impl Type {
     pub fn name(&self) -> String {
         match self {
@@ -904,7 +964,7 @@ impl Type {
             Type::Boolean => "boolean".into(),
             Type::Null => "null".into(),
             Type::Object => "object".into(),
-            Type::Named(n) => n.clone(),
+            Type::Named(n, _) => n.clone(),
             Type::Literal(s) => format!("\"{s}\""),
             Type::List(inner) => format!("list<{}>", inner.name()),
             Type::Optional(inner) => format!("{}?", inner.name()),
@@ -947,6 +1007,23 @@ impl Type {
             ),
             Type::Async(_) => "async".into(),
             Type::Any => "any".into(),
+        }
+    }
+
+    /// Render a type the way it was written, including its type arguments
+    /// (`Map<String, Int>`). Diagnostics that quote an application use this;
+    /// [`Type::name`] stays the bare head so existing messages keep reading
+    /// the same.
+    pub fn display(&self) -> String {
+        match self {
+            Type::Named(n, args) if !args.is_empty() => format!(
+                "{n}<{}>",
+                args.iter()
+                    .map(|a| a.display())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            _ => self.name(),
         }
     }
 }

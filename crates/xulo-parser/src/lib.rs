@@ -34,12 +34,7 @@ pub const MAX_NEST_DEPTH: usize = 128;
 /// legal inside blocks. Errors carry a byte span into `source`.
 pub fn parse_program(source: &str) -> Result<Program, XuloError> {
     if let Some(offset) = depth::first_too_deep(source, MAX_NEST_DEPTH) {
-        return Err(XuloError {
-            kind: ErrorKind::Parse,
-            message: "nesting is too deep".into(),
-            span: Some(offset..offset),
-            file: None,
-        });
+        return Err(XuloError::new(ErrorKind::Parse, "nesting is too deep").at(offset..offset));
     }
     let pairs = XuloParser::parse(Rule::program, source).map_err(|e| pest_error(e, source))?;
     let root = pairs
@@ -73,12 +68,7 @@ fn pest_error(e: PestError<Rule>, source: &str) -> XuloError {
         },
         ErrorVariant::CustomError { message } => message.clone(),
     };
-    XuloError {
-        kind: ErrorKind::Parse,
-        message,
-        span: Some(offset..offset),
-        file: None,
-    }
+    XuloError::new(ErrorKind::Parse, message).at(offset..offset)
 }
 
 /// Render a list of expected/unexpected rules as a comma-separated sentence.
@@ -136,10 +126,5 @@ pub(crate) fn span_of(pair: &pest::iterators::Pair<Rule>) -> Range<usize> {
 
 /// Recoverable builder error carrying a source span.
 pub(crate) fn err(message: impl Into<String>, span: Range<usize>) -> XuloError {
-    XuloError {
-        kind: ErrorKind::Parse,
-        message: message.into(),
-        span: Some(span),
-        file: None,
-    }
+    XuloError::new(ErrorKind::Parse, message).at(span)
 }

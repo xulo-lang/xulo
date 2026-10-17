@@ -75,6 +75,33 @@ struct Task {
     promise: Rc<RefCell<crate::value::Promise>>,
 }
 
+/// Settles one `send` task: fulfills the handle's promise with the reply
+/// value, or rejects it when the message failed or the service stopped.
+type ServiceSettle = Rc<dyn Fn(&Interpreter, Result<Value, RunError>)>;
+
+/// One queued message: the deep-copied message value and the settle function
+/// of the `send` that enqueued it.
+struct ServiceMsg {
+    message: Value,
+    settle: ServiceSettle,
+}
+
+/// A live service started by `spawn.process Type { … }`: its state object
+/// (the deep-copied field initializers, mutated in place by `on_message`),
+/// the FIFO message queue, and the busy/stopped flags that gate the pump
+/// (spec `concurrency.md`).
+struct ServiceInstance {
+    type_name: String,
+    /// The service type's `on_message` function, resolved through the spawn
+    /// site's scope chain (a module-level struct lives in the module env, not
+    /// the interpreter root).
+    on_message: Option<Value>,
+    state: Value,
+    queue: RefCell<VecDeque<ServiceMsg>>,
+    busy: Cell<bool>,
+    stopped: Cell<bool>,
+}
+
 // The interpreter an async coroutine's closure runs against. Set (to `self`)
 // around every `resume`, so the `'static` coroutine closures can reach the
 // shared `Interpreter` without capturing a reference. Single-threaded, so the
@@ -92,6 +119,12 @@ pub struct Interpreter {
     tasks: RefCell<Vec<Option<Task>>>,
     /// Tasks to resume next, FIFO (JS microtask order).
     ready: RefCell<VecDeque<(usize, Control)>>,
+    /// `Task.timeout` deadlines: `(deadline, combined promise, the value it
+    /// settles with)`. `drive` fires due entries once no task is ready and
+    /// sleeps to the earliest live one in between; an entry whose promise
+    /// settled before its deadline is pruned instead of waited for (the
+    /// wrapped task won the race).
+    timers: RefCell<Vec<TimerEntry>>,
     /// The task currently executing (the inline-resumed coroutine).
     current_task: Cell<Option<usize>>,
     /// Each task's yielder pointer, stashed by the coroutine on first entry.
@@ -123,11 +156,19 @@ pub struct Interpreter {
     /// across `rerender_main` calls. Multiple instances of the same component
     /// share a cell (no instance identity is tracked yet).
     state_store: RefCell<std::collections::HashMap<usize, Rc<RefCell<Value>>>>,
+    /// Services started by `spawn.process`, kept alive for the whole run:
+    /// a service is not bound to the block that started it (spec
+    /// `concurrency.md`, service lifetime).
+    services: RefCell<Vec<Rc<ServiceInstance>>>,
 }
 
 /// A cached `@Memo` result: the dependency values it was computed from, plus
 /// the computed value. Scanned by value equality (the entry lists are short).
 type MemoEntry = (Vec<Value>, Value);
+
+/// One `Task.timeout` deadline: when it fires, the combined promise it
+/// settles, and the value that settles it.
+type TimerEntry = (std::time::Instant, Rc<RefCell<crate::value::Promise>>, Value);
 
 /// Maximum nested interpreter calls. Guards against unbounded recursion, which
 /// otherwise crashes the process: sync recursion overflows the host stack with
@@ -169,6 +210,217 @@ impl Drop for Interpreter {
     fn drop(&mut self) {
         self.global.borrow_mut().clear();
     }
+}
+
+/// Normalize a combinator operand to a promise: tasks stay as they are,
+/// plain values become already-fulfilled promises (spec `Task.resolve`).
+fn as_promise(value: &Value) -> Rc<RefCell<crate::value::Promise>> {
+    match value {
+        Value::Promise(p) => p.clone(),
+        other => Rc::new(RefCell::new(crate::value::Promise {
+            state: crate::value::PromiseState::Fulfilled(other.clone()),
+            awaiters: VecDeque::new(),
+        })),
+    }
+}
+
+/// Settle a shared combinator promise once: the first settle wins, later ones
+/// are discarded (spec `error-handling.md`).
+fn settle_promise_once(
+    interp: &Interpreter,
+    promise: &Rc<RefCell<crate::value::Promise>>,
+    result: Result<Value, RunError>,
+) {
+    let mut p = promise.borrow_mut();
+    if !matches!(p.state, crate::value::PromiseState::Pending) {
+        return;
+    }
+    p.state = match &result {
+        Ok(v) => crate::value::PromiseState::Fulfilled(v.clone()),
+        Err(e) => crate::value::PromiseState::Rejected(e.clone()),
+    };
+    let awaiters = std::mem::take(&mut p.awaiters);
+    drop(p);
+    for awaiter in awaiters {
+        interp
+            .ready
+            .borrow_mut()
+            .push_back((awaiter, Control::Resume(result.clone())));
+    }
+}
+
+/// `Task.all([t, u])`: the combined task settles when every input has settled
+/// and carries the results in argument order; the first rejection rejects it.
+fn native_task_all(interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    let list = match args.first() {
+        Some(Value::List(list)) => list.clone(),
+        other => {
+            return Err(RunError::err(
+                format!(
+                    "`Task.all` expects a list of tasks, found {}",
+                    other.map(|v| v.kind_name()).unwrap_or("nothing".into())
+                ),
+                0..0,
+            ));
+        }
+    };
+    let promises: Vec<Rc<RefCell<crate::value::Promise>>> =
+        list.borrow().iter().map(as_promise).collect();
+    Ok(interp.spawn_async(move |_yielder| {
+        with_interp(|interp| {
+            let mut results = Vec::with_capacity(promises.len());
+            for promise in promises {
+                results.push(interp.await_promise(promise, 0..0)?);
+            }
+            Ok(Value::List(Rc::new(RefCell::new(results))))
+        })
+    }))
+}
+
+/// `Task.race([t, u])`: the combined task settles with the first input to
+/// settle; the others keep running and their results are discarded.
+fn native_task_race(interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    let list = match args.first() {
+        Some(Value::List(list)) => list.clone(),
+        other => {
+            return Err(RunError::err(
+                format!(
+                    "`Task.race` expects a list of tasks, found {}",
+                    other.map(|v| v.kind_name()).unwrap_or("nothing".into())
+                ),
+                0..0,
+            ));
+        }
+    };
+    let promises: Vec<Rc<RefCell<crate::value::Promise>>> =
+        list.borrow().iter().map(as_promise).collect();
+    let combined = Rc::new(RefCell::new(crate::value::Promise {
+        state: crate::value::PromiseState::Pending,
+        awaiters: VecDeque::new(),
+    }));
+    for promise in promises {
+        let combined = combined.clone();
+        interp.spawn_async(move |_yielder| {
+            with_interp(|interp| {
+                // A rejection of one racer settles the combined task rejected
+                // only if it is still pending (first settle wins).
+                let result = interp.await_promise(promise, 0..0);
+                settle_promise_once(interp, &combined, result);
+                Ok(Value::Null)
+            })
+        });
+    }
+    Ok(Value::Promise(combined))
+}
+
+/// `Task.resolve(v)`: an already-fulfilled task holding `v`.
+fn native_task_resolve(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    let value = args.first().cloned().unwrap_or(Value::Null);
+    Ok(Value::Promise(Rc::new(RefCell::new(
+        crate::value::Promise {
+            state: crate::value::PromiseState::Fulfilled(value),
+            awaiters: VecDeque::new(),
+        },
+    ))))
+}
+
+/// The built-in `Error` value (spec `error-handling.md`): an object carrying
+/// its one `message` field, so `e.message` reads it back.
+fn error_value(message: Rc<str>) -> Value {
+    Value::Object(Rc::new(RefCell::new(vec![(
+        "message".to_string(),
+        Value::String(message),
+    )])))
+}
+
+/// `Error(message)`: construct the base error type (the semantic pass checks
+/// the argument is a string; the runtime formats anything for robustness).
+fn native_error(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    let message = match args.first() {
+        Some(Value::String(s)) => s.clone(),
+        Some(other) => other.format().into(),
+        None => String::new().into(),
+    };
+    Ok(error_value(message))
+}
+
+/// `Result::Ok(value)` as a runtime enum value. `Task.timeout` wraps outcomes
+/// in the built-in `Result`, which needs no runtime registration: enum
+/// construction and matching are generic over the enum's name.
+fn result_ok(value: Value) -> Value {
+    Value::Enum {
+        enum_name: "Result".to_string(),
+        tag: "Ok".to_string(),
+        payload: Some(Box::new(value)),
+    }
+}
+
+/// `Result::Err(error)` as a runtime enum value.
+fn result_err(error: Value) -> Value {
+    Value::Enum {
+        enum_name: "Result".to_string(),
+        tag: "Err".to_string(),
+        payload: Some(Box::new(error)),
+    }
+}
+
+/// `Task.timeout(t, ms)`: settles with `Result::Ok(t's result)` when `t`
+/// finishes within `ms`, or with `Result::Err(Error("timed out"))` when the
+/// deadline elapses first (spec `error-handling.md`). The deadline is a timer
+/// entry `drive` fires once nothing else is ready to run; a rejection of `t`
+/// propagates as a rejection (the runtime has no separate cancelled state).
+///
+/// The wrapped task cannot be interrupted — there is no cancellation — so
+/// after a timeout it runs on: its late result finds the combined promise
+/// already settled and is discarded, and its timer entry is pruned by `drive`
+/// instead of being waited for.
+fn native_task_timeout(interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    let Some(first) = args.first() else {
+        return Err(RunError::err(
+            "`Task.timeout` requires a task argument",
+            0..0,
+        ));
+    };
+    let inner = as_promise(first);
+    let ms = match args.get(1) {
+        Some(Value::Number(n)) if n.is_finite() && *n >= 0.0 => *n,
+        other => {
+            return Err(RunError::err(
+                format!(
+                    "`Task.timeout` expects a millisecond count of type number, found {}",
+                    other.map(|v| v.kind_name()).unwrap_or("nothing".into())
+                ),
+                0..0,
+            ));
+        }
+    };
+    // Clamp to the range a deadline addition can hold so an absurd input
+    // cannot overflow `Instant + Duration`.
+    let deadline = std::time::Instant::now()
+        + std::time::Duration::from_millis(ms.min(u32::MAX as f64) as u64);
+    let combined = Rc::new(RefCell::new(crate::value::Promise {
+        state: crate::value::PromiseState::Pending,
+        awaiters: VecDeque::new(),
+    }));
+    interp.timers.borrow_mut().push((
+        deadline,
+        combined.clone(),
+        result_err(error_value("timed out".into())),
+    ));
+    let settled = combined.clone();
+    interp.spawn_async(move |_yielder| {
+        with_interp(|interp| {
+            // First settle wins: the waiter's wrap of the task result races
+            // the timer, and the loser is discarded.
+            let wrapped = match interp.await_promise(inner, 0..0) {
+                Ok(v) => Ok(result_ok(v)),
+                Err(e) => Err(e),
+            };
+            settle_promise_once(interp, &settled, wrapped);
+            Ok(Value::Null)
+        })
+    });
+    Ok(Value::Promise(combined))
 }
 
 fn native_print(interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
@@ -464,6 +716,11 @@ impl Interpreter {
         global
             .borrow_mut()
             .define("assert", Value::Native(Rc::new(native_assert)), false);
+        // `Error(message)`: the built-in base error type (spec
+        // `error-handling.md`), constructed like any other builtin call.
+        global
+            .borrow_mut()
+            .define("Error", Value::Native(Rc::new(native_error)), false);
         // Array global: Array.new(size, fill?), Array.fill(n, v), Array.clone(iter)
         let array_methods = vec![
             (
@@ -484,11 +741,36 @@ impl Interpreter {
             Value::Object(Rc::new(RefCell::new(array_methods))),
             false,
         );
+        // The `Task` combinator namespace (spec `builtins/intrinsic-functions.md`).
+        let task_methods = vec![
+            (
+                "all".to_string(),
+                Value::Native(Rc::new(native_task_all)),
+            ),
+            (
+                "race".to_string(),
+                Value::Native(Rc::new(native_task_race)),
+            ),
+            (
+                "resolve".to_string(),
+                Value::Native(Rc::new(native_task_resolve)),
+            ),
+            (
+                "timeout".to_string(),
+                Value::Native(Rc::new(native_task_timeout)),
+            ),
+        ];
+        global.borrow_mut().define(
+            "Task",
+            Value::Object(Rc::new(RefCell::new(task_methods))),
+            false,
+        );
         Interpreter {
             out: RefCell::new(Vec::new()),
             global,
             tasks: RefCell::new(Vec::new()),
             ready: RefCell::new(VecDeque::new()),
+            timers: RefCell::new(Vec::new()),
             current_task: Cell::new(None),
             task_yielder: RefCell::new(Vec::new()),
             task_free: RefCell::new(Vec::new()),
@@ -498,6 +780,7 @@ impl Interpreter {
             view: RefCell::new(None),
             entry_env: RefCell::new(None),
             state_store: RefCell::new(std::collections::HashMap::new()),
+            services: RefCell::new(Vec::new()),
         }
     }
 
@@ -559,7 +842,7 @@ impl Interpreter {
     fn run_main(&self, main: &FnDef, global: &Rc<RefCell<Env>>) -> Result<(), XuloError> {
         let is_view = matches!(
             &main.return_type,
-            Some(Type::Named(name)) if name == "View"
+            Some(Type::Named(name, _)) if name == "View"
         );
         let result = self.call_fn(main, &[], global);
         self.drive();
@@ -640,6 +923,14 @@ impl Interpreter {
             match statement {
                 Statement::Fn(f) => self.register_fn(f, &global),
                 Statement::Impl(imp) => self.register_impl(imp, &global),
+                Statement::Struct(s) => {
+                    self.struct_names.borrow_mut().push(s.name.clone());
+                    global.borrow_mut().define(
+                        &s.name,
+                        Value::Object(Rc::new(RefCell::new(Vec::new()))),
+                        false,
+                    );
+                }
                 Statement::Export(export) => self.register_export_fns(&export.item, &global),
                 _ => {}
             }
@@ -779,6 +1070,159 @@ impl Interpreter {
     /// Start an async function body as a coroutine task and inline-resume it
     /// once, so its synchronous prefix runs at the call site exactly as in JS.
     /// Returns the task's promise.
+    /// Suspend the current task until `promise` settles, resolving to its
+    /// value (or failing with its rejection). Shared by `await` expressions
+    /// and the service pump's `on_message` chaining.
+    fn await_promise(
+        &self,
+        promise: Rc<RefCell<crate::value::Promise>>,
+        span: std::ops::Range<usize>,
+    ) -> Result<Value, RunError> {
+        let task = self.current_task.get().ok_or_else(|| {
+            RunError::err(
+                "`await` may only be used inside an `async` function",
+                span.clone(),
+            )
+        })?;
+        let settled = {
+            let promise = promise.borrow();
+            match &promise.state {
+                crate::value::PromiseState::Pending => None,
+                crate::value::PromiseState::Fulfilled(v) => Some(Ok(v.clone())),
+                crate::value::PromiseState::Rejected(e) => Some(Err(e.clone())),
+            }
+        };
+        if let Some(result) = settled {
+            // Awaiting an already-settled promise defers to a microtask
+            // (matching JS), so re-queue ourselves.
+            self.ready
+                .borrow_mut()
+                .push_back((task, Control::Resume(result)));
+        } else {
+            promise.borrow_mut().awaiters.push_back(task);
+        }
+        let yielder = self.current_yielder(task);
+        let next = unsafe { (*yielder).suspend(()) };
+        match next {
+            Control::Resume(result) => result,
+            Control::Start => {
+                unreachable!("a suspended coroutine cannot be resumed with Start")
+            }
+        }
+    }
+
+    /// Run one message through the service's `on_message`: bind `self` to
+    /// the service state and `reply` to a cell the pump reads back.
+    fn invoke_on_message(
+        &self,
+        func: &Rc<FunctionValue>,
+        state: Value,
+        message: Value,
+        reply_cell: &Rc<RefCell<Option<Value>>>,
+    ) -> Result<Value, RunError> {
+        let reply = {
+            let cell = Rc::clone(reply_cell);
+            Value::Native(Rc::new(move |_interp, args| {
+                let v = args.first().cloned().unwrap_or(Value::Null);
+                *cell.borrow_mut() = Some(v);
+                Ok(Value::Null)
+            }))
+        };
+        let bound: Vec<Option<Value>> = func
+            .params
+            .iter()
+            .map(|param| {
+                if param.name == "self" {
+                    Some(state.clone())
+                } else {
+                    Some(message.clone())
+                }
+            })
+            .collect();
+        if func.is_async {
+            let func = func.clone();
+            return Ok(self.spawn_async(move |_yielder| {
+                with_interp(|interp| {
+                    let env = Env::child(&func.closure);
+                    interp.bind_callee_args(&env, &func.params, bound)?;
+                    env.borrow_mut().define("reply", reply, false);
+                    interp.run_body(&func.body, &env, func.return_type.is_some())
+                })
+            }));
+        }
+        let env = Env::child(&func.closure);
+        self.bind_callee_args(&env, &func.params, bound)?;
+        env.borrow_mut().define("reply", reply, false);
+        self.run_body(&func.body, &env, func.return_type.is_some())
+    }
+
+    /// Settle one message's send task, mark the service idle, and take the
+    /// next queued message (arrival order, one at a time).
+    fn finish_message(
+        &self,
+        service: &Rc<ServiceInstance>,
+        settle: &ServiceSettle,
+        reply_cell: &Rc<RefCell<Option<Value>>>,
+        result: Result<Value, RunError>,
+    ) {
+        let outcome = result.map(|_| reply_cell.borrow().clone().unwrap_or(Value::Null));
+        settle(self, outcome);
+        service.busy.set(false);
+        self.service_pump(service);
+    }
+
+    /// Process queued messages while the service is idle: one `on_message`
+    /// runs to completion (through every `await`) before the next begins.
+    fn service_pump(&self, service: &Rc<ServiceInstance>) {
+        while !service.stopped.get() && !service.busy.get() {
+            let Some(msg) = service.queue.borrow_mut().pop_front() else {
+                break;
+            };
+            service.busy.set(true);
+            let reply_cell = Rc::new(RefCell::new(None));
+            let func = service.on_message.clone();
+            let Some(Value::Function(func)) = func else {
+                (msg.settle)(
+                    self,
+                    Err(RunError::err(
+                        format!(
+                            "service `{}` declares no `on_message`",
+                            service.type_name
+                        ),
+                        0..0,
+                    )),
+                );
+                service.busy.set(false);
+                continue;
+            };
+            match self.invoke_on_message(&func, service.state.clone(), msg.message, &reply_cell) {
+                Ok(Value::Promise(p)) => {
+                    // An async `on_message` holds the service busy until it
+                    // settles; the next message waits (spec concurrency.md).
+                    let service = service.clone();
+                    let settle = msg.settle;
+                    self.spawn_async(move |_yielder| {
+                        with_interp(|interp| {
+                            let result = interp.await_promise(p, 0..0);
+                            interp.finish_message(&service, &settle, &reply_cell, result);
+                            Ok(Value::Null)
+                        })
+                    });
+                    return;
+                }
+                Ok(_) => {
+                    self.finish_message(service, &msg.settle, &reply_cell, Ok(Value::Null));
+                }
+                Err(e) => {
+                    // A failing message settles its send as rejected; the
+                    // service keeps handling what is queued.
+                    (msg.settle)(self, Err(e));
+                    service.busy.set(false);
+                }
+            }
+        }
+    }
+
     fn spawn_async(
         &self,
         body: impl FnOnce(&Yielder<Control, ()>) -> Result<Value, RunError> + 'static,
@@ -898,13 +1342,76 @@ impl Interpreter {
     }
 
     /// Drain the ready queue (JS microtasks): resume each queued task in FIFO
-    /// order until none is ready to run.
+    /// order until none is ready to run. With no task ready, the timer half of
+    /// the loop takes over: fire deadlines that have passed, otherwise sleep
+    /// until the next one (`Task.timeout` deadlines), and end when neither
+    /// has work left.
     fn drive(&self) {
         loop {
             let next = self.ready.borrow_mut().pop_front();
-            let Some((id, control)) = next else { break };
+            let Some((id, control)) = next else {
+                if self.fire_due_timers() {
+                    continue;
+                }
+                if !self.sleep_to_next_timer() {
+                    break;
+                }
+                continue;
+            };
             self.resume_task(id, control);
         }
+    }
+
+    /// Settle every timer whose deadline has passed. Returns whether any
+    /// fired: a settle wakes awaiters, so the caller re-checks the ready queue.
+    fn fire_due_timers(&self) -> bool {
+        let now = std::time::Instant::now();
+        let mut due = Vec::new();
+        {
+            let mut timers = self.timers.borrow_mut();
+            let mut i = 0;
+            while i < timers.len() {
+                if timers[i].0 <= now {
+                    due.push(timers.swap_remove(i));
+                } else {
+                    i += 1;
+                }
+            }
+        }
+        if due.is_empty() {
+            return false;
+        }
+        for (_, promise, value) in due {
+            // Settle-once: a promise the waiter already settled is a no-op.
+            settle_promise_once(self, &promise, Ok(value));
+        }
+        true
+    }
+
+    /// Wait until the earliest pending deadline, returning `false` when there
+    /// is none left to wait for (nothing else will wake the loop). Timers
+    /// whose promise settled before their deadline are dropped here — the
+    /// wrapped task won the race — so waiting for them cannot stall a program
+    /// that is otherwise done.
+    fn sleep_to_next_timer(&self) -> bool {
+        let next = {
+            let mut timers = self.timers.borrow_mut();
+            timers.retain(|(_, promise, _)| {
+                matches!(
+                    promise.borrow().state,
+                    crate::value::PromiseState::Pending
+                )
+            });
+            timers.iter().map(|(deadline, _, _)| *deadline).min()
+        };
+        let Some(next) = next else {
+            return false;
+        };
+        let wait = next.saturating_duration_since(std::time::Instant::now());
+        if !wait.is_zero() {
+            std::thread::sleep(wait);
+        }
+        true
     }
 
     fn current_yielder(&self, id: usize) -> *const Yielder<Control, ()> {
@@ -940,9 +1447,10 @@ impl Interpreter {
                 closure: closure.clone(),
             }));
             if imp.is_inherent {
-                // Inherent impl: add method to the struct's object in the environment
-                let env = self.global.borrow_mut();
-                if let Some(Value::Object(obj)) = env.get(&imp.type_name) {
+                // Inherent impl: add the method to the struct object in the
+                // scope that registered the impl (module env under
+                // `exec_module`, the root env under `run`).
+                if let Some(Value::Object(obj)) = closure.borrow().get(&imp.type_name) {
                     obj.borrow_mut().push((method.name.clone(), func));
                 }
             } else {
@@ -1139,9 +1647,9 @@ impl Interpreter {
                 Ok(Flow::Continue)
             }
             Statement::Struct(_) => {
-                // Struct name was already registered in the first pass of run();
-                // skip re-registration in exec_stmt to avoid wiping out inherent
-                // impl methods that were added during the first pass.
+                // Struct name was already registered in the first pass of
+                // run()/setup_module(); skip re-registration in exec_stmt to
+                // avoid wiping out inherent impl methods added in that pass.
                 Ok(Flow::Continue)
             }
         }
@@ -1799,37 +2307,7 @@ impl Interpreter {
                         awaiters: VecDeque::new(),
                     })),
                 };
-                let task = self.current_task.get().ok_or_else(|| {
-                    RunError::err(
-                        "`await` may only be used inside an `async` function",
-                        span.clone(),
-                    )
-                })?;
-                let settled = {
-                    let promise = promise.borrow();
-                    match &promise.state {
-                        crate::value::PromiseState::Pending => None,
-                        crate::value::PromiseState::Fulfilled(v) => Some(Ok(v.clone())),
-                        crate::value::PromiseState::Rejected(e) => Some(Err(e.clone())),
-                    }
-                };
-                if let Some(result) = settled {
-                    // Awaiting an already-settled promise defers to a microtask
-                    // (matching JS), so re-queue ourselves.
-                    self.ready
-                        .borrow_mut()
-                        .push_back((task, Control::Resume(result)));
-                } else {
-                    promise.borrow_mut().awaiters.push_back(task);
-                }
-                let yielder = self.current_yielder(task);
-                let next = unsafe { (*yielder).suspend(()) };
-                match next {
-                    Control::Resume(result) => result,
-                    Control::Start => {
-                        unreachable!("a suspended coroutine cannot be resumed with Start")
-                    }
-                }
+                self.await_promise(promise, span.clone())
             }
             Expression::FnExpr(f) => Ok(Value::Function(Rc::new(FunctionValue {
                 params: f.params.clone(),
@@ -1907,15 +2385,118 @@ impl Interpreter {
                     }))
                 }
                 xulo_core::ast::SpawnBody::Service { type_name, fields } => {
+                    // The field initializers construct the service's state;
+                    // the value is deep-copied into the service, which never
+                    // shares storage with its spawner (spec concurrency.md).
                     let mut out = Vec::with_capacity(fields.len());
                     for field in fields {
                         out.push((field.name.clone(), self.eval(&field.value, env)?));
                     }
-                    out.push((
-                        "__service".to_string(),
-                        Value::String(Rc::from(type_name.as_str())),
-                    ));
-                    Ok(Value::Object(Rc::new(RefCell::new(out))))
+                    let state = deep_copy_value(&Value::Object(Rc::new(RefCell::new(out))));
+                    // Resolve `on_message` now: the struct object lives in the
+                    // module scope that lexically contains the spawn.
+                    let on_message = env.borrow().get(type_name).and_then(|v| match v {
+                        Value::Object(fields) => fields
+                            .borrow()
+                            .iter()
+                            .find(|(k, _)| k == "on_message")
+                            .map(|(_, v)| v.clone()),
+                        _ => None,
+                    });
+                    let service = Rc::new(ServiceInstance {
+                        type_name: type_name.clone(),
+                        on_message,
+                        state: state.clone(),
+                        queue: RefCell::new(VecDeque::new()),
+                        busy: Cell::new(false),
+                        stopped: Cell::new(false),
+                    });
+                    self.services.borrow_mut().push(service.clone());
+
+                    let send_service = service.clone();
+                    let send = Value::Native(Rc::new(move |interp, args| {
+                        if send_service.stopped.get() {
+                            return Err(RunError::err(
+                                format!(
+                                    "service `{}` has stopped; cannot send",
+                                    send_service.type_name
+                                ),
+                                0..0,
+                            ));
+                        }
+                        let message = args.first().cloned().unwrap_or(Value::Null);
+                        // The message is a value: it is deep-copied in transit
+                        // (an `move x` operand is already an owned transfer at
+                        // the language level; the single-threaded runtime keeps
+                        // the copy, which is observationally equivalent here).
+                        let message = deep_copy_value(&message);
+                        let promise = Rc::new(RefCell::new(crate::value::Promise {
+                            state: crate::value::PromiseState::Pending,
+                            awaiters: VecDeque::new(),
+                        }));
+                        let settle: ServiceSettle = {
+                            let promise = promise.clone();
+                            Rc::new(move |interp, result| {
+                                let mut p = promise.borrow_mut();
+                                if !matches!(
+                                    p.state,
+                                    crate::value::PromiseState::Pending
+                                ) {
+                                    return;
+                                }
+                                p.state = match &result {
+                                    Ok(v) => crate::value::PromiseState::Fulfilled(v.clone()),
+                                    Err(e) => crate::value::PromiseState::Rejected(e.clone()),
+                                };
+                                let awaiters = std::mem::take(&mut p.awaiters);
+                                drop(p);
+                                for awaiter in awaiters {
+                                    interp.ready.borrow_mut().push_back((
+                                        awaiter,
+                                        Control::Resume(result.clone()),
+                                    ));
+                                }
+                            })
+                        };
+                        send_service
+                            .queue
+                            .borrow_mut()
+                            .push_back(ServiceMsg { message, settle });
+                        interp.service_pump(&send_service);
+                        Ok(Value::Promise(promise))
+                    }));
+
+                    let stop_service = service.clone();
+                    let stop = Value::Native(Rc::new(move |_interp, _args| {
+                        if !stop_service.stopped.replace(true) {
+                            // Nothing further is queued; messages already
+                            // waiting never run, so their sends settle as
+                            // cancelled.
+                            let queued = std::mem::take(&mut *stop_service.queue.borrow_mut());
+                            for msg in queued {
+                                (msg.settle)(
+                                    _interp,
+                                    Err(RunError::err(
+                                        format!(
+                                            "service `{}` stopped before handling the message",
+                                            stop_service.type_name
+                                        ),
+                                        0..0,
+                                    )),
+                                );
+                            }
+                        }
+                        Ok(Value::Null)
+                    }));
+
+                    let handle = Value::Object(Rc::new(RefCell::new(vec![
+                        ("send".to_string(), send),
+                        ("stop".to_string(), stop),
+                    ])));
+                    // Start the first queued message (if any raced ahead);
+                    // normally the queue is empty here and this is a no-op.
+                    self.service_pump(&service);
+                    Ok(handle)
                 }
             },
             Expression::Lock(lock) => self.block_value(&lock.body, env),
@@ -3376,7 +3957,7 @@ fn type_matches_value(type_: &Type, value: &Value) -> bool {
         Type::Null => matches!(value, Value::Null),
         Type::List(_) => matches!(value, Value::List(_)),
         Type::Object | Type::ObjectType(_) => matches!(value, Value::Object(_)),
-        Type::Named(name) => value_is_named_type(value, name),
+        Type::Named(name, _) => value_is_named_type(value, name),
         Type::Optional(inner) => matches!(value, Value::Null) || type_matches_value(inner, value),
         Type::Union(parts) => parts.iter().any(|p| type_matches_value(p, value)),
         Type::Intersection(parts) => parts.iter().all(|p| type_matches_value(p, value)),
@@ -3440,7 +4021,7 @@ fn main_fn(program: &Program) -> Option<&FnDef> {
 }
 
 fn is_component_return(ret: &Option<Type>) -> bool {
-    matches!(ret, Some(Type::Named(n)) if n == "View")
+    matches!(ret, Some(Type::Named(n, _)) if n == "View")
 }
 
 /// The binding names an `import` statement introduces (namespace or named

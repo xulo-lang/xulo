@@ -57,22 +57,8 @@ impl Analysis {
             } else {
                 Severity::Error
             },
-            code: Some(code(err.kind).to_string()),
+            code: Some(err.code().to_string()),
             message: err.message.clone(),
         }
-    }
-}
-
-/// Stable diagnostic codes keyed by error kind (the same scheme the CLI's
-/// `xulo_core::diagnostics` renderer uses).
-fn code(kind: ErrorKind) -> &'static str {
-    match kind {
-        ErrorKind::Lex => "E0001",
-        ErrorKind::Parse => "E0002",
-        ErrorKind::Semantic => "E0003",
-        ErrorKind::Io => "E0004",
-        ErrorKind::Codegen => "E0005",
-        ErrorKind::Runtime => "E0006",
-        ErrorKind::Warning => "W0001",
     }
 }

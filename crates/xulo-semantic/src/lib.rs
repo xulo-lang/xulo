@@ -5,9 +5,9 @@ use std::ops::Range;
 
 use symbol_table::{Symbol, SymbolKind, SymbolTable};
 use xulo_core::ast::{
-    AssignStmt, AssignTarget, BinaryOperator, Block, Call, CallArg, EnumVariant, ExportItem,
-    Expression, FnBound, IfExpr, ImplDecl, LetBinding, Literal, ObjectField, Program, Statement,
-    TraitDecl, Type, TypeAlias, UiElement, impl_fn_name,
+    AssignStmt, AssignTarget, BinaryOperator, Block, Call, CallArg, EnumPayloadParam, EnumVariant,
+    ExportItem, Expression, FnBound, IfExpr, ImplDecl, LetBinding, Literal, ObjectField, Program,
+    Statement, TraitDecl, Type, TypeAlias, UiElement, impl_fn_name,
 };
 use xulo_core::error::{ErrorKind, XuloError};
 
@@ -34,6 +34,68 @@ impl TypeEntryKind {
     }
 }
 
+/// The fixed arity of a prelude type (spec `builtins/prelude.md`): the number
+/// of type arguments an application of it must write. Names whose declaration
+/// the program provides are answered from the type table instead; these exist
+/// so an application like `Map<String>` reports the arity rule (E0230) rather
+/// than an unknown head.
+fn builtin_type_arity(name: &str) -> Option<usize> {
+    match name {
+        "List" | "list" | "Set" | "Task" => Some(1),
+        "Map" | "Result" => Some(2),
+        // The primitives never take arguments; the parser only forms an
+        // application for one when a list was written (`string<Int>`).
+        "string" | "number" | "boolean" | "object" => Some(0),
+        "View" | "Unit" | "Null" | "Unknown" | "Error" | "Range" => Some(0),
+        _ => None,
+    }
+}
+
+/// The built-in `Result`/`Error` types (spec `error-handling.md`):
+/// `Result<T, E>` is the two-variant result data every fallible path carries,
+/// and `Error` is the base error type carrying one `message` field. They live
+/// in their own map — consulted only when the program declares nothing of the
+/// name — so a module's own `enum Result` shadows them without tripping the
+/// "type is already defined" rule (spec: `Result` is both a prelude type and
+/// a name a program may redefine).
+fn builtin_type_entries() -> HashMap<String, TypeEntry> {
+    let mut builtins = HashMap::new();
+    builtins.insert(
+        "Result".to_string(),
+        TypeEntry {
+            type_params: vec!["T".to_string(), "E".to_string()],
+            type_bounds: Vec::new(),
+            kind: TypeEntryKind::Enum(vec![
+                EnumVariant {
+                    name: "Ok".to_string(),
+                    name_span: 0..0,
+                    payload: Some(vec![EnumPayloadParam {
+                        name: None,
+                        type_: Type::Named("T".to_string(), Vec::new()),
+                    }]),
+                },
+                EnumVariant {
+                    name: "Err".to_string(),
+                    name_span: 0..0,
+                    payload: Some(vec![EnumPayloadParam {
+                        name: None,
+                        type_: Type::Named("E".to_string(), Vec::new()),
+                    }]),
+                },
+            ]),
+        },
+    );
+    builtins.insert(
+        "Error".to_string(),
+        TypeEntry {
+            type_params: Vec::new(),
+            type_bounds: Vec::new(),
+            kind: TypeEntryKind::Struct(vec![("message".to_string(), Type::String, None)]),
+        },
+    );
+    builtins
+}
+
 /// The method contract of a `trait`: method name, parameter types (the `self`
 /// receiver excluded), and return type.
 #[derive(Debug, Clone, PartialEq)]
@@ -55,7 +117,55 @@ pub struct TraitMethodSig {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeEntry {
     pub type_params: Vec<String>,
+    /// Inline bounds on `type_params`, parallel to it (spec `types/generics.md`).
+    pub type_bounds: Vec<FnBound>,
     pub kind: TypeEntryKind,
+}
+
+/// A method a type declares in an `impl` block, as seen by the statement
+/// pre-scan that backs the `spawn.process` service rule (spec `concurrency.md`,
+/// E0409).
+struct ImplMethodSig {
+    name: String,
+    has_self: bool,
+    param_count: usize,
+    /// Written parameter types (or `any` when unannotated), in order —
+    /// `on_message`'s second entry is the service's message type `M`.
+    param_types: Vec<Type>,
+}
+
+/// One method of a pre-scanned [`ImplRecord`], as seen by member-call
+/// resolution: its declared return type (`any` when unannotated) and
+/// async-ness, so a resolved call can be typed without re-entering the
+/// body checker.
+#[derive(Debug, Clone)]
+pub(crate) struct ImplMethodType {
+    name: String,
+    /// Declared return type; async methods wrap it in `Type::Async` here.
+    ret: Type,
+}
+
+/// A pre-scanned `impl` block: enough to decide applicability (spec
+/// `types/traits.md`, "When an impl applies") and to resolve member calls
+/// (`value.method(…)`) without re-entering the body checker. Populated
+/// before checking so resolution is order-independent, like
+/// [`ImplMethodSig`] backs the E0409 service rule.
+#[derive(Debug, Clone)]
+pub(crate) struct ImplRecord {
+    /// `None` for an inherent `impl Type { … }`.
+    trait_name: Option<String>,
+    type_name: String,
+    /// Declared type parameters (`impl<T> …`); empty for a non-generic
+    /// `impl`, which applies to its receiver name alone.
+    type_params: Vec<String>,
+    /// The receiver's written type arguments — the pattern applicability
+    /// is decided against (`Pair<T, T>` in `impl<T> Pair<T, T> { … }`).
+    type_args: Vec<Type>,
+    /// Inline bounds on `type_params`; validated (E0806) when the `impl`
+    /// itself is checked, consulted as-is here.
+    bounds: Vec<FnBound>,
+    /// Methods the block declares, in declaration order.
+    methods: Vec<ImplMethodType>,
 }
 
 pub struct Analyzer {
@@ -65,6 +175,11 @@ pub struct Analyzer {
     /// then does a trailing expression count as its implicit return).
     declared_return: bool,
     type_table: HashMap<String, TypeEntry>,
+    /// The built-in `Result`/`Error` entries, consulted only when
+    /// `type_table` (and the imports) do not declare the name, so a program's
+    /// own declaration of either name shadows the builtin (see
+    /// [`builtin_type_entries`]).
+    builtins: HashMap<String, TypeEntry>,
     /// Type-parameter names currently in scope (these are valid as `Named`)
     /// and are erased to `Any` for kind/arithmetic checks.
     generics: Vec<String>,
@@ -72,6 +187,12 @@ pub struct Analyzer {
     /// -> the trait's structural `ObjectType` shape. Enables `member_field_type`
     /// refinement and call-site `assignable` checks for `T: Trait` bounds.
     bound_shapes: Vec<HashMap<String, Type>>,
+    /// Stack parallel to `bound_shapes` recording the *trait names* each
+    /// in-scope type parameter requires: parameter name -> its bounds. A type
+    /// parameter satisfies a bound when its own declaration grants it, which
+    /// is how bound satisfaction is answered inside a generic body (spec
+    /// `types/traits.md`).
+    bound_traits: Vec<HashMap<String, Vec<String>>>,
     /// Registered `impl Trait for Type` blocks: `(trait, type)` -> method names
     /// provided. The receiver type's concrete name must be known statically.
     impls: std::collections::HashSet<(String, String, String)>,
@@ -81,6 +202,10 @@ pub struct Analyzer {
     /// function name (e.g. `a_b`+`c` vs `a`+`b_c`), which would silently
     /// overwrite in both the JS and native runtimes; duplicates are an error.
     impl_mangled: std::collections::HashSet<String>,
+    /// Every `impl` block declared in this module, pre-scanned before
+    /// checking so member-call resolution and bound satisfaction are
+    /// order-independent (spec `types/traits.md`, "When an impl applies").
+    declared_impls: Vec<ImplRecord>,
     /// Trait-dispatch call sites found during checking: `(span, method name)`.
     /// These are applied back onto the AST (`Call.trait_impl`) by
     /// [`apply_trait_dispatch`] after analysis, keeping the checker call-site
@@ -96,6 +221,59 @@ pub struct Analyzer {
     /// Depth of enclosing `View`-returning functions; `@State`/`@Store`/
     /// `@Effect`/`@Environment` are only valid when > 0.
     component_depth: usize,
+    /// Borrows whose call returned a `Task`: they end where control passes an
+    /// `await` of that task in the same block, or at the block's end (spec
+    /// `memory-and-runtime.md`, Span end).
+    pending_borrows: Vec<PendingBorrow>,
+    /// Id of the block currently being checked; a borrow is released only by
+    /// an `await` in the block that holds its task binding.
+    block_id: usize,
+    /// Next block id to hand out.
+    next_block_id: usize,
+    /// Nesting depth of a place expression being checked as the object of a
+    /// member/index access: only the outermost place is a "use" for the
+    /// borrow-span rules (E0405/E0411).
+    place_depth: usize,
+    /// Depth of closure bodies (`fn(…)` expressions and `=>` arrows) currently
+    /// being checked: a capture of a `mut` parameter is read-only (E0401).
+    closure_depth: usize,
+    /// Scope index at which each enclosing `spawn` block starts: references
+    /// to bindings declared outside that index must be captured (spec
+    /// `concurrency.md`, E0408).
+    spawn_scopes: Vec<usize>,
+    /// True while checking a `let x = move y` / `let x = copy y` initializer
+    /// inside a `spawn` block: that operand *is* the capture.
+    capture_operand: bool,
+    /// Bindings already moved out of (`move`), keyed by name with the site of
+    /// the transfer: any later use of one is E0403 (spec
+    /// `memory-and-runtime.md`). Cleared per function body.
+    moved: std::collections::HashMap<String, std::ops::Range<usize>>,
+    /// Set by the three move positions — a `let` initializer, an argument,
+    /// and a `return` — and consumed by the expression checked there.
+    in_move_position: bool,
+    /// The move-position state of the expression currently in
+    /// `check_expression_inner` (consumed at entry).
+    cur_move_pos: bool,
+    /// Methods each type declares in an `impl` block, pre-scanned so the
+    /// `spawn.process` service rule (E0409) is order-independent.
+    impl_methods: HashMap<String, Vec<ImplMethodSig>>,
+    /// Nonzero while checking an `on_message` method body: `reply` is only
+    /// in scope there (spec `concurrency.md`).
+    in_on_message: bool,
+    /// Operand types of the `reply(...)` calls in the `on_message` body being
+    /// checked; their common type is the service's reply type `R`.
+    reply_operands: Vec<Type>,
+    /// Per service type, the computed reply type `R` (spec `concurrency.md`):
+    /// the common type of the `on_message` reply operands, or `Null` (unit)
+    /// when the method never calls `reply`.
+    service_reply_types: HashMap<String, Type>,
+    /// Bindings whose `lock` section encloses the code being checked: their
+    /// contents are reachable (and mutable) only under one (spec
+    /// `concurrency.md`, E0406).
+    locked: Vec<String>,
+    /// Depth of `lock` bodies currently being checked: `await` is never a
+    /// legal suspension point inside one (spec `concurrency.md`, E0410).
+    lock_depth: usize,
     /// Depth of nested blocks below the current function body's top level;
     /// decorators are only allowed when this is 0 (docs §12).
     block_depth: usize,
@@ -274,14 +452,33 @@ fn run_analysis(
         current_return: None,
         declared_return: false,
         type_table: HashMap::new(),
+        builtins: builtin_type_entries(),
         generics: Vec::new(),
         bound_shapes: Vec::new(),
+        bound_traits: Vec::new(),
         impls: imported_impls.iter().cloned().collect(),
         impl_mangled: std::collections::HashSet::new(),
+        declared_impls: Vec::new(),
         trait_dispatch: Vec::new(),
         list_concat: Vec::new(),
         async_depth: 0,
         component_depth: 0,
+        pending_borrows: Vec::new(),
+        block_id: 0,
+        next_block_id: 1,
+        place_depth: 0,
+        closure_depth: 0,
+        spawn_scopes: Vec::new(),
+        capture_operand: false,
+        moved: std::collections::HashMap::new(),
+        in_move_position: false,
+        cur_move_pos: false,
+        impl_methods: HashMap::new(),
+        in_on_message: false,
+        reply_operands: Vec::new(),
+        service_reply_types: HashMap::new(),
+        locked: Vec::new(),
+        lock_depth: 0,
         block_depth: 0,
         no_await_depth: 0,
         test_names: std::collections::HashSet::new(),
@@ -309,6 +506,54 @@ fn run_analysis(
     for statement in &program.statements {
         if let Statement::Test(f) = statement {
             analyzer.test_names.insert(f.name.clone());
+        }
+    }
+    // Pre-scan `impl` methods so `spawn.process Tally { … }` can ask whether
+    // the service type declares `on_message` wherever the `impl` sits in the
+    // file (E0409).
+    for statement in &program.statements {
+        if let Statement::Impl(imp) = statement {
+            analyzer.declared_impls.push(ImplRecord {
+                trait_name: if imp.is_inherent {
+                    None
+                } else {
+                    Some(imp.trait_name.clone())
+                },
+                type_name: imp.type_name.clone(),
+                type_params: imp.type_params.clone(),
+                type_args: imp.type_args.clone(),
+                bounds: imp.type_bounds.clone(),
+                methods: imp
+                    .methods
+                    .iter()
+                    .map(|m| ImplMethodType {
+                        name: m.name.clone(),
+                        ret: if m.is_async {
+                            Type::Async(Box::new(
+                                m.return_type.clone().unwrap_or(Type::Any),
+                            ))
+                        } else {
+                            m.return_type.clone().unwrap_or(Type::Any)
+                        },
+                    })
+                    .collect(),
+            });
+            for m in &imp.methods {
+                analyzer
+                    .impl_methods
+                    .entry(imp.type_name.clone())
+                    .or_default()
+                    .push(ImplMethodSig {
+                        name: m.name.clone(),
+                        has_self: m.params.first().is_some_and(|p| p.name == "self"),
+                        param_count: m.params.len(),
+                        param_types: m
+                            .params
+                            .iter()
+                            .map(|p| p.type_annotation.clone().unwrap_or(Type::Any))
+                            .collect(),
+                    });
+            }
         }
     }
     if lenient {
@@ -624,6 +869,188 @@ fn walk_expr(expr: &mut Expression, f: &mut dyn FnMut(&mut Expression)) {
     }
 }
 
+/// One step of a place path: a field (or tuple position) name, or a list
+/// subscript. `Sub(None)` is a subscript whose index is not an integer
+/// literal, which is never assumed distinct from any other subscript.
+#[derive(Debug, Clone, PartialEq)]
+enum PlaceSeg {
+    Field(String),
+    Sub(Option<i64>),
+}
+
+/// A place rooted at a binding: `xs[0].y` is root `xs` with
+/// [`PlaceSeg::Sub(Some(0))`, `PlaceSeg::Field("y")`].
+#[derive(Debug, Clone, PartialEq)]
+struct Place {
+    root: String,
+    segs: Vec<PlaceSeg>,
+    display: String,
+    /// Span of the root binding's name, used to point the diagnostic at the
+    /// place rather than wherever the checker happened to be.
+    span: std::ops::Range<usize>,
+}
+
+/// The place a place-expression denotes, when it is a chain of field accesses
+/// and subscripts rooted at a binding.
+fn place_of(expr: &Expression) -> Option<Place> {
+    let mut segs = Vec::new();
+    let mut cur = expr;
+    let (root, span) = loop {
+        match cur {
+            Expression::Identifier { name, span } => break (name.clone(), span.clone()),
+            Expression::Member(m) => {
+                segs.push(PlaceSeg::Field(m.property.clone()));
+                cur = &m.object;
+            }
+            Expression::Index(i) => {
+                let index = match &*i.index {
+                    Expression::Literal {
+                        value: xulo_core::ast::Literal::Number(n),
+                        ..
+                    } if n.fract() == 0.0 && n.is_finite() => Some(*n as i64),
+                    _ => None,
+                };
+                segs.push(PlaceSeg::Sub(index));
+                cur = &i.object;
+            }
+            _ => return None,
+        }
+    };
+    segs.reverse();
+    let mut display = root.clone();
+    for seg in &segs {
+        match seg {
+            PlaceSeg::Field(f) => display.push_str(&format!(".{f}")),
+            PlaceSeg::Sub(Some(n)) => display.push_str(&format!("[{n}]")),
+            PlaceSeg::Sub(None) => display.push_str("[...]"),
+        }
+    }
+    Some(Place {
+        root,
+        segs,
+        display,
+        span,
+    })
+}
+
+/// A borrow that outlives its call because the call returned a `Task`: the
+/// borrowed place, whether the parameter was `mut`, the task binding that
+/// carries the call's result, and the block that holds the binding (spec
+/// `memory-and-runtime.md`, Span end).
+#[derive(Debug, Clone)]
+struct PendingBorrow {
+    place: Place,
+    is_mut: bool,
+    task: String,
+    block: usize,
+}
+
+/// Two places overlap unless, walking their paths from the base, the first
+/// position where they differ proves them disjoint: different field names
+/// (tuple positions included), or the same list subscripted by two distinct
+/// integer literals (spec `memory-and-runtime.md`, Overlap).
+fn places_overlap(a: &Place, b: &Place) -> bool {
+    if a.root != b.root {
+        return false;
+    }
+    for (x, y) in a.segs.iter().zip(b.segs.iter()) {
+        match (x, y) {
+            (PlaceSeg::Field(f), PlaceSeg::Field(g)) if f != g => return false,
+            (PlaceSeg::Sub(Some(i)), PlaceSeg::Sub(Some(j))) if i != j => return false,
+            _ => {}
+        }
+    }
+    // No divergence proving them disjoint: one is a prefix of the other, or
+    // every shared step matched (a non-literal index is never assumed
+    // distinct from anything).
+    true
+}
+
+/// The place an assignment target writes: `xs[0].y` roots at `xs` with the
+/// same path an expression would have.
+fn assign_target_place(target: &AssignTarget) -> Option<Place> {
+    match target {
+        AssignTarget::Name(name) => Some(Place {
+            root: name.clone(),
+            segs: Vec::new(),
+            display: name.clone(),
+            span: 0..0,
+        }),
+        AssignTarget::Member(object, property) => {
+            let mut place = place_of(object)?;
+            place.segs.push(PlaceSeg::Field(property.clone()));
+            place.display.push_str(&format!(".{property}"));
+            Some(place)
+        }
+        AssignTarget::Index(object, index) => {
+            let mut place = place_of(object)?;
+            let idx = match &**index {
+                Expression::Literal {
+                    value: xulo_core::ast::Literal::Number(n),
+                    ..
+                } if n.fract() == 0.0 && n.is_finite() => Some(*n as i64),
+                _ => None,
+            };
+            match idx {
+                Some(n) => {
+                    place.segs.push(PlaceSeg::Sub(Some(n)));
+                    place.display.push_str(&format!("[{n}]"));
+                }
+                None => {
+                    place.segs.push(PlaceSeg::Sub(None));
+                    place.display.push_str("[...]");
+                }
+            }
+            Some(place)
+        }
+    }
+}
+
+/// The task bindings an `await` operand waits for: `await t`,
+/// `await Task.all([t, u])`, and `await Task.timeout(t, ms)` each settle the
+/// tasks named in the operand (spec, Span end). Anything else is left alone —
+/// the borrow simply lasts on.
+fn collect_task_names(expr: &Expression, out: &mut Vec<String>) {
+    match expr {
+        Expression::Identifier { name, .. } => out.push(name.clone()),
+        Expression::Call(call) => {
+            for arg in &call.arguments {
+                collect_task_names(&arg.value, out);
+            }
+        }
+        Expression::CallValue(cv) => {
+            for arg in &cv.arguments {
+                collect_task_names(&arg.value, out);
+            }
+        }
+        Expression::Literal {
+            value: xulo_core::ast::Literal::List(items),
+            ..
+        } => {
+            for item in items {
+                collect_task_names(item, out);
+            }
+        }
+        Expression::Tuple { items, .. } => {
+            for item in items {
+                collect_task_names(item, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// How a place expression renders in a diagnostic: the root binding's name
+/// with its path (`a.b`, `a[...]`), not the whole expression's source text.
+fn place_root_display(expr: &Expression) -> String {
+    match expr {
+        Expression::Identifier { name, .. } => name.clone(),
+        Expression::Member(m) => format!("{}.{}", place_root_display(&m.object), m.property),
+        Expression::Index(i) => format!("{}[...]", place_root_display(&i.object)),
+        _ => "<value>".to_string(),
+    }
+}
+
 fn assign_target_name(target: &AssignTarget) -> String {
     match target {
         AssignTarget::Name(name) => name.clone(),
@@ -654,6 +1081,12 @@ impl Analyzer {
     /// expression's span (see [`Analyzer::current_span`]).
     fn err(&self, message: impl Into<String>) -> XuloError {
         XuloError::new(ErrorKind::Semantic, message).at(self.current_span.clone())
+    }
+
+    /// Like [`Analyzer::err`], but tags the diagnostic with a fine-grained
+    /// code from `spec/type-system/errors.md` (e.g. `E0230`).
+    fn err_code(&self, code: &'static str, message: impl Into<String>) -> XuloError {
+        self.err(message).with_code(code)
     }
 
     /// Record that the name at `span` resolved to `symbol` (out-of-band, for
@@ -763,10 +1196,39 @@ impl Analyzer {
                 if let Some(annotation) = &binding.type_annotation {
                     self.check_type(annotation)?;
                 }
+                // Inside a `spawn` block a `let x = move y` / `copy y`
+                // initializer *is* the capture of `y`: the operand is the one
+                // place an enclosing binding may be named.
+                // `move` is legal as a whole `let` initializer (E0403).
+                self.in_move_position = true;
+                let saved_capture = self.capture_operand;
+                self.capture_operand = !self.spawn_scopes.is_empty()
+                    && matches!(
+                        &binding.value,
+                        Some(Expression::Unary(u))
+                            if matches!(
+                                u.operator,
+                                xulo_core::ast::UnaryOperator::Move
+                                    | xulo_core::ast::UnaryOperator::Copy
+                            )
+                    );
                 let value_type = match &binding.value {
-                    Some(value) => self.check_expression(value)?,
-                    None => binding.type_annotation.clone().unwrap_or(Type::Any),
+                    Some(value) => self.check_expression(value),
+                    None => Ok(binding.type_annotation.clone().unwrap_or(Type::Any)),
                 };
+                self.capture_operand = saved_capture;
+                let value_type = value_type?;
+
+                // A call that returns a `Task` keeps its arguments borrowed
+                // until that task settles: the borrow outlives the call and
+                // is released by an `await` of this binding (spec
+                // `memory-and-runtime.md`, Span end).
+                if let Some(Expression::Call(call)) = &binding.value
+                    && (matches!(value_type, Type::Async(_))
+                        || matches!(&value_type, Type::Named(n, _) if n == "Task"))
+                {
+                    self.record_task_borrows(call, &binding.name);
+                }
 
                 // Tuple destructuring: `let (a, b, c) = expr`
                 if let Some(tuple_names) = &binding.tuple_names {
@@ -794,6 +1256,8 @@ impl Analyzer {
                                 name: name.clone(),
                                 type_: inner_type.clone(),
                                 kind: SymbolKind::Variable,
+                                is_shared: binding.is_shared,
+                                is_param: false,
                                 is_const: binding.is_const,
                                 is_mutable: false,
                             },
@@ -818,7 +1282,7 @@ impl Analyzer {
                 // Object destructuring: `let { name, age: user_age } = expr`
                 if let Some(fields) = &binding.object_destructuring {
                     let inner_type = match &value_type {
-                        Type::Object | Type::Named(_) => value_type.clone(),
+                        Type::Object | Type::Named(_, _) => value_type.clone(),
                         Type::Any => Type::Any,
                         other => {
                             return Err(self.err(format!(
@@ -845,7 +1309,7 @@ impl Analyzer {
                             )));
                         }
                         // If we have a Named type with struct fields, look up the field type
-                        let field_type = if let Type::Named(type_name) = &inner_type {
+                        let field_type = if let Type::Named(type_name, _) = &inner_type {
                             if let Some(entry) = self.type_table.get(type_name) {
                                 if let TypeEntryKind::Struct(fields) = &entry.kind {
                                     fields
@@ -867,6 +1331,8 @@ impl Analyzer {
                                 name: bind_name.to_string(),
                                 type_: field_type.clone(),
                                 kind: SymbolKind::Variable,
+                                is_shared: binding.is_shared,
+                                is_param: false,
                                 is_const: binding.is_const,
                                 is_mutable: binding.is_mutable,
                             },
@@ -916,6 +1382,8 @@ impl Analyzer {
                         name: binding.name.clone(),
                         type_: declared_type.clone(),
                         kind: SymbolKind::Variable,
+                        is_shared: binding.is_shared,
+                        is_param: false,
                         is_const: binding.is_const,
                         is_mutable: binding.is_mutable,
                     },
@@ -951,6 +1419,8 @@ impl Analyzer {
                     }
                     return Ok(());
                 };
+                // `move` is legal as a whole `return` value (E0403).
+                self.in_move_position = true;
                 let value_type = self.check_expression(value)?;
                 if let Some(expected) = &self.current_return {
                     let target = match expected {
@@ -992,6 +1462,8 @@ impl Analyzer {
                         name: stmt.iter_var.clone(),
                         type_: Type::Any,
                         kind: SymbolKind::Variable,
+                        is_shared: false,
+                        is_param: false,
                         is_const: false,
                         is_mutable: true,
                     },
@@ -1034,6 +1506,8 @@ impl Analyzer {
                         name: try_stmt.catch_var.clone(),
                         type_: Type::Any,
                         kind: SymbolKind::Variable,
+                        is_shared: false,
+                        is_param: false,
                         is_const: true,
                         is_mutable: false,
                     },
@@ -1124,6 +1598,8 @@ impl Analyzer {
                 symbol_return,
                 f.bounds.clone(),
             ),
+            is_shared: false,
+            is_param: false,
             is_const: true,
             is_mutable: false,
         };
@@ -1149,11 +1625,17 @@ impl Analyzer {
         // `T: Trait` bounds: validate the trait exists and make the bound shape
         // visible to `member_field_type` / `assignable` while checking the body.
         let mut bound_map = HashMap::new();
+        let mut trait_map: HashMap<String, Vec<String>> = HashMap::new();
         for bound in &f.bounds {
             let shape = self.bound_shape(bound)?;
             bound_map.insert(bound.param.clone(), shape);
+            trait_map
+                .entry(bound.param.clone())
+                .or_default()
+                .extend(bound.traits.iter().cloned());
         }
         self.bound_shapes.push(bound_map);
+        self.bound_traits.push(trait_map);
 
         self.table.push_scope();
         self.declare_params_with_defaults(&f.params)?;
@@ -1169,6 +1651,14 @@ impl Analyzer {
         // arms, so a nested function body must not inherit it.
         let saved_no_await = self.no_await_depth;
         self.no_await_depth = 0;
+        // A nested `fn` declared inside a lock body runs later, outside the
+        // critical section, so it does not inherit the enclosing lock.
+        let saved_lock = self.lock_depth;
+        self.lock_depth = 0;
+        // A named `fn` body is its own context: a nested declaration does not
+        // inherit the enclosing closure's capture rules.
+        let saved_closure = self.closure_depth;
+        self.closure_depth = 0;
         let is_component = self.is_component_type(&return_type);
         let saved_component = self.component_depth;
         let saved_block = self.block_depth;
@@ -1192,7 +1682,11 @@ impl Analyzer {
             }
             self.render_locals.push(render_locals);
         }
+        // Moves do not cross function boundaries: a binding of the same name
+        // in another body is a different binding.
+        let saved_moved = std::mem::take(&mut self.moved);
         let result = self.check_block_implicit(&f.body);
+        self.moved = saved_moved;
         if is_component {
             self.render_locals.pop();
         }
@@ -1200,11 +1694,14 @@ impl Analyzer {
         self.component_depth = saved_component;
         self.async_depth = saved_async;
         self.no_await_depth = saved_no_await;
+        self.lock_depth = saved_lock;
+        self.closure_depth = saved_closure;
         self.current_return = saved;
         self.declared_return = saved_declared;
         result?;
         self.table.pop_scope();
         self.bound_shapes.pop();
+        self.bound_traits.pop();
         Ok(())
     }
 
@@ -1230,11 +1727,20 @@ impl Analyzer {
         self.async_depth = if f.is_async { saved_async + 1 } else { 0 };
         let saved_no_await = self.no_await_depth;
         self.no_await_depth = 0;
+        let saved_lock = self.lock_depth;
+        self.lock_depth = 0;
+        let saved_closure = self.closure_depth;
+        self.closure_depth = 0;
         let saved_block = self.block_depth;
         self.block_depth = 0;
+        // Moves do not cross function boundaries.
+        let saved_moved = std::mem::take(&mut self.moved);
         let result = self.check_block_implicit(&f.body);
+        self.moved = saved_moved;
         self.block_depth = saved_block;
         self.no_await_depth = saved_no_await;
+        self.lock_depth = saved_lock;
+        self.closure_depth = saved_closure;
         self.async_depth = saved_async;
         self.current_return = saved;
         self.declared_return = saved_declared;
@@ -1276,8 +1782,10 @@ impl Analyzer {
                     name: p.name.clone(),
                     type_: ty.clone(),
                     kind: SymbolKind::Variable,
+                    is_shared: p.mode == Some(xulo_core::ast::ParamMode::Shared),
+                    is_param: true,
                     is_const: true,
-                    is_mutable: false,
+                    is_mutable: p.mode == Some(xulo_core::ast::ParamMode::Mut),
                 },
                 Some(p.span.clone()),
             );
@@ -1306,11 +1814,23 @@ impl Analyzer {
         let saved_component = self.component_depth;
         let saved_block = self.block_depth;
         let saved_no_await = self.no_await_depth;
+        // A closure body runs when it is called, not at the point of the
+        // enclosing critical section, so it does not inherit the lock.
+        let saved_lock = self.lock_depth;
+        // Inside a closure, every captured binding is part of the closure's
+        // own value: only a `let mut` binding may be written through one.
+        self.closure_depth += 1;
         self.component_depth = 0;
         self.block_depth = 0;
         self.no_await_depth = 0;
+        self.lock_depth = 0;
+        // Moves do not cross function boundaries.
+        let saved_moved = std::mem::take(&mut self.moved);
         let result = self.check_block_implicit(&f.body);
+        self.moved = saved_moved;
+        self.closure_depth -= 1;
         self.no_await_depth = saved_no_await;
+        self.lock_depth = saved_lock;
         self.component_depth = saved_component;
         self.block_depth = saved_block;
         self.async_depth = saved_async;
@@ -1342,6 +1862,8 @@ impl Analyzer {
                     name: ns.clone(),
                     type_: Type::Any,
                     kind: SymbolKind::Variable,
+                    is_shared: false,
+                    is_param: false,
                     is_const: true,
                     is_mutable: false,
                 }) {
@@ -1360,6 +1882,7 @@ impl Analyzer {
                                 local.clone(),
                                 TypeEntry {
                                     type_params: Vec::new(),
+                                    type_bounds: Vec::new(),
                                     kind: TypeEntryKind::Alias(Type::Any),
                                 },
                             );
@@ -1371,6 +1894,8 @@ impl Analyzer {
                             name: local.clone(),
                             type_: symbol.type_.clone(),
                             kind: symbol.kind.clone(),
+                            is_shared: false,
+                            is_param: false,
                             is_const: true,
                             is_mutable: false,
                         },
@@ -1385,6 +1910,8 @@ impl Analyzer {
                                     Type::Any,
                                     Vec::new(),
                                 ),
+                                is_shared: false,
+                                is_param: false,
                                 is_const: true,
                                 is_mutable: false,
                             }
@@ -1434,8 +1961,10 @@ impl Analyzer {
                     e.name.clone(),
                     Symbol {
                         name: e.name.clone(),
-                        type_: Type::Named(e.name.clone()),
+                        type_: Type::Named(e.name.clone(), Vec::new()),
                         kind: symbol_table::SymbolKind::Variable,
+                        is_shared: false,
+                        is_param: false,
                         is_const: true,
                         is_mutable: false,
                     },
@@ -1449,8 +1978,10 @@ impl Analyzer {
                     s.name.clone(),
                     Symbol {
                         name: s.name.clone(),
-                        type_: Type::Named(s.name.clone()),
+                        type_: Type::Named(s.name.clone(), Vec::new()),
                         kind: symbol_table::SymbolKind::Variable,
+                        is_shared: false,
+                        is_param: false,
                         is_const: true,
                         is_mutable: false,
                     },
@@ -1483,8 +2014,10 @@ impl Analyzer {
                             name.clone(),
                             Symbol {
                                 name: name.clone(),
-                                type_: Type::Named(name.clone()),
+                                type_: Type::Named(name.clone(), Vec::new()),
                                 kind: symbol_table::SymbolKind::Variable,
+                                is_shared: false,
+                                is_param: false,
                                 is_const: true,
                                 is_mutable: false,
                             },
@@ -1516,9 +2049,300 @@ impl Analyzer {
         Ok(())
     }
 
+    /// Record the borrows a task-returning call holds: every argument that is
+    /// a place, with the mutability its parameter declares.
+    fn record_task_borrows(&mut self, call: &xulo_core::ast::Call, task: &str) {
+        let params = match self.table.lookup(&call.callee).map(|s| &s.kind) {
+            Some(SymbolKind::Function(_, params, _, _)) => params.clone(),
+            _ => return,
+        };
+        for (i, arg) in call.arguments.iter().enumerate() {
+            let param = match &arg.name {
+                Some(name) => params.iter().find(|p| &p.name == name),
+                None => params.get(i),
+            };
+            let Some(param) = param else { continue };
+            let Some(place) = place_of(&arg.value) else {
+                continue;
+            };
+            self.pending_borrows.push(PendingBorrow {
+                place,
+                is_mut: param.mode == Some(xulo_core::ast::ParamMode::Mut),
+                task: task.to_string(),
+                block: self.block_id,
+            });
+        }
+    }
+
+    /// A `spawn` block does not see the surrounding scope: an enclosing
+    /// binding may appear only as a capture, `let local = move config` (spec
+    /// concurrency.md, E0408). Declarations, `const`s, and `shared` regions
+    /// are always visible.
+    fn check_spawn_capture(&self, name: &str, span: &std::ops::Range<usize>) -> SResult<()> {
+        if self.spawn_scopes.is_empty() || self.capture_operand {
+            return Ok(());
+        }
+        let Some(&spawn_depth) = self.spawn_scopes.last() else {
+            return Ok(());
+        };
+        let Some(sym) = self.table.lookup(name) else {
+            return Ok(());
+        };
+        // Declared inside the spawn block (including nested scopes) — it is
+        // the block's own binding.
+        if let Some(index) = self.table.depth_of(name)
+            && index >= spawn_depth
+        {
+            return Ok(());
+        }
+        match &sym.kind {
+            // Declarations (`fn`, and the type forms) and prelude names are
+            // always visible inside the block.
+            SymbolKind::Function(..) => Ok(()),
+            _ if sym.is_const => Ok(()),
+            // A shared region needs no capture form: the block takes the
+            // region itself.
+            _ if sym.is_shared => Ok(()),
+            _ => Err(self
+                .err_code(
+                    "E0408",
+                    format!("`{name}` is not captured by the spawned block"),
+                )
+                .at(span.clone())),
+        }
+    }
+
+    /// Is this root currently locked by a lexically enclosing `lock` on it?
+    fn is_locked(&self, root: &str) -> bool {
+        self.locked.iter().any(|n| n == root)
+    }
+
+    /// The contents of a shared binding — every field and subscript reached
+    /// through it — may be reached only under a `lock` on that binding, or
+    /// inside a function that receives the region as a `shared` parameter
+    /// (spec concurrency.md, E0406).
+    fn check_shared_contents(&self, place: &Place) -> SResult<()> {
+        let Some(sym) = self.table.lookup(&place.root) else {
+            return Ok(());
+        };
+        if !sym.is_shared || self.is_locked(&place.root) || sym.is_param {
+            return Ok(());
+        }
+        Err(self
+            .err_code(
+                "E0406",
+                format!(
+                    "shared state `{}` is accessed outside `lock`",
+                    place.root
+                ),
+            )
+            .at(place.span.clone()))
+    }
+
+    /// A use of a place (read, write, move, or argument) while a borrow of it
+    /// is outstanding (spec `memory-and-runtime.md`, rules 3 and Span end).
+    /// While a **mutable** borrow is outstanding the place may not be used at
+    /// all (`E0405`); while an **immutable** one is, it may not be written
+    /// (`E0411`) and reads remain unrestricted.
+    fn check_borrow_place(&self, place: &Place, is_write: bool) -> SResult<()> {
+        for b in &self.pending_borrows {
+            if !places_overlap(&b.place, place) {
+                continue;
+            }
+            if b.is_mut {
+                return Err(self
+                    .err_code(
+                        "E0405",
+                        format!("cannot use `{}`: it is mutably borrowed", place.display),
+                    )
+                    .at(place.span.clone()));
+            }
+            if is_write {
+                return Err(self
+                    .err_code(
+                        "E0411",
+                        format!("cannot write `{}`: it is immutably borrowed", place.display),
+                    )
+                    .at(place.span.clone()));
+            }
+        }
+        Ok(())
+    }
+
+    /// An `await` whose operand contains a task's binding is where a borrow
+    /// that outlived its call ends (spec, Span end). Only an `await` in the
+    /// same block releases it: on any other path the borrow is outstanding.
+    fn release_borrows_of_awaited(&mut self, operand: &Expression) {
+        let mut tasks = Vec::new();
+        collect_task_names(operand, &mut tasks);
+        if tasks.is_empty() {
+            return;
+        }
+        self.pending_borrows
+            .retain(|b| !(b.block == self.block_id && tasks.contains(&b.task)));
+    }
+
+    /// Rule 1 of aliasing XOR mutability: an argument passed to a `mut`
+    /// parameter must be a place backed by a `mut` binding (spec
+    /// `memory-and-runtime.md`, E0404). A `mut` parameter (or `mut self`)
+    /// lends its own mutable borrow onward, so it qualifies here too.
+    fn require_mutable_place(&self, expr: &Expression) -> SResult<Place> {
+        let Some(place) = place_of(expr) else {
+            return Err(self.err_code(
+                "E0404",
+                "cannot borrow as mutable: the argument is not a place",
+            ));
+        };
+        let Some(sym) = self.table.lookup(&place.root) else {
+            return Ok(place);
+        };
+        // Inside `lock` the contents of the shared binding are mutable places
+        // whether or not the binding itself is `let mut`.
+        if !sym.is_mutable && !self.is_locked(&place.root) {
+            return Err(self
+                .err_code("E0404", format!("cannot borrow `{}` as mutable", place.display))
+                .at(place.span.clone()));
+        }
+        Ok(place)
+    }
+
+    /// Rules 1 and 2 for one call's argument list, in parameter order:
+    /// every `mut` parameter receives a mutable place, and no two places
+    /// overlap when either of the two parameters is `mut`.
+    fn check_call_borrows(
+        &self,
+        args: &[(&Expression, Option<xulo_core::ast::ParamMode>)],
+    ) -> SResult<()> {
+        use xulo_core::ast::ParamMode;
+        let mut places: Vec<(Place, bool)> = Vec::with_capacity(args.len());
+        for (expr, mode) in args {
+            match mode {
+                Some(ParamMode::Mut) => {
+                    let place = self.require_mutable_place(expr)?;
+                    // Rule 3: a mutable borrow may not start while an
+                    // immutable one of the same place is outstanding.
+                    for b in &self.pending_borrows {
+                        if !b.is_mut && places_overlap(&b.place, &place) {
+                            return Err(self
+                                .err_code(
+                                    "E0404",
+                                    format!(
+                                        "cannot borrow `{}` as mutable: it is already immutably borrowed",
+                                        place.display
+                                    ),
+                                )
+                                .at(place.span.clone()));
+                        }
+                    }
+                    places.push((place, true));
+                }
+                Some(ParamMode::Shared) => {
+                    // A `shared` parameter receives the region itself: only a
+                    // shared binding may be passed (spec concurrency.md, E0407).
+                    let Some(place) = place_of(expr) else {
+                        return Err(self.err_code(
+                            "E0407",
+                            "`shared` parameters take a shared binding",
+                        ));
+                    };
+                    let is_shared = self
+                        .table
+                        .lookup(&place.root)
+                        .is_some_and(|sym| sym.is_shared);
+                    if !is_shared {
+                        return Err(self
+                            .err_code(
+                                "E0407",
+                                format!(
+                                    "`shared` parameter requires a shared binding, found `{}`",
+                                    place.display
+                                ),
+                            )
+                            .at(place.span.clone()));
+                    }
+                    places.push((place, false));
+                }
+                None => {
+                    if let Some(place) = place_of(expr) {
+                        places.push((place, false));
+                    }
+                }
+            }
+        }
+        for (i, (a, a_mut)) in places.iter().enumerate() {
+            for (b, b_mut) in places.iter().skip(i + 1) {
+                if (*a_mut || *b_mut) && places_overlap(a, b) {
+                    let culprit = if *a_mut { a } else { b };
+                    return Err(self
+                        .err_code(
+                            "E0404",
+                            format!(
+                                "cannot borrow `{}` as mutable: it overlaps another argument of this call",
+                                culprit.display
+                            ),
+                        )
+                        .at(culprit.span.clone()));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The binding a place expression is rooted in: `a`, `a.b.c`, and
+    /// `a[0].b` all root at `a`.
+    fn place_root_name(expr: &Expression) -> Option<&str> {
+        match expr {
+            Expression::Identifier { name, .. } => Some(name),
+            Expression::Member(m) => Self::place_root_name(&m.object),
+            Expression::Index(i) => Self::place_root_name(&i.object),
+            _ => None,
+        }
+    }
+
+    /// A write through a place is legal only when its root binding is
+    /// writable: not a `const`, and declared `mut` — and, inside a closure,
+    /// only when it is a `let mut` binding rather than a capture of a
+    /// parameter (spec `expressions/closures.md`, E0401).
+    fn check_place_writable(&self, place: &Expression, display: &str) -> SResult<()> {
+        let Some(name) = Self::place_root_name(place) else {
+            return Ok(());
+        };
+        let Some(sym) = self.table.lookup(name) else {
+            return Ok(());
+        };
+        if !matches!(sym.kind, SymbolKind::Variable | SymbolKind::State) {
+            return Ok(());
+        }
+        if self.closure_depth > 0 && sym.is_param {
+            return Err(self.err_code(
+                "E0401",
+                format!(
+                    "cannot assign to `{name}`: a capture of a parameter is not a `let mut` binding"
+                ),
+            ));
+        }
+        if !sym.is_mutable && !self.is_locked(name) {
+            return Err(self.err_code(
+                "E0401",
+                format!("cannot assign to `{display}`: variable is not declared `mut`"),
+            ));
+        }
+        Ok(())
+    }
+
     /// Type-check the left-hand side of an assignment and return the type its
     /// value must have.
     fn assign_target_type(&mut self, target: &AssignTarget) -> SResult<Type> {
+        // A write is a use: it is barred by an outstanding mutable borrow
+        // (`E0405`) and by an outstanding immutable one (`E0411`).
+        if let Some(place) = assign_target_place(target) {
+            self.check_borrow_place(&place, true)?;
+            self.check_shared_contents(&place)?;
+        }
+        self.assign_target_type_inner(target)
+    }
+
+    fn assign_target_type_inner(&mut self, target: &AssignTarget) -> SResult<Type> {
         match target {
             AssignTarget::Name(name) => {
                 let Some(sym) = self.table.lookup(name) else {
@@ -1530,9 +2354,10 @@ impl Analyzer {
                     );
                 }
                 if !sym.is_mutable {
-                    return Err(self.err(format!(
-                        "cannot assign to `{name}`: variable is not declared `mut`"
-                    )));
+                    return Err(self.err_code(
+                        "E0401",
+                        format!("cannot assign to `{name}`: variable is not declared `mut`"),
+                    ));
                 }
                 match &sym.kind {
                     SymbolKind::Variable | SymbolKind::State => Ok(sym.type_.clone()),
@@ -1546,9 +2371,11 @@ impl Analyzer {
             }
             AssignTarget::Member(object, property) => {
                 let object_type = self.check_expression(object)?;
+                let place = format!("{}.{}", place_root_display(object), property);
+                self.check_place_writable(object, &place)?;
                 let resolved = self.resolve_alias(&object_type, 0);
                 match resolved {
-                    Type::Object | Type::Any | Type::Named(_) => Ok(Type::Any),
+                    Type::Object | Type::Any | Type::Named(_, _) => Ok(Type::Any),
                     Type::ObjectType(fields) => fields
                         .iter()
                         .find(|(n, _)| n == property)
@@ -1563,10 +2390,12 @@ impl Analyzer {
             AssignTarget::Index(object, index) => {
                 let object_type = self.check_expression(object)?;
                 self.check_expression(index)?;
+                let place = format!("{}[...]", place_root_display(object));
+                self.check_place_writable(object, &place)?;
                 let resolved = self.resolve_alias(&object_type, 0);
                 match resolved {
                     Type::List(inner) => Ok(*inner),
-                    Type::Object | Type::Any | Type::Named(_) => Ok(Type::Any),
+                    Type::Object | Type::Any | Type::Named(_, _) => Ok(Type::Any),
                     other => {
                         Err(self.err(format!("cannot assign into `{}` by index", other.name())))
                     }
@@ -1607,8 +2436,8 @@ impl Analyzer {
     /// Is this type `View` (optionally wrapped in `async`)?
     fn is_component_type(&self, ty: &Type) -> bool {
         match self.resolve_alias(ty, 0) {
-            Type::Named(n) => n == "View",
-            Type::Async(inner) => matches!(inner.as_ref(), Type::Named(n) if n == "View"),
+            Type::Named(n, _) => n == "View",
+            Type::Async(inner) => matches!(inner.as_ref(), Type::Named(n, _) if n == "View"),
             _ => false,
         }
     }
@@ -1641,6 +2470,8 @@ impl Analyzer {
                 name: binding.name.clone(),
                 type_: binding.type_annotation.clone().unwrap_or(value_type),
                 kind: SymbolKind::State,
+                is_shared: false,
+                is_param: false,
                 is_const: binding.is_const,
                 is_mutable: true,
             },
@@ -1667,6 +2498,8 @@ impl Analyzer {
                     name: name.clone(),
                     type_: value_type.clone(),
                     kind: SymbolKind::Store,
+                    is_shared: false,
+                    is_param: false,
                     is_const: true,
                     is_mutable: false,
                 }) {
@@ -1682,6 +2515,8 @@ impl Analyzer {
                         name: local.clone(),
                         type_: Type::Any,
                         kind: SymbolKind::Store,
+                        is_shared: false,
+                        is_param: false,
                         is_const: true,
                         is_mutable: false,
                     }) {
@@ -1728,6 +2563,8 @@ impl Analyzer {
                 name: env.name.clone(),
                 type_: env.type_.clone(),
                 kind: SymbolKind::Store,
+                is_shared: false,
+                is_param: false,
                 is_const: true,
                 is_mutable: false,
             },
@@ -1747,7 +2584,7 @@ impl Analyzer {
         // `component_call_props_are_loosely_typed`).
         self.record_component_use(component);
         for arg in &component.args {
-            self.check_expression(&arg.value)?;
+            self.check_arg_value(&arg.value)?;
         }
         self.block_depth += 1;
         let mut result = Ok(());
@@ -1776,7 +2613,7 @@ impl Analyzer {
         let type_ = self
             .lookup_symbol(name)
             .map(|symbol| symbol.type_)
-            .unwrap_or_else(|_| Type::Named("View".to_string()));
+            .unwrap_or_else(|_| Type::Named("View".to_string(), Vec::new()));
         self.resolutions.push(UseRecord {
             span,
             name: name.clone(),
@@ -1857,6 +2694,8 @@ impl Analyzer {
                         name: iter_var.clone(),
                         type_: Type::Any,
                         kind: SymbolKind::Variable,
+                        is_shared: false,
+                        is_param: false,
                         is_const: false,
                         is_mutable: true,
                     },
@@ -1894,6 +2733,7 @@ impl Analyzer {
             alias.name.clone(),
             TypeEntry {
                 type_params: alias.type_params.clone(),
+                type_bounds: alias.type_bounds.clone(),
                 kind: TypeEntryKind::Alias(alias.type_.clone()),
             },
         );
@@ -1929,6 +2769,7 @@ impl Analyzer {
             e.name.clone(),
             TypeEntry {
                 type_params: e.type_params.clone(),
+                type_bounds: e.type_bounds.clone(),
                 kind: TypeEntryKind::Enum(e.variants.clone()),
             },
         );
@@ -1945,8 +2786,10 @@ impl Analyzer {
         self.table.declare_with_def(
             Symbol {
                 name: s.name.clone(),
-                type_: Type::Named(s.name.clone()),
+                type_: Type::Named(s.name.clone(), Vec::new()),
                 kind: SymbolKind::Variable,
+                is_shared: false,
+                is_param: false,
                 is_const: true,
                 is_mutable: false,
             },
@@ -1977,6 +2820,7 @@ impl Analyzer {
             s.name.clone(),
             TypeEntry {
                 type_params: s.type_params.clone(),
+                type_bounds: s.type_bounds.clone(),
                 kind: TypeEntryKind::Struct(fields),
             },
         );
@@ -1984,6 +2828,11 @@ impl Analyzer {
     }
 
     fn check_trait(&mut self, t: &TraitDecl) -> SResult<()> {
+        // A trait is a fixed contract; the grammar accepts a parameter list
+        // only so the attempt can be diagnosed (spec `types/traits.md`).
+        if !t.type_params.is_empty() {
+            return Err(self.err_code("E0810", "a trait may not declare type parameters"));
+        }
         if self.type_table.contains_key(&t.name) {
             return Err(self.err(format!("type `{}` is already defined", t.name)));
         }
@@ -1993,6 +2842,7 @@ impl Analyzer {
             t.name.clone(),
             TypeEntry {
                 type_params: t.type_params.clone(),
+                type_bounds: Vec::new(),
                 kind: TypeEntryKind::Trait(TraitDef {
                     methods: Vec::new(),
                 }),
@@ -2044,10 +2894,65 @@ impl Analyzer {
         Ok(())
     }
 
+    /// Fold the collected `reply` operand types into the service's reply
+    /// type `R`: `Null` (unit) when the method never replies, the operands'
+    /// common type otherwise, and E0211 when they share none (spec
+    /// `concurrency.md`).
+    fn common_reply_type(&mut self, type_name: &str) -> SResult<()> {
+        let mut common: Option<Type> = None;
+        for operand in std::mem::take(&mut self.reply_operands) {
+            common = Some(match common {
+                None => operand,
+                Some(prev) if self.assignable(&operand, &prev) => prev,
+                Some(prev) if self.assignable(&prev, &operand) => operand,
+                Some(prev) => {
+                    return Err(self.err_code(
+                        "E0211",
+                        format!(
+                            "`{}` and `{}` have no common type",
+                            prev.name(),
+                            operand.name()
+                        ),
+                    ));
+                }
+            });
+        }
+        self.service_reply_types
+            .insert(type_name.to_string(), common.unwrap_or(Type::Null));
+        Ok(())
+    }
+
     /// `impl Trait for Type { ... }`: every method must have a signature
     /// compatible with the trait's, and its body is checked as a normal
     /// function (where `self` binds to the implemented type).
     fn check_impl(&mut self, imp: &ImplDecl) -> SResult<()> {
+        // `impl<T: Bound> Receiver<T> { … }`: the receiver's type parameters
+        // and their bounds are in scope while the method bodies are checked —
+        // `self` carries them, so a field of type `T` has its bound's members
+        // (spec `types/traits.md`, `types/generics.md`). Bounds are validated
+        // first (E0806); the stack is popped on every exit, errors included.
+        let mut bound_map = HashMap::new();
+        let mut trait_map: HashMap<String, Vec<String>> = HashMap::new();
+        for bound in &imp.type_bounds {
+            let shape = self.bound_shape(bound)?;
+            bound_map.insert(bound.param.clone(), shape);
+            trait_map
+                .entry(bound.param.clone())
+                .or_default()
+                .extend(bound.traits.iter().cloned());
+        }
+        self.generics.extend(imp.type_params.iter().cloned());
+        self.bound_shapes.push(bound_map);
+        self.bound_traits.push(trait_map);
+        let result = self.check_impl_body(imp);
+        let pushed = imp.type_params.len();
+        self.generics.truncate(self.generics.len() - pushed);
+        self.bound_shapes.pop();
+        self.bound_traits.pop();
+        result
+    }
+
+    fn check_impl_body(&mut self, imp: &ImplDecl) -> SResult<()> {
         // Inherent impl: `impl Type { ... }` — no trait, just methods on the type
         if imp.is_inherent {
             let ty_entry = self
@@ -2059,6 +2964,18 @@ impl Analyzer {
                     imp.type_name
                 )));
             }
+            // The receiver must be a well-formed application of the
+            // implemented type: the declaration's arity (E0230) and its
+            // declared bounds apply to the written arguments, so a bare
+            // `impl Palette` on `struct Palette<T>` is rejected here.
+            self.check_type(&Type::Named(
+                imp.type_name.clone(),
+                imp.type_args.clone(),
+            ))?;
+            // The receiver's type as the impl declares it: `self` binds to
+            // `Pair<T, T>` inside `impl<T> Pair<T, T>`, carrying the
+            // parameters into the body.
+            let self_ty = Type::Named(imp.type_name.clone(), imp.type_args.clone());
             for m in &imp.methods {
                 // Check the method body with the receiver bound to the type.
                 self.table.push_scope();
@@ -2067,10 +2984,12 @@ impl Analyzer {
                         self.table.declare_with_def(
                             Symbol {
                                 name: "self".to_string(),
-                                type_: Type::Named(imp.type_name.clone()),
+                                type_: self_ty.clone(),
                                 kind: SymbolKind::Variable,
+                                is_shared: param.mode == Some(xulo_core::ast::ParamMode::Shared),
+                                is_param: true,
                                 is_const: true,
-                                is_mutable: false,
+                                is_mutable: param.mode == Some(xulo_core::ast::ParamMode::Mut),
                             },
                             None,
                         );
@@ -2081,8 +3000,10 @@ impl Analyzer {
                                 name: param.name.clone(),
                                 type_: ty,
                                 kind: SymbolKind::Variable,
+                                is_shared: param.mode == Some(xulo_core::ast::ParamMode::Shared),
+                                is_param: true,
                                 is_const: true,
-                                is_mutable: false,
+                                is_mutable: param.mode == Some(xulo_core::ast::ParamMode::Mut),
                             },
                             Some(param.span.clone()),
                         );
@@ -2094,11 +3015,23 @@ impl Analyzer {
                 self.declared_return = m.return_type.is_some();
                 let saved_async = self.async_depth;
                 self.async_depth = if m.is_async { saved_async + 1 } else { 0 };
+                // Inside `on_message`, `reply(...)` settles the send task;
+                // the common type of its operands is the service's `R`.
+                self.in_on_message = m.name == "on_message";
+                self.reply_operands.clear();
                 let result = self.check_block_implicit(&m.body);
+                self.in_on_message = false;
+                let reply_result = if m.name == "on_message" {
+                    self.common_reply_type(&imp.type_name)
+                } else {
+                    Ok(())
+                };
+                self.reply_operands.clear();
+                result?;
+                reply_result?;
                 self.async_depth = saved_async;
                 self.declared_return = saved_declared;
                 self.current_return = saved;
-                result?;
                 self.table.pop_scope();
             }
             return Ok(());
@@ -2121,6 +3054,14 @@ impl Analyzer {
                 imp.type_name
             )));
         }
+        // Same well-formedness for a trait impl's receiver: arity (E0230),
+        // declared bounds, and well-formed arguments (`impl<T> Show for
+        // Pair<T, T>` checks `Pair`'s application against `T, T`).
+        self.check_type(&Type::Named(
+            imp.type_name.clone(),
+            imp.type_args.clone(),
+        ))?;
+        let self_ty = Type::Named(imp.type_name.clone(), imp.type_args.clone());
         // The `impl` must provide every method the trait declares; otherwise a
         // later `Trait::method` dispatch of the missing one would only fail at
         // the call site with a misleading "does not implement" error.
@@ -2137,49 +3078,61 @@ impl Analyzer {
                 .map(|m| m.name.as_str())
                 .collect::<Vec<_>>();
             if !missing.is_empty() {
-                return Err(self.err(format!(
-                    "`impl {0} for {1}` does not implement all of `{0}`'s methods: missing {2}",
-                    imp.trait_name,
-                    imp.type_name,
-                    missing.join(", ")
-                )));
+                return Err(self.err_code(
+                    "E0802",
+                    format!(
+                        "`impl {0} for {1}` does not implement all of `{0}`'s methods: missing {2}",
+                        imp.trait_name,
+                        imp.type_name,
+                        missing.join(", ")
+                    ),
+                ));
             }
         }
         for m in &imp.methods {
             let Some(sig) = trait_def.methods.iter().find(|s| s.name == m.name) else {
-                return Err(self.err(format!(
-                    "`impl {0} for {1}` defines `{2}`, which `{0}` does not declare",
-                    imp.trait_name, imp.type_name, m.name
-                )));
+                return Err(self.err_code(
+                    "E0804",
+                    format!(
+                        "`impl {0} for {1}` defines `{2}`, which `{0}` does not declare",
+                        imp.trait_name, imp.type_name, m.name
+                    ),
+                ));
             };
             // The `self` receiver must match the trait declaration: dispatch
             // always passes the receiver as the impl function's first argument,
             // so a mismatch would silently drop it or mis-bind the parameters.
             let impl_has_self = m.params.iter().any(|p| p.name == "self");
             if impl_has_self != sig.has_self {
-                return Err(self.err(format!(
-                    "`impl {0} for {1}` method `{2}` {3}",
-                    imp.trait_name,
-                    imp.type_name,
-                    m.name,
-                    if sig.has_self {
-                        "must declare `self` as its first parameter, as the trait does"
-                    } else {
-                        "declares `self`, but the trait method has no receiver"
-                    }
-                )));
+                return Err(self.err_code(
+                    "E0803",
+                    format!(
+                        "`impl {0} for {1}` method `{2}` {3}",
+                        imp.trait_name,
+                        imp.type_name,
+                        m.name,
+                        if sig.has_self {
+                            "must declare `self` as its first parameter, as the trait does"
+                        } else {
+                            "declares `self`, but the trait method has no receiver"
+                        }
+                    ),
+                ));
             }
             // Async-ness must match too: dispatching is typed by the trait
             // signature, so a promise/value mismatch would break `await` at the
             // call site.
             if m.is_async != sig.is_async {
-                return Err(self.err(format!(
-                    "`impl {0} for {1}` method `{2}` must be {3} to match the trait",
-                    imp.trait_name,
-                    imp.type_name,
-                    m.name,
-                    if sig.is_async { "async" } else { "synchronous" }
-                )));
+                return Err(self.err_code(
+                    "E0803",
+                    format!(
+                        "`impl {0} for {1}` method `{2}` must be {3} to match the trait",
+                        imp.trait_name,
+                        imp.type_name,
+                        m.name,
+                        if sig.is_async { "async" } else { "synchronous" }
+                    ),
+                ));
             }
             // Signature compatibility: the impl method's non-`self` parameters
             // and return must match the trait binding.
@@ -2190,41 +3143,50 @@ impl Analyzer {
                 .collect::<Vec<_>>();
             let sig_params = sig.params.clone();
             if impl_params.len() != sig_params.len() {
-                return Err(self.err(format!(
-                    "`impl {0} for {1}` method `{2}` has the wrong arity (trait declares {3})",
-                    imp.trait_name,
-                    imp.type_name,
-                    m.name,
-                    sig_params.len()
-                )));
+                return Err(self.err_code(
+                    "E0803",
+                    format!(
+                        "`impl {0} for {1}` method `{2}` has the wrong arity (trait declares {3})",
+                        imp.trait_name,
+                        imp.type_name,
+                        m.name,
+                        sig_params.len()
+                    ),
+                ));
             }
             for (impl_p, sig_t) in impl_params.iter().zip(sig_params.iter()) {
                 let impl_t = impl_p.type_annotation.clone().unwrap_or(Type::Any);
                 let compatible = self.assignable(sig_t, &impl_t) && self.assignable(&impl_t, sig_t);
                 if !compatible {
-                    return Err(self.err(format!(
-                        "`impl {0} for {1}` method `{2}` parameter `{3}` must be `{4}`, found `{5}`",
-                        imp.trait_name,
-                        imp.type_name,
-                        m.name,
-                        impl_p.name,
-                        sig_t.name(),
-                        impl_t.name()
-                    )));
+                    return Err(self.err_code(
+                        "E0803",
+                        format!(
+                            "`impl {0} for {1}` method `{2}` parameter `{3}` must be `{4}`, found `{5}`",
+                            imp.trait_name,
+                            imp.type_name,
+                            m.name,
+                            impl_p.name,
+                            sig_t.name(),
+                            impl_t.name()
+                        ),
+                    ));
                 }
             }
             let impl_ret = m.return_type.clone().unwrap_or(Type::Any);
             if !self.assignable(&sig.return_type, &impl_ret)
                 && !self.assignable(&impl_ret, &sig.return_type)
             {
-                return Err(self.err(format!(
-                    "`impl {0} for {1}` method `{2}` must return `{3}`, found `{4}`",
-                    imp.trait_name,
-                    imp.type_name,
-                    m.name,
-                    sig.return_type.name(),
-                    impl_ret.name()
-                )));
+                return Err(self.err_code(
+                    "E0803",
+                    format!(
+                        "`impl {0} for {1}` method `{2}` must return `{3}`, found `{4}`",
+                        imp.trait_name,
+                        imp.type_name,
+                        m.name,
+                        sig.return_type.name(),
+                        impl_ret.name()
+                    ),
+                ));
             }
             // Register the dispatch target so `Trait::method` can resolve it.
             if !self.impls.insert((
@@ -2232,10 +3194,13 @@ impl Analyzer {
                 imp.type_name.clone(),
                 m.name.clone(),
             )) {
-                return Err(self.err(format!(
-                    "`{0}` is already implemented for `{1}` (method `{2}`)",
-                    imp.trait_name, imp.type_name, m.name
-                )));
+                return Err(self.err_code(
+                    "E0805",
+                    format!(
+                        "`{0}` is already implemented for `{1}` (method `{2}`)",
+                        imp.trait_name, imp.type_name, m.name
+                    ),
+                ));
             }
             // Guard the mangled dispatch name: it joins `trait`/`type`/`method`
             // with `_`, so an `impl` whose names differ only by underscores (or
@@ -2259,10 +3224,12 @@ impl Analyzer {
                     self.table.declare_with_def(
                         Symbol {
                             name: "self".to_string(),
-                            type_: Type::Named(imp.type_name.clone()),
+                            type_: self_ty.clone(),
                             kind: SymbolKind::Variable,
+                            is_shared: param.mode == Some(xulo_core::ast::ParamMode::Shared),
+                            is_param: true,
                             is_const: true,
-                            is_mutable: false,
+                            is_mutable: param.mode == Some(xulo_core::ast::ParamMode::Mut),
                         },
                         None,
                     );
@@ -2273,8 +3240,10 @@ impl Analyzer {
                             name: param.name.clone(),
                             type_: ty,
                             kind: SymbolKind::Variable,
+                            is_shared: param.mode == Some(xulo_core::ast::ParamMode::Shared),
+                            is_param: true,
                             is_const: true,
-                            is_mutable: false,
+                            is_mutable: param.mode == Some(xulo_core::ast::ParamMode::Mut),
                         },
                         Some(param.span.clone()),
                     );
@@ -2285,7 +3254,10 @@ impl Analyzer {
             self.declared_return = m.return_type.is_some();
             let saved_async = self.async_depth;
             self.async_depth = if m.is_async { saved_async + 1 } else { 0 };
+            // Inside `on_message`, `reply(...)` settles the send task.
+            self.in_on_message = m.name == "on_message";
             let result = self.check_block_implicit(&m.body);
+            self.in_on_message = false;
             self.async_depth = saved_async;
             self.declared_return = saved_declared;
             self.current_return = saved;
@@ -2323,9 +3295,9 @@ impl Analyzer {
         for trait_name in &bound.traits {
             let entry = self
                 .type_entry(trait_name)
-                .ok_or_else(|| self.err(format!("unknown trait `{trait_name}`")))?;
+                .ok_or_else(|| self.err_code("E0806", format!("unknown trait `{trait_name}`")))?;
             let TypeEntryKind::Trait(def) = &entry.kind else {
-                return Err(self.err(format!("`{trait_name}` is not a trait")));
+                return Err(self.err_code("E0806", format!("`{trait_name}` is not a trait")));
             };
             for (name, ty) in match self.trait_shape(def) {
                 Type::ObjectType(f) => f,
@@ -2337,6 +3309,172 @@ impl Analyzer {
             }
         }
         Ok(Type::ObjectType(fields))
+    }
+
+    /// Does `arg` satisfy the bound `trait_name`? (spec `types/traits.md`):
+    /// exactly when a visible `impl` for that trait applies to it — there is
+    /// no structural fallback and no second source of evidence.
+    fn satisfies_bound(&self, arg: &Type, trait_name: &str) -> bool {
+        // A type parameter is admissible when its own declaration grants this
+        // bound; the evidence travels with the parameter into the body.
+        if let Type::Named(name, _) = arg
+            && self.generics.contains(name)
+        {
+            return self
+                .bound_traits
+                .iter()
+                .rev()
+                .find_map(|m| m.get(name))
+                .is_some_and(|traits| traits.iter().any(|t| t == trait_name));
+        }
+        // An impl is registered under the implemented type's declared name;
+        // an alias also answers under every name it expands to.
+        let mut current = match arg {
+            Type::Named(name, _) => Some(name.clone()),
+            _ => None,
+        };
+        let mut hops = 0;
+        while let Some(name) = current {
+            if self
+                .impls
+                .iter()
+                .any(|(t, ty, _)| t == trait_name && ty == &name)
+            {
+                // A generic `impl` that cannot be instantiated for this
+                // receiver — or whose bounds that instantiation leaves
+                // unsatisfied — contributes nothing for it (spec
+                // `types/traits.md`, "When an impl applies"). Impls of this
+                // module are pre-scanned, so the gate can decide; an `impl`
+                // present only as an imported triple keeps its name-only
+                // answer.
+                let mut any_record = false;
+                let mut applies = false;
+                for record in self.declared_impls.iter().filter(|r| {
+                    r.trait_name.as_deref() == Some(trait_name) && r.type_name == name
+                }) {
+                    any_record = true;
+                    if self.impl_applies(record, &name, arg).is_some() {
+                        applies = true;
+                        break;
+                    }
+                }
+                if !any_record || applies {
+                    return true;
+                }
+                // This name's impl does not apply: keep following the alias
+                // chain in case another name answers.
+            }
+            hops += 1;
+            if hops > 32 {
+                break;
+            }
+            current = match self.type_entry(&name).map(|e| &e.kind) {
+                Some(TypeEntryKind::Alias(Type::Named(target, _))) => Some(target.clone()),
+                _ => None,
+            };
+        }
+        false
+    }
+
+    /// Does the pre-scanned `impl` `record` apply to a receiver answering
+    /// under `receiver_name` with type `receiver` (spec `types/traits.md`,
+    /// "When an impl applies")? A non-generic `impl` applies to its receiver
+    /// name alone; a generic one applies exactly when its written receiver
+    /// arguments instantiate to the receiver's — every parameter binding to
+    /// one type — and every bound of that instantiation is satisfied in
+    /// turn. Returns that instantiation's bindings, or `None`.
+    fn impl_applies(
+        &self,
+        record: &ImplRecord,
+        receiver_name: &str,
+        receiver: &Type,
+    ) -> Option<HashMap<String, Type>> {
+        if record.type_name != receiver_name {
+            return None;
+        }
+        let Type::Named(_, receiver_args) = receiver else {
+            return None;
+        };
+        if record.type_params.is_empty() {
+            return Some(HashMap::new());
+        }
+        let mut bindings = HashMap::new();
+        if !pattern_matches(
+            &record.type_args,
+            receiver_args,
+            &record.type_params,
+            &mut bindings,
+        ) {
+            return None;
+        }
+        for bound in &record.bounds {
+            let Some(arg) = bindings.get(&bound.param) else {
+                // The parameter never appears in the receiver pattern;
+                // nothing selected a type to hold against its bound.
+                continue;
+            };
+            for trait_name in &bound.traits {
+                if !self.satisfies_bound(arg, trait_name) {
+                    return None;
+                }
+            }
+        }
+        Some(bindings)
+    }
+
+    /// True when this module declares impls of `trait_name` for
+    /// `receiver_name` yet none of them applies to `receiver`: the
+    /// registered `(trait, type)` name alone must not answer for impls that
+    /// contribute nothing here. No records at all (an imported impl) keeps
+    /// the name-only answer, so `false`.
+    fn impl_gate_blocks(&self, trait_name: &str, receiver_name: &str, receiver: &Type) -> bool {
+        let mut any_record = false;
+        for record in self.declared_impls.iter().filter(|r| {
+            r.trait_name.as_deref() == Some(trait_name) && r.type_name == receiver_name
+        }) {
+            any_record = true;
+            if self.impl_applies(record, receiver_name, receiver).is_some() {
+                return false;
+            }
+        }
+        any_record
+    }
+
+    /// Check every inferred binding of a call against its parameter's bounds
+    /// (spec `type-system/checking-rules.md`, E0801). A parameter no
+    /// constraint reached is left alone: nothing selected a type argument for
+    /// it to be checked against.
+    fn check_inferred_bounds(
+        &self,
+        bounds: &[FnBound],
+        bindings: &std::collections::HashMap<String, Type>,
+    ) -> SResult<()> {
+        for bound in bounds {
+            let Some(arg) = bindings.get(&bound.param) else {
+                continue;
+            };
+            for trait_name in &bound.traits {
+                if !self.satisfies_bound(arg, trait_name) {
+                    return Err(self.err_code(
+                        "E0801",
+                        format!("`{}` does not implement `{trait_name}`", arg.display()),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Replace a callee's type parameters with `any` throughout a declared
+    /// parameter type, so the structural argument check does not re-run the
+    /// bound rule (the parameter's bound is what decides admissibility, and
+    /// is checked by [`Analyzer::check_inferred_bounds`]).
+    fn erase_generic_params(&self, ty: &Type, type_params: &[String]) -> Type {
+        let bindings: std::collections::HashMap<String, Type> = type_params
+            .iter()
+            .map(|p| (p.clone(), Type::Any))
+            .collect();
+        substitute_type(ty, &bindings)
     }
 
     fn check_block(&mut self, block: &Block) -> SResult<()> {
@@ -2363,6 +3501,13 @@ impl Analyzer {
     fn check_block_tail(&mut self, block: &Block) -> SResult<Option<Type>> {
         self.table.push_scope();
         self.block_depth += 1;
+        // Every block owns its borrows: they are released at the block's end
+        // (the scope exit has settled the task by then) and no `await` in a
+        // sibling or outer block ends them.
+        let saved_block = self.block_id;
+        self.block_id = self.next_block_id;
+        self.next_block_id += 1;
+        let saved_borrows = self.pending_borrows.len();
         let tail = match block.statements.last() {
             Some(Statement::Expr(e)) => {
                 self.check_statements_lenient(&block.statements[..block.statements.len() - 1])?;
@@ -2377,6 +3522,8 @@ impl Analyzer {
                 None
             }
         };
+        self.pending_borrows.truncate(saved_borrows);
+        self.block_id = saved_block;
         self.block_depth -= 1;
         self.table.pop_scope();
         Ok(tail)
@@ -2450,17 +3597,48 @@ impl Analyzer {
     /// span) for editor tooling. The bulk of the work happens in
     /// [`Analyzer::check_expression_inner`]; the recording is deliberately
     /// done here, on success, so a failed check never leaves a type entry.
+    /// Check one call/component argument value: the argument is a move
+    /// position, so `move x` may appear whole inside it (spec
+    /// `memory-and-runtime.md`, E0403).
+    fn check_arg_value(&mut self, value: &Expression) -> SResult<Type> {
+        self.in_move_position = true;
+        self.check_expression(value)
+    }
+
     fn check_expression(&mut self, expr: &Expression) -> SResult<Type> {
         self.current_span = expr.span().clone();
+        // Only the outermost place of a chain is a use: the binding read of
+        // `xs[0]` is part of reaching that one place, not a second use.
+        if self.place_depth == 0
+            && matches!(
+                expr,
+                Expression::Identifier { .. } | Expression::Member(_) | Expression::Index(_)
+            )
+            && let Some(place) = place_of(expr)
+        {
+            self.check_borrow_place(&place, false)?;
+        }
         let ty = self.check_expression_inner(expr)?;
         self.expr_types.push((expr.span().clone(), ty.clone()));
         Ok(ty)
     }
 
     fn check_expression_inner(&mut self, expr: &Expression) -> SResult<Type> {
+        // The move position set by a `let`/argument/`return` covers exactly
+        // this node: children get no position of their own (spec
+        // `memory-and-runtime.md`, E0403).
+        self.cur_move_pos = std::mem::replace(&mut self.in_move_position, false);
         match expr {
             Expression::Literal { value: lit, .. } => self.check_literal(lit),
             Expression::Identifier { name, .. } => {
+                if let Expression::Identifier { name, span } = expr {
+                    self.check_spawn_capture(name, span)?;
+                    if self.moved.contains_key(name) {
+                        return Err(self
+                            .err_code("E0403", format!("cannot use moved value `{name}`"))
+                            .at(span.clone()));
+                    }
+                }
                 let sym = self.lookup_symbol(name)?;
                 self.record_use(expr.span().clone(), name, &sym);
                 Ok(sym.type_.clone())
@@ -2524,12 +3702,12 @@ impl Analyzer {
             }
             Expression::Component(c) => {
                 for arg in &c.args {
-                    self.check_expression(&arg.value)?;
+                    self.check_arg_value(&arg.value)?;
                 }
                 for el in &c.children {
                     self.check_ui_element(el)?;
                 }
-                Ok(Type::Named("View".to_string()))
+                Ok(Type::Named("View".to_string(), Vec::new()))
             }
             Expression::Tuple { items, .. } => {
                 let mut types = Vec::with_capacity(items.len());
@@ -2543,7 +3721,7 @@ impl Analyzer {
                     self.check_expression(&entry.key)?;
                     self.check_expression(&entry.value)?;
                 }
-                Ok(Type::Named("Map".to_string()))
+                Ok(Type::Named("Map".to_string(), Vec::new()))
             }
             Expression::Is(is) => {
                 self.check_expression(&is.expr)?;
@@ -2568,10 +3746,12 @@ impl Analyzer {
                         params.push(Type::Any);
                     }
                 }
+                self.closure_depth += 1;
                 let ret = match &arrow.body {
                     xulo_core::ast::ArrowBody::Expr(e) => Some(Box::new(self.check_expression(e)?)),
                     xulo_core::ast::ArrowBody::Block(b) => self.check_block_tail(b)?.map(Box::new),
                 };
+                self.closure_depth -= 1;
                 let ret = match ret {
                     Some(r) if arrow.is_async => Some(Box::new(Type::Async(r))),
                     other => other,
@@ -2580,19 +3760,118 @@ impl Analyzer {
             }
             Expression::Spawn(spawn) => match &spawn.body {
                 xulo_core::ast::SpawnBody::Async(b) => {
-                    self.check_block(b)?;
-                    Ok(Type::Named("Task".to_string()))
+                    // `check_block` pushes the block's own scope: references
+                    // to anything declared at a shallower scope must be
+                    // captured first (spec concurrency.md).
+                    let depth = self.table.depth();
+                    self.spawn_scopes.push(depth);
+                    let result = self.check_block(b);
+                    self.spawn_scopes.pop();
+                    result?;
+                    Ok(Type::Named("Task".to_string(), Vec::new()))
                 }
-                xulo_core::ast::SpawnBody::Service { fields, .. } => {
+                xulo_core::ast::SpawnBody::Service {
+                    type_name, fields,
+                } => {
                     for field in fields {
                         self.check_expression(&field.value)?;
                     }
-                    Ok(Type::Named("Service".to_string()))
+                    // The service type must declare `on_message` in an `impl`
+                    // block, taking a receiver and exactly one message
+                    // parameter (spec `concurrency.md`, E0409).
+                    let methods = self.impl_methods.get(type_name).map(|ms| {
+                        ms.iter()
+                            .find(|m| m.name == "on_message")
+                            .map(|m| (m.has_self, m.param_count))
+                    });
+                    match methods.flatten() {
+                        None => {
+                            return Err(self
+                                .err_code(
+                                    "E0409",
+                                    format!("service `{type_name}` declares no `on_message`"),
+                                )
+                                .at(expr.span().clone()));
+                        }
+                        Some((has_self, param_count)) => {
+                            if !has_self || param_count != 2 {
+                                return Err(self
+                                    .err_code(
+                                        "E0409",
+                                        format!(
+                                            "`{type_name}.on_message` must take a receiver (`self` or `mut self`) and exactly one message parameter"
+                                        ),
+                                    )
+                                    .at(expr.span().clone()));
+                            }
+                        }
+                    }
+                    // The handle is a structural value:
+                    // `{ send: fn(M): Task<R>, stop: fn(): Unit }` (spec
+                    // `concurrency.md`). `M` comes from `on_message`'s message
+                    // parameter; `R` is left loose (`any`) until reply-operand
+                    // common typing lands (E0211).
+                    let on_message = self
+                        .impl_methods
+                        .get(type_name)
+                        .and_then(|ms| ms.iter().find(|m| m.name == "on_message"));
+                    let message_type = on_message
+                        .and_then(|m| m.param_types.get(1).cloned())
+                        .unwrap_or(Type::Any);
+                    // `R` is the common type of the `on_message` reply
+                    // operands (spec `concurrency.md`); `Any` when the impl
+                    // has not been checked yet (the spawn precedes it in the
+                    // file), matching the loose `any` of unchecked bodies.
+                    let reply_type = self
+                        .service_reply_types
+                        .get(type_name)
+                        .cloned()
+                        .unwrap_or(Type::Any);
+                    Ok(Type::ObjectType(vec![
+                        (
+                            "send".to_string(),
+                            Type::FnSig {
+                                params: vec![message_type],
+                                ret: Some(Box::new(Type::Named(
+                                    "Task".to_string(),
+                                    vec![reply_type],
+                                ))),
+                            },
+                        ),
+                        (
+                            "stop".to_string(),
+                            Type::FnSig {
+                                params: vec![],
+                                ret: Some(Box::new(Type::Any)),
+                            },
+                        ),
+                    ]))
                 }
             },
             Expression::Lock(lock) => {
-                self.check_block(&lock.body)?;
-                Ok(Type::Named("Lock".to_string()))
+                // The operand is the region the section guards: it must be a
+                // `shared` binding (spec concurrency.md, E0407).
+                let (is_shared, defined) = match self.table.lookup(&lock.name) {
+                    Some(sym) => (sym.is_shared, true),
+                    None => (false, false),
+                };
+                if !defined {
+                    return Err(self
+                        .err(format!("undefined variable `{}` in `lock`", lock.name))
+                        .at(lock.name_span.clone()));
+                }
+                if !is_shared {
+                    return Err(self
+                        .err_code("E0407", "`lock` requires a shared binding")
+                        .at(lock.name_span.clone()));
+                }
+                self.locked.push(lock.name.clone());
+                self.lock_depth += 1;
+                let result = self.check_block(&lock.body);
+                self.lock_depth -= 1;
+                self.locked.pop();
+                result?;
+                Ok(Type::Named("Lock".to_string(), Vec::new()))
             }
         }
     }
@@ -2646,11 +3925,13 @@ impl Analyzer {
             }
             Literal::Object(fields) => {
                 let mut field_names = Vec::new();
+                let mut field_types: Vec<(String, Type)> = Vec::new();
                 for field in fields {
                     match field {
                         ObjectField::Field { name, value } => {
-                            self.check_expression(value)?;
+                            let ty = self.check_expression(value)?;
                             field_names.push(name.clone());
+                            field_types.push((name.clone(), ty));
                         }
                         ObjectField::Spread { value } => {
                             let spread_type = self.check_expression(value)?;
@@ -2662,21 +3943,55 @@ impl Analyzer {
                             }
                             // Spread means we can't do exact struct matching
                             field_names.clear();
+                            field_types.clear();
                         }
                     }
                 }
-                // Try to match against a known struct type
+                // Try to match against a known struct type, inferring the
+                // struct's type arguments from the field values so a
+                // generic struct literal carries them (`Palette(shape: rect)`
+                // → `Palette<Rect>`), which is what impl applicability and
+                // bound checking decide against (spec `types/traits.md`).
+                // A struct declaring no parameters matches exactly as before;
+                // a conflict keeps the argument-less type it always had.
                 if !field_names.is_empty() {
+                    let mut first_match: Option<String> = None;
                     for (name, entry) in &self.type_table {
-                        if let TypeEntryKind::Struct(fields) = &entry.kind {
-                            let struct_field_names: Vec<&str> =
-                                fields.iter().map(|(n, _, _)| n.as_str()).collect();
-                            let literal_field_names: Vec<&str> =
-                                field_names.iter().map(|n| n.as_str()).collect();
-                            if struct_field_names == literal_field_names {
-                                return Ok(Type::Named(name.clone()));
-                            }
+                        let TypeEntryKind::Struct(declared) = &entry.kind else {
+                            continue;
+                        };
+                        let struct_field_names: Vec<&str> =
+                            declared.iter().map(|(n, _, _)| n.as_str()).collect();
+                        let literal_field_names: Vec<&str> =
+                            field_names.iter().map(|n| n.as_str()).collect();
+                        if struct_field_names != literal_field_names {
+                            continue;
                         }
+                        if entry.type_params.is_empty() {
+                            return Ok(Type::Named(name.clone(), Vec::new()));
+                        }
+                        if first_match.is_none() {
+                            first_match = Some(name.clone());
+                        }
+                        let declared_types: Vec<Type> =
+                            declared.iter().map(|(_, t, _)| t.clone()).collect();
+                        let value_types: Vec<Type> =
+                            field_types.iter().map(|(_, t)| t.clone()).collect();
+                        if let Ok(bindings) =
+                            infer_type_bindings(&entry.type_params, &declared_types, &value_types)
+                        {
+                            let args = entry
+                                .type_params
+                                .iter()
+                                .map(|p| {
+                                    bindings.get(p).cloned().unwrap_or(Type::Any)
+                                })
+                                .collect();
+                            return Ok(Type::Named(name.clone(), args));
+                        }
+                    }
+                    if let Some(name) = first_match {
+                        return Ok(Type::Named(name, Vec::new()));
                     }
                 }
                 Ok(Type::Object)
@@ -2695,6 +4010,12 @@ impl Analyzer {
     }
 
     fn check_await(&mut self, operand: &Expression) -> SResult<Type> {
+        // A `lock` body holds a critical section from entry to the end of the
+        // block; a suspension point would let another task interrupt it, so
+        // the section is checked for absence of `await` (spec concurrency.md).
+        if self.lock_depth > 0 {
+            return Err(self.err_code("E0410", "`await` is not allowed inside `lock`"));
+        }
         if self.no_await_depth > 0 {
             return Err(self.err(
                 "`await` cannot be used inside an `if`/`match` expression; assign its value first with `let`",
@@ -2703,9 +4024,15 @@ impl Analyzer {
         if self.async_depth == 0 {
             return Err(self.err("`await` may only be used inside an `async` function"));
         }
+        self.release_borrows_of_awaited(operand);
         let inner = self.check_expression(operand)?;
         match inner {
             Type::Async(inner) => Ok(*inner),
+            // `await` unwraps `Task<T>` (spec: concurrency.md, lexical-structure.md).
+            Type::Named(name, args) if name == "Task" => Ok(args
+                .into_iter()
+                .next()
+                .unwrap_or(Type::Any)),
             Type::Any => Ok(Type::Any),
             other => Err(self.err(format!(
                 "cannot await a non-promise value of type `{}`",
@@ -2715,6 +4042,8 @@ impl Analyzer {
     }
 
     fn check_unary(&mut self, un: &xulo_core::ast::UnaryOp) -> SResult<Type> {
+        // Read before the operand's own check resets the position state.
+        let move_pos = self.cur_move_pos;
         let operand = self.check_expression(&un.operand)?;
         match un.operator {
             xulo_core::ast::UnaryOperator::Not => {
@@ -2747,9 +4076,44 @@ impl Analyzer {
                     )))
                 }
             }
-            xulo_core::ast::UnaryOperator::Move | xulo_core::ast::UnaryOperator::Copy => {
+            xulo_core::ast::UnaryOperator::Move => {
+                // A transfer is legal only in a `let` initializer, an
+                // argument, or a `return` (spec `memory-and-runtime.md`,
+                // E0403), and moves a whole, frame-owned binding: the operand
+                // is a path naming one, and never a borrow.
+                if !move_pos {
+                    return Err(self.err_code(
+                        "E0403",
+                        "`move` is only allowed in a `let` initializer, an argument, or a `return`",
+                    ));
+                }
+                let moved = match &un.operand {
+                    Expression::Identifier { name, .. } => Some(name.clone()),
+                    _ => None,
+                };
+                let Some(name) = moved else {
+                    return Err(self.err_code(
+                        "E0403",
+                        "a transfer moves a whole binding, never a part of one or a computed value",
+                    ));
+                };
+                if let Some(sym) = self.table.lookup(&name)
+                    && sym.is_param
+                {
+                    return Err(self.err_code(
+                        "E0403",
+                        format!("cannot move `{name}`: it is a borrow, not an owned binding"),
+                    ));
+                }
+                // A move is a consuming use: an outstanding borrow of the
+                // place bars it (E0405 mutably, E0411 immutably).
+                if let Some(place) = place_of(&un.operand) {
+                    self.check_borrow_place(&place, true)?;
+                }
+                self.moved.insert(name, un.operand.span().clone());
                 Ok(operand)
             }
+            xulo_core::ast::UnaryOperator::Copy => Ok(operand),
         }
     }
 
@@ -2773,7 +4137,13 @@ impl Analyzer {
     }
 
     fn check_member(&mut self, m: &xulo_core::ast::MemberAccess) -> SResult<Type> {
-        let object = self.check_expression(&m.object)?;
+        self.place_depth += 1;
+        let object = self.check_expression(&m.object);
+        self.place_depth -= 1;
+        let object = object?;
+        if let Some(place) = place_of(&m.object) {
+            self.check_shared_contents(&place)?;
+        }
         let resolved = self.resolve_alias(&object, 0);
         let inner = match resolved {
             Type::Optional(inner) if m.optional => *inner,
@@ -2812,7 +4182,17 @@ impl Analyzer {
                 "length" | "capacity" => Ok(Type::Number),
                 _ => Ok(Type::Any),
             },
-            Type::Named(name) => {
+            Type::Named(name, _) => {
+                // A declared struct's fields type their member access (`e`
+                // : `Error` has `message: string`); a field the struct does
+                // not declare keeps the loose `any` it always had.
+                if !self.generics.contains(name)
+                    && let Some(TypeEntryKind::Struct(fields)) =
+                        self.type_entry(name).map(|e| &e.kind)
+                    && let Some((_, field_type, _)) = fields.iter().find(|(n, _, _)| n == property)
+                {
+                    return Ok(field_type.clone());
+                }
                 // A bounded generic parameter (`T: Area`) exposes its bound's
                 // members, so `t.area()` type-checks against the trait shape.
                 match self.bound_shape_of(name) {
@@ -2833,13 +4213,19 @@ impl Analyzer {
     }
 
     fn check_index(&mut self, idx: &xulo_core::ast::IndexExpr) -> SResult<Type> {
-        let object = self.check_expression(&idx.object)?;
+        self.place_depth += 1;
+        let object = self.check_expression(&idx.object);
+        self.place_depth -= 1;
+        let object = object?;
         self.check_expression(&idx.index)?;
+        if let Some(place) = place_of(&idx.object) {
+            self.check_shared_contents(&place)?;
+        }
         let resolved = self.resolve_alias(&object, 0);
         match resolved {
             Type::List(inner) => Ok(*inner),
             Type::Object | Type::Any | Type::String | Type::Null => Ok(Type::Any),
-            Type::Named(_) => Ok(Type::Any),
+            Type::Named(_, _) => Ok(Type::Any),
             other => Err(self.err(format!("cannot index into `{}`", other.name()))),
         }
     }
@@ -2888,6 +4274,8 @@ impl Analyzer {
                             name: name.clone(),
                             type_: value_type.clone(),
                             kind: SymbolKind::Variable,
+                            is_shared: false,
+                            is_param: false,
                             is_const: true,
                             is_mutable: false,
                         },
@@ -2900,13 +4288,15 @@ impl Analyzer {
                     span,
                     ..
                 } => {
-                    self.check_type(&Type::Named(type_name.clone()))?;
+                    self.check_type(&Type::Named(type_name.clone(), Vec::new()))?;
                     if let xulo_core::ast::PatternBinder::Binding(b) = binder {
                         self.table.declare_with_def(
                             Symbol {
                                 name: b.clone(),
-                                type_: Type::Named(type_name.clone()),
+                                type_: Type::Named(type_name.clone(), Vec::new()),
                                 kind: SymbolKind::Variable,
+                                is_shared: false,
+                                is_param: false,
                                 is_const: true,
                                 is_mutable: false,
                             },
@@ -2937,7 +4327,7 @@ impl Analyzer {
                         .type_entry(enum_name)
                         .ok_or_else(|| self.err(format!("unknown enum `{enum_name}`")))?
                         .clone();
-                    let enum_type = Type::Named(enum_name.clone());
+                    let enum_type = Type::Named(enum_name.clone(), Vec::new());
                     if !self.assignable(&value_type, &enum_type) {
                         return Err(self.err(format!(
                             "match arm pattern `{}` does not match value of type `{}` (expected `{}`)",
@@ -2976,6 +4366,8 @@ impl Analyzer {
                                         name: binding.clone(),
                                         type_: self.resolve_alias(&param.type_, 0),
                                         kind: SymbolKind::Variable,
+                                        is_shared: false,
+                                        is_param: false,
                                         is_const: true,
                                         is_mutable: false,
                                     },
@@ -3181,6 +4573,119 @@ impl Analyzer {
         }
     }
 
+    /// Type-check a call to a member of the built-in `Task` namespace.
+    /// Returns `Task<T>` (spec signatures), which `await` unwraps to `T`.
+    fn check_task_utility(&mut self, call: &Call, method: &str) -> SResult<Type> {
+        match method {
+            "resolve" => {
+                if call.arguments.len() != 1 {
+                    return Err(self
+                        .err(format!(
+                            "`Task.resolve` expects exactly one argument, got {}",
+                            call.arguments.len()
+                        ))
+                        .at(call.span.clone()));
+                }
+                let inner = self.check_expression(&call.arguments[0].value)?;
+                Ok(Type::Named("Task".to_string(), vec![inner]))
+            }
+            "all" | "race" => {
+                if call.arguments.len() != 1 {
+                    return Err(self
+                        .err(format!(
+                            "`Task.{method}` expects exactly one argument (a list of tasks), got {}",
+                            call.arguments.len()
+                        ))
+                        .at(call.span.clone()));
+                }
+                let arg_span = call.arguments[0].value.span().clone();
+                let arg = self.check_expression(&call.arguments[0].value)?;
+                let elem = match arg {
+                    Type::List(inner) => match *inner {
+                        // `Async(T)` is an in-flight async call; `Task<T>` a
+                        // spawn or combinator result. Both await to `T`.
+                        Type::Async(inner) => *inner,
+                        Type::Named(ref name, ref args) if name == "Task" => args
+                            .first()
+                            .cloned()
+                            .unwrap_or(Type::Any),
+                        Type::Any => Type::Any,
+                        other => other,
+                    },
+                    Type::Any => Type::Any,
+                    other => {
+                        return Err(self
+                            .err(format!(
+                                "`Task.{method}` expects a list of tasks, found `{}`",
+                                other.name()
+                            ))
+                            .at(arg_span));
+                    }
+                };
+                let combined = if method == "all" {
+                    Type::List(Box::new(elem))
+                } else {
+                    elem
+                };
+                Ok(Type::Named("Task".to_string(), vec![combined]))
+            }
+            "timeout" => {
+                if call.arguments.len() != 2 {
+                    return Err(self
+                        .err(format!(
+                            "`Task.timeout` expects exactly two arguments (a task and a millisecond count), got {}",
+                            call.arguments.len()
+                        ))
+                        .at(call.span.clone()));
+                }
+                let task_span = call.arguments[0].value.span().clone();
+                let task = self.check_expression(&call.arguments[0].value)?;
+                // `timeout` wraps one task: an in-flight async call (`Async`)
+                // or any task result (`Task<T>`), unwrapped the same way
+                // `await` unwraps it.
+                let inner = match task {
+                    Type::Async(inner) => *inner,
+                    Type::Named(ref name, ref args) if name == "Task" => args
+                        .first()
+                        .cloned()
+                        .unwrap_or(Type::Any),
+                    Type::Any => Type::Any,
+                    other => {
+                        return Err(self
+                            .err(format!(
+                                "`Task.timeout` expects a task, found `{}`",
+                                other.name()
+                            ))
+                            .at(task_span));
+                    }
+                };
+                let ms_span = call.arguments[1].value.span().clone();
+                let ms = self.check_expression(&call.arguments[1].value)?;
+                if !self.assignable(&ms, &Type::Number) {
+                    return Err(self
+                        .err(format!(
+                            "`Task.timeout` millisecond count must be a `number`, found `{}`",
+                            ms.name()
+                        ))
+                        .at(ms_span));
+                }
+                // The combined task carries the outcome as data: `Ok` of the
+                // wrapped result, `Err(Error("timed out"))` past the deadline
+                // (spec `error-handling.md`).
+                Ok(Type::Named(
+                    "Task".to_string(),
+                    vec![Type::Named(
+                        "Result".to_string(),
+                        vec![inner, Type::Named("Error".to_string(), Vec::new())],
+                    )],
+                ))
+            }
+            other => Err(self
+                .err(format!("`Task` has no member `{other}`"))
+                .at(call.span.clone())),
+        }
+    }
+
     fn check_call(&mut self, call: &xulo_core::ast::Call) -> SResult<Type> {
         if call.is_enum() {
             let (enum_name, variant) = call.enum_parts().unwrap();
@@ -3204,9 +4709,18 @@ impl Analyzer {
             return self.check_enum_call(enum_name.to_string(), variant.to_string(), &args);
         }
         if let Some(object) = &call.object {
+            // `Task` is the built-in combinator namespace (spec
+            // `builtins/intrinsic-functions.md`): `Task.all`/`race`/`resolve`
+            // combine tasks, and it is never a value of its own.
+            if let Expression::Identifier { name, .. } = object.as_ref()
+                && name == "Task"
+                && let Some(method) = call.method.as_deref()
+            {
+                return self.check_task_utility(call, method);
+            }
             // Method call `obj.method(args)`.
             let receiver = self.check_expression(object)?;
-            if let Type::Named(name) = &receiver
+            if let Type::Named(name, _) = &receiver
                 && self.generics.contains(name)
             {
                 return Err(self.err(format!(
@@ -3216,7 +4730,124 @@ impl Analyzer {
                 )));
             }
             for arg in &call.arguments {
-                self.check_expression(&arg.value)?;
+                self.check_arg_value(&arg.value)?;
+            }
+            // A structural object member with a function type (`send` on a
+            // service handle) yields its declared return type; otherwise the
+            // call stays `any`.
+            if let Some(method) = &call.method
+                && let Some(Type::FnSig { ret, .. }) =
+                    self.member_field_type(&self.resolve_alias(&receiver, 0), method)
+                        .ok()
+                        .filter(|t| matches!(t, Type::FnSig { .. }))
+            {
+                return Ok(ret.clone().map(|r| *r).unwrap_or(Type::Any));
+            }
+            // Member-call resolution for a user-declared struct/enum
+            // receiver (spec `types/traits.md`, "Member calls"): inherent
+            // `impl` methods first, then trait `impl` methods applicable to
+            // the receiver; none found is E0102, several trait candidates
+            // are E0809. Field members were handled above; builtin heads
+            // (`Map`, `Task`, …) have no type entry and keep the loose
+            // `any` this call always had.
+            if let Some(method) = &call.method {
+                let resolved = self.resolve_alias(&receiver, 0);
+                if let Type::Named(recv_name, _) = &resolved
+                    && matches!(
+                        self.type_entry(recv_name).map(|e| &e.kind),
+                        Some(TypeEntryKind::Struct(_)) | Some(TypeEntryKind::Enum(_))
+                    )
+                {
+                    // A declared field that is not callable keeps the loose
+                    // `any`: the field exists, so E0102 would be a lie.
+                    let is_field = matches!(
+                        self.type_entry(recv_name).map(|e| &e.kind),
+                        Some(TypeEntryKind::Struct(fields))
+                            if fields.iter().any(|(n, _, _)| n == method)
+                    );
+                    if is_field {
+                        return Ok(Type::Any);
+                    }
+                    // Every name the receiver answers under: the name it was
+                    // written as, each alias hop, and the resolved name —
+                    // an `impl` is registered under the name it was written
+                    // for.
+                    let mut names: Vec<String> = Vec::new();
+                    if let Type::Named(orig, _) = &receiver {
+                        names.push(orig.clone());
+                    }
+                    let mut target = self.alias_target(&receiver);
+                    let mut hops = 0;
+                    while let Some(t) = target {
+                        if hops > 32 || names.contains(&t) {
+                            break;
+                        }
+                        hops += 1;
+                        let next = self.alias_target(&Type::Named(t.clone(), Vec::new()));
+                        names.push(t);
+                        target = next;
+                    }
+                    if !names.contains(recv_name) {
+                        names.push(recv_name.clone());
+                    }
+                    // Step 1: inherent impl methods of the receiver's type.
+                    for name in &names {
+                        for record in self
+                            .declared_impls
+                            .iter()
+                            .filter(|r| r.trait_name.is_none() && r.type_name == *name)
+                        {
+                            let Some(bindings) =
+                                self.impl_applies(record, name, &resolved)
+                            else {
+                                continue;
+                            };
+                            if let Some(m) = record.methods.iter().find(|m| &m.name == method) {
+                                return Ok(substitute_type(&m.ret, &bindings));
+                            }
+                        }
+                    }
+                    // Step 2: methods of trait impls applicable to the
+                    // receiver; exactly one candidate may result.
+                    let mut candidates: Vec<Type> = Vec::new();
+                    for name in &names {
+                        for record in self
+                            .declared_impls
+                            .iter()
+                            .filter(|r| r.trait_name.is_some() && r.type_name == *name)
+                        {
+                            let Some(bindings) =
+                                self.impl_applies(record, name, &resolved)
+                            else {
+                                continue;
+                            };
+                            if let Some(m) = record.methods.iter().find(|m| &m.name == method) {
+                                candidates.push(substitute_type(&m.ret, &bindings));
+                            }
+                        }
+                    }
+                    match candidates.len() {
+                        1 => return Ok(candidates.pop().unwrap()),
+                        0 => {
+                            return Err(self.err_code(
+                                "E0102",
+                                format!(
+                                    "no member `{method}` on `{}`",
+                                    resolved.display()
+                                ),
+                            ));
+                        }
+                        _ => {
+                            return Err(self.err_code(
+                                "E0809",
+                                format!(
+                                    "multiple applicable implementations of `{method}` for `{}`",
+                                    resolved.display()
+                                ),
+                            ));
+                        }
+                    }
+                }
             }
             // Infer return type for known list methods
             if let Type::List(inner) = &receiver
@@ -3245,9 +4876,29 @@ impl Analyzer {
             self.record_call_callee(call, &sym);
             return self.check_call_symbol(call, &sym);
         }
+        if call.callee == "reply" {
+            // `reply(e)` settles the current message's send task; it exists
+            // only while checking an `on_message` body (spec concurrency.md).
+            if !self.in_on_message {
+                return Err(self
+                    .err("`reply` may only be called inside `on_message`")
+                    .at(call.span.clone()));
+            }
+            if call.arguments.len() != 1 {
+                return Err(self
+                    .err(format!(
+                        "`reply` expects exactly one argument, got {}",
+                        call.arguments.len()
+                    ))
+                    .at(call.span.clone()));
+            }
+            let operand = self.check_arg_value(&call.arguments[0].value)?;
+            self.reply_operands.push(operand);
+            return Ok(Type::Any);
+        }
         if call.callee == "print" || call.callee == "println" || call.callee == "repl_echo" {
             for arg in &call.arguments {
-                self.check_expression(&arg.value)?;
+                self.check_arg_value(&arg.value)?;
             }
             return Ok(Type::Any);
         }
@@ -3262,6 +4913,30 @@ impl Analyzer {
             }
             self.check_expression(&call.arguments[0].value)?;
             return Ok(Type::String);
+        }
+        // `Error(message)` constructs the built-in base error type (spec
+        // `error-handling.md`): one `string` argument, typed `Error`. Like
+        // `print`/`str`, a user-declared `fn Error` shadows it (the lookup
+        // above runs first).
+        if call.callee == "Error" {
+            if call.arguments.len() != 1 {
+                return Err(self
+                    .err(format!(
+                        "`Error` expects exactly one argument (a message), got {}",
+                        call.arguments.len()
+                    ))
+                    .at(call.span.clone()));
+            }
+            let message = self.check_expression(&call.arguments[0].value)?;
+            if !self.assignable(&message, &Type::String) {
+                return Err(self
+                    .err(format!(
+                        "`Error` message must be a `string`, found `{}`",
+                        message.name()
+                    ))
+                    .at(call.arguments[0].value.span().clone()));
+            }
+            return Ok(Type::Named("Error".to_string(), Vec::new()));
         }
         if call.callee == "assert" {
             if call.arguments.len() != 2 {
@@ -3328,7 +5003,7 @@ impl Analyzer {
                 // here, even when un-annotated (zero params, no return type).
                 if self.opaque.contains(&call.callee) {
                     for arg in &call.arguments {
-                        self.check_expression(&arg.value)?;
+                        self.check_arg_value(&arg.value)?;
                     }
                     return Ok(Type::Any);
                 }
@@ -3366,11 +5041,21 @@ impl Analyzer {
                     }
                 };
                 self.bound_shapes.push(bound_map);
+                let mut trait_map: HashMap<String, Vec<String>> = HashMap::new();
+                for bound in &callee_bounds {
+                    trait_map
+                        .entry(bound.param.clone())
+                        .or_default()
+                        .extend(bound.traits.iter().cloned());
+                }
+                self.bound_traits.push(trait_map);
                 let result = (|| {
                     if all_named {
                         // Named arguments must cover every parameter (defaults
                         // may be omitted) exactly once.
                         let mut seen = std::collections::HashSet::new();
+                        let mut borrow_args: Vec<(&Expression, Option<xulo_core::ast::ParamMode>)> =
+                            Vec::with_capacity(named.len());
                         for arg in &named {
                             let name = arg.name.as_ref().unwrap();
                             let Some(param) = params.iter().find(|p| &p.name == name) else {
@@ -3385,19 +5070,31 @@ impl Analyzer {
                                     call.callee
                                 )));
                             }
-                            let arg_type = self.check_expression(&arg.value)?;
-                            let expected = param.type_annotation.as_ref().unwrap_or(&Type::Any);
-                            if !self.assignable(&arg_type, expected)
-                                && !self.literal_matches(&arg.value, expected)
+                            let arg_type = self.check_arg_value(&arg.value)?;
+                            // The structural check does not re-run the bound
+                            // rule: a parameter's bound is what decides
+                            // admissibility, and it is checked once per
+                            // inferred binding below.
+                            let expected = self.erase_generic_params(
+                                param.type_annotation.as_ref().unwrap_or(&Type::Any),
+                                &type_params,
+                            );
+                            if !self.assignable(&arg_type, &expected)
+                                && !self.literal_matches(&arg.value, &expected)
                             {
-                                return Err(self.err(format!(
-                                    "argument to `{}` must be `{}`, found `{}`",
-                                    call.callee,
-                                    expected.name(),
-                                    arg_type.name()
-                                )));
+                                return Err(self.err_code(
+                                    "E0202",
+                                    format!(
+                                        "argument to `{}` must be `{}`, found `{}`",
+                                        call.callee,
+                                        expected.name(),
+                                        arg_type.name()
+                                    ),
+                                ));
                             }
+                            borrow_args.push((&arg.value, param.mode));
                         }
+                        self.check_call_borrows(&borrow_args)?;
                         let required = params
                             .iter()
                             .filter(|p| p.default.is_none() && !param_optional(p))
@@ -3423,7 +5120,7 @@ impl Analyzer {
                                     .iter()
                                     .find(|a| a.name.as_ref() == Some(&param.name));
                                 if let Some(arg) = arg {
-                                    let arg_type = self.check_expression(&arg.value)?;
+                                    let arg_type = self.check_arg_value(&arg.value)?;
                                     positional_types.push(arg_type);
                                 } else if let Some(default) = &param.default {
                                     let default_type = self.check_expression(default)?;
@@ -3441,11 +5138,24 @@ impl Analyzer {
                                     .iter()
                                     .map(|p| p.type_annotation.clone().unwrap_or(Type::Any))
                                     .collect::<Vec<_>>();
-                                let bindings = infer_type_bindings(
+                                let bindings = match infer_type_bindings(
                                     &type_params,
                                     &param_types,
                                     &positional_types,
-                                );
+                                ) {
+                                    Ok(b) => b,
+                                    Err((param, existing, found)) => {
+                                        return Err(self.err_code(
+                                            "E0202",
+                                            format!(
+                                                "expected `{}` for `{param}`, found `{}`",
+                                                existing.name(),
+                                                found.name()
+                                            ),
+                                        ));
+                                    }
+                                };
+                                self.check_inferred_bounds(&callee_bounds, &bindings)?;
                                 resolved = substitute_type(&resolved, &bindings);
                             }
                         }
@@ -3478,21 +5188,33 @@ impl Analyzer {
                             )));
                         }
                         let mut positional_types = Vec::with_capacity(positional.len());
+                        let mut borrow_args: Vec<(&Expression, Option<xulo_core::ast::ParamMode>)> =
+                            Vec::with_capacity(positional.len());
                         for (arg, param) in positional.iter().zip(params.iter()) {
-                            let arg_type = self.check_expression(&arg.value)?;
+                            let arg_type = self.check_arg_value(&arg.value)?;
                             positional_types.push(arg_type.clone());
-                            let expected = param.type_annotation.as_ref().unwrap_or(&Type::Any);
-                            if !self.assignable(&arg_type, expected)
-                                && !self.literal_matches(&arg.value, expected)
+                            // The structural check does not re-run the bound
+                            // rule; it is checked once per binding below.
+                            let expected = self.erase_generic_params(
+                                param.type_annotation.as_ref().unwrap_or(&Type::Any),
+                                &type_params,
+                            );
+                            if !self.assignable(&arg_type, &expected)
+                                && !self.literal_matches(&arg.value, &expected)
                             {
-                                return Err(self.err(format!(
-                                    "argument to `{}` must be `{}`, found `{}`",
-                                    call.callee,
-                                    expected.name(),
-                                    arg_type.name()
-                                )));
+                                return Err(self.err_code(
+                                    "E0202",
+                                    format!(
+                                        "argument to `{}` must be `{}`, found `{}`",
+                                        call.callee,
+                                        expected.name(),
+                                        arg_type.name()
+                                    ),
+                                ));
                             }
+                            borrow_args.push((&arg.value, param.mode));
                         }
+                        self.check_call_borrows(&borrow_args)?;
                         // Call-site inference for generic functions
                         // (`first([1, 2])` binds `T = number`).
                         let mut resolved = return_type;
@@ -3501,14 +5223,31 @@ impl Analyzer {
                                 .iter()
                                 .map(|p| p.type_annotation.clone().unwrap_or(Type::Any))
                                 .collect::<Vec<_>>();
-                            let bindings =
-                                infer_type_bindings(&type_params, &param_types, &positional_types);
+                            let bindings = match infer_type_bindings(
+                                &type_params,
+                                &param_types,
+                                &positional_types,
+                            ) {
+                                Ok(b) => b,
+                                Err((param, existing, found)) => {
+                                    return Err(self.err_code(
+                                        "E0202",
+                                        format!(
+                                            "expected `{}` for `{param}`, found `{}`",
+                                            existing.name(),
+                                            found.name()
+                                        ),
+                                    ));
+                                }
+                            };
+                            self.check_inferred_bounds(&callee_bounds, &bindings)?;
                             resolved = substitute_type(&resolved, &bindings);
                         }
                         Ok(resolved)
                     }
                 })();
                 self.bound_shapes.pop();
+                self.bound_traits.pop();
                 self.generics
                     .truncate(self.generics.len().saturating_sub(type_params.len()));
                 result
@@ -3556,7 +5295,7 @@ impl Analyzer {
             )));
         }
         for (arg, param) in arguments.iter().zip(params.iter()) {
-            let arg_type = self.check_expression(&arg.value)?;
+            let arg_type = self.check_arg_value(&arg.value)?;
             if !self.assignable(&arg_type, param) {
                 return Err(self.err(format!(
                     "argument to function value must be `{}`, found `{}`",
@@ -3577,7 +5316,7 @@ impl Analyzer {
                 if !variants.iter().any(|v| v.name == variant) {
                     return Err(self.err(format!("enum `{enum_name}` has no member `{variant}`")));
                 }
-                Ok(Type::Named(enum_name))
+                Ok(Type::Named(enum_name, Vec::new()))
             }
             TypeEntryKind::Alias(_) | TypeEntryKind::Trait(_) | TypeEntryKind::Struct(_) => {
                 Err(self.err(format!("`{enum_name}` is not an enum")))
@@ -3632,7 +5371,7 @@ impl Analyzer {
                     if let Some(e) = errs.into_iter().next() {
                         Err(e)
                     } else {
-                        Ok(Type::Named(enum_name))
+                        Ok(Type::Named(enum_name, Vec::new()))
                     }
                 }
             }
@@ -3642,7 +5381,7 @@ impl Analyzer {
                         "enum member `{enum_name}::{variant}` takes no payload"
                     )))
                 } else {
-                    Ok(Type::Named(enum_name))
+                    Ok(Type::Named(enum_name, Vec::new()))
                 }
             }
         };
@@ -3717,7 +5456,7 @@ impl Analyzer {
         }
         // Resolve the receiver type to its concrete name for impl lookup.
         let concrete = match &receiver_type {
-            Type::Named(name) => Some(name.clone()),
+            Type::Named(name, _) => Some(name.clone()),
             Type::Optional(_) => {
                 return Err(self.err(format!(
                     "cannot dispatch `{trait_name}::{method}` on an optional receiver: it may be `null` at run time, and dispatch has no null-safe form; pass a concrete, non-nullable receiver"
@@ -3732,6 +5471,16 @@ impl Analyzer {
         // (dispatch on generics is rejected with its own message).
         match concrete {
             Some(name) if self.impls.contains(&(trait_name.clone(), name.clone(), method.to_string())) => {
+                // An impl declared in this module that cannot be
+                // instantiated for this receiver (or whose bounds fail for
+                // it) contributes nothing: dispatch reports the same
+                // "does not implement" a missing impl would (spec
+                // `types/traits.md`, "When an impl applies").
+                if self.impl_gate_blocks(&trait_name, &name, &receiver_type) {
+                    return Err(self.err(format!(
+                        "type `{name}` does not implement trait `{trait_name}` (add `impl {trait_name} for {name}`)"
+                    )));
+                }
                 Ok((sig.return_type.clone(), impl_fn_name(&trait_name, &name, method)))
             }
             Some(name) if self.generics.contains(&name) => Err(self.err(format!(
@@ -3749,7 +5498,7 @@ impl Analyzer {
                             impl_fn_name(&trait_name, t, method),
                         ));
                     }
-                    target = self.alias_target(&Type::Named(t.clone()));
+                    target = self.alias_target(&Type::Named(t.clone(), Vec::new()));
                 }
                 Err(self.err(format!(
                     "type `{name}` does not implement trait `{trait_name}` (add `impl {trait_name} for {name}`)"
@@ -3767,8 +5516,8 @@ impl Analyzer {
     /// not a named alias or its target is not named (e.g. `type X = object`).
     fn alias_target(&self, ty: &Type) -> Option<String> {
         match ty {
-            Type::Named(name) => match self.type_entry(name).map(|e| &e.kind) {
-                Some(TypeEntryKind::Alias(Type::Named(target))) => Some(target.clone()),
+            Type::Named(name, _) => match self.type_entry(name).map(|e| &e.kind) {
+                Some(TypeEntryKind::Alias(Type::Named(target, _))) => Some(target.clone()),
                 _ => None,
             },
             _ => None,
@@ -3808,19 +5557,15 @@ impl Analyzer {
     /// Validate that every named type referenced by `ty` is defined.
     fn check_type(&self, ty: &Type) -> SResult<()> {
         match ty {
-            Type::Named(name) => {
-                if name == "View"
-                    || self.generics.contains(name)
-                    || self.type_table.contains_key(name)
-                    || self.imported_types.contains_key(name)
-                {
-                    Ok(())
-                } else {
-                    Err(self.err(format!("unknown type `{name}`")))
-                }
-            }
+            Type::Named(name, args) => self.check_type_application(name, args),
             Type::List(inner) | Type::Optional(inner) => self.check_type(inner),
             Type::Union(parts) | Type::Intersection(parts) => {
+                for p in parts {
+                    self.check_type(p)?;
+                }
+                Ok(())
+            }
+            Type::Tuple(parts) => {
                 for p in parts {
                     self.check_type(p)?;
                 }
@@ -3846,6 +5591,76 @@ impl Analyzer {
         }
     }
 
+    /// Check one type application `Name<Args>` for well-formedness (spec
+    /// `types/generics.md`, E0230): the head takes no applied type parameter,
+    /// the argument count matches the head's declaration, and every argument
+    /// is itself a well-formed type.
+    fn check_type_application(&self, name: &str, args: &[Type]) -> SResult<()> {
+        if self.generics.iter().any(|g| g == name) {
+            // A parameter stands for a proper type, never a family of them.
+            if !args.is_empty() {
+                return Err(self.err_code(
+                    "E0230",
+                    format!("`{name}` is a type parameter, so it takes no type arguments"),
+                ));
+            }
+            return Ok(());
+        }
+        if let Some(expected) = self.declared_type_arity(name)
+            && args.len() != expected
+        {
+            return Err(self.err_code(
+                "E0230",
+                format!(
+                    "`{name}` expects {expected} type argument{}, found {}",
+                    if expected == 1 { "" } else { "s" },
+                    args.len()
+                ),
+            ));
+        }
+        // Every position a type argument is written is checked against the
+        // bound its parameter declares (spec `type-system/checking-rules.md`).
+        if let Some(entry) = self.type_entry(name) {
+            for (i, arg) in args.iter().enumerate() {
+                let Some(param) = entry.type_params.get(i) else {
+                    break;
+                };
+                for bound in entry.type_bounds.iter().filter(|b| &b.param == param) {
+                    for trait_name in &bound.traits {
+                        if !self.satisfies_bound(arg, trait_name) {
+                            return Err(self.err_code(
+                                "E0801",
+                                format!("`{}` does not implement `{trait_name}`", arg.display()),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        for arg in args {
+            self.check_type(arg)?;
+        }
+        if name == "View"
+            || self.type_table.contains_key(name)
+            || self.imported_types.contains_key(name)
+            || self.builtins.contains_key(name)
+        {
+            Ok(())
+        } else {
+            Err(self.err(format!("unknown type `{name}`")))
+        }
+    }
+
+    /// How many type arguments a named type's declaration takes, if that is
+    /// known statically: a user `struct`/`enum`/`type`/`trait`, or a prelude
+    /// type whose arity the language fixes.
+    fn declared_type_arity(&self, name: &str) -> Option<usize> {
+        if let Some(entry) = self.type_entry(name) {
+            return Some(entry.type_params.len());
+        }
+        builtin_type_arity(name)
+    }
+
     /// Resolve a `Named` type to its underlying type. Generic type parameters
     /// erase to `Any`; enums are returned unchanged. A depth cap guards against
     /// self-referential aliases.
@@ -3854,7 +5669,7 @@ impl Analyzer {
             return ty.clone();
         }
         match ty {
-            Type::Named(name) => {
+            Type::Named(name, _) => {
                 if self.generics.contains(name) {
                     // A bounded generic erases to its bound's structural shape
                     // (`T: Area` behaves like `{ area: fn(): number }`); an
@@ -3871,12 +5686,14 @@ impl Analyzer {
         }
     }
 
-    /// Look up a type by name, consulting both locally-declared types and
-    /// types imported from other modules.
+    /// Look up a type by name, consulting locally-declared types, then types
+    /// imported from other modules, then the built-ins: a declaration at any
+    /// of the first two levels shadows a builtin of the same name.
     fn type_entry(&self, name: &str) -> Option<&TypeEntry> {
         self.type_table
             .get(name)
             .or_else(|| self.imported_types.get(name))
+            .or_else(|| self.builtins.get(name))
     }
 
     /// Is a value of type `from` acceptable where `to` is expected?
@@ -3960,7 +5777,7 @@ impl Analyzer {
                 _ => self.literal_matches(value, inner),
             },
             Type::Union(parts) => parts.iter().any(|p| self.literal_matches(value, p)),
-            Type::Named(_) => {
+            Type::Named(_, _) => {
                 let resolved = self.resolve_alias(annotation, 0);
                 if resolved != *annotation {
                     self.literal_matches(value, &resolved)
@@ -3986,19 +5803,28 @@ fn param_optional(param: &xulo_core::ast::Param) -> bool {
     matches!(param.type_annotation, Some(Type::Optional(_)))
 }
 
+/// A type parameter that two constraints settled differently: the parameter
+/// name, the type the earlier constraint fixed, and the type the later one
+/// demanded. Reported as a mismatch (spec `types/generics.md`, E0202).
+type InferenceConflict = (String, Type, Type);
+
 /// Infer a function's type-parameter bindings by unifying each declared
 /// parameter type against its (positionally aligned) argument type, e.g.
 /// `first([1, 2])` binds `T = number` when the parameter is `list<T>`.
+///
+/// A parameter receives one solution: when a later constraint demands a
+/// different type for one already fixed, inference fails with the conflict
+/// instead of keeping the first answer.
 fn infer_type_bindings(
     type_params: &[String],
     param_types: &[Type],
     arg_types: &[Type],
-) -> std::collections::HashMap<String, Type> {
+) -> Result<std::collections::HashMap<String, Type>, InferenceConflict> {
     let mut bindings = std::collections::HashMap::new();
     for (param_ty, arg_ty) in param_types.iter().zip(arg_types.iter()) {
-        unify_param(param_ty, arg_ty, type_params, &mut bindings);
+        unify_param(param_ty, arg_ty, type_params, &mut bindings)?;
     }
-    bindings
+    Ok(bindings)
 }
 
 fn unify_param(
@@ -4006,37 +5832,50 @@ fn unify_param(
     actual: &Type,
     type_params: &[String],
     bindings: &mut std::collections::HashMap<String, Type>,
-) {
+) -> Result<(), InferenceConflict> {
     match expected {
-        Type::Named(name) if type_params.contains(name) => {
-            bindings
-                .entry(name.clone())
-                .or_insert_with(|| actual.clone());
+        Type::Named(name, _) if type_params.contains(name) => {
+            match bindings.get(name) {
+                Some(existing) if existing != actual => Err((
+                    name.clone(),
+                    existing.clone(),
+                    actual.clone(),
+                )),
+                Some(_) => Ok(()),
+                None => {
+                    bindings.insert(name.clone(), actual.clone());
+                    Ok(())
+                }
+            }
         }
         Type::List(inner) => {
             if let Type::List(element) = actual {
-                unify_param(inner, element, type_params, bindings);
+                unify_param(inner, element, type_params, bindings)?;
             }
+            Ok(())
         }
         Type::Optional(inner) => match actual {
             Type::Optional(a) => unify_param(inner, a, type_params, bindings),
-            Type::Null => {}
+            Type::Null => Ok(()),
             other => unify_param(inner, other, type_params, bindings),
         },
         Type::Union(parts) => {
             for p in parts {
-                unify_param(p, actual, type_params, bindings);
+                unify_param(p, actual, type_params, bindings)?;
             }
+            Ok(())
         }
         Type::Intersection(parts) => {
             for p in parts {
-                unify_param(p, actual, type_params, bindings);
+                unify_param(p, actual, type_params, bindings)?;
             }
+            Ok(())
         }
         Type::Async(inner) => {
             if let Type::Async(a) = actual {
-                unify_param(inner, a, type_params, bindings);
+                unify_param(inner, a, type_params, bindings)?;
             }
+            Ok(())
         }
         Type::FnSig { params, ret } => {
             if let Type::FnSig {
@@ -4045,21 +5884,22 @@ fn unify_param(
             } = actual
             {
                 for (p, a) in params.iter().zip(actual_params.iter()) {
-                    unify_param(p, a, type_params, bindings);
+                    unify_param(p, a, type_params, bindings)?;
                 }
                 if let (Some(pe), Some(ae)) = (ret, actual_ret) {
-                    unify_param(pe, ae, type_params, bindings);
+                    unify_param(pe, ae, type_params, bindings)?;
                 }
             }
+            Ok(())
         }
-        _ => {}
+        _ => Ok(()),
     }
 }
 
 /// Substitute inferred type-parameter bindings throughout a type.
 fn substitute_type(ty: &Type, bindings: &std::collections::HashMap<String, Type>) -> Type {
     match ty {
-        Type::Named(name) => {
+        Type::Named(name, _) => {
             if let Some(bound) = bindings.get(name) {
                 bound.clone()
             } else {
@@ -4083,6 +5923,115 @@ fn substitute_type(ty: &Type, bindings: &std::collections::HashMap<String, Type>
             ret: ret.as_ref().map(|r| Box::new(substitute_type(r, bindings))),
         },
         other => other.clone(),
+    }
+}
+
+/// Strict structural match of an `impl` receiver pattern against a
+/// receiver's written type arguments (spec `types/traits.md`, "When an impl
+/// applies"): equal arity, every parameter position binding to exactly one
+/// type — so the repeated parameter of `Pair<T, T>` must see one type in
+/// both slots — and every concrete position equal, including its own type
+/// arguments, which `Type`'s name-based `PartialEq` ignores.
+fn pattern_matches(
+    pattern: &[Type],
+    receiver: &[Type],
+    params: &[String],
+    bindings: &mut std::collections::HashMap<String, Type>,
+) -> bool {
+    if pattern.len() != receiver.len() {
+        return false;
+    }
+    pattern
+        .iter()
+        .zip(receiver.iter())
+        .all(|(p, r)| pattern_type_matches(p, r, params, bindings))
+}
+
+fn pattern_type_matches(
+    pattern: &Type,
+    actual: &Type,
+    params: &[String],
+    bindings: &mut std::collections::HashMap<String, Type>,
+) -> bool {
+    match pattern {
+        Type::Named(name, args) if params.contains(name) && args.is_empty() => {
+            match bindings.get(name) {
+                Some(prev) => type_same(prev, actual),
+                None => {
+                    bindings.insert(name.clone(), actual.clone());
+                    true
+                }
+            }
+        }
+        Type::Named(name, pargs) => match actual {
+            Type::Named(aname, aargs) => {
+                name == aname
+                    && (pargs.is_empty()
+                        || pattern_matches(pargs, aargs, params, bindings))
+            }
+            _ => false,
+        },
+        Type::List(inner) => match actual {
+            Type::List(a) => pattern_type_matches(inner, a, params, bindings),
+            _ => false,
+        },
+        Type::Optional(inner) => match actual {
+            Type::Optional(a) => pattern_type_matches(inner, a, params, bindings),
+            Type::Null => true,
+            other => pattern_type_matches(inner, other, params, bindings),
+        },
+        Type::Async(inner) => match actual {
+            Type::Async(a) => pattern_type_matches(inner, a, params, bindings),
+            _ => false,
+        },
+        Type::Union(parts) => parts
+            .iter()
+            .all(|p| pattern_type_matches(p, actual, params, bindings)),
+        Type::Intersection(parts) => parts
+            .iter()
+            .all(|p| pattern_type_matches(p, actual, params, bindings)),
+        Type::Any => true,
+        other => other == actual,
+    }
+}
+
+/// Type equality that sees type arguments (`Type`'s `PartialEq` compares
+/// named types by name only), used when one parameter must bind to a single
+/// type in every position it appears.
+fn type_same(a: &Type, b: &Type) -> bool {
+    match (a, b) {
+        (Type::Named(x, xa), Type::Named(y, ya)) => {
+            x == y
+                && xa.len() == ya.len()
+                && xa.iter().zip(ya.iter()).all(|(p, q)| type_same(p, q))
+        }
+        (Type::List(x), Type::List(y))
+        | (Type::Optional(x), Type::Optional(y))
+        | (Type::Async(x), Type::Async(y)) => type_same(x, y),
+        (Type::Union(x), Type::Union(y))
+        | (Type::Intersection(x), Type::Intersection(y))
+        | (Type::Tuple(x), Type::Tuple(y)) => {
+            x.len() == y.len() && x.iter().zip(y.iter()).all(|(p, q)| type_same(p, q))
+        }
+        (
+            Type::FnSig {
+                params: px,
+                ret: rx,
+            },
+            Type::FnSig {
+                params: py,
+                ret: ry,
+            },
+        ) => {
+            px.len() == py.len()
+                && px.iter().zip(py.iter()).all(|(p, q)| type_same(p, q))
+                && match (rx, ry) {
+                    (Some(x), Some(y)) => type_same(x, y),
+                    (None, None) => true,
+                    _ => false,
+                }
+        }
+        _ => a == b,
     }
 }
 

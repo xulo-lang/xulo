@@ -22,6 +22,14 @@ pub struct Symbol {
     pub is_const: bool,
     /// `true` when the variable can be reassigned (`let mut` or `let :=`).
     pub is_mutable: bool,
+    /// `true` when the binding is a function parameter or a `self` receiver:
+    /// it borrows its argument and owns no storage of its own, so it cannot
+    /// be the operand of a `move` (spec `memory-and-runtime.md`, E0403).
+    pub is_param: bool,
+    /// `true` for a `shared` binding or a `shared` parameter: its contents
+    /// may be reached only under a `lock` on it (spec `concurrency.md`,
+    /// E0406/E0407).
+    pub is_shared: bool,
 }
 
 /// A stack of scopes mapping names to symbols. The innermost scope is last.
@@ -80,6 +88,19 @@ impl SymbolTable {
     }
 
     /// Look up a symbol walking outward from the innermost scope.
+    /// How many scopes are on the stack (the next `push_scope` would be at
+    /// index `depth()`).
+    pub fn depth(&self) -> usize {
+        self.scopes.len()
+    }
+
+    /// The index of the scope that declares `name`, innermost first.
+    pub fn depth_of(&self, name: &str) -> Option<usize> {
+        self.scopes
+            .iter()
+            .rposition(|scope| scope.contains_key(name))
+    }
+
     pub fn lookup(&self, name: &str) -> Option<&Symbol> {
         for scope in self.scopes.iter().rev() {
             if let Some(sym) = scope.get(name) {

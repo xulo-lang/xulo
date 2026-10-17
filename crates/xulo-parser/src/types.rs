@@ -81,37 +81,37 @@ fn named_type(pair: Pair<'_, Rule>) -> R<Type> {
     let name_pair = inner.next().expect("named_type has an identifier");
     check_rule(&name_pair, Rule::identifier)?;
     let name = name_pair.as_str().to_string();
-    let args = inner.next();
-
-    match name.as_str() {
-        "string" => Ok(Type::String),
-        "number" => Ok(Type::Number),
-        "boolean" => Ok(Type::Boolean),
-        "object" => Ok(Type::Object),
-        "list" | "List" => {
-            let Some(type_list) = args else {
-                return Ok(Type::List(Box::new(Type::Any)));
-            };
+    let args = match inner.next() {
+        Some(type_list) => {
             check_rule(&type_list, Rule::type_args)?;
             let mut items = Vec::new();
             for t in single(type_list).into_inner() {
                 check_rule(&t, Rule::type_expr)?;
                 items.push(type_expr(t)?);
             }
-            let inner_ty = items.into_iter().next().unwrap_or(Type::Any);
-            Ok(Type::List(Box::new(inner_ty)))
+            items
         }
-        _ => {
-            // Generic named type: `Result<T>` erases its arguments.
-            if let Some(type_list) = args {
-                check_rule(&type_list, Rule::type_args)?;
-                for t in single(type_list).into_inner() {
-                    check_rule(&t, Rule::type_expr)?;
-                    type_expr(t)?;
-                }
-            }
-            Ok(Type::Named(name))
+        None => Vec::new(),
+    };
+
+    match name.as_str() {
+        // A primitive carries no argument list: keep it a primitive only when
+        // none was written, so that `string<Int>` reaches the checker as an
+        // application and is diagnosed there (spec `types/generics.md`).
+        "string" if args.is_empty() => Ok(Type::String),
+        "number" if args.is_empty() => Ok(Type::Number),
+        "boolean" if args.is_empty() => Ok(Type::Boolean),
+        "object" if args.is_empty() => Ok(Type::Object),
+        // `List` keeps its dedicated form only for exactly one argument; a
+        // missing or surplus one stays an application so the arity rule
+        // reports it (spec E0230).
+        "list" | "List" if args.len() == 1 => {
+            Ok(Type::List(Box::new(args.into_iter().next().unwrap())))
         }
+        // A named type keeps its written type arguments; whether they are the
+        // right number, and whether they satisfy their bounds, is checked by
+        // the semantic analyzer.
+        _ => Ok(Type::Named(name, args)),
     }
 }
 

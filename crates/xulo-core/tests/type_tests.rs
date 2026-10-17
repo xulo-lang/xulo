@@ -12,8 +12,8 @@ fn test_type_name_primitives() {
 
 #[test]
 fn test_type_name_named() {
-    assert_eq!(Type::Named("User".to_string()).name(), "User");
-    assert_eq!(Type::Named("Vec".to_string()).name(), "Vec");
+    assert_eq!(Type::Named("User".to_string(), Vec::new()).name(), "User");
+    assert_eq!(Type::Named("Vec".to_string(), Vec::new()).name(), "Vec");
 }
 
 #[test]
@@ -57,8 +57,8 @@ fn test_type_name_union_three() {
 #[test]
 fn test_type_name_intersection() {
     let inter = Type::Intersection(vec![
-        Type::Named("A".to_string()),
-        Type::Named("B".to_string()),
+        Type::Named("A".to_string(), Vec::new()),
+        Type::Named("B".to_string(), Vec::new()),
     ]);
     assert_eq!(inter.name(), "A & B");
 }

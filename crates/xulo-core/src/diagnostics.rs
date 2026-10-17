@@ -39,7 +39,7 @@ pub fn render(err: &XuloError, source: Option<&str>) -> String {
     let mut header = format!(
         "{}[{}]",
         paint(BOLD, severity),
-        paint(CYAN, err.kind.code())
+        paint(CYAN, err.code())
     );
     if !is_warning {
         header.push_str(&format!(" {}", err.kind.label()));

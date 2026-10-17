@@ -2,6 +2,7 @@ use std::ops::Range;
 
 use pest::iterators::Pair;
 
+use xulo_core::error::{ErrorKind, XuloError};
 use xulo_core::ast::{
     ArrowBody, ArrowClosure, AssignTarget, BinaryOp, BinaryOperator, Block, Call, CallArg,
     CallValue, ComponentStmt, EnumRef, ExprStmt, Expression, FnExpr, IfExpr, IndexExpr, IsExpr,
@@ -1023,80 +1024,30 @@ fn place_op_text(pair: Pair<'_, Rule>) -> String {
     }
 }
 
-/// The left-hand side of an assignment (`Assignment`'s `Place`).
-pub(crate) fn assign_target(pair: Pair<'_, Rule>) -> R<AssignTarget> {
-    let span_start = pair.as_span().start();
-    let mut expr: Option<Expression> = None;
-    for p in pair.into_inner() {
-        match p.as_rule() {
-            Rule::place_primary => {
-                let primary_span = span_of(&p);
-                let inner = single(p);
-                let base = match inner.as_rule() {
-                    Rule::ident_raw => Expression::Identifier {
-                        name: inner.as_str().to_string(),
-                        span: primary_span,
-                    },
-                    Rule::place => target_to_expr(assign_target(inner)?, span_start),
-                    _ => unreachable!("place_primary {:?}", inner.as_rule()),
-                };
-                expr = Some(base);
-            }
-            Rule::place_op => {
-                let base = expr.take().expect("place_op follows a primary");
-                let inner = single(p);
-                let span = span_start..inner.as_span().end();
-                let next_expr = match inner.as_rule() {
-                    Rule::ident_raw | Rule::integer_literal => {
-                        Expression::Member(Box::new(MemberAccess {
-                            object: base,
-                            property: inner.as_str().to_string(),
-                            optional: false,
-                            span,
-                        }))
-                    }
-                    Rule::expression => {
-                        let index = expression(inner)?;
-                        Expression::Index(Box::new(IndexExpr {
-                            object: Box::new(base),
-                            index: Box::new(index),
-                            span,
-                        }))
-                    }
-                    _ => unreachable!("place_op {:?}", inner.as_rule()),
-                };
-                expr = Some(next_expr);
-            }
-            _ => unreachable!("place child {:?}", p.as_rule()),
+/// The left-hand side of an assignment. The grammar takes any expression
+/// there so a target that is not a place — `f() = 2`, `1 = 2` — fails here
+/// with the semantic diagnostic the error table promises (spec
+/// `statements/expression-statements.md`, E0402).
+pub(crate) fn assign_target(expr: Expression, span: Range<usize>) -> R<AssignTarget> {
+    fn is_place(expr: &Expression) -> bool {
+        match expr {
+            Expression::Identifier { .. } => true,
+            Expression::Member(m) => is_place(&m.object),
+            Expression::Index(i) => is_place(&i.object),
+            _ => false,
         }
     }
-    let expr = expr.expect("place has a primary");
+    if !is_place(&expr) {
+        return Err(XuloError::new(ErrorKind::Semantic, "invalid assignment target")
+            .with_code("E0402")
+            .at(span));
+    }
     Ok(match expr {
         Expression::Identifier { name, .. } => AssignTarget::Name(name),
         Expression::Member(m) => AssignTarget::Member(Box::new(m.object), m.property),
         Expression::Index(i) => AssignTarget::Index(i.object, i.index),
-        _ => unreachable!("place lowers to a name, member, or index"),
+        _ => unreachable!("assign_target accepted only place shapes"),
     })
-}
-
-fn target_to_expr(target: AssignTarget, span: usize) -> Expression {
-    match target {
-        AssignTarget::Name(name) => Expression::Identifier {
-            name,
-            span: span..span,
-        },
-        AssignTarget::Member(object, property) => Expression::Member(Box::new(MemberAccess {
-            object: *object,
-            property,
-            optional: false,
-            span: span..span,
-        })),
-        AssignTarget::Index(object, index) => Expression::Index(Box::new(IndexExpr {
-            object,
-            index,
-            span: span..span,
-        })),
-    }
 }
 
 pub(crate) fn pattern(pair: Pair<'_, Rule>) -> R<MatchPattern> {

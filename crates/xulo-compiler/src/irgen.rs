@@ -476,7 +476,7 @@ impl IrGenerator {
                         Type::Null => 6,
                         Type::List(_) => 3,
                         Type::Object | Type::ObjectType(_) => 4,
-                        Type::Named(_) => -1, // 泛型参数，运行时自动检测
+                        Type::Named(_, _) => -1, // 泛型参数，运行时自动检测
                         _ => 1,
                     }
                 } else if let Some(local_id) = self.locals.get(name) {
@@ -567,7 +567,7 @@ impl IrGenerator {
                         Type::Null => 6,
                         Type::List(_) => 3,
                         Type::Object | Type::ObjectType(_) => 4,
-                        Type::Named(_) => {
+                        Type::Named(_, _) => {
                             // 泛型参数：无法在编译期确定具体类型，使用运行时自动检测
                             -1
                         }
@@ -1554,7 +1554,7 @@ impl IrGenerator {
                 | Type::Null
                 | Type::Object
                 | Type::List(_)
-                | Type::Named(_)
+                | Type::Named(_, _)
                 | Type::Literal(_)
                 | Type::Optional(_)
                 | Type::Union(_)

@@ -45,6 +45,10 @@ pub struct XuloError {
     pub message: String,
     pub span: Option<Range<usize>>,
     pub file: Option<PathBuf>,
+    /// Fine-grained diagnostic code from the specification's error table
+    /// (`spec/type-system/errors.md`), e.g. `E0230`. When absent the coarse
+    /// [`ErrorKind`] code is reported instead.
+    pub code: Option<&'static str>,
 }
 
 impl XuloError {
@@ -54,12 +58,24 @@ impl XuloError {
             message: message.into(),
             span: None,
             file: None,
+            code: None,
         }
     }
 
     pub fn at(mut self, span: impl Into<Range<usize>>) -> Self {
         self.span = Some(span.into());
         self
+    }
+
+    /// Attach a fine-grained diagnostic code, overriding the kind's code.
+    pub fn with_code(mut self, code: &'static str) -> Self {
+        self.code = Some(code);
+        self
+    }
+
+    /// The fine-grained code when one was attached, else the kind's code.
+    pub fn code(&self) -> &'static str {
+        self.code.unwrap_or_else(|| self.kind.code())
     }
 
     pub fn with_file(mut self, file: PathBuf) -> Self {

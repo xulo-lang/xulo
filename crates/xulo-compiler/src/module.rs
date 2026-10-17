@@ -249,6 +249,8 @@ fn collect_imports(modules: &[Module], idx: usize) -> Result<ImportSeed, XuloErr
                         name: ns.clone(),
                         type_: Type::Any,
                         kind: SymbolKind::Variable,
+                        is_shared: false,
+                        is_param: false,
                         is_const: true,
                         is_mutable: false,
                     });
@@ -274,11 +276,13 @@ fn collect_imports(modules: &[Module], idx: usize) -> Result<ImportSeed, XuloErr
                         name: local.clone(),
                         type_: sym.type_.clone(),
                         kind: sym.kind.clone(),
+                        is_shared: false,
+                        is_param: false,
                         is_const: true,
                         is_mutable: false,
                     });
                     // Importing an enum gives both a value and a type.
-                    if let Type::Named(named) = &sym.type_
+                    if let Type::Named(named, _) = &sym.type_
                         && let Some((_, entry)) =
                             analysis.exported_types.iter().find(|(n, _)| n == named)
                         && matches!(entry.kind, TypeEntryKind::Enum(_))

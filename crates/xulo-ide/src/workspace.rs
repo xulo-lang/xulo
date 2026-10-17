@@ -295,6 +295,8 @@ fn seed(
                         name: ns.clone(),
                         type_: Type::Any,
                         kind: SymbolKind::Variable,
+                        is_shared: false,
+                        is_param: false,
                         is_const: true,
                         is_mutable: false,
                     });
@@ -322,10 +324,12 @@ fn seed(
                         name: local.clone(),
                         type_: sym.type_.clone(),
                         kind: sym.kind.clone(),
+                        is_shared: false,
+                        is_param: false,
                         is_const: true,
                         is_mutable: false,
                     });
-                    if let Type::Named(named) = &sym.type_
+                    if let Type::Named(named, _) = &sym.type_
                         && let Some((_, entry)) =
                             result.exported_types.iter().find(|(n, _)| n == named)
                         && matches!(entry.kind, TypeEntryKind::Enum(_))
@@ -352,6 +356,7 @@ fn exported_type(
         .map(|(_, entry)| entry)
         .unwrap_or_else(|| TypeEntry {
             type_params: Vec::new(),
+            type_bounds: Vec::new(),
             kind: TypeEntryKind::Alias(Type::Any),
         });
     (local, entry)

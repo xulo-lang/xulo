@@ -74,12 +74,12 @@ fn test_fn_def_generic() {
         name_span: 3..11,
         params: vec![Param {
             name: "x".to_string(),
-            type_annotation: Some(Type::Named("T".to_string())),
+            type_annotation: Some(Type::Named("T".to_string(), Vec::new())),
             default: None,
             mode: None,
             span: 12..13,
         }],
-        return_type: Some(Type::Named("T".to_string())),
+        return_type: Some(Type::Named("T".to_string(), Vec::new())),
         type_params: vec!["T".to_string()],
         bounds: vec![FnBound {
             param: "T".to_string(),

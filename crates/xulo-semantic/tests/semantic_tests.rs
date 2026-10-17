@@ -1253,8 +1253,8 @@ fn effect_closure_rejects_parameters() {
 
 #[test]
 fn index_assignment_is_type_checked_on_typed_list() {
-    assert!(analyze_src("fn main() { let xs: list<number> = [1] xs[0] = 5 print(xs) }").is_ok());
-    let err = analyze_src("fn main() { let xs: list<number> = [1] xs[0] = \"s\" print(xs) }")
+    assert!(analyze_src("fn main() { let mut xs: list<number> = [1] xs[0] = 5 print(xs) }").is_ok());
+    let err = analyze_src("fn main() { let mut xs: list<number> = [1] xs[0] = \"s\" print(xs) }")
         .unwrap_err();
     assert!(
         err.message
@@ -1264,7 +1264,7 @@ fn index_assignment_is_type_checked_on_typed_list() {
 
 #[test]
 fn non_list_index_assignment_is_rejected() {
-    let err = analyze_src("fn main() { print(5) let n: number = 1 n[0] = 2 }").unwrap_err();
+    let err = analyze_src("fn main() { print(5) let mut n: number = 1 n[0] = 2 }").unwrap_err();
     assert!(err.message.contains("cannot assign into `number` by index"));
 }
 
@@ -1764,16 +1764,22 @@ fn unbounded_generic_stays_any_zero_regression() {
 
 #[test]
 fn bounded_generic_refines_member_access() {
+    // Bound satisfaction is impl-based (spec `types/traits.md`), so the
+    // argument is a nominal type with a `Shape` impl, not a structural match.
     let src = r#"
+        enum Marker { Marker(number) }
         trait Shape {
             fn area(self): number
+        }
+        impl Shape for Marker {
+            fn area(self): number { return 5 }
         }
         fn apply<T: Shape>(t: T): number {
             let area = t.area
             return area()
         }
         fn main() {
-            let c: object = { area: fn(): number { return 5 } }
+            let c = Marker::Marker(1)
             print(apply(c))
         }
     "#;
@@ -3193,4 +3199,1418 @@ fn user_function_named_assert_shadows_intrinsic() {
         }
     "#;
     assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn type_application_arity_mismatch_is_e0230() {
+    let src = r#"
+        struct Pair<A, B> { a: A, b: B }
+        fn main() {
+            let bad: Pair<string> = { a: 1, b: 2 }
+            print(str(bad))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0230");
+    assert!(
+        err.message.contains("`Pair` expects 2 type arguments, found 1"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn well_formed_type_application_is_accepted() {
+    let src = r#"
+        struct Pair<A, B> { a: A, b: B }
+        fn main() {
+            let ok: Pair<string, number> = { a: 1, b: 2 }
+            print(str(ok))
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn type_application_checks_its_arguments() {
+    let src = r#"
+        struct Pair<A, B> { a: A, b: B }
+        fn main() {
+            let bad: Pair<Bogus, number> = { a: 1, b: 2 }
+            print(str(bad))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(
+        err.message.contains("unknown type `Bogus`"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn bare_generic_name_is_e0230() {
+    let src = r#"
+        fn main() {
+            let xs: List = [1]
+            print(str(xs))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0230");
+    assert!(
+        err.message.contains("`List` expects 1 type argument, found 0"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn arguments_on_a_non_generic_name_are_e0230() {
+    let src = r#"
+        fn main() {
+            let x: number<Int> = 1
+            print(str(x))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0230");
+    assert!(
+        err.message.contains("`number` expects 0 type arguments, found 1"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn applied_type_parameter_is_e0230() {
+    let src = r#"
+        fn f<T>(x: T<Int>): T { x }
+        fn main() { print(str(f(1))) }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0230");
+    assert!(
+        err.message.contains("`T` is a type parameter, so it takes no type arguments"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn type_parameter_list_has_no_defaults() {
+    // `T = Int` is not a form the grammar accepts at all.
+    let src = "fn f<T = Int>(x: T): T { x }\nfn main() { print(str(f(1))) }";
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0002");
+}
+
+#[test]
+fn trait_declaring_type_parameters_is_e0810() {
+    let src = r#"
+        trait Convert<T> { fn convert(self): string }
+        fn main() { print("x") }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0810");
+    assert!(
+        err.message.contains("a trait may not declare type parameters"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn bound_applying_type_arguments_is_e0811() {
+    let src = r#"
+        trait Convert { fn convert(self): string }
+        fn f<T: Convert<string> >(x: T): string { x.convert() }
+        fn main() { print("x") }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0811");
+    assert!(
+        err.message
+            .contains("`Convert<string>` applies type arguments; a trait has none"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn where_bound_applying_type_arguments_is_e0811() {
+    let src = r#"
+        trait Convert { fn convert(self): string }
+        fn f<T>(x: T): string where T: Convert<string> { x.convert() }
+        fn main() { print("x") }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0811");
+}
+
+#[test]
+fn bound_that_is_not_a_trait_is_e0806() {
+    let src = r#"
+        fn f<T: number>(x: T): T { x }
+        fn main() { print(str(f(1))) }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0806");
+    assert!(
+        err.message.contains("unknown trait `number`"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn bounded_generic_argument_without_impl_is_e0801() {
+    let src = r#"
+        trait Shape {
+            fn area(self): number
+        }
+        fn apply<T: Shape>(t: T): number { return 0 }
+        fn main() {
+            print(apply(1))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0801");
+    assert!(err.message.contains("`number` does not implement `Shape`"));
+}
+
+#[test]
+fn bounded_type_argument_at_a_written_position_is_e0801() {
+    let src = r#"
+        trait Area {
+            fn area(self): number
+        }
+        type Palette<T: Area> = list<T>
+        fn main() {
+            let p: Palette<string> = ["a"]
+            print(p)
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0801");
+    assert!(err.message.contains("`string` does not implement `Area`"));
+}
+
+#[test]
+fn conflicting_type_argument_inference_is_e0202() {
+    let src = r#"
+        fn pick<T>(a: list<T>, b: T): T { return b }
+        fn main() {
+            print(pick([1, 2], "x"))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0202");
+    assert!(err.message.contains("expected `number` for `T`, found `string`"));
+}
+
+#[test]
+fn bound_satisfied_by_a_type_alias_is_accepted() {
+    let src = r#"
+        enum Marker { Marker(number) }
+        trait Shape {
+            fn area(self): number
+        }
+        impl Shape for Marker {
+            fn area(self): number { return 5 }
+        }
+        type Dot = Marker
+        fn apply<T: Shape>(t: T): number { return 0 }
+        fn main() {
+            let d: Dot = Marker::Marker(1)
+            print(apply(d))
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn structural_object_alone_does_not_satisfy_a_bound() {
+    let src = r#"
+        trait Shape {
+            fn area(self): number
+        }
+        fn apply<T: Shape>(t: T): number { return 0 }
+        fn main() {
+            let c: object = { area: fn(): number { return 5 } }
+            print(apply(c))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0801");
+}
+
+#[test]
+fn await_inside_lock_is_e0410() {
+    let src = r#"
+        async fn fetch_count(): number { return 1 }
+        async fn refresh(state: shared number) {
+            lock state {
+                let n = await fetch_count()
+                print(n)
+            }
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0410");
+    assert!(err.message.contains("`await` is not allowed inside `lock`"));
+}
+
+#[test]
+fn await_outside_lock_is_accepted() {
+    let src = r#"
+        async fn fetch_count(): number { return 1 }
+        async fn refresh(state: shared number) {
+            let fresh = await fetch_count()
+            lock state {
+                print(fresh)
+            }
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn await_in_a_closure_declared_inside_lock_is_accepted() {
+    // The closure body runs when it is called, outside the critical section.
+    let src = r#"
+        async fn fetch_count(): number { return 1 }
+        async fn holder(state: shared number) {
+            lock state {
+                let f = async fn(): number { return await fetch_count() }
+                print(0)
+            }
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn mut_param_can_be_written_through() {
+    let src = r#"
+        fn fill(p: mut list<number>) {
+            p[0] = 7
+        }
+        fn main() {
+            let mut xs = [0]
+            fill(xs)
+            print(xs)
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn immutable_param_cannot_be_written_through_is_e0401() {
+    let src = r#"
+        fn fill(p: list<number>) {
+            p[0] = 7
+        }
+        fn main() {
+            let xs = [0]
+            fill(xs)
+            print(xs)
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0401");
+    assert!(err.message.contains("not declared `mut`"));
+}
+
+#[test]
+fn index_assignment_through_immutable_binding_is_e0401() {
+    let src = r#"
+        fn main() {
+            let xs = [0]
+            xs[0] = 1
+            print(xs)
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0401");
+}
+
+#[test]
+fn capture_of_mut_param_cannot_be_assigned_is_e0401() {
+    let src = r#"
+        enum Counter { Counter(number) }
+        fn broken(p: mut Counter) {
+            let f = fn() { p.value = 1 }
+            print(f)
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0401");
+    assert!(err.message.contains("`p`"));
+}
+
+#[test]
+fn capture_of_let_mut_binding_may_be_assigned() {
+    let src = r#"
+        enum Counter { Counter(number) }
+        fn ok() {
+            let mut c = Counter::Counter(0)
+            let f = fn() { c.value = 1 }
+            print(f)
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn move_of_a_parameter_is_e0403() {
+    let src = r#"
+        fn steal(p: list<number>): number {
+            let owned = move p
+            return owned[0]
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0403");
+    assert!(err.message.contains("cannot move `p`"));
+}
+
+#[test]
+fn move_of_a_part_of_a_binding_is_e0403() {
+    let src = r#"
+        fn main() {
+            let xs = [1, 2]
+            let owned = move xs[0]
+            print(owned)
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0403");
+    assert!(err.message.contains("whole binding"));
+}
+
+#[test]
+fn move_of_a_local_binding_is_accepted() {
+    let src = r#"
+        fn take(owned: list<number>): number {
+            return owned[0]
+        }
+        fn main() {
+            let xs = [1, 2]
+            let owned = move xs
+            print(take(owned))
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn mutable_argument_must_be_a_mut_place_is_e0404() {
+    let src = r#"
+        fn bump(n: mut number): number { return n + 1 }
+        fn main() {
+            let n = 1
+            print(bump(n))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0404");
+    assert!(err.message.contains("cannot borrow `n` as mutable"));
+}
+
+#[test]
+fn overlapping_arguments_where_either_param_is_mut_are_e0404() {
+    let src = r#"
+        fn pair(a: mut number, b: number): number { return a + b }
+        fn main() {
+            let mut xs = [1, 2]
+            print(pair(xs[0], xs[0]))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0404");
+}
+
+#[test]
+fn non_literal_subscript_is_never_assumed_distinct_is_e0404() {
+    let src = r#"
+        fn pair(a: mut number, b: number): number { return a + b }
+        fn main() {
+            let mut xs = [1, 2]
+            let i = 0
+            print(pair(xs[0], xs[i]))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0404");
+}
+
+#[test]
+fn distinct_literal_subscripts_are_disjoint() {
+    let src = r#"
+        fn pair(a: mut number, b: number): number { return a + b }
+        fn main() {
+            let mut xs = [1, 2]
+            print(pair(xs[0], xs[1]))
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn mut_parameter_lends_its_borrow_onward() {
+    let src = r#"
+        fn bump(n: mut number): number { return n + 1 }
+        fn outer(n: mut number): number { return bump(n) }
+        fn main() {
+            let mut n = 1
+            print(outer(n))
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn immutable_parameter_cannot_lend_a_mutable_borrow() {
+    let src = r#"
+        fn bump(n: mut number): number { return n + 1 }
+        fn outer(n: number): number { return bump(n) }
+        fn main() {
+            let mut n = 1
+            print(outer(n))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0404");
+}
+
+#[test]
+fn write_during_an_outstanding_immutable_borrow_is_e0411() {
+    let src = r#"
+        async fn peek(xs: list<number>): number { return xs[0] }
+        async fn watch(xs: mut list<number>) {
+            let t = peek(xs)
+            xs[0] = 9
+            await t
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0411");
+    assert!(err.message.contains("cannot write `xs[0]`"));
+}
+
+#[test]
+fn reads_during_an_immutable_borrow_are_allowed() {
+    let src = r#"
+        async fn peek(xs: list<number>): number { return xs[0] }
+        async fn watch(xs: mut list<number>) {
+            let t = peek(xs)
+            let a = xs[0]
+            print(a)
+            await t
+            xs[0] = 9
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn use_during_an_outstanding_mutable_borrow_is_e0405() {
+    let src = r#"
+        async fn fill(p: mut list<number>) {
+            p[0] = 7
+        }
+        async fn main() {
+            let mut xs = [0]
+            let t = fill(xs)
+            xs[0] = 1
+            await t
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0405");
+    assert!(err.message.contains("cannot use `xs[0]`"));
+}
+
+#[test]
+fn the_borrow_ends_where_control_passes_an_await_of_the_task() {
+    let src = r#"
+        async fn fill(p: mut list<number>) {
+            p[0] = 7
+        }
+        async fn main() {
+            let mut xs = [0]
+            let t = fill(xs)
+            await t
+            xs[0] = 1
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn a_mutable_borrow_may_not_start_during_an_immutable_one() {
+    let src = r#"
+        async fn peek(xs: list<number>): number { return xs[0] }
+        async fn fill(p: mut list<number>) {
+            p[0] = 7
+        }
+        async fn main() {
+            let mut xs = [0]
+            let u = peek(xs)
+            let t = fill(xs)
+            await u
+            await t
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0404");
+    assert!(err.message.contains("already immutably borrowed"));
+}
+
+#[test]
+fn a_sync_call_leaves_nothing_outstanding() {
+    let src = r#"
+        fn bump(p: mut list<number>) {
+            p[0] = 7
+        }
+        fn main() {
+            let mut xs = [0]
+            bump(xs)
+            xs[0] = 1
+            print(xs)
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn reading_shared_contents_outside_lock_is_e0406() {
+    let src = r#"
+        fn main() {
+            let state = shared [0]
+            print(state[0])
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0406");
+    assert!(err.message.contains("shared state `state` is accessed outside `lock`"));
+}
+
+#[test]
+fn writing_shared_contents_outside_lock_is_e0406() {
+    let src = r#"
+        fn main() {
+            let state = shared [0]
+            state[0] = 1
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0406");
+}
+
+#[test]
+fn shared_contents_are_reachable_under_lock_without_let_mut() {
+    let src = r#"
+        fn main() {
+            let state = shared [0]
+            lock state {
+                state[0] = 1
+                print(state[0])
+            }
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn lock_requires_a_shared_binding_is_e0407() {
+    let src = r#"
+        fn main() {
+            let ordinary = [0]
+            lock ordinary {
+                print(ordinary)
+            }
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0407");
+    assert!(err.message.contains("`lock` requires a shared binding"));
+}
+
+#[test]
+fn a_non_shared_argument_to_a_shared_parameter_is_e0407() {
+    let src = r#"
+        fn tick(state: shared list<number>) {
+            lock state {
+                print(state[0])
+            }
+        }
+        fn main() {
+            let n = [1]
+            tick(n)
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0407");
+}
+
+#[test]
+fn a_shared_parameter_reaches_its_contents_without_its_own_lock() {
+    // The region arrives as a `shared` parameter: the caller's section (or
+    // the callee's own `lock`) is what guards it, so the parameter is not
+    // barred from its own contents.
+    let src = r#"
+        fn peek(state: shared list<number>): number {
+            return state[0]
+        }
+        fn main() {
+            let s = shared [1]
+            lock s {
+                print(peek(s))
+            }
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn an_uncaptured_enclosing_binding_in_spawn_is_e0408() {
+    let src = r#"
+        async fn main() {
+            let config = { host: "localhost" }
+            let job = spawn async {
+                print(config.host)
+            }
+            await job
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0408");
+    assert!(err.message.contains("`config` is not captured by the spawned block"));
+}
+
+#[test]
+fn a_copy_capture_makes_the_binding_visible_to_the_spawn_block() {
+    let src = r#"
+        async fn main() {
+            let config = { host: "localhost" }
+            let job = spawn async {
+                let payload = copy config
+                print(payload.host)
+            }
+            await job
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn a_move_capture_makes_the_binding_visible_to_the_spawn_block() {
+    let src = r#"
+        async fn main() {
+            let config = { host: "localhost" }
+            let job = spawn async {
+                let payload = move config
+                print(payload.host)
+            }
+            await job
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn declarations_constants_and_literals_need_no_capture() {
+    let src = r#"
+        const LIMIT: number = 10
+        fn helper(): number {
+            return 1
+        }
+        async fn main() {
+            let job = spawn async {
+                print(helper())
+                print(LIMIT)
+                print("literal")
+            }
+            await job
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn a_nested_function_inside_spawn_may_read_the_blocks_own_bindings() {
+    let src = r#"
+        async fn main() {
+            let outer = 1
+            let job = spawn async {
+                let inner = 2
+                fn helper(): number {
+                    return inner
+                }
+                print(helper())
+                print(inner)
+                print(outer)
+            }
+            await job
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0408");
+    assert!(err.message.contains("`outer` is not captured"));
+}
+
+#[test]
+fn await_unwraps_a_spawned_task() {
+    let src = r#"
+        async fn main() {
+            let job = spawn async {
+                print("work")
+            }
+            await job
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn using_a_binding_after_move_is_e0403() {
+    let src = r#"
+        fn consume(items: list<number>) {
+            print(items)
+        }
+        fn main() {
+            let items = [1, 2]
+            consume(move items)
+            print(items)
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0403");
+    assert!(err.message.contains("cannot use moved value `items`"));
+}
+
+#[test]
+fn moving_twice_is_e0403() {
+    let src = r#"
+        fn consume(items: list<number>) {
+            print(items)
+        }
+        fn main() {
+            let items = [1, 2]
+            consume(move items)
+            consume(move items)
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0403");
+    assert!(err.message.contains("cannot use moved value `items`"));
+}
+
+#[test]
+fn move_outside_let_argument_or_return_is_e0403() {
+    let src = r#"
+        fn main() {
+            let x = 1
+            let y = move x + 1
+            print(y)
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0403");
+    assert!(err.message.contains("`move` is only allowed"));
+}
+
+#[test]
+fn move_in_let_argument_and_return_positions_is_legal() {
+    let src = r#"
+        fn consume(items: list<number>) {
+            print(items)
+        }
+        fn pick(): list<number> {
+            let a = [1]
+            return move a
+        }
+        fn main() {
+            let items = [1, 2]
+            consume(move items)
+            let b = pick()
+            print(b)
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn a_service_must_declare_on_message_is_e0409() {
+    let src = r#"
+        struct Tally { total: number }
+        async fn main() {
+            let worker = spawn.process Tally { total: 0 }
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0409");
+    assert!(err.message.contains("service `Tally` declares no `on_message`"));
+}
+
+#[test]
+fn a_service_impl_may_appear_after_the_spawn() {
+    let src = r#"
+        struct Tally { total: number }
+        async fn main() {
+            let worker = spawn.process Tally { total: 0 }
+        }
+        impl Tally {
+            fn on_message(mut self, cmd: number) {
+                self.total = self.total + cmd
+            }
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn an_on_message_without_a_receiver_is_e0409() {
+    let src = r#"
+        struct Tally { total: number }
+        async fn main() {
+            let worker = spawn.process Tally { total: 0 }
+        }
+        impl Tally {
+            fn on_message(cmd: number) {
+                print(cmd)
+            }
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0409");
+    assert!(err.message.contains("receiver"));
+}
+
+#[test]
+fn reply_outside_on_message_is_an_error() {
+    let src = r#"
+        fn leak(n: number) {
+            reply(n)
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(err.message.contains("`reply` may only be called inside `on_message`"));
+}
+
+#[test]
+fn reply_inside_on_message_checks() {
+    let src = r#"
+        struct Tally { total: number }
+        impl Tally {
+            fn on_message(mut self, cmd: number) {
+                self.total = self.total + cmd
+                reply(self.total)
+            }
+        }
+        async fn main() {
+            let worker = spawn.process Tally { total: 0 }
+            let sum = await worker.send(41)
+            print(sum)
+            worker.stop()
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn task_all_of_async_calls_unwraps_to_a_list() {
+    let src = r#"
+        async fn work(n: number): number { n }
+        async fn main() {
+            let a = work(1)
+            let b = work(2)
+            let xs = await Task.all([a, b])
+            print(xs)
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn task_race_and_resolve_check() {
+    let src = r#"
+        async fn work(n: number): number { n }
+        async fn main() {
+            let a = work(1)
+            let b = work(2)
+            print(await Task.race([a, b]))
+            let ready = Task.resolve(42)
+            print(await ready)
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn task_timeout_wraps_the_task_in_a_result() {
+    let src = r#"
+        async fn work(): number { 1 }
+        async fn main() {
+            let r: Result<number, Error> = await Task.timeout(work(), 100)
+            match r {
+                Result::Ok(v) => print(v)
+                Result::Err(e) => print(e.message)
+            }
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn task_timeout_requires_a_task() {
+    let src = r#"
+        async fn main() {
+            print(await Task.timeout(42, 100))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(err.message.contains("`Task.timeout` expects a task"));
+}
+
+#[test]
+fn task_timeout_requires_a_number_deadline() {
+    let src = r#"
+        async fn main() {
+            print(await Task.timeout(Task.resolve(1), "100"))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(err
+        .message
+        .contains("`Task.timeout` millisecond count must be a `number`"));
+}
+
+#[test]
+fn task_timeout_requires_two_arguments() {
+    let src = r#"
+        async fn main() {
+            print(await Task.timeout(Task.resolve(1)))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(err
+        .message
+        .contains("`Task.timeout` expects exactly two arguments"));
+}
+
+#[test]
+fn builtin_result_and_error_construct_and_annotate() {
+    let src = r#"
+        async fn main() {
+            let ok: Result<number, Error> = Result::Ok(1)
+            let err: Result<number, Error> = Result::Err(Error("boom"))
+            let e: Error = Error("boom")
+            print(e.message)
+            match ok {
+                Result::Ok(v) => print(v)
+                Result::Err(f) => print(f.message)
+            }
+            print(err)
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn builtin_result_takes_two_type_arguments() {
+    let src = r#"
+        async fn main() {
+            let r: Result<number> = Result::Ok(1)
+            print(r)
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0230");
+    assert!(err.message.contains("`Result` expects 2 type arguments"));
+}
+
+#[test]
+fn error_call_requires_a_string_message() {
+    let src = r#"
+        async fn main() {
+            print(Error(42))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(err.message.contains("`Error` message must be a `string`"));
+}
+
+#[test]
+fn user_declared_result_shadows_the_builtin() {
+    let src = r#"
+        enum Result<T> {
+            Success(T),
+            Failure(string),
+        }
+        async fn main() {
+            let ok: Result<number> = Result::Success(1)
+            let bad: Result<number> = Result::Failure("nope")
+            match ok {
+                Result::Success(v) => print(v)
+                Result::Failure(m) => print(m)
+            }
+            print(bad)
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn task_namespace_rejects_unknown_members() {
+    let src = r#"
+        async fn main() {
+            print(await Task.nope([]))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(err.message.contains("`Task` has no member `nope`"));
+}
+
+#[test]
+fn task_all_requires_a_list() {
+    let src = r#"
+        async fn main() {
+            print(await Task.all(1))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(err.message.contains("expects a list of tasks"));
+}
+
+#[test]
+fn conflicting_reply_operands_are_e0211() {
+    let src = r#"
+        struct S { n: number }
+        impl S {
+            fn on_message(mut self, cmd: number) {
+                if cmd > 0 {
+                    reply(1)
+                } else {
+                    reply("x")
+                }
+            }
+        }
+        async fn main() {
+            let h = spawn.process S { n: 0 }
+            h.stop()
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0211");
+    assert!(err.message.contains("no common type"));
+}
+
+#[test]
+fn reply_type_flows_into_the_send_task() {
+    let src = r#"
+        struct S { n: number }
+        impl S {
+            fn on_message(mut self, cmd: number) {
+                reply(cmd)
+            }
+        }
+        async fn main() {
+            let h = spawn.process S { n: 0 }
+            let r: number = await h.send(1)
+            print(r)
+            h.stop()
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn send_task_rejects_a_mismatched_binding() {
+    let src = r#"
+        struct S { n: number }
+        impl S {
+            fn on_message(mut self, cmd: number) {
+                reply(cmd)
+            }
+        }
+        async fn main() {
+            let h = spawn.process S { n: 0 }
+            let r: string = await h.send(1)
+            print(r)
+            h.stop()
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(err.message.contains("cannot bind a value of type `number`"));
+}
+
+#[test]
+fn on_message_without_reply_settles_unit() {
+    let src = r#"
+        struct S { n: number }
+        impl S {
+            fn on_message(mut self, cmd: number) {
+                self.n = cmd
+            }
+        }
+        async fn main() {
+            let h = spawn.process S { n: 0 }
+            let r = await h.send(1)
+            print(r)
+            h.stop()
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+// ----------------------------------------------------------------
+// A4: generic `impl` applicability (spec `types/traits.md`,
+// "When an impl applies", E0102/E0809 member-call resolution)
+// ----------------------------------------------------------------
+
+#[test]
+fn generic_impl_applies_to_instantiated_receiver() {
+    // The spec's `Palette<T: Area>` example: `Rect: Area`, so the impl
+    // applies and `render` resolves with its declared return type.
+    let src = r#"
+        trait Area { fn area(self): number }
+        struct Palette<T> { shape: T }
+        struct Rect { w: number, h: number }
+        impl Area for Rect {
+            fn area(self): number { return self.w * self.h }
+        }
+        impl<T: Area> Palette<T> {
+            fn render(self): number { return 12 }
+        }
+        fn main() {
+            let ok = { shape: { w: 3, h: 4 } }
+            let n: number = ok.render()
+            print(str(n))
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn generic_impl_bound_unsatisfied_is_e0102() {
+    // The same `Palette<T: Area>` example with `Dot` (no `Area` impl): the
+    // impl contributes nothing for `Palette<Dot>`, so `render` is missing
+    // (spec `types/traits.md`: error[E0102], `no member ... on ...`).
+    let src = r#"
+        trait Area { fn area(self): number }
+        struct Palette<T> { shape: T }
+        struct Rect { w: number, h: number }
+        struct Dot { r: number }
+        impl Area for Rect {
+            fn area(self): number { return self.w * self.h }
+        }
+        impl<T: Area> Palette<T> {
+            fn render(self): number { return 12 }
+        }
+        fn main() {
+            let bad = { shape: { r: 1 } }
+            print(str(bad.render()))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0102");
+    assert!(
+        err.message
+            .contains("no member `render` on `Palette<Dot>`"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn generic_inherent_impl_member_returns_instantiated_type() {
+    // `impl<T> Holder<T> { fn get(self): T }` resolves for a
+    // `Holder<number>` receiver with `T` substituted back to `number`.
+    let src = r#"
+        struct Holder<T> { value: T }
+        impl<T> Holder<T> {
+            fn get(self): T { self.value }
+        }
+        fn main() {
+            let h = { value: 42 }
+            let n: number = h.get()
+            print(str(n))
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn repeated_pattern_parameter_must_bind_one_type() {
+    // `impl<T> Pair<T, T>` applies to `Pair<number, number>`; a literal
+    // whose fields disagree cannot instantiate it (inference conflict
+    // falls back to the argument-less type, which the pattern's arity then
+    // rejects).
+    let src = r#"
+        struct Pair<A, B> { first: A, second: B }
+        impl<T> Pair<T, T> {
+            fn duplicated(self): T { self.first }
+        }
+        fn main() {
+            let p = { first: 1, second: "x" }
+            print(str(p.duplicated()))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0102");
+    assert!(
+        err.message.contains("no member `duplicated` on `Pair<number, string>`"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn member_missing_on_plain_struct_is_e0102() {
+    // Step 1 and step 2 of member-call resolution both find nothing for a
+    // struct with no applicable impl: E0102, not the loose `any`.
+    let src = r#"
+        struct User { name: string }
+        fn main() {
+            let u = { name: "a" }
+            print(str(u.nope()))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0102");
+    assert!(
+        err.message.contains("no member `nope` on `User`"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn ambiguous_trait_member_is_e0809() {
+    // Two applicable trait impls both declaring `grow`: the member call has
+    // more than one candidate and must be disambiguated with explicit
+    // dispatch (spec `types/traits.md`).
+    let src = r#"
+        trait Grow { fn grow(self): number }
+        trait Spurt { fn grow(self): number }
+        struct Rect { w: number }
+        impl Grow for Rect {
+            fn grow(self): number { return 1 }
+        }
+        impl Spurt for Rect {
+            fn grow(self): number { return 2 }
+        }
+        fn main() {
+            let r = { w: 1 }
+            print(str(r.grow()))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0809");
+    assert!(
+        err.message
+            .contains("multiple applicable implementations of `grow` for `Rect`"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn bound_check_requires_applicable_impl_not_mere_name() {
+    // `impl<T: Show> Show for Wrapper<T>` registers `(Show, Wrapper)`, but
+    // for `Wrapper<Dot>` its own bound fails, so the impl contributes
+    // nothing: inferring `T = Wrapper<Dot>` against `T: Show` must reject
+    // it (E0801) instead of answering from the registered name alone.
+    let src = r#"
+        trait Show { fn show(self): string }
+        struct Dot { r: number }
+        struct Wrapper<T> { inner: T }
+        impl<T: Show> Show for Wrapper<T> {
+            fn show(self): string { return "w" }
+        }
+        fn accept<T: Show>(x: T): string { return "s" }
+        fn main() {
+            let w = { inner: { r: 1 } }
+            print(accept(w))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0801");
+    assert!(
+        err.message
+            .contains("`Wrapper<Dot>` does not implement `Show`"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn dispatch_on_generic_impl_receiver_is_gated_by_applicability() {
+    // Explicit dispatch registers `(Show, Wrapper)`, but the impl cannot be
+    // instantiated for `Wrapper<Dot>`: dispatch reports "does not implement"
+    // the same way a missing impl does.
+    let src = r#"
+        trait Show { fn show(self): string }
+        struct Dot { r: number }
+        struct Wrapper<T> { inner: T }
+        impl<T: Show> Show for Wrapper<T> {
+            fn show(self): string { return "w" }
+        }
+        fn main() {
+            let w = { inner: { r: 1 } }
+            print(Show::show(w))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(
+        err.message.contains("does not implement trait `Show`"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn dispatch_applies_when_generic_impl_instantiates() {
+    // Same shape, but `Dot` does implement `Show`: the bound holds for the
+    // instantiation `T = Dot`, so dispatch resolves.
+    let src = r#"
+        trait Show { fn show(self): string }
+        struct Dot { r: number }
+        struct Wrapper<T> { inner: T }
+        impl Show for Dot {
+            fn show(self): string { return "d" }
+        }
+        impl<T: Show> Show for Wrapper<T> {
+            fn show(self): string { return "w" }
+        }
+        fn main() {
+            let w = { inner: { r: 1 } }
+            let s: string = Show::show(w)
+            print(s)
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn impl_receiver_argument_count_must_match_declaration() {
+    // The receiver of an `impl` is a type application too: `Pair` takes two
+    // arguments, so `impl Pair<number>` is E0230 at the impl site.
+    let src = r#"
+        struct Pair<A, B> { first: A, second: B }
+        impl Pair<number> {
+            fn first_of(self): number { return self.first }
+        }
+        fn main() { print(1) }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0230");
+    assert!(
+        err.message.contains("`Pair` expects 2 type arguments, found 1"),
+        "unexpected message: {}",
+        err.message
+    );
 }

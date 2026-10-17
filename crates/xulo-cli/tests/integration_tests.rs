@@ -1317,10 +1317,10 @@ fn run_member_and_index_assignment() {
         "mut.xulo",
         r#"
         fn main() {
-            let xs: list<number> = [1, 2, 3]
+            let mut xs: list<number> = [1, 2, 3]
             xs[0] = 10
             xs[2] = 30
-            let user = { age: 20 }
+            let mut user = { age: 20 }
             user.age = user.age + 5
             print(xs[0] + xs[1] + user.age)
         }
@@ -1462,7 +1462,7 @@ fn run_typed_object_read_and_assign() {
         "typed.xulo",
         r#"
         fn main() {
-            let people = [{ name: "a", age: 1 }, { name: "b", age: 2 }]
+            let mut people = [{ name: "a", age: 1 }, { name: "b", age: 2 }]
             people[1].age = people[1].age + 1
             print(people[0].name)
             print(people[1].age)

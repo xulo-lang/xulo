@@ -399,7 +399,7 @@ fn for_over_list_iterates_live_like_js() {
     let out = run_ok(
         r#"
         fn main() {
-            let xs = [1, 2]
+            let mut xs = [1, 2]
             for x in xs {
                 print(str(x))
                 xs[1] = 99
@@ -540,7 +540,7 @@ fn list_index_validates_integer_indices() {
     );
 
     // Assignments go through the same validation.
-    let err = run(r#"fn main() { let xs = [10, 20, 30] xs[0.5] = 1 print(xs) }"#).unwrap_err();
+    let err = run(r#"fn main() { let mut xs = [10, 20, 30] xs[0.5] = 1 print(xs) }"#).unwrap_err();
     assert!(
         err.message.contains("non-negative integer"),
         "got: {}",
@@ -627,7 +627,7 @@ fn cyclic_values_print_without_overflowing() {
     let out = run_ok(
         r#"
         fn main() {
-            let o: object = {}
+            let mut o: object = {}
             o.x = o
             print(o)
         }
@@ -667,7 +667,7 @@ fn object_literal_member_access_and_assign() {
     let out = run_ok(
         r#"
         fn main() {
-            let person = { name: "lyy", age: 30 }
+            let mut person = { name: "lyy", age: 30 }
             print(person.name)
             person.age = 31
             print(person.age)
@@ -696,7 +696,7 @@ fn index_read_write() {
     let out = run_ok(
         r#"
         fn main() {
-            let xs = [10, 20, 30]
+            let mut xs = [10, 20, 30]
             print(xs[1])
             xs[1] = 99
             print(xs)
@@ -714,7 +714,7 @@ fn list_alias_is_shared_like_js() {
         r#"
         fn main() {
             let a = [1, 2]
-            let b = a
+            let mut b = a
             b[0] = 9
             print(a)
         }
@@ -2313,4 +2313,73 @@ fn struct_instance_method_dispatch() {
         ),
         vec!["Hi Bob"]
     );
+}
+
+#[test]
+fn generic_impl_member_call_end_to_end() {
+    // A generic inherent impl is type-erased at run time: the method lives
+    // on the struct object and answers for any instantiation.
+    let out = run_ok(
+        r#"
+            struct Holder<T> { value: T }
+            impl<T> Holder<T> {
+                fn get(self): T { self.value }
+            }
+            fn main() {
+                let h = { value: 42 }
+                print(str(h.get()))
+            }
+        "#,
+    );
+    assert_eq!(out, vec!["42"]);
+}
+
+#[test]
+fn bounded_generic_impl_applies_at_runtime() {
+    // The spec's `Palette<T: Area>` example end to end: the receiver's
+    // instantiated argument satisfies the bound, so `render` resolves
+    // (spec `types/traits.md`, "When an impl applies").
+    let out = run_ok(
+        r#"
+            trait Area { fn area(self): number }
+            struct Palette<T> { shape: T }
+            struct Rect { w: number, h: number }
+            impl Area for Rect {
+                fn area(self): number { return self.w * self.h }
+            }
+            impl<T: Area> Palette<T> {
+                fn render(self): number { return 12 }
+            }
+            fn main() {
+                let ok = { shape: { w: 3, h: 4 } }
+                print(str(ok.render()))
+            }
+        "#,
+    );
+    assert_eq!(out, vec!["12"]);
+}
+
+#[test]
+fn generic_impl_dispatch_end_to_end() {
+    // Explicit dispatch through a generic impl whose bound holds for the
+    // receiver's instantiation (`T = Dot`, `Dot: Show`).
+    let out = run_annotated(
+        r#"
+            trait Show { fn show(self): string }
+            struct Dot { r: number }
+            struct Wrapper<T> { inner: T }
+            impl Show for Dot {
+                fn show(self): string { return "d" }
+            }
+            impl<T: Show> Show for Wrapper<T> {
+                fn show(self): string { return "w" }
+            }
+            fn main() {
+                let w = { inner: { r: 1 } }
+                print(Show::show(w))
+            }
+        "#,
+    )
+    .unwrap_or_else(|e| panic!("{}", e.message));
+    assert_eq!(out, vec!["w"]);
 }

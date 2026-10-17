@@ -6,8 +6,8 @@ use xulo_core::ast::{
     AssignStmt, BindingPattern, Block, ComponentStmt, DeferBody, DeferStmt, EffectStmt, EnumDef,
     EnumPayloadParam, EnumVariant, EnvStmt, ExportItem, ExportStmt, ExprStmt, Expression, FnBound,
     FnDef, ForStmt, ImplDecl, ImportSpec, ImportStmt, LetBinding, Param, ParamMode, ReturnStmt,
-    StateStmt, Statement, StoreStmt, StructDef, StructField, TraitDecl, TraitMethod, TypeAlias,
-    UiElement, WhileStmt,
+    StateStmt, Statement, StoreStmt, StructDef, StructField, TraitDecl, TraitMethod, Type,
+    TypeAlias, UiElement, WhileStmt,
 };
 use xulo_core::error::XuloError;
 
@@ -280,7 +280,22 @@ fn trait_bound(pair: Pair<'_, Rule>) -> R<Vec<String>> {
     let mut traits = Vec::new();
     for p in pair.into_inner() {
         check_rule(&p, Rule::type_expr)?;
-        traits.push(type_expr(p)?.name());
+        let ty = type_expr(p.clone())?;
+        // A bound names a trait, never an application of one: a trait is not a
+        // type constructor (spec `types/generics.md`, E0811).
+        if let Type::Named(_, args) = &ty
+            && !args.is_empty()
+        {
+            return Err(err(
+                format!(
+                    "`{}` applies type arguments; a trait has none",
+                    ty.display()
+                ),
+                span_of(&p),
+            )
+            .with_code("E0811"));
+        }
+        traits.push(ty.name());
     }
     Ok(traits)
 }
@@ -313,6 +328,7 @@ fn struct_decl(pair: Pair<'_, Rule>) -> R<StructDef> {
     let mut name = String::new();
     let mut name_span = 0..0;
     let mut type_params = Vec::new();
+    let mut type_bounds = Vec::new();
     let mut fields = Vec::new();
     for p in pair.into_inner() {
         match p.as_rule() {
@@ -322,7 +338,9 @@ fn struct_decl(pair: Pair<'_, Rule>) -> R<StructDef> {
                 name_span = span_of(&p);
             }
             Rule::generic_params => {
-                type_params = generic_params(p)?.0;
+                let (tp, bd) = generic_params(p)?;
+                type_params = tp;
+                type_bounds = bd;
             }
             Rule::field_list => {
                 for f in p.into_inner() {
@@ -357,6 +375,7 @@ fn struct_decl(pair: Pair<'_, Rule>) -> R<StructDef> {
         name,
         name_span,
         type_params,
+        type_bounds,
         fields,
         span,
     })
@@ -366,6 +385,7 @@ fn enum_decl(pair: Pair<'_, Rule>) -> R<EnumDef> {
     let mut name = String::new();
     let mut name_span = 0..0;
     let mut type_params = Vec::new();
+    let mut type_bounds = Vec::new();
     let mut variants = Vec::new();
     for p in pair.into_inner() {
         match p.as_rule() {
@@ -375,7 +395,9 @@ fn enum_decl(pair: Pair<'_, Rule>) -> R<EnumDef> {
                 name_span = span_of(&p);
             }
             Rule::generic_params => {
-                type_params = generic_params(p)?.0;
+                let (tp, bd) = generic_params(p)?;
+                type_params = tp;
+                type_bounds = bd;
             }
             Rule::variant_list => {
                 for v in p.into_inner() {
@@ -405,6 +427,7 @@ fn enum_decl(pair: Pair<'_, Rule>) -> R<EnumDef> {
         name,
         name_span,
         type_params,
+        type_bounds,
         variants,
     })
 }
@@ -516,18 +539,30 @@ fn impl_decl(pair: Pair<'_, Rule>) -> R<ImplDecl> {
     let span = span_of(&pair);
     let mut trait_name = String::new();
     let mut type_name = String::new();
+    let mut type_params = Vec::new();
+    let mut type_bounds = Vec::new();
+    let mut type_args = Vec::new();
     let mut methods = Vec::new();
     let mut is_inherent = true;
     let mut seen_type = false;
     for p in pair.into_inner() {
         match p.as_rule() {
-            Rule::generic_params | Rule::kw_impl | Rule::kw_for => {}
+            Rule::kw_impl | Rule::kw_for => {}
+            Rule::generic_params => {
+                let (params, bounds) = generic_params(p)?;
+                type_params = params;
+                type_bounds = bounds;
+            }
             Rule::identifier if !seen_type => {
                 trait_name = p.as_str().to_string();
                 is_inherent = false;
             }
             Rule::type_expr => {
-                type_name = type_expr(p)?.name();
+                let ty = type_expr(p)?;
+                type_name = ty.name();
+                if let Type::Named(_, args) = ty {
+                    type_args = args;
+                }
                 seen_type = true;
             }
             Rule::fn_decl => methods.push(fn_decl(p)?),
@@ -537,6 +572,9 @@ fn impl_decl(pair: Pair<'_, Rule>) -> R<ImplDecl> {
     Ok(ImplDecl {
         trait_name,
         type_name,
+        type_params,
+        type_bounds,
+        type_args,
         methods,
         span,
         is_inherent,
@@ -547,6 +585,7 @@ fn type_alias(pair: Pair<'_, Rule>) -> R<TypeAlias> {
     let mut name = String::new();
     let mut name_span = 0..0;
     let mut type_params = Vec::new();
+    let mut type_bounds = Vec::new();
     let mut type_ = None;
     for p in pair.into_inner() {
         match p.as_rule() {
@@ -556,7 +595,9 @@ fn type_alias(pair: Pair<'_, Rule>) -> R<TypeAlias> {
                 name_span = span_of(&p);
             }
             Rule::generic_params => {
-                type_params = generic_params(p)?.0;
+                let (tp, bd) = generic_params(p)?;
+                type_params = tp;
+                type_bounds = bd;
             }
             Rule::type_expr => type_ = Some(type_expr(p)?),
             _ => unreachable!("type_alias child {:?}", p.as_rule()),
@@ -566,6 +607,7 @@ fn type_alias(pair: Pair<'_, Rule>) -> R<TypeAlias> {
         name,
         name_span,
         type_params,
+        type_bounds,
         type_: type_.expect("type_alias has a type"),
     })
 }
@@ -918,29 +960,6 @@ fn while_stmt(pair: Pair<'_, Rule>) -> R<WhileStmt> {
     Ok(WhileStmt { condition, body })
 }
 
-fn assignment(pair: Pair<'_, Rule>) -> R<Statement> {
-    let span = span_of(&pair);
-    let mut inner = pair.into_inner();
-    let place = next(&mut inner, Rule::place);
-    let target = assign_target(place)?;
-    let _op = next(&mut inner, Rule::assign_op);
-    let rhs = next(&mut inner, Rule::assignment_expression);
-    let mut parts = rhs.into_inner();
-    let first = next(&mut parts, Rule::ternary_expression);
-    if parts.next().is_some() {
-        return Err(err(
-            "chained assignment is not supported; split `a = b = c` into two statements",
-            span,
-        ));
-    }
-    let value = ternary_entry(first)?;
-    Ok(Statement::Assign(AssignStmt {
-        target,
-        value,
-        span,
-    }))
-}
-
 pub(crate) fn statement(pair: Pair<'_, Rule>) -> R<Statement> {
     let stmt_span = span_of(&pair);
     let inner = single(pair);
@@ -974,11 +993,34 @@ fn inner_statement(pair: Pair<'_, Rule>) -> R<Statement> {
             let expr = component_call(pair)?;
             statement_from_expr(expr, span)
         }
-        Rule::assignment => assignment(pair),
-        Rule::expression_statement => {
+        Rule::expr_stmt_or_assignment => {
             let span = span_of(&pair);
-            let expr = ternary_entry(single(pair))?;
-            statement_from_expr(expr, span)
+            let mut inner = pair.into_inner();
+            let lhs = next(&mut inner, Rule::ternary_expression);
+            let lhs_span = span_of(&lhs);
+            let expr = ternary_entry(lhs)?;
+            match inner.next() {
+                None => statement_from_expr(expr, span),
+                Some(op) if op.as_rule() == Rule::assign_op => {
+                    let rhs = next(&mut inner, Rule::assignment_expression);
+                    let mut parts = rhs.into_inner();
+                    let first = next(&mut parts, Rule::ternary_expression);
+                    if parts.next().is_some() {
+                        return Err(err(
+                            "chained assignment is not supported; split `a = b = c` into two statements",
+                            span,
+                        ));
+                    }
+                    let value = ternary_entry(first)?;
+                    let target = assign_target(expr, lhs_span)?;
+                    Ok(Statement::Assign(AssignStmt {
+                        target,
+                        value,
+                        span,
+                    }))
+                }
+                Some(other) => unreachable!("expr_stmt_or_assignment child {:?}", other.as_rule()),
+            }
         }
         _ => unreachable!("inner_statement {:?}", pair.as_rule()),
     }
