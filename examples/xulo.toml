@@ -1,0 +1,2 @@
+[dependencies]
+"@xulo/ui" = { version = "1.2", alias = "ui" }

@@ -36,17 +36,18 @@ pub fn render(err: &XuloError, source: Option<&str>) -> String {
     let mut out = String::new();
     let is_warning = err.kind == ErrorKind::Warning;
     let severity = if is_warning { "warning" } else { "error" };
-    let mut header = format!(
-        "{}[{}]",
-        paint(BOLD, severity),
-        paint(CYAN, err.code())
-    );
+    let mut header = format!("{}[{}]", paint(BOLD, severity), paint(CYAN, err.code()));
     if !is_warning {
         header.push_str(&format!(" {}", err.kind.label()));
     }
     header.push_str(&format!(": {}", err.message));
     out.push_str(&header);
     out.push('\n');
+    if let Some(note) = &err.note
+        && err.span.is_none()
+    {
+        out.push_str(&format!("  = note: {}\n", paint(BOLD, note)));
+    }
 
     let Some(span) = &err.span else {
         if let Some(f) = &err.file {
@@ -100,6 +101,9 @@ pub fn render(err: &XuloError, source: Option<&str>) -> String {
     out.push_str(&" ".repeat(caret_col));
     out.push_str(&paint(CYAN, &"^".repeat(visible.max(1))));
     out.push('\n');
+    if let Some(note) = &err.note {
+        out.push_str(&format!("  = note: {}\n", paint(BOLD, note)));
+    }
 
     out
 }

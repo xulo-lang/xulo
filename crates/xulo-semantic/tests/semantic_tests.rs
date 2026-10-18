@@ -346,7 +346,9 @@ fn number_string_concat_is_rejected() {
 fn str_converts_any_value_to_string() {
     assert!(analyze_src(r#"fn main() { print("got " + str(42)) }"#).is_ok());
     assert!(analyze_src(r#"fn main() { print("v=" + str(true)) }"#).is_ok());
-    assert!(analyze_src(r#"fn main() { print("n=" + str(null)) }"#).is_ok());
+    // `null` has no string form (spec `builtins/intrinsic-functions.md`).
+    let err = analyze_src(r#"fn main() { print("n=" + str(null)) }"#).unwrap_err();
+    assert_eq!(err.code(), "E0212", "unexpected message: {}", err.message);
 }
 
 #[test]
@@ -542,17 +544,6 @@ fn awaits_sync_call_is_ok_but_non_promise_is_an_error() {
         .unwrap_err();
     assert!(err.message.contains("non-promise"));
     let _ = ok;
-}
-
-#[test]
-fn imported_symbols_are_checked_against_exported_signatures() {
-    let src = r#"
-        import { add as sum } from "./math"
-        fn main() { print(sum(1, 2)) }
-    "#;
-    // Without a module graph the import is opaque (Any), so it must still parse
-    // and analyze successfully.
-    assert!(analyze_src(src).is_ok());
 }
 
 #[test]
@@ -1253,7 +1244,9 @@ fn effect_closure_rejects_parameters() {
 
 #[test]
 fn index_assignment_is_type_checked_on_typed_list() {
-    assert!(analyze_src("fn main() { let mut xs: list<number> = [1] xs[0] = 5 print(xs) }").is_ok());
+    assert!(
+        analyze_src("fn main() { let mut xs: list<number> = [1] xs[0] = 5 print(xs) }").is_ok()
+    );
     let err = analyze_src("fn main() { let mut xs: list<number> = [1] xs[0] = \"s\" print(xs) }")
         .unwrap_err();
     assert!(
@@ -1740,18 +1733,27 @@ fn store_destructure_binds_fields() {
 
 #[test]
 fn enum_name_can_be_reexported() {
-    // `pub use { Color }` re-exports an enum (which has runtime value); a type
-    // alias cannot be re-exported by bare name and gets an honest message.
+    // The header (`use`/`pub use`) precedes every declaration (E0605), so
+    // `pub use { Color }` runs before the enum exists and is validated at
+    // the end of the pass: a `pub` enum re-exports, a type alias gets an
+    // honest message, and a private declaration is E0602.
     assert!(
-        analyze_src("enum Color { Red Blue }\npub use { Color }\nfn main() { print(1) }").is_ok()
+        analyze_src("pub use { Color };\npub enum Color { Red Blue }\nfn main() { print(1) }")
+            .is_ok()
     );
     let err =
-        analyze_src("type Rect = object\npub use { Rect }\nfn main() { print(1) }").unwrap_err();
+        analyze_src("pub use { Rect };\ntype Rect = object\nfn main() { print(1) }").unwrap_err();
     assert!(
         err.message.contains("no runtime value"),
         "got: {}",
         err.message
     );
+    assert_eq!(err.code(), "E0602");
+    let err =
+        analyze_src("pub use { Secret };\nenum Secret { A }\nfn main() { print(1) }").unwrap_err();
+    assert_eq!(err.code(), "E0602", "got: {}", err.message);
+    let err = analyze_src("pub use { nowhere };\nfn main() { print(1) }").unwrap_err();
+    assert_eq!(err.code(), "E0101", "got: {}", err.message);
 }
 
 #[test]
@@ -2987,13 +2989,13 @@ fn object_destructuring_duplicate_binding_is_error() {
 }
 
 // ---------------------------------------------------------------------------
-// `test fn` (spec testing.md)
+// `#Test fn` (spec testing.md)
 // ---------------------------------------------------------------------------
 
 #[test]
 fn test_fn_body_is_checked() {
     let src = r#"
-        test fn checked() {
+        #Test fn checked() {
             let x: number = "not a number"
         }
     "#;
@@ -3010,7 +3012,7 @@ fn test_fn_body_sees_module_declarations() {
     let src = r#"
         fn helper(): number { return 42 }
         const LIMIT = 10
-        test fn sees_module() {
+        #Test fn sees_module() {
             let a = helper()
             let b = LIMIT
             assert(a == 42, "helper")
@@ -3023,7 +3025,7 @@ fn test_fn_body_sees_module_declarations() {
 #[test]
 fn test_fn_reference_is_forbidden() {
     let src = r#"
-        test fn forbidden() {
+        #Test fn forbidden() {
             assert(true, "ok")
         }
         fn main() {
@@ -3042,7 +3044,7 @@ fn test_fn_reference_is_forbidden() {
 #[test]
 fn test_fn_value_reference_is_forbidden() {
     let src = r#"
-        test fn forbidden() {
+        #Test fn forbidden() {
             assert(true, "ok")
         }
         fn main() {
@@ -3061,7 +3063,7 @@ fn test_fn_value_reference_is_forbidden() {
 #[test]
 fn test_fn_self_reference_is_forbidden() {
     let src = r#"
-        test fn recursive() {
+        #Test fn recursive() {
             recursive()
         }
     "#;
@@ -3080,7 +3082,7 @@ fn test_fn_reference_before_declaration_is_forbidden() {
         fn main() {
             later()
         }
-        test fn later() {
+        #Test fn later() {
             assert(true, "ok")
         }
     "#;
@@ -3096,8 +3098,8 @@ fn test_fn_reference_before_declaration_is_forbidden() {
 #[test]
 fn test_fn_await_needs_async_marker() {
     let src = r#"
-        test fn sync_test() {
-            await Time.sleep(1)
+        #Test fn sync_test() {
+            await Time::sleep(1)
         }
     "#;
     let err = analyze_src(src).unwrap_err();
@@ -3112,7 +3114,7 @@ fn test_fn_await_needs_async_marker() {
 fn test_async_fn_await_is_allowed() {
     let src = r#"
         async fn load(): number { return 1 }
-        test async fn async_test() {
+        #Test async fn async_test() {
             let v = await load()
             assert(v == 1, "loaded")
         }
@@ -3123,10 +3125,10 @@ fn test_async_fn_await_is_allowed() {
 #[test]
 fn test_fn_duplicate_names_are_allowed() {
     let src = r#"
-        test fn same_name() {
+        #Test fn same_name() {
             assert(true, "first")
         }
-        test fn same_name() {
+        #Test fn same_name() {
             assert(true, "second")
         }
     "#;
@@ -3140,7 +3142,7 @@ fn test_fn_trailing_expression_is_not_an_implicit_return() {
     // number-returning call in `return` position must fail.
     let src = r#"
         fn num(): number { return 1 }
-        test fn t() {
+        #Test fn t() {
             return num()
         }
     "#;
@@ -3234,7 +3236,8 @@ fn type_application_arity_mismatch_is_e0230() {
     let err = analyze_src(src).unwrap_err();
     assert_eq!(err.code(), "E0230");
     assert!(
-        err.message.contains("`Pair` expects 2 type arguments, found 1"),
+        err.message
+            .contains("`Pair` expects 2 type arguments, found 1"),
         "unexpected message: {}",
         err.message
     );
@@ -3245,8 +3248,8 @@ fn well_formed_type_application_is_accepted() {
     let src = r#"
         struct Pair<A, B> { a: A, b: B }
         fn main() {
-            let ok: Pair<string, number> = { a: 1, b: 2 }
-            print(str(ok))
+            let ok: Pair<string, number> = { a: "x", b: 2 }
+            let also_ok: Pair<number, string> = { a: 1, b: "y" }
         }
     "#;
     assert!(analyze_src(src).is_ok());
@@ -3280,7 +3283,8 @@ fn bare_generic_name_is_e0230() {
     let err = analyze_src(src).unwrap_err();
     assert_eq!(err.code(), "E0230");
     assert!(
-        err.message.contains("`List` expects 1 type argument, found 0"),
+        err.message
+            .contains("`List` expects 1 type argument, found 0"),
         "unexpected message: {}",
         err.message
     );
@@ -3297,7 +3301,8 @@ fn arguments_on_a_non_generic_name_are_e0230() {
     let err = analyze_src(src).unwrap_err();
     assert_eq!(err.code(), "E0230");
     assert!(
-        err.message.contains("`number` expects 0 type arguments, found 1"),
+        err.message
+            .contains("`number` expects 0 type arguments, found 1"),
         "unexpected message: {}",
         err.message
     );
@@ -3312,7 +3317,8 @@ fn applied_type_parameter_is_e0230() {
     let err = analyze_src(src).unwrap_err();
     assert_eq!(err.code(), "E0230");
     assert!(
-        err.message.contains("`T` is a type parameter, so it takes no type arguments"),
+        err.message
+            .contains("`T` is a type parameter, so it takes no type arguments"),
         "unexpected message: {}",
         err.message
     );
@@ -3335,7 +3341,8 @@ fn trait_declaring_type_parameters_is_e0810() {
     let err = analyze_src(src).unwrap_err();
     assert_eq!(err.code(), "E0810");
     assert!(
-        err.message.contains("a trait may not declare type parameters"),
+        err.message
+            .contains("a trait may not declare type parameters"),
         "unexpected message: {}",
         err.message
     );
@@ -3427,7 +3434,10 @@ fn conflicting_type_argument_inference_is_e0202() {
     "#;
     let err = analyze_src(src).unwrap_err();
     assert_eq!(err.code(), "E0202");
-    assert!(err.message.contains("expected `number` for `T`, found `string`"));
+    assert!(
+        err.message
+            .contains("expected `number` for `T`, found `string`")
+    );
 }
 
 #[test]
@@ -3815,7 +3825,10 @@ fn reading_shared_contents_outside_lock_is_e0406() {
     "#;
     let err = analyze_src(src).unwrap_err();
     assert_eq!(err.code(), "E0406");
-    assert!(err.message.contains("shared state `state` is accessed outside `lock`"));
+    assert!(
+        err.message
+            .contains("shared state `state` is accessed outside `lock`")
+    );
 }
 
 #[test]
@@ -3908,7 +3921,10 @@ fn an_uncaptured_enclosing_binding_in_spawn_is_e0408() {
     "#;
     let err = analyze_src(src).unwrap_err();
     assert_eq!(err.code(), "E0408");
-    assert!(err.message.contains("`config` is not captured by the spawned block"));
+    assert!(
+        err.message
+            .contains("`config` is not captured by the spawned block")
+    );
 }
 
 #[test]
@@ -4073,7 +4089,10 @@ fn a_service_must_declare_on_message_is_e0409() {
     "#;
     let err = analyze_src(src).unwrap_err();
     assert_eq!(err.code(), "E0409");
-    assert!(err.message.contains("service `Tally` declares no `on_message`"));
+    assert!(
+        err.message
+            .contains("service `Tally` declares no `on_message`")
+    );
 }
 
 #[test]
@@ -4118,7 +4137,10 @@ fn reply_outside_on_message_is_an_error() {
         }
     "#;
     let err = analyze_src(src).unwrap_err();
-    assert!(err.message.contains("`reply` may only be called inside `on_message`"));
+    assert!(
+        err.message
+            .contains("`reply` may only be called inside `on_message`")
+    );
 }
 
 #[test]
@@ -4148,7 +4170,7 @@ fn task_all_of_async_calls_unwraps_to_a_list() {
         async fn main() {
             let a = work(1)
             let b = work(2)
-            let xs = await Task.all([a, b])
+            let xs = await Task::all([a, b])
             print(xs)
         }
     "#;
@@ -4162,8 +4184,8 @@ fn task_race_and_resolve_check() {
         async fn main() {
             let a = work(1)
             let b = work(2)
-            print(await Task.race([a, b]))
-            let ready = Task.resolve(42)
+            print(await Task::race([a, b]))
+            let ready = Task::resolve(42)
             print(await ready)
         }
     "#;
@@ -4175,7 +4197,7 @@ fn task_timeout_wraps_the_task_in_a_result() {
     let src = r#"
         async fn work(): number { 1 }
         async fn main() {
-            let r: Result<number, Error> = await Task.timeout(work(), 100)
+            let r: Result<number, Error> = await Task::timeout(work(), 100)
             match r {
                 Result::Ok(v) => print(v)
                 Result::Err(e) => print(e.message)
@@ -4189,37 +4211,39 @@ fn task_timeout_wraps_the_task_in_a_result() {
 fn task_timeout_requires_a_task() {
     let src = r#"
         async fn main() {
-            print(await Task.timeout(42, 100))
+            print(await Task::timeout(42, 100))
         }
     "#;
     let err = analyze_src(src).unwrap_err();
-    assert!(err.message.contains("`Task.timeout` expects a task"));
+    assert!(err.message.contains("`Task::timeout` expects a task"));
 }
 
 #[test]
 fn task_timeout_requires_a_number_deadline() {
     let src = r#"
         async fn main() {
-            print(await Task.timeout(Task.resolve(1), "100"))
+            print(await Task::timeout(Task::resolve(1), "100"))
         }
     "#;
     let err = analyze_src(src).unwrap_err();
-    assert!(err
-        .message
-        .contains("`Task.timeout` millisecond count must be a `number`"));
+    assert!(
+        err.message
+            .contains("`Task::timeout` millisecond count must be a `number`")
+    );
 }
 
 #[test]
 fn task_timeout_requires_two_arguments() {
     let src = r#"
         async fn main() {
-            print(await Task.timeout(Task.resolve(1)))
+            print(await Task::timeout(Task::resolve(1)))
         }
     "#;
     let err = analyze_src(src).unwrap_err();
-    assert!(err
-        .message
-        .contains("`Task.timeout` expects exactly two arguments"));
+    assert!(
+        err.message
+            .contains("`Task::timeout` expects exactly two arguments")
+    );
 }
 
 #[test]
@@ -4288,7 +4312,7 @@ fn user_declared_result_shadows_the_builtin() {
 fn task_namespace_rejects_unknown_members() {
     let src = r#"
         async fn main() {
-            print(await Task.nope([]))
+            print(await Task::nope([]))
         }
     "#;
     let err = analyze_src(src).unwrap_err();
@@ -4299,7 +4323,7 @@ fn task_namespace_rejects_unknown_members() {
 fn task_all_requires_a_list() {
     let src = r#"
         async fn main() {
-            print(await Task.all(1))
+            print(await Task::all(1))
         }
     "#;
     let err = analyze_src(src).unwrap_err();
@@ -4439,8 +4463,7 @@ fn generic_impl_bound_unsatisfied_is_e0102() {
     let err = analyze_src(src).unwrap_err();
     assert_eq!(err.code(), "E0102");
     assert!(
-        err.message
-            .contains("no member `render` on `Palette<Dot>`"),
+        err.message.contains("no member `render` on `Palette<Dot>`"),
         "unexpected message: {}",
         err.message
     );
@@ -4483,7 +4506,8 @@ fn repeated_pattern_parameter_must_bind_one_type() {
     let err = analyze_src(src).unwrap_err();
     assert_eq!(err.code(), "E0102");
     assert!(
-        err.message.contains("no member `duplicated` on `Pair<number, string>`"),
+        err.message
+            .contains("no member `duplicated` on `Pair<number, string>`"),
         "unexpected message: {}",
         err.message
     );
@@ -4630,16 +4654,17 @@ fn impl_receiver_argument_count_must_match_declaration() {
     let err = analyze_src(src).unwrap_err();
     assert_eq!(err.code(), "E0230");
     assert!(
-        err.message.contains("`Pair` expects 2 type arguments, found 1"),
+        err.message
+            .contains("`Pair` expects 2 type arguments, found 1"),
         "unexpected message: {}",
         err.message
     );
 }
 
 #[test]
-fn dot_form_trait_dispatch_resolves() {
+fn qualified_trait_dispatch_resolves() {
     // spec `expressions/path-and-access.md` ("Qualified calls"):
-    // `Area.area(r)` is the explicit dispatch form — the trait name is a
+    // `Area::area(r)` is the explicit dispatch form — the trait name is a
     // path namespace, not a value of its own.
     let src = r#"
         trait Area { fn area(self): number }
@@ -4649,7 +4674,7 @@ fn dot_form_trait_dispatch_resolves() {
         }
         fn main() {
             let r = { w: 3, h: 4 }
-            let n: number = Area.area(r)
+            let n: number = Area::area(r)
             print(str(n))
         }
     "#;
@@ -4658,7 +4683,7 @@ fn dot_form_trait_dispatch_resolves() {
 
 #[test]
 fn generic_bound_explicit_dispatch_resolves() {
-    // spec `types/traits.md` example body: `Area.area(self.shape)` inside
+    // spec `types/traits.md` example body: `Area::area(self.shape)` inside
     // `impl<T: Area> Palette<T>` — explicit dispatch through the bound, with
     // the member form denoting the same call (spec `types/generics.md`).
     let src = r#"
@@ -4669,7 +4694,7 @@ fn generic_bound_explicit_dispatch_resolves() {
             fn area(self): number { return self.w * self.h }
         }
         impl<T: Area> Palette<T> {
-            fn render(self): number { return Area.area(self.shape) }
+            fn render(self): number { return Area::area(self.shape) }
         }
         fn main() {
             let ok = { shape: { w: 3, h: 4 } }
@@ -4688,7 +4713,7 @@ fn generic_dispatch_without_bound_is_rejected() {
         trait Area { fn area(self): number }
         trait Show { fn show(self): string }
         fn describe<T: Show>(t: T): number {
-            return Area.area(t)
+            return Area::area(t)
         }
         fn main() { print(1) }
     "#;
@@ -4719,4 +4744,630 @@ fn member_field_missing_on_struct_is_e0102() {
         "unexpected message: {}",
         err.message
     );
+}
+
+#[test]
+fn math_namespace_constant_and_calls_typecheck() {
+    let src = r#"
+        fn main() {
+            let r = 2.5
+            let circumference = 2.0 * Math::PI * r
+            let hypotenuse = Math::sqrt(3.0 * 3.0 + 4.0 * 4.0)
+            let clamped = Math::min(Math::max(120, 0), 100)
+            let whole = Math::floor(3.7)
+            let fixed = Math::toFixed(3.14159, 2)
+            print(str(circumference + hypotenuse + clamped + whole))
+            print(fixed)
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn math_call_argument_type_is_e0202() {
+    let src = r#"
+        fn main() {
+            print(str(Math::sqrt(true)))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0202");
+    assert!(
+        err.message
+            .contains("argument to `Math::sqrt` must be `Float`"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn math_call_arity_is_e0207() {
+    let src = r#"
+        fn main() {
+            print(str(Math::max(1)))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0207");
+    assert!(
+        err.message.contains("expected 2 arguments, found 1"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn math_unknown_member_is_rejected() {
+    let src = r#"
+        fn main() {
+            print(str(Math::typo(1)))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(
+        err.message.contains("`Math` has no member `typo`"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn math_constant_as_a_call_is_rejected() {
+    let src = r#"
+        fn main() {
+            print(str(Math::PI()))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(
+        err.message.contains("member `Math::PI` is not a function"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn math_namespace_dot_form_is_rejected() {
+    let src = r#"
+        fn main() {
+            print(str(Math.max(1, 2)))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0003");
+    assert!(
+        err.message.contains("undefined variable `Math`"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn task_namespace_dot_form_is_rejected() {
+    let src = r#"
+        async fn main() {
+            print(await Task.all([]))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0003");
+    assert!(
+        err.message.contains("undefined variable `Task`"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn trait_name_dot_dispatch_is_rejected() {
+    let src = r#"
+        trait Area { fn area(self): number }
+        struct Rect { w: number, h: number }
+        impl Area for Rect {
+            fn area(self): number { return self.w * self.h }
+        }
+        fn main() {
+            let r = { w: 3, h: 4 }
+            print(str(Area.area(r)))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0003");
+    assert!(
+        err.message.contains("undefined variable `Area`"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn time_namespace_types_and_await_check() {
+    let src = r#"
+        async fn later() {
+            await Time::sleep(1)
+        }
+        fn main() {
+            let now = Time::now()
+            print(str(now))
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn time_unknown_member_is_rejected() {
+    let src = r#"
+        fn main() {
+            print(str(Time::nope()))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(
+        err.message.contains("`Time` has no member `nope`"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+// ──────────────────────────────────────────────────────────────────────
+//  Declaration attributes: the closed registry (`#Test`, `#Derive`) and
+//  struct construction — spec `types/traits.md` "Attributes",
+//  `type-system/errors.md` E0107–E0112, `types/composite-types.md`.
+// ──────────────────────────────────────────────────────────────────────
+
+#[test]
+fn unknown_attribute_is_e0108() {
+    let err = analyze_src("#Inline\nfn f() {}").unwrap_err();
+    assert_eq!(err.code(), "E0108", "unexpected: {}", err.message);
+    assert!(
+        err.message.contains("attribute `Inline` is not defined"),
+        "unexpected: {}",
+        err.message
+    );
+}
+
+#[test]
+fn derive_on_a_function_is_e0109() {
+    let err = analyze_src("#Derive(ToString)\nfn f() {}").unwrap_err();
+    assert_eq!(err.code(), "E0109", "unexpected: {}", err.message);
+    assert!(
+        err.message
+            .contains("attribute `Derive` is not valid on a function"),
+        "unexpected: {}",
+        err.message
+    );
+}
+
+#[test]
+fn test_on_a_struct_is_e0109() {
+    let err = analyze_src("#Test\nstruct S { a: string }").unwrap_err();
+    assert_eq!(err.code(), "E0109", "unexpected: {}", err.message);
+    assert!(
+        err.message
+            .contains("attribute `Test` is not valid on a struct"),
+        "unexpected: {}",
+        err.message
+    );
+}
+
+#[test]
+fn derive_shape_errors_are_e0110() {
+    // Bare and empty-paren forms both lack the required list.
+    for src in [
+        "#Derive\nstruct S { a: string }",
+        "#Derive()\nstruct S { a: string }",
+    ] {
+        let err = analyze_src(src).unwrap_err();
+        assert_eq!(err.code(), "E0110", "{src}: {}", err.message);
+        assert!(
+            err.message
+                .contains("attribute `Derive` takes a parenthesized list of trait names"),
+            "{src}: {}",
+            err.message
+        );
+    }
+}
+
+#[test]
+fn wrong_test_shape_is_e0110() {
+    // `#Test` is not a `TestDecl` — params, a return type, or generics send
+    // the parse through `fn_decl` with the attribute attached (spec
+    // testing.md: no params, no return, no generics). Newlines are
+    // insignificant, so `#Test` + `fn t() {}` on separate lines stays a
+    // well-formed `TestDecl` and is not in this list.
+    for src in [
+        "#Test fn t(x: number) {}",
+        "#Test fn t(): number { return 1 }",
+        "#Test fn t<T>() {}",
+    ] {
+        let err = analyze_src(src).unwrap_err();
+        assert_eq!(err.code(), "E0110", "{src}: {}", err.message);
+        assert!(
+            err.message
+                .contains("attribute `Test` takes the form `#Test [async] fn name() { … }`"),
+            "{src}: {}",
+            err.message
+        );
+    }
+}
+
+#[test]
+fn unregistered_derive_target_is_e0111_with_note() {
+    let err = analyze_src("#Derive(Display)\nstruct S { a: string }").unwrap_err();
+    assert_eq!(err.code(), "E0111", "unexpected: {}", err.message);
+    assert!(
+        err.message
+            .contains("`Display` is not a registered derive target"),
+        "unexpected: {}",
+        err.message
+    );
+    let note = err.note.expect("E0111 carries the registry note");
+    assert_eq!(note, "registered targets: `ToString`");
+}
+
+#[test]
+fn derive_on_a_generic_type_is_e0112() {
+    let err = analyze_src("#Derive(ToString)\nstruct Box<T> { v: T }").unwrap_err();
+    assert_eq!(err.code(), "E0112", "unexpected: {}", err.message);
+    assert!(
+        err.message
+            .contains("cannot derive `ToString` for a generic type"),
+        "unexpected: {}",
+        err.message
+    );
+}
+
+#[test]
+fn referencing_a_test_fn_is_e0107() {
+    let err = analyze_src("#Test fn t() {}\nfn main() { t() }").unwrap_err();
+    assert_eq!(err.code(), "E0107", "unexpected: {}", err.message);
+    let err = analyze_src("#Test fn t() {}\nfn main() { let x = t }").unwrap_err();
+    assert_eq!(err.code(), "E0107", "unexpected: {}", err.message);
+}
+
+#[test]
+fn derive_field_without_string_form_is_e0801() {
+    let err = analyze_src("#Derive(ToString)\nstruct S { xs: list<number> }").unwrap_err();
+    assert_eq!(err.code(), "E0801", "unexpected: {}", err.message);
+    assert!(
+        err.message
+            .contains("`list<number>` does not implement `ToString`"),
+        "unexpected: {}",
+        err.message
+    );
+}
+
+#[test]
+fn second_derive_is_e0805() {
+    let err =
+        analyze_src("#Derive(ToString)\n#Derive(ToString)\nstruct S { a: string }").unwrap_err();
+    assert_eq!(err.code(), "E0805", "unexpected: {}", err.message);
+}
+
+#[test]
+fn derive_after_manual_impl_is_e0805() {
+    // The derive expands into an impl, so a hand-written `impl ToString` for
+    // the same type collides however the two are ordered (spec
+    // `types/traits.md`).
+    let err = analyze_src(
+        "#Derive(ToString)\nstruct S { a: string }\n\
+         impl ToString for S { fn to_string(self): string { return self.a } }",
+    )
+    .unwrap_err();
+    assert_eq!(err.code(), "E0805", "unexpected: {}", err.message);
+}
+
+#[test]
+fn well_formed_attributes_and_derive_are_accepted() {
+    // Valid shapes across every attributed declaration, a `#Test fn` body,
+    // and uses of the derived type (member call, explicit dispatch, `str`,
+    // interpolation — spec `types/traits.md`).
+    let src = r#"
+        #Derive(ToString)
+        struct User { name: string, age: number }
+        #Derive(ToString)
+        struct Tagged { inner: User }
+        #Derive(ToString)
+        enum Shape { Circle(number) Rect(number, number) }
+        #Test fn passes() { let x: number = 1 }
+        #Test async fn also_passes() { await Time::sleep(0) }
+        trait Named { fn name(self): string }
+        impl Named for User { fn name(self): string { return self.name } }
+        fn main() {
+            let u = User(name: "Alice", age: 30)
+            let s: string = u.to_string()
+            let t: string = ToString::to_string(u)
+            let b: string = str(u)
+            let c: string = str(Tagged(inner: u))
+            let d: string = str(Shape::Rect(3, 4))
+            let e: string = `${u}`
+        }
+    "#;
+    analyze_src(src).unwrap_or_else(|err| panic!("{}: {}", err.code(), err.message));
+}
+
+#[test]
+fn enum_without_string_form_is_e0212() {
+    let err = analyze_src("enum Color { Red }\nfn main() { print(str(Color::Red)) }").unwrap_err();
+    assert_eq!(err.code(), "E0212", "unexpected: {}", err.message);
+    assert!(
+        err.message.contains("`Color` has no string form"),
+        "unexpected: {}",
+        err.message
+    );
+}
+
+#[test]
+fn struct_construction_happy_path_and_type() {
+    // Named construction with defaults/optional omitted infers the struct
+    // type; the values check against the field types.
+    let src = r#"
+        struct Config { name: string, alias: string? }
+        fn main() {
+            let a: Config = Config(name: "x")
+            let b = Config(name: "y", alias: "z")
+            let n: string = a.name
+            let m: string? = b.alias
+        }
+    "#;
+    analyze_src(src).unwrap_or_else(|err| panic!("{}: {}", err.code(), err.message));
+}
+
+#[test]
+fn struct_construction_errors_are_e0205_e0206_e0208_e0202() {
+    let err = analyze_src("struct R { name: string }\nfn main() { let r = R() }").unwrap_err();
+    assert_eq!(err.code(), "E0205", "unexpected: {}", err.message);
+    assert!(
+        err.message
+            .contains("missing field `name` in initializer of `R`"),
+        "unexpected: {}",
+        err.message
+    );
+
+    let err =
+        analyze_src("struct R { name: string }\nfn main() { let r = R(nam: \"x\") }").unwrap_err();
+    assert_eq!(err.code(), "E0206", "unexpected: {}", err.message);
+    assert!(
+        err.message.contains("`R` has no field `nam`"),
+        "unexpected: {}",
+        err.message
+    );
+
+    let err = analyze_src("struct R { name: string }\nfn main() { let r = R(\"x\") }").unwrap_err();
+    assert_eq!(err.code(), "E0208", "unexpected: {}", err.message);
+    assert!(
+        err.message
+            .contains("struct `R` is constructed with named arguments"),
+        "unexpected: {}",
+        err.message
+    );
+
+    let err =
+        analyze_src("struct R { name: string }\nfn main() { let r = R(name: 42) }").unwrap_err();
+    assert_eq!(err.code(), "E0202", "unexpected: {}", err.message);
+    assert!(
+        err.message
+            .contains("field `name` of `R` expects `string`, found `number`"),
+        "unexpected: {}",
+        err.message
+    );
+}
+
+#[test]
+fn struct_construction_duplicate_label_is_rejected() {
+    let err =
+        analyze_src("struct R { name: string }\nfn main() { let r = R(name: \"a\", name: \"b\") }")
+            .unwrap_err();
+    assert!(
+        err.message.contains("provided twice"),
+        "unexpected: {}",
+        err.message
+    );
+}
+
+// ------------------------------------------------------------------
+// Call-site type arguments: `first<Int>(…)` — spec expressions/calls.md,
+// types/generics.md (`E0801`/`E0807`/`E0808`, written-argument rules).
+// ------------------------------------------------------------------
+
+#[test]
+fn written_type_args_on_non_generic_function_are_e0807() {
+    let err = analyze_src(
+        "fn greet(name: string): string { name }\nfn main() { print(greet<int>(\"x\")) }",
+    )
+    .unwrap_err();
+    assert_eq!(err.code(), "E0807", "unexpected: {}", err.message);
+    assert_eq!(
+        err.message, "`greet` accepts no type arguments",
+        "spec registration is `accepts`, not `takes`"
+    );
+}
+
+#[test]
+fn written_type_arg_arity_is_e0808() {
+    let err = analyze_src(
+        "fn first<T>(xs: list<T>): T { return xs[0] }\nfn main() { let x = first<number, string>([1]) }",
+    )
+    .unwrap_err();
+    assert_eq!(err.code(), "E0808", "unexpected: {}", err.message);
+    assert!(
+        err.message.contains("expected 1 type argument, found 2"),
+        "unexpected: {}",
+        err.message
+    );
+
+    let err = analyze_src(
+        "fn first<T>(xs: list<T>): T { return xs[0] }\nfn main() { let x = first<>([1]) }",
+    )
+    .unwrap_err();
+    assert_eq!(err.code(), "E0808", "unexpected: {}", err.message);
+    assert!(
+        err.message.contains("expected 1 type argument, found 0"),
+        "unexpected: {}",
+        err.message
+    );
+}
+
+#[test]
+fn empty_list_on_non_generic_function_is_e0807() {
+    let err = analyze_src("fn greet(name: string): string { name }\nfn main() { greet<>(\"x\") }")
+        .unwrap_err();
+    assert_eq!(err.code(), "E0807", "unexpected: {}", err.message);
+}
+
+#[test]
+fn written_type_arg_bound_violation_is_e0801() {
+    let src = "\
+trait Area { fn area(self): number }
+struct Rect { w: number, h: number }
+struct Dot { r: number }
+impl Area for Rect { fn area(self): number { return self.w * self.h } }
+fn describe<T: Area>(x: T): number { return Area::area(x) }
+fn main() {
+  let d = { r: 1 }
+  print(str(describe<Dot>(d)))
+}";
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0801", "unexpected: {}", err.message);
+    assert!(
+        err.message.contains("`Dot` does not implement `Area`"),
+        "unexpected: {}",
+        err.message
+    );
+
+    // A written argument that does satisfy the bound checks clean.
+    let ok_src = "\
+trait Area { fn area(self): number }
+struct Rect { w: number, h: number }
+impl Area for Rect { fn area(self): number { return self.w * self.h } }
+fn describe<T: Area>(x: T): number { return Area::area(x) }
+fn main() {
+  let r = { w: 3, h: 4 }
+  print(str(describe<Rect>(r)))
+}";
+    analyze_src(ok_src).unwrap();
+}
+
+#[test]
+fn e0807_reaches_every_non_generic_call_path() {
+    let cases: &[(&str, &str)] = &[
+        (
+            "namespace",
+            "async fn main() { let xs = Task::all<number>([]) }",
+        ),
+        (
+            "namespace-math",
+            "fn main() { print(str(Math::max<number>(1, 2))) }",
+        ),
+        (
+            "constructor",
+            "struct User { name: string }\nfn main() { let u = User<number>(name: \"a\") }",
+        ),
+        ("intrinsic", "fn main() { print(str(str<number>(1))) }"),
+        (
+            "method",
+            "struct S { n: number }\nimpl S { fn get(self): number { return self.n } }\nfn main() { let s = { n: 1 } print(str(s.get<number>())) }",
+        ),
+        (
+            "enum-ctor",
+            "enum Shape { Circle(number) }\nfn main() { print(str(Shape::Circle<number>(2.5))) }",
+        ),
+        ("component", "fn main() { Text<number>(\"Hi\") { } }"),
+        (
+            "fn-value",
+            "fn get(): fn(number): number { return fn(x: number): number { x * 2 } }\nfn main() { let f = get() let n = f<number>(1) print(str(n)) }",
+        ),
+    ];
+    for (what, src) in cases {
+        let err = analyze_src(src)
+            .err()
+            .unwrap_or_else(|| panic!("{what}: expected an error"));
+        assert_eq!(err.code(), "E0807", "{what}: unexpected {}", err.message);
+        assert!(
+            err.message.ends_with("accepts no type arguments"),
+            "{what}: unexpected {}",
+            err.message
+        );
+    }
+}
+
+#[test]
+fn written_list_on_a_value_callee_is_e0807() {
+    let src = "\
+fn getFn(): fn(number): number { return fn(x: number): number { x * 2 } }
+fn main() { let n = getFn()<number>(1) print(str(n)) }";
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0807", "unexpected: {}", err.message);
+    assert!(
+        err.message.contains("accepts no type arguments"),
+        "unexpected: {}",
+        err.message
+    );
+}
+
+#[test]
+fn written_type_args_substitute_before_the_value_check() {
+    // spec generics.md: the written list replaces inference; arguments are
+    // checked against the substituted parameter types — the expected type of
+    // the binding must not rescue a mismatched argument.
+    let err = analyze_src(
+        "fn first<T>(xs: list<T>): T { return xs[0] }\nfn main() { let x = first<number>([\"a\"]) }",
+    )
+    .unwrap_err();
+    assert_eq!(err.code(), "E0202", "unexpected: {}", err.message);
+    assert!(
+        err.message.contains("`list<number>`") && err.message.contains("`list<string>`"),
+        "unexpected: {}",
+        err.message
+    );
+}
+
+#[test]
+fn written_type_args_replace_inference_and_the_result_binds() {
+    let src = "\
+fn first<T>(xs: list<T>): T { return xs[0] }
+fn main() {
+  let a = first<number>([1])
+  let b = first([\"x\"])
+  let c: string = first<string>([\"y\"])
+  print(str(a) + str(b) + c)
+}";
+    analyze_src(src).unwrap();
+}
+
+#[test]
+fn expected_binding_type_over_a_written_list_is_e0201() {
+    let err = analyze_src(
+        "fn first<T>(xs: list<T>): T { return xs[0] }\nfn main() { let ys: string = first<number>([1]) }",
+    )
+    .unwrap_err();
+    assert_eq!(err.code(), "E0201", "unexpected: {}", err.message);
+}
+
+#[test]
+fn written_type_args_work_with_named_arguments() {
+    analyze_src(
+        "fn first<T>(items: list<T>): T { return items[0] }\nfn main() { let x = first<number>(items: [1]) print(str(x)) }",
+    )
+    .unwrap();
+
+    let err = analyze_src(
+        "fn first<T>(items: list<T>): T { return items[0] }\nfn main() { let x = first<number>(items: [\"a\"]) }",
+    )
+    .unwrap_err();
+    assert_eq!(err.code(), "E0202", "unexpected: {}", err.message);
+}
+
+#[test]
+fn comparison_fallback_still_typechecks_as_comparison() {
+    // Condition 2 of the disambiguation fails (no `(` after `>`), so the
+    // operator stays relational and the condition is a boolean expression.
+    analyze_src(
+        "fn main() { let a = 2 let b = 3 let c = 4 if a < b and b > (c - 1) { print(\"x\") } }",
+    )
+    .unwrap();
+    // Single comparison with the type-arg-shaped material and no paren is
+    // non-associative per the grammar — it must be a parse error, not a call.
+    let err = analyze_src("fn main() { let a = 1 let b = 2 let x = a < number > [1] }");
+    assert!(err.is_err(), "two relational operators cannot chain");
 }

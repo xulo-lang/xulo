@@ -335,15 +335,16 @@ fn cross_module_trait_dispatch_loads_and_runs() {
     std::fs::write(
         dir.join("main.xulo"),
         r#"
-        import type { Shape } from "./shapes"
-        import type { Rect } from "./shapes"
-        import { rect } from "./shapes"
+        mod shapes;
+        use type shapes::Shape;
+        use type shapes::Rect;
+        use shapes::rect;
         fn main() { print(Shape::area(rect(3, 4))) }
         "#,
     )
     .unwrap();
 
     let mut loaded = xulo_compiler::module::load(&dir.join("main.xulo")).unwrap();
-    xulo_compiler::module::analyze(&mut loaded).unwrap();
+    xulo_compiler::module::analyze(&mut loaded, false).unwrap();
     let _ = std::fs::remove_dir_all(&dir);
 }

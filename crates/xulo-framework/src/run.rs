@@ -5,9 +5,9 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::rc::Rc;
 
-use xulo_core::ast::{ImportSpec, Program};
+use xulo_core::ast::Program;
 use xulo_core::error::XuloError;
-use xulo_runtime::interpreter::Interpreter;
+use xulo_runtime::interpreter::{Interpreter, ModuleExports};
 use xulo_runtime::value::Value;
 
 use crate::convert::widget_from_value;
@@ -35,9 +35,9 @@ pub struct ExecuteResult {
 }
 
 /// Load, analyze, and execute `entry`, mirroring the CLI's module wiring:
-/// modules run in dependency order, external (non-`type`-only) imports bind to
-/// `null` placeholders, and the entry module's `main` (when it returns a
-/// `View`) has its render value captured by the interpreter.
+/// modules run in initialization order (children before parents, declared
+/// dependencies first), the entry module's `main` (when it returns a `View`)
+/// has its render value captured by the interpreter.
 pub fn execute(entry: &Path) -> Result<ExecuteResult, XuloError> {
     let interp = Rc::new(Interpreter::new());
     let _ = execute_in(entry, &interp)?;
@@ -53,7 +53,7 @@ pub fn execute(entry: &Path) -> Result<ExecuteResult, XuloError> {
 /// [`Interpreter::rerender_main`].
 pub(crate) fn execute_in(entry: &Path, interp: &Rc<Interpreter>) -> Result<Program, XuloError> {
     let mut loaded = xulo_compiler::module::load(entry)?;
-    let warnings = xulo_compiler::module::analyze(&mut loaded)?;
+    let warnings = xulo_compiler::module::analyze(&mut loaded, true)?;
     for warning in warnings {
         let source = warning
             .file
@@ -66,42 +66,51 @@ pub(crate) fn execute_in(entry: &Path, interp: &Rc<Interpreter>) -> Result<Progr
     }
     xulo_compiler::module::apply_trait_dispatch(&mut loaded);
 
-    let placeholders: Vec<(String, Value)> = loaded
-        .external_imports
-        .iter()
-        .filter(|i| !i.type_only)
-        .flat_map(|i| import_binding_names(&i.spec))
-        .map(|name| (name, Value::Null))
-        .collect();
-
     let mut export_maps: Vec<HashMap<String, Value>> = Vec::with_capacity(loaded.modules.len());
+    let mut module_exports: Vec<ModuleExports> = Vec::with_capacity(loaded.modules.len());
+    // Forward import bindings from legal `use` cycles, patched once every
+    // non-entry module has executed (the entry runs last; spec forbids
+    // naming the entry from a dependency, so all targets are complete
+    // before `main` runs).
+    let mut pending: Vec<(usize, String, usize, Option<String>)> = Vec::new();
     for (idx, module) in loaded.modules.iter().enumerate() {
-        let mut imports: Vec<(String, Value)> = Vec::new();
-        for binding in &module.imports {
-            if binding.type_only {
-                continue;
-            }
-            match resolve_import(binding, &export_maps, &loaded) {
-                Ok(mut pairs) => imports.append(&mut pairs),
-                Err(msg) => {
-                    return Err(xulo_core::error::XuloError::new(
-                        xulo_core::error::ErrorKind::Runtime,
-                        msg,
-                    ));
-                }
+        if idx == loaded.entry {
+            for (owner, local, target, member) in std::mem::take(&mut pending) {
+                let value = if let Some(member) = member {
+                    export_maps[target]
+                        .get(&member)
+                        .cloned()
+                        .unwrap_or(Value::Null)
+                } else {
+                    let fields: Vec<(String, Value)> = export_maps[target]
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect();
+                    Value::Object(Rc::new(std::cell::RefCell::new(fields)))
+                };
+                module_exports[owner].patch_import(&local, value);
             }
         }
-        imports.extend_from_slice(&placeholders);
+        let imports = module_imports(module, &export_maps, &loaded);
         let run_main = idx == loaded.entry && module.has_main;
         let exports = interp
             .exec_module(&module.program, &imports, run_main)
             .map_err(map_run_error)?;
+        for binding in &module.uses {
+            if let Some(target) = loaded.index_of(&binding.module_id)
+                && target >= export_maps.len()
+            {
+                pending.push((idx, binding.local.clone(), target, binding.member.clone()));
+            }
+        }
         export_maps.push(
             exports
                 .bindings
-                .into_iter()
+                .iter()
+                .cloned()
                 .collect::<HashMap<String, Value>>(),
         );
+        module_exports.push(exports);
     }
     Ok(loaded.modules[loaded.entry].program.clone())
 }
@@ -441,17 +450,71 @@ fn render_terminal(root: &xulo_ui::Widget) -> Result<String, XuloError> {
     Ok(render_plain(&ops, size))
 }
 
-/// Names an `import` statement binds (namespace or named bindings with their
-/// aliases); a bare side-effect import binds nothing.
-fn import_binding_names(spec: &ImportSpec) -> Vec<String> {
-    match spec {
-        ImportSpec::Namespace(ns) => vec![ns.clone()],
-        ImportSpec::Named(bindings) => bindings
+/// The runtime bindings for one module: its `mod` declarations (children
+/// initialize first) and its resolved `use` bindings. A target with no
+/// local sources (an external dependency) binds to `null` placeholders, and
+/// a target that has not executed yet binds to a placeholder the runner
+/// patches before the entry `main` runs.
+fn module_imports(
+    module: &xulo_compiler::module::Module,
+    export_maps: &[HashMap<String, Value>],
+    loaded: &xulo_compiler::module::LoadedModules,
+) -> Vec<(String, Value)> {
+    let mut out: Vec<(String, Value)> = Vec::new();
+    for (name, child) in &module.mods {
+        let fields: Vec<(String, Value)> = export_maps[*child]
             .iter()
-            .map(|(name, alias)| alias.clone().unwrap_or_else(|| name.clone()))
-            .collect(),
-        ImportSpec::Bare => Vec::new(),
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        out.push((
+            name.clone(),
+            Value::Object(std::rc::Rc::new(std::cell::RefCell::new(fields))),
+        ));
     }
+    for binding in &module.uses {
+        let target = match loaded.index_of(&binding.module_id) {
+            // No local sources (version-only dependency): a named import is
+            // an opaque `null` placeholder (components resolve by name), a
+            // namespace binding is an empty object (`ns::member` reads fail
+            // with a member error rather than a non-object one).
+            None => {
+                let value = match &binding.member {
+                    None => Value::Object(std::rc::Rc::new(std::cell::RefCell::new(Vec::new()))),
+                    Some(_) => Value::Null,
+                };
+                out.push((binding.local.clone(), value));
+                continue;
+            }
+            Some(target) if target < export_maps.len() => target,
+            // Not yet executed (a sibling this module declares before):
+            // bind a placeholder; `exec_module` reads patch it late.
+            Some(_) => {
+                out.push((
+                    binding.local.clone(),
+                    Value::Object(std::rc::Rc::new(std::cell::RefCell::new(Vec::new()))),
+                ));
+                continue;
+            }
+        };
+        if binding.member.is_none() {
+            let fields: Vec<(String, Value)> = export_maps[target]
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            out.push((
+                binding.local.clone(),
+                Value::Object(std::rc::Rc::new(std::cell::RefCell::new(fields))),
+            ));
+            continue;
+        }
+        let member = binding.member.as_deref().expect("member is Some here");
+        let value = export_maps[target]
+            .get(member)
+            .cloned()
+            .unwrap_or(Value::Null);
+        out.push((binding.local.clone(), value));
+    }
+    out
 }
 
 /// Convert a module-execution error into a printable [`XuloError`]: an
@@ -464,41 +527,4 @@ pub(crate) fn map_run_error(e: xulo_runtime::interpreter::RunError) -> XuloError
             format!("uncaught exception: {}", value.format()),
         ),
     }
-}
-
-fn resolve_import(
-    binding: &xulo_compiler::module::ImportBinding,
-    export_maps: &[HashMap<String, Value>],
-    loaded: &xulo_compiler::module::LoadedModules,
-) -> Result<Vec<(String, Value)>, String> {
-    let target = &loaded.modules[binding.target];
-    let readable = target.file.display();
-    let mut out = Vec::new();
-    match &binding.spec {
-        ImportSpec::Bare => {}
-        ImportSpec::Namespace(ns) => {
-            let fields: Vec<(String, Value)> = export_maps[binding.target]
-                .iter()
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect();
-            out.push((
-                ns.clone(),
-                Value::Object(std::rc::Rc::new(std::cell::RefCell::new(fields))),
-            ));
-        }
-        ImportSpec::Named(names) => {
-            for (name, alias) in names {
-                let local = alias.clone().unwrap_or_else(|| name.clone());
-                match export_maps[binding.target].get(name) {
-                    Some(value) => out.push((local, value.clone())),
-                    None => {
-                        return Err(format!(
-                            "module `{readable}` has no runtime export named `{name}`"
-                        ));
-                    }
-                }
-            }
-        }
-    }
-    Ok(out)
 }

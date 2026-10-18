@@ -241,6 +241,7 @@ fn no_space_after(t: Token) -> bool {
         t,
         Token::At
             | Token::Dollar
+            | Token::Hash
             | Token::LParen
             | Token::LBracket
             | Token::Dot

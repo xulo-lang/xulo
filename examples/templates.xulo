@@ -14,8 +14,8 @@ fn main() {
     let xs = [1, 2, 3]
     print(`first: ${xs[0]}`)
 
-    // 只读反引号字符串等价于 str() + 拼接（可混搭 number/boolean/null）
-    print(`count=${n} ok=${true} none=${null}`)
+    // 只读反引号字符串等价于 str() + 拼接（可混搭 number/boolean，null 无字符串形式）
+    print(`count=${n} ok=${true}`)
     print("count=" + str(n) + " ok=" + str(true))
 
     // 转义：`  \$  \${  多行

@@ -32,7 +32,11 @@ fn temp_dir(files: &[(&str, &str)], entry: &str) -> (PathBuf, PathBuf) {
     ));
     std::fs::create_dir_all(&dir).unwrap();
     for (name, content) in files {
-        std::fs::write(dir.join(name), content).unwrap();
+        let path = dir.join(name);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(path, content).unwrap();
     }
     (dir.clone(), dir.join(entry))
 }
@@ -411,12 +415,12 @@ fn run_multi_file_imports() {
             (
                 "main.xulo",
                 r#"
-                import { add, PI } from "./math"
-                import * as math from "./math"
+                mod math;
+                use math::{add, PI};
                 fn main() {
                     print(add(2, 3))
                     print(PI)
-                    print(math.add(10, 1))
+                    print(math::add(10, 1))
                 }
                 "#,
             ),
@@ -455,8 +459,10 @@ fn run_multi_file_named_and_async() {
             (
                 "main.xulo",
                 r#"
-                import { greet } from "./greet"
-                import { load } from "./load"
+                mod greet;
+                mod load;
+                use greet::greet;
+                use load::load;
                 async fn main() {
                     print(greet("bob"))
                     let v = await load(21)
@@ -490,7 +496,8 @@ fn run_pub_module_exports() {
             ),
             (
                 "main.xulo",
-                "import { add, PI, Role } from \"./math\"\n\
+                "mod math;\n\
+                 use math::{add, PI, Role};\n\
                  fn main() { print(add(2, 3)) print(PI) print(Role::Admin) }\n",
             ),
         ],
@@ -573,7 +580,7 @@ fn run_module_import_destructure() {
             ),
             (
                 "main.xulo",
-                "import { double } from \"./util\"\nfn main() { print(double(4)) }\n",
+                "mod util;\nuse util::double;\nfn main() { print(double(4)) }\n",
             ),
         ],
         "main.xulo",
@@ -598,51 +605,58 @@ fn check_reports_missing_export() {
             ),
             (
                 "main.xulo",
-                "import { triple } from \"./util\"\nfn main() { print(triple(1)) }\n",
+                "mod util;\nuse util::triple;\nfn main() { print(triple(1)) }\n",
             ),
         ],
         "main.xulo",
     );
     let out = Command::new(BIN).arg("check").arg(&entry).output().unwrap();
     assert!(!out.status.success());
-    assert!(String::from_utf8_lossy(&out.stderr).contains("no export named `triple`"));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("does not export `triple`"),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
-fn check_reports_circular_import() {
+fn check_accepts_circular_import() {
+    // `use` cycles are legal (the interface phase is two-pass): a and b may
+    // read each other's exports, and checking succeeds.
     let (dir, entry) = temp_dir(
         &[
-            (
-                "a.xulo",
-                "import { b } from \"./b\"\npub fn a() { return 1 }\n",
-            ),
-            (
-                "b.xulo",
-                "import { a } from \"./a\"\npub fn b() { return 2 }\n",
-            ),
+            ("a.xulo", "use b::b;\npub fn a(): number { return b() }\n"),
+            ("b.xulo", "use a::a;\npub fn b(): number { return a() }\n"),
             (
                 "main.xulo",
-                "import { a } from \"./a\"\nfn main() { print(a()) }\n",
+                "pub mod a;\npub mod b;\nuse a::a;\nfn main() { print(a()) }\n",
             ),
         ],
         "main.xulo",
     );
     let out = Command::new(BIN).arg("check").arg(&entry).output().unwrap();
-    assert!(!out.status.success());
-    assert!(String::from_utf8_lossy(&out.stderr).contains("circular"));
+    assert!(
+        out.status.success(),
+        "cycles must not be rejected: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn type_only_enum_import_still_binds_the_value() {
+    // The enum's *type* is imported `use type`; its runtime value comes from
+    // the executing module (enums register by name in the interpreter), so
+    // construction keeps working with no value binding.
     let (dir, entry) = temp_dir(
         &[
             ("colors.xulo", "pub enum Kind { User Admin }\n"),
             (
                 "main.xulo",
                 r#"
-                import type { Kind } from "./colors"
+                mod colors;
+                use type colors::Kind;
                 fn main() { print(Kind::Admin) }
                 "#,
             ),
@@ -700,7 +714,7 @@ fn run_list_concat_native() {
             let a = [1, 2]
             let b = [3, 4]
             print(a + b)
-            print(str([0] + [7]))
+            print([0] + [7])
         }
     "#;
     let file = temp_file("listcat.xulo", src);
@@ -710,7 +724,9 @@ fn run_list_concat_native() {
         "stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    // Lists render as `[1, 2, 3, 4]`; `str()` on a list yields `[0, 7]`.
+    // Lists render as `[1, 2, 3, 4]`; `str()` on a list is E0212 (spec
+    // `builtins/intrinsic-functions.md`), so the second line prints the
+    // concatenation directly.
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert_eq!(stdout, "[1, 2, 3, 4]\n[0, 7]\n");
     let _ = std::fs::remove_file(&file);
@@ -876,9 +892,10 @@ fn cross_module_trait_dispatch() {
             (
                 "main.xulo",
                 r#"
-                import type { Shape } from "./shapes"
-                import type { Rect } from "./shapes"
-                import { rect } from "./shapes"
+                mod shapes;
+                use type shapes::Shape;
+                use type shapes::Rect;
+                use shapes::rect;
                 fn main() {
                     print("area=" + str(Shape::area(rect(3, 4))))
                 }
@@ -907,7 +924,7 @@ fn imported_function_supports_named_arguments() {
             ),
             (
                 "main.xulo",
-                "import { greet } from \"./util\"\nfn main() { print(greet(times: 2, name: \"hi\")) }\n",
+                "mod util;\nuse util::greet;\nfn main() { print(greet(times: 2, name: \"hi\")) }\n",
             ),
         ],
         "main.xulo",
@@ -1344,13 +1361,14 @@ fn run_str_builtin_conversions() {
         fn main() {
             print("v=" + str(3.5))
             print(str(true))
-            print(str(null))
         }
         "#,
     );
     let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
     assert!(out.status.success());
-    assert_eq!(String::from_utf8_lossy(&out.stdout), "v=3.5\ntrue\nnull\n");
+    // `str(null)` is E0212 — null has no string form (spec
+    // `builtins/intrinsic-functions.md`); covered in the semantic suite.
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "v=3.5\ntrue\n");
     let _ = std::fs::remove_file(&file);
 }
 
@@ -1560,7 +1578,8 @@ fn native_run_local_module_named_imports() {
             ),
             (
                 "main.xulo",
-                "import { add, PI } from \"./math\"\n\
+                "mod math;\n\
+                 use math::{add, PI};\n\
                  fn main() { print(add(2, 3)) print(PI) }\n",
             ),
         ],
@@ -1580,7 +1599,8 @@ fn native_run_local_module_import_alias() {
             ),
             (
                 "main.xulo",
-                "import { add as plus } from \"./math\"\n\
+                "mod math;\n\
+                 use math::add as plus;\n\
                  fn main() { print(plus(1, 1)) }\n",
             ),
         ],
@@ -1597,12 +1617,14 @@ fn native_run_local_module_dependency_chain() {
             ("base.xulo", "pub fn base(): number { 10 }\n"),
             (
                 "mid.xulo",
-                "import { base } from \"./base\"\n\
+                "use base::base;\n\
                  pub fn mid(): number { base() + 5 }\n",
             ),
             (
                 "main.xulo",
-                "import { mid } from \"./mid\"\n\
+                "mod base;\n\
+                 mod mid;\n\
+                 use mid::mid;\n\
                  fn main() { print(mid()) }\n",
             ),
         ],
@@ -1623,8 +1645,9 @@ fn native_run_local_module_namespace_import() {
             ),
             (
                 "main.xulo",
-                "import * as c from \"./cal\"\n\
-                 fn main() { print(c.HOURS) print(c.hours()) }\n",
+                "mod cal;\n\
+                 use cal as c;\n\
+                 fn main() { print(c::HOURS) print(c::hours()) }\n",
             ),
         ],
         "main.xulo",
@@ -1640,7 +1663,8 @@ fn native_run_local_module_named_import() {
             ("lib.xulo", "pub fn greet(): string { \"hi\" }\n"),
             (
                 "main.xulo",
-                "import { greet } from \"./lib\"\n\
+                "mod lib;\n\
+                 use lib::greet;\n\
                  fn main() { print(greet()) }\n",
             ),
         ],
@@ -1652,18 +1676,17 @@ fn native_run_local_module_named_import() {
 
 #[test]
 fn native_run_imports_exported_enum_value() {
-    // A runtime `import { Theme }` of an exported enum must resolve in the
-    // native runtime too (it used to fail with "no runtime export named
-    // Theme" because enums registered no runtime value), and the imported
-    // value's member access must match the JS shape.
+    // A runtime `use lib::Theme` of an exported enum must resolve in the
+    // native runtime (`Theme::Dark` constructs by name), while the `.`-spelled
+    // variant is ill-formed (spec `expressions/path-and-access.md`).
     for (name, entry_src) in [
         (
             "construct",
-            "import { Theme } from \"./lib\"\nfn main() { print(str(Theme::Dark)) }\n",
+            "mod lib;\nuse lib::Theme;\nfn main() { print(Theme::Dark) }\n",
         ),
         (
             "member",
-            "import { Theme } from \"./lib\"\nfn main() { print(Theme.Dark) }\n",
+            "mod lib;\nuse lib::Theme;\nfn main() { print(Theme.Dark) }\n",
         ),
     ] {
         let (ok, stdout, stderr) = native_run(
@@ -1673,21 +1696,33 @@ fn native_run_imports_exported_enum_value() {
             ],
             "main.xulo",
         );
-        assert!(ok, "{name}: stderr: {stderr}");
-        assert_eq!(stdout, "Theme.Dark\n", "{name}");
+        if name == "member" {
+            assert!(!ok, "{name}: stdout: {stdout}");
+            assert!(
+                stderr.contains("is an enum type with no value binding"),
+                "{name}: stderr: {stderr}"
+            );
+        } else {
+            assert!(ok, "{name}: stderr: {stderr}");
+            assert_eq!(stdout, "Theme.Dark\n", "{name}");
+        }
     }
 }
 
 #[test]
 fn pub_bare_enum_name_imports_on_both_paths() {
     // `pub use { Color }` (the bare-names form) makes the enum importable,
-    // like `pub enum Color` does.
+    // like `pub enum Color` does. The `pub use` sits in the header; the
+    // enum it re-exports is declared below.
     let (dir, entry) = temp_dir(
         &[
-            ("lib.xulo", "enum Color { Red Blue }\npub use { Color }\n"),
+            (
+                "lib.xulo",
+                "pub use { Color };\npub enum Color { Red Blue }\n",
+            ),
             (
                 "main.xulo",
-                "import { Color } from \"./lib\"\nfn main() { print(str(Color::Red)) print(Color.Blue) }\n",
+                "mod lib;\nuse lib::Color;\nfn main() { print(Color::Red) print(Color::Blue) }\n",
             ),
         ],
         "main.xulo",
@@ -1716,7 +1751,8 @@ fn native_run_semantic_rejects_missing_export() {
             ),
             (
                 "main.xulo",
-                "import { nope } from \"./lib\"\n\
+                "mod lib;\n\
+                 use lib::nope;\n\
                  fn main() { print(nope(1)) }\n",
             ),
         ],
@@ -1724,7 +1760,7 @@ fn native_run_semantic_rejects_missing_export() {
     );
     assert!(!ok, "stdout: {stdout}");
     assert!(
-        stderr.contains("has no export named `nope`"),
+        stderr.contains("does not export `nope`"),
         "stderr: {stderr}"
     );
 }
@@ -1742,13 +1778,20 @@ fn native_run_rejects_removed_default_keyword() {
 #[test]
 fn native_run_external_import_binds_placeholder() {
     // An external package has no native values, but the run must not reject the
-    // program: imported names bind to `null` placeholders and the entry runs.
+    // program: the manifest declares it (version-only, no local sources), its
+    // imported names bind to `null` placeholders, and the entry runs.
     let (ok, stdout, stderr) = native_run(
-        &[(
-            "main.xulo",
-            "import { useSignal } from \"@xulo/ui\"\n\
+        &[
+            (
+                "xulo.toml",
+                "[dependencies]\n\"@xulo/ui\" = { version = \"1.2\", alias = \"ui\" }\n",
+            ),
+            (
+                "main.xulo",
+                "use ui::{useSignal};\n\
                  fn main() { print(1) }\n",
-        )],
+            ),
+        ],
         "main.xulo",
     );
     assert!(ok, "stderr: {stderr}");
@@ -1796,9 +1839,14 @@ fn native_run_ui_component_headless() {
     // The full UI example runs natively: `@State`, `@Effect`, component blocks,
     // `$` binding — the tree builds and effects fire, with no DOM to mount.
     let (ok, stdout, stderr) = native_run(
-        &[(
-            "main.xulo",
-            "import { Screen, VStack, HStack, Text, Button, Input } from \"@xulo/ui\"\n\
+        &[
+            (
+                "xulo.toml",
+                "[dependencies]\n\"@xulo/ui\" = { version = \"1.2\", alias = \"ui\" }\n",
+            ),
+            (
+                "main.xulo",
+                "use ui::{Screen, VStack, HStack, Text, Button, Input};\n\
                  fn Counter(): View {\n\
                      @State let count: number = 0\n\
                      @Effect fn() { print(\"mounted\") }\n\
@@ -1823,7 +1871,8 @@ fn native_run_ui_component_headless() {
                          NameField()\n\
                      }\n\
                  }\n",
-        )],
+            ),
+        ],
         "main.xulo",
     );
     assert!(ok, "stderr: {stderr}");
@@ -1841,8 +1890,6 @@ fn run_template_interpolation() {
             print(`2 + 3 = ${2 + 3}`)
             let b = true
             print(`bool: ${b}`)
-            let xs = [1, 2]
-            print(`list: ${xs}`)
         }
         "#,
     );
@@ -1852,9 +1899,11 @@ fn run_template_interpolation() {
         "stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
+    // `${list}` is E0212 like `str(list)` (spec: the two accept the same
+    // operands); interpolation of base values stays as before.
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
-        "Hello, xulo!\n2 + 3 = 5\nbool: true\nlist: [1, 2]\n"
+        "Hello, xulo!\n2 + 3 = 5\nbool: true\n"
     );
     let _ = std::fs::remove_file(&file);
 }
@@ -1963,11 +2012,11 @@ fn test_command_reports_pass_and_fail() {
         r#"
 fn add(a: number, b: number): number { return a + b }
 
-test fn addition_works() {
+#Test fn addition_works() {
     assert(add(2, 3) == 5, "2+3=5")
 }
 
-test fn failing_test() {
+#Test fn failing_test() {
     assert(add(1, 1) == 3, "one plus one is three")
 }
 
@@ -2001,11 +2050,11 @@ fn test_command_all_pass_exits_zero() {
     let file = temp_file(
         "tests_pass.xulo",
         r#"
-test fn first() {
+#Test fn first() {
     assert(true, "ok")
 }
 
-test fn second() {
+#Test fn second() {
     assert(1 < 2, "ordering")
 }
 "#,
@@ -2030,7 +2079,7 @@ fn test_command_async_test_runs() {
         r#"
 async fn double(x: number): number { return x * 2 }
 
-test async fn async_works() {
+#Test async fn async_works() {
     let v = await double(21)
     assert(v == 42, "answer")
 }
@@ -2055,7 +2104,7 @@ fn test_command_inert_under_run() {
     let file = temp_file(
         "tests_inert.xulo",
         r#"
-test fn never_runs() {
+#Test fn never_runs() {
     print("SHOULD NOT PRINT")
 }
 
@@ -2082,4 +2131,138 @@ fn test_command_with_no_tests_exits_zero() {
     );
     assert!(stdout.contains("no tests found"), "stdout: {stdout}");
     let _ = std::fs::remove_file(&file);
+}
+
+#[test]
+fn native_run_pub_struct_cross_module() {
+    let (ok, stdout, stderr) = native_run(
+        &[
+            (
+                "lib.xulo",
+                "pub struct Point { x: number, y: number }\n\
+                 pub fn make(): Point { return Point(x: 1, y: 2) }\n",
+            ),
+            (
+                "main.xulo",
+                "mod lib;\n\
+                 use lib::{Point, make};\n\
+                 fn main() { let p = make() print(p.x) let q = Point(x: 5, y: 6) print(q.y) }\n",
+            ),
+        ],
+        "main.xulo",
+    );
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout, "1\n6\n");
+}
+
+#[test]
+fn native_run_pub_use_reexports_across_modules() {
+    let (ok, stdout, stderr) = native_run(
+        &[
+            ("lib.xulo", "pub fn greet(): string { \"hi\" }\n"),
+            ("mid.xulo", "pub use lib::greet;\n"),
+            (
+                "main.xulo",
+                "mod lib;\n\
+                 mod mid;\n\
+                 use mid::greet;\n\
+                 fn main() { print(greet()) }\n",
+            ),
+        ],
+        "main.xulo",
+    );
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout, "hi\n");
+}
+
+#[test]
+fn native_run_use_cycle_is_patched_before_main() {
+    let (ok, stdout, stderr) = native_run(
+        &[
+            (
+                "a.xulo",
+                "use b::b;\n\
+                 pub fn a(): number { 42 }\n\
+                 pub fn call_b(): number { return b() }\n",
+            ),
+            (
+                "b.xulo",
+                "use a::a;\n\
+                 pub fn b(): number { return a() }\n",
+            ),
+            (
+                "main.xulo",
+                "mod a;\n\
+                 mod b;\n\
+                 fn main() { print(b::b()) }\n",
+            ),
+        ],
+        "main.xulo",
+    );
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout, "42\n");
+}
+
+#[test]
+fn native_run_pub_mod_namespace_reexport() {
+    let (ok, stdout, stderr) = native_run(
+        &[
+            ("mid.xulo", "pub mod inner;\n"),
+            ("mid/inner.xulo", "pub fn v(): number { 7 }\n"),
+            (
+                "main.xulo",
+                "mod mid;\n\
+                 use mid as m;\n\
+                 fn main() { print(m::inner::v()) }\n",
+            ),
+        ],
+        "main.xulo",
+    );
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout, "7\n");
+}
+
+#[test]
+fn native_run_called_import_is_not_reported_unused() {
+    let (ok, stdout, stderr) = native_run(
+        &[
+            (
+                "lib.xulo",
+                "pub fn add(a: number, b: number): number { a + b }\n",
+            ),
+            (
+                "main.xulo",
+                "mod lib;\nuse lib::add;\nfn main() { print(add(2, 3)) }\n",
+            ),
+        ],
+        "main.xulo",
+    );
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout, "5\n");
+    assert!(
+        !stderr.contains("W0102"),
+        "false-positive unused warning: {stderr}"
+    );
+}
+
+#[test]
+fn native_run_uncalled_import_still_warns_unused() {
+    let (ok, _stdout, stderr) = native_run(
+        &[
+            (
+                "lib.xulo",
+                "pub fn add(a: number, b: number): number { a + b }\n",
+            ),
+            (
+                "main.xulo",
+                "mod lib;\nuse lib::add;\nfn main() { print(1) }\n",
+            ),
+        ],
+        "main.xulo",
+    );
+    assert!(ok, "stderr: {stderr}");
+    assert!(
+        stderr.contains("W0102") && stderr.contains("`add`"),
+        "expected W0102 for uncalled import: {stderr}"
+    );
 }

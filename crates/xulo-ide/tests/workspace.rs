@@ -16,8 +16,7 @@ fn sources() -> HashMap<PathBuf, String> {
     HashMap::from([
         (
             PathBuf::from(MAIN),
-            "import { greet } from \"./lib\"\nfn main() {\n    let m = greet(\"hi\")\n}\n"
-                .to_string(),
+            "mod lib;\nuse lib::greet;\nfn main() {\n    let m = greet(\"hi\")\n}\n".to_string(),
         ),
         (
             PathBuf::from(LIB),
@@ -129,7 +128,7 @@ fn import_aliases_resolve_to_exported_name() {
     let mut all = sources();
     all.insert(
         PathBuf::from(MAIN),
-        "import { greet as g } from \"./lib\"\nfn main() {\n    let m = g(\"hi\")\n}\n".to_string(),
+        "mod lib;\nuse lib::greet as g;\nfn main() {\n    let m = g(\"hi\")\n}\n".to_string(),
     );
     let ws = Workspace::open(&all, Path::new(MAIN)).expect("open");
     let main = ws.analysis(Path::new(MAIN)).unwrap();
@@ -158,34 +157,50 @@ fn exports_appear_in_outline_and_symbols() {
 
 #[test]
 fn namespace_import_anchors_at_target_start() {
+    // `mod lib;` alone binds the namespace (a head-only `use lib;` would be
+    // a duplicate binding): go-to-definition on the path head follows the
+    // claim edge and anchors at the target file's start.
     let mut all = sources();
     all.insert(
         PathBuf::from(MAIN),
-        "import * as lib from \"./lib\"\nfn main() {\n    let m = lib.greet(\"hi\")\n}\n"
-            .to_string(),
+        "mod lib;\nfn main() {\n    let m = lib::greet(\"hi\")\n}\n".to_string(),
     );
     let ws = Workspace::open(&all, Path::new(MAIN)).expect("open");
     let main = ws.analysis(Path::new(MAIN)).unwrap();
+    assert!(main.error.is_none(), "{:?}", main.error);
     let located = ws
-        .go_to_definition(Path::new(MAIN), pos(main, &main.source, "lib.greet"))
+        .go_to_definition(Path::new(MAIN), pos(main, &main.source, "lib::greet"))
         .expect("namespace resolves");
     assert_eq!(located.file, PathBuf::from(LIB));
     assert_eq!(located.range.start, xulo_ide::line_index::Pos::default());
 }
 
 #[test]
-fn cyclic_imports_are_rejected() {
+fn cyclic_imports_are_accepted() {
+    // Use cycles are legal (spec two-phase fill): main claims both `a` and
+    // `b`, and they use each other. The workspace opens, all three modules
+    // analyze, and no side aborts on the cycle.
     let mut all = HashMap::new();
     all.insert(
         PathBuf::from(MAIN),
-        "import { b } from \"./b\"\npub fn a(): number { return 1 }\n".to_string(),
+        "mod a;\nmod b;\nuse a::a;\nfn main() {\n    let x = a()\n}\n".to_string(),
+    );
+    all.insert(
+        PathBuf::from("/w/a.xulo"),
+        "use b::b;\npub fn a(): number {\n    return b()\n}\n".to_string(),
     );
     all.insert(
         PathBuf::from("/w/b.xulo"),
-        "import { a } from \"./main\"\npub fn b(): number { return 2 }\n".to_string(),
+        "use a::a;\npub fn b(): number {\n    return a()\n}\n".to_string(),
     );
-    let err = Workspace::open(&all, Path::new(MAIN)).expect_err("cycle is an error");
-    assert!(err.message.contains("circular import"));
+    let ws = Workspace::open(&all, Path::new(MAIN)).expect("cycles are legal");
+    assert_eq!(ws.modules().count(), 3);
+    for file in [MAIN, "/w/a.xulo", "/w/b.xulo"] {
+        let analysis = ws
+            .analysis(Path::new(file))
+            .unwrap_or_else(|| panic!("{file} loaded"));
+        assert!(analysis.error.is_none(), "{file}: {:?}", analysis.error);
+    }
 }
 
 #[test]
@@ -217,9 +232,16 @@ fn transitive_imports_work() {
         PathBuf::from("/w/util.xulo"),
         "pub fn loud(s: string): string {\n    return s + \"!\"\n}\n".to_string(),
     );
+    // Root-absolute head: `util` is claimed by the entry (spec paths), so
+    // lib's `use util::loud` needs no claim of its own.
+    all.insert(
+        PathBuf::from(MAIN),
+        "mod lib;\nmod util;\nuse lib::greet;\nfn main() {\n    let m = greet(\"hi\")\n}\n"
+            .to_string(),
+    );
     all.insert(
         PathBuf::from(LIB),
-        "import { loud } from \"./util\"\npub fn greet(name: string): string {\n    return loud(name)\n}\n"
+        "use util::loud;\npub fn greet(name: string): string {\n    return loud(name)\n}\n"
             .to_string(),
     );
     let ws = Workspace::open(&all, Path::new(MAIN)).expect("open");
@@ -258,7 +280,7 @@ fn local_shadowing_beats_import_edge_in_go_to_definition() {
     let all = HashMap::from([
         (
             PathBuf::from(MAIN),
-            "import { greet } from \"./lib\"\n\nfn f() {\n    let greet = \"local\"\n    print(greet)\n}\n"
+            "mod lib;\nuse lib::greet;\n\nfn f() {\n    let greet = \"local\"\n    print(greet)\n}\n"
                 .to_string(),
         ),
         (

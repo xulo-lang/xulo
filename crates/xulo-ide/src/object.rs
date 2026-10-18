@@ -174,12 +174,13 @@ fn outline_statement(
         | Statement::Block(_)
         | Statement::Try(_)
         | Statement::Throw(_)
-        | Statement::Import(_)
+        | Statement::Mod(_)
+        | Statement::Use(_)
         | Statement::Effect(_)
         | Statement::Component(_)
         | Statement::Struct(_)
         | Statement::Defer(_)
-        // A `test fn` binds no value (spec testing.md): no navigable symbol.
+        // A `#Test fn` binds no value (spec testing.md): no navigable symbol.
         | Statement::Test(_)
         | Statement::Break
         | Statement::Continue => None,

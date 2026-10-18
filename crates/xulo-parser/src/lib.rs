@@ -58,14 +58,26 @@ fn pest_error(e: PestError<Rule>, source: &str) -> XuloError {
         ErrorVariant::ParsingError {
             positives,
             negatives,
-        } => match (describe_rules(positives), describe_rules(negatives)) {
-            (Some(expected), Some(unexpected)) => {
-                format!("expected {expected}, found {unexpected}")
+        } => {
+            let text = match (describe_rules(positives), describe_rules(negatives)) {
+                (Some(expected), Some(unexpected)) => {
+                    format!("expected {expected}, found {unexpected}")
+                }
+                (Some(expected), None) => format!("expected {expected}"),
+                (None, Some(unexpected)) => format!("unexpected {unexpected}"),
+                (None, None) => "syntax error".into(),
+            };
+            // A written `CallTypeArgs` list whose nested closing brackets are
+            // adjacent — `first<Map<String, Int>>(m)` — fails with a note to
+            // insert the space: `gt_close` rejects `>>` (spec `grammar.md`,
+            // the nested-bracket rule).
+            if source.contains(">>(") && positives.contains(&Rule::gt_close) {
+                return XuloError::new(ErrorKind::Parse, text)
+                    .at(offset..offset)
+                    .with_note("insert a space between the closing angle brackets: `> >`");
             }
-            (Some(expected), None) => format!("expected {expected}"),
-            (None, Some(unexpected)) => format!("unexpected {unexpected}"),
-            (None, None) => "syntax error".into(),
-        },
+            text
+        }
         ErrorVariant::CustomError { message } => message.clone(),
     };
     XuloError::new(ErrorKind::Parse, message).at(offset..offset)

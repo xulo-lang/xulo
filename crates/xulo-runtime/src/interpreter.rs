@@ -1,20 +1,20 @@
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use corosensei::stack::DefaultStack;
 use corosensei::{Coroutine, Yielder};
 
 use xulo_core::ast::{
-    AssignTarget, BinaryOp, BinaryOperator, BindingPattern, Block, Call, ComponentStmt, EffectStmt,
-    Expression, FnDef, ForStmt, IfExpr, ImplDecl, LetBinding, Literal, MatchExpr, ObjectField,
-    Param, Program, ReturnStmt, Statement, StoreStmt, TryStmt, Type, UiElement, UnaryOperator,
-    impl_fn_name,
+    AssignTarget, Attribute, BinaryOp, BinaryOperator, BindingPattern, Block, Call, ComponentStmt,
+    EffectStmt, EnumDef, Expression, FnDef, ForStmt, IfExpr, ImplDecl, LetBinding, Literal,
+    MatchExpr, ObjectField, Param, Program, ReturnStmt, Statement, StoreStmt, StructDef, TryStmt,
+    Type, UiElement, UnaryOperator, impl_fn_name,
 };
 use xulo_core::error::{ErrorKind, XuloError};
 
 use crate::env::Env;
-use crate::value::{FunctionValue, Value, equal, is_truthy};
+use crate::value::{FunctionValue, Value, equal, format_number, is_truthy};
 
 pub use xulo_core::ast::CallArg;
 
@@ -58,6 +58,17 @@ enum Tail<'a> {
 /// The runtime exports a module's `export` statements produce.
 pub struct ModuleExports {
     pub bindings: Vec<(String, Value)>,
+    env: Rc<RefCell<Env>>,
+}
+
+impl ModuleExports {
+    /// Re-bind an import placeholder in this module's scope once the target
+    /// module has executed. Legal `use` cycles are filled two-phase
+    /// (spec/import-export.md): the placeholder holds an empty object until
+    /// the loop owner patches it in with the real binding.
+    pub fn patch_import(&self, local: &str, value: Value) {
+        self.env.borrow_mut().define(local, value, false);
+    }
 }
 
 /// The control message passed into an async coroutine. The first resume is
@@ -119,7 +130,7 @@ pub struct Interpreter {
     tasks: RefCell<Vec<Option<Task>>>,
     /// Tasks to resume next, FIFO (JS microtask order).
     ready: RefCell<VecDeque<(usize, Control)>>,
-    /// `Task.timeout` deadlines: `(deadline, combined promise, the value it
+    /// `Task::timeout` deadlines: `(deadline, combined promise, the value it
     /// settles with)`. `drive` fires due entries once no task is ready and
     /// sleeps to the earliest live one in between; an entry whose promise
     /// settled before its deadline is pruned instead of waited for (the
@@ -139,6 +150,22 @@ pub struct Interpreter {
     /// falls back to these objects (which hold inherent impl methods) when a
     /// method is not found directly on a receiver instance.
     struct_names: RefCell<Vec<String>>,
+    /// Names of every `enum` declared by a program executed in this
+    /// interpreter (execution registers them as it goes). A `head::member`
+    /// call whose head is here constructs a variant; any other head that
+    /// names an object in scope reads as a namespace member
+    /// (`use mod as ns; ns::f()` — spec `expressions/path-and-access.md`).
+    enum_names: RefCell<Vec<String>>,
+    /// Declared field names and default expressions per `struct`, with the
+    /// environment defaults evaluate in — the metadata behind
+    /// `User(name: …, age: …)` construction (spec `types/composite-types.md`).
+    struct_fields: RefCell<std::collections::HashMap<String, StructCtorDecl>>,
+    /// Instances built by a struct constructor, keyed by their field map's
+    /// identity: `u.to_string()` must find *that* struct's methods, not the
+    /// first registered struct declaring a method of the same name. The weak
+    /// handle makes a recycled pointer evict a stale entry instead of claiming
+    /// a type it no longer has.
+    instance_types: InstanceTypeMap,
     /// `@Memo let` value cache keyed by the binding's `name_span.start`: each
     /// site holds `(deps values, cached result)` entries, scanned by value
     /// equality. Live for the whole run (the native runtime has no re-render
@@ -166,9 +193,18 @@ pub struct Interpreter {
 /// the computed value. Scanned by value equality (the entry lists are short).
 type MemoEntry = (Vec<Value>, Value);
 
-/// One `Task.timeout` deadline: when it fires, the combined promise it
+/// Pointer-identity side table for constructor-built instances: object ptr ->
+/// (weak handle to the defining module's bindings, struct name).
+type InstanceTypeMap =
+    RefCell<std::collections::HashMap<usize, (Weak<RefCell<Vec<(String, Value)>>>, String)>>;
+
+/// One `Task::timeout` deadline: when it fires, the combined promise it
 /// settles, and the value that settles it.
-type TimerEntry = (std::time::Instant, Rc<RefCell<crate::value::Promise>>, Value);
+type TimerEntry = (
+    std::time::Instant,
+    Rc<RefCell<crate::value::Promise>>,
+    Value,
+);
 
 /// Maximum nested interpreter calls. Guards against unbounded recursion, which
 /// otherwise crashes the process: sync recursion overflows the host stack with
@@ -213,7 +249,7 @@ impl Drop for Interpreter {
 }
 
 /// Normalize a combinator operand to a promise: tasks stay as they are,
-/// plain values become already-fulfilled promises (spec `Task.resolve`).
+/// plain values become already-fulfilled promises (spec `Task::resolve`).
 fn as_promise(value: &Value) -> Rc<RefCell<crate::value::Promise>> {
     match value {
         Value::Promise(p) => p.clone(),
@@ -249,7 +285,7 @@ fn settle_promise_once(
     }
 }
 
-/// `Task.all([t, u])`: the combined task settles when every input has settled
+/// `Task::all([t, u])`: the combined task settles when every input has settled
 /// and carries the results in argument order; the first rejection rejects it.
 fn native_task_all(interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     let list = match args.first() {
@@ -257,7 +293,7 @@ fn native_task_all(interp: &Interpreter, args: &[Value]) -> Result<Value, RunErr
         other => {
             return Err(RunError::err(
                 format!(
-                    "`Task.all` expects a list of tasks, found {}",
+                    "`Task::all` expects a list of tasks, found {}",
                     other.map(|v| v.kind_name()).unwrap_or("nothing".into())
                 ),
                 0..0,
@@ -277,7 +313,7 @@ fn native_task_all(interp: &Interpreter, args: &[Value]) -> Result<Value, RunErr
     }))
 }
 
-/// `Task.race([t, u])`: the combined task settles with the first input to
+/// `Task::race([t, u])`: the combined task settles with the first input to
 /// settle; the others keep running and their results are discarded.
 fn native_task_race(interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     let list = match args.first() {
@@ -285,7 +321,7 @@ fn native_task_race(interp: &Interpreter, args: &[Value]) -> Result<Value, RunEr
         other => {
             return Err(RunError::err(
                 format!(
-                    "`Task.race` expects a list of tasks, found {}",
+                    "`Task::race` expects a list of tasks, found {}",
                     other.map(|v| v.kind_name()).unwrap_or("nothing".into())
                 ),
                 0..0,
@@ -313,7 +349,7 @@ fn native_task_race(interp: &Interpreter, args: &[Value]) -> Result<Value, RunEr
     Ok(Value::Promise(combined))
 }
 
-/// `Task.resolve(v)`: an already-fulfilled task holding `v`.
+/// `Task::resolve(v)`: an already-fulfilled task holding `v`.
 fn native_task_resolve(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     let value = args.first().cloned().unwrap_or(Value::Null);
     Ok(Value::Promise(Rc::new(RefCell::new(
@@ -344,7 +380,7 @@ fn native_error(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError
     Ok(error_value(message))
 }
 
-/// `Result::Ok(value)` as a runtime enum value. `Task.timeout` wraps outcomes
+/// `Result::Ok(value)` as a runtime enum value. `Task::timeout` wraps outcomes
 /// in the built-in `Result`, which needs no runtime registration: enum
 /// construction and matching are generic over the enum's name.
 fn result_ok(value: Value) -> Value {
@@ -364,7 +400,7 @@ fn result_err(error: Value) -> Value {
     }
 }
 
-/// `Task.timeout(t, ms)`: settles with `Result::Ok(t's result)` when `t`
+/// `Task::timeout(t, ms)`: settles with `Result::Ok(t's result)` when `t`
 /// finishes within `ms`, or with `Result::Err(Error("timed out"))` when the
 /// deadline elapses first (spec `error-handling.md`). The deadline is a timer
 /// entry `drive` fires once nothing else is ready to run; a rejection of `t`
@@ -377,7 +413,7 @@ fn result_err(error: Value) -> Value {
 fn native_task_timeout(interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     let Some(first) = args.first() else {
         return Err(RunError::err(
-            "`Task.timeout` requires a task argument",
+            "`Task::timeout` requires a task argument",
             0..0,
         ));
     };
@@ -387,7 +423,7 @@ fn native_task_timeout(interp: &Interpreter, args: &[Value]) -> Result<Value, Ru
         other => {
             return Err(RunError::err(
                 format!(
-                    "`Task.timeout` expects a millisecond count of type number, found {}",
+                    "`Task::timeout` expects a millisecond count of type number, found {}",
                     other.map(|v| v.kind_name()).unwrap_or("nothing".into())
                 ),
                 0..0,
@@ -421,6 +457,257 @@ fn native_task_timeout(interp: &Interpreter, args: &[Value]) -> Result<Value, Ru
         })
     });
     Ok(Value::Promise(combined))
+}
+
+/// A numeric argument of a built-in namespace call. The semantic pass checks
+/// the registered signature; this guard keeps a program that skips it from
+/// panicking on a wrong operand.
+fn builtin_num_arg(args: &[Value], i: usize, name: &str) -> Result<f64, RunError> {
+    match args.get(i) {
+        Some(Value::Number(n)) => Ok(*n),
+        other => Err(RunError::err(
+            format!(
+                "`{name}` expects a number, found {}",
+                other
+                    .map(|v| v.kind_name())
+                    .unwrap_or_else(|| "nothing".into())
+            ),
+            0..0,
+        )),
+    }
+}
+
+/// `Math::abs(x)`: the absolute value (spec `builtins/intrinsic-functions.md`).
+fn native_math_abs(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    Ok(Value::Number(builtin_num_arg(args, 0, "Math::abs")?.abs()))
+}
+
+/// `Math::min(a, b)` / `Math::max(a, b)`: the smaller / larger operand, with
+/// the IEEE-754 special values propagating (a `NaN` operand yields `NaN`).
+fn native_math_min(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    let a = builtin_num_arg(args, 0, "Math::min")?;
+    let b = builtin_num_arg(args, 1, "Math::min")?;
+    Ok(Value::Number(if a.is_nan() || b.is_nan() {
+        f64::NAN
+    } else {
+        a.min(b)
+    }))
+}
+
+fn native_math_max(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    let a = builtin_num_arg(args, 0, "Math::max")?;
+    let b = builtin_num_arg(args, 1, "Math::max")?;
+    Ok(Value::Number(if a.is_nan() || b.is_nan() {
+        f64::NAN
+    } else {
+        a.max(b)
+    }))
+}
+
+/// `Math::sqrt(x)`: the square root; a negative operand yields `NaN`.
+fn native_math_sqrt(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    Ok(Value::Number(
+        builtin_num_arg(args, 0, "Math::sqrt")?.sqrt(),
+    ))
+}
+
+/// `Math::cbrt(x)`: the cube root, defined for every `Float`.
+fn native_math_cbrt(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    Ok(Value::Number(
+        builtin_num_arg(args, 0, "Math::cbrt")?.cbrt(),
+    ))
+}
+
+/// `Math::pow(base, exp)`: `base` raised to `exp`.
+fn native_math_pow(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    let base = builtin_num_arg(args, 0, "Math::pow")?;
+    let exp = builtin_num_arg(args, 1, "Math::pow")?;
+    Ok(Value::Number(base.powf(exp)))
+}
+
+/// `Math::floor(x)` / `Math::ceil(x)` / `Math::round(x)` / `Math::trunc(x)`:
+/// the integral value, typed `Int`. `f64::round` rounds halfway cases away
+/// from zero (spec `builtins/intrinsic-functions.md`), matching the
+/// specified rule; every result stays an integer-valued `Float`.
+fn native_math_floor(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    Ok(Value::Number(
+        builtin_num_arg(args, 0, "Math::floor")?.floor(),
+    ))
+}
+
+fn native_math_ceil(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    Ok(Value::Number(
+        builtin_num_arg(args, 0, "Math::ceil")?.ceil(),
+    ))
+}
+
+fn native_math_round(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    Ok(Value::Number(
+        builtin_num_arg(args, 0, "Math::round")?.round(),
+    ))
+}
+
+fn native_math_trunc(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    Ok(Value::Number(
+        builtin_num_arg(args, 0, "Math::trunc")?.trunc(),
+    ))
+}
+
+/// `Math::toFixed(x, digits)`: the decimal numeral of `x` with exactly
+/// `digits` digits after the decimal point, rounded halfway away from zero
+/// and keeping trailing zeros (spec `builtins/intrinsic-functions.md`).
+/// Special values ignore `digits`. A `digits` value outside `0..=15` is a
+/// runtime failure (spec `memory-and-runtime.md`).
+fn native_math_to_fixed(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    let x = builtin_num_arg(args, 0, "Math::toFixed")?;
+    let digits = match args.get(1) {
+        Some(Value::Number(d)) if d.fract() == 0.0 && (0.0..=15.0).contains(d) => *d as usize,
+        Some(Value::Number(d)) => {
+            return Err(RunError::err(
+                format!("`Math::toFixed` digits must be an integer in 0..=15, found {d}"),
+                0..0,
+            ));
+        }
+        other => {
+            return Err(RunError::err(
+                format!(
+                    "`Math::toFixed` expects a number for `digits`, found {}",
+                    other
+                        .map(|v| v.kind_name())
+                        .unwrap_or_else(|| "nothing".into())
+                ),
+                0..0,
+            ));
+        }
+    };
+    if x.is_nan() || x.is_infinite() {
+        return Ok(Value::String(format_number(x).into()));
+    }
+    let factor = 10f64.powi(digits as i32);
+    let scaled = x * factor;
+    // Scaling an enormous operand can overflow to infinity; its decimal
+    // numeral then carries no meaningful fractional part and formatting the
+    // operand directly is the fixed-width answer.
+    let formatted = if scaled.is_infinite() {
+        format!("{x:.*}", digits)
+    } else {
+        format!("{:.*}", digits, scaled.round() / factor)
+    };
+    Ok(Value::String(formatted.into()))
+}
+
+/// The one-argument trigonometric functions (`Math::sin` … `Math::atan`);
+/// outside an arcsine/arccosine's domain the `f64` operation yields `NaN`.
+fn native_math_unary_float(
+    name: &'static str,
+    f: fn(f64) -> f64,
+) -> impl Fn(&Interpreter, &[Value]) -> Result<Value, RunError> {
+    move |_interp, args| Ok(Value::Number(f(builtin_num_arg(args, 0, name)?)))
+}
+
+/// `Math::atan2(y, x)`: the quadrant-aware arctangent of `y / x`.
+fn native_math_atan2(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    let y = builtin_num_arg(args, 0, "Math::atan2")?;
+    let x = builtin_num_arg(args, 1, "Math::atan2")?;
+    Ok(Value::Number(y.atan2(x)))
+}
+
+/// `Math::log(x)` / `Math::log2(x)` / `Math::log10(x)`: `-Infinity` at `0`,
+/// `NaN` for a negative argument; `Math::exp(x)`: `e` raised to `x`,
+/// `Infinity` once the result overflows.
+fn native_math_log(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    Ok(Value::Number(builtin_num_arg(args, 0, "Math::log")?.ln()))
+}
+
+fn native_math_log2(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    Ok(Value::Number(
+        builtin_num_arg(args, 0, "Math::log2")?.log2(),
+    ))
+}
+
+fn native_math_log10(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    Ok(Value::Number(
+        builtin_num_arg(args, 0, "Math::log10")?.log10(),
+    ))
+}
+
+fn native_math_exp(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    Ok(Value::Number(builtin_num_arg(args, 0, "Math::exp")?.exp()))
+}
+
+/// The zero-argument clock members of `Time` reject a stray argument the
+/// semantic pass would already have rejected (spec `builtins/intrinsic-functions.md`).
+fn no_arg_guard(args: &[Value], name: &str) -> Result<(), RunError> {
+    if args.is_empty() {
+        Ok(())
+    } else {
+        Err(RunError::err(format!("`{name}` takes no arguments"), 0..0))
+    }
+}
+
+/// `Time::now`: milliseconds since the Unix epoch (wall clock).
+fn native_time_now(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    no_arg_guard(args, "Time::now")?;
+    let ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as f64)
+        .unwrap_or(0.0);
+    Ok(Value::Number(ms))
+}
+
+/// `Time::now_nanos`: nanoseconds since the Unix epoch (wall clock).
+fn native_time_now_nanos(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    no_arg_guard(args, "Time::now_nanos")?;
+    let ns = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as f64)
+        .unwrap_or(0.0);
+    Ok(Value::Number(ns))
+}
+
+/// The process's monotonic baseline: `Instant::now()` at first use, so every
+/// `Time::monotonic` reading is a difference from a fixed origin that never
+/// runs backwards.
+fn monotonic_start() -> std::time::Instant {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    *START.get_or_init(std::time::Instant::now)
+}
+
+/// `Time::monotonic`: milliseconds on the monotonic clock.
+fn native_time_monotonic(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    no_arg_guard(args, "Time::monotonic")?;
+    Ok(Value::Number(monotonic_start().elapsed().as_millis() as f64))
+}
+
+/// `Time::monotonic_nanos`: nanoseconds on the monotonic clock.
+fn native_time_monotonic_nanos(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    no_arg_guard(args, "Time::monotonic_nanos")?;
+    Ok(Value::Number(monotonic_start().elapsed().as_nanos() as f64))
+}
+
+/// `Time::sleep(ms)`: a `Task<Unit>` that settles at least `ms` milliseconds
+/// from now. The deadline is a timer entry `drive` fires once nothing else is
+/// ready to run, exactly like a `Task::timeout` deadline; awaiting the task
+/// suspends the body until then.
+fn native_time_sleep(interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    let ms = builtin_num_arg(args, 0, "Time::sleep")?;
+    if !ms.is_finite() || ms < 0.0 {
+        return Err(RunError::err(
+            format!("`Time::sleep` expects a non-negative millisecond count, found {ms}"),
+            0..0,
+        ));
+    }
+    let deadline = std::time::Instant::now()
+        + std::time::Duration::from_millis(ms.min(u32::MAX as f64) as u64);
+    let promise = Rc::new(RefCell::new(crate::value::Promise {
+        state: crate::value::PromiseState::Pending,
+        awaiters: VecDeque::new(),
+    }));
+    interp
+        .timers
+        .borrow_mut()
+        .push((deadline, promise.clone(), Value::Null));
+    Ok(Value::Promise(promise))
 }
 
 fn native_print(interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
@@ -538,7 +825,7 @@ fn block_has_closure(block: &Block) -> bool {
 fn stmt_has_closure(stmt: &Statement) -> bool {
     match stmt {
         Statement::Fn(_) => true,
-        // A `test fn` body is inert: nothing can reach it, so its closures
+        // A `#Test fn` body is inert: nothing can reach it, so its closures
         // never exist at run time.
         Statement::Test(_) => false,
         Statement::Let(l) => {
@@ -561,7 +848,8 @@ fn stmt_has_closure(stmt: &Statement) -> bool {
         Statement::TypeAlias(_)
         | Statement::Enum(_)
         | Statement::Struct(_)
-        | Statement::Import(_)
+        | Statement::Mod(_)
+        | Statement::Use(_)
         | Statement::Environment(_)
         | Statement::Trait(_)
         | Statement::Break
@@ -696,6 +984,32 @@ fn ui_has_closure(el: &xulo_core::ast::UiElement) -> bool {
     }
 }
 
+/// How a derived `to_string` renders one field or payload parameter:
+/// structurally, or by delegating to that type's `ToString` impl (hand
+/// written or itself derived — both live under the same mangled name).
+enum DerivedForm {
+    Structural,
+    ToStr(String),
+}
+
+fn derived_form(ty: &Type) -> DerivedForm {
+    match ty {
+        // `string` parses as `Type::String`, so a named type here is a
+        // user type; the semantic pass has already rejected the derive
+        // unless the type has a string form (E0212/E0801).
+        Type::Named(name, _) => DerivedForm::ToStr(name.clone()),
+        _ => DerivedForm::Structural,
+    }
+}
+
+/// A struct constructor's declaration: field names in order, each field's
+/// optional default expression, and the environment defaults evaluate in.
+#[derive(Clone)]
+struct StructCtorDecl {
+    env: Rc<RefCell<Env>>,
+    fields: Vec<(String, Option<Expression>)>,
+}
+
 impl Interpreter {
     /// A fresh interpreter with `print`/`str` builtins registered in the global
     /// scope (user declarations of the same name shadow them).
@@ -743,14 +1057,8 @@ impl Interpreter {
         );
         // The `Task` combinator namespace (spec `builtins/intrinsic-functions.md`).
         let task_methods = vec![
-            (
-                "all".to_string(),
-                Value::Native(Rc::new(native_task_all)),
-            ),
-            (
-                "race".to_string(),
-                Value::Native(Rc::new(native_task_race)),
-            ),
+            ("all".to_string(), Value::Native(Rc::new(native_task_all))),
+            ("race".to_string(), Value::Native(Rc::new(native_task_race))),
             (
                 "resolve".to_string(),
                 Value::Native(Rc::new(native_task_resolve)),
@@ -765,6 +1073,106 @@ impl Interpreter {
             Value::Object(Rc::new(RefCell::new(task_methods))),
             false,
         );
+        // The `Math` namespace of constants and functions (spec
+        // `builtins/intrinsic-functions.md`): reached as `Math::PI` /
+        // `Math::max(a, b)`, never as a value of its own.
+        let math_members: Vec<(String, Value)> = vec![
+            ("PI".to_string(), Value::Number(std::f64::consts::PI)),
+            ("E".to_string(), Value::Number(std::f64::consts::E)),
+            ("TAU".to_string(), Value::Number(std::f64::consts::TAU)),
+            ("INFINITY".to_string(), Value::Number(f64::INFINITY)),
+            ("NAN".to_string(), Value::Number(f64::NAN)),
+            ("abs".to_string(), Value::Native(Rc::new(native_math_abs))),
+            ("min".to_string(), Value::Native(Rc::new(native_math_min))),
+            ("max".to_string(), Value::Native(Rc::new(native_math_max))),
+            ("sqrt".to_string(), Value::Native(Rc::new(native_math_sqrt))),
+            ("cbrt".to_string(), Value::Native(Rc::new(native_math_cbrt))),
+            ("pow".to_string(), Value::Native(Rc::new(native_math_pow))),
+            (
+                "floor".to_string(),
+                Value::Native(Rc::new(native_math_floor)),
+            ),
+            ("ceil".to_string(), Value::Native(Rc::new(native_math_ceil))),
+            (
+                "round".to_string(),
+                Value::Native(Rc::new(native_math_round)),
+            ),
+            (
+                "trunc".to_string(),
+                Value::Native(Rc::new(native_math_trunc)),
+            ),
+            (
+                "toFixed".to_string(),
+                Value::Native(Rc::new(native_math_to_fixed)),
+            ),
+            (
+                "sin".to_string(),
+                Value::Native(Rc::new(native_math_unary_float("Math::sin", f64::sin))),
+            ),
+            (
+                "cos".to_string(),
+                Value::Native(Rc::new(native_math_unary_float("Math::cos", f64::cos))),
+            ),
+            (
+                "tan".to_string(),
+                Value::Native(Rc::new(native_math_unary_float("Math::tan", f64::tan))),
+            ),
+            (
+                "asin".to_string(),
+                Value::Native(Rc::new(native_math_unary_float("Math::asin", f64::asin))),
+            ),
+            (
+                "acos".to_string(),
+                Value::Native(Rc::new(native_math_unary_float("Math::acos", f64::acos))),
+            ),
+            (
+                "atan".to_string(),
+                Value::Native(Rc::new(native_math_unary_float("Math::atan", f64::atan))),
+            ),
+            (
+                "atan2".to_string(),
+                Value::Native(Rc::new(native_math_atan2)),
+            ),
+            ("log".to_string(), Value::Native(Rc::new(native_math_log))),
+            ("log2".to_string(), Value::Native(Rc::new(native_math_log2))),
+            (
+                "log10".to_string(),
+                Value::Native(Rc::new(native_math_log10)),
+            ),
+            ("exp".to_string(), Value::Native(Rc::new(native_math_exp))),
+        ];
+        global.borrow_mut().define(
+            "Math",
+            Value::Object(Rc::new(RefCell::new(math_members))),
+            false,
+        );
+        // The `Time` namespace of clocks and async sleep (spec
+        // `builtins/intrinsic-functions.md`): reached as `Time::now` /
+        // `await Time::sleep(ms)`.
+        let time_members: Vec<(String, Value)> = vec![
+            ("now".to_string(), Value::Native(Rc::new(native_time_now))),
+            (
+                "now_nanos".to_string(),
+                Value::Native(Rc::new(native_time_now_nanos)),
+            ),
+            (
+                "monotonic".to_string(),
+                Value::Native(Rc::new(native_time_monotonic)),
+            ),
+            (
+                "monotonic_nanos".to_string(),
+                Value::Native(Rc::new(native_time_monotonic_nanos)),
+            ),
+            (
+                "sleep".to_string(),
+                Value::Native(Rc::new(native_time_sleep)),
+            ),
+        ];
+        global.borrow_mut().define(
+            "Time",
+            Value::Object(Rc::new(RefCell::new(time_members))),
+            false,
+        );
         Interpreter {
             out: RefCell::new(Vec::new()),
             global,
@@ -777,6 +1185,9 @@ impl Interpreter {
             call_depth: Cell::new(0),
             memo_cache: RefCell::new(std::collections::HashMap::new()),
             struct_names: RefCell::new(Vec::new()),
+            enum_names: RefCell::new(Vec::new()),
+            struct_fields: RefCell::new(std::collections::HashMap::new()),
+            instance_types: RefCell::new(std::collections::HashMap::new()),
             view: RefCell::new(None),
             entry_env: RefCell::new(None),
             state_store: RefCell::new(std::collections::HashMap::new()),
@@ -793,19 +1204,14 @@ impl Interpreter {
             match statement {
                 Statement::Fn(f) => self.register_fn(f, &global),
                 Statement::Impl(imp) => self.register_impl(imp, &global),
-                Statement::Struct(s) => {
-                    self.struct_names.borrow_mut().push(s.name.clone());
-                    global.borrow_mut().define(
-                        &s.name,
-                        Value::Object(Rc::new(RefCell::new(Vec::new()))),
-                        false,
-                    );
-                }
-                Statement::Export(export) => {
-                    if let xulo_core::ast::ExportItem::Fn(f) = &export.item {
-                        self.register_fn(f, &global);
-                    }
-                }
+                Statement::Struct(s) => self.register_struct(s, &global),
+                Statement::Enum(e) => self.register_derived_enum(e),
+                Statement::Export(export) => match &export.item {
+                    xulo_core::ast::ExportItem::Fn(f) => self.register_fn(f, &global),
+                    xulo_core::ast::ExportItem::Struct(s) => self.register_struct(s, &global),
+                    xulo_core::ast::ExportItem::Enum(e) => self.register_derived_enum(e),
+                    _ => {}
+                },
                 _ => {}
             }
         }
@@ -900,11 +1306,34 @@ impl Interpreter {
         }
         let mut bindings = Vec::new();
         for statement in &program.statements {
-            if let Statement::Export(export) = statement {
-                collect_exports(&export.item, &global, &mut bindings);
+            match statement {
+                Statement::Export(export) => collect_exports(&export.item, &global, &mut bindings),
+                // `pub use`/`pub mod` re-export names this module bound but
+                // never declared: mirror them into the export map so
+                // importers see the same interface the semantic pass does.
+                Statement::Use(u) if u.is_pub => {
+                    for local in use_local_names(&u.target) {
+                        if let Some(v) = global.borrow().get(&local)
+                            && !bindings.iter().any(|(n, _)| n == &local)
+                        {
+                            bindings.push((local, v));
+                        }
+                    }
+                }
+                Statement::Mod(m) if m.is_pub => {
+                    if let Some(v) = global.borrow().get(&m.name)
+                        && !bindings.iter().any(|(n, _)| n == &m.name)
+                    {
+                        bindings.push((m.name.clone(), v));
+                    }
+                }
+                _ => {}
             }
         }
-        Ok(ModuleExports { bindings })
+        Ok(ModuleExports {
+            bindings,
+            env: global,
+        })
     }
 
     /// Bind a module's imports, register its declarations, and execute its
@@ -923,22 +1352,13 @@ impl Interpreter {
             match statement {
                 Statement::Fn(f) => self.register_fn(f, &global),
                 Statement::Impl(imp) => self.register_impl(imp, &global),
-                Statement::Struct(s) => {
-                    self.struct_names.borrow_mut().push(s.name.clone());
-                    global.borrow_mut().define(
-                        &s.name,
-                        Value::Object(Rc::new(RefCell::new(Vec::new()))),
-                        false,
-                    );
-                }
+                Statement::Struct(s) => self.register_struct(s, &global),
+                Statement::Enum(e) => self.register_derived_enum(e),
                 Statement::Export(export) => self.register_export_fns(&export.item, &global),
                 _ => {}
             }
         }
         for statement in &program.statements {
-            if matches!(statement, Statement::Import(_)) {
-                continue;
-            }
             match self.exec_stmt(statement, &global) {
                 Ok(_) => {}
                 Err(e) => return Err(e),
@@ -948,7 +1368,7 @@ impl Interpreter {
     }
 
     /// Execute a module exactly like [`Interpreter::exec_module`] with
-    /// `run_main: false`, then invoke one `test fn` body. The test body sees
+    /// `run_main: false`, then invoke one `#Test fn` body. The test body sees
     /// the module the same way a function body does (spec testing.md).
     ///
     /// Pass = the body completes; an async test passes when its task settles
@@ -1055,8 +1475,14 @@ impl Interpreter {
     }
 
     fn register_export_fns(&self, item: &xulo_core::ast::ExportItem, env: &Rc<RefCell<Env>>) {
-        if let xulo_core::ast::ExportItem::Fn(f) = item {
-            self.register_fn(f, env);
+        match item {
+            xulo_core::ast::ExportItem::Fn(f) => self.register_fn(f, env),
+            // `pub struct`/`pub enum` reach this arm parser-wrapped: the
+            // struct's constructor table and derived impls register here so
+            // construction and dispatch work exactly like a bare declaration.
+            xulo_core::ast::ExportItem::Struct(s) => self.register_struct(s, env),
+            xulo_core::ast::ExportItem::Enum(e) => self.register_derived_enum(e),
+            _ => {}
         }
     }
 
@@ -1185,10 +1611,7 @@ impl Interpreter {
                 (msg.settle)(
                     self,
                     Err(RunError::err(
-                        format!(
-                            "service `{}` declares no `on_message`",
-                            service.type_name
-                        ),
+                        format!("service `{}` declares no `on_message`", service.type_name),
                         0..0,
                     )),
                 );
@@ -1344,7 +1767,7 @@ impl Interpreter {
     /// Drain the ready queue (JS microtasks): resume each queued task in FIFO
     /// order until none is ready to run. With no task ready, the timer half of
     /// the loop takes over: fire deadlines that have passed, otherwise sleep
-    /// until the next one (`Task.timeout` deadlines), and end when neither
+    /// until the next one (`Task::timeout` deadlines), and end when neither
     /// has work left.
     fn drive(&self) {
         loop {
@@ -1397,10 +1820,7 @@ impl Interpreter {
         let next = {
             let mut timers = self.timers.borrow_mut();
             timers.retain(|(_, promise, _)| {
-                matches!(
-                    promise.borrow().state,
-                    crate::value::PromiseState::Pending
-                )
+                matches!(promise.borrow().state, crate::value::PromiseState::Pending)
             });
             timers.iter().map(|(deadline, _, _)| *deadline).min()
         };
@@ -1416,6 +1836,202 @@ impl Interpreter {
 
     fn current_yielder(&self, id: usize) -> *const Yielder<Control, ()> {
         self.task_yielder.borrow()[id].expect("an awaiting task has a yielder")
+    }
+
+    /// Register a `struct` declaration: the shared type object (inherent
+    /// methods and a derived `to_string` land on it), the constructor
+    /// metadata `User(name: …)` builds instances from, and the name
+    /// `struct_method`/dispatch look the object up by.
+    fn register_struct(&self, s: &StructDef, env: &Rc<RefCell<Env>>) {
+        self.struct_names.borrow_mut().push(s.name.clone());
+        env.borrow_mut().define(
+            &s.name,
+            Value::Object(Rc::new(RefCell::new(Vec::new()))),
+            false,
+        );
+        self.struct_fields.borrow_mut().insert(
+            s.name.clone(),
+            StructCtorDecl {
+                env: env.clone(),
+                fields: s
+                    .fields
+                    .iter()
+                    .map(|f| (f.name.clone(), f.default.clone()))
+                    .collect(),
+            },
+        );
+        self.register_derived_struct(s, env);
+    }
+
+    /// Whether a declaration carries `#Derive(ToString)` (spec
+    /// `types/traits.md` registers exactly one derive target).
+    fn derives_to_string(attributes: &[Attribute]) -> bool {
+        attributes
+            .iter()
+            .any(|attr| attr.name == "Derive" && attr.args.iter().any(|(arg, _)| arg == "ToString"))
+    }
+
+    /// Render one derived field/parameter. Nested named types resolve through
+    /// the interpreter root, where every `impl` — hand written and derived —
+    /// registers its mangled name, so derived renderers compose.
+    fn derived_to_string(&self, value: &Value, form: &DerivedForm) -> Result<String, RunError> {
+        match form {
+            DerivedForm::Structural => Ok(value.format()),
+            DerivedForm::ToStr(type_name) => {
+                let mangled = impl_fn_name("ToString", type_name, "to_string");
+                let func = self.global.borrow().get(&mangled);
+                match func {
+                    Some(func) => {
+                        let out =
+                            self.call_value_with_values(&func, std::slice::from_ref(value))?;
+                        Ok(match out {
+                            Value::String(s) => s.to_string(),
+                            other => other.format(),
+                        })
+                    }
+                    // No analysis pass registered an impl: fall back to
+                    // structural rendering, matching an underived type.
+                    None => Ok(value.format()),
+                }
+            }
+        }
+    }
+
+    /// Register `#Derive(ToString)` for a struct (spec `types/traits.md`): the
+    /// generated method sits on the struct's object so `user.to_string()`
+    /// resolves like a hand written member, and under its mangled name on the
+    /// shared root so `ToString::to_string(user)` and an annotated `str(user)`
+    /// dispatch through the same function.
+    fn register_derived_struct(&self, s: &StructDef, env: &Rc<RefCell<Env>>) {
+        if !Self::derives_to_string(&s.attributes) {
+            return;
+        }
+        let type_name = s.name.clone();
+        let forms: Vec<(String, DerivedForm)> = s
+            .fields
+            .iter()
+            .map(|f| (f.name.clone(), derived_form(&f.type_)))
+            .collect();
+        let renderer: Value = Value::Native(Rc::new(move |interp, args| {
+            let receiver = args.first().cloned().unwrap_or(Value::Null);
+            let out = interp.render_derived_struct(&type_name, &forms, &receiver)?;
+            Ok(Value::String(out.into()))
+        }));
+        if let Some(Value::Object(obj)) = env.borrow().get(&s.name) {
+            let mut obj = obj.borrow_mut();
+            if !obj.iter().any(|(k, _)| k == "to_string") {
+                obj.push(("to_string".to_string(), renderer.clone()));
+            }
+            // The qualified key is what a generic `T: ToString` bound's
+            // dynamic dispatch looks for on the receiver's struct object —
+            // the same slot a hand-written trait impl registers.
+            let qualified = "ToString::to_string".to_string();
+            if !obj.iter().any(|(k, _)| *k == qualified) {
+                obj.push((qualified, renderer.clone()));
+            }
+        }
+        self.global.borrow_mut().define(
+            &impl_fn_name("ToString", &s.name, "to_string"),
+            renderer,
+            false,
+        );
+    }
+
+    /// Render a struct instance as `Type(field: value, …)` in declaration
+    /// order (spec `types/traits.md` derive example).
+    fn render_derived_struct(
+        &self,
+        type_name: &str,
+        forms: &[(String, DerivedForm)],
+        receiver: &Value,
+    ) -> Result<String, RunError> {
+        let Value::Object(fields) = receiver else {
+            return Ok(receiver.format());
+        };
+        let fields = fields.borrow();
+        let mut parts = Vec::with_capacity(forms.len());
+        for (name, form) in forms {
+            let value = fields
+                .iter()
+                .find(|(k, _)| k == name)
+                .map(|(_, v)| v.clone())
+                .unwrap_or(Value::Null);
+            parts.push(format!("{name}: {}", self.derived_to_string(&value, form)?));
+        }
+        Ok(format!("{type_name}({})", parts.join(", ")))
+    }
+
+    /// Register `#Derive(ToString)` for an enum: enum instances carry no
+    /// object, so the generated method exists only under its mangled name —
+    /// `variant.to_string()` dispatches to it, as do `Trait::method` calls and
+    /// annotated `str(v)`.
+    fn register_derived_enum(&self, e: &EnumDef) {
+        if !Self::derives_to_string(&e.attributes) {
+            return;
+        }
+        let type_name = e.name.clone();
+        let variants: Vec<(String, Vec<DerivedForm>)> = e
+            .variants
+            .iter()
+            .map(|v| {
+                let forms = v
+                    .payload
+                    .as_deref()
+                    .unwrap_or(&[])
+                    .iter()
+                    .map(|p| derived_form(&p.type_))
+                    .collect();
+                (v.name.clone(), forms)
+            })
+            .collect();
+        let renderer: Value = Value::Native(Rc::new(move |interp, args| {
+            let receiver = args.first().cloned().unwrap_or(Value::Null);
+            let out = interp.render_derived_enum(&type_name, &variants, &receiver)?;
+            Ok(Value::String(out.into()))
+        }));
+        self.global.borrow_mut().define(
+            &impl_fn_name("ToString", &e.name, "to_string"),
+            renderer,
+            false,
+        );
+    }
+
+    /// Render an enum instance as `Enum::Variant` or `Enum::Variant(p, …)`,
+    /// each payload slot through its declared type's string form.
+    fn render_derived_enum(
+        &self,
+        type_name: &str,
+        variants: &[(String, Vec<DerivedForm>)],
+        receiver: &Value,
+    ) -> Result<String, RunError> {
+        let Value::Enum { tag, payload, .. } = receiver else {
+            return Ok(receiver.format());
+        };
+        let Some((_, forms)) = variants.iter().find(|(name, _)| name == tag) else {
+            return Ok(receiver.format());
+        };
+        let slots: Vec<Value> = match payload {
+            None => Vec::new(),
+            // A single-slot variant stores its one value directly — even when
+            // that value is itself a list.
+            Some(p) if forms.len() == 1 => vec![(**p).clone()],
+            Some(p) => match &**p {
+                Value::List(items) => items.borrow().clone(),
+                single => vec![single.clone()],
+            },
+        };
+        if slots.len() != forms.len() {
+            return Ok(receiver.format());
+        }
+        let mut parts = Vec::with_capacity(slots.len());
+        for (value, form) in slots.iter().zip(forms) {
+            parts.push(self.derived_to_string(value, form)?);
+        }
+        if parts.is_empty() {
+            Ok(format!("{type_name}::{tag}"))
+        } else {
+            Ok(format!("{type_name}::{tag}({})", parts.join(", ")))
+        }
     }
 
     fn register_fn(&self, f: &FnDef, env: &Rc<RefCell<Env>>) {
@@ -1480,10 +2096,7 @@ impl Interpreter {
                     if !obj.iter().any(|(k, _)| k == &method.name) {
                         obj.push((method.name.clone(), func.clone()));
                     }
-                    obj.push((
-                        format!("{}::{}", imp.trait_name, method.name),
-                        func.clone(),
-                    ));
+                    obj.push((format!("{}::{}", imp.trait_name, method.name), func.clone()));
                 }
             }
         }
@@ -1495,7 +2108,7 @@ impl Interpreter {
                 self.register_fn(f, env);
                 Ok(Flow::Continue)
             }
-            // A `test fn` body is inert (spec testing.md): the identifier
+            // A `#Test fn` body is inert (spec testing.md): the identifier
             // binds no value and no execution reaches the body, so the
             // declaration is a no-op at run time.
             Statement::Test(_) => Ok(Flow::Continue),
@@ -1596,7 +2209,12 @@ impl Interpreter {
             Statement::Enum(e) => {
                 // Register the enum's runtime value so `pub use { Color }` and
                 // `pub enum` both resolve it for importers (construction
-                // `Color::Red` is name-based and unaffected).
+                // `Color::Red` is name-based and unaffected), and record the
+                // name so `Color::Red` stays variant construction rather than
+                // a namespace read.
+                if !self.enum_names.borrow().iter().any(|n| n == &e.name) {
+                    self.enum_names.borrow_mut().push(e.name.clone());
+                }
                 env.borrow_mut().define(&e.name, enum_value(e), false);
                 Ok(Flow::Continue)
             }
@@ -1620,25 +2238,10 @@ impl Interpreter {
                 let value = self.eval(expr, env)?;
                 Err(RunError::Throw(value))
             }
-            Statement::Import(imp) => {
-                if imp.type_only {
-                    Ok(Flow::Continue)
-                } else {
-                    // Local imports are bound into the module scope by
-                    // `exec_module` before statements run; any remaining import
-                    // is an external package. The headless runtime has no
-                    // external values, so bind the names to `null` placeholders
-                    // — UI components still resolve by name (they build the
-                    // props-object shape), and expression uses of a missing
-                    // external value fail only if a program computes with it.
-                    for name in import_binding_names(&imp.spec) {
-                        if env.borrow().get(&name).is_none() {
-                            env.borrow_mut().define(&name, Value::Null, false);
-                        }
-                    }
-                    Ok(Flow::Continue)
-                }
-            }
+            // `mod` claims/nests a module (its body runs as a separate
+            // module, earlier in the structural init order) and `use` only
+            // moves names — the CLI binds both before statements run.
+            Statement::Mod(_) | Statement::Use(_) => Ok(Flow::Continue),
             Statement::Export(export) => self.exec_export(&export.item, env),
             Statement::State(s) => self.exec_state(&s.binding, env),
             Statement::Store(s) => self.exec_store(s, env),
@@ -1696,8 +2299,10 @@ impl Interpreter {
             xulo_core::ast::ExportItem::Let(binding) => {
                 self.exec_stmt(&Statement::Let(binding.clone()), env)
             }
-            xulo_core::ast::ExportItem::Enum(_)
-            | xulo_core::ast::ExportItem::Type(_)
+            // `pub enum` reaches the same registration a bare `enum` does:
+            // env value for importers, and the name for `E::V` construction.
+            xulo_core::ast::ExportItem::Enum(e) => self.exec_stmt(&Statement::Enum(e.clone()), env),
+            xulo_core::ast::ExportItem::Type(_)
             | xulo_core::ast::ExportItem::Struct(_)
             | xulo_core::ast::ExportItem::Trait(_)
             | xulo_core::ast::ExportItem::Names(_) => Ok(Flow::Continue),
@@ -2244,11 +2849,42 @@ impl Interpreter {
                 }
             }
             Expression::Call(call) => self.call(call, env),
-            Expression::EnumRef(r) => Ok(Value::Enum {
-                enum_name: r.enum_name.clone(),
-                tag: r.variant.clone(),
-                payload: None,
-            }),
+            Expression::EnumRef(r) => {
+                // A built-in namespace's bare member: `Math::PI` is its
+                // constant value, `Math::sqrt` the native function (spec
+                // `builtins/intrinsic-functions.md`). A member the table does
+                // not have falls through to the enum reading.
+                if matches!(r.enum_name.as_str(), "Math" | "Time" | "Task")
+                    && let Some(value) = self.builtin_ns_member(&r.enum_name, &r.variant)
+                {
+                    return Ok(value);
+                }
+                // A module-namespace member in value position (`ns::CONST`):
+                // the head is not a declared enum and names an object in
+                // scope — read the member out of the namespace object.
+                if !self.enum_names.borrow().iter().any(|n| n == &r.enum_name) {
+                    let ns = env.borrow().get(&r.enum_name);
+                    if let Some(Value::Object(ns)) = ns {
+                        let found = ns
+                            .borrow()
+                            .iter()
+                            .find(|(k, _)| k == &r.variant)
+                            .map(|(_, v)| v.clone());
+                        return match found {
+                            Some(value) => Ok(value),
+                            None => Err(RunError::err(
+                                format!("`{}` has no member `{}`", r.enum_name, r.variant),
+                                r.span.clone(),
+                            )),
+                        };
+                    }
+                }
+                Ok(Value::Enum {
+                    enum_name: r.enum_name.clone(),
+                    tag: r.variant.clone(),
+                    payload: None,
+                })
+            }
             Expression::If(if_expr) => self.eval_if(if_expr, env),
             Expression::Ternary(tr) => {
                 let cond = self.eval(&tr.condition, env)?;
@@ -2466,10 +3102,7 @@ impl Interpreter {
                             let promise = promise.clone();
                             Rc::new(move |interp, result| {
                                 let mut p = promise.borrow_mut();
-                                if !matches!(
-                                    p.state,
-                                    crate::value::PromiseState::Pending
-                                ) {
+                                if !matches!(p.state, crate::value::PromiseState::Pending) {
                                     return;
                                 }
                                 p.state = match &result {
@@ -2479,10 +3112,10 @@ impl Interpreter {
                                 let awaiters = std::mem::take(&mut p.awaiters);
                                 drop(p);
                                 for awaiter in awaiters {
-                                    interp.ready.borrow_mut().push_back((
-                                        awaiter,
-                                        Control::Resume(result.clone()),
-                                    ));
+                                    interp
+                                        .ready
+                                        .borrow_mut()
+                                        .push_back((awaiter, Control::Resume(result.clone())));
                                 }
                             })
                         };
@@ -2937,7 +3570,10 @@ impl Interpreter {
             // `impl Trait for Type` registered there).
             if let Some(rest) = impl_name.strip_prefix("dyn:") {
                 let (trait_name, method) = rest.split_once(':').ok_or_else(|| {
-                    RunError::err(format!("malformed dynamic dispatch `{impl_name}`"), call.span.clone())
+                    RunError::err(
+                        format!("malformed dynamic dispatch `{impl_name}`"),
+                        call.span.clone(),
+                    )
                 })?;
                 let args = self.eval_args(&call.arguments, env)?;
                 let key = format!("{trait_name}::{method}");
@@ -2976,11 +3612,72 @@ impl Interpreter {
             })?;
             return self.call_value(&callee, &call.arguments, env);
         }
+        // A built-in namespace head (`Math::max`, `Time::sleep`, `Task::all`)
+        // resolves to its intrinsic object in the root environment (spec
+        // `builtins/intrinsic-functions.md`). A member the table does not
+        // have falls through to enum construction, which is what a
+        // program-declared `enum Math`-style shadowing head needs (the
+        // semantic pass rejects an unknown member on a genuine namespace).
+        if let Some((head, member)) = call.callee.split_once("::")
+            && !member.contains("::")
+            && matches!(head, "Math" | "Time" | "Task")
+            && let Some(func) = self.builtin_ns_member(head, member)
+        {
+            return self.call_value(&func, &call.arguments, env);
+        }
+        // A module-namespace member (`use mod as ns; ns::f()`): the head is
+        // not a declared enum and names an object in scope — the namespace
+        // object exported by `mod`/`use` bindings (spec
+        // `expressions/path-and-access.md`: members are reached with `::`).
+        if let Some((head, member)) = call.callee.split_once("::")
+            && !self.enum_names.borrow().iter().any(|n| n == head)
+        {
+            let ns = env.borrow().get(head);
+            if let Some(Value::Object(ns)) = ns {
+                // Walk nested namespaces: `ns::inner::v` reads `inner` on the
+                // head object, then `v` on that child object, then calls it.
+                let segments: Vec<&str> = member.split("::").collect();
+                let mut current = ns;
+                for (i, seg) in segments.iter().enumerate() {
+                    let found = current
+                        .borrow()
+                        .iter()
+                        .find(|(k, _)| k == seg)
+                        .map(|(_, v)| v.clone());
+                    if i + 1 == segments.len() {
+                        return match found {
+                            Some(func) => self.call_value(&func, &call.arguments, env),
+                            None => Err(RunError::err(
+                                format!("`{head}` has no member `{member}`"),
+                                call.span.clone(),
+                            )),
+                        };
+                    }
+                    match found {
+                        Some(Value::Object(child)) => current = child,
+                        _ => {
+                            return Err(RunError::err(
+                                format!("`{head}` has no member `{seg}`"),
+                                call.span.clone(),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
         if let Some((enum_name, variant)) = call.enum_parts() {
             return self.enum_construct(enum_name, variant, &call.arguments, env);
         }
         if let Some(object) = &call.object {
             return self.method_call(call, object, env);
+        }
+        // A struct constructor: the callee names a registered `struct` type
+        // and the call supplies its fields as named arguments (spec
+        // `types/composite-types.md`: `User(name: "Alice", age: 30)`).
+        if let Some(Value::Object(_)) = env.borrow().get(&call.callee)
+            && self.struct_fields.borrow().contains_key(&call.callee)
+        {
+            return self.construct_struct(&call.callee, call, env);
         }
         let callee = env.borrow().get(&call.callee);
         match callee {
@@ -2989,6 +3686,101 @@ impl Interpreter {
                 format!("undefined function `{}`", call.callee),
                 call.span.clone(),
             )),
+        }
+    }
+
+    /// Build a struct instance from `User(name: …, age: …)`: named arguments
+    /// only, defaults evaluated against the declaration's environment, and an
+    /// omitted field without a default left `null` — the semantic pass reports
+    /// a missing required field as `E0205` before execution, while an omitted
+    /// optional field carries no value of its own (spec
+    /// `types/composite-types.md`).
+    fn construct_struct(
+        &self,
+        name: &str,
+        call: &Call,
+        call_env: &Rc<RefCell<Env>>,
+    ) -> Result<Value, RunError> {
+        let decl = {
+            let table = self.struct_fields.borrow();
+            table.get(name).cloned().ok_or_else(|| {
+                RunError::err(
+                    format!("`{name}` is not a struct constructor"),
+                    call.span.clone(),
+                )
+            })?
+        };
+        let mut args: std::collections::HashMap<&str, &CallArg> = std::collections::HashMap::new();
+        for arg in &call.arguments {
+            let Some(label) = arg.name.as_deref() else {
+                return Err(RunError::err(
+                    format!("struct `{name}` is constructed with named arguments"),
+                    arg.value.span().clone(),
+                ));
+            };
+            if !decl.fields.iter().any(|(fname, _)| fname == label) {
+                return Err(RunError::err(
+                    format!("`{name}` has no field `{label}`"),
+                    arg.value.span().clone(),
+                ));
+            }
+            if args.insert(label, arg).is_some() {
+                return Err(RunError::err(
+                    format!("argument `{label}` to `{name}` is provided twice"),
+                    arg.value.span().clone(),
+                ));
+            }
+        }
+        let mut fields = Vec::with_capacity(decl.fields.len());
+        for (fname, default) in &decl.fields {
+            let value = if let Some(arg) = args.get(fname.as_str()) {
+                self.eval(&arg.value, call_env)?
+            } else if let Some(default) = default {
+                self.eval(default, &decl.env)?
+            } else {
+                Value::Null
+            };
+            fields.push((fname.clone(), value));
+        }
+        let obj = Rc::new(RefCell::new(fields));
+        self.instance_types.borrow_mut().insert(
+            Rc::as_ptr(&obj) as usize,
+            (Rc::downgrade(&obj), name.to_string()),
+        );
+        Ok(Value::Object(obj))
+    }
+
+    /// The struct type a constructed instance was built from, while its
+    /// identity still resolves in the instance table.
+    fn instance_type(&self, obj: &Rc<RefCell<Vec<(String, Value)>>>) -> Option<String> {
+        let ptr = Rc::as_ptr(obj) as usize;
+        let hit = {
+            let table = self.instance_types.borrow();
+            let (weak, name) = table.get(&ptr)?;
+            weak.upgrade()
+                .map(|rc| (Rc::as_ptr(&rc) as usize == ptr, name.clone()))
+        };
+        match hit {
+            Some((true, name)) => Some(name),
+            Some((false, _)) => {
+                self.instance_types.borrow_mut().remove(&ptr);
+                None
+            }
+            None => None,
+        }
+    }
+
+    /// A member of a built-in namespace object registered in the root
+    /// environment (`Math`/`Time`/`Task`), cloned out for dispatch.
+    fn builtin_ns_member(&self, ns: &str, member: &str) -> Option<Value> {
+        let global = self.global.borrow();
+        match global.get(ns)? {
+            Value::Object(map) => map
+                .borrow()
+                .iter()
+                .find(|(k, _)| k == member)
+                .map(|(_, v)| v.clone()),
+            _ => None,
         }
     }
 
@@ -3017,10 +3809,47 @@ impl Interpreter {
         match callee {
             Some(v) => self.call_value(&v, &call.arguments, env),
             None => {
+                // A derived (or hand written) `ToString` on an enum is a
+                // standalone mangled function — enum instances carry no object
+                // to hang methods on — so `variant.to_string()` dispatches
+                // through it with the receiver bound as `self`.
+                if let Value::Enum { enum_name, .. } = &receiver
+                    && method == "to_string"
+                {
+                    let mangled = impl_fn_name("ToString", enum_name, "to_string");
+                    if let Some(func) = env.borrow().get(&mangled) {
+                        let arg_values = self.eval_args(&call.arguments, env)?;
+                        let mut args = Vec::with_capacity(arg_values.len() + 1);
+                        args.push(receiver.clone());
+                        args.extend(arg_values);
+                        return self.call_value_with_values(&func, &args);
+                    }
+                }
+                // A constructed instance knows its struct type: the method
+                // resolves on that type's object (inherent methods, a derived
+                // `to_string`) with the receiver bound as `self`, so two
+                // structs declaring the same method name never cross-fire.
+                if let Value::Object(obj) = &receiver
+                    && let Some(struct_name) = self.instance_type(obj)
+                    && let Some(Value::Object(type_obj)) = env.borrow().get(&struct_name)
+                    && let Some(func) = type_obj
+                        .borrow()
+                        .iter()
+                        .find(|(k, _)| k == method)
+                        .map(|(_, v)| v.clone())
+                {
+                    let arg_values = self.eval_args(&call.arguments, env)?;
+                    let mut args = Vec::with_capacity(arg_values.len() + 1);
+                    args.push(receiver.clone());
+                    args.extend(arg_values);
+                    return self.call_value_with_values(&func, &args);
+                }
                 // Inherent impl methods live on the struct's object in the
                 // global environment (`impl User { fn method(self, ...) }`), not
                 // on instances. Fall back to the matching struct method, binding
-                // the receiver as the first (`self`) argument.
+                // the receiver as the first (`self`) argument — the scan
+                // applies only to instances the runtime cannot place (a plain
+                // object literal).
                 if let Value::Object(_) = &receiver
                     && let Some(struct_callee) =
                         self.struct_method(method, &receiver, &call.arguments, env)
@@ -3512,10 +4341,13 @@ impl Interpreter {
         env: &Rc<RefCell<Env>>,
     ) -> Result<Value, RunError> {
         if args.is_empty() {
-            return Err(RunError::err(
-                format!("enum constructor `{enum_name}::{variant}` requires at least one argument"),
-                0..0,
-            ));
+            // A payload-less variant called with an empty argument list
+            // (`Color::Red()`) is the variant value itself.
+            return Ok(Value::Enum {
+                enum_name: enum_name.to_string(),
+                tag: variant.to_string(),
+                payload: None,
+            });
         }
         if args.iter().any(|a| a.name.is_some()) {
             return Err(RunError::err(
@@ -4095,19 +4927,6 @@ fn is_component_return(ret: &Option<Type>) -> bool {
     matches!(ret, Some(Type::Named(n, _)) if n == "View")
 }
 
-/// The binding names an `import` statement introduces (namespace or named
-/// bindings with their aliases); a bare side-effect import binds nothing.
-fn import_binding_names(spec: &xulo_core::ast::ImportSpec) -> Vec<String> {
-    match spec {
-        xulo_core::ast::ImportSpec::Namespace(ns) => vec![ns.clone()],
-        xulo_core::ast::ImportSpec::Named(bindings) => bindings
-            .iter()
-            .map(|(name, alias)| alias.clone().unwrap_or_else(|| name.clone()))
-            .collect(),
-        xulo_core::ast::ImportSpec::Bare => Vec::new(),
-    }
-}
-
 /// Gather a module's exports: named bindings, from the bindings already
 /// defined by running its statements.
 fn collect_exports(
@@ -4133,12 +4952,46 @@ fn collect_exports(
                 }
             }
         }
-        xulo_core::ast::ExportItem::Type(_)
-        | xulo_core::ast::ExportItem::Trait(_)
-        | xulo_core::ast::ExportItem::Struct(_) => {}
+        xulo_core::ast::ExportItem::Type(_) | xulo_core::ast::ExportItem::Trait(_) => {}
+        xulo_core::ast::ExportItem::Struct(s) => {
+            if let Some(v) = env.borrow().get(&s.name) {
+                bindings.push((s.name.clone(), v));
+            }
+        }
         xulo_core::ast::ExportItem::Enum(e) => {
             bindings.push((e.name.clone(), enum_value(e)));
         }
+    }
+}
+
+/// The local names a `pub use` target binds, mirroring the semantic pass's
+/// interface so re-exported names land in the module's export map. Globs are
+/// skipped: each globbed name is an individual `use` binding the runtime
+/// already wired, and the semantic pass publishes them under their own locals.
+fn use_local_names(target: &xulo_core::ast::UseTarget) -> Vec<String> {
+    let head_name = |head: &xulo_core::ast::PathHead| match head {
+        xulo_core::ast::PathHead::Package(n) | xulo_core::ast::PathHead::Name(n) => n.clone(),
+        xulo_core::ast::PathHead::SelfModule => "self".to_string(),
+        xulo_core::ast::PathHead::Super => "super".to_string(),
+    };
+    match target {
+        xulo_core::ast::UseTarget::Path {
+            head,
+            segments,
+            alias,
+        } => vec![
+            alias
+                .clone()
+                .or_else(|| segments.last().cloned())
+                .unwrap_or_else(|| head_name(head)),
+        ],
+        xulo_core::ast::UseTarget::Group { entries, .. } => entries
+            .iter()
+            .map(|e| e.alias.clone().or_else(|| e.segments.last().cloned()))
+            .filter_map(|s| s.filter(|s| !s.is_empty()))
+            .collect(),
+        xulo_core::ast::UseTarget::Glob { .. } => Vec::new(),
+        xulo_core::ast::UseTarget::Local(names) => names.clone(),
     }
 }
 

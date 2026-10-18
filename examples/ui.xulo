@@ -1,5 +1,5 @@
 // UI 组件示例：样式系统 — Flex 布局 / Fill / justify / alignment
-import { Screen, VStack, HStack, Fill, Text, Button, Input } from "@xulo/ui"
+use ui::{Screen, VStack, HStack, Fill, Text, Button, Input};
 
 fn Counter(): View {
     @State let count: number = 0

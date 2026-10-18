@@ -6,10 +6,10 @@ use std::rc::Rc;
 
 use clap::{Parser, Subcommand};
 
-use xulo_core::ast::{FnDef, ImportSpec, Statement};
+use xulo_core::ast::{FnDef, Statement};
 use xulo_core::diagnostics;
 use xulo_core::error::{ErrorKind, XuloError};
-use xulo_runtime::interpreter::{Interpreter, NativeFn, RunError};
+use xulo_runtime::interpreter::{Interpreter, ModuleExports, NativeFn, RunError};
 use xulo_runtime::value::Value;
 
 #[derive(Parser)]
@@ -34,7 +34,7 @@ pub enum Commands {
     },
     /// Only run lexical + syntax + semantic checks
     Check { file: PathBuf },
-    /// Run the file's `test fn` declarations and report pass/fail per test
+    /// Run the file's `#Test fn` declarations and report pass/fail per test
     Test { file: PathBuf },
     /// Format a .xulo file in place (comments are not preserved)
     Fmt { file: PathBuf },
@@ -108,9 +108,9 @@ fn rendered_run(file: &Path, backend: xulo_framework::Backend) -> ExitCode {
 }
 
 /// Run a `.xulo` file: lex -> parse -> semantic check -> the Rust
-/// tree-walking interpreter. Local imports are loaded, analyzed in dependency
-/// order, and executed module by module; external (non-`type`-only) imports
-/// bind their names to `null` placeholders.
+/// tree-walking interpreter. The package's module tree is loaded, analyzed
+/// in initialization order, and executed module by module; bindings of a
+/// dependency with no local sources are `null` placeholders.
 fn native_run(file: &Path) -> ExitCode {
     let mut loaded = match xulo_compiler::module::load(file) {
         Ok(l) => l,
@@ -121,7 +121,7 @@ fn native_run(file: &Path) -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    let warnings = match xulo_compiler::module::analyze(&mut loaded) {
+    let warnings = match xulo_compiler::module::analyze(&mut loaded, true) {
         Ok(w) => w,
         Err(err) => {
             let src_file = err.file.clone().unwrap_or_else(|| file.to_path_buf());
@@ -133,50 +133,52 @@ fn native_run(file: &Path) -> ExitCode {
     xulo_compiler::module::apply_trait_dispatch(&mut loaded);
     print_warnings(&warnings, None);
 
-    // External packages (`@xulo/ui`) have no native values; their imported
-    // names are bound to `null` placeholders so UI components still resolve by
-    // name (they build the props-object shape) and headless programs can run.
-    // Expression use of a missing external value fails only if a program
-    // computes with it.
-    let placeholders: Vec<(String, Value)> = loaded
-        .external_imports
-        .iter()
-        .filter(|i| !i.type_only)
-        .flat_map(|i| import_binding_names(&i.spec))
-        .map(|name| (name, Value::Null))
-        .collect();
-
     let interp = Interpreter::new();
     let mut export_maps: Vec<HashMap<String, Value>> = Vec::with_capacity(loaded.modules.len());
+    let mut module_exports: Vec<ModuleExports> = Vec::with_capacity(loaded.modules.len());
+    // Forward import bindings from legal `use` cycles: (importer module
+    // index, local name, target module index, member). Recorded while
+    // modules execute, patched once every non-entry module has run — the
+    // entry is last (post-order init), and spec forbids naming the entry
+    // from a dependency, so every target is complete before `main` runs.
+    let mut pending: Vec<(usize, String, usize, Option<String>)> = Vec::new();
 
     for (idx, module) in loaded.modules.iter().enumerate() {
-        let mut imports: Vec<(String, Value)> = Vec::new();
-        let mut resolve_err: Option<String> = None;
-        for binding in &module.imports {
-            if binding.type_only {
-                continue;
-            }
-            match resolve_import(binding, &export_maps, &loaded) {
-                Ok(mut pairs) => imports.append(&mut pairs),
-                Err(msg) => {
-                    resolve_err = Some(msg);
-                    break;
-                }
+        if idx == loaded.entry {
+            for (owner, local, target, member) in std::mem::take(&mut pending) {
+                let value = if let Some(member) = member {
+                    export_maps[target]
+                        .get(&member)
+                        .cloned()
+                        .unwrap_or(Value::Null)
+                } else {
+                    let fields: Vec<(String, Value)> = export_maps[target]
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect();
+                    Value::Object(Rc::new(std::cell::RefCell::new(fields)))
+                };
+                module_exports[owner].patch_import(&local, value);
             }
         }
-        if let Some(msg) = resolve_err {
-            eprintln!("error: {msg}");
-            return ExitCode::from(1);
-        }
-        imports.extend_from_slice(&placeholders);
+        let imports = module_imports(module, &export_maps, &loaded);
         let run_main = idx == loaded.entry && module.has_main;
         match interp.exec_module(&module.program, &imports, run_main) {
             Ok(exports) => {
-                let mut map = HashMap::new();
-                for (name, value) in exports.bindings {
-                    map.insert(name, value);
+                for binding in &module.uses {
+                    if let Some(target) = loaded.index_of(&binding.module_id)
+                        && target >= export_maps.len()
+                    {
+                        pending.push((idx, binding.local.clone(), target, binding.member.clone()));
+                    }
                 }
+                let map = exports
+                    .bindings
+                    .iter()
+                    .cloned()
+                    .collect::<HashMap<String, Value>>();
                 export_maps.push(map);
+                module_exports.push(exports);
             }
             Err(RunError::Err(err)) => {
                 let src_file = err.file.clone().unwrap_or_else(|| module.file.clone());
@@ -197,56 +199,68 @@ fn native_run(file: &Path) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// Resolve one import binding against the exports of its already-executed
-/// target module, returning the `(local name, value)` pairs to bind.
-/// The binding names an `import` statement introduces (namespace or named
-/// bindings with their aliases); a bare side-effect import binds nothing.
-fn import_binding_names(spec: &ImportSpec) -> Vec<String> {
-    match spec {
-        ImportSpec::Namespace(ns) => vec![ns.clone()],
-        ImportSpec::Named(bindings) => bindings
-            .iter()
-            .map(|(name, alias)| alias.clone().unwrap_or_else(|| name.clone()))
-            .collect(),
-        ImportSpec::Bare => Vec::new(),
-    }
-}
-
-fn resolve_import(
-    binding: &xulo_compiler::module::ImportBinding,
+/// The runtime bindings for one module: its `mod` declarations (children
+/// initialize first) and its resolved `use` bindings. A target with no
+/// local sources (an external dependency) binds to `null` placeholders, and
+/// a target that has not executed yet binds to a placeholder patched before
+/// the entry `main` runs.
+fn module_imports(
+    module: &xulo_compiler::module::Module,
     export_maps: &[HashMap<String, Value>],
     loaded: &xulo_compiler::module::LoadedModules,
-) -> Result<Vec<(String, Value)>, String> {
-    let target = &loaded.modules[binding.target];
-    let readable = target.file.display();
-    let mut out = Vec::new();
-    match &binding.spec {
-        ImportSpec::Bare => {}
-        ImportSpec::Namespace(ns) => {
-            let fields: Vec<(String, Value)> = export_maps[binding.target]
+) -> Vec<(String, Value)> {
+    let mut out: Vec<(String, Value)> = Vec::new();
+    for (name, child) in &module.mods {
+        let fields: Vec<(String, Value)> = export_maps[*child]
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        out.push((
+            name.clone(),
+            Value::Object(std::rc::Rc::new(std::cell::RefCell::new(fields))),
+        ));
+    }
+    for binding in &module.uses {
+        let target = match loaded.index_of(&binding.module_id) {
+            // No local sources (version-only dependency): a named import is
+            // an opaque `null` placeholder, a namespace binding an empty
+            // object (`ns::member` reads then fail with a member error).
+            None => {
+                let value = match &binding.member {
+                    None => Value::Object(std::rc::Rc::new(std::cell::RefCell::new(Vec::new()))),
+                    Some(_) => Value::Null,
+                };
+                out.push((binding.local.clone(), value));
+                continue;
+            }
+            Some(target) if target < export_maps.len() => target,
+            Some(_) => {
+                out.push((
+                    binding.local.clone(),
+                    Value::Object(std::rc::Rc::new(std::cell::RefCell::new(Vec::new()))),
+                ));
+                continue;
+            }
+        };
+        if binding.member.is_none() {
+            let fields: Vec<(String, Value)> = export_maps[target]
                 .iter()
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect();
             out.push((
-                ns.clone(),
+                binding.local.clone(),
                 Value::Object(std::rc::Rc::new(std::cell::RefCell::new(fields))),
             ));
+            continue;
         }
-        ImportSpec::Named(names) => {
-            for (name, alias) in names {
-                let local = alias.clone().unwrap_or_else(|| name.clone());
-                match export_maps[binding.target].get(name) {
-                    Some(value) => out.push((local, value.clone())),
-                    None => {
-                        return Err(format!(
-                            "module `{readable}` has no runtime export named `{name}`"
-                        ));
-                    }
-                }
-            }
-        }
+        let member = binding.member.as_deref().expect("member is Some here");
+        let value = export_maps[target]
+            .get(member)
+            .cloned()
+            .unwrap_or(Value::Null);
+        out.push((binding.local.clone(), value));
     }
-    Ok(out)
+    out
 }
 
 fn fmt_file(file: &Path) -> ExitCode {
@@ -288,7 +302,7 @@ fn check_file(file: &Path) -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    match xulo_compiler::module::analyze(&mut loaded) {
+    match xulo_compiler::module::analyze(&mut loaded, false) {
         Ok(warnings) => {
             print_warnings(&warnings, None);
             println!("no errors");
@@ -303,7 +317,7 @@ fn check_file(file: &Path) -> ExitCode {
     }
 }
 
-/// Run the entry module's `test fn` declarations (spec testing.md).
+/// Run the entry module's `#Test fn` declarations (spec testing.md).
 ///
 /// Each test runs in a fresh interpreter with its dependencies re-executed,
 /// so module-level state cannot leak between tests. A test passes when its
@@ -320,7 +334,7 @@ fn test_file(file: &Path) -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    let warnings = match xulo_compiler::module::analyze(&mut loaded) {
+    let warnings = match xulo_compiler::module::analyze(&mut loaded, false) {
         Ok(w) => w,
         Err(err) => {
             let src_file = err.file.clone().unwrap_or_else(|| file.to_path_buf());
@@ -347,16 +361,6 @@ fn test_file(file: &Path) -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
-    // External (`@xulo/ui`) imports bind to `null` placeholders, as in
-    // `native_run`.
-    let placeholders: Vec<(String, Value)> = loaded
-        .external_imports
-        .iter()
-        .filter(|i| !i.type_only)
-        .flat_map(|i| import_binding_names(&i.spec))
-        .map(|name| (name, Value::Null))
-        .collect();
-
     let mut passed = 0usize;
     let mut failed = 0usize;
     for test in tests {
@@ -369,34 +373,8 @@ fn test_file(file: &Path) -> ExitCode {
             if idx == loaded.entry {
                 break;
             }
-            let mut imports: Vec<(String, Value)> = Vec::new();
-            let mut resolve_err: Option<String> = None;
-            for binding in &module.imports {
-                if binding.type_only {
-                    continue;
-                }
-                match resolve_import(binding, &export_maps, &loaded) {
-                    Ok(mut pairs) => imports.append(&mut pairs),
-                    Err(msg) => {
-                        resolve_err = Some(msg);
-                        break;
-                    }
-                }
-            }
-            imports.extend_from_slice(&placeholders);
-            let result = match resolve_err {
-                Some(msg) => Err(XuloError::new(ErrorKind::Runtime, msg)),
-                None => interp
-                    .exec_module(&module.program, &imports, false)
-                    .map_err(|e| match e {
-                        RunError::Err(e) => e,
-                        RunError::Throw(v) => XuloError::new(
-                            ErrorKind::Runtime,
-                            format!("uncaught exception: {}", v.format()),
-                        ),
-                    }),
-            };
-            match result {
+            let imports = module_imports(module, &export_maps, &loaded);
+            match interp.exec_module(&module.program, &imports, false) {
                 Ok(exports) => {
                     let mut map = HashMap::new();
                     for (name, value) in exports.bindings {
@@ -405,7 +383,13 @@ fn test_file(file: &Path) -> ExitCode {
                     export_maps.push(map);
                 }
                 Err(err) => {
-                    setup_err = Some(err);
+                    setup_err = Some(match err {
+                        RunError::Err(e) => e,
+                        RunError::Throw(v) => XuloError::new(
+                            ErrorKind::Runtime,
+                            format!("uncaught exception: {}", v.format()),
+                        ),
+                    });
                     break;
                 }
             }
@@ -418,27 +402,7 @@ fn test_file(file: &Path) -> ExitCode {
             failed += 1;
             continue;
         }
-        let mut imports: Vec<(String, Value)> = Vec::new();
-        let mut entry_import_err: Option<String> = None;
-        for binding in &entry.imports {
-            if binding.type_only {
-                continue;
-            }
-            match resolve_import(binding, &export_maps, &loaded) {
-                Ok(mut pairs) => imports.append(&mut pairs),
-                Err(msg) => {
-                    entry_import_err = Some(msg);
-                    break;
-                }
-            }
-        }
-        if let Some(msg) = entry_import_err {
-            eprintln!("test {} ... FAILED", test.name);
-            eprintln!("error: {msg}");
-            failed += 1;
-            continue;
-        }
-        imports.extend_from_slice(&placeholders);
+        let imports = module_imports(entry, &export_maps, &loaded);
         match interp.run_test(&entry.program, &imports, test) {
             Ok(_printed) => {
                 println!("test {} ... ok", test.name);
@@ -465,7 +429,7 @@ fn test_file(file: &Path) -> ExitCode {
 const REPL_CANDIDATES: &[&str] = &[
     "exit", "clear", "run", "fn", "let", "const", "return", "if", "else", "for", "in", "while",
     "match", "print", "type", "enum", "null", "true", "false", "and", "or", "await", "async",
-    "try", "catch", "throw", "import", "pub", "use", "from", "as", "test",
+    "try", "catch", "throw", "import", "pub", "use", "from", "as", "#Test",
 ];
 
 /// Completion/history helper for the REPL line editor.

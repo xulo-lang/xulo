@@ -2,7 +2,7 @@ use xulo_core::ast::{FnDef, Statement};
 use xulo_parser::parse_program;
 use xulo_runtime::interpreter::Interpreter;
 
-/// Full pipeline, then run every `test fn` in the program. Returns the
+/// Full pipeline, then run every `#Test fn` in the program. Returns the
 /// per-test outcomes `(name, error message)`; a `None` error means pass.
 fn run_all_tests(src: &str) -> Vec<(String, Option<String>)> {
     let program = parse_program(src).expect("parse failed");
@@ -15,7 +15,7 @@ fn run_all_tests(src: &str) -> Vec<(String, Option<String>)> {
             _ => None,
         })
         .collect();
-    assert!(!tests.is_empty(), "no `test fn` found in source");
+    assert!(!tests.is_empty(), "no `#Test fn` found in source");
     tests
         .into_iter()
         .map(|test| {
@@ -35,7 +35,7 @@ fn passing_test_completes() {
     let outcomes = run_all_tests(
         r#"
         fn add(a: number, b: number): number { return a + b }
-        test fn addition_works() {
+        #Test fn addition_works() {
             assert(add(2, 3) == 5, "2+3=5")
         }
         "#,
@@ -47,7 +47,7 @@ fn passing_test_completes() {
 fn failed_assert_surfaces_as_error() {
     let outcomes = run_all_tests(
         r#"
-        test fn fails() {
+        #Test fn fails() {
             assert(1 == 2, "one is not two")
         }
         "#,
@@ -61,7 +61,7 @@ fn failed_assert_surfaces_as_error() {
 fn panic_fails_the_test() {
     let outcomes = run_all_tests(
         r#"
-        test fn panics() {
+        #Test fn panics() {
             panic("boom")
         }
         "#,
@@ -75,7 +75,7 @@ fn tests_do_not_run_under_interpreter_run() {
     // test identifier binds no value.
     let program = parse_program(
         r#"
-        test fn never_runs() {
+        #Test fn never_runs() {
             print("SHOULD NOT PRINT")
         }
         fn main() {
@@ -95,7 +95,7 @@ fn async_test_passes_when_task_settles() {
     let outcomes = run_all_tests(
         r#"
         async fn double(x: number): number { return x * 2 }
-        test async fn async_works() {
+        #Test async fn async_works() {
             let v = await double(21)
             assert(v == 42, "answer")
         }
@@ -109,7 +109,7 @@ fn async_test_fails_when_body_asserts() {
     let outcomes = run_all_tests(
         r#"
         async fn one(): number { return 1 }
-        test async fn async_fails() {
+        #Test async fn async_fails() {
             let v = await one()
             assert(v == 2, "one is not two")
         }
@@ -126,7 +126,7 @@ fn test_body_sees_module_declarations() {
         r#"
         const LIMIT = 10
         fn helper(): number { return LIMIT * 2 }
-        test fn sees_module() {
+        #Test fn sees_module() {
             assert(helper() == 20, "helper")
         }
         "#,
@@ -142,11 +142,11 @@ fn each_test_gets_a_fresh_interpreter() {
     let outcomes = run_all_tests(
         r#"
         let mut counter = 0
-        test fn first() {
+        #Test fn first() {
             counter = counter + 1
             assert(counter == 1, "first sees 1")
         }
-        test fn second() {
+        #Test fn second() {
             counter = counter + 1
             assert(counter == 1, "second sees 1")
         }

@@ -5,13 +5,13 @@ use pest::iterators::Pair;
 use xulo_core::ast::{
     AssignStmt, BindingPattern, Block, ComponentStmt, DeferBody, DeferStmt, EffectStmt, EnumDef,
     EnumPayloadParam, EnumVariant, EnvStmt, ExportItem, ExportStmt, ExprStmt, Expression, FnBound,
-    FnDef, ForStmt, ImplDecl, ImportSpec, ImportStmt, LetBinding, Param, ParamMode, ReturnStmt,
+    FnDef, ForStmt, ImplDecl, LetBinding, ModDecl, Param, ParamMode, PathHead, ReturnStmt,
     StateStmt, Statement, StoreStmt, StructDef, StructField, TraitDecl, TraitMethod, Type,
-    TypeAlias, UiElement, WhileStmt,
+    TypeAlias, UiElement, UseDecl, UseEntry, UseTarget, WhileStmt,
 };
 use xulo_core::error::XuloError;
 
-use super::expr::{assign_target, component_call, decode_string, expression, ternary_entry};
+use super::expr::{assign_target, component_call, expression, ternary_entry};
 use super::types::{R, check_rule, single, type_expr};
 use super::{Rule, err, span_of};
 
@@ -20,7 +20,7 @@ pub fn program(root: Pair<'_, Rule>) -> Result<xulo_core::ast::Program, XuloErro
     for pair in root.into_inner() {
         match pair.as_rule() {
             Rule::EOI => {}
-            Rule::import_decl => statements.push(Statement::Import(import_decl(pair)?)),
+            Rule::header_item => statements.push(header_item(pair)?),
             Rule::declaration => statements.push(declaration(pair)?),
             _ => unreachable!("program child {:?}", pair.as_rule()),
         }
@@ -31,7 +31,6 @@ pub fn program(root: Pair<'_, Rule>) -> Result<xulo_core::ast::Program, XuloErro
 fn declaration(pair: Pair<'_, Rule>) -> R<Statement> {
     let inner = single(pair);
     match inner.as_rule() {
-        Rule::pub_use => pub_use(inner),
         Rule::fn_decl => {
             let is_pub = has_pub(&inner);
             let f = fn_decl(inner)?;
@@ -124,6 +123,66 @@ fn has_pub(pair: &Pair<'_, Rule>) -> bool {
         .any(|p| p.as_rule() == Rule::pub_marker)
 }
 
+/// Build one `attribute_list` child (spec `AttributeList = { Attribute }`).
+fn attribute_list(pair: Pair<'_, Rule>) -> R<Vec<xulo_core::ast::Attribute>> {
+    let mut out = Vec::new();
+    for a in pair.into_inner() {
+        check_rule(&a, Rule::attribute)?;
+        out.push(attribute(a)?);
+    }
+    Ok(out)
+}
+
+/// Build a single `#Name` or `#Name(arg, …)` attribute.
+fn attribute(pair: Pair<'_, Rule>) -> R<xulo_core::ast::Attribute> {
+    let pair_span = span_of(&pair);
+    // `into_inner` consumes the pair; keep the matched source for the
+    // `#Name` / `#Name()` distinction below.
+    let pair_text = pair.as_str().to_string();
+    let mut name = String::new();
+    let mut name_span = 0..0;
+    let mut args = Vec::new();
+    let mut seen_name = false;
+    for p in pair.into_inner() {
+        match p.as_rule() {
+            Rule::identifier if !seen_name => {
+                name = p.as_str().to_string();
+                name_span = span_of(&p);
+                seen_name = true;
+            }
+            Rule::attribute_args => {
+                for a in p.into_inner() {
+                    check_rule(&a, Rule::attribute_arg)?;
+                    let id = a
+                        .into_inner()
+                        .next()
+                        .expect("attribute_arg has an identifier");
+                    args.push((id.as_str().to_string(), span_of(&id)));
+                }
+            }
+            _ => unreachable!("attribute child {:?}", p.as_rule()),
+        }
+    }
+    // `#Name` vs `#Name()`: the written text decides. Reading the matched
+    // source rather than comparing spans keeps pest's implicit-whitespace
+    // span tail (a bare attribute's pair swallows the gap before the next
+    // token) out of both the flag and the reported span — registry shape
+    // checks read both forms.
+    let has_parens = pair_text.contains('(');
+    let span = if has_parens {
+        pair_span
+    } else {
+        pair_span.start..name_span.end
+    };
+    Ok(xulo_core::ast::Attribute {
+        name,
+        name_span,
+        args,
+        span,
+        has_parens,
+    })
+}
+
 fn fn_decl(pair: Pair<'_, Rule>) -> R<FnDef> {
     let span = span_of(&pair);
     let mut is_async = false;
@@ -134,8 +193,10 @@ fn fn_decl(pair: Pair<'_, Rule>) -> R<FnDef> {
     let mut params = Vec::new();
     let mut return_type = None;
     let mut body = None;
+    let mut attributes = Vec::new();
     for p in pair.into_inner() {
         match p.as_rule() {
+            Rule::attribute_list => attributes = attribute_list(p)?,
             Rule::pub_marker | Rule::kw_fn => {}
             Rule::kw_async => is_async = true,
             Rule::identifier => {
@@ -164,10 +225,11 @@ fn fn_decl(pair: Pair<'_, Rule>) -> R<FnDef> {
         is_async,
         body: body.expect("fn_decl has a body"),
         span,
+        attributes,
     })
 }
 
-/// Build a `test [async] fn name() { … }` into the fixed-shape `FnDef` the
+/// Build a `#Test [async] fn name() { … }` into the fixed-shape `FnDef` the
 /// `Statement::Test` variant carries: no parameters, no return type, no
 /// generics (the grammar already forbids them; the fields are filled empty).
 fn test_decl(pair: Pair<'_, Rule>) -> R<FnDef> {
@@ -178,7 +240,7 @@ fn test_decl(pair: Pair<'_, Rule>) -> R<FnDef> {
     let mut body = None;
     for p in pair.into_inner() {
         match p.as_rule() {
-            Rule::kw_test | Rule::kw_fn => {}
+            Rule::kw_fn => {}
             Rule::kw_async => is_async = true,
             Rule::identifier => {
                 name = p.as_str().to_string();
@@ -198,6 +260,7 @@ fn test_decl(pair: Pair<'_, Rule>) -> R<FnDef> {
         is_async,
         body: body.expect("test_decl has a body"),
         span,
+        attributes: Vec::new(),
     })
 }
 
@@ -330,8 +393,10 @@ fn struct_decl(pair: Pair<'_, Rule>) -> R<StructDef> {
     let mut type_params = Vec::new();
     let mut type_bounds = Vec::new();
     let mut fields = Vec::new();
+    let mut attributes = Vec::new();
     for p in pair.into_inner() {
         match p.as_rule() {
+            Rule::attribute_list => attributes = attribute_list(p)?,
             Rule::pub_marker | Rule::kw_struct => {}
             Rule::identifier => {
                 name = p.as_str().to_string();
@@ -378,6 +443,7 @@ fn struct_decl(pair: Pair<'_, Rule>) -> R<StructDef> {
         type_bounds,
         fields,
         span,
+        attributes,
     })
 }
 
@@ -387,8 +453,10 @@ fn enum_decl(pair: Pair<'_, Rule>) -> R<EnumDef> {
     let mut type_params = Vec::new();
     let mut type_bounds = Vec::new();
     let mut variants = Vec::new();
+    let mut attributes = Vec::new();
     for p in pair.into_inner() {
         match p.as_rule() {
+            Rule::attribute_list => attributes = attribute_list(p)?,
             Rule::pub_marker | Rule::kw_enum => {}
             Rule::identifier => {
                 name = p.as_str().to_string();
@@ -429,6 +497,7 @@ fn enum_decl(pair: Pair<'_, Rule>) -> R<EnumDef> {
         type_params,
         type_bounds,
         variants,
+        attributes,
     })
 }
 
@@ -474,8 +543,10 @@ fn trait_decl(pair: Pair<'_, Rule>) -> R<TraitDecl> {
     let mut name_span = 0..0;
     let mut type_params = Vec::new();
     let mut methods = Vec::new();
+    let mut attributes = Vec::new();
     for p in pair.into_inner() {
         match p.as_rule() {
+            Rule::attribute_list => attributes = attribute_list(p)?,
             Rule::pub_marker | Rule::kw_trait => {}
             Rule::identifier => {
                 name = p.as_str().to_string();
@@ -499,6 +570,7 @@ fn trait_decl(pair: Pair<'_, Rule>) -> R<TraitDecl> {
         type_params,
         methods,
         span,
+        attributes,
     })
 }
 
@@ -545,8 +617,10 @@ fn impl_decl(pair: Pair<'_, Rule>) -> R<ImplDecl> {
     let mut methods = Vec::new();
     let mut is_inherent = true;
     let mut seen_type = false;
+    let mut attributes = Vec::new();
     for p in pair.into_inner() {
         match p.as_rule() {
+            Rule::attribute_list => attributes = attribute_list(p)?,
             Rule::kw_impl | Rule::kw_for => {}
             Rule::generic_params => {
                 let (params, bounds) = generic_params(p)?;
@@ -578,6 +652,7 @@ fn impl_decl(pair: Pair<'_, Rule>) -> R<ImplDecl> {
         methods,
         span,
         is_inherent,
+        attributes,
     })
 }
 
@@ -1055,106 +1130,184 @@ pub(crate) fn block(pair: Pair<'_, Rule>) -> R<Block> {
     Ok(Block { statements })
 }
 
-fn import_decl(pair: Pair<'_, Rule>) -> R<ImportStmt> {
-    let mut inner = pair.into_inner();
-    let _kw = next(&mut inner, Rule::kw_import);
-    let inner = inner.next().expect("import_decl has an alternative");
+fn header_item(pair: Pair<'_, Rule>) -> R<Statement> {
+    let inner = single(pair);
     match inner.as_rule() {
-        Rule::type_import => {
-            let (names, source) = named_import_parts(inner)?;
-            Ok(ImportStmt {
-                source,
-                spec: ImportSpec::Named(names),
-                type_only: true,
-            })
-        }
-        Rule::named_import => {
-            let (names, source) = named_import_parts(inner)?;
-            Ok(ImportStmt {
-                source,
-                spec: ImportSpec::Named(names),
-                type_only: false,
-            })
-        }
-        Rule::namespace_import => {
-            let mut ns = String::new();
-            let mut source = String::new();
-            for p in inner.into_inner() {
-                match p.as_rule() {
-                    Rule::kw_as | Rule::kw_from => {}
-                    Rule::identifier => ns = p.as_str().to_string(),
-                    Rule::string_literal => source = decode_string(p.as_str()),
-                    _ => unreachable!("namespace_import child {:?}", p.as_rule()),
-                }
-            }
-            Ok(ImportStmt {
-                source,
-                spec: ImportSpec::Namespace(ns),
-                type_only: false,
-            })
-        }
-        Rule::side_effect_import => {
-            let lit = single(inner);
-            check_rule(&lit, Rule::string_literal)?;
-            Ok(ImportStmt {
-                source: decode_string(lit.as_str()),
-                spec: ImportSpec::Bare,
-                type_only: false,
-            })
-        }
-        _ => unreachable!("import alternative {:?}", inner.as_rule()),
+        Rule::mod_decl => mod_decl(inner),
+        Rule::use_decl => use_decl(inner, false),
+        Rule::pub_use => pub_use(inner),
+        _ => unreachable!("header alternative {:?}", inner.as_rule()),
     }
 }
 
-/// One imported name: the local binding, optionally renamed from the export.
-type ImportName = (String, Option<String>);
-
-fn named_import_parts(pair: Pair<'_, Rule>) -> R<(Vec<ImportName>, String)> {
-    let mut names = Vec::new();
-    let mut source = String::new();
+fn mod_decl(pair: Pair<'_, Rule>) -> R<Statement> {
+    let span = span_of(&pair);
+    let mut is_pub = false;
+    let mut name = None;
+    let mut body = None;
     for p in pair.into_inner() {
         match p.as_rule() {
-            Rule::kw_type | Rule::kw_from => {}
-            Rule::named_imports => {
-                for entry in p.into_inner() {
-                    check_rule(&entry, Rule::import_entry)?;
-                    let mut name = None;
-                    let mut alias = None;
-                    for e in entry.into_inner() {
-                        match e.as_rule() {
-                            Rule::identifier => {
-                                if name.is_none() {
-                                    name = Some(e.as_str().to_string());
-                                } else {
-                                    alias = Some(e.as_str().to_string());
-                                }
-                            }
-                            Rule::kw_as => {}
-                            _ => unreachable!("import_entry child {:?}", e.as_rule()),
-                        }
+            Rule::pub_marker => is_pub = true,
+            Rule::kw_mod => {}
+            Rule::identifier => name = Some(p.as_str().to_string()),
+            Rule::module_body => {
+                let mut stmts = Vec::new();
+                for item in p.into_inner() {
+                    match item.as_rule() {
+                        Rule::header_item => stmts.push(header_item(item)?),
+                        Rule::declaration => stmts.push(declaration(item)?),
+                        _ => unreachable!("module_body child {:?}", item.as_rule()),
                     }
-                    names.push((name.expect("import_entry has a name"), alias));
                 }
+                body = Some(stmts);
             }
-            Rule::string_literal => source = decode_string(p.as_str()),
-            _ => unreachable!("import child {:?}", p.as_rule()),
+            _ => unreachable!("mod_decl child {:?}", p.as_rule()),
         }
     }
-    Ok((names, source))
+    Ok(Statement::Mod(ModDecl {
+        name: name.expect("mod declares a name"),
+        is_pub,
+        body,
+        span,
+    }))
+}
+
+fn use_decl(pair: Pair<'_, Rule>, is_pub: bool) -> R<Statement> {
+    let span = span_of(&pair);
+    let mut type_only = false;
+    let mut target = None;
+    for p in pair.into_inner() {
+        match p.as_rule() {
+            Rule::kw_use | Rule::kw_pub => {}
+            Rule::kw_type => type_only = true,
+            Rule::use_target => target = Some(use_target(p)?),
+            _ => unreachable!("use_decl child {:?}", p.as_rule()),
+        }
+    }
+    Ok(Statement::Use(UseDecl {
+        is_pub,
+        type_only,
+        target: target.expect("use declares a target"),
+        span,
+    }))
 }
 
 fn pub_use(pair: Pair<'_, Rule>) -> R<Statement> {
-    let mut names = Vec::new();
+    let span = span_of(&pair);
+    let mut target = None;
     for p in pair.into_inner() {
         match p.as_rule() {
-            Rule::identifier => names.push(p.as_str().to_string()),
-            Rule::kw_pub | Rule::kw_use | Rule::kw_from | Rule::string_literal => {}
+            Rule::kw_pub | Rule::kw_use => {}
+            Rule::use_target => target = Some(use_target(p)?),
+            Rule::pub_use_local => {
+                let mut names = Vec::new();
+                for n in p.into_inner() {
+                    check_rule(&n, Rule::identifier)?;
+                    names.push(n.as_str().to_string());
+                }
+                target = Some(UseTarget::Local(names));
+            }
             _ => unreachable!("pub_use child {:?}", p.as_rule()),
         }
     }
-    Ok(Statement::Export(ExportStmt {
-        item: ExportItem::Names(names),
+    Ok(Statement::Use(UseDecl {
+        is_pub: true,
+        type_only: false,
+        target: target.expect("pub use declares a target"),
+        span,
     }))
+}
+
+fn use_target(pair: Pair<'_, Rule>) -> R<UseTarget> {
+    let inner = single(pair);
+    match inner.as_rule() {
+        Rule::use_path => {
+            let mut head = None;
+            let mut segments = Vec::new();
+            let mut alias = None;
+            let mut after_as = false;
+            for p in inner.into_inner() {
+                match p.as_rule() {
+                    Rule::path_head => head = Some(path_head(p)?),
+                    Rule::kw_as => after_as = true,
+                    Rule::identifier => {
+                        let ident = p.as_str().to_string();
+                        if after_as {
+                            alias = Some(ident);
+                            after_as = false;
+                        } else {
+                            segments.push(ident);
+                        }
+                    }
+                    _ => unreachable!("use_path child {:?}", p.as_rule()),
+                }
+            }
+            Ok(UseTarget::Path {
+                head: head.expect("use_path has a head"),
+                segments,
+                alias,
+            })
+        }
+        Rule::use_group => {
+            let mut head = None;
+            let mut entries = Vec::new();
+            for p in inner.into_inner() {
+                match p.as_rule() {
+                    Rule::path_head => head = Some(path_head(p)?),
+                    Rule::use_entry => {
+                        let mut segments = Vec::new();
+                        let mut alias = None;
+                        let mut after_as = false;
+                        for e in p.into_inner() {
+                            match e.as_rule() {
+                                Rule::relative_path => {
+                                    segments = e.as_str().split("::").map(str::to_string).collect();
+                                }
+                                Rule::kw_as => after_as = true,
+                                Rule::identifier => {
+                                    if after_as {
+                                        alias = Some(e.as_str().to_string());
+                                        after_as = false;
+                                    }
+                                }
+                                _ => unreachable!("use_entry child {:?}", e.as_rule()),
+                            }
+                        }
+                        entries.push(UseEntry { segments, alias });
+                    }
+                    _ => unreachable!("use_group child {:?}", p.as_rule()),
+                }
+            }
+            Ok(UseTarget::Group {
+                head: head.expect("use_group has a head"),
+                entries,
+            })
+        }
+        Rule::use_glob => {
+            let mut head = None;
+            for p in inner.into_inner() {
+                match p.as_rule() {
+                    Rule::path_head => head = Some(path_head(p)?),
+                    _ => unreachable!("use_glob child {:?}", p.as_rule()),
+                }
+            }
+            Ok(UseTarget::Glob {
+                head: head.expect("use_glob has a head"),
+            })
+        }
+        _ => unreachable!("use_target alternative {:?}", inner.as_rule()),
+    }
+}
+
+fn path_head(pair: Pair<'_, Rule>) -> R<PathHead> {
+    let inner = single(pair);
+    Ok(match inner.as_rule() {
+        Rule::super_kw => PathHead::Super,
+        Rule::kw_self => PathHead::SelfModule,
+        Rule::package_head => PathHead::Package(inner.as_str().to_string()),
+        Rule::identifier => PathHead::Name(inner.as_str().to_string()),
+        _ => unreachable!("path_head alternative {:?}", inner.as_rule()),
+    })
 }
 
 // ============================================================
@@ -1235,7 +1388,8 @@ fn stmt_kind(stmt: &Statement) -> &'static str {
         Statement::Block(_) => "block",
         Statement::Try(_) => "try",
         Statement::Throw(_) => "throw",
-        Statement::Import(_) => "import",
+        Statement::Mod(_) => "module declaration",
+        Statement::Use(_) => "use declaration",
         Statement::Export(_) => "pub declaration",
         Statement::State(_) => "@State",
         Statement::Store(_) => "@Store",
@@ -1295,6 +1449,7 @@ fn component_from_call(expr: Expression) -> ComponentStmt {
         args: c.arguments.clone(),
         children: Vec::new(),
         span: c.span.clone(),
+        type_args: c.type_args.clone(),
     }
 }
 

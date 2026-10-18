@@ -586,7 +586,7 @@ fn default_parameter_evaluates_in_callee_scope_across_modules() {
         pub fn make(x: number, y: number = rate): number { y }
         "#,
         r#"
-        import { make } from "./lib"
+        use lib::make;
         fn main() {
             let rate = 999
             print(str(make(5)))
@@ -767,9 +767,13 @@ fn method_call_on_object() {
 #[test]
 fn str_builtin() {
     assert_eq!(
-        run_ok(r#"fn main() { print(str(3.14)) print(str([1, 2])) }"#),
-        vec!["3.14", "[1, 2]"]
+        run_ok(r#"fn main() { print(str(3.14)) print(str("s")) }"#),
+        vec!["3.14", "s"]
     );
+    // A list has no string form: `str(list)` is E0212 (spec
+    // `builtins/intrinsic-functions.md`).
+    let err = run(r#"fn main() { print(str([1, 2])) }"#).unwrap_err();
+    assert_eq!(err.code(), "E0212", "unexpected: {}", err.message);
 }
 
 #[test]
@@ -825,14 +829,30 @@ fn ui_component_state_mutation_and_for() {
 fn external_import_binds_null_placeholder() {
     // An unresolved external package still binds its imported names (to a
     // `null` placeholder) so UI components resolve by name; the program runs.
-    let out = run(r#"
-        import { Button } from "@xulo/ui"
+    // The loader supplies the binding — here it is handed to `exec_module`
+    // exactly as the CLI's `module_imports` does for a version-only
+    // dependency with no local sources.
+    let program = parse_program(
+        r#"
+        use ui::{Button};
         fn main(): View {
             Button(onClick: fn() { print("clicked") }) { Text("ok") }
         }
-        "#)
+        "#,
+    )
     .unwrap();
-    assert_eq!(out, Vec::<String>::new());
+    let interp = Interpreter::new();
+    let imports = vec![("Button".to_string(), Value::Null)];
+    if let Err(e) = interp.exec_module(&program, &imports, true) {
+        panic!(
+            "external placeholder program must run: {}",
+            match e {
+                RunError::Err(err) => err.message,
+                RunError::Throw(v) => format!("uncaught exception: {}", v.format()),
+            }
+        );
+    }
+    assert_eq!(interp.take_output(), Vec::<String>::new());
 }
 
 #[test]
@@ -1313,7 +1333,7 @@ fn module_named_imports_bind_fn_and_const() {
         pub const PI = 3.14
         "#,
         r#"
-        import { add, PI } from "lib"
+        use lib::{add, PI};
         fn main() {
             print(add(2, 3))
             print(PI)
@@ -1332,7 +1352,7 @@ fn module_import_alias() {
         pub fn add(a: number, b: number): number { a + b }
         "#,
         r#"
-        import { add as plus } from "lib"
+        use lib::add as plus;
         fn main() { print(plus(1, 1)) }
         "#,
         |exports| {
@@ -1354,7 +1374,7 @@ fn module_namespace_import_exposes_named_fields() {
         pub fn hours(): number { HOURS_IN_DAY }
         "#,
         r#"
-        import * as cal from "lib"
+        use lib as cal;
         fn main() {
             print(cal.HOURS_IN_DAY)
             print(cal.hours())
@@ -2428,8 +2448,8 @@ fn bounded_generic_member_call_runs() {
 }
 
 #[test]
-fn dot_form_dispatch_concrete_receiver_runs() {
-    // `Area.area(r)` is the dotted explicit dispatch form (spec
+fn qualified_dispatch_concrete_receiver_runs() {
+    // `Area::area(r)` is the qualified explicit dispatch form (spec
     // `expressions/path-and-access.md`); the receiver type is static, so the
     // mangled impl answers.
     let out = run_annotated(
@@ -2441,7 +2461,7 @@ fn dot_form_dispatch_concrete_receiver_runs() {
             }
             fn main() {
                 let r = { w: 3, h: 4 }
-                print(str(Area.area(r)))
+                print(str(Area::area(r)))
             }
         "#,
     )
@@ -2451,7 +2471,7 @@ fn dot_form_dispatch_concrete_receiver_runs() {
 
 #[test]
 fn spec_palette_example_runs() {
-    // spec `types/traits.md` example: `Area.area(self.shape)` inside
+    // spec `types/traits.md` example: `Area::area(self.shape)` inside
     // `impl<T: Area> Palette<T>` resolves through the bound at run time.
     let out = run_annotated(
         r#"
@@ -2463,7 +2483,7 @@ fn spec_palette_example_runs() {
                 fn area(self): number { return self.w * self.h }
             }
             impl<T: Area> Palette<T> {
-                fn render(self): number { return Area.area(self.shape) }
+                fn render(self): number { return Area::area(self.shape) }
             }
             fn main() {
                 let ok = { shape: { w: 3, h: 4 } }
@@ -2473,4 +2493,437 @@ fn spec_palette_example_runs() {
     )
     .unwrap_or_else(|e| panic!("{}", e.message));
     assert_eq!(out, vec!["12"]);
+}
+
+#[test]
+fn math_namespace_spec_example_runs() {
+    // The `Math` namespace example of spec `builtins/intrinsic-functions.md`
+    // (without the interpolation lines): every exactly-known result.
+    let out = run_ok(
+        r#"
+            fn main() {
+                let a = 3.0
+                let b = 4.0
+                let hypotenuse = Math::sqrt(a * a + b * b)
+                let value = 120
+                let clamped = Math::min(Math::max(value, 0), 100)
+                let whole = Math::floor(3.7)
+                print(str(hypotenuse))
+                print(str(clamped))
+                print(str(whole))
+            }
+        "#,
+    );
+    assert_eq!(out, vec!["5", "100", "3"]);
+}
+
+#[test]
+fn math_constants_render_as_specified() {
+    let out = run_ok(
+        r#"
+            fn main() {
+                print(str(Math::PI))
+                print(str(Math::E))
+                print(str(Math::TAU))
+                print(str(Math::INFINITY))
+                print(str(Math::NAN))
+            }
+        "#,
+    );
+    assert_eq!(
+        out,
+        vec![
+            "3.141592653589793",
+            "2.718281828459045",
+            "6.283185307179586",
+            "Infinity",
+            "NaN"
+        ]
+    );
+}
+
+#[test]
+fn math_round_rounds_halfway_cases_away_from_zero() {
+    let out = run_ok(
+        r#"
+            fn main() {
+                print(str(Math::round(2.5)))
+                print(str(Math::round(-2.5)))
+                print(str(Math::round(0.5)))
+                print(str(Math::round(-0.5)))
+                print(str(Math::round(2.4)))
+                print(str(Math::floor(-3.2)))
+                print(str(Math::ceil(-3.2)))
+                print(str(Math::trunc(-3.2)))
+            }
+        "#,
+    );
+    assert_eq!(out, vec!["3", "-3", "1", "-1", "2", "-4", "-3", "-3"]);
+}
+
+#[test]
+fn math_domain_edges_follow_ieee754() {
+    let out = run_ok(
+        r#"
+            fn main() {
+                print(str(Math::sqrt(-1.0)))
+                print(str(Math::log(0.0)))
+                print(str(Math::log(-1.0)))
+                print(str(Math::asin(2.0)))
+                print(str(Math::exp(0.0)))
+                print(str(Math::sin(0.0)))
+                print(str(Math::atan2(1.0, 1.0)))
+            }
+        "#,
+    );
+    assert_eq!(
+        out,
+        vec![
+            "NaN",
+            "-Infinity",
+            "NaN",
+            "NaN",
+            "1",
+            "0",
+            "0.7853981633974483"
+        ]
+    );
+}
+
+#[test]
+fn math_to_fixed_spec_examples_run() {
+    let out = run_ok(
+        r#"
+            fn main() {
+                print(Math::toFixed(3.14159, 2))
+                print(Math::toFixed(2.5, 0))
+                print(Math::toFixed(-2.5, 0))
+                print(Math::toFixed(3.1, 2))
+            }
+        "#,
+    );
+    assert_eq!(out, vec!["3.14", "3", "-3", "3.10"]);
+}
+
+#[test]
+fn math_to_fixed_special_values_and_negative_zero() {
+    let out = run_ok(
+        r#"
+            fn main() {
+                print(Math::toFixed(Math::NAN, 3))
+                print(Math::toFixed(Math::INFINITY, 3))
+                print(Math::toFixed(-Math::INFINITY, 3))
+                print(Math::toFixed(0.0, 0))
+                print(Math::toFixed(-0.0, 0))
+            }
+        "#,
+    );
+    assert_eq!(out, vec!["NaN", "Infinity", "-Infinity", "0", "-0"]);
+}
+
+#[test]
+fn math_to_fixed_out_of_range_digits_is_a_runtime_failure() {
+    for digits in ["16", "2.5", "-1"] {
+        let err = run(format!(
+            r#"
+            fn main() {{
+                print(Math::toFixed(1.5, {digits}))
+            }}
+        "#
+        )
+        .as_str())
+        .unwrap_err();
+        assert!(
+            err.message
+                .contains("`Math::toFixed` digits must be an integer in 0..=15"),
+            "digits {digits}: {}",
+            err.message
+        );
+    }
+}
+
+#[test]
+fn bare_builtin_function_reference_is_callable() {
+    let out = run_ok(
+        r#"
+            fn main() {
+                let f = Math::sqrt
+                print(str(f(4.0)))
+            }
+        "#,
+    );
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn time_clocks_read_sane_values() {
+    let out = run_ok(
+        r#"
+            fn main() {
+                let wall = Time::now()
+                let mono = Time::monotonic()
+                let nanos = Time::monotonic_nanos()
+                print(str(wall > 0 and mono >= 0 and nanos >= 0))
+                print(str(Time::now_nanos() >= 0))
+            }
+        "#,
+    );
+    assert_eq!(out, vec!["true", "true"]);
+}
+
+// --- P2: `#Derive(ToString)`, `str` / template string forms, constructor calls
+
+#[test]
+fn derived_struct_spec_example_all_string_forms() {
+    // spec `types/traits.md`: `str(s)`, backtick `${s}`, `s.to_string()`,
+    // and qualified `ToString::to_string(u)` all render the derived form.
+    let out = run_annotated(
+        r#"
+            #Derive(ToString)
+            struct User { name: string, age: number }
+            fn main() {
+                let u = User(name: "Alice", age: 30)
+                print(str(u))
+                print(`${u}`)
+                print(u.to_string())
+                print(ToString::to_string(u))
+            }
+        "#,
+    )
+    .unwrap_or_else(|e| panic!("{}", e.message));
+    let expected = "User(name: Alice, age: 30)";
+    assert_eq!(out, vec![expected; 4]);
+}
+
+#[test]
+fn derived_struct_nested_and_empty_render() {
+    let out = run_annotated(
+        r#"
+            #Derive(ToString)
+            struct User { name: string, age: number }
+            #Derive(ToString)
+            struct Tagged { inner: User, label: string }
+            #Derive(ToString)
+            struct Empty { }
+            fn main() {
+                let t = Tagged(inner: User(name: "Alice", age: 30), label: "x")
+                print(str(t))
+                print(str(Empty()))
+            }
+        "#,
+    )
+    .unwrap_or_else(|e| panic!("{}", e.message));
+    assert_eq!(
+        out,
+        vec![
+            "Tagged(inner: User(name: Alice, age: 30), label: x)",
+            "Empty()",
+        ]
+    );
+}
+
+#[test]
+fn derived_enum_variants_render_spec_form() {
+    // spec output table: `Enum::Variant` / `Enum::Variant(p, …)` — payload
+    // slots through their declared type's string form.
+    let out = run_annotated(
+        r#"
+            #Derive(ToString)
+            enum Shape { Circle(number), Rect(number, number) }
+            #Derive(ToString)
+            enum Status { Active, Offline(string) }
+            fn main() {
+                print(str(Shape::Circle(2.5)))
+                print(str(Shape::Rect(3, 4)))
+                print(str(Status::Active))
+                print(str(Status::Offline("gone")))
+            }
+        "#,
+    )
+    .unwrap_or_else(|e| panic!("{}", e.message));
+    assert_eq!(
+        out,
+        vec![
+            "Shape::Circle(2.5)",
+            "Shape::Rect(3, 4)",
+            "Status::Active",
+            "Status::Offline(gone)",
+        ]
+    );
+}
+
+#[test]
+fn derived_structs_do_not_cross_types() {
+    // Regression: instance methods are dispatched through a weak
+    // pointer-identity side table, so a second derived struct must not reuse
+    // the first struct's renderer (the bare `to_string` member key matches
+    // across types otherwise).
+    let out = run_annotated(
+        r#"
+            #Derive(ToString)
+            struct User { name: string, age: number }
+            #Derive(ToString)
+            struct Plain { n: number }
+            fn main() {
+                let a = User(name: "A", age: 1)
+                let b = Plain(n: 7)
+                print(str(a))
+                print(str(b))
+                print(a.to_string())
+                print(b.to_string())
+            }
+        "#,
+    )
+    .unwrap_or_else(|e| panic!("{}", e.message));
+    assert_eq!(
+        out,
+        vec![
+            "User(name: A, age: 1)",
+            "Plain(n: 7)",
+            "User(name: A, age: 1)",
+            "Plain(n: 7)",
+        ]
+    );
+}
+
+#[test]
+fn manual_to_string_impl_runs_on_all_forms() {
+    // A hand-written `impl ToString` (no derive — derive + manual on the
+    // same type is E0805) answers member, qualified, and `str` forms alike.
+    // A derived struct living in the same program must not steal the
+    // dispatch.
+    let out = run_annotated(
+        r#"
+            #Derive(ToString)
+            struct Plain { n: number }
+            struct Hand { v: number }
+            impl ToString for Hand {
+                fn to_string(self): string { return "Hand(" + str(self.v) + ")" }
+            }
+            fn main() {
+                let h = Hand(v: 1)
+                let p = Plain(n: 9)
+                print(str(h))
+                print(h.to_string())
+                print(ToString::to_string(h))
+                print(str(p))
+            }
+        "#,
+    )
+    .unwrap_or_else(|e| panic!("{}", e.message));
+    assert_eq!(out, vec!["Hand(1)", "Hand(1)", "Hand(1)", "Plain(n: 9)"]);
+}
+
+#[test]
+fn struct_constructor_reads_fields_and_optional_defaults_to_null() {
+    let out = run_annotated(
+        r#"
+            struct Opt { name: string, alias: string? }
+            fn main() {
+                let a = Opt(name: "x")
+                let b = Opt(name: "y", alias: "z")
+                print(str(a.name))
+                print(a.alias)
+                print(str(b.alias))
+            }
+        "#,
+    )
+    .unwrap_or_else(|e| panic!("{}", e.message));
+    assert_eq!(out, vec!["x", "null", "z"]);
+}
+
+#[test]
+fn constructed_instance_reaches_inherent_impl_methods() {
+    // Regression: instance `show()` on a constructor-created object resolves
+    // its type through the pointer-identity side table (the first
+    // `struct_method` match would otherwise dispatch another type's method).
+    let out = run_annotated(
+        r#"
+            struct S { n: number }
+            struct T { n: number }
+            impl S { fn show(self): string { return "S(" + str(self.n) + ")" } }
+            impl T { fn show(self): string { return "T(" + str(self.n) + ")" } }
+            fn main() {
+                let s = S(n: 4)
+                let t = T(n: 5)
+                print(s.show())
+                print(t.show())
+            }
+        "#,
+    )
+    .unwrap_or_else(|e| panic!("{}", e.message));
+    assert_eq!(out, vec!["S(4)", "T(5)"]);
+}
+
+#[test]
+fn str_rejects_non_string_forms_at_runtime_pipeline() {
+    // `str` / templates accept exactly the operand set with a string form
+    // (spec intrinsic-functions.md E0212): lists, enums without ToString,
+    // and null are compile-time errors, not conversions.
+    for src in [
+        "fn main() { print(str([1, 2])) }",
+        "fn main() { print(str(null)) }",
+        "enum E { A } fn main() { print(str(E::A)) }",
+        "fn main() { print(`${[1]}`) }",
+    ] {
+        let err = run(src).unwrap_err();
+        assert_eq!(err.code(), "E0212", "{src}: {}", err.message);
+    }
+}
+
+// ------------------------------------------------------------------
+// Call-site type arguments end to end — spec expressions/calls.md.
+// The interpreter ignores the written list; only the checker sees it.
+// ------------------------------------------------------------------
+
+#[test]
+fn written_type_args_run_with_inferred_and_named_forms() {
+    let out = run_ok(
+        "fn first<T>(xs: list<T>): T { return xs[0] }\n\
+         fn main() {\n\
+         let a = first<number>([1])\n\
+         let b = first([2])\n\
+         let c = first<number>(xs: [3])\n\
+         print(str(a) + \",\" + str(b) + \",\" + str(c))\n\
+         }",
+    );
+    assert_eq!(out, ["1,2,3"]);
+}
+
+#[test]
+fn disambiguated_written_list_runs_as_a_call() {
+    // No `(` immediately after the closing `>` in a type-list reading fails,
+    // but here `first < number > ([5])` satisfies both disambiguation
+    // conditions, so it is a call with a written list (and runs).
+    let out = run_ok(
+        "fn first<T>(xs: list<T>): T { return xs[0] }\n\
+         fn main() { let x = first < number > ([5]) print(str(x)) }",
+    );
+    assert_eq!(out, ["5"]);
+}
+
+#[test]
+fn written_bound_dispatch_runs_the_matching_impl() {
+    let out = run_annotated(
+        "trait Area { fn area(self): number }\n\
+         struct Rect { w: number, h: number }\n\
+         impl Area for Rect { fn area(self): number { return self.w * self.h } }\n\
+         fn describe<T: Area>(x: T): number { return Area::area(x) }\n\
+         fn main() { let r = { w: 3, h: 4 } print(str(describe<Rect>(r))) }",
+    )
+    .unwrap();
+    assert_eq!(out, ["12"]);
+}
+
+#[test]
+fn comparison_fallback_still_compares_at_runtime() {
+    let out = run_ok(
+        "fn main() {\n\
+         let a = 2\n\
+         let b = 3\n\
+         let c = 4\n\
+         if a < b and b > (c - 2) { print(\"yes\") }\n\
+         }",
+    );
+    assert_eq!(out, ["yes"]);
 }

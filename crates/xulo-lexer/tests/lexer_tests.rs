@@ -37,8 +37,20 @@ fn tracks_byte_spans() {
 }
 
 #[test]
+fn hash_attribute_sigil_lexes() {
+    // `#` is the attribute sigil (spec `grammar.md` `Attribute`), a token of
+    // its own so the formatter can keep `#Test` glued.
+    let toks = tokenize("#Test fn t() {}").unwrap();
+    let kinds: Vec<Token> = toks.iter().map(|t| t.kind).collect();
+    assert_eq!(kinds[0], Hash);
+    assert_eq!(kinds[1], Ident);
+    assert!(matches!(kinds[2], Fn));
+}
+
+#[test]
 fn rejects_garbage() {
-    assert!(tokenize("let # = 1").is_err());
+    // `#` is the attribute sigil and lexes; a non-ASCII glyph does not.
+    assert!(tokenize("let § = 1").is_err());
 }
 
 #[test]

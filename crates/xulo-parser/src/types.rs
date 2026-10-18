@@ -78,8 +78,8 @@ fn primary_type(pair: Pair<'_, Rule>) -> R<Type> {
 
 fn named_type(pair: Pair<'_, Rule>) -> R<Type> {
     let mut inner = pair.into_inner();
-    let name_pair = inner.next().expect("named_type has an identifier");
-    check_rule(&name_pair, Rule::identifier)?;
+    let name_pair = inner.next().expect("named_type has a type_path");
+    check_rule(&name_pair, Rule::type_path)?;
     let name = name_pair.as_str().to_string();
     let args = match inner.next() {
         Some(type_list) => {

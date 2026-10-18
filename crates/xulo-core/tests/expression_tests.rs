@@ -47,6 +47,7 @@ fn test_expression_span_call() {
         arguments: vec![],
         span: 0..5,
         trait_impl: None,
+        type_args: None,
     });
     assert_eq!(expr.span(), &(0..5));
 }

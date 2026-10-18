@@ -2,7 +2,7 @@
 //! lowered-AST shape checks, negative cases, and the nesting-depth limit.
 
 use xulo_core::ast::{
-    Expression, ImportSpec, Literal, MatchBody, MatchPattern, Statement, Type, UiElement,
+    Expression, Literal, MatchBody, MatchPattern, PathHead, Statement, Type, UiElement, UseTarget,
 };
 use xulo_parser::{MAX_NEST_DEPTH, parse_program};
 
@@ -184,46 +184,97 @@ fn tuple_type_alias() {
 }
 
 // ---------------------------------------------------------------
-// Imports
+// Use declarations (header forms)
 // ---------------------------------------------------------------
 
 #[test]
-fn named_import_with_alias() {
-    let p = parse_ok(r#"import { a, b as c } from "./m.xulo""#);
-    let Statement::Import(i) = &p.statements[0] else {
-        panic!("expected import");
+fn use_path_with_alias() {
+    let p = parse_ok("use form::validate as v;");
+    let Statement::Use(u) = &p.statements[0] else {
+        panic!("expected use");
     };
-    assert_eq!(i.source, "./m.xulo");
-    assert_eq!(
-        i.spec,
-        ImportSpec::Named(vec![
-            ("a".to_string(), None),
-            ("b".to_string(), Some("c".to_string()))
-        ])
+    let UseTarget::Path {
+        head,
+        segments,
+        alias,
+    } = &u.target
+    else {
+        panic!("expected a path target, got {:?}", u.target);
+    };
+    assert!(matches!(head, PathHead::Name(n) if n == "form"));
+    assert_eq!(segments, &["validate".to_string()]);
+    assert_eq!(alias.as_deref(), Some("v"));
+    assert!(!u.is_pub);
+    assert!(!u.type_only);
+}
+
+#[test]
+fn type_use() {
+    let p = parse_ok("use type ui::User;");
+    let Statement::Use(u) = &p.statements[0] else {
+        panic!("expected use");
+    };
+    assert!(u.type_only);
+    let UseTarget::Path { head, segments, .. } = &u.target else {
+        panic!("expected a path target");
+    };
+    assert!(matches!(head, PathHead::Name(n) if n == "ui"));
+    assert_eq!(segments, &["User".to_string()]);
+}
+
+#[test]
+fn group_and_glob_use() {
+    let p = parse_ok("use ui::{HStack, Text as T};\nuse lsp-server::*;");
+    let Statement::Use(u) = &p.statements[0] else {
+        panic!("expected use");
+    };
+    let UseTarget::Group { head, entries } = &u.target else {
+        panic!("expected a group target, got {:?}", u.target);
+    };
+    assert!(matches!(head, PathHead::Name(n) if n == "ui"));
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0].segments, ["HStack".to_string()]);
+    assert_eq!(entries[0].alias, None);
+    assert_eq!(entries[1].segments, ["Text".to_string()]);
+    assert_eq!(entries[1].alias.as_deref(), Some("T"));
+    let Statement::Use(u) = &p.statements[1] else {
+        panic!("expected use");
+    };
+    assert!(
+        matches!(&u.target, UseTarget::Glob { head } if matches!(head, PathHead::Package(n) if n == "lsp-server"))
     );
-    assert!(!i.type_only);
 }
 
 #[test]
-fn type_import() {
-    let p = parse_ok(r#"import type { T } from "./t.xulo""#);
-    let Statement::Import(i) = &p.statements[0] else {
-        panic!("expected import");
+fn pub_use_local_form() {
+    let p = parse_ok("pub use { add, PI };");
+    let Statement::Use(u) = &p.statements[0] else {
+        panic!("expected use");
     };
-    assert!(i.type_only);
+    assert!(u.is_pub);
+    let UseTarget::Local(names) = &u.target else {
+        panic!("expected a local target, got {:?}", u.target);
+    };
+    assert_eq!(names, &["add".to_string(), "PI".to_string()]);
 }
 
 #[test]
-fn namespace_and_side_effect_imports() {
-    let p = parse_ok("import * as ns from \"./m.xulo\"\nimport \"./side.xulo\"");
-    assert!(matches!(
-        &p.statements[0],
-        Statement::Import(i) if i.spec == ImportSpec::Namespace("ns".to_string())
-    ));
-    assert!(matches!(
-        &p.statements[1],
-        Statement::Import(i) if i.spec == ImportSpec::Bare
-    ));
+fn mod_declarations() {
+    let p = parse_ok("mod forms;\npub mod widgets { fn x() {} }");
+    let Statement::Mod(m) = &p.statements[0] else {
+        panic!("expected mod");
+    };
+    assert_eq!(m.name, "forms");
+    assert!(!m.is_pub);
+    assert!(m.body.is_none());
+    let Statement::Mod(m) = &p.statements[1] else {
+        panic!("expected mod");
+    };
+    assert_eq!(m.name, "widgets");
+    assert!(m.is_pub);
+    let body = m.body.as_ref().expect("inline body");
+    assert_eq!(body.len(), 1);
+    assert!(matches!(body[0], Statement::Fn(_)));
 }
 
 // ---------------------------------------------------------------
@@ -919,4 +970,16 @@ fn deep_else_chain_does_not_backtrack_exponentially() {
     );
     // Either outcome is fine; what matters is that this returns at all.
     let _ = parse_program(&src);
+}
+
+/// spec `modules/import-export.md`: a path that stops at its head binds the
+/// namespace only under `as` — `use lib;` without one is a syntax error.
+#[test]
+fn head_only_use_requires_as_alias() {
+    let err = parse_err("use lib;\nfn main() {}");
+    assert!(
+        err.message.contains("expected `as`"),
+        "message: {}",
+        err.message
+    );
 }

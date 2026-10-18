@@ -11,6 +11,7 @@ fn test_call_is_enum() {
         arguments: vec![],
         span: 0..15,
         trait_impl: None,
+        type_args: None,
     };
     assert!(call.is_enum());
 }
@@ -29,6 +30,7 @@ fn test_call_is_not_enum_with_object() {
         arguments: vec![],
         span: 0..15,
         trait_impl: None,
+        type_args: None,
     };
     assert!(!call.is_enum());
 }
@@ -44,6 +46,7 @@ fn test_call_is_not_enum_plain() {
         arguments: vec![],
         span: 0..5,
         trait_impl: None,
+        type_args: None,
     };
     assert!(!call.is_enum());
 }
@@ -59,6 +62,7 @@ fn test_call_enum_parts() {
         arguments: vec![],
         span: 0..15,
         trait_impl: None,
+        type_args: None,
     };
     assert_eq!(call.enum_parts(), Some(("Result", "Success")));
 }
@@ -77,6 +81,7 @@ fn test_call_enum_parts_with_object() {
         arguments: vec![],
         span: 0..15,
         trait_impl: None,
+        type_args: None,
     };
     assert_eq!(call.enum_parts(), None);
 }
@@ -95,6 +100,7 @@ fn test_call_optional() {
         arguments: vec![],
         span: 0..10,
         trait_impl: None,
+        type_args: None,
     };
     assert!(call.optional);
 }
@@ -116,6 +122,7 @@ fn test_call_with_trait_impl() {
         }],
         span: 0..15,
         trait_impl: Some("impl_Area_Rectangle_area".to_string()),
+        type_args: None,
     };
     assert_eq!(
         call.trait_impl,

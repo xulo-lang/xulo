@@ -49,6 +49,9 @@ pub struct XuloError {
     /// (`spec/type-system/errors.md`), e.g. `E0230`. When absent the coarse
     /// [`ErrorKind`] code is reported instead.
     pub code: Option<&'static str>,
+    /// An attached note (spec error rows carry `= note: …` guidance, e.g.
+    /// `E0111`'s registered-target list). Rendered after the diagnostic.
+    pub note: Option<String>,
 }
 
 impl XuloError {
@@ -59,6 +62,7 @@ impl XuloError {
             span: None,
             file: None,
             code: None,
+            note: None,
         }
     }
 
@@ -70,6 +74,12 @@ impl XuloError {
     /// Attach a fine-grained diagnostic code, overriding the kind's code.
     pub fn with_code(mut self, code: &'static str) -> Self {
         self.code = Some(code);
+        self
+    }
+
+    /// Attach a `= note: …` line to the rendered diagnostic.
+    pub fn with_note(mut self, note: impl Into<String>) -> Self {
+        self.note = Some(note.into());
         self
     }
 

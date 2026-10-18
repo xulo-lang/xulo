@@ -6,6 +6,12 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 static DIR_COUNTER: AtomicU32 = AtomicU32::new(0);
 
+/// Manifest for temp programs: the UI package is a version-only dependency
+/// (no local sources), so `use ui::…` resolves to the external face.
+const MANIFEST_SRC: &str = r#"[dependencies]
+"@xulo/ui" = { version = "1.2", alias = "ui" }
+"#;
+
 /// Write `src` to a unique temp `.xulo` file and return its path.
 fn temp_program(src: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
@@ -14,6 +20,7 @@ fn temp_program(src: &str) -> PathBuf {
         DIR_COUNTER.fetch_add(1, Ordering::Relaxed)
     ));
     std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("xulo.toml"), MANIFEST_SRC).unwrap();
     let path = dir.join("main.xulo");
     std::fs::write(&path, src).unwrap();
     path
@@ -31,7 +38,7 @@ fn write_sibling(path: &Path, name: &str, src: &str) {
 }
 
 const UI_SRC: &str = r##"
-import { Screen, VStack, HStack, Text, Button, Input } from "@xulo/ui"
+use ui::{Screen, VStack, HStack, Text, Button, Input};
 
 fn Counter(): View {
     @State let count: number = 0
@@ -109,7 +116,8 @@ fn local_module_imports_wire_into_view() {
     // exported function feeds the View. Exercised so module wiring (exports
     // collected per module) is covered end to end.
     let path = temp_program(
-        r#"import { label } from "./lib.xulo"
+        r#"mod lib;
+use lib::label;
 fn main(): View {
     VStack { Text(label()) }
 }
@@ -131,7 +139,7 @@ fn clicking_button_rerenders_with_updated_state() {
     // The interactive session: clicking a button runs its `onClick` (which
     // mutates `@State`), then re-renders — the next frame shows the new count.
     let path = temp_program(
-        r#"import { Button, Text, VStack } from "@xulo/ui"
+        r#"use ui::{Button, Text, VStack};
 fn Counter(): View {
     @State let count: number = 0
     VStack(spacing: 1) {
@@ -215,8 +223,11 @@ fn non_view_main_is_rejected_for_rendering() {
     let result = xulo_framework::render_to_string(&path, xulo_framework::Backend::Terminal);
     cleanup(&path);
     let err = result.expect_err("rendering a non-View main fails");
+    // The run path enforces the entry-point rule (`E0609`) before executing:
+    // a `main` that returns neither Unit nor View never starts.
+    assert_eq!(err.code, Some("E0609"), "{}", err.message);
     assert!(
-        err.message.contains("did not produce a `View`"),
+        err.message.contains("`main` must return Unit or View"),
         "{}",
         err.message
     );
@@ -226,7 +237,7 @@ fn non_view_main_is_rejected_for_rendering() {
 fn multiple_components_preserve_state_across_rerender() {
     // When one component updates its state, other components should keep theirs.
     let path = temp_program(
-        r#"import { Button, Text, VStack, Input } from "@xulo/ui"
+        r#"use ui::{Button, Text, VStack, Input};
 fn Counter(): View {
     @State let count: number = 0
     VStack(spacing: 1) {
@@ -320,7 +331,7 @@ fn main(): View {
 fn input_change_preserves_state() {
     // Typing in an Input should update @State, and re-render should keep it.
     let path = temp_program(
-        r#"import { Button, Text, VStack, Input } from "@xulo/ui"
+        r#"use ui::{Button, Text, VStack, Input};
 fn Counter(): View {
     @State let count: number = 0
     VStack(spacing: 1) {
@@ -406,7 +417,7 @@ fn main(): View {
 fn input_state_not_reset_by_button_click() {
     // Reproduce: type in Input, then click Button — Input should keep its value.
     let path = temp_program(
-        "import { Screen, VStack, Text, Button, Input } from \"@xulo/ui\"\n\
+        "use ui::{Screen, VStack, Text, Button, Input};\n\
          fn Counter(): View {\n\
          @State let count: number = 0\n\
          VStack(spacing: 1) {\n\
@@ -480,7 +491,7 @@ fn input_state_not_reset_by_button_click() {
 }
 
 const FILL_UI_SRC: &str = r##"
-import { Screen, VStack, Fill, Text } from "@xulo/ui"
+use ui::{Screen, VStack, Fill, Text};
 
 fn main(): View {
     Screen(bg: "#101010") {

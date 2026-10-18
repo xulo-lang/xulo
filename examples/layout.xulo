@@ -1,4 +1,4 @@
-import { Screen, VStack, HStack, Fill, Text } from "@xulo/ui"
+use ui::{Screen, VStack, HStack, Fill, Text};
 
 fn main(): View {
     Screen(bg: "#0a0a1a") {

@@ -19,8 +19,7 @@ fn run(src: &str) -> Vec<String> {
 /// the running total.
 #[test]
 fn service_reply_settles_send_task() {
-    let out = run(
-        r#"
+    let out = run(r#"
         struct Tally { total: number }
         impl Tally {
             fn on_message(mut self, cmd: number) {
@@ -34,8 +33,7 @@ fn service_reply_settles_send_task() {
             print(sum)
             worker.stop()
         }
-        "#,
-    );
+        "#);
     assert_eq!(out, vec!["41"]);
 }
 
@@ -44,8 +42,7 @@ fn service_reply_settles_send_task() {
 /// the running total in order.
 #[test]
 fn service_handles_messages_in_fifo_order() {
-    let out = run(
-        r#"
+    let out = run(r#"
         struct Counter { n: number }
         impl Counter {
             fn on_message(mut self, v: number) {
@@ -63,8 +60,7 @@ fn service_handles_messages_in_fifo_order() {
             print(c)
             svc.stop()
         }
-        "#,
-    );
+        "#);
     assert_eq!(out, vec!["1", "3", "6"]);
 }
 
@@ -72,8 +68,7 @@ fn service_handles_messages_in_fifo_order() {
 /// message waits for every `await` inside the handler to finish.
 #[test]
 fn async_on_message_defers_next_message() {
-    let out = run(
-        r#"
+    let out = run(r#"
         struct Box { v: number }
         async fn slow(x: number): number { x }
         impl Box {
@@ -90,8 +85,7 @@ fn async_on_message_defers_next_message() {
             print(b)
             svc.stop()
         }
-        "#,
-    );
+        "#);
     assert_eq!(out, vec!["7", "9"]);
 }
 
@@ -100,8 +94,7 @@ fn async_on_message_defers_next_message() {
 /// and cancelled). The in-flight message still settles with its reply.
 #[test]
 fn stop_cancels_queued_messages() {
-    let out = run(
-        r#"
+    let out = run(r#"
         async fn slow(n: number): number { n }
         struct S { n: number }
         impl S {
@@ -120,8 +113,7 @@ fn stop_cancels_queued_messages() {
             let r = await inflight
             print(r)
         }
-        "#,
-    );
+        "#);
     // 2 and 3 were cancelled by stop before their handlers ran, so the only
     // reply is the first message's.
     assert_eq!(out, vec!["1"]);
@@ -131,8 +123,7 @@ fn stop_cancels_queued_messages() {
 /// reply operand means the task settles with unit).
 #[test]
 fn on_message_without_reply_settles_null() {
-    let out = run(
-        r#"
+    let out = run(r#"
         struct Nop { seen: number }
         impl Nop {
             fn on_message(mut self, v: number) {
@@ -145,8 +136,7 @@ fn on_message_without_reply_settles_null() {
             print(str(r))
             svc.stop()
         }
-        "#,
-    );
+        "#);
     assert_eq!(out, vec!["null"]);
 }
 
@@ -154,8 +144,7 @@ fn on_message_without_reply_settles_null() {
 /// value the spawn copied from does not touch the service, and vice versa.
 #[test]
 fn service_state_is_isolated_from_spawner() {
-    let out = run(
-        r#"
+    let out = run(r#"
         struct Acc { v: number }
         impl Acc {
             fn on_message(mut self, delta: number) {
@@ -172,35 +161,32 @@ fn service_state_is_isolated_from_spawner() {
             print(start)
             svc.stop()
         }
-        "#,
-    );
+        "#);
     // The service saw the copied-in value 10, not the spawner's later 99.
     assert_eq!(out, vec!["11", "99"]);
 }
 
-/// `Task.resolve` yields the value immediately; `Task.all` collects results in
-/// argument order; `Task.race` takes whichever settles first.
+/// `Task::resolve` yields the value immediately; `Task::all` collects results in
+/// argument order; `Task::race` takes whichever settles first.
 #[test]
 fn task_namespace_combinators_settle() {
-    let out = run(
-        r#"
+    let out = run(r#"
         async fn work(n: number): number { n }
         async fn main() {
-            let ready = Task.resolve(42)
+            let ready = Task::resolve(42)
             print(await ready)
             let a = work(1)
             let b = work(2)
-            print(await Task.all([a, b]))
+            print(await Task::all([a, b]))
             let c = work(3)
             let d = work(4)
-            print(await Task.race([c, d]))
+            print(await Task::race([c, d]))
         }
-        "#,
-    );
+        "#);
     assert_eq!(out, vec!["42", "[1, 2]", "3"]);
 }
 
-/// A rejection propagates through `Task.all`: the combined task settles
+/// A rejection propagates through `Task::all`: the combined task settles
 /// rejected and awaiting it fails the run.
 #[test]
 fn task_all_propagates_rejection() {
@@ -212,32 +198,30 @@ fn task_all_propagates_rejection() {
         }
         async fn main() {
             let t = boom()
-            print(await Task.all([t]))
+            print(await Task::all([t]))
         }
         "#,
     )
     .unwrap();
     let result = interp.run(&program);
-    assert!(result.is_err(), "Task.all of a rejected task must fail");
+    assert!(result.is_err(), "Task::all of a rejected task must fail");
 }
 
-/// `Task.timeout` wraps a task that settles in time: the combined task
+/// `Task::timeout` wraps a task that settles in time: the combined task
 /// resolves with `Result::Ok(v)`, and the pending deadline must not stall the
 /// loop — the run finishes far inside its 10-second budget.
 #[test]
 fn task_timeout_wraps_a_task_that_settles_in_time() {
     let start = std::time::Instant::now();
-    let out = run(
-        r#"
+    let out = run(r#"
         async fn main() {
-            let r = await Task.timeout(Task.resolve(41), 10000)
+            let r = await Task::timeout(Task::resolve(41), 10000)
             match r {
                 Result::Ok(v) => print(v)
                 Result::Err(e) => print(e.message)
             }
         }
-        "#,
-    );
+        "#);
     assert_eq!(out, vec!["41"]);
     assert!(
         start.elapsed() < std::time::Duration::from_secs(2),
@@ -253,8 +237,7 @@ fn task_timeout_wraps_a_task_that_settles_in_time() {
 /// wrapped task after `stop` finds the combined task already settled.
 #[test]
 fn task_timeout_expires_on_a_task_that_never_settles() {
-    let out = run(
-        r#"
+    let out = run(r#"
         struct Relay { n: number }
         impl Relay {
             async fn on_message(mut self, cmd: object) {
@@ -263,14 +246,27 @@ fn task_timeout_expires_on_a_task_that_never_settles() {
         }
         async fn main() {
             let svc = spawn.process Relay { n: 0 }
-            let r = await Task.timeout(svc.send({ me: svc }), 50)
+            let r = await Task::timeout(svc.send({ me: svc }), 50)
             match r {
                 Result::Ok(v) => print(v)
                 Result::Err(e) => print(e.message)
             }
             svc.stop()
         }
-        "#,
-    );
+        "#);
     assert_eq!(out, vec!["timed out"]);
+}
+
+/// `await Time::sleep(ms)` suspends the body until the deadline passes and
+/// yields `Unit` (spec `builtins/intrinsic-functions.md`): the coroutine
+/// resumes with nothing to print, then continues.
+#[test]
+fn time_sleep_settles_after_the_delay() {
+    let out = run(r#"
+        async fn main() {
+            await Time::sleep(10)
+            print("slept")
+        }
+        "#);
+    assert_eq!(out, vec!["slept"]);
 }

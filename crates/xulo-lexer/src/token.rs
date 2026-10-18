@@ -84,11 +84,12 @@ pub enum Token {
     Impl,
     Mut,
     Struct,
-    Test,
     /// A reserved-for-future-use word (see `RESERVED_WORDS`): it lexes as a
     /// token instead of an identifier so it can never be used as a name.
     Reserved,
     At,
+    /// `#`, the attribute sigil (`#Test`, `#Derive(ToString)`).
+    Hash,
     Dollar,
     EOF,
 }
@@ -203,7 +204,6 @@ impl Token {
             "impl" => Token::Impl,
             "mut" => Token::Mut,
             "struct" => Token::Struct,
-            "test" => Token::Test,
             "break" => Token::Break,
             "continue" => Token::Continue,
             "true" | "false" => Token::Boolean,
@@ -255,11 +255,11 @@ impl Token {
             Token::Impl => "`impl`",
             Token::Mut => "`mut`",
             Token::Struct => "`struct`",
-            Token::Test => "`test`",
             Token::Reserved => "`<reserved keyword>`",
             Token::Break => "`break`",
             Token::Continue => "`continue`",
             Token::At => "`@`",
+            Token::Hash => "`#`",
             Token::Dollar => "`$`",
             Token::Number => "number",
             Token::String => "string",

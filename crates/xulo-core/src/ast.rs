@@ -8,7 +8,7 @@ pub struct Program {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Statement {
     Fn(FnDef),
-    /// `test [async] fn name() { … }` — an always-checked, inert test body
+    /// `#Test [async] fn name() { … }` — an always-checked, inert test body
     /// (spec testing.md). The `FnDef` carries the fixed shape: empty params,
     /// no return type, no generics; `is_async` is the optional marker.
     Test(FnDef),
@@ -24,7 +24,6 @@ pub enum Statement {
     Block(Block),
     Try(TryStmt),
     Throw(Expression),
-    Import(ImportStmt),
     Export(ExportStmt),
     State(StateStmt),
     Store(StoreStmt),
@@ -35,6 +34,10 @@ pub enum Statement {
     Impl(ImplDecl),
     Break,
     Continue,
+    /// `mod name;` / `mod name { … }` — claims a file, or nests a module.
+    Mod(ModDecl),
+    /// `use …;` / `pub use …;` — binds names of a path in this file's scope.
+    Use(UseDecl),
     /// `defer <block|expression>`: runs its operand when the enclosing block
     /// exits (spec: statements/return-and-block.md).
     Defer(DeferStmt),
@@ -51,6 +54,30 @@ pub struct ExprStmt {
     pub span: Range<usize>,
 }
 
+/// One declaration attribute: `#Name` with an optional parenthesized,
+/// comma-separated list of identifier arguments (`#Derive(ToString)`,
+/// `#Test`). Attributes are written on the five item declarations — `fn`,
+/// `struct`, `enum`, `trait`, `impl` — and on the test form; which names are
+/// defined and where they may appear is a checking rule (spec
+/// `types/traits.md`, "Attributes"), not a grammatical one.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Attribute {
+    /// The attribute name as written after `#` (`Test`, `Derive`).
+    pub name: String,
+    /// Source span of the attribute name (diagnostics point here).
+    pub name_span: Range<usize>,
+    /// Parenthesized argument names, in order; empty for `#Name` and for
+    /// `#Name()` alike (registry entries distinguish the two shapes, which is
+    /// `E0110` where a list is required).
+    pub args: Vec<(String, Range<usize>)>,
+    /// Full span from `#` through the closing `)` (or the name when bare).
+    pub span: Range<usize>,
+    /// Whether the argument list was written at all — `#Derive` and
+    /// `#Derive()` are both an E0110 for `Derive`, but the registry reports
+    /// them uniformly from the list being empty.
+    pub has_parens: bool,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct FnDef {
     pub name: String,
@@ -65,6 +92,10 @@ pub struct FnDef {
     pub is_async: bool,
     pub body: Block,
     pub span: Range<usize>,
+    /// Declaration attributes written directly before the `fn` keyword
+    /// (empty for methods, closures, and the fixed-shape test form, whose
+    /// `#Test` is part of the `TestDecl` production).
+    pub attributes: Vec<Attribute>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -168,6 +199,9 @@ pub struct ComponentStmt {
     pub children: Vec<UiElement>,
     /// Source span of the whole invocation (name through children block).
     pub span: Range<usize>,
+    /// A written `CallTypeArgs` list (`Text<Int>("Hi") { … }`); components
+    /// declare no type parameters, so the checker rejects it with `E0807`.
+    pub type_args: Option<Vec<Type>>,
 }
 
 /// A single element in a UI block (component, text, expression, if, for, or grouping).
@@ -246,6 +280,8 @@ pub struct TraitDecl {
     pub type_params: Vec<String>,
     pub methods: Vec<TraitMethod>,
     pub span: Range<usize>,
+    /// Declaration attributes written directly before the `trait` keyword.
+    pub attributes: Vec<Attribute>,
 }
 
 /// One method signature in a `trait` declaration. `self` is the receiver and
@@ -283,6 +319,8 @@ pub struct ImplDecl {
     pub span: Range<usize>,
     /// `true` for `impl Type { ... }` (inherent), `false` for `impl Trait for Type { ... }`.
     pub is_inherent: bool,
+    /// Declaration attributes written directly before the `impl` keyword.
+    pub attributes: Vec<Attribute>,
 }
 
 /// Mangle an `impl` method into the module-level function name that codegen
@@ -301,6 +339,8 @@ pub struct EnumDef {
     /// Inline bounds on `type_params`, parallel to it (spec `types/generics.md`).
     pub type_bounds: Vec<FnBound>,
     pub variants: Vec<EnumVariant>,
+    /// Declaration attributes written directly before the `enum` keyword.
+    pub attributes: Vec<Attribute>,
 }
 
 /// A single positional payload parameter of an enum variant:
@@ -333,6 +373,8 @@ pub struct StructDef {
     pub type_bounds: Vec<FnBound>,
     pub fields: Vec<StructField>,
     pub span: Range<usize>,
+    /// Declaration attributes written directly before the `struct` keyword.
+    pub attributes: Vec<Attribute>,
 }
 
 /// A single field in a `struct` definition.
@@ -397,22 +439,66 @@ pub enum DeferBody {
     Expr(Expression),
 }
 
-/// An `import` statement.
+/// `mod name;` / `pub mod name { … }` — a file-backed module claims a file in
+/// the declaring module's home directory; an inline module carries its own
+/// body (header forms plus declarations).
 #[derive(Debug, Clone, PartialEq)]
-pub struct ImportStmt {
-    pub source: String,
-    pub spec: ImportSpec,
-    /// `import type { ... }`: erased at runtime, only feeds the type checker.
-    pub type_only: bool,
+pub struct ModDecl {
+    pub name: String,
+    pub is_pub: bool,
+    /// `Some(body)` for an inline `mod name { … }`.
+    pub body: Option<Vec<Statement>>,
+    pub span: Range<usize>,
 }
 
-/// What `import` brings in: a namespace (`* as ns`), named bindings
-/// (`{ a, b as c }`), or a bare side-effect import (`import "..."`).
+/// `use …;` and `pub use …;` — binds names of a path in this file's scope
+/// (and, for `pub use`, adds them to the module's interface).
 #[derive(Debug, Clone, PartialEq)]
-pub enum ImportSpec {
-    Namespace(String),
-    Named(Vec<(String, Option<String>)>),
-    Bare,
+pub struct UseDecl {
+    pub is_pub: bool,
+    /// `use type …`: binds for type positions only, erased everywhere else.
+    pub type_only: bool,
+    pub target: UseTarget,
+    pub span: Range<usize>,
+}
+
+/// What a `use`/`pub use` targets: a single (possibly aliased) path, a group
+/// of entries under a prefix, or a glob of the prefix's exports.
+#[derive(Debug, Clone, PartialEq)]
+pub enum UseTarget {
+    Path {
+        head: PathHead,
+        segments: Vec<String>,
+        alias: Option<String>,
+    },
+    Group {
+        head: PathHead,
+        entries: Vec<UseEntry>,
+    },
+    Glob {
+        head: PathHead,
+    },
+    /// `pub use { a, b }` — re-exports names already bound in this module.
+    Local(Vec<String>),
+}
+
+/// One entry of a grouped use: a path relative to the group's prefix
+/// (`fields::Field` in `use form::{validate, fields::Field}`), optionally
+/// renamed locally.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UseEntry {
+    pub segments: Vec<String>,
+    pub alias: Option<String>,
+}
+
+/// The head of a qualified path: a manifest package name (kebab-case
+/// allowed), an ordinary identifier, or the `self`/`super` module keywords.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PathHead {
+    Package(String),
+    Name(String),
+    SelfModule,
+    Super,
 }
 
 /// A `pub` declaration statement (also the target of `pub use`). Internal
@@ -833,6 +919,11 @@ pub struct Call {
     /// phase annotates the mangled impl name (`impl_Area_Rectangle_area`) here.
     /// `None` for plain/enum/method calls.
     pub trait_impl: Option<String>,
+    /// A written call-site type-argument list — `first<Int>(…)` — between the
+    /// callee and the argument list (spec `expressions/calls.md`
+    /// `CallTypeArgs`). `None` when no list is written; `Some(vec![])` for
+    /// `f<>(…)`, which must reach the arity diagnostic, not a comparison.
+    pub type_args: Option<Vec<Type>>,
 }
 
 /// A single call argument, optionally labeled (`name: expr`).
@@ -849,6 +940,10 @@ pub struct CallValue {
     pub callee: Box<Expression>,
     pub arguments: Vec<CallArg>,
     pub span: Range<usize>,
+    /// Call-site type arguments on a callee that is an arbitrary expression
+    /// (`xs[0]<Int>(1)`); always `E0807` — a value of function type declares
+    /// no type parameters (spec `types/generics.md`).
+    pub type_args: Option<Vec<Type>>,
 }
 
 impl Call {

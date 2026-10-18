@@ -5,15 +5,20 @@ use std::ops::Range;
 
 use symbol_table::{Symbol, SymbolKind, SymbolTable};
 use xulo_core::ast::{
-    AssignStmt, AssignTarget, BinaryOperator, Block, Call, CallArg, EnumPayloadParam, EnumVariant,
-    ExportItem, Expression, FnBound, IfExpr, ImplDecl, LetBinding, Literal, ObjectField, Program,
-    Statement, TraitDecl, Type, TypeAlias, UiElement, impl_fn_name,
+    AssignStmt, AssignTarget, Attribute, BinaryOperator, Block, Call, CallArg, EnumPayloadParam,
+    EnumVariant, ExportItem, Expression, FnBound, FnDef, IfExpr, ImplDecl, LetBinding, Literal,
+    ObjectField, PathHead, Program, Statement, TraitDecl, Type, TypeAlias, UiElement, UseDecl,
+    UseTarget, impl_fn_name,
 };
 use xulo_core::error::{ErrorKind, XuloError};
 
 /// Result of a single semantic error, without a source span (spans are
 /// attached by the lexer/parser; semantic checks target names).
 type SResult<T> = Result<T, XuloError>;
+
+/// One walk's derive targets pending field checks: attribute span -> declared
+/// target types as (type, label span).
+type DeriveList = Vec<(Range<usize>, Vec<(Type, Range<usize>)>)>;
 
 /// A named type known to the program: a user `type` alias, an `enum`, a
 /// `trait`, or a `struct`.
@@ -93,7 +98,138 @@ fn builtin_type_entries() -> HashMap<String, TypeEntry> {
             kind: TypeEntryKind::Struct(vec![("message".to_string(), Type::String, None)]),
         },
     );
+    // `ToString` is the built-in protocol trait (spec `types/traits.md`):
+    // `str(v)` and `${v}` accept a base type or a type with this impl, and
+    // `#Derive(ToString)` expands to the same impl an author would write.
+    builtins.insert(
+        "ToString".to_string(),
+        TypeEntry {
+            type_params: Vec::new(),
+            type_bounds: Vec::new(),
+            kind: TypeEntryKind::Trait(TraitDef {
+                methods: vec![TraitMethodSig {
+                    name: "to_string".to_string(),
+                    params: Vec::new(),
+                    return_type: Type::String,
+                    has_self: true,
+                    is_async: false,
+                }],
+            }),
+        },
+    );
     builtins
+}
+
+/// A parameter of an intrinsic namespace function (spec
+/// `builtins/intrinsic-functions.md`): the name its signature writes, for
+/// diagnostics, and the type it accepts. `Float`/`Int`/`U64` are written the
+/// way the spec writes them, while every numeric parameter accepts the
+/// implementation's one `number` type.
+#[derive(Clone, Copy)]
+enum BuiltinTy {
+    Number,
+    Float,
+    Int,
+    U64,
+}
+
+impl BuiltinTy {
+    fn display(self) -> &'static str {
+        match self {
+            BuiltinTy::Number => "Number",
+            BuiltinTy::Float => "Float",
+            BuiltinTy::Int => "Int",
+            BuiltinTy::U64 => "U64",
+        }
+    }
+
+    fn ty(self) -> Type {
+        Type::Number
+    }
+}
+
+/// The declared return kind of an intrinsic namespace function.
+#[derive(Clone, Copy)]
+enum BuiltinRet {
+    Number,
+    Float,
+    Int,
+    String,
+    TaskUnit,
+}
+
+impl BuiltinRet {
+    fn ty(self) -> Type {
+        match self {
+            BuiltinRet::Number | BuiltinRet::Float | BuiltinRet::Int => Type::Number,
+            BuiltinRet::String => Type::String,
+            BuiltinRet::TaskUnit => Type::Named(
+                "Task".to_string(),
+                vec![Type::Named("Unit".to_string(), Vec::new())],
+            ),
+        }
+    }
+}
+
+/// One intrinsic function's registered signature.
+struct BuiltinSig {
+    params: &'static [BuiltinTy],
+    ret: BuiltinRet,
+}
+
+/// One member of a built-in namespace: a constant (`Math::PI`) or a function.
+enum BuiltinMember {
+    Constant,
+    Fn(BuiltinSig),
+}
+
+/// The intrinsic table of `Math` and `Time` (spec
+/// `builtins/intrinsic-functions.md`). `Task` calls route through
+/// [`Analyzer::check_task_utility`], which infers the task element types a
+/// static table cannot.
+fn builtin_member(ns: &str, member: &str) -> Option<BuiltinMember> {
+    use BuiltinMember as M;
+    use BuiltinRet as R;
+    use BuiltinTy as T;
+    let f = |params: &'static [T], ret: R| Some(M::Fn(BuiltinSig { params, ret }));
+    match ns {
+        "Math" => match member {
+            "PI" | "E" | "TAU" | "INFINITY" | "NAN" => Some(M::Constant),
+            "abs" => f(&[T::Number], R::Number),
+            "min" | "max" => f(&[T::Number, T::Number], R::Number),
+            "sqrt" | "cbrt" => f(&[T::Float], R::Float),
+            "floor" | "ceil" | "round" | "trunc" => f(&[T::Float], R::Int),
+            "pow" => f(&[T::Float, T::Float], R::Float),
+            "toFixed" => f(&[T::Float, T::Int], R::String),
+            "sin" | "cos" | "tan" | "asin" | "acos" | "atan" => f(&[T::Float], R::Float),
+            "atan2" => f(&[T::Float, T::Float], R::Float),
+            "log" | "log2" | "log10" | "exp" => f(&[T::Float], R::Float),
+            _ => None,
+        },
+        "Time" => match member {
+            "now" | "now_nanos" | "monotonic" | "monotonic_nanos" => f(&[], R::Number),
+            "sleep" => f(&[T::U64], R::TaskUnit),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// A loose signature for a bare `Task::all`-style reference (the combinator
+/// used as a value): element types are inferred at the call, so the bare
+/// reference only needs the shape.
+fn task_bare_member_sig(member: &str) -> Option<Type> {
+    let task_any = || Type::Named("Task".to_string(), vec![Type::Any]);
+    let sig = |params: Vec<Type>, ret: Type| Type::FnSig {
+        params,
+        ret: Some(Box::new(ret)),
+    };
+    match member {
+        "all" | "race" => Some(sig(vec![Type::List(Box::new(task_any()))], task_any())),
+        "resolve" => Some(sig(vec![Type::Any], task_any())),
+        "timeout" => Some(sig(vec![task_any(), Type::Number], task_any())),
+        _ => None,
+    }
 }
 
 /// The method contract of a `trait`: method name, parameter types (the `self`
@@ -196,6 +332,11 @@ pub struct Analyzer {
     /// Registered `impl Trait for Type` blocks: `(trait, type)` -> method names
     /// provided. The receiver type's concrete name must be known statically.
     impls: std::collections::HashSet<(String, String, String)>,
+    /// Every type with a string form — a `ToString` impl (hand-written or
+    /// `#Derive(ToString)`) — built before checking so `str(v)` / `${v}`
+    /// (E0212) and derive field checks (E0801) are order-independent (spec
+    /// `types/traits.md`, `builtins/intrinsic-functions.md`).
+    string_forms: std::collections::HashSet<String>,
     /// Mangled dispatch function names already claimed by `impl` methods, plus
     /// user functions present in the symbol table. Mangles join `trait`, `type`
     /// and `method` with `_`, so distinct `impl`s can collapse onto the same
@@ -281,18 +422,19 @@ pub struct Analyzer {
     /// arms compile to a plain (non-`async`) function, so `await` is
     /// rejected there regardless of the enclosing `async_depth`.
     no_await_depth: usize,
-    /// Names of `test fn` declarations in this module (spec testing.md): the
+    /// Names of `#Test fn` declarations in this module (spec testing.md): the
     /// identifier is declared but binds no value, so any reference to it is a
     /// compile-time error (E0107). Pre-scanned before checking so the ban is
     /// order-independent.
     test_names: std::collections::HashSet<String>,
-    /// Imported names available to this module (name -> symbol).
-    imports: HashMap<String, Symbol>,
     /// Names imported from an unseeded external package (no module graph): the
     /// loader provides no signature, so calls to these are checked opaquely.
     opaque: std::collections::HashSet<String>,
     /// Imported type/alias names available to this module.
     imported_types: HashMap<String, TypeEntry>,
+    /// Value symbols seeded by the caller (the editor workspace): consulted
+    /// only by the lenient no-world binds, never by strict analysis.
+    imports: HashMap<String, Symbol>,
     /// Names exported from this module for codegen / module resolution.
     exported: Vec<String>,
     /// Exported symbols captured for cross-module type checking.
@@ -326,6 +468,33 @@ pub struct Analyzer {
     expr_types: Vec<(Range<usize>, Type)>,
     /// Name resolutions captured while checking (see [`UseRecord`]).
     resolutions: Vec<UseRecord>,
+    /// Resolved `use` bindings for the runtime (see [`UseBinding`]).
+    use_bindings: Vec<UseBinding>,
+    /// Local-form `pub use { a, b }` names whose own declarations appear
+    /// later in the file (the header precedes every declaration, E0605):
+    /// re-export validation runs once the pass has seen them all.
+    pending_reexports: Vec<(String, Range<usize>)>,
+    /// Package tree for path resolution (`None` for single-file analysis).
+    world: Option<ModuleWorld>,
+    /// Id of the module being checked ("" for single-file analysis).
+    module_id: String,
+    /// Local namespace bindings: `mod` names and `use … as` aliases, each
+    /// mapped to the module id it names.
+    namespaces: HashMap<String, String>,
+    /// `use`-bound value/type names -> (origin module id, kind), for the
+    /// initialization-order check (E0611).
+    use_origins: HashMap<String, (String, FaceKind)>,
+    /// `use`-bound names -> binding span, for the unused check (W0102).
+    use_bound: std::cell::RefCell<HashMap<String, Range<usize>>>,
+    /// Glob `use` spans and the names each still contributes unused (W0102).
+    glob_unused: std::cell::RefCell<Vec<(Range<usize>, std::collections::HashSet<String>)>>,
+    /// Type-only `use` names -> binding span (E0606).
+    type_only: HashMap<String, Range<usize>>,
+    /// Names this module's interface contains: `pub` declarations, `pub mod`
+    /// names, and `pub use` exports (E0604).
+    own_interface: std::collections::HashSet<String>,
+    /// Type entries contributed by `pub use` (re-exports of imported types).
+    exported_types_for_iface: Vec<(String, TypeEntry)>,
 }
 
 /// The kind of a value symbol a name-use resolved to (a light projection of
@@ -371,6 +540,24 @@ pub struct UseRecord {
     pub def: Option<Range<usize>>,
 }
 
+/// One `use` binding resolved against the package world, recorded for the
+/// runtime: the local name it introduces and the module (by id) it reads.
+/// `member: None` binds the target's namespace object; `Some` copies one
+/// export (a glob arrives as one binding per contributed member). Only
+/// value-relevant bindings are recorded — `use type …` is erased everywhere.
+#[derive(Debug, Clone)]
+pub struct UseBinding {
+    /// The file-scope name this binding introduces (after `as`).
+    pub local: String,
+    /// Id of the module the binding reads from.
+    pub module_id: String,
+    /// The export to copy; `None` binds the whole namespace.
+    pub member: Option<String>,
+    /// Whether `pub use` also puts this name into the module's interface
+    /// (the runtime mirrors it into the module's export map).
+    pub is_pub: bool,
+}
+
 /// The result of analyzing a module: the names/symbols/types it exports, so a
 /// loader can seed dependent modules.
 #[derive(Debug, Clone, Default)]
@@ -395,6 +582,492 @@ pub struct AnalysisResult {
     pub expr_types: Vec<(Range<usize>, Type)>,
     /// The checker's name resolutions (see [`UseRecord`]).
     pub resolutions: Vec<UseRecord>,
+    /// Resolved `use` bindings (see [`UseBinding`]), for the runtime to wire
+    /// each module's environment.
+    pub use_bindings: Vec<UseBinding>,
+}
+
+/// Every named type reachable from `ty` (E0604's signature walk).
+fn collect_named_types(ty: &Type, out: &mut Vec<String>) {
+    match ty {
+        Type::Named(n, args) => {
+            out.push(n.clone());
+            for a in args {
+                collect_named_types(a, out);
+            }
+        }
+        Type::List(inner) | Type::Optional(inner) | Type::Async(inner) => {
+            collect_named_types(inner, out)
+        }
+        Type::Tuple(parts) => {
+            for p in parts {
+                collect_named_types(p, out);
+            }
+        }
+        Type::Union(parts) | Type::Intersection(parts) => {
+            for p in parts {
+                collect_named_types(p, out);
+            }
+        }
+        Type::FnSig { params, ret } => {
+            for p in params {
+                collect_named_types(p, out);
+            }
+            if let Some(ret) = ret {
+                collect_named_types(ret, out);
+            }
+        }
+        Type::ObjectType(fields) => {
+            for (_, t) in fields {
+                collect_named_types(t, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The last `::` segment of a module id, for diagnostics.
+fn module_display(id: &str) -> String {
+    id.rsplit("::").next().unwrap_or(id).to_string()
+}
+
+/// A path head's written name, for diagnostics.
+fn head_display(head: &xulo_core::ast::PathHead) -> String {
+    match head {
+        xulo_core::ast::PathHead::Name(n) | xulo_core::ast::PathHead::Package(n) => n.clone(),
+        xulo_core::ast::PathHead::SelfModule => "self".to_string(),
+        xulo_core::ast::PathHead::Super => "super".to_string(),
+    }
+}
+
+/// What a file-scope name is, for visibility and the initialization-order
+/// check (spec `modules/visibility.md`, `modules/import-export.md`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FaceKind {
+    /// A function or other callable value.
+    Fn,
+    /// A file-scope `let` binding (the E0611-sensitive kind).
+    Let,
+    /// Any other value binding (const, enum, struct-as-value, use alias).
+    Value,
+    /// A nominal type, alias, or trait.
+    Type,
+    /// A child module namespace.
+    Module,
+}
+
+/// One file-scope name of a module, as the rest of the package sees it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FaceName {
+    pub is_pub: bool,
+    pub kind: FaceKind,
+}
+
+/// One module's file-scope interface, as assembled by the loader for the
+/// rest of the package (spec `modules/README.md`).
+#[derive(Debug, Clone, Default)]
+pub struct ModuleFace {
+    /// Every file-scope name the module declares, with its visibility —
+    /// present for private names too, so an inaccessible name is `E0602`
+    /// rather than "does not export".
+    pub names: HashMap<String, FaceName>,
+    /// `pub` value symbols: what a `use` binding receives.
+    pub exports: Vec<(String, Symbol)>,
+    /// `pub` type entries.
+    pub types: Vec<(String, TypeEntry)>,
+    /// `impl Trait for Type { method }` registrations (dispatch seeding).
+    pub impls: Vec<(String, String, String)>,
+    /// Child module name -> module id (all children; privacy in `names`).
+    pub children: HashMap<String, String>,
+    /// A manifest dependency whose exports this compiler cannot see (version
+    /// dependency, no local path): every member resolves opaquely instead of
+    /// `E0601`/`E0602` (spec `modules/import-export.md`, "Package names and
+    /// the manifest" — the mapping is given to the compiler, not the
+    /// package's contents).
+    pub external: bool,
+}
+
+/// Phase 1: a module's file-scope interface, extracted syntactically from its
+/// declarations (spec `modules/README.md`). Runs without the world, so `use`
+/// paths are not resolved here: the loader's fixpoint completes `pub use`
+/// re-exports (target symbol/type/kind), and its face refresh upgrades
+/// `exports`/`types` with inferred signatures after phase-2 analysis.
+/// `children` maps each `mod` declaration to its child module id
+/// (`{module_id}::{name}`, or the bare `name` under the package root, whose
+/// id is the empty string).
+pub fn module_face(program: &Program, module_id: &str) -> ModuleFace {
+    let mut face = ModuleFace::default();
+    for statement in &program.statements {
+        match statement {
+            Statement::Fn(f) => set_face_name(&mut face, &f.name, false, FaceKind::Fn),
+            // `#Test` functions are entry points, not bindings.
+            Statement::Test(_) => {}
+            Statement::Let(b) => set_face_name(
+                &mut face,
+                &b.name,
+                false,
+                if b.is_const {
+                    FaceKind::Value
+                } else {
+                    FaceKind::Let
+                },
+            ),
+            Statement::TypeAlias(a) => set_face_name(&mut face, &a.name, false, FaceKind::Type),
+            Statement::Enum(e) => {
+                set_face_name(&mut face, &e.name, false, FaceKind::Type);
+                face_derive_tostring(&mut face, &e.attributes, &e.name, e.type_params.is_empty());
+            }
+            Statement::Struct(s) => {
+                set_face_name(&mut face, &s.name, false, FaceKind::Type);
+                face_derive_tostring(&mut face, &s.attributes, &s.name, s.type_params.is_empty());
+            }
+            Statement::Trait(t) => set_face_name(&mut face, &t.name, false, FaceKind::Type),
+            // Inherent methods live in the receiver's object at runtime, not
+            // in the trait-dispatch table.
+            Statement::Impl(imp) if !imp.is_inherent => {
+                for m in &imp.methods {
+                    face.impls.push((
+                        imp.trait_name.clone(),
+                        imp.type_name.clone(),
+                        m.name.clone(),
+                    ));
+                }
+            }
+            Statement::Mod(m) => {
+                set_face_name(&mut face, &m.name, m.is_pub, FaceKind::Module);
+                face.children
+                    .insert(m.name.clone(), child_module_id(module_id, &m.name));
+            }
+            Statement::Use(u) => face_use_names(&mut face, u),
+            Statement::Export(ex) => face_export(&mut face, &ex.item),
+            _ => {}
+        }
+    }
+    face
+}
+
+/// Child module id: `form` under the package root, `outer::form` below it.
+pub fn child_module_id(module_id: &str, name: &str) -> String {
+    if module_id.is_empty() {
+        name.to_string()
+    } else {
+        format!("{module_id}::{name}")
+    }
+}
+
+/// Declare (or refine) one file-scope name. A `pub use { a }` that ran first
+/// keeps its `pub` even when the declaration itself is private.
+fn set_face_name(face: &mut ModuleFace, name: &str, is_pub: bool, kind: FaceKind) {
+    match face.names.get_mut(name) {
+        Some(existing) => {
+            existing.is_pub |= is_pub;
+            existing.kind = kind;
+        }
+        None => {
+            face.names
+                .insert(name.to_string(), FaceName { is_pub, kind });
+        }
+    }
+}
+
+/// `#Derive(ToString)` on a non-generic struct/enum registers the derived
+/// method for dispatch, mirroring `validate_derive_decls`.
+fn face_derive_tostring(face: &mut ModuleFace, attrs: &[Attribute], name: &str, non_generic: bool) {
+    if !non_generic {
+        return;
+    }
+    if attrs
+        .iter()
+        .any(|a| a.name == "Derive" && a.args.iter().any(|(arg, _)| arg == "ToString"))
+    {
+        face.impls.push((
+            "ToString".to_string(),
+            name.to_string(),
+            "to_string".to_string(),
+        ));
+    }
+}
+
+/// The written name a head-only path binds: `use form;` binds `form`.
+fn head_local(head: &PathHead) -> String {
+    match head {
+        PathHead::Name(n) | PathHead::Package(n) => n.clone(),
+        PathHead::SelfModule => "self".to_string(),
+        PathHead::Super => "super".to_string(),
+    }
+}
+
+/// `pub use { a }` marks an already-bound name public; the name may not be
+/// declared yet (`pub use` precedes declarations, E0605), so claim it as a
+/// value placeholder for the fixpoint to upgrade.
+fn mark_face_pub(face: &mut ModuleFace, name: &str) {
+    match face.names.get_mut(name) {
+        Some(existing) => existing.is_pub = true,
+        None => {
+            face.names.insert(
+                name.to_string(),
+                FaceName {
+                    is_pub: true,
+                    kind: FaceKind::Value,
+                },
+            );
+        }
+    }
+}
+
+/// File-scope names a `use` binding claims: its privacy is syntactic; a
+/// `pub use` re-export's kind and value come from the target module in the
+/// loader's fixpoint.
+fn face_use_names(face: &mut ModuleFace, u: &UseDecl) {
+    match &u.target {
+        UseTarget::Path {
+            head,
+            segments,
+            alias,
+        } => {
+            let local = alias
+                .clone()
+                .unwrap_or_else(|| segments.last().cloned().unwrap_or_else(|| head_local(head)));
+            let kind = if segments.is_empty() {
+                FaceKind::Module
+            } else {
+                FaceKind::Value
+            };
+            set_face_name(face, &local, u.is_pub, kind);
+        }
+        UseTarget::Group { head, entries } => {
+            for entry in entries {
+                let local = entry.alias.clone().unwrap_or_else(|| {
+                    entry
+                        .segments
+                        .last()
+                        .cloned()
+                        .unwrap_or_else(|| head_local(head))
+                });
+                let kind = if entry.segments.is_empty() {
+                    FaceKind::Module
+                } else {
+                    FaceKind::Value
+                };
+                set_face_name(face, &local, u.is_pub, kind);
+            }
+        }
+        UseTarget::Glob { .. } => {}
+        UseTarget::Local(names) => {
+            for name in names {
+                mark_face_pub(face, name);
+            }
+        }
+    }
+}
+
+/// The value symbol callers bind for a `pub fn`: the `async T` wrap mirrors
+/// `check_fn`.
+fn face_fn_symbol(f: &FnDef) -> Symbol {
+    let return_type = f.return_type.clone().unwrap_or(Type::Any);
+    let symbol_return = if f.is_async {
+        Type::Async(Box::new(return_type))
+    } else {
+        return_type
+    };
+    Symbol {
+        name: f.name.clone(),
+        type_: symbol_return.clone(),
+        kind: SymbolKind::Function(
+            f.type_params.clone(),
+            f.params.clone(),
+            symbol_return,
+            f.bounds.clone(),
+        ),
+        is_shared: false,
+        is_param: false,
+        is_const: true,
+        is_mutable: false,
+    }
+}
+
+/// The value symbol for a nominal type exported as a runtime value.
+fn face_type_value(name: &str) -> Symbol {
+    Symbol {
+        name: name.to_string(),
+        type_: Type::Named(name.to_string(), Vec::new()),
+        kind: SymbolKind::Variable,
+        is_shared: false,
+        is_param: false,
+        is_const: true,
+        is_mutable: false,
+    }
+}
+
+/// A `pub` declaration: the public twin of the private cases in
+/// [`module_face`], plus the value symbol/type entry a `use` binding
+/// receives (shapes mirror `check_export_item`, without body checking).
+fn face_export(face: &mut ModuleFace, item: &ExportItem) {
+    match item {
+        ExportItem::Fn(f) => {
+            set_face_name(face, &f.name, true, FaceKind::Fn);
+            face.exports.push((f.name.clone(), face_fn_symbol(f)));
+        }
+        ExportItem::Let(b) => {
+            set_face_name(
+                face,
+                &b.name,
+                true,
+                if b.is_const {
+                    FaceKind::Value
+                } else {
+                    FaceKind::Let
+                },
+            );
+            face.exports.push((
+                b.name.clone(),
+                Symbol {
+                    name: b.name.clone(),
+                    type_: b.type_annotation.clone().unwrap_or(Type::Any),
+                    kind: SymbolKind::Variable,
+                    is_shared: b.is_shared,
+                    is_param: false,
+                    is_const: b.is_const,
+                    is_mutable: b.is_mutable,
+                },
+            ));
+        }
+        ExportItem::Type(a) => {
+            set_face_name(face, &a.name, true, FaceKind::Type);
+            face.types.push((
+                a.name.clone(),
+                TypeEntry {
+                    type_params: a.type_params.clone(),
+                    type_bounds: a.type_bounds.clone(),
+                    kind: TypeEntryKind::Alias(a.type_.clone()),
+                },
+            ));
+        }
+        ExportItem::Enum(e) => {
+            set_face_name(face, &e.name, true, FaceKind::Type);
+            face.exports
+                .push((e.name.clone(), face_type_value(&e.name)));
+            face.types.push((
+                e.name.clone(),
+                TypeEntry {
+                    type_params: e.type_params.clone(),
+                    type_bounds: e.type_bounds.clone(),
+                    kind: TypeEntryKind::Enum(e.variants.clone()),
+                },
+            ));
+            face_derive_tostring(face, &e.attributes, &e.name, e.type_params.is_empty());
+        }
+        ExportItem::Struct(s) => {
+            set_face_name(face, &s.name, true, FaceKind::Type);
+            face.exports
+                .push((s.name.clone(), face_type_value(&s.name)));
+            face.types.push((
+                s.name.clone(),
+                TypeEntry {
+                    type_params: s.type_params.clone(),
+                    type_bounds: s.type_bounds.clone(),
+                    kind: TypeEntryKind::Struct(
+                        s.fields
+                            .iter()
+                            .map(|f| (f.name.clone(), f.type_.clone(), f.default.clone()))
+                            .collect(),
+                    ),
+                },
+            ));
+            face_derive_tostring(face, &s.attributes, &s.name, s.type_params.is_empty());
+        }
+        ExportItem::Trait(t) => {
+            set_face_name(face, &t.name, true, FaceKind::Type);
+            face.types.push((
+                t.name.clone(),
+                TypeEntry {
+                    type_params: t.type_params.clone(),
+                    type_bounds: Vec::new(),
+                    kind: TypeEntryKind::Trait(TraitDef {
+                        methods: t
+                            .methods
+                            .iter()
+                            .map(|m| TraitMethodSig {
+                                name: m.name.clone(),
+                                params: m
+                                    .params
+                                    .iter()
+                                    .map(|p| p.type_annotation.clone().unwrap_or(Type::Any))
+                                    .collect(),
+                                return_type: m.return_type.clone().unwrap_or(Type::Any),
+                                has_self: m.has_self,
+                                is_async: m.is_async,
+                            })
+                            .collect(),
+                    }),
+                },
+            ));
+        }
+        ExportItem::Names(names) => {
+            for name in names {
+                mark_face_pub(face, name);
+            }
+        }
+    }
+}
+
+/// The package tree bare paths resolve against: every module keyed by id
+/// (the root module's id is [`ModuleWorld::root`]), the manifest's
+/// dependency path names, and the structural initialization order
+/// (spec `modules/import-export.md`, `modules/visibility.md`).
+#[derive(Debug, Clone, Default)]
+pub struct ModuleWorld {
+    pub modules: HashMap<String, ModuleFace>,
+    /// Id of the package's root module.
+    pub root: String,
+    /// Id of the module being analyzed.
+    pub current: String,
+    /// Module id -> initialization index (post-order: children first).
+    pub init_order: HashMap<String, usize>,
+    /// Manifest path name (after aliasing) -> package root module id.
+    pub packages: HashMap<String, String>,
+    /// Whether to enforce the entry-point rules on the root module
+    /// (`E0608`/`E0609`; the run command, not the checker on libraries).
+    pub check_entry: bool,
+}
+
+impl ModuleWorld {
+    /// The package root a module id belongs to: `@pkg` for a dependency's
+    /// own tree (`@pkg` / `@pkg::child`), the empty id for this package's
+    /// tree. Bare path heads resolve against this root's children.
+    pub fn package_root_of(id: &str) -> &str {
+        match id.split_once("::") {
+            Some((head, _)) if head.starts_with('@') => head,
+            Some(_) => "",
+            None if id.starts_with('@') => id,
+            None => "",
+        }
+    }
+}
+
+/// Semantic checks against a package world: the module's own body, plus
+/// every `use`/`pub use` resolved through the interfaces the loader
+/// extracted (spec `modules/`). Used by the multi-module loader; single-file
+/// analysis keeps [`analyze_with`].
+pub fn analyze_module_with(
+    program: &Program,
+    world: &ModuleWorld,
+) -> Result<AnalysisResult, XuloError> {
+    // Trait dispatch is package-global (one mangled function per
+    // `impl Trait for Type`), so this module sees the impls every other
+    // module has already registered. Init order runs dependencies first;
+    // the current module's own impls are registered as its body checks.
+    let imported_impls: Vec<(String, String, String)> = world
+        .modules
+        .iter()
+        .filter(|(id, _)| *id != &world.current)
+        .flat_map(|(_, face)| face.impls.iter().cloned())
+        .collect();
+    let (result, error) = run_analysis(program, &[], &[], &imported_impls, Some(world), false);
+    match error {
+        Some(err) => Err(err),
+        None => Ok(result),
+    }
 }
 
 /// Run all semantic checks over a parsed program.
@@ -417,7 +1090,14 @@ pub fn analyze_with(
     imported_types: &[(String, TypeEntry)],
     imported_impls: &[(String, String, String)],
 ) -> Result<AnalysisResult, XuloError> {
-    let (result, error) = run_analysis(program, imports, imported_types, imported_impls, false);
+    let (result, error) = run_analysis(
+        program,
+        imports,
+        imported_types,
+        imported_impls,
+        None,
+        false,
+    );
     match error {
         Some(err) => Err(err),
         None => Ok(result),
@@ -435,7 +1115,7 @@ pub fn analyze_partial(
     imported_types: &[(String, TypeEntry)],
     imported_impls: &[(String, String, String)],
 ) -> (AnalysisResult, Option<XuloError>) {
-    run_analysis(program, imports, imported_types, imported_impls, true)
+    run_analysis(program, imports, imported_types, imported_impls, None, true)
 }
 
 fn run_analysis(
@@ -443,6 +1123,7 @@ fn run_analysis(
     imports: &[Symbol],
     imported_types: &[(String, TypeEntry)],
     imported_impls: &[(String, String, String)],
+    world: Option<&ModuleWorld>,
     lenient: bool,
 ) -> (AnalysisResult, Option<XuloError>) {
     let mut analyzer = Analyzer {
@@ -457,6 +1138,7 @@ fn run_analysis(
         bound_shapes: Vec::new(),
         bound_traits: Vec::new(),
         impls: imported_impls.iter().cloned().collect(),
+        string_forms: std::collections::HashSet::new(),
         impl_mangled: std::collections::HashSet::new(),
         declared_impls: Vec::new(),
         trait_dispatch: Vec::new(),
@@ -482,11 +1164,11 @@ fn run_analysis(
         block_depth: 0,
         no_await_depth: 0,
         test_names: std::collections::HashSet::new(),
+        opaque: std::collections::HashSet::new(),
         imports: imports
             .iter()
             .map(|s| (s.name.clone(), s.clone()))
             .collect(),
-        opaque: std::collections::HashSet::new(),
         imported_types: imported_types
             .iter()
             .map(|(n, t)| (n.clone(), t.clone()))
@@ -500,8 +1182,19 @@ fn run_analysis(
         current_span: 0..0,
         expr_types: Vec::new(),
         resolutions: Vec::new(),
+        use_bindings: Vec::new(),
+        pending_reexports: Vec::new(),
+        world: world.cloned(),
+        module_id: world.map(|w| w.current.clone()).unwrap_or_default(),
+        namespaces: HashMap::new(),
+        use_origins: HashMap::new(),
+        use_bound: std::cell::RefCell::new(HashMap::new()),
+        glob_unused: std::cell::RefCell::new(Vec::new()),
+        type_only: HashMap::new(),
+        own_interface: std::collections::HashSet::new(),
+        exported_types_for_iface: Vec::new(),
     };
-    // Pre-scan `test fn` names so any reference to one — before or after its
+    // Pre-scan `#Test` names so any reference to one — before or after its
     // declaration — fails with E0107 instead of "undefined variable".
     for statement in &program.statements {
         if let Statement::Test(f) = statement {
@@ -529,9 +1222,7 @@ fn run_analysis(
                     .map(|m| ImplMethodType {
                         name: m.name.clone(),
                         ret: if m.is_async {
-                            Type::Async(Box::new(
-                                m.return_type.clone().unwrap_or(Type::Any),
-                            ))
+                            Type::Async(Box::new(m.return_type.clone().unwrap_or(Type::Any)))
                         } else {
                             m.return_type.clone().unwrap_or(Type::Any)
                         },
@@ -556,15 +1247,234 @@ fn run_analysis(
             }
         }
     }
-    if lenient {
-        for statement in &program.statements {
-            analyzer.check_statement_lenient(statement);
+    // Hand-written `impl ToString for T` contributes to the string-form index
+    // wherever it sits, so `str(v)` and `${v}` (E0212) and derive field
+    // checks (E0801) see it regardless of position (spec
+    // `builtins/intrinsic-functions.md`, `types/traits.md`).
+    for statement in &program.statements {
+        if let Statement::Impl(imp) = statement
+            && imp.trait_name == "ToString"
+            && !imp.is_inherent
+        {
+            analyzer.string_forms.insert(imp.type_name.clone());
         }
-    } else {
+    }
+    // Header forms (`mod`, `use`, `pub use`) may appear only before any
+    // other top-level declaration (spec modules/source-files.md, E0605).
+    if analyzer.first_error.is_none() || lenient {
+        let mut seen_body = false;
+        let mut header_err = None;
         for statement in &program.statements {
-            if let Err(err) = analyzer.check_statement(statement) {
-                analyzer.first_error = Some(err);
+            let is_header = matches!(statement, Statement::Mod(_) | Statement::Use(_));
+            if is_header && seen_body {
+                let span = match statement {
+                    Statement::Mod(m) => m.span.clone(),
+                    Statement::Use(u) => u.span.clone(),
+                    _ => unreachable!(),
+                };
+                header_err = Some(
+                    XuloError::new(
+                        ErrorKind::Semantic,
+                        "module and use declarations must appear at the top of the file",
+                    )
+                    .at(span)
+                    .with_code("E0605"),
+                );
                 break;
+            }
+            if !is_header {
+                seen_body = true;
+            }
+        }
+        if let Some(err) = header_err {
+            if lenient {
+                if analyzer.first_error.is_none() {
+                    analyzer.first_error = Some(err);
+                }
+            } else {
+                analyzer.first_error = Some(err);
+            }
+        }
+    }
+    // The entry-point rules apply to an executable package's root module
+    // (spec modules/source-files.md, E0608/E0609).
+    if let Some(world) = &analyzer.world
+        && world.check_entry
+        && world.current == world.root
+        && analyzer.first_error.is_none()
+    {
+        let main = program.statements.iter().find_map(|st| match st {
+            Statement::Fn(f) if f.name == "main" => Some(f),
+            Statement::Export(xulo_core::ast::ExportStmt {
+                item: ExportItem::Fn(f),
+                ..
+            }) if f.name == "main" => Some(f),
+            _ => None,
+        });
+        match main {
+            None => {
+                analyzer.first_error = Some(
+                    XuloError::new(ErrorKind::Semantic, "entry module does not declare `main`")
+                        .at(0..0)
+                        .with_code("E0608"),
+                );
+            }
+            Some(f) => {
+                if !f.params.is_empty() {
+                    analyzer.first_error = Some(
+                        XuloError::new(ErrorKind::Semantic, "`main` must take no parameters")
+                            .at(f.name_span.clone())
+                            .with_code("E0609"),
+                    );
+                } else if let Some(rt) = &f.return_type
+                    && !matches!(rt, Type::Named(n, _) if n == "View" || n == "Unit")
+                {
+                    analyzer.first_error = Some(
+                        XuloError::new(ErrorKind::Semantic, "`main` must return Unit or View")
+                            .at(f.name_span.clone())
+                            .with_code("E0609"),
+                    );
+                }
+            }
+        }
+    }
+    // The module's interface is the set of every `pub` declaration in the
+    // file, collected up front so a `pub` signature may name a `pub` type
+    // declared later in the file (E0604), and so a local `pub use { x }` —
+    // checked after the pass, once every declaration is known — can tell an
+    // interface name from a private one (E0602).
+    for statement in &program.statements {
+        if let Statement::Export(export) = statement {
+            let name = match &export.item {
+                xulo_core::ast::ExportItem::Fn(f) => Some(f.name.clone()),
+                xulo_core::ast::ExportItem::Let(b) => Some(b.name.clone()),
+                xulo_core::ast::ExportItem::Type(a) => Some(a.name.clone()),
+                xulo_core::ast::ExportItem::Trait(t) => Some(t.name.clone()),
+                xulo_core::ast::ExportItem::Enum(e) => Some(e.name.clone()),
+                xulo_core::ast::ExportItem::Struct(st) => Some(st.name.clone()),
+                xulo_core::ast::ExportItem::Names(ns) => {
+                    analyzer.own_interface.extend(ns.iter().cloned());
+                    None
+                }
+            };
+            if let Some(name) = name {
+                analyzer.own_interface.insert(name);
+            }
+        }
+        if let Statement::Mod(m) = statement
+            && m.is_pub
+        {
+            analyzer.own_interface.insert(m.name.clone());
+        }
+    }
+    // The attribute registry runs before the check loop: `#Derive(ToString)`
+    // registers its impl up front so a `str(s)` or `s.to_string()` use of the
+    // derived type resolves no matter where it sits in the file (spec
+    // `types/traits.md`, "Attributes").
+    if let Err(err) = analyzer.validate_attributes(program) {
+        analyzer.first_error = Some(err);
+    }
+    if analyzer.first_error.is_none() || lenient {
+        if lenient {
+            for statement in &program.statements {
+                analyzer.check_statement_lenient(statement);
+            }
+        } else {
+            for statement in &program.statements {
+                if let Err(err) = analyzer.check_statement(statement) {
+                    analyzer.first_error = Some(err);
+                    break;
+                }
+            }
+        }
+    }
+    // Local-form `pub use { … }` sits in the header, before every
+    // declaration, so its names are validated only now that the
+    // declarations have been seen: each name must be part of the module's
+    // interface (a `pub` declaration, a `pub mod`, or a name a `use` brought
+    // in) — a private local declaration is `E0602`, an unbound name `E0101`
+    // (spec `modules/import-export.md`, "Well-formedness table").
+    let pending = std::mem::take(&mut analyzer.pending_reexports);
+    if !pending.is_empty() && (analyzer.first_error.is_none() || lenient) {
+        let mut reexport_err = None;
+        for (name, span) in pending {
+            let in_interface = analyzer.own_interface.contains(&name)
+                || analyzer.use_bindings.iter().any(|b| b.local == name)
+                || analyzer.type_only.contains_key(&name)
+                || analyzer.imported_types.contains_key(&name);
+            if in_interface {
+                let is_enum = matches!(
+                    analyzer.type_table.get(&name).map(|e| &e.kind),
+                    Some(TypeEntryKind::Enum(_))
+                );
+                let already = analyzer.exported_symbols.iter().any(|(n, _)| n == &name);
+                if !already {
+                    if is_enum {
+                        analyzer.exported_symbols.push((
+                            name.clone(),
+                            Symbol {
+                                name: name.clone(),
+                                type_: Type::Named(name.clone(), Vec::new()),
+                                kind: symbol_table::SymbolKind::Variable,
+                                is_shared: false,
+                                is_param: false,
+                                is_const: true,
+                                is_mutable: false,
+                            },
+                        ));
+                    } else if let Some(sym) = analyzer.table.lookup(&name).cloned() {
+                        analyzer.exported_symbols.push((name.clone(), sym));
+                    }
+                }
+                // Feed the exported-types fill below so a re-exported enum's
+                // `Enum` entry reaches `face.types` for importers.
+                if !analyzer.exported.iter().any(|n| n == &name) {
+                    analyzer.exported.push(name.clone());
+                }
+                analyzer.own_interface.insert(name);
+                continue;
+            }
+            let bound = analyzer.table.lookup(&name).is_some()
+                || analyzer.type_table.contains_key(&name)
+                || analyzer.namespaces.contains_key(&name);
+            reexport_err = Some(if !bound {
+                XuloError::new(
+                    ErrorKind::Semantic,
+                    format!("cannot re-export `{name}`: it is not bound in this module"),
+                )
+                .at(span)
+                .with_code("E0101")
+            } else if matches!(
+                analyzer.type_table.get(&name).map(|e| &e.kind),
+                Some(TypeEntryKind::Alias(_))
+            ) {
+                XuloError::new(
+                    ErrorKind::Semantic,
+                    format!(
+                        "cannot re-export `{name}`: it is a type with no runtime value; use `pub type` or `pub enum`"
+                    ),
+                )
+                .at(span)
+                .with_code("E0602")
+            } else {
+                XuloError::new(
+                    ErrorKind::Semantic,
+                    format!(
+                        "cannot re-export `{name}`: it is a private declaration of this module"
+                    ),
+                )
+                .at(span)
+                .with_code("E0602")
+            });
+            break;
+        }
+        if let Some(err) = reexport_err {
+            if lenient {
+                if analyzer.first_error.is_none() {
+                    analyzer.first_error = Some(err);
+                }
+            } else {
+                analyzer.first_error = Some(err);
             }
         }
     }
@@ -577,12 +1487,40 @@ fn run_analysis(
         impls: analyzer.impls.iter().cloned().collect(),
         expr_types: analyzer.expr_types.clone(),
         resolutions: analyzer.resolutions.clone(),
+        use_bindings: analyzer.use_bindings,
     };
     for name in &analyzer.exported {
         if let Some(entry) = analyzer.type_table.get(name).cloned() {
             result.exported_types.push((name.clone(), entry));
         }
     }
+    result
+        .exported_types
+        .extend(analyzer.exported_types_for_iface);
+    // W0102: a `use` binding nothing this module reads warns once; a glob
+    // whose contributed names are all unused warns once at the glob span.
+    let unused = analyzer.use_bound.into_inner();
+    for (name, span) in &unused {
+        analyzer.warnings.push(
+            XuloError::new(ErrorKind::Warning, format!("unused `use` of `{name}`"))
+                .at(span.clone())
+                .with_code("W0102"),
+        );
+    }
+    for (span, names) in analyzer.glob_unused.into_inner() {
+        let contributed_used = names.iter().any(|n| !unused.contains_key(n));
+        if names.is_empty() || !contributed_used {
+            analyzer.warnings.push(
+                XuloError::new(
+                    ErrorKind::Warning,
+                    "unused `use` glob: no name it contributes is referenced",
+                )
+                .at(span)
+                .with_code("W0102"),
+            );
+        }
+    }
+    result.warnings = analyzer.warnings.clone();
     (result, analyzer.first_error)
 }
 
@@ -694,7 +1632,8 @@ fn walk_stmt(stmt: &mut Statement, f: &mut dyn FnMut(&mut Expression)) {
         Statement::TypeAlias(_)
         | Statement::Enum(_)
         | Statement::Struct(_)
-        | Statement::Import(_)
+        | Statement::Mod(_)
+        | Statement::Use(_)
         | Statement::Trait(_)
         | Statement::Break
         | Statement::Continue => {}
@@ -1007,7 +1946,7 @@ fn assign_target_place(target: &AssignTarget) -> Option<Place> {
 }
 
 /// The task bindings an `await` operand waits for: `await t`,
-/// `await Task.all([t, u])`, and `await Task.timeout(t, ms)` each settle the
+/// `await Task::all([t, u])`, and `await Task::timeout(t, ms)` each settle the
 /// tasks named in the operand (spec, Span end). Anything else is left alone —
 /// the borrow simply lasts on.
 fn collect_task_names(expr: &Expression, out: &mut Vec<String>) {
@@ -1071,6 +2010,58 @@ fn target_base(expr: &Expression) -> String {
     }
 }
 
+/// Every payload slot of an enum's variants as (type, label span) pairs for
+/// derive field checking (E0801); positional and named payloads alike, keyed
+/// by the variant's name span as the diagnostic location.
+fn enum_field_forms(variants: &[EnumVariant]) -> Vec<(Type, Range<usize>)> {
+    let mut out = Vec::new();
+    for v in variants {
+        if let Some(slots) = &v.payload {
+            for s in slots {
+                out.push((s.type_.clone(), v.name_span.clone()));
+            }
+        }
+    }
+    out
+}
+
+/// A registry entry for the closed attribute registry (spec
+/// `types/traits.md`, "Attributes"): `#Test` and `#Derive`, nothing else.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AttrKind {
+    Test,
+    Derive,
+}
+
+/// The closed registry: every written attribute name must resolve here or
+/// it is `E0108`. There are no inert attributes.
+fn attribute_registry(name: &str) -> Option<AttrKind> {
+    match name {
+        "Test" => Some(AttrKind::Test),
+        "Derive" => Some(AttrKind::Derive),
+        _ => None,
+    }
+}
+
+/// The noun phrase a declaration kind answers with in `E0109`
+/// (`attribute `Derive` is not valid on a function`).
+const DECL_PHRASE_FN: &str = "a function";
+const DECL_PHRASE_STRUCT: &str = "a struct";
+const DECL_PHRASE_ENUM: &str = "an enum";
+const DECL_PHRASE_TRAIT: &str = "a trait";
+const DECL_PHRASE_IMPL: &str = "an impl";
+
+/// Record `err` unless an earlier one already stands: registry validation
+/// keeps walking after a failure so later declarations still register their
+/// derives, but only the first error is reported (fail-fast contract).
+macro_rules! record_first {
+    ($slot:expr, $err:expr) => {
+        if $slot.is_none() {
+            $slot = Some($err);
+        }
+    };
+}
+
 impl Analyzer {
     fn warn(&mut self, message: String) {
         self.warnings
@@ -1118,6 +2109,9 @@ impl Analyzer {
     /// Record a callee-name resolution for a plain call, when the call's bare
     /// callee name has a precise source span (see `Call.callee_span`).
     fn record_call_callee(&mut self, call: &xulo_core::ast::Call, symbol: &Symbol) {
+        // A call through the name reads it: mark the `use` binding used
+        // (W0102) even though no identifier expression evaluates it.
+        self.mark_name_used(&call.callee);
         if let Some(span) = &call.callee_span {
             let def = self.table.lookup_def(&call.callee).flatten().cloned();
             self.resolutions.push(UseRecord {
@@ -1135,7 +2129,7 @@ impl Analyzer {
     /// Resolve a name to its symbol, rejecting references from inside an
     /// `@Effect` closure to bindings that live only in the component's render
     /// code: those are hoisted above the render closure and are not in scope
-    /// when the effect runs. A `test fn`'s identifier is declared but binds no
+    /// when the effect runs. A `#Test fn`'s identifier is declared but binds no
     /// value, so mentioning it is the E0107 reference ban (spec testing.md).
     fn lookup_symbol(&self, name: &str) -> SResult<Symbol> {
         let render_scoped = self
@@ -1148,18 +2142,413 @@ impl Analyzer {
             )));
         }
         if let Some(sym) = self.table.lookup(name) {
+            self.mark_name_used(name);
             return Ok(sym.clone());
         }
-        if self.test_names.contains(name) {
+        if let Some(span) = self.type_only.get(name) {
+            return Err(self
+                .err_code(
+                    "E0606",
+                    format!("`{name}` is a type-only binding and is not a value"),
+                )
+                .at(span.clone()));
+        }
+        // `Theme.Dark`: `.` is field access only, and an enum type has no
+        // value binding of its own — name the fix instead of the miss
+        // (spec `types/enums.md`, `expressions/path-and-access.md`).
+        if let Some(entry) = self.type_entry(name)
+            && matches!(entry.kind, TypeEntryKind::Enum(_))
+        {
             return Err(self.err(format!(
-                "`{name}` is a test function and cannot be referenced"
+                "`{name}` is an enum type with no value binding; a variant is `{name}::Variant`, not `{name}.…`"
             )));
+        }
+        if self.test_names.contains(name) {
+            return Err(self.err_code(
+                "E0107",
+                format!("`{name}` is a test function and cannot be referenced"),
+            ));
         }
         Err(self.err(format!("undefined variable `{name}`")))
     }
 }
 
 impl Analyzer {
+    /// Validate every written attribute against the closed registry before
+    /// the check loop (spec `types/traits.md`, "Attributes"): unknown names
+    /// are `E0108`, a registered attribute on a declaration the registry
+    /// does not allow is `E0109`, and arguments that do not fit the
+    /// registered shape are `E0110` (`E0111` for an unregistered derive
+    /// target, `E0112` for a derive on a generic type, `E0805` for a
+    /// repeated or hand-conflicting `#Derive(ToString)`). A valid derive
+    /// registers its impl up front — and its field types without a string
+    /// form are `E0801` — so `str(s)` on the derived type resolves no
+    /// matter where the use sits.
+    fn validate_attributes(&mut self, program: &Program) -> SResult<()> {
+        let mut first: Option<XuloError> = None;
+        // Derive targets to field-check after the walk: (attribute span,
+        // fields as (type, label span)).
+        let mut derives: DeriveList = Vec::new();
+
+        for statement in &program.statements {
+            // A `TestDecl`'s `#Test` is part of the production: no registry
+            // lookup runs for it (spec testing.md).
+            if matches!(statement, Statement::Test(_)) {
+                continue;
+            }
+            match statement {
+                Statement::Fn(f) => self.validate_fn_attrs(f, false, &mut first),
+                Statement::Struct(s) => self.validate_derive_decls(
+                    &s.attributes,
+                    DECL_PHRASE_STRUCT,
+                    &s.name,
+                    !s.type_params.is_empty() || !s.type_bounds.is_empty(),
+                    || {
+                        s.fields
+                            .iter()
+                            .map(|f| (f.type_.clone(), f.name_span.clone()))
+                            .collect()
+                    },
+                    &mut first,
+                    &mut derives,
+                ),
+                Statement::Enum(e) => self.validate_derive_decls(
+                    &e.attributes,
+                    DECL_PHRASE_ENUM,
+                    &e.name,
+                    !e.type_params.is_empty() || !e.type_bounds.is_empty(),
+                    || enum_field_forms(&e.variants),
+                    &mut first,
+                    &mut derives,
+                ),
+                Statement::Trait(t) => {
+                    for attr in &t.attributes {
+                        self.attr_gate(attr, DECL_PHRASE_TRAIT, &mut first);
+                    }
+                }
+                Statement::Impl(imp) => {
+                    for attr in &imp.attributes {
+                        self.attr_gate(attr, DECL_PHRASE_IMPL, &mut first);
+                    }
+                    for m in &imp.methods {
+                        self.validate_fn_attrs(m, false, &mut first);
+                    }
+                }
+                Statement::Export(ex) => match &ex.item {
+                    // `pub` is part of the test form's fixed shape: a `#Test`
+                    // fn that is exported is `E0110`, not a `TestDecl`.
+                    ExportItem::Fn(f) => self.validate_fn_attrs(f, true, &mut first),
+                    ExportItem::Struct(s) => self.validate_derive_decls(
+                        &s.attributes,
+                        DECL_PHRASE_STRUCT,
+                        &s.name,
+                        !s.type_params.is_empty() || !s.type_bounds.is_empty(),
+                        || {
+                            s.fields
+                                .iter()
+                                .map(|f| (f.type_.clone(), f.name_span.clone()))
+                                .collect()
+                        },
+                        &mut first,
+                        &mut derives,
+                    ),
+                    ExportItem::Enum(e) => self.validate_derive_decls(
+                        &e.attributes,
+                        DECL_PHRASE_ENUM,
+                        &e.name,
+                        !e.type_params.is_empty() || !e.type_bounds.is_empty(),
+                        || enum_field_forms(&e.variants),
+                        &mut first,
+                        &mut derives,
+                    ),
+                    ExportItem::Trait(t) => {
+                        for attr in &t.attributes {
+                            self.attr_gate(attr, DECL_PHRASE_TRAIT, &mut first);
+                        }
+                    }
+                    _ => {}
+                },
+                _ => {}
+            }
+        }
+
+        // Every target is registered now: a field or payload type with no
+        // string form fails the derive (spec `types/traits.md`, "Derive").
+        for (_span, fields) in &derives {
+            for (ty, label_span) in fields {
+                if !self.type_has_string_form(ty) {
+                    record_first!(
+                        first,
+                        self.err_code(
+                            "E0801",
+                            format!("`{}` does not implement `ToString`", ty.display())
+                        )
+                        .at(label_span.clone())
+                    );
+                }
+            }
+        }
+
+        match first {
+            Some(err) => Err(err),
+            None => Ok(()),
+        }
+    }
+
+    /// Gate one attribute through `E0108` (unknown) and `E0109` (registry
+    /// does not allow it here); returns its kind when it may proceed.
+    fn attr_gate(
+        &self,
+        attr: &Attribute,
+        target: &'static str,
+        first: &mut Option<XuloError>,
+    ) -> Option<AttrKind> {
+        let Some(kind) = attribute_registry(&attr.name) else {
+            record_first!(
+                *first,
+                self.err_code("E0108", format!("attribute `{}` is not defined", attr.name))
+                    .at(attr.name_span.clone())
+            );
+            return None;
+        };
+        let allowed = match kind {
+            AttrKind::Test => target == DECL_PHRASE_FN,
+            AttrKind::Derive => target == DECL_PHRASE_STRUCT || target == DECL_PHRASE_ENUM,
+        };
+        if !allowed {
+            record_first!(
+                *first,
+                self.err_code(
+                    "E0109",
+                    format!("attribute `{}` is not valid on {}", attr.name, target)
+                )
+                .at(attr.name_span.clone())
+            );
+            return None;
+        }
+        Some(kind)
+    }
+
+    /// Validate the attribute list of one function declaration: `#Test` on a
+    /// `fn` must be the test form — no parameters, no return type, no
+    /// generics, no `where` clause, no `pub` — or it is `E0110` (a correct
+    /// sequence at file scope became a `TestDecl` instead; anywhere else the
+    /// form's file-scope requirement still fails here).
+    fn validate_fn_attrs(&mut self, f: &FnDef, is_pub: bool, first: &mut Option<XuloError>) {
+        for attr in &f.attributes {
+            let Some(kind) = self.attr_gate(attr, DECL_PHRASE_FN, first) else {
+                continue;
+            };
+            if kind == AttrKind::Test {
+                let shape_ok = f.params.is_empty()
+                    && f.return_type.is_none()
+                    && f.type_params.is_empty()
+                    && f.bounds.is_empty()
+                    && !is_pub;
+                if !shape_ok {
+                    record_first!(
+                        *first,
+                        self.err_code(
+                            "E0110",
+                            "attribute `Test` takes the form `#Test [async] fn name() { … }`"
+                        )
+                        .at(attr.name_span.clone())
+                    );
+                }
+            }
+        }
+    }
+
+    /// Validate the attributes of a `struct`/`enum` declaration and register
+    /// every valid `#Derive(ToString)` for field checking. `fields` is
+    /// deferred as a closure so the caller's borrows end first.
+    #[allow(clippy::too_many_arguments)]
+    fn validate_derive_decls(
+        &mut self,
+        attrs: &[Attribute],
+        target: &'static str,
+        type_name: &str,
+        is_generic: bool,
+        fields: impl FnOnce() -> Vec<(Type, Range<usize>)>,
+        first: &mut Option<XuloError>,
+        derives: &mut DeriveList,
+    ) {
+        let Some(attr) = attrs
+            .iter()
+            .find(|a| self.attr_gate(a, target, first) == Some(AttrKind::Derive))
+        else {
+            // Still walk the rest for E0108/E0109 on other names.
+            for a in attrs {
+                if a.name == "Derive" {
+                    continue;
+                }
+                self.attr_gate(a, target, first);
+            }
+            return;
+        };
+        self.validate_derive_attr(attr, type_name, is_generic, fields(), first, derives);
+        for a in attrs {
+            if std::ptr::eq(a, attr) {
+                continue;
+            }
+            if self.attr_gate(a, target, first) == Some(AttrKind::Derive) {
+                // A second `#Derive(ToString)` on the same declaration is the
+                // conflicting-impl error (spec: "a second `#Derive(ToString)`").
+                record_first!(
+                    *first,
+                    self.err_code(
+                        "E0805",
+                        format!(
+                            "`ToString` is already implemented for `{}` (method `to_string`)",
+                            type_name
+                        )
+                    )
+                    .at(a.span.clone())
+                );
+            }
+        }
+    }
+
+    /// Shape-check and register one `#Derive(...)` attribute (spec
+    /// `types/traits.md`, "Derive"): a parenthesized list of registered
+    /// targets (`E0110`/`E0111`), no type parameters (`E0112`), no
+    /// conflicting impl (`E0805`), then the impl registrations that make
+    /// `str(s)` and `s.to_string()` resolve the derived type.
+    fn validate_derive_attr(
+        &mut self,
+        attr: &Attribute,
+        type_name: &str,
+        is_generic: bool,
+        fields: Vec<(Type, Range<usize>)>,
+        first: &mut Option<XuloError>,
+        derives: &mut DeriveList,
+    ) {
+        if !attr.has_parens || attr.args.is_empty() {
+            record_first!(
+                *first,
+                self.err_code(
+                    "E0110",
+                    "attribute `Derive` takes a parenthesized list of trait names"
+                )
+                .at(attr.name_span.clone())
+            );
+            return;
+        }
+        let mut targets_ok = true;
+        for (arg, arg_span) in &attr.args {
+            if attribute_registry(arg) != Some(AttrKind::Derive)
+                && !matches!(arg.as_str(), "ToString")
+            {
+                record_first!(
+                    *first,
+                    self.err_code(
+                        "E0111",
+                        format!("`{arg}` is not a registered derive target")
+                    )
+                    .at(arg_span.clone())
+                    .with_note("registered targets: `ToString`")
+                );
+                targets_ok = false;
+            }
+        }
+        if !targets_ok {
+            return;
+        }
+        if is_generic {
+            record_first!(
+                *first,
+                self.err_code(
+                    "E0112",
+                    format!("cannot derive `{}` for a generic type", attr.args[0].0)
+                )
+                .at(attr.name_span.clone())
+            );
+            return;
+        }
+        if !self.impls.insert((
+            "ToString".to_string(),
+            type_name.to_string(),
+            "to_string".to_string(),
+        )) {
+            record_first!(
+                *first,
+                self.err_code(
+                    "E0805",
+                    format!(
+                        "`ToString` is already implemented for `{}` (method `to_string`)",
+                        type_name
+                    )
+                )
+                .at(attr.span.clone())
+            );
+            return;
+        }
+        let mangled = impl_fn_name("ToString", type_name, "to_string");
+        if !self.impl_mangled.insert(mangled.clone()) {
+            record_first!(
+                *first,
+                self.err(format!(
+                    "trait dispatch name `{mangled}` is claimed by more than one `impl` (trait/type/method names that mangle to the same string collide, e.g. `a_b`/`c` vs `a`/`b_c`)"
+                ))
+                .at(attr.span.clone())
+            );
+            return;
+        }
+        if self.table.lookup(&mangled).is_some() {
+            record_first!(
+                *first,
+                self.err(format!(
+                    "trait dispatch name `{mangled}` collides with a function of the same name"
+                ))
+                .at(attr.span.clone())
+            );
+            return;
+        }
+        self.impl_methods
+            .entry(type_name.to_string())
+            .or_default()
+            .push(ImplMethodSig {
+                name: "to_string".to_string(),
+                has_self: true,
+                param_count: 1,
+                param_types: vec![Type::Any],
+            });
+        self.declared_impls.push(ImplRecord {
+            trait_name: Some("ToString".to_string()),
+            type_name: type_name.to_string(),
+            type_params: Vec::new(),
+            type_args: Vec::new(),
+            bounds: Vec::new(),
+            methods: vec![ImplMethodType {
+                name: "to_string".to_string(),
+                ret: Type::String,
+            }],
+        });
+        self.string_forms.insert(type_name.to_string());
+        derives.push((attr.span.clone(), fields));
+    }
+
+    /// Does `t` have a string form — a base type, or a named type with a
+    /// `ToString` impl (spec `builtins/intrinsic-functions.md`)? Shared by
+    /// E0212 (`str`/`${}`) and E0801 (`#Derive` fields). Spec-silent forms
+    /// (structural objects, functions, tuples, unions, async) stay
+    /// permissive so dynamic paths keep working.
+    fn type_has_string_form(&self, t: &Type) -> bool {
+        match t {
+            Type::String | Type::Number | Type::Boolean | Type::Any | Type::Object => true,
+            Type::Null | Type::List(_) => false,
+            // An in-scope generic parameter's form is unknown until
+            // instantiation: `str(v)` inside `fn show<T>(v: T)` must not be
+            // rejected by the absence of a bound (spec has no "is base or
+            // ToString" bound to write).
+            Type::Named(name, _) => {
+                self.string_forms.contains(name) || self.generics.iter().any(|g| g == name)
+            }
+            Type::Optional(inner) => self.type_has_string_form(inner),
+            _ => true,
+        }
+    }
+
     /// Check a statement, swallowing its error in lenient mode: the first
     /// error is remembered, later ones are dropped (cascade noise), and
     /// checking continues so sibling statements still resolve.
@@ -1218,6 +2607,17 @@ impl Analyzer {
                 };
                 self.capture_operand = saved_capture;
                 let value_type = value_type?;
+
+                // A file-scope initializer that directly reads a `use`-bound
+                // name of a later-initializing module is `E0611` (spec
+                // modules/import-export.md); the direct subset only — no
+                // descent into closures.
+                if self.world.is_some()
+                    && self.block_depth == 0
+                    && let Some(value) = &binding.value
+                {
+                    self.check_init_order(value)?;
+                }
 
                 // A call that returns a `Task` keeps its arguments borrowed
                 // until that task settles: the borrow outlives the call and
@@ -1369,12 +2769,18 @@ impl Analyzer {
                     }
                 }
                 if !ok {
-                    return Err(self.err(format!(
-                        "cannot bind a value of type `{}` to `let {}: {}`",
-                        value_type.name(),
-                        binding.name,
-                        binding.type_annotation.as_ref().unwrap().name()
-                    )));
+                    // An annotated binding that does not accept its value is
+                    // the registered `E0201` case (spec `type-system/errors.md`:
+                    // "an annotation or annotated initializer").
+                    return Err(self.err_code(
+                        "E0201",
+                        format!(
+                            "cannot bind a value of type `{}` to `let {}: {}`",
+                            value_type.name(),
+                            binding.name,
+                            binding.type_annotation.as_ref().unwrap().name()
+                        ),
+                    ));
                 }
                 let declared_type = binding.type_annotation.clone().unwrap_or(value_type);
                 let declared = self.table.declare_with_def(
@@ -1521,7 +2927,8 @@ impl Analyzer {
                 self.check_expression(expr)?;
                 Ok(())
             }
-            Statement::Import(import) => self.check_import(import),
+            Statement::Mod(m) => self.check_mod(m),
+            Statement::Use(u) => self.check_use(u),
             Statement::Export(export) => self.check_export(export),
             Statement::State(state) => self.check_state(&state.binding),
             Statement::Store(store) => self.check_store(store),
@@ -1850,83 +3257,867 @@ impl Analyzer {
         })
     }
 
-    fn check_import(&mut self, import: &xulo_core::ast::ImportStmt) -> SResult<()> {
-        match &import.spec {
-            xulo_core::ast::ImportSpec::Bare => Ok(()),
-            xulo_core::ast::ImportSpec::Namespace(ns) => {
-                if import.type_only {
-                    // `import type * as ns` is erased at runtime.
-                    return Ok(());
+    /// `mod name;` / `mod name { … }` — declare the module's namespace
+    /// binding in this file (the loader claims files and analyzes child
+    /// bodies as their own modules; spec `modules/source-files.md`).
+    fn check_mod(&mut self, m: &xulo_core::ast::ModDecl) -> SResult<()> {
+        let child_id = if self.module_id.is_empty() {
+            m.name.clone()
+        } else {
+            format!("{}::{}", self.module_id, m.name)
+        };
+        // A root-level `mod` named like a manifest path head would shadow the
+        // package at every path in this package: decide it here rather than
+        // at each use (spec `modules/import-export.md`, "Name collisions").
+        if let Some(world) = &self.world
+            && self.module_id.is_empty()
+            && world.packages.contains_key(&m.name)
+        {
+            return Err(self
+                .err_code("E0104", format!("`{}` is a manifest path name", m.name))
+                .at(m.span.clone())
+                .with_note("rename the `mod`, or give the dependency an `alias` in the manifest"));
+        }
+        if self.namespaces.contains_key(&m.name)
+            || self.table.lookup(&m.name).is_some()
+            || self.imported_types.contains_key(&m.name)
+        {
+            return Err(self
+                .err_code("E0104", format!("`{}` is already declared", m.name))
+                .at(m.span.clone()));
+        }
+        self.namespaces.insert(m.name.clone(), child_id);
+        if m.is_pub {
+            self.own_interface.insert(m.name.clone());
+        }
+        Ok(())
+    }
+
+    /// `use …;` / `pub use …;` — resolve the target against the package
+    /// world and bind its names (spec `modules/import-export.md`).
+    fn check_use(&mut self, u: &xulo_core::ast::UseDecl) -> SResult<()> {
+        match &u.target {
+            xulo_core::ast::UseTarget::Path {
+                head,
+                segments,
+                alias,
+            } => {
+                if segments.is_empty() {
+                    // `use form;` / `use form as f;` — bind the namespace.
+                    let id = self.resolve_path_head(head, &u.span)?;
+                    let local = alias.clone().unwrap_or_else(|| match head {
+                        xulo_core::ast::PathHead::Name(n)
+                        | xulo_core::ast::PathHead::Package(n) => n.clone(),
+                        xulo_core::ast::PathHead::SelfModule => "self".to_string(),
+                        xulo_core::ast::PathHead::Super => "super".to_string(),
+                    });
+                    return self.bind_namespace(&local, &id, u);
                 }
-                if !self.table.declare(Symbol {
-                    name: ns.clone(),
-                    type_: Type::Any,
-                    kind: SymbolKind::Variable,
-                    is_shared: false,
-                    is_param: false,
-                    is_const: true,
-                    is_mutable: false,
-                }) {
-                    return Err(self.err(format!("`{ns}` is already declared",)));
+                let local = alias
+                    .clone()
+                    .unwrap_or_else(|| segments.last().cloned().expect("segments non-empty"));
+                self.bind_path_member(head, segments, &local, u)
+            }
+            xulo_core::ast::UseTarget::Group { head, entries } => {
+                for entry in entries {
+                    let local = entry.alias.clone().unwrap_or_else(|| {
+                        entry.segments.last().cloned().expect("entry non-empty")
+                    });
+                    self.bind_path_member(head, &entry.segments, &local, u)?;
                 }
                 Ok(())
             }
-            xulo_core::ast::ImportSpec::Named(names) => {
-                for (name, alias) in names {
-                    let local = alias.clone().unwrap_or_else(|| name.clone());
-                    if import.type_only {
-                        // Type-only imports feed the type table (as an opaque
-                        // alias unless the loader supplied the real entry).
-                        if !self.imported_types.contains_key(&local) {
-                            self.imported_types.insert(
-                                local.clone(),
-                                TypeEntry {
-                                    type_params: Vec::new(),
-                                    type_bounds: Vec::new(),
-                                    kind: TypeEntryKind::Alias(Type::Any),
-                                },
-                            );
+            xulo_core::ast::UseTarget::Glob { head } => {
+                let id = self.resolve_path_head(head, &u.span)?;
+                let Some(face) = self.world.as_ref().and_then(|w| w.modules.get(&id)) else {
+                    if self.lenient {
+                        // Editor partial mode has no face to enumerate:
+                        // bind nothing rather than failing the document (the
+                        // workspace seeds the target's exports itself).
+                        return Ok(());
+                    }
+                    return Err(self
+                        .err_code("E0607", format!("cannot resolve `{}`", head_display(head)))
+                        .at(u.span.clone()));
+                };
+                let members: Vec<(String, FaceKind, bool)> = face
+                    .names
+                    .iter()
+                    .filter(|(_, info)| info.is_pub)
+                    .map(|(n, info)| (n.clone(), info.kind, true))
+                    .collect();
+                let mut contributed = std::collections::HashSet::new();
+                for (name, kind, _) in members {
+                    self.bind_glob_member(&id, &name, kind, u, &mut contributed)?;
+                }
+                if u.is_pub {
+                    // A glob re-export is the whole module's interface.
+                    if let Some(face) = self.world.as_ref().and_then(|w| w.modules.get(&id)) {
+                        for (n, sym) in &face.exports {
+                            self.exported_symbols.push((n.clone(), sym.clone()));
                         }
+                        for (n, e) in &face.types {
+                            self.exported_types_for_iface.push((n.clone(), e.clone()));
+                        }
+                    }
+                }
+                self.glob_unused
+                    .borrow_mut()
+                    .push((u.span.clone(), contributed));
+                Ok(())
+            }
+            xulo_core::ast::UseTarget::Local(names) => {
+                // `pub use { a, b }` — re-export names already bound here.
+                for name in names {
+                    let is_enum = matches!(
+                        self.type_table.get(name).map(|e| &e.kind),
+                        Some(TypeEntryKind::Enum(_))
+                    );
+                    if self.table.lookup(name).is_none() && !is_enum {
+                        if self.type_table.contains_key(name) {
+                            return Err(self.err(format!(
+                                "cannot re-export `{name}`: it is a type with no runtime value; use `pub type` or `pub enum`"
+                            )));
+                        }
+                        // The header precedes every declaration (E0605), so a
+                        // `pub use { x }` naming a declaration of this file
+                        // runs before `x` exists: defer the re-export
+                        // validation to the end of the pass.
+                        self.pending_reexports.push((name.clone(), u.span.clone()));
                         continue;
                     }
-                    let sym = match self.imports.get(name) {
-                        Some(symbol) => Symbol {
-                            name: local.clone(),
-                            type_: symbol.type_.clone(),
-                            kind: symbol.kind.clone(),
-                            is_shared: false,
-                            is_param: false,
-                            is_const: true,
-                            is_mutable: false,
-                        },
-                        None => {
-                            self.opaque.insert(local.clone());
+                    self.own_interface.insert(name.clone());
+                    if is_enum {
+                        self.exported_symbols.push((
+                            name.clone(),
                             Symbol {
-                                name: local.clone(),
-                                type_: Type::Any,
-                                kind: SymbolKind::Function(
-                                    Vec::new(),
-                                    Vec::new(),
-                                    Type::Any,
-                                    Vec::new(),
-                                ),
+                                name: name.clone(),
+                                type_: Type::Named(name.clone(), Vec::new()),
+                                kind: symbol_table::SymbolKind::Variable,
                                 is_shared: false,
                                 is_param: false,
                                 is_const: true,
                                 is_mutable: false,
-                            }
-                        }
-                    };
-                    if !self.table.declare(sym) {
-                        return Err(self.err(format!("`{local}` is already declared",)));
+                            },
+                        ));
                     }
                 }
+                for name in names {
+                    if let Some(sym) = self.table.lookup(name).cloned() {
+                        self.exported_symbols.push((name.clone(), sym));
+                    }
+                }
+                self.exported.extend(names.iter().cloned());
                 Ok(())
             }
         }
     }
 
+    /// Resolve a path head to a module id: an ordinary name first (mod/use
+    /// namespace bindings), then a manifest package, then a root module
+    /// (spec `names.md`, "Name resolution").
+    fn resolve_path_head(
+        &self,
+        head: &xulo_core::ast::PathHead,
+        span: &Range<usize>,
+    ) -> SResult<String> {
+        match head {
+            xulo_core::ast::PathHead::SelfModule => Ok(self.module_id.clone()),
+            xulo_core::ast::PathHead::Super => {
+                let parent = self
+                    .module_id
+                    .rsplit_once("::")
+                    .map(|(p, _)| p.to_string())
+                    .unwrap_or_default();
+                // `super` stops at each package's own root: it may not climb
+                // out of a dependency into this package (spec `modules/
+                // import-export.md`, "Paths" — above the root, `super`
+                // resolves to nothing).
+                let above_root = parent.is_empty()
+                    && (self.module_id.is_empty()
+                        || self
+                            .world
+                            .as_ref()
+                            .is_some_and(|w| w.packages.values().any(|p| *p == self.module_id)));
+                if above_root {
+                    return Err(self
+                        .err_code("E0607", "cannot resolve `super` at the package root")
+                        .at(span.clone()));
+                }
+                Ok(parent)
+            }
+            xulo_core::ast::PathHead::Name(n) | xulo_core::ast::PathHead::Package(n) => {
+                if let Some(id) = self.namespaces.get(n) {
+                    self.use_bound.borrow_mut().remove(n);
+                    return Ok(id.clone());
+                }
+                if let Some(world) = &self.world {
+                    // Manifest dependencies belong to this package's manifest
+                    // only: a dependency's files have no manifest of their own.
+                    let pkg_root = ModuleWorld::package_root_of(&self.module_id);
+                    if pkg_root.is_empty()
+                        && let Some(id) = world.packages.get(n)
+                    {
+                        return Ok(id.clone());
+                    }
+                    // Bare path heads are package-root absolute: the root
+                    // module children of *this* package (spec `modules/
+                    // import-export.md`, "Paths").
+                    if let Some(child) = world.modules.get(pkg_root).and_then(|f| f.children.get(n))
+                    {
+                        return Ok(child.clone());
+                    }
+                }
+                if self.lenient {
+                    // Editor partial mode has no loader graph to verify the
+                    // head against: resolve through under a virtual id and
+                    // let the member bind degrade opaquely.
+                    return Ok(n.to_string());
+                }
+                Err(self
+                    .err_code("E0607", format!("cannot resolve `{n}`"))
+                    .at(span.clone()))
+            }
+        }
+    }
+
+    /// Bind `head::segments`'s last name under `local` (value, type, or
+    /// child-module namespace), enforcing publication (`E0601`/`E0602`).
+    fn bind_path_member(
+        &mut self,
+        head: &xulo_core::ast::PathHead,
+        segments: &[String],
+        local: &str,
+        u: &xulo_core::ast::UseDecl,
+    ) -> SResult<()> {
+        let start = self.resolve_path_head(head, &u.span)?;
+        // An external dependency's module tree is invisible: every path into
+        // it binds opaquely under `local` (spec `modules/import-export.md`).
+        if self
+            .world
+            .as_ref()
+            .and_then(|w| w.modules.get(&start))
+            .is_some_and(|f| f.external)
+        {
+            return self.bind_external_name(local, &start, u);
+        }
+        if self.lenient && self.world.is_none() {
+            // Editor partial mode: no faces to walk. Bind the last member
+            // under `local` — typed from the caller's seed when it has one,
+            // opaquely otherwise — instead of failing the whole document.
+            let member = segments.last().map(|s| s.as_str()).unwrap_or(local);
+            return self.bind_degraded_member(local, member, &start, u);
+        }
+        let mut current = start.clone();
+        for (i, seg) in segments.iter().enumerate() {
+            let last = i + 1 == segments.len();
+            let entry = self
+                .world
+                .as_ref()
+                .and_then(|w| w.modules.get(&current))
+                .map(|face| {
+                    let child = face.children.get(seg).cloned();
+                    let info = face.names.get(seg).copied();
+                    (child, info)
+                });
+            let Some((child, info)) = entry else {
+                return Err(self
+                    .err_code(
+                        "E0607",
+                        format!("cannot resolve `{}`", segments[..=i].join("::")),
+                    )
+                    .at(u.span.clone()));
+            };
+            if let Some(child) = child {
+                if current != self.module_id && info.map(|n| !n.is_pub).unwrap_or(true) {
+                    return Err(self
+                        .err_code(
+                            "E0602",
+                            format!("`{seg}` is private to `{}`", module_display(&current)),
+                        )
+                        .at(u.span.clone()));
+                }
+                if last {
+                    return self.bind_namespace(local, &child, u);
+                }
+                current = child;
+                continue;
+            }
+            let Some(info) = info else {
+                return Err(self
+                    .err_code(
+                        "E0601",
+                        format!(
+                            "module `{}` does not export `{seg}`",
+                            module_display(&current)
+                        ),
+                    )
+                    .at(u.span.clone()));
+            };
+            if current != self.module_id && !info.is_pub {
+                return Err(self
+                    .err_code(
+                        "E0602",
+                        format!("`{seg}` is private to `{}`", module_display(&current)),
+                    )
+                    .at(u.span.clone()));
+            }
+            if !last {
+                return Err(self
+                    .err_code(
+                        "E0607",
+                        format!("cannot resolve `{}`", segments[i + 1..].join("::")),
+                    )
+                    .at(u.span.clone()));
+            }
+            return self.bind_member(&current, seg, info, local, u);
+        }
+        Ok(())
+    }
+
+    /// Bind one resolved member of module `module_id` under `local`.
+    fn bind_member(
+        &mut self,
+        module_id: &str,
+        member: &str,
+        info: FaceName,
+        local: &str,
+        u: &xulo_core::ast::UseDecl,
+    ) -> SResult<()> {
+        let face = self
+            .world
+            .as_ref()
+            .and_then(|w| w.modules.get(module_id))
+            .cloned();
+        let Some(face) = face else {
+            return Err(self
+                .err_code("E0607", format!("cannot resolve `{member}`"))
+                .at(u.span.clone()));
+        };
+        if face.external {
+            return self.bind_external_name(local, module_id, u);
+        }
+        match info.kind {
+            FaceKind::Type => {
+                let entry = face
+                    .types
+                    .iter()
+                    .find(|(n, _)| n == member)
+                    .map(|(_, e)| e.clone())
+                    .unwrap_or(TypeEntry {
+                        type_params: Vec::new(),
+                        type_bounds: Vec::new(),
+                        kind: TypeEntryKind::Alias(Type::Any),
+                    });
+                self.imported_types.insert(local.to_string(), entry);
+                if u.is_pub {
+                    self.own_interface.insert(local.to_string());
+                    if let Some(e) = self.imported_types.get(local).cloned() {
+                        self.exported_types_for_iface.push((local.to_string(), e));
+                    }
+                    self.exported.push(local.to_string());
+                }
+                self.use_bound
+                    .borrow_mut()
+                    .insert(local.to_string(), u.span.clone());
+                if !u.type_only {
+                    // A struct's runtime value — its constructor name — is a
+                    // `pub` face export that travels with the import, so a
+                    // call through the imported name resolves like the
+                    // defining module's own binding (`check_struct` declares
+                    // the same symbol locally; `use`-imported struct types
+                    // previously fell through to `unknown function`). Enums
+                    // stay type-only, matching `check_enum`: the enum name
+                    // has no value binding of its own (`Theme.Dark` is
+                    // rejected via `lookup_symbol`), and construction
+                    // (`Theme::Variant`) resolves through the type entry.
+                    let is_struct = self
+                        .imported_types
+                        .get(local)
+                        .is_some_and(|e| matches!(e.kind, TypeEntryKind::Struct(_)));
+                    if is_struct
+                        && let Some((_, sym)) = face.exports.iter().find(|(n, _)| n == member)
+                    {
+                        let mut sym = sym.clone();
+                        sym.name = local.to_string();
+                        if !self.table.declare(sym) {
+                            return Err(self
+                                .err_code("E0104", format!("`{local}` is already declared"))
+                                .at(u.span.clone()));
+                        }
+                    }
+                    self.use_bindings.push(UseBinding {
+                        local: local.to_string(),
+                        module_id: module_id.to_string(),
+                        member: Some(member.to_string()),
+                        is_pub: u.is_pub,
+                    });
+                }
+            }
+            FaceKind::Module => {
+                if let Some(child) = face.children.get(member) {
+                    return self.bind_namespace(local, child, u);
+                }
+                return Err(self
+                    .err_code("E0607", format!("cannot resolve `{member}`"))
+                    .at(u.span.clone()));
+            }
+            FaceKind::Fn | FaceKind::Let | FaceKind::Value => {
+                if u.type_only {
+                    // `use type form::helper` — a value name bound for types
+                    // only; a later value-position use is `E0606`.
+                    self.type_only.insert(local.to_string(), u.span.clone());
+                    return Ok(());
+                }
+                let found = face
+                    .exports
+                    .iter()
+                    .find(|(n, _)| n == member)
+                    .map(|(_, s)| s.clone());
+                let missing = found.is_none();
+                let symbol = found.unwrap_or(Symbol {
+                    name: local.to_string(),
+                    type_: Type::Any,
+                    kind: SymbolKind::Function(Vec::new(), Vec::new(), Type::Any, Vec::new()),
+                    is_shared: false,
+                    is_param: false,
+                    is_const: true,
+                    is_mutable: false,
+                });
+                let symbol = Symbol {
+                    name: local.to_string(),
+                    ..symbol
+                };
+                if !self.table.declare(symbol.clone()) {
+                    return Err(self
+                        .err_code("E0104", format!("`{local}` is already declared"))
+                        .at(u.span.clone()));
+                }
+                if missing {
+                    // The source face does not (yet) carry the symbol — an
+                    // external re-export or a face this module read before
+                    // completion. Bind opaquely so later calls/annotations
+                    // degrade to `any` instead of failing outright.
+                    self.imported_types.insert(
+                        local.to_string(),
+                        TypeEntry {
+                            type_params: Vec::new(),
+                            type_bounds: Vec::new(),
+                            kind: TypeEntryKind::Alias(Type::Any),
+                        },
+                    );
+                    self.opaque.insert(local.to_string());
+                } else {
+                    self.opaque.remove(local);
+                }
+                self.use_origins
+                    .insert(local.to_string(), (module_id.to_string(), info.kind));
+                self.use_bound
+                    .borrow_mut()
+                    .insert(local.to_string(), u.span.clone());
+                self.use_bindings.push(UseBinding {
+                    local: local.to_string(),
+                    module_id: module_id.to_string(),
+                    member: Some(member.to_string()),
+                    is_pub: u.is_pub,
+                });
+                if u.is_pub {
+                    self.own_interface.insert(local.to_string());
+                    self.exported_symbols.push((local.to_string(), symbol));
+                    self.exported.push(local.to_string());
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Bind a glob-contributed name from module `module_id`.
+    fn bind_glob_member(
+        &mut self,
+        module_id: &str,
+        member: &str,
+        kind: FaceKind,
+        u: &xulo_core::ast::UseDecl,
+        contributed: &mut std::collections::HashSet<String>,
+    ) -> SResult<()> {
+        let info = FaceName { is_pub: true, kind };
+        // A glob binds without aliasing; the local name is the member name.
+        let local = member.to_string();
+        self.bind_member(module_id, member, info, &local, u)?;
+        contributed.insert(local);
+        Ok(())
+    }
+
+    /// Bind a namespace alias `local` -> module `id`.
+    fn bind_namespace(
+        &mut self,
+        local: &str,
+        id: &str,
+        u: &xulo_core::ast::UseDecl,
+    ) -> SResult<()> {
+        if u.type_only {
+            return Ok(());
+        }
+        // A root-level namespace binding named like a manifest path head
+        // would shadow the package: decide the collision here rather than at
+        // each path (spec `modules/import-export.md`, "Name collisions").
+        // Binding the package itself (`use ui;`) is not a collision.
+        if let Some(world) = &self.world
+            && self.module_id.is_empty()
+            && world.packages.get(local).is_some_and(|p| p != id)
+        {
+            return Err(self
+                .err_code("E0104", format!("`{local}` is a manifest path name"))
+                .at(u.span.clone())
+                .with_note(
+                    "rename the binding, or give the dependency an `alias` in the manifest",
+                ));
+        }
+        if self.namespaces.contains_key(local) || self.table.lookup(local).is_some() {
+            return Err(self
+                .err_code("E0104", format!("`{local}` is already declared"))
+                .at(u.span.clone()));
+        }
+        self.namespaces.insert(local.to_string(), id.to_string());
+        self.use_bound
+            .borrow_mut()
+            .insert(local.to_string(), u.span.clone());
+        self.use_bindings.push(UseBinding {
+            local: local.to_string(),
+            module_id: id.to_string(),
+            member: None,
+            is_pub: u.is_pub,
+        });
+        if u.is_pub {
+            self.own_interface.insert(local.to_string());
+        }
+        Ok(())
+    }
+
+    /// Bind a member of an external manifest dependency (no local sources):
+    /// the name is opaque in every position — a value that accepts any call
+    /// and a type that accepts any annotation — so a package the compiler
+    /// cannot see still type-checks at its use sites (spec `modules/
+    /// import-export.md`: the manifest mapping, not the package, is given to
+    /// the compiler).
+    fn bind_external_name(&mut self, local: &str, module_id: &str, u: &UseDecl) -> SResult<()> {
+        let entry = TypeEntry {
+            type_params: Vec::new(),
+            type_bounds: Vec::new(),
+            kind: TypeEntryKind::Alias(Type::Any),
+        };
+        self.imported_types.insert(local.to_string(), entry.clone());
+        if u.type_only {
+            self.type_only.insert(local.to_string(), u.span.clone());
+            return Ok(());
+        }
+        let symbol = Symbol {
+            name: local.to_string(),
+            type_: Type::Any,
+            kind: SymbolKind::Function(Vec::new(), Vec::new(), Type::Any, Vec::new()),
+            is_shared: false,
+            is_param: false,
+            is_const: true,
+            is_mutable: false,
+        };
+        if !self.table.declare(symbol.clone()) {
+            return Err(self
+                .err_code("E0104", format!("`{local}` is already declared"))
+                .at(u.span.clone()));
+        }
+        self.opaque.insert(local.to_string());
+        self.use_origins
+            .insert(local.to_string(), (module_id.to_string(), FaceKind::Value));
+        self.use_bound
+            .borrow_mut()
+            .insert(local.to_string(), u.span.clone());
+        self.use_bindings.push(UseBinding {
+            local: local.to_string(),
+            module_id: module_id.to_string(),
+            member: None,
+            is_pub: u.is_pub,
+        });
+        if u.is_pub {
+            self.own_interface.insert(local.to_string());
+            self.exported_symbols.push((local.to_string(), symbol));
+            self.exported_types_for_iface
+                .push((local.to_string(), entry));
+            self.exported.push(local.to_string());
+        }
+        Ok(())
+    }
+
+    /// Bind `local` to `member` of the virtual module `module_id` when there
+    /// is no world to inspect (lenient editor analysis): a seeded value
+    /// symbol keeps its real type, a seeded type entry binds as a type-only
+    /// name, and anything else degrades to an opaque `any` value — the same
+    /// shapes the face-driven [`Self::bind_member`] produces, minus the
+    /// publication walk that needs real faces.
+    fn bind_degraded_member(
+        &mut self,
+        local: &str,
+        member: &str,
+        module_id: &str,
+        u: &UseDecl,
+    ) -> SResult<()> {
+        let entry = TypeEntry {
+            type_params: Vec::new(),
+            type_bounds: Vec::new(),
+            kind: TypeEntryKind::Alias(Type::Any),
+        };
+        if u.type_only {
+            self.imported_types
+                .entry(local.to_string())
+                .or_insert(entry);
+            self.type_only.insert(local.to_string(), u.span.clone());
+            return Ok(());
+        }
+        let seeded = self.imports.get(member).cloned();
+        let had_seed = seeded.is_some();
+        if seeded.is_none() {
+            if let Some(existing) = self.imported_types.get(local).cloned() {
+                // A seeded type entry with no value symbol (an enum or alias
+                // member): bind the type, never a value name.
+                self.use_bound
+                    .borrow_mut()
+                    .insert(local.to_string(), u.span.clone());
+                self.use_bindings.push(UseBinding {
+                    local: local.to_string(),
+                    module_id: module_id.to_string(),
+                    member: Some(member.to_string()),
+                    is_pub: u.is_pub,
+                });
+                if u.is_pub {
+                    self.own_interface.insert(local.to_string());
+                    self.exported_types_for_iface
+                        .push((local.to_string(), existing));
+                    self.exported.push(local.to_string());
+                }
+                return Ok(());
+            }
+            self.imported_types
+                .entry(local.to_string())
+                .or_insert_with(|| TypeEntry {
+                    type_params: Vec::new(),
+                    type_bounds: Vec::new(),
+                    kind: TypeEntryKind::Alias(Type::Any),
+                });
+        }
+        let symbol = match seeded {
+            Some(seed) => Symbol {
+                name: local.to_string(),
+                type_: seed.type_.clone(),
+                kind: seed.kind.clone(),
+                is_shared: false,
+                is_param: false,
+                is_const: true,
+                is_mutable: false,
+            },
+            None => Symbol {
+                name: local.to_string(),
+                type_: Type::Any,
+                kind: SymbolKind::Function(Vec::new(), Vec::new(), Type::Any, Vec::new()),
+                is_shared: false,
+                is_param: false,
+                is_const: true,
+                is_mutable: false,
+            },
+        };
+        if !self.table.declare(symbol.clone()) {
+            return Err(self
+                .err_code("E0104", format!("`{local}` is already declared"))
+                .at(u.span.clone()));
+        }
+        if !had_seed {
+            self.opaque.insert(local.to_string());
+        }
+        self.use_origins
+            .insert(local.to_string(), (module_id.to_string(), FaceKind::Value));
+        self.use_bound
+            .borrow_mut()
+            .insert(local.to_string(), u.span.clone());
+        self.use_bindings.push(UseBinding {
+            local: local.to_string(),
+            module_id: module_id.to_string(),
+            member: Some(member.to_string()),
+            is_pub: u.is_pub,
+        });
+        if u.is_pub {
+            self.own_interface.insert(local.to_string());
+            self.exported_symbols.push((local.to_string(), symbol));
+            self.exported.push(local.to_string());
+        }
+        Ok(())
+    }
+
+    /// The E0611 subset: a file-scope initializer that directly reads a
+    /// `use`-bound name (or directly calls its function) from a module
+    /// that initializes later (spec `modules/import-export.md`).
+    fn check_init_order(&self, expr: &Expression) -> SResult<()> {
+        if self.world.is_none() {
+            return Ok(());
+        }
+        let mut violation: Option<XuloError> = None;
+        self.walk_init_refs(expr, &mut |name, span| {
+            if violation.is_some() {
+                return;
+            }
+            let Some((origin, _)) = self.use_origins.get(name) else {
+                return;
+            };
+            let Some(world) = &self.world else { return };
+            let Some(cur) = world.init_order.get(&self.module_id) else {
+                return;
+            };
+            let Some(ord) = world.init_order.get(origin) else {
+                return;
+            };
+            if ord > cur {
+                let short = origin.rsplit("::").next().unwrap_or(origin);
+                violation = Some(
+                    self.err_code(
+                        "E0611",
+                        format!("`{short}::{name}` is used before `{short}` initializes"),
+                    )
+                    .at(span.clone()),
+                );
+            }
+        });
+        match violation {
+            Some(err) => Err(err),
+            None => Ok(()),
+        }
+    }
+
+    /// Collect the direct identifier references of `expr` (reads and call
+    /// callees), not descending into closures or nested function bodies.
+    fn walk_init_refs(&self, expr: &Expression, f: &mut dyn FnMut(&str, &Range<usize>)) {
+        match expr {
+            Expression::Identifier { name, span } => f(name, span),
+            Expression::Call(call) => {
+                if let Some((head, _)) = call.callee.split_once("::") {
+                    f(head, &call.span);
+                } else {
+                    f(&call.callee, &call.span);
+                }
+                for arg in &call.arguments {
+                    self.walk_init_refs(&arg.value, f);
+                }
+            }
+            Expression::BinaryOp(b) => {
+                self.walk_init_refs(&b.left, f);
+                self.walk_init_refs(&b.right, f);
+            }
+            Expression::Unary(u) => self.walk_init_refs(&u.operand, f),
+            Expression::Index(ix) => {
+                self.walk_init_refs(&ix.object, f);
+                self.walk_init_refs(&ix.index, f);
+            }
+            Expression::Member(m) => self.walk_init_refs(&m.object, f),
+            Expression::Await { expr, .. } => self.walk_init_refs(expr, f),
+            Expression::Tuple { items, .. } => {
+                for item in items {
+                    self.walk_init_refs(item, f);
+                }
+            }
+            Expression::Propagate { expr, .. } => self.walk_init_refs(expr, f),
+            Expression::Panic { expr, .. } => self.walk_init_refs(expr, f),
+            Expression::Spread { expr, .. } => self.walk_init_refs(expr, f),
+            Expression::If(i) => {
+                self.walk_init_refs(&i.condition, f);
+                for s in &i.then_branch.statements {
+                    if let Statement::Expr(e) = s {
+                        self.walk_init_refs(&e.expr, f);
+                    }
+                }
+                if let Some(else_branch) = &i.else_branch {
+                    for s in &else_branch.statements {
+                        if let Statement::Expr(e) = s {
+                            self.walk_init_refs(&e.expr, f);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Mark a `use`-bound value/type name as used (W0102).
+    fn mark_name_used(&self, name: &str) {
+        self.use_bound.borrow_mut().remove(name);
+    }
+
     fn check_export(&mut self, export: &xulo_core::ast::ExportStmt) -> SResult<()> {
+        self.check_export_item(export)?;
+        // E0604: every `pub` signature may name only universally visible
+        // types, types this interface publishes, or `pub use` re-exports.
+        if self.world.is_some() {
+            match &export.item {
+                xulo_core::ast::ExportItem::Fn(f) => {
+                    let mut sig: Vec<&Type> = Vec::new();
+                    for p in &f.params {
+                        if let Some(t) = &p.type_annotation {
+                            sig.push(t);
+                        }
+                    }
+                    if let Some(rt) = &f.return_type {
+                        sig.push(rt);
+                    }
+                    self.check_pub_interface_types(&sig, &f.name_span)?;
+                }
+                xulo_core::ast::ExportItem::Let(b) => {
+                    if let Some(t) = &b.type_annotation {
+                        let sig: [&Type; 1] = [t];
+                        self.check_pub_interface_types(&sig, &b.name_span)?;
+                    }
+                }
+                xulo_core::ast::ExportItem::Type(a) => {
+                    let sig: [&Type; 1] = [&a.type_];
+                    self.check_pub_interface_types(&sig, &a.name_span)?;
+                }
+                xulo_core::ast::ExportItem::Struct(st) => {
+                    let types: Vec<&Type> = st.fields.iter().map(|f| &f.type_).collect();
+                    self.check_pub_interface_types(&types, &st.name_span)?;
+                }
+                xulo_core::ast::ExportItem::Enum(e) => {
+                    let mut types: Vec<&Type> = Vec::new();
+                    for v in &e.variants {
+                        for p in v.payload.iter().flatten() {
+                            types.push(&p.type_);
+                        }
+                    }
+                    self.check_pub_interface_types(&types, &e.name_span)?;
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    /// E0604: each named module-local type in a `pub` signature must be
+    /// part of this module's interface (`pub` here or `pub use`d).
+    fn check_pub_interface_types(&self, types: &[&Type], span: &Range<usize>) -> SResult<()> {
+        for ty in types {
+            let mut named = Vec::new();
+            collect_named_types(ty, &mut named);
+            for name in named {
+                if self.generics.contains(&name) {
+                    continue;
+                }
+                if self.type_table.contains_key(&name) && !self.own_interface.contains(&name) {
+                    return Err(self
+                        .err_code(
+                            "E0604",
+                            format!("private type `{name}` in public interface"),
+                        )
+                        .at(span.clone()));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn check_export_item(&mut self, export: &xulo_core::ast::ExportStmt) -> SResult<()> {
         match &export.item {
             xulo_core::ast::ExportItem::Fn(f) => {
                 self.check_fn(f)?;
@@ -2131,10 +4322,7 @@ impl Analyzer {
         Err(self
             .err_code(
                 "E0406",
-                format!(
-                    "shared state `{}` is accessed outside `lock`",
-                    place.root
-                ),
+                format!("shared state `{}` is accessed outside `lock`", place.root),
             )
             .at(place.span.clone()))
     }
@@ -2200,7 +4388,10 @@ impl Analyzer {
         // whether or not the binding itself is `let mut`.
         if !sym.is_mutable && !self.is_locked(&place.root) {
             return Err(self
-                .err_code("E0404", format!("cannot borrow `{}` as mutable", place.display))
+                .err_code(
+                    "E0404",
+                    format!("cannot borrow `{}` as mutable", place.display),
+                )
                 .at(place.span.clone()));
         }
         Ok(place)
@@ -2240,10 +4431,9 @@ impl Analyzer {
                     // A `shared` parameter receives the region itself: only a
                     // shared binding may be passed (spec concurrency.md, E0407).
                     let Some(place) = place_of(expr) else {
-                        return Err(self.err_code(
-                            "E0407",
-                            "`shared` parameters take a shared binding",
-                        ));
+                        return Err(
+                            self.err_code("E0407", "`shared` parameters take a shared binding")
+                        );
                     };
                     let is_shared = self
                         .table
@@ -2457,12 +4647,15 @@ impl Analyzer {
                 None => false,
             };
             if !self.assignable(&value_type, annotation) && !literal_ok {
-                return Err(self.err(format!(
-                    "cannot bind a value of type `{}` to `@State {}: {}`",
-                    value_type.name(),
-                    binding.name,
-                    annotation.name()
-                )));
+                return Err(self.err_code(
+                    "E0201",
+                    format!(
+                        "cannot bind a value of type `{}` to `@State {}: {}`",
+                        value_type.name(),
+                        binding.name,
+                        annotation.name()
+                    ),
+                ));
             }
         }
         let declared = self.table.declare_with_def(
@@ -2582,6 +4775,16 @@ impl Analyzer {
         // Uppercase calls lower to UI components (`Name({ key: value })`);
         // props are not validated against a function signature (see
         // `component_call_props_are_loosely_typed`).
+        // Components declare no type parameters — a written `CallTypeArgs`
+        // list is `E0807` (spec `expressions/calls.md`, `ComponentCall`).
+        if component.type_args.is_some() {
+            return Err(self
+                .err_code(
+                    "E0807",
+                    format!("`{}` accepts no type arguments", component.name),
+                )
+                .at(component.span.clone()));
+        }
         self.record_component_use(component);
         for arg in &component.args {
             self.check_arg_value(&arg.value)?;
@@ -2968,10 +5171,7 @@ impl Analyzer {
             // implemented type: the declaration's arity (E0230) and its
             // declared bounds apply to the written arguments, so a bare
             // `impl Palette` on `struct Palette<T>` is rejected here.
-            self.check_type(&Type::Named(
-                imp.type_name.clone(),
-                imp.type_args.clone(),
-            ))?;
+            self.check_type(&Type::Named(imp.type_name.clone(), imp.type_args.clone()))?;
             // The receiver's type as the impl declares it: `self` binds to
             // `Pair<T, T>` inside `impl<T> Pair<T, T>`, carrying the
             // parameters into the body.
@@ -3057,10 +5257,7 @@ impl Analyzer {
         // Same well-formedness for a trait impl's receiver: arity (E0230),
         // declared bounds, and well-formed arguments (`impl<T> Show for
         // Pair<T, T>` checks `Pair`'s application against `T, T`).
-        self.check_type(&Type::Named(
-            imp.type_name.clone(),
-            imp.type_args.clone(),
-        ))?;
+        self.check_type(&Type::Named(imp.type_name.clone(), imp.type_args.clone()))?;
         let self_ty = Type::Named(imp.type_name.clone(), imp.type_args.clone());
         // The `impl` must provide every method the trait declares; otherwise a
         // later `Trait::method` dispatch of the missing one would only fail at
@@ -3349,9 +5546,11 @@ impl Analyzer {
                 // answer.
                 let mut any_record = false;
                 let mut applies = false;
-                for record in self.declared_impls.iter().filter(|r| {
-                    r.trait_name.as_deref() == Some(trait_name) && r.type_name == name
-                }) {
+                for record in self
+                    .declared_impls
+                    .iter()
+                    .filter(|r| r.trait_name.as_deref() == Some(trait_name) && r.type_name == name)
+                {
                     any_record = true;
                     if self.impl_applies(record, &name, arg).is_some() {
                         applies = true;
@@ -3429,9 +5628,11 @@ impl Analyzer {
     /// the name-only answer, so `false`.
     fn impl_gate_blocks(&self, trait_name: &str, receiver_name: &str, receiver: &Type) -> bool {
         let mut any_record = false;
-        for record in self.declared_impls.iter().filter(|r| {
-            r.trait_name.as_deref() == Some(trait_name) && r.type_name == receiver_name
-        }) {
+        for record in self
+            .declared_impls
+            .iter()
+            .filter(|r| r.trait_name.as_deref() == Some(trait_name) && r.type_name == receiver_name)
+        {
             any_record = true;
             if self.impl_applies(record, receiver_name, receiver).is_some() {
                 return false;
@@ -3465,15 +5666,72 @@ impl Analyzer {
         Ok(())
     }
 
+    /// Validate a written call-site type-argument list (`first<Int>(…)`): a
+    /// list before a callee that declares no type parameters is `E0807`, a
+    /// list of the wrong length is `E0808`, and an accepted list yields the
+    /// bindings that take the place of inference for this call (spec
+    /// `types/generics.md`).
+    fn written_type_args(
+        &self,
+        call: &Call,
+        type_params: &[String],
+    ) -> SResult<Option<HashMap<String, Type>>> {
+        let Some(written) = &call.type_args else {
+            return Ok(None);
+        };
+        if type_params.is_empty() {
+            return Err(self
+                .err_code(
+                    "E0807",
+                    format!("`{}` accepts no type arguments", call.callee),
+                )
+                .at(call.span.clone()));
+        }
+        if written.len() != type_params.len() {
+            let expected = type_params.len();
+            return Err(self
+                .err_code(
+                    "E0808",
+                    format!(
+                        "expected {expected} type argument{}, found {}",
+                        if expected == 1 { "" } else { "s" },
+                        written.len()
+                    ),
+                )
+                .at(call.span.clone()));
+        }
+        Ok(Some(
+            type_params
+                .iter()
+                .cloned()
+                .zip(written.iter().cloned())
+                .collect(),
+        ))
+    }
+
+    /// `E0807` for a callee that declares no type parameters at all — an
+    /// intrinsic, a constructor, a method resolved without a generic
+    /// signature (spec `types/generics.md`, registered message `` `f`
+    /// accepts no type arguments ``).
+    fn no_type_args(&self, call: &Call) -> SResult<()> {
+        if call.type_args.is_some() {
+            return Err(self
+                .err_code(
+                    "E0807",
+                    format!("`{}` accepts no type arguments", call.callee),
+                )
+                .at(call.span.clone()));
+        }
+        Ok(())
+    }
+
     /// Replace a callee's type parameters with `any` throughout a declared
     /// parameter type, so the structural argument check does not re-run the
     /// bound rule (the parameter's bound is what decides admissibility, and
     /// is checked by [`Analyzer::check_inferred_bounds`]).
     fn erase_generic_params(&self, ty: &Type, type_params: &[String]) -> Type {
-        let bindings: std::collections::HashMap<String, Type> = type_params
-            .iter()
-            .map(|p| (p.clone(), Type::Any))
-            .collect();
+        let bindings: std::collections::HashMap<String, Type> =
+            type_params.iter().map(|p| (p.clone(), Type::Any)).collect();
         substitute_type(ty, &bindings)
     }
 
@@ -3684,6 +5942,20 @@ impl Analyzer {
             Expression::CallValue(cv) => {
                 let callee_type = self.check_expression(&cv.callee)?;
                 let callee_type = self.resolve_alias(&callee_type, 0);
+                // A callee reached through a subscript, a call, or any other
+                // postfix never declares type parameters: a written list on a
+                // callable value is `E0807` (spec `types/generics.md`).
+                if cv.type_args.is_some() && matches!(callee_type, Type::FnSig { .. } | Type::Any) {
+                    return Err(self
+                        .err_code(
+                            "E0807",
+                            format!(
+                                "expression of type `{}` accepts no type arguments",
+                                callee_type.name()
+                            ),
+                        )
+                        .at(cv.span.clone()));
+                }
                 match callee_type {
                     Type::FnSig { params, ret } => {
                         self.check_fn_value_args(&params, ret, &cv.arguments)
@@ -3770,9 +6042,7 @@ impl Analyzer {
                     result?;
                     Ok(Type::Named("Task".to_string(), Vec::new()))
                 }
-                xulo_core::ast::SpawnBody::Service {
-                    type_name, fields,
-                } => {
+                xulo_core::ast::SpawnBody::Service { type_name, fields } => {
                     for field in fields {
                         self.check_expression(&field.value)?;
                     }
@@ -3983,9 +6253,7 @@ impl Analyzer {
                             let args = entry
                                 .type_params
                                 .iter()
-                                .map(|p| {
-                                    bindings.get(p).cloned().unwrap_or(Type::Any)
-                                })
+                                .map(|p| bindings.get(p).cloned().unwrap_or(Type::Any))
                                 .collect();
                             return Ok(Type::Named(name.clone(), args));
                         }
@@ -4029,10 +6297,9 @@ impl Analyzer {
         match inner {
             Type::Async(inner) => Ok(*inner),
             // `await` unwraps `Task<T>` (spec: concurrency.md, lexical-structure.md).
-            Type::Named(name, args) if name == "Task" => Ok(args
-                .into_iter()
-                .next()
-                .unwrap_or(Type::Any)),
+            Type::Named(name, args) if name == "Task" => {
+                Ok(args.into_iter().next().unwrap_or(Type::Any))
+            }
             Type::Any => Ok(Type::Any),
             other => Err(self.err(format!(
                 "cannot await a non-promise value of type `{}`",
@@ -4160,15 +6427,9 @@ impl Analyzer {
                     .find(|(n, _)| *n == property)
                     .map(|(_, t)| t.clone())
                     .ok_or_else(|| {
-                        self.err_code(
-                            "E0102",
-                            format!("no member `{property}` on `{name}`"),
-                        )
+                        self.err_code("E0102", format!("no member `{property}` on `{name}`"))
                     }),
-                _ => Err(self.err_code(
-                    "E0102",
-                    format!("no member `{property}` on `{name}`"),
-                )),
+                _ => Err(self.err_code("E0102", format!("no member `{property}` on `{name}`"))),
             };
         }
         let resolved = self.resolve_alias(&object, 0);
@@ -4219,8 +6480,7 @@ impl Analyzer {
                     && let Some(TypeEntryKind::Struct(fields)) =
                         self.type_entry(name).map(|e| &e.kind)
                 {
-                    if let Some((_, field_type, _)) =
-                        fields.iter().find(|(n, _, _)| n == property)
+                    if let Some((_, field_type, _)) = fields.iter().find(|(n, _, _)| n == property)
                     {
                         return Ok(field_type.clone());
                     }
@@ -4247,15 +6507,11 @@ impl Analyzer {
                         .find(|(n, _)| n == property)
                         .map(|(_, t)| t.clone())
                         .ok_or_else(|| {
-                            self.err_code(
-                                "E0102",
-                                format!("no member `{property}` on `{name}`"),
-                            )
+                            self.err_code("E0102", format!("no member `{property}` on `{name}`"))
                         }),
-                    _ if self.generics.contains(name) => Err(self.err_code(
-                        "E0102",
-                        format!("no member `{property}` on `{name}`"),
-                    )),
+                    _ if self.generics.contains(name) => {
+                        Err(self.err_code("E0102", format!("no member `{property}` on `{name}`")))
+                    }
                     _ => Ok(Type::Any),
                 }
             }
@@ -4630,13 +6886,70 @@ impl Analyzer {
 
     /// Type-check a call to a member of the built-in `Task` namespace.
     /// Returns `Task<T>` (spec signatures), which `await` unwraps to `T`.
+    /// `Math::max(a, b)` / `Time::sleep(ms)`: check a call to an intrinsic
+    /// namespace function against its registered signature (spec
+    /// `builtins/intrinsic-functions.md`). Arity is `E0207` and an
+    /// inadmissible argument `E0202` (spec `expressions/calls.md`).
+    fn check_builtin_fn_call(&mut self, ns: &str, member: &str, call: &Call) -> SResult<Type> {
+        // Namespace members of the intrinsic tables declare no type
+        // parameters; the `Head::member` dispatch already guards this, kept
+        // here so any future entry point is covered too.
+        self.no_type_args(call)?;
+        let registered = builtin_member(ns, member);
+        let sig = match &registered {
+            Some(BuiltinMember::Fn(sig)) => sig,
+            Some(BuiltinMember::Constant) => {
+                return Err(self
+                    .err(format!("member `{ns}::{member}` is not a function"))
+                    .at(call.span.clone()));
+            }
+            None => {
+                return Err(self
+                    .err(format!("`{ns}` has no member `{member}`"))
+                    .at(call.span.clone()));
+            }
+        };
+        if call.arguments.len() != sig.params.len() {
+            let expected = sig.params.len();
+            return Err(self
+                .err_code(
+                    "E0207",
+                    format!(
+                        "expected {} argument{}, found {}",
+                        expected,
+                        if expected == 1 { "" } else { "s" },
+                        call.arguments.len()
+                    ),
+                )
+                .at(call.span.clone()));
+        }
+        for (arg, param) in call.arguments.iter().zip(sig.params.iter()) {
+            let found = self.check_arg_value(&arg.value)?;
+            let expected = param.ty();
+            if !self.assignable(&found, &expected) && !self.literal_matches(&arg.value, &expected) {
+                return Err(self
+                    .err_code(
+                        "E0202",
+                        format!(
+                            "argument to `{ns}::{member}` must be `{}`, found `{}`",
+                            param.display(),
+                            found.name()
+                        ),
+                    )
+                    .at(arg.value.span().clone()));
+            }
+        }
+        Ok(sig.ret.ty())
+    }
+
     fn check_task_utility(&mut self, call: &Call, method: &str) -> SResult<Type> {
+        self.no_type_args(call)?;
         match method {
             "resolve" => {
                 if call.arguments.len() != 1 {
                     return Err(self
                         .err(format!(
-                            "`Task.resolve` expects exactly one argument, got {}",
+                            "`Task::resolve` expects exactly one argument, got {}",
                             call.arguments.len()
                         ))
                         .at(call.span.clone()));
@@ -4648,7 +6961,7 @@ impl Analyzer {
                 if call.arguments.len() != 1 {
                     return Err(self
                         .err(format!(
-                            "`Task.{method}` expects exactly one argument (a list of tasks), got {}",
+                            "`Task::{method}` expects exactly one argument (a list of tasks), got {}",
                             call.arguments.len()
                         ))
                         .at(call.span.clone()));
@@ -4660,10 +6973,9 @@ impl Analyzer {
                         // `Async(T)` is an in-flight async call; `Task<T>` a
                         // spawn or combinator result. Both await to `T`.
                         Type::Async(inner) => *inner,
-                        Type::Named(ref name, ref args) if name == "Task" => args
-                            .first()
-                            .cloned()
-                            .unwrap_or(Type::Any),
+                        Type::Named(ref name, ref args) if name == "Task" => {
+                            args.first().cloned().unwrap_or(Type::Any)
+                        }
                         Type::Any => Type::Any,
                         other => other,
                     },
@@ -4671,7 +6983,7 @@ impl Analyzer {
                     other => {
                         return Err(self
                             .err(format!(
-                                "`Task.{method}` expects a list of tasks, found `{}`",
+                                "`Task::{method}` expects a list of tasks, found `{}`",
                                 other.name()
                             ))
                             .at(arg_span));
@@ -4688,7 +7000,7 @@ impl Analyzer {
                 if call.arguments.len() != 2 {
                     return Err(self
                         .err(format!(
-                            "`Task.timeout` expects exactly two arguments (a task and a millisecond count), got {}",
+                            "`Task::timeout` expects exactly two arguments (a task and a millisecond count), got {}",
                             call.arguments.len()
                         ))
                         .at(call.span.clone()));
@@ -4700,15 +7012,14 @@ impl Analyzer {
                 // `await` unwraps it.
                 let inner = match task {
                     Type::Async(inner) => *inner,
-                    Type::Named(ref name, ref args) if name == "Task" => args
-                        .first()
-                        .cloned()
-                        .unwrap_or(Type::Any),
+                    Type::Named(ref name, ref args) if name == "Task" => {
+                        args.first().cloned().unwrap_or(Type::Any)
+                    }
                     Type::Any => Type::Any,
                     other => {
                         return Err(self
                             .err(format!(
-                                "`Task.timeout` expects a task, found `{}`",
+                                "`Task::timeout` expects a task, found `{}`",
                                 other.name()
                             ))
                             .at(task_span));
@@ -4719,7 +7030,7 @@ impl Analyzer {
                 if !self.assignable(&ms, &Type::Number) {
                     return Err(self
                         .err(format!(
-                            "`Task.timeout` millisecond count must be a `number`, found `{}`",
+                            "`Task::timeout` millisecond count must be a `number`, found `{}`",
                             ms.name()
                         ))
                         .at(ms_span));
@@ -4744,6 +7055,10 @@ impl Analyzer {
     fn check_call(&mut self, call: &xulo_core::ast::Call) -> SResult<Type> {
         if call.is_enum() {
             let (enum_name, variant) = call.enum_parts().unwrap();
+            // Trait dispatch, built-in namespace members, and enum
+            // construction alike declare no type parameters, so a written
+            // list anywhere on a `Head::member` call is `E0807`.
+            self.no_type_args(call)?;
             // `Area::area(recv)` is a trait dispatch call when `Area` is a
             // registered trait; otherwise it is an enum construction.
             if let Some(entry) = self.type_entry(enum_name)
@@ -4760,41 +7075,37 @@ impl Analyzer {
                 self.trait_dispatch.push((call.span.clone(), mangled));
                 return Ok(ret);
             }
+            // Built-in namespaces (`Task::all`, `Math::max`, `Time::sleep`)
+            // are not enums: their heads are the intrinsic tables of spec
+            // `builtins/intrinsic-functions.md`. A program-declared type of
+            // the same name shadows the namespace, as elsewhere.
+            if self.type_entry(enum_name).is_none() {
+                if enum_name == "Task" {
+                    return self.check_task_utility(call, variant);
+                }
+                if matches!(enum_name, "Math" | "Time") {
+                    return self.check_builtin_fn_call(enum_name, variant, call);
+                }
+            }
+            // A module or package path (`form::validate(…)`,
+            // `lsp-server::run()`): the head resolves as an ordinary name
+            // (use-alias or `mod` binding), then a manifest package, then a
+            // root module (spec names.md). The member is a value of that
+            // module's interface.
+            if let Some(ret) = self.check_module_path_call(call, enum_name, variant)? {
+                return Ok(ret);
+            }
             let args: Vec<&Expression> = call.arguments.iter().map(|a| &a.value).collect();
             return self.check_enum_call(enum_name.to_string(), variant.to_string(), &args);
         }
         if let Some(object) = &call.object {
-            // `Task` is the built-in combinator namespace (spec
-            // `builtins/intrinsic-functions.md`): `Task.all`/`race`/`resolve`
-            // combine tasks, and it is never a value of its own.
-            if let Expression::Identifier { name, .. } = object.as_ref()
-                && name == "Task"
-                && let Some(method) = call.method.as_deref()
-            {
-                return self.check_task_utility(call, method);
-            }
-            // `Area.area(recv)` is explicit trait dispatch through the dotted
-            // qualified path (spec `expressions/path-and-access.md`,
-            // "Qualified calls"): a trait name in the path's namespace
-            // position is not a value, so the path resolves to the trait's
-            // method table instead of evaluating as a receiver.
-            if let Some(method) = call.method.as_deref()
-                && let Expression::Identifier { name, .. } = object.as_ref()
-                && let Some(entry) = self.type_entry(name)
-                && matches!(entry.kind, TypeEntryKind::Trait(_))
-            {
-                if call.arguments.iter().any(|a| a.name.is_some()) {
-                    return Err(self.err(format!(
-                        "trait dispatch `{name}.{method}` takes positional arguments: the receiver is the first argument, and the method's parameters follow in the trait declaration's order"
-                    )));
-                }
-                let args: Vec<&Expression> = call.arguments.iter().map(|a| &a.value).collect();
-                let (ret, mangled) = self.check_trait_call(name.to_string(), method, &args)?;
-                self.trait_dispatch.push((call.span.clone(), mangled));
-                return Ok(ret);
-            }
             // Method call `obj.method(args)`.
             let receiver = self.check_expression(object)?;
+            // No method declared in this language is generic — impl methods,
+            // trait methods, bound methods, and loose member signatures all
+            // take no type parameters — so a written list is `E0807` as soon
+            // as the receiver itself checks.
+            self.no_type_args(call)?;
             // A type parameter's method members are granted by its bound
             // (spec `types/generics.md`): the bound's declared signature types
             // the call; without a bound — or with a method the bound does not
@@ -4814,10 +7125,7 @@ impl Analyzer {
                     }
                     return Ok(ret.clone().map(|r| *r).unwrap_or(Type::Any));
                 }
-                return Err(self.err_code(
-                    "E0102",
-                    format!("no member `{method}` on `{name}`"),
-                ));
+                return Err(self.err_code("E0102", format!("no member `{method}` on `{name}`")));
             }
             for arg in &call.arguments {
                 self.check_arg_value(&arg.value)?;
@@ -4826,10 +7134,10 @@ impl Analyzer {
             // service handle) yields its declared return type; otherwise the
             // call stays `any`.
             if let Some(method) = &call.method
-                && let Some(Type::FnSig { ret, .. }) =
-                    self.member_field_type(&self.resolve_alias(&receiver, 0), method)
-                        .ok()
-                        .filter(|t| matches!(t, Type::FnSig { .. }))
+                && let Some(Type::FnSig { ret, .. }) = self
+                    .member_field_type(&self.resolve_alias(&receiver, 0), method)
+                    .ok()
+                    .filter(|t| matches!(t, Type::FnSig { .. }))
             {
                 return Ok(ret.clone().map(|r| *r).unwrap_or(Type::Any));
             }
@@ -4887,9 +7195,7 @@ impl Analyzer {
                             .iter()
                             .filter(|r| r.trait_name.is_none() && r.type_name == *name)
                         {
-                            let Some(bindings) =
-                                self.impl_applies(record, name, &resolved)
-                            else {
+                            let Some(bindings) = self.impl_applies(record, name, &resolved) else {
                                 continue;
                             };
                             if let Some(m) = record.methods.iter().find(|m| &m.name == method) {
@@ -4906,9 +7212,7 @@ impl Analyzer {
                             .iter()
                             .filter(|r| r.trait_name.is_some() && r.type_name == *name)
                         {
-                            let Some(bindings) =
-                                self.impl_applies(record, name, &resolved)
-                            else {
+                            let Some(bindings) = self.impl_applies(record, name, &resolved) else {
                                 continue;
                             };
                             if let Some(m) = record.methods.iter().find(|m| &m.name == method) {
@@ -4921,10 +7225,7 @@ impl Analyzer {
                         0 => {
                             return Err(self.err_code(
                                 "E0102",
-                                format!(
-                                    "no member `{method}` on `{}`",
-                                    resolved.display()
-                                ),
+                                format!("no member `{method}` on `{}`", resolved.display()),
                             ));
                         }
                         _ => {
@@ -4967,6 +7268,7 @@ impl Analyzer {
             return self.check_call_symbol(call, &sym);
         }
         if call.callee == "reply" {
+            self.no_type_args(call)?;
             // `reply(e)` settles the current message's send task; it exists
             // only while checking an `on_message` body (spec concurrency.md).
             if !self.in_on_message {
@@ -4987,12 +7289,14 @@ impl Analyzer {
             return Ok(Type::Any);
         }
         if call.callee == "print" || call.callee == "println" || call.callee == "repl_echo" {
+            self.no_type_args(call)?;
             for arg in &call.arguments {
                 self.check_arg_value(&arg.value)?;
             }
             return Ok(Type::Any);
         }
         if call.callee == "str" {
+            self.no_type_args(call)?;
             if call.arguments.len() != 1 {
                 return Err(self
                     .err(format!(
@@ -5001,7 +7305,32 @@ impl Analyzer {
                     ))
                     .at(call.span.clone()));
             }
-            self.check_expression(&call.arguments[0].value)?;
+            let operand = self.check_expression(&call.arguments[0].value)?;
+            // `str(v)` and `${v}` accept exactly the same operands: a base
+            // type or a value whose type implements `ToString`; anything
+            // else is `E0212` (spec `builtins/intrinsic-functions.md`,
+            // `expressions/literals.md`).
+            if !self.type_has_string_form(&operand) {
+                return Err(self
+                    .err_code(
+                        "E0212",
+                        format!(
+                            "`{}` has no string form; implement `ToString`",
+                            operand.display()
+                        ),
+                    )
+                    .at(call.arguments[0].value.span().clone()));
+            }
+            // A `ToString` implementor renders through `to_string`: the call
+            // is annotated for dispatch exactly like `Trait::method(recv)`.
+            if let Type::Named(name, _) = &operand
+                && self.string_forms.contains(name)
+            {
+                self.trait_dispatch.push((
+                    call.span.clone(),
+                    impl_fn_name("ToString", name, "to_string"),
+                ));
+            }
             return Ok(Type::String);
         }
         // `Error(message)` constructs the built-in base error type (spec
@@ -5009,6 +7338,7 @@ impl Analyzer {
         // `print`/`str`, a user-declared `fn Error` shadows it (the lookup
         // above runs first).
         if call.callee == "Error" {
+            self.no_type_args(call)?;
             if call.arguments.len() != 1 {
                 return Err(self
                     .err(format!(
@@ -5029,6 +7359,7 @@ impl Analyzer {
             return Ok(Type::Named("Error".to_string(), Vec::new()));
         }
         if call.callee == "assert" {
+            self.no_type_args(call)?;
             if call.arguments.len() != 2 {
                 return Err(self
                     .err(format!(
@@ -5059,10 +7390,13 @@ impl Analyzer {
         }
         if self.test_names.contains(&call.callee) {
             return Err(self
-                .err(format!(
-                    "`{}` is a test function and cannot be referenced",
-                    call.callee
-                ))
+                .err_code(
+                    "E0107",
+                    format!(
+                        "`{}` is a test function and cannot be referenced",
+                        call.callee
+                    ),
+                )
                 .at(call.span.clone()));
         }
         let Some(sym) = self.table.lookup(&call.callee).cloned() else {
@@ -5112,6 +7446,10 @@ impl Analyzer {
                 let params = params.clone();
                 let return_type = return_type.clone();
                 let callee_bounds = callee_bounds.clone();
+                // A written type-argument list replaces inference for this
+                // call; arity (`E0808`) and the non-generic case (`E0807`)
+                // are settled before any call-site state is pushed.
+                let written = self.written_type_args(call, &type_params)?;
                 self.generics.extend(type_params.iter().cloned());
                 // Call-site bounds: the callee's `T: Trait` clauses constrain
                 // its argument checks the same way they do inside its body.
@@ -5164,23 +7502,37 @@ impl Analyzer {
                             // The structural check does not re-run the bound
                             // rule: a parameter's bound is what decides
                             // admissibility, and it is checked once per
-                            // inferred binding below.
-                            let expected = self.erase_generic_params(
-                                param.type_annotation.as_ref().unwrap_or(&Type::Any),
-                                &type_params,
-                            );
+                            // binding below. Written type arguments substitute
+                            // into the annotation first (spec `types/generics.md`);
+                            // otherwise the annotation is erased.
+                            let ann = param.type_annotation.as_ref().unwrap_or(&Type::Any);
+                            let expected = match &written {
+                                Some(w) => substitute_type(ann, w),
+                                None => self.erase_generic_params(ann, &type_params),
+                            };
                             if !self.assignable(&arg_type, &expected)
                                 && !self.literal_matches(&arg.value, &expected)
                             {
-                                return Err(self.err_code(
-                                    "E0202",
-                                    format!(
-                                        "argument to `{}` must be `{}`, found `{}`",
-                                        call.callee,
-                                        expected.name(),
-                                        arg_type.name()
-                                    ),
-                                ));
+                                return Err(if written.is_some() {
+                                    self.err_code(
+                                        "E0202",
+                                        format!(
+                                            "expected `{}`, found `{}`",
+                                            expected.name(),
+                                            arg_type.name()
+                                        ),
+                                    )
+                                } else {
+                                    self.err_code(
+                                        "E0202",
+                                        format!(
+                                            "argument to `{}` must be `{}`, found `{}`",
+                                            call.callee,
+                                            expected.name(),
+                                            arg_type.name()
+                                        ),
+                                    )
+                                });
                             }
                             borrow_args.push((&arg.value, param.mode));
                         }
@@ -5200,8 +7552,13 @@ impl Analyzer {
                         // Call-site inference for generic functions, mirroring
                         // the positional path: bind `T` from the named args
                         // (in parameter order, using defaults when omitted).
+                        // A written list suppresses inference entirely (spec:
+                        // no unification against the value arguments).
                         let mut resolved = return_type;
-                        if !type_params.is_empty() && !params.is_empty() {
+                        if let Some(w) = &written {
+                            self.check_inferred_bounds(&callee_bounds, w)?;
+                            resolved = substitute_type(&resolved, w);
+                        } else if !type_params.is_empty() && !params.is_empty() {
                             let mut positional_types = Vec::with_capacity(params.len());
                             let mut unbounded = false;
                             for param in &params {
@@ -5285,30 +7642,50 @@ impl Analyzer {
                             positional_types.push(arg_type.clone());
                             // The structural check does not re-run the bound
                             // rule; it is checked once per binding below.
-                            let expected = self.erase_generic_params(
-                                param.type_annotation.as_ref().unwrap_or(&Type::Any),
-                                &type_params,
-                            );
+                            // Written type arguments substitute into the
+                            // annotation first, so `first<Int>(["a"])` fails
+                            // with the substituted `List<number>` (spec
+                            // `types/generics.md`); otherwise it is erased.
+                            let ann = param.type_annotation.as_ref().unwrap_or(&Type::Any);
+                            let expected = match &written {
+                                Some(w) => substitute_type(ann, w),
+                                None => self.erase_generic_params(ann, &type_params),
+                            };
                             if !self.assignable(&arg_type, &expected)
                                 && !self.literal_matches(&arg.value, &expected)
                             {
-                                return Err(self.err_code(
-                                    "E0202",
-                                    format!(
-                                        "argument to `{}` must be `{}`, found `{}`",
-                                        call.callee,
-                                        expected.name(),
-                                        arg_type.name()
-                                    ),
-                                ));
+                                return Err(if written.is_some() {
+                                    self.err_code(
+                                        "E0202",
+                                        format!(
+                                            "expected `{}`, found `{}`",
+                                            expected.name(),
+                                            arg_type.name()
+                                        ),
+                                    )
+                                } else {
+                                    self.err_code(
+                                        "E0202",
+                                        format!(
+                                            "argument to `{}` must be `{}`, found `{}`",
+                                            call.callee,
+                                            expected.name(),
+                                            arg_type.name()
+                                        ),
+                                    )
+                                });
                             }
                             borrow_args.push((&arg.value, param.mode));
                         }
                         self.check_call_borrows(&borrow_args)?;
                         // Call-site inference for generic functions
-                        // (`first([1, 2])` binds `T = number`).
+                        // (`first([1, 2])` binds `T = number`); a written
+                        // list takes the place of inference for the call.
                         let mut resolved = return_type;
-                        if !type_params.is_empty() {
+                        if let Some(w) = &written {
+                            self.check_inferred_bounds(&callee_bounds, w)?;
+                            resolved = substitute_type(&resolved, w);
+                        } else if !type_params.is_empty() {
                             let param_types = params
                                 .iter()
                                 .map(|p| p.type_annotation.clone().unwrap_or(Type::Any))
@@ -5346,6 +7723,21 @@ impl Analyzer {
                 // A function value: `let f = fn() {...}; f(x)`. The type may be
                 // a `type Handler = fn(...)` alias, so resolve it first.
                 let resolved = self.resolve_alias(&sym.type_, 0);
+                // A struct constructor: the name resolves to a nominal struct
+                // type and the call supplies its fields as named arguments
+                // (spec `types/composite-types.md`: `User(name: "Alice",
+                // age: 30)`).
+                if let Type::Named(name, _) = &resolved
+                    && self
+                        .type_entry(name)
+                        .is_some_and(|e| matches!(e.kind, TypeEntryKind::Struct(_)))
+                {
+                    // Constructors declare no type parameters (spec change
+                    // `add-explicit-type-arguments`: a struct's type arguments
+                    // come from its field initializers) — `E0807`.
+                    self.no_type_args(call)?;
+                    return self.check_struct_ctor_call(call, name);
+                }
                 let sig = match &resolved {
                     Type::FnSig { params, ret } => Some((params.clone(), ret.clone())),
                     _ => None,
@@ -5353,6 +7745,8 @@ impl Analyzer {
                 let Some((params, ret)) = sig else {
                     return Err(self.err(format!("`{}` is not a function", call.callee)));
                 };
+                // A call through a function value takes no type arguments.
+                self.no_type_args(call)?;
                 self.check_fn_value_args(&params, ret, &call.arguments)
             }
             SymbolKind::State | SymbolKind::Store => {
@@ -5397,7 +7791,134 @@ impl Analyzer {
         Ok(ret.map(|r| *r).unwrap_or(Type::Any))
     }
 
+    /// Type-check a struct constructor — `User(name: "Alice", age: 30)`:
+    /// named arguments only (spec `types/composite-types.md`), no field the
+    /// struct does not declare (`E0206`), each argument given once, every
+    /// non-optional field without a default supplied (`E0205`), and every
+    /// value fitting its field's type (`E0202`). The call's type is the
+    /// struct with its type arguments inferred from the field values.
+    fn check_struct_ctor_call(&mut self, call: &Call, name: &str) -> SResult<Type> {
+        let entry = self
+            .type_entry(name)
+            .cloned()
+            .ok_or_else(|| self.err(format!("unknown type `{name}`")))?;
+        let TypeEntryKind::Struct(declared) = entry.kind else {
+            return Err(self.err(format!("`{name}` is not a struct")));
+        };
+        let type_params = entry.type_params;
+        let type_bounds = entry.type_bounds;
+        for arg in &call.arguments {
+            if arg.name.is_none() {
+                return Err(self
+                    .err_code(
+                        "E0208",
+                        format!("struct `{name}` is constructed with named arguments"),
+                    )
+                    .at(arg.value.span().clone()));
+            }
+        }
+        let mut provided: HashMap<String, (Type, &Expression)> = HashMap::new();
+        for arg in &call.arguments {
+            let label = arg.name.as_deref().unwrap_or_default();
+            if !declared.iter().any(|(fname, _, _)| fname == label) {
+                return Err(self
+                    .err_code("E0206", format!("`{name}` has no field `{label}`"))
+                    .at(arg.value.span().clone()));
+            }
+            if provided.contains_key(label) {
+                return Err(self.err(format!("argument `{label}` to `{name}` is provided twice")));
+            }
+            let arg_type = self.check_expression(&arg.value)?;
+            provided.insert(label.to_string(), (arg_type, &arg.value));
+        }
+        for (fname, ftype, fdefault) in &declared {
+            match provided.get(fname) {
+                Some((arg_type, expr)) => {
+                    if !self.assignable(arg_type, ftype) && !self.literal_matches(expr, ftype) {
+                        return Err(self
+                            .err_code(
+                                "E0202",
+                                format!(
+                                    "field `{fname}` of `{name}` expects `{}`, found `{}`",
+                                    ftype.name(),
+                                    arg_type.name()
+                                ),
+                            )
+                            .at(expr.span().clone()));
+                    }
+                }
+                None => {
+                    if fdefault.is_none() && !matches!(ftype, Type::Optional(_)) {
+                        return Err(self
+                            .err_code(
+                                "E0205",
+                                format!("missing field `{fname}` in initializer of `{name}`"),
+                            )
+                            .at(call.span.clone()));
+                    }
+                }
+            }
+        }
+        let mut type_args = Vec::with_capacity(type_params.len());
+        if !type_params.is_empty() {
+            let mut param_types = Vec::new();
+            let mut arg_types = Vec::new();
+            for (fname, ftype, _) in &declared {
+                if let Some((arg_type, _)) = provided.get(fname) {
+                    param_types.push(ftype.clone());
+                    arg_types.push(arg_type.clone());
+                }
+            }
+            let bindings = match infer_type_bindings(&type_params, &param_types, &arg_types) {
+                Ok(b) => b,
+                Err((param, existing, found)) => {
+                    return Err(self.err_code(
+                        "E0202",
+                        format!(
+                            "expected `{}` for `{param}`, found `{}`",
+                            existing.name(),
+                            found.name()
+                        ),
+                    ));
+                }
+            };
+            self.check_inferred_bounds(&type_bounds, &bindings)?;
+            for p in &type_params {
+                type_args.push(bindings.get(p).cloned().unwrap_or(Type::Any));
+            }
+        }
+        Ok(Type::Named(name.to_string(), type_args))
+    }
+
     fn check_enum_ref(&self, enum_name: String, variant: &str) -> SResult<Type> {
+        // A built-in namespace's members are constants (`Math::PI`) or
+        // functions reached by call (`Math::max(...)`); a bare function
+        // reference types as a function value (spec
+        // `builtins/intrinsic-functions.md`). A program-declared type of the
+        // head's name shadows the namespace, as elsewhere.
+        if self.type_entry(&enum_name).is_none() {
+            if matches!(enum_name.as_str(), "Math" | "Time") {
+                return match builtin_member(&enum_name, variant) {
+                    Some(BuiltinMember::Constant) => Ok(Type::Number),
+                    Some(BuiltinMember::Fn(sig)) => Ok(Type::FnSig {
+                        params: sig.params.iter().map(|p| p.ty()).collect(),
+                        ret: Some(Box::new(sig.ret.ty())),
+                    }),
+                    None => Err(self.err(format!("`{enum_name}` has no member `{variant}`"))),
+                };
+            }
+            if enum_name == "Task" {
+                return match task_bare_member_sig(variant) {
+                    Some(sig) => Ok(sig),
+                    None => Err(self.err(format!("`Task` has no member `{variant}`"))),
+                };
+            }
+        }
+        // A module path (`form::CONF`, `form::fields::Point`) resolves
+        // before the enum fallback: its head is a namespace binding.
+        if let Some(ty) = self.module_path_value_type(&enum_name, variant)? {
+            return Ok(ty);
+        }
         let Some(entry) = self.type_entry(&enum_name) else {
             return Err(self.err(format!("unknown enum `{enum_name}`")));
         };
@@ -5411,6 +7932,293 @@ impl Analyzer {
             TypeEntryKind::Alias(_) | TypeEntryKind::Trait(_) | TypeEntryKind::Struct(_) => {
                 Err(self.err(format!("`{enum_name}` is not an enum")))
             }
+        }
+    }
+
+    /// Resolve `head::...::member` as a module-path call, returning the
+    /// member function's return type when the head names a module
+    /// (`Ok(None)` when the path is not a module path at all).
+    fn check_module_path_call(
+        &mut self,
+        call: &xulo_core::ast::Call,
+        head: &str,
+        member: &str,
+    ) -> SResult<Option<Type>> {
+        let module = match self.namespaces.get(head) {
+            Some(id) => id.clone(),
+            None => {
+                let Some(world) = &self.world else {
+                    return Ok(None);
+                };
+                let pkg_root = ModuleWorld::package_root_of(&self.module_id);
+                match world
+                    .packages
+                    .get(head)
+                    .filter(|_| pkg_root.is_empty())
+                    .or_else(|| {
+                        world
+                            .modules
+                            .get(pkg_root)
+                            .and_then(|f| f.children.get(head))
+                    }) {
+                    Some(id) => id.clone(),
+                    None => return Ok(None),
+                }
+            }
+        };
+        self.mark_name_used(head);
+        let Some(face) = self
+            .world
+            .as_ref()
+            .and_then(|w| w.modules.get(&module))
+            .cloned()
+        else {
+            if self.lenient {
+                // Editor partial mode: no face to consult. Record the path
+                // head (its span starts the call) so go-to-definition can
+                // follow the import edge, then check the call opaquely like
+                // an external dependency would.
+                self.resolutions.push(UseRecord {
+                    span: call.span.start..call.span.start + head.len(),
+                    name: head.to_string(),
+                    kind: UseKind::Variable,
+                    type_: Some(Type::Any),
+                    def: None,
+                });
+                for arg in &call.arguments {
+                    self.check_arg_value(&arg.value)?;
+                }
+                return Ok(Some(Type::Any));
+            }
+            return Err(self
+                .err_code("E0607", format!("cannot resolve `{head}`"))
+                .at(call.span.clone()));
+        };
+        if face.external {
+            // An external dependency's exports are invisible: any member call
+            // is checked opaquely (arguments still check, result is `any`).
+            self.no_type_args(call)?;
+            for arg in &call.arguments {
+                self.check_arg_value(&arg.value)?;
+            }
+            return Ok(Some(Type::Any));
+        }
+        // Descend child namespaces: a multi-segment member like `m::inner::v`
+        // walks `inner` down to the child module's face before `v` is looked
+        // up on it — a flat lookup would miss and report E0601.
+        let mut module = module;
+        let mut member = member.to_string();
+        let mut face = face;
+        loop {
+            if face.names.contains_key(&member) {
+                break;
+            }
+            let Some((first, rest)) = member.split_once("::") else {
+                break;
+            };
+            let Some(child) = face.children.get(first).cloned() else {
+                break;
+            };
+            if module != self.module_id && face.names.get(first).is_some_and(|info| !info.is_pub) {
+                return Err(self
+                    .err_code(
+                        "E0602",
+                        format!("`{first}` is private to `{}`", module_display(&module)),
+                    )
+                    .at(call.span.clone()));
+            }
+            let Some(next) = self
+                .world
+                .as_ref()
+                .and_then(|w| w.modules.get(&child))
+                .cloned()
+            else {
+                break;
+            };
+            module = child;
+            member = rest.to_string();
+            face = next;
+        }
+        let info = face.names.get(&member).copied();
+        let info = match info {
+            Some(info) => {
+                if module != self.module_id && !info.is_pub {
+                    return Err(self
+                        .err_code(
+                            "E0602",
+                            format!("`{member}` is private to `{}`", module_display(&module)),
+                        )
+                        .at(call.span.clone()));
+                }
+                info
+            }
+            None => {
+                return Err(self
+                    .err_code(
+                        "E0601",
+                        format!(
+                            "module `{}` does not export `{member}`",
+                            module_display(&module)
+                        ),
+                    )
+                    .at(call.span.clone()));
+            }
+        };
+        match info.kind {
+            FaceKind::Module => Err(self
+                .err_code(
+                    "E0606",
+                    format!("`{head}::{member}` is a module, not a value"),
+                )
+                .at(call.span.clone())),
+            FaceKind::Type => Err(self
+                .err_code(
+                    "E0606",
+                    format!("`{head}::{member}` is a type-only binding and is not a value"),
+                )
+                .at(call.span.clone())),
+            FaceKind::Fn | FaceKind::Let | FaceKind::Value => {
+                let symbol = face
+                    .exports
+                    .iter()
+                    .find(|(n, _)| n == &member)
+                    .map(|(_, sym)| sym.clone())
+                    .unwrap_or(Symbol {
+                        name: member.to_string(),
+                        type_: Type::Any,
+                        kind: SymbolKind::Function(Vec::new(), Vec::new(), Type::Any, Vec::new()),
+                        is_shared: false,
+                        is_param: false,
+                        is_const: true,
+                        is_mutable: false,
+                    });
+                if matches!(info.kind, FaceKind::Fn) {
+                    self.no_type_args(call)?;
+                    return Ok(Some(self.check_call_symbol(call, &symbol)?));
+                }
+                let resolved = self.resolve_alias(&symbol.type_, 0);
+                let sig = match &resolved {
+                    Type::FnSig { params, ret } => Some((params.clone(), ret.clone())),
+                    _ => None,
+                };
+                self.no_type_args(call)?;
+                let Some((params, ret)) = sig else {
+                    return Err(self.err(format!("`{head}::{member}` is not a function")));
+                };
+                Ok(Some(self.check_fn_value_args(
+                    &params,
+                    ret,
+                    &call.arguments,
+                )?))
+            }
+        }
+    }
+
+    /// Resolve `head::...::member` as a module path in a value position
+    /// (`Ok(None)` when the head is not a module namespace).
+    fn module_path_value_type(&self, head: &str, member: &str) -> SResult<Option<Type>> {
+        let module = match self.namespaces.get(head) {
+            Some(id) => id.clone(),
+            None => {
+                let Some(world) = &self.world else {
+                    return Ok(None);
+                };
+                let pkg_root = ModuleWorld::package_root_of(&self.module_id);
+                match world
+                    .packages
+                    .get(head)
+                    .filter(|_| pkg_root.is_empty())
+                    .or_else(|| {
+                        world
+                            .modules
+                            .get(pkg_root)
+                            .and_then(|f| f.children.get(head))
+                    }) {
+                    Some(id) => id.clone(),
+                    None => return Ok(None),
+                }
+            }
+        };
+        let Some(face) = self
+            .world
+            .as_ref()
+            .and_then(|w| w.modules.get(&module))
+            .cloned()
+        else {
+            if self.lenient {
+                // Editor partial mode: the head is a namespace but no face
+                // exists to read the member from — read opaquely instead of
+                // collapsing the path into an unknown-enum error.
+                return Ok(Some(Type::Any));
+            }
+            return Ok(None);
+        };
+        if face.external {
+            // External dependency: any member reads as `any`.
+            return Ok(Some(Type::Any));
+        }
+        // Descend child namespaces (mirroring `check_module_path_call`):
+        // `m::inner::v` walks `inner` to the child module's face before `v`
+        // is looked up on it.
+        let mut module = module;
+        let mut member = member.to_string();
+        let mut face = face;
+        loop {
+            if face.names.contains_key(&member) {
+                break;
+            }
+            let Some((first, rest)) = member.split_once("::") else {
+                break;
+            };
+            let Some(child) = face.children.get(first).cloned() else {
+                break;
+            };
+            if module != self.module_id && face.names.get(first).is_some_and(|info| !info.is_pub) {
+                return Err(self.err_code(
+                    "E0602",
+                    format!("`{first}` is private to `{}`", module_display(&module)),
+                ));
+            }
+            let Some(next) = self
+                .world
+                .as_ref()
+                .and_then(|w| w.modules.get(&child))
+                .cloned()
+            else {
+                break;
+            };
+            module = child;
+            member = rest.to_string();
+            face = next;
+        }
+        let Some(info) = face.names.get(&member).copied() else {
+            return Err(self.err_code(
+                "E0601",
+                format!(
+                    "module `{}` does not export `{member}`",
+                    module_display(&module)
+                ),
+            ));
+        };
+        if module != self.module_id && !info.is_pub {
+            return Err(self.err_code(
+                "E0602",
+                format!("`{member}` is private to `{}`", module_display(&module)),
+            ));
+        }
+        let value = face
+            .exports
+            .iter()
+            .find(|(n, _)| n == &member)
+            .map(|(_, sym)| sym.type_.clone());
+        match (info.kind, value) {
+            (_, Some(ty)) => Ok(Some(ty)),
+            (FaceKind::Type, None) => Ok(Some(Type::Named(member.to_string(), Vec::new()))),
+            (FaceKind::Module, _) => Err(self.err_code(
+                "E0606",
+                format!("`{head}::{member}` is a module, not a value"),
+            )),
+            (_, None) => Ok(Some(Type::Any)),
         }
     }
 
@@ -5802,10 +8610,14 @@ impl Analyzer {
     /// imported from other modules, then the built-ins: a declaration at any
     /// of the first two levels shadows a builtin of the same name.
     fn type_entry(&self, name: &str) -> Option<&TypeEntry> {
-        self.type_table
-            .get(name)
-            .or_else(|| self.imported_types.get(name))
-            .or_else(|| self.builtins.get(name))
+        if let Some(e) = self.type_table.get(name) {
+            return Some(e);
+        }
+        if let Some(e) = self.imported_types.get(name) {
+            self.mark_name_used(name);
+            return Some(e);
+        }
+        self.builtins.get(name)
     }
 
     /// Is a value of type `from` acceptable where `to` is expected?
@@ -5946,20 +8758,16 @@ fn unify_param(
     bindings: &mut std::collections::HashMap<String, Type>,
 ) -> Result<(), InferenceConflict> {
     match expected {
-        Type::Named(name, _) if type_params.contains(name) => {
-            match bindings.get(name) {
-                Some(existing) if existing != actual => Err((
-                    name.clone(),
-                    existing.clone(),
-                    actual.clone(),
-                )),
-                Some(_) => Ok(()),
-                None => {
-                    bindings.insert(name.clone(), actual.clone());
-                    Ok(())
-                }
+        Type::Named(name, _) if type_params.contains(name) => match bindings.get(name) {
+            Some(existing) if existing != actual => {
+                Err((name.clone(), existing.clone(), actual.clone()))
             }
-        }
+            Some(_) => Ok(()),
+            None => {
+                bindings.insert(name.clone(), actual.clone());
+                Ok(())
+            }
+        },
         Type::List(inner) => {
             if let Type::List(element) = actual {
                 unify_param(inner, element, type_params, bindings)?;
@@ -6078,8 +8886,7 @@ fn pattern_type_matches(
         Type::Named(name, pargs) => match actual {
             Type::Named(aname, aargs) => {
                 name == aname
-                    && (pargs.is_empty()
-                        || pattern_matches(pargs, aargs, params, bindings))
+                    && (pargs.is_empty() || pattern_matches(pargs, aargs, params, bindings))
             }
             _ => false,
         },
@@ -6113,9 +8920,7 @@ fn pattern_type_matches(
 fn type_same(a: &Type, b: &Type) -> bool {
     match (a, b) {
         (Type::Named(x, xa), Type::Named(y, ya)) => {
-            x == y
-                && xa.len() == ya.len()
-                && xa.iter().zip(ya.iter()).all(|(p, q)| type_same(p, q))
+            x == y && xa.len() == ya.len() && xa.iter().zip(ya.iter()).all(|(p, q)| type_same(p, q))
         }
         (Type::List(x), Type::List(y))
         | (Type::Optional(x), Type::Optional(y))

@@ -2,7 +2,6 @@ use std::ops::Range;
 
 use pest::iterators::Pair;
 
-use xulo_core::error::{ErrorKind, XuloError};
 use xulo_core::ast::{
     ArrowBody, ArrowClosure, AssignTarget, BinaryOp, BinaryOperator, Block, Call, CallArg,
     CallValue, ComponentStmt, EnumRef, ExprStmt, Expression, FnExpr, IfExpr, IndexExpr, IsExpr,
@@ -10,6 +9,7 @@ use xulo_core::ast::{
     ObjectField, Param, PatternBinder, RangeExpr, SpawnBody, SpawnExpr, SpawnField, SpawnTarget,
     Statement, TernaryExpr, Type, TypedMap, TypedMapEntry, UnaryOp, UnaryOperator,
 };
+use xulo_core::error::{ErrorKind, XuloError};
 
 use super::build::{block, to_ui_elements};
 use super::types::{R, check_rule, single, type_expr};
@@ -305,7 +305,22 @@ fn apply_postfix(expr: Expression, op: Pair<'_, Rule>, span_start: usize) -> R<E
     let is_optional_member = op.as_str().starts_with("?.");
     let inner = single(op);
     match inner.as_rule() {
-        Rule::call_args => Ok(make_call(expr, call_args(inner)?, span)),
+        Rule::call_args => {
+            // `call_args` may open with a written `CallTypeArgs` list
+            // (`first<Int>(…)`); PEG backtracking already dropped the
+            // alternative when the material is not a type list followed by
+            // `(`, so whatever matched here is a type-argument reading.
+            let mut type_args = None;
+            let mut args = Vec::new();
+            for part in inner.into_inner() {
+                match part.as_rule() {
+                    Rule::call_type_args => type_args = Some(call_type_args(part)?),
+                    Rule::argument => args.push(argument(part)?),
+                    _ => unreachable!("call_args child {:?}", part.as_rule()),
+                }
+            }
+            Ok(make_call(expr, args, span, type_args))
+        }
         Rule::expression => {
             let index = expression(inner)?;
             Ok(Expression::Index(Box::new(IndexExpr {
@@ -330,7 +345,12 @@ fn apply_postfix(expr: Expression, op: Pair<'_, Rule>, span_start: usize) -> R<E
     }
 }
 
-fn make_call(callee: Expression, arguments: Vec<CallArg>, span: Range<usize>) -> Expression {
+fn make_call(
+    callee: Expression,
+    arguments: Vec<CallArg>,
+    span: Range<usize>,
+    type_args: Option<Vec<Type>>,
+) -> Expression {
     match callee {
         Expression::Identifier {
             name,
@@ -344,6 +364,7 @@ fn make_call(callee: Expression, arguments: Vec<CallArg>, span: Range<usize>) ->
             arguments,
             span,
             trait_impl: None,
+            type_args,
         }),
         Expression::EnumRef(r) => Expression::Call(Call {
             callee: format!("{}::{}", r.enum_name, r.variant),
@@ -354,6 +375,7 @@ fn make_call(callee: Expression, arguments: Vec<CallArg>, span: Range<usize>) ->
             arguments,
             span,
             trait_impl: None,
+            type_args,
         }),
         Expression::Member(m) => {
             let property = m.property.clone();
@@ -366,14 +388,36 @@ fn make_call(callee: Expression, arguments: Vec<CallArg>, span: Range<usize>) ->
                 arguments,
                 span,
                 trait_impl: None,
+                type_args,
             })
         }
         other => Expression::CallValue(Box::new(CallValue {
             callee: Box::new(other),
             arguments,
             span,
+            type_args,
         })),
     }
+}
+
+/// Build a written `CallTypeArgs` list — `<` … `>` with a comma-separated
+/// type list, or the empty material of `f<>(…)`.
+fn call_type_args(pair: Pair<'_, Rule>) -> R<Vec<Type>> {
+    check_rule(&pair, Rule::call_type_args)?;
+    let mut items = Vec::new();
+    for part in pair.into_inner() {
+        // The `gt_close` child is a named rule and shows up in the tree;
+        // only `type_list` carries written arguments (absent for `f<>`).
+        if part.as_rule() != Rule::type_list {
+            check_rule(&part, Rule::gt_close)?;
+            continue;
+        }
+        for t in part.into_inner() {
+            check_rule(&t, Rule::type_expr)?;
+            items.push(type_expr(t)?);
+        }
+    }
+    Ok(items)
 }
 
 fn primary_expression(pair: Pair<'_, Rule>) -> R<Expression> {
@@ -481,6 +525,7 @@ fn template_literal(pair: Pair<'_, Rule>) -> R<Expression> {
                     arguments: vec![CallArg { name: None, value }],
                     span: interp_span.clone(),
                     trait_impl: None,
+                    type_args: None,
                 });
                 acc = concat_add(acc, call, start);
                 // Text following the interpolation is folded into the tail
@@ -538,28 +583,63 @@ fn concat_add(
     }
 }
 
+/// Compose the `(base…, member)` of a qualified path from its head and the
+/// `::`-separated segments after it: `form::fields::Field` becomes
+/// base `form::fields`, member `Field`. The two-segment case the checker
+/// historically saw (`Theme::Dark`) is just base `Theme`, member `Dark`.
+fn split_path(head: Pair<'_, Rule>, mut segments: Vec<String>) -> (String, String) {
+    let mut base = head.as_str().to_string();
+    let member = segments.pop().expect("a path carries a member segment");
+    for seg in segments {
+        base.push_str("::");
+        base.push_str(&seg);
+    }
+    (base, member)
+}
+
 fn variant_path(pair: Pair<'_, Rule>) -> R<Expression> {
     let span = span_of(&pair);
     let mut inner = pair.into_inner();
-    let enum_name = next(&mut inner, Rule::identifier).as_str().to_string();
-    let variant = next(&mut inner, Rule::identifier).as_str().to_string();
-    let Some(args) = inner.next() else {
+    let head = next(&mut inner, Rule::path_head);
+    let mut segments = Vec::new();
+    let mut args = None;
+    for p in inner {
+        match p.as_rule() {
+            Rule::identifier => segments.push(p.as_str().to_string()),
+            Rule::variant_call_args => args = Some(p),
+            other => unreachable!("variant_path child {other:?}"),
+        }
+    }
+    let (enum_name, variant) = split_path(head, segments);
+    let Some(args) = args else {
         return Ok(Expression::EnumRef(EnumRef {
             enum_name,
             variant,
             span,
         }));
     };
-    check_rule(&args, Rule::argument_list)?;
+    check_rule(&args, Rule::variant_call_args)?;
+    let arguments = match args.into_inner().next() {
+        Some(list) => {
+            check_rule(&list, Rule::argument_list)?;
+            argument_list(list)?
+        }
+        // `Time::now()` — the empty list is still a call.
+        None => Vec::new(),
+    };
+    // A written list after the variant (`Color::Red<Int>(…)`) is not part of
+    // `variant_call_args`: the postfix pass reads it and the checker reports
+    // `E0807` (constructors declare no type parameters).
     Ok(Expression::Call(Call {
         callee: format!("{enum_name}::{variant}"),
         callee_span: None,
         object: None,
         method: None,
         optional: false,
-        arguments: argument_list(args)?,
+        arguments,
         span,
         trait_impl: None,
+        type_args: None,
     }))
 }
 
@@ -571,9 +651,11 @@ pub(crate) fn component_call(pair: Pair<'_, Rule>) -> R<Expression> {
     let name = name_pair.as_str().to_string();
     let mut args = Vec::new();
     let mut children = Vec::new();
+    let mut type_args = None;
     for p in inner {
         match p.as_rule() {
-            Rule::argument_list | Rule::call_args => args = call_args(p)?,
+            Rule::call_type_args => type_args = Some(call_type_args(p)?),
+            Rule::argument_list => args = argument_list(p)?,
             Rule::component_block => children = to_ui_elements(p)?,
             _ => unreachable!("component_call child {:?}", p.as_rule()),
         }
@@ -584,6 +666,7 @@ pub(crate) fn component_call(pair: Pair<'_, Rule>) -> R<Expression> {
         args,
         children,
         span,
+        type_args,
     }))
 }
 
@@ -942,15 +1025,6 @@ fn brace_map(pair: Pair<'_, Rule>) -> R<Expression> {
     })
 }
 
-pub(crate) fn call_args(pair: Pair<'_, Rule>) -> R<Vec<CallArg>> {
-    let mut args = Vec::new();
-    for a in pair.into_inner() {
-        check_rule(&a, Rule::argument)?;
-        args.push(argument(a)?);
-    }
-    Ok(args)
-}
-
 fn argument_list(pair: Pair<'_, Rule>) -> R<Vec<CallArg>> {
     let mut args = Vec::new();
     for a in pair.into_inner() {
@@ -1038,9 +1112,11 @@ pub(crate) fn assign_target(expr: Expression, span: Range<usize>) -> R<AssignTar
         }
     }
     if !is_place(&expr) {
-        return Err(XuloError::new(ErrorKind::Semantic, "invalid assignment target")
-            .with_code("E0402")
-            .at(span));
+        return Err(
+            XuloError::new(ErrorKind::Semantic, "invalid assignment target")
+                .with_code("E0402")
+                .at(span),
+        );
     }
     Ok(match expr {
         Expression::Identifier { name, .. } => AssignTarget::Name(name),
@@ -1111,9 +1187,18 @@ fn range_pattern(pair: Pair<'_, Rule>, span: Range<usize>) -> R<MatchPattern> {
 
 fn variant_pattern(pair: Pair<'_, Rule>, span: Range<usize>) -> R<MatchPattern> {
     let mut inner = pair.into_inner();
-    let enum_name = next(&mut inner, Rule::identifier).as_str().to_string();
-    let variant = next(&mut inner, Rule::identifier).as_str().to_string();
-    let Some(pl) = inner.next() else {
+    let head = next(&mut inner, Rule::path_head);
+    let mut segments = Vec::new();
+    let mut pl = None;
+    for p in inner {
+        match p.as_rule() {
+            Rule::identifier => segments.push(p.as_str().to_string()),
+            Rule::pattern_list => pl = Some(p),
+            other => unreachable!("variant_pattern child {other:?}"),
+        }
+    }
+    let (enum_name, variant) = split_path(head, segments);
+    let Some(pl) = pl else {
         return Ok(MatchPattern::Enum(EnumRef {
             enum_name,
             variant,

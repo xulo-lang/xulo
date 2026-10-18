@@ -11,7 +11,7 @@ use std::collections::{HashMap, HashSet};
 use std::ops::Range as ByteRange;
 use std::path::{Component, Path, PathBuf};
 
-use xulo_core::ast::{ExportItem, ImportSpec, Program, Statement, Type};
+use xulo_core::ast::{ExportItem, PathHead, Program, Statement, Type, UseDecl, UseTarget};
 use xulo_core::error::{ErrorKind, XuloError};
 use xulo_semantic::symbol_table::{Symbol, SymbolKind};
 use xulo_semantic::{TypeEntry, TypeEntryKind, analyze_partial};
@@ -45,7 +45,7 @@ pub struct WorkspaceModule {
     /// `(spec, type_only, target file)`. `target` is `None` when the
     /// specifier resolves to no local file (external package / unresolved):
     /// such names are checked opaquely.
-    pub imports: Vec<(ImportSpec, bool, Option<PathBuf>)>,
+    pub imports: Vec<(UseDecl, Vec<Option<PathBuf>>)>,
 }
 
 /// The whole workspace: every module keyed by normalized path, with the entry
@@ -72,6 +72,7 @@ impl Workspace {
             sources: &sources,
             analyzed: HashMap::new(),
             visiting: HashSet::new(),
+            entry: entry.clone(),
         };
         builder.build(&entry)?;
         Ok(Workspace {
@@ -140,29 +141,51 @@ impl Workspace {
     /// it and the exported name it binds), if the name is imported.
     fn import_link(&self, file: &Path, name: &str) -> Option<ImportInfo> {
         let module = self.module(file)?;
-        for (spec, _type_only, target) in &module.imports {
-            let Some(target) = target else {
+        for (use_decl, targets) in &module.imports {
+            let Some(target) = targets.iter().flatten().next() else {
                 continue;
             };
-            match spec {
-                ImportSpec::Namespace(ns) if ns == name => {
-                    return Some(ImportInfo {
-                        target: target.clone(),
-                        exported: None,
-                    });
-                }
-                ImportSpec::Named(names) => {
-                    for (exported, alias) in names {
-                        let local = alias.clone().unwrap_or_else(|| exported.clone());
-                        if local == name {
-                            return Some(ImportInfo {
-                                target: target.clone(),
-                                exported: Some(exported.clone()),
-                            });
+            // Every (local name, exported name) pair this `use` binds.
+            let mut pairs: Vec<(String, Option<String>)> = Vec::new();
+            match &use_decl.target {
+                UseTarget::Path {
+                    head,
+                    segments,
+                    alias,
+                } => {
+                    let head_name = match head {
+                        PathHead::Name(n) | PathHead::Package(n) => Some(n.clone()),
+                        _ => None,
+                    };
+                    if segments.is_empty() {
+                        // `use form;` / `use form as f;` — namespace binding.
+                        let local = alias.clone().or(head_name);
+                        if let Some(local) = local {
+                            pairs.push((local, None));
+                        }
+                    } else {
+                        let exported = segments.last().cloned();
+                        let local = alias.clone().or_else(|| exported.clone());
+                        if let Some(local) = local {
+                            pairs.push((local, exported));
                         }
                     }
                 }
-                ImportSpec::Bare | ImportSpec::Namespace(_) => {}
+                UseTarget::Group { entries, .. } => {
+                    for entry in entries {
+                        if let Some(exported) = entry.segments.last() {
+                            let local = entry.alias.clone().unwrap_or_else(|| exported.clone());
+                            pairs.push((local, Some(exported.clone())));
+                        }
+                    }
+                }
+                UseTarget::Glob { .. } | UseTarget::Local(_) => {}
+            }
+            if let Some((_, exported)) = pairs.into_iter().find(|(local, _)| local == name) {
+                return Some(ImportInfo {
+                    target: target.clone(),
+                    exported,
+                });
             }
         }
         None
@@ -190,23 +213,27 @@ impl Workspace {
 struct Builder<'a> {
     sources: &'a HashMap<PathBuf, String>,
     analyzed: HashMap<PathBuf, WorkspaceModule>,
-    /// Files on the current DFS stack, for cycle detection.
+    /// Files on the current DFS stack. Re-entry is a legal use cycle, not an
+    /// error (spec `modules/import-export.md`); it only marks whose exports
+    /// are still unavailable for seeding.
     visiting: HashSet<PathBuf>,
+    /// The entry file: its directory is the root home that root-level `mod`
+    /// claims resolve against.
+    entry: PathBuf,
 }
 
 impl Builder<'_> {
-    /// Parse `file`, recurse into its local imports, then analyze it in
-    /// dependency order (dependents come after their dependencies, so seeds
-    /// are always available).
+    /// Parse `file`, recurse into its claims and local imports, then analyze
+    /// it in dependency order (dependents come after their dependencies, so
+    /// seeds are always available).
     fn build(&mut self, file: &Path) -> Result<(), XuloError> {
         if self.analyzed.contains_key(file) {
             return Ok(());
         }
         if self.visiting.contains(file) {
-            return Err(XuloError::new(
-                ErrorKind::Semantic,
-                format!("circular import involving {}", file.display()),
-            ));
+            // Legal cycle: this module is still mid-build, so its exports
+            // cannot seed the partner yet — the partner degrades opaquely.
+            return Ok(());
         }
         let source = self.sources.get(file).cloned().ok_or_else(|| {
             XuloError::new(
@@ -217,15 +244,56 @@ impl Builder<'_> {
         let program =
             xulo_parser::parse_program(&source).map_err(|e| e.with_file(file.to_path_buf()))?;
 
-        let mut imports = Vec::new();
+        let mut imports: Vec<(UseDecl, Vec<Option<PathBuf>>)> = Vec::new();
         self.visiting.insert(file.to_path_buf());
         for statement in &program.statements {
-            if let Statement::Import(import) = statement {
-                let target = resolve_local(self.sources, file, &import.source);
-                if let Some(target) = &target {
-                    self.build(target)?;
+            match statement {
+                Statement::Use(u) => {
+                    // One head may appear in a path/group/glob target; each head
+                    // resolves to at most one dependency file (`{head}.xulo`).
+                    let mut targets = Vec::new();
+                    match &u.target {
+                        UseTarget::Path { head, .. }
+                        | UseTarget::Group { head, .. }
+                        | UseTarget::Glob { head } => {
+                            if let PathHead::Name(n) | PathHead::Package(n) = head {
+                                let target = resolve_local(self.sources, file, n);
+                                if let Some(target) = &target {
+                                    self.build(target)?;
+                                }
+                                targets.push(target);
+                            }
+                        }
+                        UseTarget::Local(_) => {}
+                    }
+                    imports.push((u.clone(), targets));
                 }
-                imports.push((import.spec.clone(), import.type_only, target));
+                Statement::Mod(m) if m.body.is_none() => {
+                    // A file claim: `mod name;` owns `{home}/name.xulo` —
+                    // the entry's directory at the root, `D/S/` for a file
+                    // module `D/S.xulo` (spec `modules/source-files.md`).
+                    let target = claim_target(self.sources, &self.entry, file, &m.name);
+                    if let Some(target) = &target {
+                        self.build(target)?;
+                    }
+                    // A synthetic head-only use, so go-to-definition on the
+                    // namespace (or on a member call's head) follows the
+                    // claim edge to the claimed file.
+                    imports.push((
+                        UseDecl {
+                            is_pub: m.is_pub,
+                            type_only: false,
+                            target: UseTarget::Path {
+                                head: PathHead::Name(m.name.clone()),
+                                segments: Vec::new(),
+                                alias: None,
+                            },
+                            span: m.span.clone(),
+                        },
+                        vec![target],
+                    ));
+                }
+                _ => {}
             }
         }
         self.visiting.remove(file);
@@ -272,13 +340,13 @@ type ImportSeed = (
 fn seed(
     analyzed: &HashMap<PathBuf, WorkspaceModule>,
     _file: &Path,
-    imports: &[(ImportSpec, bool, Option<PathBuf>)],
+    imports: &[(UseDecl, Vec<Option<PathBuf>>)],
 ) -> ImportSeed {
     let mut symbols: Vec<Symbol> = Vec::new();
     let mut types: Vec<(String, TypeEntry)> = Vec::new();
     let impls: Vec<(String, String, String)> = Vec::new();
-    for (spec, type_only, target) in imports {
-        let Some(target_path) = target else {
+    for (use_decl, targets) in imports {
+        let Some(target_path) = targets.iter().flatten().next() else {
             continue;
         };
         let Some(module) = analyzed.get(target_path) else {
@@ -287,37 +355,92 @@ fn seed(
         let Some(result) = &module.analysis.result else {
             continue;
         };
-        match spec {
-            ImportSpec::Bare => {}
-            ImportSpec::Namespace(ns) => {
-                if !type_only {
+        // Resolve the target to (exported name, local name) pairs.
+        let mut pairs: Vec<(Option<String>, String, bool)> = Vec::new();
+        match &use_decl.target {
+            UseTarget::Path {
+                head,
+                segments,
+                alias,
+            } => {
+                let head_name = match head {
+                    PathHead::Name(n) | PathHead::Package(n) => Some(n.clone()),
+                    _ => None,
+                };
+                if segments.is_empty() {
+                    if let Some(local) = alias.clone().or(head_name) {
+                        pairs.push((None, local, false));
+                    }
+                } else if let Some(exported) = segments.last() {
+                    let local = alias.clone().unwrap_or_else(|| exported.clone());
+                    pairs.push((Some(exported.clone()), local, true));
+                }
+            }
+            UseTarget::Group { entries, .. } => {
+                for entry in entries {
+                    if let Some(exported) = entry.segments.last() {
+                        let local = entry.alias.clone().unwrap_or_else(|| exported.clone());
+                        pairs.push((Some(exported.clone()), local, true));
+                    }
+                }
+            }
+            UseTarget::Glob { .. } => {
+                // Seed every exported symbol/type of the target module.
+                for (name, sym) in &result.exported_symbols {
                     symbols.push(Symbol {
-                        name: ns.clone(),
-                        type_: Type::Any,
-                        kind: SymbolKind::Variable,
+                        name: name.clone(),
+                        type_: sym.type_.clone(),
+                        kind: sym.kind.clone(),
                         is_shared: false,
                         is_param: false,
                         is_const: true,
                         is_mutable: false,
                     });
                 }
+                for (name, entry) in &result.exported_types {
+                    types.push((name.clone(), entry.clone()));
+                }
             }
-            ImportSpec::Named(names) => {
-                for (exported, alias) in names {
-                    let local = alias.clone().unwrap_or_else(|| exported.clone());
-                    if *type_only {
-                        types.push(exported_type(result, exported, local));
+            UseTarget::Local(_) => {}
+        }
+        for (exported, local, is_value) in pairs {
+            match exported {
+                None => {
+                    // Namespace binding (`use form;`): an opaque value name.
+                    if !use_decl.type_only {
+                        symbols.push(Symbol {
+                            name: local,
+                            type_: Type::Any,
+                            kind: SymbolKind::Variable,
+                            is_shared: false,
+                            is_param: false,
+                            is_const: true,
+                            is_mutable: false,
+                        });
+                    }
+                }
+                Some(exported) => {
+                    if use_decl.type_only {
+                        types.push(exported_type(result, &exported, local));
                         continue;
                     }
                     let Some(sym) = result
                         .exported_symbols
                         .iter()
-                        .find(|(n, _)| n == exported)
+                        .find(|(n, _)| *n == exported)
                         .map(|(_, s)| s.clone())
                     else {
-                        // The target exports no such value: the name stays
-                        // opaque so the importing module reports its own
-                        // diagnostic rather than the loader aborting.
+                        if is_value {
+                            // Not a value export: may still be a type.
+                            let entry = result
+                                .exported_types
+                                .iter()
+                                .find(|(n, _)| *n == exported)
+                                .map(|(_, e)| e.clone());
+                            if let Some(entry) = entry {
+                                types.push((local, entry));
+                            }
+                        }
                         continue;
                     };
                     symbols.push(Symbol {
@@ -371,6 +494,39 @@ fn resolve_local(
 ) -> Option<PathBuf> {
     let base = importer.parent().unwrap_or_else(|| Path::new(""));
     let joined = base.join(specifier);
+    let mut candidates = Vec::new();
+    candidates.push(joined.clone());
+    candidates.push(PathBuf::from(format!("{}.xulo", joined.display())));
+    candidates.push(joined.join("index.xulo"));
+    candidates.into_iter().find_map(|candidate| {
+        let normalized = normalize(&candidate);
+        sources.contains_key(&normalized).then_some(normalized)
+    })
+}
+
+/// Resolve a `mod name;` file claim against its home: the entry file's
+/// directory for the root module, `D/S/` for a file module `D/S.xulo`
+/// (spec `modules/source-files.md`, "Home"). Candidates mirror
+/// [`resolve_local`]: `home/name`, `home/name.xulo`, `home/name/index.xulo`.
+fn claim_target(
+    sources: &HashMap<PathBuf, String>,
+    entry: &Path,
+    importer: &Path,
+    name: &str,
+) -> Option<PathBuf> {
+    let base: PathBuf = if importer == entry {
+        entry
+            .parent()
+            .unwrap_or_else(|| Path::new(""))
+            .to_path_buf()
+    } else {
+        let stem = importer.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        importer
+            .parent()
+            .unwrap_or_else(|| Path::new(""))
+            .join(stem)
+    };
+    let joined = base.join(name);
     let mut candidates = Vec::new();
     candidates.push(joined.clone());
     candidates.push(PathBuf::from(format!("{}.xulo", joined.display())));

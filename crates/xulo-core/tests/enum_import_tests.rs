@@ -19,6 +19,7 @@ fn test_enum_def_basic() {
                 payload: None,
             },
         ],
+        attributes: Vec::new(),
     };
     assert_eq!(enum_def.name, "Color");
     assert_eq!(enum_def.variants.len(), 2);
@@ -49,6 +50,7 @@ fn test_enum_def_with_payload() {
                 }]),
             },
         ],
+        attributes: Vec::new(),
     };
     assert_eq!(enum_def.variants[0].payload.as_ref().unwrap().len(), 1);
     assert_eq!(enum_def.variants[1].payload.as_ref().unwrap().len(), 1);
@@ -76,63 +78,95 @@ fn test_enum_def_generic() {
                 payload: None,
             },
         ],
+        attributes: Vec::new(),
     };
     assert_eq!(enum_def.type_params, vec!["T".to_string()]);
 }
 
 #[test]
-fn test_import_namespace() {
-    let import = ImportStmt {
-        source: "utils".to_string(),
-        spec: ImportSpec::Namespace("utils".to_string()),
+fn test_use_path() {
+    let use_decl = UseDecl {
+        is_pub: false,
         type_only: false,
+        target: UseTarget::Path {
+            head: PathHead::Name("utils".to_string()),
+            segments: vec!["run".to_string()],
+            alias: Some("run_util".to_string()),
+        },
+        span: 0..25,
     };
-    assert_eq!(import.source, "utils");
-    match import.spec {
-        ImportSpec::Namespace(name) => assert_eq!(name, "utils"),
-        _ => panic!("expected namespace"),
-    }
+    let UseTarget::Path {
+        head,
+        segments,
+        alias,
+    } = &use_decl.target
+    else {
+        panic!("expected path target");
+    };
+    assert!(matches!(head, PathHead::Name(n) if n == "utils"));
+    assert_eq!(segments, &["run".to_string()]);
+    assert_eq!(alias.as_deref(), Some("run_util"));
 }
 
 #[test]
-fn test_import_named() {
-    let import = ImportStmt {
-        source: "math".to_string(),
-        spec: ImportSpec::Named(vec![
-            ("sin".to_string(), None),
-            ("cos".to_string(), None),
-            ("PI".to_string(), Some("pi".to_string())),
-        ]),
+fn test_use_group_named() {
+    let use_decl = UseDecl {
+        is_pub: false,
         type_only: false,
+        target: UseTarget::Group {
+            head: PathHead::Name("math".to_string()),
+            entries: vec![
+                UseEntry {
+                    segments: vec!["sin".to_string()],
+                    alias: None,
+                },
+                UseEntry {
+                    segments: vec!["cos".to_string()],
+                    alias: None,
+                },
+                UseEntry {
+                    segments: vec!["PI".to_string()],
+                    alias: Some("pi".to_string()),
+                },
+            ],
+        },
+        span: 0..30,
     };
-    match import.spec {
-        ImportSpec::Named(bindings) => {
-            assert_eq!(bindings.len(), 3);
-            assert_eq!(bindings[0], ("sin".to_string(), None));
-            assert_eq!(bindings[2], ("PI".to_string(), Some("pi".to_string())));
-        }
-        _ => panic!("expected named"),
-    }
+    let UseTarget::Group { head, entries } = &use_decl.target else {
+        panic!("expected group target");
+    };
+    assert!(matches!(head, PathHead::Name(n) if n == "math"));
+    assert_eq!(entries.len(), 3);
+    assert_eq!(entries[0].segments, ["sin".to_string()]);
+    assert_eq!(entries[2].alias.as_deref(), Some("pi"));
 }
 
 #[test]
-fn test_import_bare() {
-    let import = ImportStmt {
-        source: "polyfill".to_string(),
-        spec: ImportSpec::Bare,
+fn test_use_glob() {
+    let use_decl = UseDecl {
+        is_pub: false,
         type_only: false,
+        target: UseTarget::Glob {
+            head: PathHead::Name("polyfill".to_string()),
+        },
+        span: 0..20,
     };
-    assert!(matches!(import.spec, ImportSpec::Bare));
+    assert!(matches!(use_decl.target, UseTarget::Glob { .. }));
 }
 
 #[test]
-fn test_import_type_only() {
-    let import = ImportStmt {
-        source: "types".to_string(),
-        spec: ImportSpec::Named(vec![("User".to_string(), None)]),
+fn test_use_type_only() {
+    let use_decl = UseDecl {
+        is_pub: false,
         type_only: true,
+        target: UseTarget::Path {
+            head: PathHead::Name("types".to_string()),
+            segments: vec!["User".to_string()],
+            alias: None,
+        },
+        span: 0..18,
     };
-    assert!(import.type_only);
+    assert!(use_decl.type_only);
 }
 
 #[test]
@@ -148,6 +182,7 @@ fn test_export_fn() {
             is_async: false,
             body: Block { statements: vec![] },
             span: 0..20,
+            attributes: Vec::new(),
         }),
     };
     assert!(matches!(export.item, ExportItem::Fn(_)));
@@ -219,6 +254,7 @@ fn test_trait_decl() {
             span: 15..25,
         }],
         span: 0..25,
+        attributes: Vec::new(),
     };
     assert_eq!(trait_decl.name, "Display");
     assert_eq!(trait_decl.methods.len(), 1);
@@ -243,9 +279,11 @@ fn test_impl_decl() {
             is_async: false,
             body: Block { statements: vec![] },
             span: 0..20,
+            attributes: Vec::new(),
         }],
         span: 0..25,
         is_inherent: false,
+        attributes: Vec::new(),
     };
     assert_eq!(impl_decl.trait_name, "Display");
     assert_eq!(impl_decl.type_name, "User");
