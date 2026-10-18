@@ -37,9 +37,9 @@ print("count=" + str(count))        // `str(x)` 将任意值转成字符串后�
 
 规则：
 
-- `number + number` → `number`
-- `string + string`（含字符串字面量类型）→ `string`
-- `list<T> + list<U>` → 拼接成 `list`
+- `Number + Number` → `Number`
+- `String + String`（含字符串字面量类型）→ `String`
+- `List<T> + List<U>` → 拼接成 `List`
 - **禁止混用类型**：`"hi" + 1`、`"hi" + true` 等会报错；需要拼接时用内建 `str(x)` 显式转换后再 `+`。
 
 ## 成员访问 / 下标 / 可选链 / 空合并
@@ -60,7 +60,7 @@ let all = [...head, ...tail]   // 展开合并
 let withExtra = [...all, 9]
 ```
 
-`...` 只能出现在列表/对象字面量内，展开操作数必须是 `list<T>`（列表）或对象。
+`...` 只能出现在列表/对象字面量内，展开操作数必须是 `List<T>`（列表）或对象。
 
 ## 对象展开
 

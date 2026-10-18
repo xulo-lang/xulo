@@ -46,12 +46,32 @@ impl TypeEntryKind {
 /// than an unknown head.
 fn builtin_type_arity(name: &str) -> Option<usize> {
     match name {
-        "List" | "list" | "Set" | "Task" => Some(1),
+        "List" | "Set" | "Task" => Some(1),
         "Map" | "Result" => Some(2),
         // The primitives never take arguments; the parser only forms an
-        // application for one when a list was written (`string<Int>`).
-        "string" | "number" | "boolean" | "object" => Some(0),
-        "View" | "Unit" | "Null" | "Unknown" | "Error" | "Range" => Some(0),
+        // application for one when a list was written (`String<Int>`). The
+        // spellings are the spec's (spec `types/primitive-types.md`): the
+        // lowercase words ordinary identifiers — a lowercase annotation is
+        // an unknown type, while `let string = "s"` keeps working.
+        "String" | "Number" | "Int" | "Float" | "Boolean" | "Null" => Some(0),
+        "View" | "Unit" | "Unknown" | "Error" | "Range" => Some(0),
+        // The fixed-bit layer of the two-layer numeric system.
+        "I8" | "I16" | "I32" | "I64" | "U8" | "U16" | "U32" | "U64" | "F32" | "F64" => Some(0),
+        _ => None,
+    }
+}
+
+/// The primitive a match pattern's type name spells (spec
+/// `types/primitive-types.md`): a pattern carries a bare name rather than a
+/// parsed type, so the canonical spellings resolve to the same primitives an
+/// annotation gets. `None` leaves the name as a `Named` type for the ordinary
+/// rules (user enums, structs, and prelude shapes).
+fn pattern_primitive_type(name: &str) -> Option<Type> {
+    match name {
+        "String" => Some(Type::String),
+        "Number" | "Int" | "Float" => Some(Type::Number),
+        "Boolean" => Some(Type::Boolean),
+        "Null" => Some(Type::Null),
         _ => None,
     }
 }
@@ -124,7 +144,7 @@ fn builtin_type_entries() -> HashMap<String, TypeEntry> {
 /// `builtins/intrinsic-functions.md`): the name its signature writes, for
 /// diagnostics, and the type it accepts. `Float`/`Int`/`U64` are written the
 /// way the spec writes them, while every numeric parameter accepts the
-/// implementation's one `number` type.
+/// implementation's one `Number` type.
 #[derive(Clone, Copy)]
 enum BuiltinTy {
     Number,
@@ -352,7 +372,7 @@ pub struct Analyzer {
     /// [`apply_trait_dispatch`] after analysis, keeping the checker call-site
     /// signatures shareable.
     trait_dispatch: Vec<(Range<usize>, String)>,
-    /// `+` expressions whose operands both checked out as `list` types; applied
+    /// `+` expressions whose operands both checked out as `List` types; applied
     /// back onto the AST (`BinaryOp.list_concat`) by [`apply_list_concat`] so
     /// the JS codegen emits an array concatenation instead of a stringifying
     /// bare `+`.
@@ -570,7 +590,7 @@ pub struct AnalysisResult {
     /// The loader applies these to the module's AST before codegen/runtime.
     pub trait_dispatch: Vec<(Range<usize>, String)>,
     /// List-concat `+` sites (spans of `BinaryOp`s whose operands are both
-    /// `list`); applied to the AST by [`apply_list_concat`] before codegen.
+    /// `List`); applied to the AST by [`apply_list_concat`] before codegen.
     pub list_concat: Vec<Range<usize>>,
     /// `impl Trait for Type { method }` registrations declared directly in this
     /// module. Exported so dependent modules that import `Type` (unaliased) can
@@ -1539,7 +1559,7 @@ pub fn apply_trait_dispatch(program: &mut Program, dispatch: &[(Range<usize>, St
 }
 
 /// Apply the list-concat annotations found during analysis: every `a + b`
-/// whose operands checked out as `list` types gets `BinaryOp.list_concat` set,
+/// whose operands checked out as `List` types gets `BinaryOp.list_concat` set,
 /// so the JS codegen emits an array concatenation instead of the bare `+`.
 pub fn apply_list_concat(program: &mut Program, spans: &[Range<usize>]) {
     walk_program(program, &mut |expr| {
@@ -2857,7 +2877,7 @@ impl Analyzer {
                     Type::List(_) | Type::Any => {}
                     other => {
                         return Err(self.err(format!(
-                            "for loop must iterate over a `list`, found `{}`",
+                            "for loop must iterate over a `List`, found `{}`",
                             other.name()
                         )));
                     }
@@ -2886,7 +2906,7 @@ impl Analyzer {
                 let condition = self.check_expression(&stmt.condition)?;
                 if !self.assignable(&condition, &Type::Boolean) {
                     return Err(self.err(format!(
-                        "while condition must be a `boolean`, found `{}`",
+                        "while condition must be a `Boolean`, found `{}`",
                         condition.name()
                     )));
                 }
@@ -4861,7 +4881,7 @@ impl Analyzer {
                 let cond = self.check_expression(condition)?;
                 if !self.assignable(&cond, &Type::Boolean) {
                     return Err(self.err(format!(
-                        "if condition must be a `boolean`, found `{}`",
+                        "if condition must be a `Boolean`, found `{}`",
                         cond.name()
                     )));
                 }
@@ -4886,7 +4906,7 @@ impl Analyzer {
                     Type::List(_) | Type::Any => {}
                     other => {
                         return Err(self.err(format!(
-                            "for loop must iterate over a `list`, found `{}`",
+                            "for loop must iterate over a `List`, found `{}`",
                             other.name()
                         )));
                     }
@@ -5917,7 +5937,7 @@ impl Analyzer {
                 if !self.assignable(&start, &Type::Number) || !self.assignable(&end, &Type::Number)
                 {
                     return Err(self.err(format!(
-                        "range endpoints must be `number`, found `{}` and `{}`",
+                        "range endpoints must be `Number`, found `{}` and `{}`",
                         start.name(),
                         end.name()
                     )));
@@ -6318,7 +6338,7 @@ impl Analyzer {
                     Ok(Type::Boolean)
                 } else {
                     Err(self.err(format!(
-                        "unary `!` requires a `boolean` operand, found `{}`",
+                        "unary `!` requires a `Boolean` operand, found `{}`",
                         operand.name()
                     )))
                 }
@@ -6328,7 +6348,7 @@ impl Analyzer {
                     Ok(Type::Number)
                 } else {
                     Err(self.err(format!(
-                        "unary `-` requires a `number` operand, found `{}`",
+                        "unary `-` requires a `Number` operand, found `{}`",
                         operand.name()
                     )))
                 }
@@ -6338,7 +6358,7 @@ impl Analyzer {
                     Ok(Type::Number)
                 } else {
                     Err(self.err(format!(
-                        "unary `~` requires a `number` operand, found `{}`",
+                        "unary `~` requires a `Number` operand, found `{}`",
                         operand.name()
                     )))
                 }
@@ -6388,7 +6408,7 @@ impl Analyzer {
         let condition = self.check_expression(&tr.condition)?;
         if !self.assignable(&condition, &Type::Boolean) {
             return Err(self.err(format!(
-                "ternary condition must be a `boolean`, found `{}`",
+                "ternary condition must be a `Boolean`, found `{}`",
                 condition.name()
             )));
         }
@@ -6574,7 +6594,7 @@ impl Analyzer {
                         && !self.assignable(&value_type, &Type::String)
                     {
                         return Err(self.err(format!(
-                            "match arm range pattern does not match value of type `{}` (expected `number` or `string`)",
+                            "match arm range pattern does not match value of type `{}` (expected `Number` or `String`)",
                             value_type.name()
                         )));
                     }
@@ -6599,12 +6619,14 @@ impl Analyzer {
                     span,
                     ..
                 } => {
-                    self.check_type(&Type::Named(type_name.clone(), Vec::new()))?;
+                    let pattern_ty = pattern_primitive_type(type_name)
+                        .unwrap_or_else(|| Type::Named(type_name.clone(), Vec::new()));
+                    self.check_type(&pattern_ty)?;
                     if let xulo_core::ast::PatternBinder::Binding(b) = binder {
                         self.table.declare_with_def(
                             Symbol {
                                 name: b.clone(),
-                                type_: Type::Named(type_name.clone(), Vec::new()),
+                                type_: pattern_ty,
                                 kind: SymbolKind::Variable,
                                 is_shared: false,
                                 is_param: false,
@@ -6690,7 +6712,7 @@ impl Analyzer {
                                     let guard_type = self.check_expression(guard)?;
                                     if !self.assignable(&guard_type, &Type::Boolean) {
                                         return Err(self.err(format!(
-                                            "match guard must be a `boolean`, found `{}`",
+                                            "match guard must be a `Boolean`, found `{}`",
                                             guard_type.name()
                                         )));
                                     }
@@ -6716,7 +6738,7 @@ impl Analyzer {
                 let guard_type = self.check_expression(guard)?;
                 if !self.assignable(&guard_type, &Type::Boolean) {
                     return Err(self.err(format!(
-                        "match guard must be a `boolean`, found `{}`",
+                        "match guard must be a `Boolean`, found `{}`",
                         guard_type.name()
                     )));
                 }
@@ -7030,7 +7052,7 @@ impl Analyzer {
                 if !self.assignable(&ms, &Type::Number) {
                     return Err(self
                         .err(format!(
-                            "`Task::timeout` millisecond count must be a `number`, found `{}`",
+                            "`Task::timeout` millisecond count must be a `Number`, found `{}`",
                             ms.name()
                         ))
                         .at(ms_span));
@@ -7334,7 +7356,7 @@ impl Analyzer {
             return Ok(Type::String);
         }
         // `Error(message)` constructs the built-in base error type (spec
-        // `error-handling.md`): one `string` argument, typed `Error`. Like
+        // `error-handling.md`): one `String` argument, typed `Error`. Like
         // `print`/`str`, a user-declared `fn Error` shadows it (the lookup
         // above runs first).
         if call.callee == "Error" {
@@ -7351,7 +7373,7 @@ impl Analyzer {
             if !self.assignable(&message, &Type::String) {
                 return Err(self
                     .err(format!(
-                        "`Error` message must be a `string`, found `{}`",
+                        "`Error` message must be a `String`, found `{}`",
                         message.name()
                     ))
                     .at(call.arguments[0].value.span().clone()));
@@ -7372,7 +7394,7 @@ impl Analyzer {
             if !self.assignable(&cond, &Type::Boolean) {
                 return Err(self
                     .err(format!(
-                        "`assert` condition must be a `boolean`, found `{}`",
+                        "`assert` condition must be a `Boolean`, found `{}`",
                         cond.name()
                     ))
                     .at(call.arguments[0].value.span().clone()));
@@ -7381,7 +7403,7 @@ impl Analyzer {
             if !self.assignable(&message, &Type::String) {
                 return Err(self
                     .err(format!(
-                        "`assert` message must be a `string`, found `{}`",
+                        "`assert` message must be a `String`, found `{}`",
                         message.name()
                     ))
                     .at(call.arguments[1].value.span().clone()));
@@ -8448,7 +8470,7 @@ impl Analyzer {
         let condition = self.check_expression(&if_expr.condition)?;
         if !self.assignable(&condition, &Type::Boolean) {
             return Err(self.err(format!(
-                "if condition must be a `boolean`, found `{}`",
+                "if condition must be a `Boolean`, found `{}`",
                 condition.name()
             )));
         }
@@ -8560,10 +8582,14 @@ impl Analyzer {
         for arg in args {
             self.check_type(arg)?;
         }
-        if name == "View"
-            || self.type_table.contains_key(name)
+        // A name is known when the program declares it (a type table entry,
+        // an imported face type), when it is one of the prelude's own entries,
+        // or when it is a fixed-arity prelude/primitive name (spec
+        // `types/primitive-types.md`, `builtins/prelude.md`).
+        if self.type_table.contains_key(name)
             || self.imported_types.contains_key(name)
             || self.builtins.contains_key(name)
+            || builtin_type_arity(name).is_some()
         {
             Ok(())
         } else {
@@ -8647,6 +8673,14 @@ impl Analyzer {
             (Type::List(a), Type::List(b)) => self.assignable(a, b),
             (Type::Object, Type::ObjectType(_)) => true,
             (Type::ObjectType(_), Type::Object) => true,
+            // A brace literal stands in for any map shape when the
+            // annotation is a map (spec `types/composite-types.md`: the
+            // expected type is applied to the literal — `let same:
+            // Map<String, Int> = { a: 1 }`). `Type::Object` carries no field
+            // types to compare, and map types unify loosely by name the same
+            // way the typed form does.
+            (Type::Object, Type::Named(n, _)) if n == "Map" => true,
+            (Type::Named(a, _), Type::Named(b, _)) if a == "Map" && b == "Map" => true,
             (Type::ObjectType(from_fields), Type::ObjectType(to_fields)) => {
                 // Structural typing: every field the target requires must be
                 // present in the source with a compatible type. Extra source

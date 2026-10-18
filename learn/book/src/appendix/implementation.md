@@ -15,7 +15,7 @@ UIBlock {
 }
 
 // UIElement::Expr 承载组件块内的「表达式子元素」，语义阶段限定其类型为
-// string / View / Any / list<View|string|Any> 之一；list 渲染为
+// string / View / Any / List<View|String|Any> 之一；list 渲染为
 // 嵌套数组，由运行时渲染器展平（与 if/for 产物同一约定）。
 
 // 代码块 — 只能包含普通语句
@@ -38,12 +38,12 @@ Block {
 
 ```xulo
 // 函数体末尾无分号 → 隐式返回
-fn add(a: number, b: number): number {
+fn add(a: Number, b: Number): Number {
   a + b  // ✅ 隐式返回
 }
 
 // 函数体末尾有分号 → 语句，警告
-fn add(a: number, b: number): number {
+fn add(a: Number, b: Number): Number {
   a + b;  // ⚠️ 警告：忽略返回值
 }
 ```
@@ -64,7 +64,7 @@ fn add(a: number, b: number): number {
 | 阶段 | 方法 | 说明 |
 |------|------|------|
 | 词法分析 | 独立 Lexer | 生成 Token 流，不区分上下文 |
-| 类型解析 | 上下文感知 | 解析类型时识别 `T?`、`T \| U`、`list<T>` |
+| 类型解析 | 上下文感知 | 解析类型时识别 `T?`、`T \| U`、`List<T>` |
 | 表达式解析 | Pratt Parser | 处理优先级、三目、函数调用 |
 | UI Block 解析 | 专用解析器 | 只允许 UI 元素，禁止普通语句 |
 | 语义分析 | 访问者模式 | 类型检查、作用域、生命周期 |
@@ -83,10 +83,10 @@ fn add(a: number, b: number): number {
 从词法到语义的所有节点都在 AST 上携带源码 `span`，因此错误与警告都能给出精确位置：
 
 ```text
-error[E0003]: return type mismatch: expected `number`, found `string`
+error[E0003]: return type mismatch: expected `Number`, found `String`
   --> bad.xulo:3:17
      |
-  3  |   fn f(): number { "hi" }
+  3  |   fn f(): Number { "hi" }
      |                  ^^^^^^^^
 ```
 

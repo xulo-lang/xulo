@@ -6,14 +6,14 @@
 
 ```xulo
 // 导出（pub 声明）
-pub fn add(a: number, b: number): number {
+pub fn add(a: Number, b: Number): Number {
   a + b
 }
 
 pub const PI = 3.14
 
 pub type User = {
-  name: string
+  name: String
 }
 
 pub enum Status {
@@ -47,10 +47,10 @@ import "core"
 `pub` 是声明级修饰符，把声明标记为公开（对其他模块可见）：
 
 ```xulo
-pub fn add(a: number, b: number): number { a + b }
+pub fn add(a: Number, b: Number): Number { a + b }
 pub const PI = 3.14
 pub enum Status { Active Inactive }
-pub type User = { name: string }
+pub type User = { name: String }
 ```
 
 - `pub fn/let/const/type/enum` 只影响跨模块可见性，模块内照常使用。

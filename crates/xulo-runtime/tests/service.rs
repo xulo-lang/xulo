@@ -20,9 +20,9 @@ fn run(src: &str) -> Vec<String> {
 #[test]
 fn service_reply_settles_send_task() {
     let out = run(r#"
-        struct Tally { total: number }
+        struct Tally { total: Number }
         impl Tally {
-            fn on_message(mut self, cmd: number) {
+            fn on_message(mut self, cmd: Number) {
                 self.total = self.total + cmd
                 reply(self.total)
             }
@@ -43,9 +43,9 @@ fn service_reply_settles_send_task() {
 #[test]
 fn service_handles_messages_in_fifo_order() {
     let out = run(r#"
-        struct Counter { n: number }
+        struct Counter { n: Number }
         impl Counter {
-            fn on_message(mut self, v: number) {
+            fn on_message(mut self, v: Number) {
                 self.n = self.n + v
                 reply(self.n)
             }
@@ -69,10 +69,10 @@ fn service_handles_messages_in_fifo_order() {
 #[test]
 fn async_on_message_defers_next_message() {
     let out = run(r#"
-        struct Box { v: number }
-        async fn slow(x: number): number { x }
+        struct Box { v: Number }
+        async fn slow(x: Number): Number { x }
         impl Box {
-            async fn on_message(mut self, x: number) {
+            async fn on_message(mut self, x: Number) {
                 self.v = await slow(x)
                 reply(self.v)
             }
@@ -95,10 +95,10 @@ fn async_on_message_defers_next_message() {
 #[test]
 fn stop_cancels_queued_messages() {
     let out = run(r#"
-        async fn slow(n: number): number { n }
-        struct S { n: number }
+        async fn slow(n: Number): Number { n }
+        struct S { n: Number }
         impl S {
-            async fn on_message(mut self, v: number) {
+            async fn on_message(mut self, v: Number) {
                 self.n = self.n + v
                 let _unused = await slow(0)
                 reply(self.n)
@@ -124,9 +124,9 @@ fn stop_cancels_queued_messages() {
 #[test]
 fn on_message_without_reply_settles_null() {
     let out = run(r#"
-        struct Nop { seen: number }
+        struct Nop { seen: Number }
         impl Nop {
-            fn on_message(mut self, v: number) {
+            fn on_message(mut self, v: Number) {
                 self.seen = v
             }
         }
@@ -145,9 +145,9 @@ fn on_message_without_reply_settles_null() {
 #[test]
 fn service_state_is_isolated_from_spawner() {
     let out = run(r#"
-        struct Acc { v: number }
+        struct Acc { v: Number }
         impl Acc {
-            fn on_message(mut self, delta: number) {
+            fn on_message(mut self, delta: Number) {
                 self.v = self.v + delta
                 reply(self.v)
             }
@@ -171,7 +171,7 @@ fn service_state_is_isolated_from_spawner() {
 #[test]
 fn task_namespace_combinators_settle() {
     let out = run(r#"
-        async fn work(n: number): number { n }
+        async fn work(n: Number): Number { n }
         async fn main() {
             let ready = Task::resolve(42)
             print(await ready)
@@ -193,7 +193,7 @@ fn task_all_propagates_rejection() {
     let interp = Interpreter::new();
     let program = parse_program(
         r#"
-        async fn boom(): number {
+        async fn boom(): Number {
             panic("nope")
         }
         async fn main() {
@@ -238,9 +238,9 @@ fn task_timeout_wraps_a_task_that_settles_in_time() {
 #[test]
 fn task_timeout_expires_on_a_task_that_never_settles() {
     let out = run(r#"
-        struct Relay { n: number }
+        struct Relay { n: Number }
         impl Relay {
-            async fn on_message(mut self, cmd: object) {
+            async fn on_message(mut self, cmd: Map<String, Unknown>) {
                 reply(await cmd.me.send({ me: cmd.me }))
             }
         }

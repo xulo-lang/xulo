@@ -46,7 +46,7 @@ xulo run hello.xulo
 ## 一个稍完整的例子
 
 ```xulo
-fn fib(n: number): number {
+fn fib(n: Number): Number {
     if n <= 1 {
         return n
     } else {

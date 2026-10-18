@@ -1,5 +1,5 @@
 // 泛型：类型参数 <T>，调用处自动推断类型实参
-fn first<T>(list: list<T>): T {
+fn first<T>(list: List<T>): T {
     list[0]
 }
 
@@ -7,15 +7,15 @@ fn identity<T>(value: T): T {
     value
 }
 
-fn twice<T>(value: T): list<T> {
+fn twice<T>(value: T): List<T> {
     [value, value]
 }
 
-fn combine<T>(a: list<T>, b: list<T>): list<T> {
+fn combine<T>(a: List<T>, b: List<T>): List<T> {
     a + b
 }
 
-fn prependAll<T>(prefix: T, list: list<T>): list<T> {
+fn prependAll<T>(prefix: T, list: List<T>): List<T> {
     let mut out = []
     for x in list {
         out = out + [prefix, x]

@@ -5,7 +5,7 @@
 ## `async` / `await`（TypeScript 风格）
 
 ```xulo
-fn fetchUser(id: string): async {
+fn fetchUser(id: String): async {
   let response = await fetch("/api/users/" + id)
   let data = await response.json()
   return data
@@ -19,7 +19,7 @@ fn fetchUser(id: string): async {
 ## `try` / `catch`
 
 ```xulo
-fn fetchUser(id: string): async {
+fn fetchUser(id: String): async {
   try {
     let response = await fetch("/api/users/" + id)
     return await response.json()
@@ -47,7 +47,7 @@ fn main(): async {
 
 ```xulo
 // ✅ 正确：直接调用 useAppStore()
-pub fn fetchUser(id: string): async {
+pub fn fetchUser(id: String): async {
   const store = useAppStore()
   store.actions.setLoading(true)
   let data = await fetch("/api/users/" + id).json()
@@ -55,7 +55,7 @@ pub fn fetchUser(id: string): async {
 }
 
 // ❌ 错误：在异步函数里使用 @Store 装饰器
-pub fn fetchUser(id: string): async {
+pub fn fetchUser(id: String): async {
   @Store const { setUser } = useAppStore()  // ❌ 禁止
 }
 ```

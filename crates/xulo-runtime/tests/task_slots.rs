@@ -27,7 +27,7 @@ fn run_raw(src: &str) -> (Vec<String>, usize) {
 fn sequential_async_calls_recycle_task_slots() {
     let (out, slots) = run_raw(
         r#"
-        async fn work(n: number): number { n }
+        async fn work(n: Number): Number { n }
         async fn main() {
             for i in 0..<200 {
                 print(str(await work(i)))
@@ -58,7 +58,7 @@ fn sequential_async_calls_recycle_task_slots() {
 fn fire_and_forget_calls_recycle_task_slots() {
     let (out, slots) = run_raw(
         r#"
-        async fn work(n: number) { print(str(n)) }
+        async fn work(n: Number) { print(str(n)) }
         async fn main() {
             for i in 0..<100 {
                 work(i)

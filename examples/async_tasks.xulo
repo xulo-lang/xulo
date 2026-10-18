@@ -1,6 +1,6 @@
 async fn pause() { }
 
-async fn fetch(id: number): number {
+async fn fetch(id: Number): Number {
     await pause()
     id * 10
 }

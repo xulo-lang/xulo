@@ -31,7 +31,7 @@ fn main_call(src: &str) -> Call {
 
 #[test]
 fn written_type_args_parse_onto_the_call() {
-    let call = main_call("fn main() { first<number>([1]) }");
+    let call = main_call("fn main() { first<Number>([1]) }");
     assert_eq!(call.callee, "first");
     assert_eq!(call.type_args, Some(vec![Type::Number]));
     assert_eq!(call.arguments.len(), 1);
@@ -39,7 +39,7 @@ fn written_type_args_parse_onto_the_call() {
 
 #[test]
 fn nested_list_type_args_need_the_space_between_closers() {
-    let call = main_call("fn main() { first<List<number> >([1]) }");
+    let call = main_call("fn main() { first<List<Number> >([1]) }");
     assert_eq!(
         call.type_args,
         Some(vec![Type::List(Box::new(Type::Number))])
@@ -56,7 +56,7 @@ fn empty_list_is_a_zero_length_type_argument_list() {
 
 #[test]
 fn spaces_around_the_list_are_insignificant() {
-    let call = main_call("fn main() { first< number >([1]) }");
+    let call = main_call("fn main() { first< Number >([1]) }");
     assert_eq!(call.type_args, Some(vec![Type::Number]));
 }
 
@@ -65,7 +65,7 @@ fn trailing_content_after_close_falls_back_to_comparison() {
     // Condition 2 of the disambiguation: the token after `>` must be `(`.
     // Without it the `<` is relational — and two relational operators are
     // non-associative, so the comparison reading fails to parse.
-    let err = parse_err("fn main() { let x = a < number > [1] }");
+    let err = parse_err("fn main() { let x = a < Number > [1] }");
     assert!(matches!(err.kind, xulo_core::error::ErrorKind::Parse));
 }
 
@@ -98,22 +98,22 @@ fn logical_and_separates_comparison_operands() {
 fn adjacent_closers_fail_with_a_note_to_insert_the_space() {
     // spec `grammar.md`: `first<Map<String, Int>>(m)` is not well-formed and
     // fails with a note; the well-formed spelling is `…> >(m)`.
-    let err = parse_err("fn main() { first<List<List<number>>>(xs) }");
+    let err = parse_err("fn main() { first<List<List<Number>>>(xs) }");
     let note = err.note.as_deref().unwrap_or_else(|| panic!("no note"));
     assert!(note.contains("`> >`"), "unexpected note: {note}");
 }
 
 #[test]
 fn type_args_attach_to_method_enum_and_component_callees() {
-    let call = main_call("fn main() { obj.m<number>(1) }");
+    let call = main_call("fn main() { obj.m<Number>(1) }");
     assert_eq!(call.method.as_deref(), Some("m"));
     assert_eq!(call.type_args, Some(vec![Type::Number]));
 
-    let call = main_call("fn main() { Color::Red<number>() }");
+    let call = main_call("fn main() { Color::Red<Number>() }");
     assert_eq!(call.callee, "Color::Red");
     assert_eq!(call.type_args, Some(vec![Type::Number]));
 
-    let p = parse_ok("fn main() { Text<number>(\"Hi\") { } }");
+    let p = parse_ok("fn main() { Text<Number>(\"Hi\") { } }");
     let Statement::Fn(f) = &p.statements[0] else {
         panic!("expected fn");
     };
@@ -134,8 +134,8 @@ fn subscript_and_result_callees_take_no_list_but_still_parse() {
     // parameters), which is a better diagnostic than the non-associative
     // comparison chain the alternative reading would produce.
     for src in [
-        "fn main() { xs[0]<number>(1) }",
-        "fn main() { getFn()<number>(1) }",
+        "fn main() { xs[0]<Number>(1) }",
+        "fn main() { getFn()<Number>(1) }",
     ] {
         let p = parse_ok(src);
         let Statement::Fn(f) = &p.statements[0] else {

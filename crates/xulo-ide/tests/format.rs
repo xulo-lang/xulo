@@ -49,9 +49,9 @@ fn no_space_in_call_index_and_member() {
 
 #[test]
 fn range_and_optional_type() {
-    let out = fmt("fn main(){for i in 0..<10{print(i)}}\nfn f(x: User?): number { return 1 }");
+    let out = fmt("fn main(){for i in 0..<10{print(i)}}\nfn f(x: User?): Number { return 1 }");
     assert!(out.contains("for i in 0..<10 {"));
-    assert!(out.contains("fn f(x: User?): number {"));
+    assert!(out.contains("fn f(x: User?): Number {"));
 }
 
 #[test]
@@ -77,7 +77,7 @@ fn empty_block_does_not_shift_sibling_indent() {
 
 #[test]
 fn is_idempotent() {
-    let src = "fn fib(n:number):number{if n<=1{return n}else{return fib(n-1)+fib(n-2)}}\n";
+    let src = "fn fib(n:Number):Number{if n<=1{return n}else{return fib(n-1)+fib(n-2)}}\n";
     let once = fmt(src);
     assert_eq!(fmt(&once), once);
 }
@@ -91,7 +91,7 @@ fn comments_are_dropped() {
 
 #[test]
 fn unary_minus_keeps_space_after_assign_return() {
-    let out = fmt("fn f(): number { return -5 }\nfn main(){let x=-5\nprint(x)}");
+    let out = fmt("fn f(): Number { return -5 }\nfn main(){let x=-5\nprint(x)}");
     assert!(out.contains("return -5"));
     assert!(out.contains("let x = -5"));
 }
@@ -125,8 +125,8 @@ fn generic_type_annotation_gets_operator_spacing() {
     // `list < number >`. It still re-parses; the deviation is cosmetic. Fixing
     // it requires distinguishing type annotations from comparisons. Pinned so
     // the behavior is deliberate.
-    let out = fmt("fn main(){let xs: list<number> = []\nprint(1)}");
-    assert!(out.contains("let xs: list < number > = []"), "out: {out}");
+    let out = fmt("fn main(){let xs: List<Number> = []\nprint(1)}");
+    assert!(out.contains("let xs: List < Number > = []"), "out: {out}");
 }
 
 #[test]
@@ -137,7 +137,7 @@ fn comparison_operator_spacing_is_untouched() {
 
 #[test]
 fn declaration_attributes_stay_glued_and_on_their_own_line() {
-    let out = fmt("#Test fn t(){print(1)}\n#Derive(ToString)\nstruct S{a:string}");
+    let out = fmt("#Test fn t(){print(1)}\n#Derive(ToString)\nstruct S{a:String}");
     assert!(out.contains("#Test fn t() {"), "out: {out}");
     assert!(out.contains("#Derive(ToString)\nstruct S {"), "out: {out}");
 }

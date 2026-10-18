@@ -994,7 +994,7 @@ enum DerivedForm {
 
 fn derived_form(ty: &Type) -> DerivedForm {
     match ty {
-        // `string` parses as `Type::String`, so a named type here is a
+        // `String` parses as `Type::String`, so a named type here is a
         // user type; the semantic pass has already rejected the derive
         // unless the type has a string form (E0212/E0801).
         Type::Named(name, _) => DerivedForm::ToStr(name.clone()),
@@ -2454,7 +2454,7 @@ impl Interpreter {
                         other => {
                             return Err(RunError::err(
                                 format!(
-                                    "for loop must iterate over a `list`, found {}",
+                                    "for loop must iterate over a `List`, found {}",
                                     other.kind_name()
                                 ),
                                 0..0,
@@ -2464,7 +2464,7 @@ impl Interpreter {
                     other => {
                         return Err(RunError::err(
                             format!(
-                                "for loop must iterate over a `list`, found {}",
+                                "for loop must iterate over a `List`, found {}",
                                 other.kind_name()
                             ),
                             0..0,
@@ -2642,7 +2642,7 @@ impl Interpreter {
                 other => {
                     return Err(RunError::err(
                         format!(
-                            "for loop must iterate over a `list`, found {}",
+                            "for loop must iterate over a `List`, found {}",
                             other.kind_name()
                         ),
                         f.iterable.span().clone(),
@@ -3399,7 +3399,7 @@ impl Interpreter {
         match self.eval(expr, env)? {
             Value::Number(n) => Ok(n),
             other => Err(RunError::err(
-                format!("expected a `number`, found {}", other.kind_name()),
+                format!("expected a `Number`, found {}", other.kind_name()),
                 expr.span().clone(),
             )),
         }
@@ -4878,13 +4878,16 @@ fn type_matches_value(type_: &Type, value: &Value) -> bool {
 /// A coarse runtime type test for `value is Type` / type patterns.
 fn value_is_named_type(value: &Value, type_name: &str) -> bool {
     match type_name {
-        "number" | "int" | "float" => matches!(value, Value::Number(_)),
-        "string" => matches!(value, Value::String(_)),
-        "boolean" => matches!(value, Value::Boolean(_)),
-        "null" => matches!(value, Value::Null),
-        "list" | "List" => matches!(value, Value::List(_)),
-        "object" | "Object" | "Map" => matches!(value, Value::Object(_)),
-        "any" | "Any" | "unknown" | "Unknown" => true,
+        // The spec primitive spellings (spec `types/primitive-types.md`),
+        // including the fixed-bit layer of the numeric system.
+        "Number" | "Int" | "Float" | "I8" | "I16" | "I32" | "I64" | "U8" | "U16" | "U32"
+        | "U64" | "F32" | "F64" => matches!(value, Value::Number(_)),
+        "String" => matches!(value, Value::String(_)),
+        "Boolean" => matches!(value, Value::Boolean(_)),
+        "Null" => matches!(value, Value::Null),
+        "List" => matches!(value, Value::List(_)),
+        "Map" => matches!(value, Value::Object(_)),
+        "Unknown" => true,
         _ => match value {
             Value::Enum { enum_name, .. } => enum_name == type_name,
             _ => false,

@@ -4,7 +4,7 @@ use xulo_parser::parse_program;
 #[test]
 fn test_fn_parses_with_fixed_shape() {
     let src = r#"
-fn helper(): number { return 42 }
+fn helper(): Number { return 42 }
 
 #Test fn basic_works() {
   let x = 1
@@ -58,8 +58,8 @@ fn test_fn_rejects_parameters_return_pub_and_generics() {
     // own production); the semantic pass rejects those with E0110 — the
     // parser keeps no registry knowledge.
     for src in [
-        "#Test fn t(x: number) {}",
-        "#Test fn t(): number { return 1 }",
+        "#Test fn t(x: Number) {}",
+        "#Test fn t(): Number { return 1 }",
         "#Test fn t<T>() {}",
     ] {
         let program = parse_program(src).unwrap_or_else(|e| panic!("{src}: {e}"));

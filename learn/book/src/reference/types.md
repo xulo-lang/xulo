@@ -5,27 +5,26 @@
 ## 基础类型
 
 ```xulo
-string         // 字符串
-number         // 数字（整数和浮点统一）
-boolean        // 布尔值
-list<T>        // 列表（泛型）
-object         // 对象（结构体）
+String         // 字符串
+Number         // 数字（整数和浮点统一）
+Boolean        // 布尔值
+List<T>        // 列表（泛型）
 null           // 空值
-T?             // 可选类型（Swift 风格，等价于 T | null）
+T?             // 可选类型（Swift 风格，等价于 T | Null）
 T | U          // 联合类型（TS 风格）
 T & U          // 交叉类型（TS 风格）
 ```
 
-`number` 统一表示整数与浮点；`print(...)` 与 `list<T>` 是内建能力。`View` 是内建**标记类型**：编译器用它识别「返回该类型的函数即 UI 组件」，本身无运行时实现，具体组件由标准库 `@xulo/ui` 提供（见 [UI 组件](ui.md)）。
+`Number` 统一表示整数与浮点；`print(...)` 与 `List<T>` 是内建能力。`View` 是内建**标记类型**：编译器用它识别「返回该类型的函数即 UI 组件」，本身无运行时实现，具体组件由标准库 `@xulo/ui` 提供（见 [UI 组件](ui.md)）。
 
 ## 类型别名（统一使用 `type`，无 `interface`）
 
 ```xulo
 // 对象类型
 type User = {
-  name: string
-  age: number
-  email: string?
+  name: String
+  age: Number
+  email: String?
 }
 
 // 联合类型
@@ -36,13 +35,13 @@ type Handler = fn(request: Request): Response
 
 // 组合类型（交叉类型）
 type UserWithRole = User & {
-  role: string
+  role: String
 }
 
 // 泛型
 type Result<T> = {
   data: T?
-  error: string?
+  error: String?
 }
 ```
 
@@ -65,22 +64,22 @@ enum Theme {
 ```xulo
 enum Result<T> {
   Success(T)
-  Error(string)
+  Error(String)
 }
 
 enum Action {
   Click
-  Submit(data: object)   // 具名关联数据（字段名）
+  Submit(data: Map<String, Unknown>)   // 具名关联数据（字段名）
   Cancel
 }
 
 enum Person {
   Nobody
-  Named(string, number)  // 多参数 payload
+  Named(String, Number)  // 多参数 payload
 }
 ```
 
-payload 可以是位置形式 `Success(T)`、具名形式 `Submit(data: object)`，也支持多参数 `Named(string, number)`；构造按位置传参。匹配时每个参数对应一个绑定，用 `_` 丢弃不需要的槽位：
+payload 可以是位置形式 `Success(T)`、具名形式 `Submit(data: Map<String, Unknown>)`，也支持多参数 `Named(String, Number)`；构造按位置传参。匹配时每个参数对应一个绑定，用 `_` 丢弃不需要的槽位：
 
 ```xulo
 Action::Submit({ message: "hi" })
@@ -126,15 +125,15 @@ match result {
 
 ```xulo
 trait Area {
-    fn area(self): number
-    fn perimeter(self): number
+    fn area(self): Number
+    fn perimeter(self): Number
 }
 
-type Rectangle = { w: number, h: number }
+type Rectangle = { w: Number, h: Number }
 
 impl Area for Rectangle {
-    fn area(self): number { self.w * self.h }
-    fn perimeter(self): number { 2 * (self.w + self.h) }
+    fn area(self): Number { self.w * self.h }
+    fn perimeter(self): Number { 2 * (self.w + self.h) }
 }
 ```
 
@@ -153,7 +152,7 @@ fn main() {
 类型参数可以用 `T: Trait`（行内）或 `where T: Trait` 约束。有界类型参数在类型检查时被精化为特征的结构形状，可对其成员访问；多个特征用 `&` 连接：
 
 ```xulo
-fn describe<T: Area>(t: T): number {
+fn describe<T: Area>(t: T): Number {
     Area::area(t)
 }
 ```

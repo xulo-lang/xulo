@@ -70,14 +70,14 @@ pub struct FunctionValue {
 }
 
 impl Value {
-    /// A short type name for error messages (e.g. "a `number`").
+    /// A short type name for error messages (e.g. "a `Number`").
     pub fn kind_name(&self) -> String {
         match self {
-            Value::Number(_) => "a `number`".into(),
-            Value::String(_) => "a `string`".into(),
-            Value::Boolean(_) => "a `boolean`".into(),
+            Value::Number(_) => "a `Number`".into(),
+            Value::String(_) => "a `String`".into(),
+            Value::Boolean(_) => "a `Boolean`".into(),
             Value::Null => "`null`".into(),
-            Value::List(_) => "a `list`".into(),
+            Value::List(_) => "a `List`".into(),
             Value::Object(_) => "an `object`".into(),
             Value::Function(_) | Value::Native(_) => "a function".into(),
             Value::Signal(_) => "a signal".into(),

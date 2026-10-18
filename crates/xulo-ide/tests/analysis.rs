@@ -21,7 +21,7 @@ fn pos(analysis: &Analysis, src: &str, needle: &str, n: usize) -> Pos {
 }
 
 const SAMPLE: &str = "\
-fn greet(name: string): string {
+fn greet(name: String): String {
     return name
 }
 let input = \"hi\"
@@ -200,7 +200,7 @@ fn find_references_includes_declaration_and_uses() {
 fn shadowing_resolves_to_innermost_declaration() {
     let src = "\
 let x = 1
-fn f(): number {
+fn f(): Number {
     let x = 2
     return x
 }
@@ -245,9 +245,9 @@ let y = x
 #[test]
 fn closure_captures_outer_binding() {
     let src = "\
-fn apply(): number {
+fn apply(): Number {
     let base = 10
-    let f = fn(x: number): number {
+    let f = fn(x: Number): Number {
         return x + base
     }
     return 0
@@ -262,7 +262,7 @@ fn apply(): number {
         .unwrap();
     let hover = analysis.hover_at(base_use).expect("hover");
     assert_eq!(hover.name, "base");
-    assert_eq!(hover.type_name.as_deref(), Some("number"));
+    assert_eq!(hover.type_name.as_deref(), Some("Number"));
     assert_eq!(hover.def.unwrap().start, base_decl);
     assert_eq!(
         analysis.go_to_definition(base_use).unwrap().range.start,
@@ -284,7 +284,7 @@ let doubled = num * 2
         .expect("hover on use");
     assert_eq!(on_use.name, "num");
     assert_eq!(on_use.kind, "variable");
-    assert_eq!(on_use.type_name.as_deref(), Some("number"));
+    assert_eq!(on_use.type_name.as_deref(), Some("Number"));
     assert_eq!(on_use.def.unwrap().start, pos(&analysis, src, "num =", 0));
 
     // A literal has no name-use; the inferred expression type is shown.
@@ -292,22 +292,22 @@ let doubled = num * 2
         .hover_at(pos(&analysis, src, "42", 0))
         .expect("hover on literal");
     assert_eq!(on_literal.kind, "expression");
-    assert_eq!(on_literal.type_name.as_deref(), Some("number"));
+    assert_eq!(on_literal.type_name.as_deref(), Some("Number"));
 }
 
 #[test]
 fn document_symbols_builds_outline() {
     let src = "\
-type Rectangle = object
+type Rectangle = Map<String, Number>
 enum Color {
     Red,
     Green
 }
 trait Area {
-    fn area(self): number
+    fn area(self): Number
 }
 impl Area for Rectangle {
-    fn area(self): number {
+    fn area(self): Number {
         return 0
     }
 }
@@ -399,7 +399,7 @@ fn diagnostics_map_errors_and_warnings() {
 
     // A trailing `expr;` in a typed function warns instead of erroring.
     let warning_src = "\
-fn f(): number {
+fn f(): Number {
     let x = 1
     x;
 }
@@ -460,7 +460,7 @@ fn location_type_is_public() {
 #[test]
 fn component_hover_and_definition() {
     let src = "\
-fn Card(title: string): View {
+fn Card(title: String): View {
     View { Text(title) }
 }
 fn main() {
@@ -518,7 +518,7 @@ fn main() {
         .hover_at(pos(&analysis, src, "after =", 0))
         .expect("hover on healthy variable");
     assert_eq!(hover.kind, "variable");
-    assert_eq!(hover.type_name.as_deref(), Some("number"));
+    assert_eq!(hover.type_name.as_deref(), Some("Number"));
 
     // Definition resolution still works.
     let def = analysis
@@ -530,10 +530,10 @@ fn main() {
 #[test]
 fn hover_shows_signature_params_and_doc_comment() {
     let src = "\
-type User = object
+type User = Map<String, String>
 // A card that renders a greeting.
 // Title is uppercased.
-fn Card(title: string, user: User): View {
+fn Card(title: String, user: User): View {
     View { Text(title) }
 }
 fn main() {
@@ -553,12 +553,12 @@ fn main() {
     assert_eq!(usage.type_name.as_deref(), Some("View"));
     assert_eq!(
         usage.signature.as_deref(),
-        Some("fn Card(title: string, user: User): View")
+        Some("fn Card(title: String, user: User): View")
     );
     assert_eq!(
         usage.params,
         vec![
-            ("title".to_string(), "string".to_string()),
+            ("title".to_string(), "String".to_string()),
             ("user".to_string(), "User".to_string()),
         ]
     );
@@ -574,6 +574,6 @@ fn main() {
     assert_eq!(decl.kind, "function");
     assert_eq!(
         decl.signature.as_deref(),
-        Some("fn Card(title: string, user: User): View")
+        Some("fn Card(title: String, user: User): View")
     );
 }

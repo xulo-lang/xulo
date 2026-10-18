@@ -74,7 +74,7 @@ identifier     = (letter | "_") { letter | digit | "_" } ;
 
 以下内建类型名建议不要作为变量名使用（当前不报错，仅约定）：
 
-`string` `number` `boolean` `list` `object` `View`
+`String` `Number` `Boolean` `List<T>` `View`
 
 `View` 是内建**标记类型**：编译器仅用它识别「返回该类型的函数即 UI 组件」（并据此启用 `@State` / `@Store` 顶层校验），本身无运行时可执行实现——具体组件实现由标准库 `@xulo/ui` 提供。
 
@@ -85,12 +85,12 @@ identifier     = (letter | "_") { letter | digit | "_" } ;
 ## 字面量
 
 ```xulo
-123            // number（整数）
-3.14           // number（浮点）
-"hello"        // string（双引号）
-'world'        // string（单引号）
-true           // boolean
-false          // boolean
+123            // Number（整数）
+3.14           // Number（浮点）
+"hello"        // String（双引号）
+'world'        // String（单引号）
+true           // Boolean
+false          // Boolean
 null           // null
 [1, 2, 3]      // 列表字面量
 { name: "lyy" } // 对象字面量

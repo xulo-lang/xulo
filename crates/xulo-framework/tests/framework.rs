@@ -41,7 +41,7 @@ const UI_SRC: &str = r##"
 use ui::{Screen, VStack, HStack, Text, Button, Input};
 
 fn Counter(): View {
-    @State let count: number = 0
+    @State let count: Number = 0
     @Effect fn() { print("mounted") }
     VStack(spacing: 1) {
         Text("Count: " + str(count))
@@ -126,7 +126,7 @@ fn main(): View {
     write_sibling(
         &path,
         "lib.xulo",
-        "pub fn label(): string { \"from lib\" }\n",
+        "pub fn label(): String { \"from lib\" }\n",
     );
     let result = xulo_framework::render_to_string(&path, xulo_framework::Backend::Terminal);
     cleanup(&path);
@@ -141,7 +141,7 @@ fn clicking_button_rerenders_with_updated_state() {
     let path = temp_program(
         r#"use ui::{Button, Text, VStack};
 fn Counter(): View {
-    @State let count: number = 0
+    @State let count: Number = 0
     VStack(spacing: 1) {
         Text("Count: " + str(count))
         Button(onClick: fn() { count = count + 1 }) { Text("+") }
@@ -219,7 +219,7 @@ fn text_color_prop_becomes_widget_color() {
 
 #[test]
 fn non_view_main_is_rejected_for_rendering() {
-    let path = temp_program("fn main(): number { 42 }");
+    let path = temp_program("fn main(): Number { 42 }");
     let result = xulo_framework::render_to_string(&path, xulo_framework::Backend::Terminal);
     cleanup(&path);
     let err = result.expect_err("rendering a non-View main fails");
@@ -239,14 +239,14 @@ fn multiple_components_preserve_state_across_rerender() {
     let path = temp_program(
         r#"use ui::{Button, Text, VStack, Input};
 fn Counter(): View {
-    @State let count: number = 0
+    @State let count: Number = 0
     VStack(spacing: 1) {
         Text("Count: " + str(count))
         Button(onClick: fn() { count = count + 1 }) { Text("+") }
     }
 }
 fn Greeting(): View {
-    @State let name: string = "World"
+    @State let name: String = "World"
     VStack(spacing: 1) {
         Text("Hello, " + name)
         Button(onClick: fn() { name = "Xulo" }) { Text("Change Name") }
@@ -333,14 +333,14 @@ fn input_change_preserves_state() {
     let path = temp_program(
         r#"use ui::{Button, Text, VStack, Input};
 fn Counter(): View {
-    @State let count: number = 0
+    @State let count: Number = 0
     VStack(spacing: 1) {
         Text("Count: " + str(count))
         Button(onClick: fn() { count = count + 1 }) { Text("+") }
     }
 }
 fn NameField(): View {
-    @State let name: string = ""
+    @State let name: String = ""
     VStack(spacing: 1) {
         Input(value: $name, width: 200, placeholder: "Enter your name")
         Text("Hello, " + name)
@@ -419,14 +419,14 @@ fn input_state_not_reset_by_button_click() {
     let path = temp_program(
         "use ui::{Screen, VStack, Text, Button, Input};\n\
          fn Counter(): View {\n\
-         @State let count: number = 0\n\
+         @State let count: Number = 0\n\
          VStack(spacing: 1) {\n\
          Text(\"Count: \" + str(count))\n\
          Button(onClick: fn() { count = count + 1 }) { Text(\"+\") }\n\
          }\n\
          }\n\
          fn NameField(): View {\n\
-         @State let name: string = \"\"\n\
+         @State let name: String = \"\"\n\
          VStack(spacing: 1) {\n\
          Input(value: $name, width: 200, placeholder: \"Enter your name\")\n\
          Text(\"Hello, \" + name)\n\

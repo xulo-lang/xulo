@@ -7,23 +7,23 @@ enum Direction {
 }
 
 enum Shape {
-    Circle(number)                      // 位置形式 payload
-    Rect(width: number, height: number) // 具名 payload，匹配仍按位置
+    Circle(Number)                      // 位置形式 payload
+    Rect(width: Number, height: Number) // 具名 payload，匹配仍按位置
 }
 
 enum Result<T> {
     Success(T)
-    Error(string)
+    Error(String)
 }
 
-fn area(s: Shape): number {
+fn area(s: Shape): Number {
     match s {
         Shape::Circle(r) => 3.14 * r * r
         Shape::Rect(w, h) => w * h
     }
 }
 
-fn describe<T>(r: Result<T>): string {
+fn describe<T>(r: Result<T>): String {
     match r {
         Result::Success(v) => `ok: ${str(v)}`
         Result::Error(msg) => `err: ${msg}`

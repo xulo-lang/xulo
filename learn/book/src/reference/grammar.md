@@ -47,15 +47,15 @@ type_expr           = union_type ;
 
 union_type          = intersection_type { "|" intersection_type } ;
 intersection_type   = primary_type { "&" primary_type } ;
-primary_type        = "string"
-                    | "number"
-                    | "boolean"
-                    | "null"
+primary_type        = "String"
+                    | "Number"
+                    | "Boolean"
+                    | "Null"
                     | "object"
-                    | type_identifier [ type_args ]      (* generic named type, e.g. Result<number> *)
+                    | type_identifier [ type_args ]      (* generic named type, e.g. Result<Number> *)
                     | string_literal                     (* string literal type *)
                     | type_expr "?"                      (* optional type *)
-                    | "list" "<" type_expr ">"          (* generic list *)
+                    | "List" "<" type_expr ">"         (* generic list *)
                     | "(" type_expr ")"
                     | "{" [ field_list ] "}"            (* object type *)
                     | "fn" "(" [ param_type_list ] ")" [ ":" type_expr ] (* function type *)
@@ -237,7 +237,7 @@ component_block     = "{" { ui_element } "}" ;
 (* UI Element: only UI-specific constructs *)
 ui_element          = component_stmt
                     | text_literal_expr
-                    | expression            (* string / View / list<View> *)
+                    | expression            (* string / View / List<View> *)
                     | if_stmt
                     | for_stmt
                     | "{" { ui_element } "}"

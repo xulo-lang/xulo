@@ -1054,14 +1054,14 @@ impl PartialEq for Type {
 impl Type {
     pub fn name(&self) -> String {
         match self {
-            Type::String => "string".into(),
-            Type::Number => "number".into(),
-            Type::Boolean => "boolean".into(),
-            Type::Null => "null".into(),
+            Type::String => "String".into(),
+            Type::Number => "Number".into(),
+            Type::Boolean => "Boolean".into(),
+            Type::Null => "Null".into(),
             Type::Object => "object".into(),
             Type::Named(n, _) => n.clone(),
             Type::Literal(s) => format!("\"{s}\""),
-            Type::List(inner) => format!("list<{}>", inner.name()),
+            Type::List(inner) => format!("List<{}>", inner.name()),
             Type::Optional(inner) => format!("{}?", inner.name()),
             Type::Union(parts) => parts
                 .iter()

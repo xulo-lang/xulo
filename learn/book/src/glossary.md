@@ -14,7 +14,7 @@
 | **枚举（Enum）** | 一组固定值，可带关联数据 | [数据与类型](reference/types.md) |
 | **联合类型** | `T \| U`，值为 T 或 U 之一 | [数据与类型](reference/types.md) |
 | **交叉类型** | `T & U`，同时满足 T 与 U | [数据与类型](reference/types.md) |
-| **可选类型** | `T?`，等价 `T \| null` | [数据与类型](reference/types.md) |
+| **可选类型** | `T?`，等价 `T \| Null` | [数据与类型](reference/types.md) |
 | **泛型** | `<T>` 参数化的类型 / 函数 | [数据与类型](reference/types.md) |
 | **隐式返回** | 函数体末尾无分号表达式作为返回值 | [函数](reference/functions.md) |
 | **命名参数** | 按参数名传参（可乱序） | [函数](reference/functions.md) |

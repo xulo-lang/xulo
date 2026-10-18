@@ -88,7 +88,7 @@ fn run_fibonacci_recursion() {
     let file = temp_file(
         "fib.xulo",
         r#"
-        fn fib(n: number): number {
+        fn fib(n: Number): Number {
             if n <= 1 { return n }
             else { return fib(n - 1) + fib(n - 2) }
         }
@@ -242,20 +242,20 @@ fn run_types_enums_const_null() {
         "types.xulo",
         r#"
         enum Theme { Light Dark }
-        enum Result<T> { Success(T) Error(string) }
+        enum Result<T> { Success(T) Error(String) }
         type Status = "active" | "inactive"
 
         const APP = "Xulo"
         let mut count = 1
 
-        fn run(): number {
+        fn run(): Number {
           count = count + 1
           count
         }
         fn main() {
           let theme = Theme::Dark
           let ok = Result::Success(42)
-          let s: string? = null
+          let s: String? = null
           print(theme == Theme::Dark)
           print(ok)
           print(APP)
@@ -283,9 +283,9 @@ fn run_multi_payload_enum() {
     let file = temp_file(
         "multipayload.xulo",
         r#"
-        enum Person { Nobody, Named(string, number) }
+        enum Person { Nobody, Named(String, Number) }
 
-        fn greet(p: Person): string {
+        fn greet(p: Person): String {
             match p {
                 Person::Named(name, age) => "hi " + name + " (" + str(age) + ")"
                 Person::Nobody => "hi anon"
@@ -316,9 +316,9 @@ fn run_phase2_control_flow_and_expressions() {
     let file = temp_file(
         "phase2.xulo",
         r#"
-        enum Result<T> { Success(T) Error(string) }
+        enum Result<T> { Success(T) Error(String) }
 
-        fn describe(r: Result<number>): string {
+        fn describe(r: Result<Number>): String {
           match r {
             Result::Success(v) => "got " + v
             Result::Error(msg) => "err: " + msg
@@ -334,7 +334,7 @@ fn run_phase2_control_flow_and_expressions() {
           while c < 3 { c = c + 1 }
           print(c)
 
-          let name: string? = null
+          let name: String? = null
           print(name ?? "anon")
 
           let user = { name: "Xulo" }
@@ -408,7 +408,7 @@ fn run_multi_file_imports() {
             (
                 "math.xulo",
                 r#"
-                pub fn add(a: number, b: number): number { return a + b }
+                pub fn add(a: Number, b: Number): Number { return a + b }
                 pub const PI = 3.14
                 "#,
             ),
@@ -444,13 +444,13 @@ fn run_multi_file_named_and_async() {
             (
                 "greet.xulo",
                 r#"
-                pub fn greet(name: string): string { return "hi " + name }
+                pub fn greet(name: String): String { return "hi " + name }
                 "#,
             ),
             (
                 "load.xulo",
                 r#"
-                pub async fn load(n: number): number {
+                pub async fn load(n: Number): Number {
                     let x = n * 2
                     return x
                 }
@@ -489,7 +489,7 @@ fn run_pub_module_exports() {
         &[
             (
                 "math.xulo",
-                "pub fn add(a: number, b: number): number { return a + b }\n\
+                "pub fn add(a: Number, b: Number): Number { return a + b }\n\
                  pub const PI = 3.14\n\
                  pub enum Role { Admin Guest }\n\
                  fn secret() { print(\"no\") }\n",
@@ -576,7 +576,7 @@ fn run_module_import_destructure() {
         &[
             (
                 "util.xulo",
-                "pub fn double(x: number): number { return x * 2 }\n",
+                "pub fn double(x: Number): Number { return x * 2 }\n",
             ),
             (
                 "main.xulo",
@@ -601,7 +601,7 @@ fn check_reports_missing_export() {
         &[
             (
                 "util.xulo",
-                "pub fn double(x: number): number { return x * 2 }\n",
+                "pub fn double(x: Number): Number { return x * 2 }\n",
             ),
             (
                 "main.xulo",
@@ -626,8 +626,8 @@ fn check_accepts_circular_import() {
     // read each other's exports, and checking succeeds.
     let (dir, entry) = temp_dir(
         &[
-            ("a.xulo", "use b::b;\npub fn a(): number { return b() }\n"),
-            ("b.xulo", "use a::a;\npub fn b(): number { return a() }\n"),
+            ("a.xulo", "use b::b;\npub fn a(): Number { return b() }\n"),
+            ("b.xulo", "use a::a;\npub fn b(): Number { return a() }\n"),
             (
                 "main.xulo",
                 "pub mod a;\npub mod b;\nuse a::a;\nfn main() { print(a()) }\n",
@@ -676,15 +676,14 @@ fn type_only_enum_import_still_binds_the_value() {
 #[test]
 fn run_trait_dispatch_native() {
     let src = r#"
-        trait Area { fn area(self): number; fn perimeter(self): number }
-        type Rectangle = object
+        trait Area { fn area(self): Number; fn perimeter(self): Number }
+        struct Rectangle { w: Number, h: Number }
         impl Area for Rectangle {
-            fn area(self): number { return self.w * self.h }
-            fn perimeter(self): number { return 2 * (self.w + self.h) }
+            fn area(self): Number { return self.w * self.h }
+            fn perimeter(self): Number { return 2 * (self.w + self.h) }
         }
-        fn rect(w: number, h: number): Rectangle {
-            let r = { w: w, h: h }
-            r
+        fn rect(w: Number, h: Number): Rectangle {
+            return Rectangle(w: w, h: h)
         }
         fn main() {
             print("area=" + str(Area::area(rect(3, 4))))
@@ -763,7 +762,7 @@ fn run_loop_closure_capture_native() {
         fn main() {
             let mut funcs = []
             for i in 0..<3 {
-                fn get(): number { i }
+                fn get(): Number { i }
                 funcs = [...funcs, get]
             }
             for j in 0..<3 {
@@ -816,7 +815,7 @@ fn run_enum_equality_native() {
     // Payload enums compare structurally: separately-constructed `Result::Ok(1)`
     // values are equal, and differ from `Result::Ok(2)`.
     let src = r#"
-        enum Result { Ok(number) Err(string) }
+        enum Result { Ok(Number) Err(String) }
         fn main() {
             let a = Result::Ok(1)
             let b = Result::Ok(1)
@@ -846,7 +845,7 @@ fn run_plain_tagged_objects_keep_identity_equality() {
     // A plain object that happens to have a `tag` key is *not* an enum: it
     // compares by identity, while enum values still compare structurally.
     let src = r#"
-        enum R { Ok(number) }
+        enum R { Ok(Number) }
         fn main() {
             let a = { tag: "Ok", value: 1 }
             let b = { tag: "Ok", value: 1 }
@@ -878,14 +877,13 @@ fn cross_module_trait_dispatch() {
             (
                 "shapes.xulo",
                 r#"
-                pub trait Shape { fn area(self): number }
-                pub type Rect = object
+                pub trait Shape { fn area(self): Number }
+                pub struct Rect { w: Number, h: Number }
                 impl Shape for Rect {
-                    fn area(self): number { return self.w * self.h }
+                    fn area(self): Number { return self.w * self.h }
                 }
-                pub fn rect(w: number, h: number): Rect {
-                    let r = { w: w, h: h }
-                    r
+                pub fn rect(w: Number, h: Number): Rect {
+                    return Rect(w: w, h: h)
                 }
                 "#,
             ),
@@ -920,7 +918,7 @@ fn imported_function_supports_named_arguments() {
         &[
             (
                 "util.xulo",
-                "pub fn greet(name: string, times: number): string { name }\n",
+                "pub fn greet(name: String, times: Number): String { name }\n",
             ),
             (
                 "main.xulo",
@@ -944,12 +942,12 @@ fn run_closures_and_higher_order_functions() {
     let file = temp_file(
         "closure.xulo",
         r#"
-        fn apply(f: fn(number): number, x: number): number { return f(x) }
-        fn makeAdder(n: number): fn(number): number {
-            return fn(v: number): number { v + n }
+        fn apply(f: fn(Number): Number, x: Number): Number { return f(x) }
+        fn makeAdder(n: Number): fn(Number): Number {
+            return fn(v: Number): Number { v + n }
         }
         fn main() {
-            let double = fn(x: number): number { x * 2 }
+            let double = fn(x: Number): Number { x * 2 }
             print(apply(double, 4))
             let add5 = makeAdder(5)
             print(add5(10))
@@ -1024,7 +1022,7 @@ fn run_list_spread_with_computed_values() {
     let file = temp_file(
         "spread2.xulo",
         r#"
-        fn build(xs: list<number>, extra: number): list<number> {
+        fn build(xs: List<Number>, extra: Number): List<Number> {
             return [...xs, extra]
         }
         fn main() {
@@ -1049,7 +1047,7 @@ fn run_comma_separated_match() {
         "matchcomma.xulo",
         r#"
         enum Color { Red, Green, Blue }
-        fn name(c: Color): string {
+        fn name(c: Color): String {
             match c {
                 Color::Red => "red",
                 Color::Green => "green",
@@ -1076,8 +1074,8 @@ fn run_comma_separated_match_with_enum_payload() {
     let file = temp_file(
         "matchpayload.xulo",
         r#"
-        enum Maybe { Some(number), None }
-        fn unwrap(m: Maybe): number {
+        enum Maybe { Some(Number), None }
+        fn unwrap(m: Maybe): Number {
             match m {
                 Maybe::Some(v) => v,
                 Maybe::None => 0,
@@ -1104,14 +1102,14 @@ fn run_function_values_from_expressions() {
     let file = temp_file(
         "callval.xulo",
         r#"
-        fn makeAdder(n: number): fn(number): number {
-          fn(v: number): number { v + n }
+        fn makeAdder(n: Number): fn(Number): Number {
+          fn(v: Number): Number { v + n }
         }
         fn main() {
-          let ops = [fn(a: number, b: number): number { a + b }, fn(a: number, b: number): number { a * b }]
+          let ops = [fn(a: Number, b: Number): Number { a + b }, fn(a: Number, b: Number): Number { a * b }]
           print(ops[0](3, 4))
           print(ops[1](3, 4))
-          let get = fn(): fn(number): number { fn(x: number): number { x + 100 } }
+          let get = fn(): fn(Number): Number { fn(x: Number): Number { x + 100 } }
           print(get()(1))
           let add5 = makeAdder(5)
           print(add5(10))
@@ -1133,8 +1131,8 @@ fn run_named_enum_payload() {
     let file = temp_file(
         "namedpayload.xulo",
         r#"
-        enum Action { Click, Submit(data: object), Cancel }
-        fn describe(a: Action): string {
+        enum Action { Click, Submit(data: Map<String, Unknown>), Cancel }
+        fn describe(a: Action): String {
           match a {
             Action::Click => "click",
             Action::Submit(d) => "submit",
@@ -1162,7 +1160,7 @@ fn run_optional_and_default_params() {
     let file = temp_file(
         "optparams.xulo",
         r#"
-        fn f(a: number, b: string?, c: boolean = true): string {
+        fn f(a: Number, b: String?, c: Boolean = true): String {
             let flag = if c { "yes" } else { "no" }
             if b == null { str(a) + ":" + flag } else { str(a) + ":" + str(b) + ":" + flag }
         }
@@ -1215,7 +1213,7 @@ fn run_component_state_and_effect() {
         "comp.xulo",
         r#"
         fn main(): View {
-            @State let count: number = 0
+            @State let count: Number = 0
             @Effect fn() { print("mounted") }
             count = count + 1
             print("count=" + str(count))
@@ -1234,7 +1232,7 @@ fn run_component_state_and_effect() {
 
 #[test]
 fn check_rejects_decorator_outside_component() {
-    let file = temp_file("bad.xulo", "fn main() { @State let count: number = 0 }");
+    let file = temp_file("bad.xulo", "fn main() { @State let count: Number = 0 }");
     let out = Command::new(BIN).arg("check").arg(&file).output().unwrap();
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("returning `View`"));
@@ -1247,7 +1245,7 @@ fn run_component_loop_var_shadowing() {
         "shadow.xulo",
         r#"
         fn main(): View {
-            @State let x: number = 0
+            @State let x: Number = 0
             let ys = [1, 2, 3]
             for x in ys { print(x) }
         }
@@ -1334,7 +1332,7 @@ fn run_member_and_index_assignment() {
         "mut.xulo",
         r#"
         fn main() {
-            let mut xs: list<number> = [1, 2, 3]
+            let mut xs: List<Number> = [1, 2, 3]
             xs[0] = 10
             xs[2] = 30
             let mut user = { age: 20 }
@@ -1399,7 +1397,7 @@ fn run_else_if_chain_and_while() {
     let file = temp_file(
         "elseif.xulo",
         r#"
-        fn classify(n: number): string {
+        fn classify(n: Number): String {
             if n < 0 { "neg" }
             else if n == 0 { "zero" }
             else if n < 10 { "small" }
@@ -1422,7 +1420,7 @@ fn run_nullish_ternary_and_match_on_strings() {
     let file = temp_file(
         "mix.xulo",
         r#"
-        fn grade(s: string): string { match s { "A" => "excellent" _ => "ok" } }
+        fn grade(s: String): String { match s { "A" => "excellent" _ => "ok" } }
         fn main() {
             let name = null ?? "anon"
             let g = 5 > 3 ? grade("A") : "?"
@@ -1443,12 +1441,12 @@ fn run_generic_enum_and_payload_match() {
         "gen.xulo",
         r#"
         enum Box<T> { Put(T) Empty }
-        enum Shape { Circle(number) Rect(number, number) }
+        enum Shape { Circle(Number) Rect(Number, Number) }
         fn id<T>(x: T): T { x }
-        fn unbox(b: Box<number>): number {
+        fn unbox(b: Box<Number>): Number {
             match b { Box::Put(v) => v * 2 Box::Empty => 0 }
         }
-        fn area(s: Shape): number {
+        fn area(s: Shape): Number {
             match s {
                 Shape::Circle(r) => 3 * r * r
                 Shape::Rect(w, h) => w * h
@@ -1503,7 +1501,7 @@ fn run_optional_chaining_deep_on_null() {
         "opt.xulo",
         r#"
         fn main() {
-            let u: object? = null
+            let u: Map<String, Unknown>? = null
             print(u?.a?.b)
             print(u == null)
         }
@@ -1524,7 +1522,7 @@ fn run_multi_payload_enum_value_shape() {
     let file = temp_file(
         "multi.xulo",
         r#"
-        enum Pair { A(number, string) B }
+        enum Pair { A(Number, String) B }
         fn main() {
             let p = Pair::A(1, "x")
             let m = match p { Pair::A(a, b) => "a" + str(a) + b Pair::B => "z" }
@@ -1573,7 +1571,7 @@ fn native_run_local_module_named_imports() {
         &[
             (
                 "math.xulo",
-                "pub fn add(a: number, b: number): number { a + b }\n\
+                "pub fn add(a: Number, b: Number): Number { a + b }\n\
                  pub const PI = 3.14\n",
             ),
             (
@@ -1595,7 +1593,7 @@ fn native_run_local_module_import_alias() {
         &[
             (
                 "math.xulo",
-                "pub fn add(a: number, b: number): number { a + b }\n",
+                "pub fn add(a: Number, b: Number): Number { a + b }\n",
             ),
             (
                 "main.xulo",
@@ -1614,11 +1612,11 @@ fn native_run_local_module_import_alias() {
 fn native_run_local_module_dependency_chain() {
     let (ok, stdout, stderr) = native_run(
         &[
-            ("base.xulo", "pub fn base(): number { 10 }\n"),
+            ("base.xulo", "pub fn base(): Number { 10 }\n"),
             (
                 "mid.xulo",
                 "use base::base;\n\
-                 pub fn mid(): number { base() + 5 }\n",
+                 pub fn mid(): Number { base() + 5 }\n",
             ),
             (
                 "main.xulo",
@@ -1641,7 +1639,7 @@ fn native_run_local_module_namespace_import() {
             (
                 "cal.xulo",
                 "pub const HOURS = 24\n\
-                 pub fn hours(): number { HOURS }\n",
+                 pub fn hours(): Number { HOURS }\n",
             ),
             (
                 "main.xulo",
@@ -1660,7 +1658,7 @@ fn native_run_local_module_namespace_import() {
 fn native_run_local_module_named_import() {
     let (ok, stdout, stderr) = native_run(
         &[
-            ("lib.xulo", "pub fn greet(): string { \"hi\" }\n"),
+            ("lib.xulo", "pub fn greet(): String { \"hi\" }\n"),
             (
                 "main.xulo",
                 "mod lib;\n\
@@ -1747,7 +1745,7 @@ fn native_run_semantic_rejects_missing_export() {
         &[
             (
                 "lib.xulo",
-                "pub fn add(a: number, b: number): number { a + b }\n",
+                "pub fn add(a: Number, b: Number): Number { a + b }\n",
             ),
             (
                 "main.xulo",
@@ -1804,7 +1802,7 @@ fn native_run_async_coroutines_interleave() {
         &[(
             "main.xulo",
             "async fn pause() { }\n\
-                 async fn fetch(id: number): number {\n\
+                 async fn fetch(id: Number): Number {\n\
                      await pause()\n\
                      return id * 10\n\
                  }\n\
@@ -1848,7 +1846,7 @@ fn native_run_ui_component_headless() {
                 "main.xulo",
                 "use ui::{Screen, VStack, HStack, Text, Button, Input};\n\
                  fn Counter(): View {\n\
-                     @State let count: number = 0\n\
+                     @State let count: Number = 0\n\
                      @Effect fn() { print(\"mounted\") }\n\
                      VStack(spacing: 8) {\n\
                          Text(\"Count: \" + str(count))\n\
@@ -1859,7 +1857,7 @@ fn native_run_ui_component_headless() {
                      }\n\
                  }\n\
                  fn NameField(): View {\n\
-                     @State let name: string = \"\"\n\
+                     @State let name: String = \"\"\n\
                      VStack {\n\
                          Input(value: $name)\n\
                          Text(\"Hello, \" + name)\n\
@@ -2010,7 +2008,7 @@ fn test_command_reports_pass_and_fail() {
     let file = temp_file(
         "tests_mixed.xulo",
         r#"
-fn add(a: number, b: number): number { return a + b }
+fn add(a: Number, b: Number): Number { return a + b }
 
 #Test fn addition_works() {
     assert(add(2, 3) == 5, "2+3=5")
@@ -2077,7 +2075,7 @@ fn test_command_async_test_runs() {
     let file = temp_file(
         "tests_async.xulo",
         r#"
-async fn double(x: number): number { return x * 2 }
+async fn double(x: Number): Number { return x * 2 }
 
 #Test async fn async_works() {
     let v = await double(21)
@@ -2139,7 +2137,7 @@ fn native_run_pub_struct_cross_module() {
         &[
             (
                 "lib.xulo",
-                "pub struct Point { x: number, y: number }\n\
+                "pub struct Point { x: Number, y: Number }\n\
                  pub fn make(): Point { return Point(x: 1, y: 2) }\n",
             ),
             (
@@ -2159,7 +2157,7 @@ fn native_run_pub_struct_cross_module() {
 fn native_run_pub_use_reexports_across_modules() {
     let (ok, stdout, stderr) = native_run(
         &[
-            ("lib.xulo", "pub fn greet(): string { \"hi\" }\n"),
+            ("lib.xulo", "pub fn greet(): String { \"hi\" }\n"),
             ("mid.xulo", "pub use lib::greet;\n"),
             (
                 "main.xulo",
@@ -2182,13 +2180,13 @@ fn native_run_use_cycle_is_patched_before_main() {
             (
                 "a.xulo",
                 "use b::b;\n\
-                 pub fn a(): number { 42 }\n\
-                 pub fn call_b(): number { return b() }\n",
+                 pub fn a(): Number { 42 }\n\
+                 pub fn call_b(): Number { return b() }\n",
             ),
             (
                 "b.xulo",
                 "use a::a;\n\
-                 pub fn b(): number { return a() }\n",
+                 pub fn b(): Number { return a() }\n",
             ),
             (
                 "main.xulo",
@@ -2208,7 +2206,7 @@ fn native_run_pub_mod_namespace_reexport() {
     let (ok, stdout, stderr) = native_run(
         &[
             ("mid.xulo", "pub mod inner;\n"),
-            ("mid/inner.xulo", "pub fn v(): number { 7 }\n"),
+            ("mid/inner.xulo", "pub fn v(): Number { 7 }\n"),
             (
                 "main.xulo",
                 "mod mid;\n\
@@ -2228,7 +2226,7 @@ fn native_run_called_import_is_not_reported_unused() {
         &[
             (
                 "lib.xulo",
-                "pub fn add(a: number, b: number): number { a + b }\n",
+                "pub fn add(a: Number, b: Number): Number { a + b }\n",
             ),
             (
                 "main.xulo",
@@ -2251,7 +2249,7 @@ fn native_run_uncalled_import_still_warns_unused() {
         &[
             (
                 "lib.xulo",
-                "pub fn add(a: number, b: number): number { a + b }\n",
+                "pub fn add(a: Number, b: Number): Number { a + b }\n",
             ),
             (
                 "main.xulo",

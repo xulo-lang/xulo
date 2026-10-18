@@ -152,8 +152,8 @@ fn use_cycles_are_accepted() {
         "main.xulo",
         "mod a;\nmod b;\nfn main() { print(a::aa()) }\n",
     );
-    write(&dir, "a.xulo", "use b::bb;\npub fn aa(): number { bb() }\n");
-    write(&dir, "b.xulo", "use a::aa;\npub fn bb(): number { aa() }\n");
+    write(&dir, "a.xulo", "use b::bb;\npub fn aa(): Number { bb() }\n");
+    write(&dir, "b.xulo", "use a::aa;\npub fn bb(): Number { aa() }\n");
     let warnings = analyze_pkg(&dir).expect("mutual use must analyze");
     assert!(
         !warnings.iter().any(|w| w.code() == "W0102"),
@@ -263,7 +263,7 @@ fn path_dependency_initializes_first() {
         "xulo.toml",
         "[dependencies]\ndep = { version = \"0.1\", path = \"./dep\" }\n",
     );
-    write(&dir, "dep/main.xulo", "pub fn helper(): number { 7 }\n");
+    write(&dir, "dep/main.xulo", "pub fn helper(): Number { 7 }\n");
     write(
         &dir,
         "main.xulo",
@@ -286,7 +286,7 @@ fn path_dependency_without_main_is_error() {
         "xulo.toml",
         "[dependencies]\ndep = { version = \"0.1\", path = \"./dep\" }\n",
     );
-    write(&dir, "dep/lib.xulo", "pub fn helper(): number { 7 }\n");
+    write(&dir, "dep/lib.xulo", "pub fn helper(): Number { 7 }\n");
     write(&dir, "main.xulo", "fn main() {}\n");
     let err = load_err(&dir);
     assert!(

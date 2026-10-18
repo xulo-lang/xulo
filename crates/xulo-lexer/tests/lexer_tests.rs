@@ -13,7 +13,7 @@ fn tokenizes_literals() {
 
 #[test]
 fn tokenizes_keywords_and_types() {
-    let tokens = tokenize("fn main(): number { }").unwrap();
+    let tokens = tokenize("fn main(): Number { }").unwrap();
     let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
     assert_eq!(
         kinds,
@@ -233,7 +233,7 @@ fn tokenizes_phase3_keywords() {
 
 #[test]
 fn tokenizes_pub_keyword() {
-    let tokens = tokenize("pub fn add(a: number): number { return a }").unwrap();
+    let tokens = tokenize("pub fn add(a: Number): Number { return a }").unwrap();
     let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
     assert_eq!(
         kinds,

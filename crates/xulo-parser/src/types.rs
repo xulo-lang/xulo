@@ -95,19 +95,21 @@ fn named_type(pair: Pair<'_, Rule>) -> R<Type> {
     };
 
     match name.as_str() {
-        // A primitive carries no argument list: keep it a primitive only when
-        // none was written, so that `string<Int>` reaches the checker as an
-        // application and is diagnosed there (spec `types/generics.md`).
-        "string" if args.is_empty() => Ok(Type::String),
-        "number" if args.is_empty() => Ok(Type::Number),
-        "boolean" if args.is_empty() => Ok(Type::Boolean),
-        "object" if args.is_empty() => Ok(Type::Object),
+        // The primitive names are the spec spellings (spec
+        // `types/primitive-types.md`) — ordinary identifiers in a type
+        // position, kept a primitive only when no argument list was written,
+        // so that `String<Int>` reaches the checker as an application and is
+        // diagnosed there (spec `types/generics.md`). `Int`/`Float` spell the
+        // numeric primitive for now; the checker does not yet separate them
+        // from `Number`.
+        "String" if args.is_empty() => Ok(Type::String),
+        "Number" | "Int" | "Float" if args.is_empty() => Ok(Type::Number),
+        "Boolean" if args.is_empty() => Ok(Type::Boolean),
+        "Null" if args.is_empty() => Ok(Type::Null),
         // `List` keeps its dedicated form only for exactly one argument; a
         // missing or surplus one stays an application so the arity rule
         // reports it (spec E0230).
-        "list" | "List" if args.len() == 1 => {
-            Ok(Type::List(Box::new(args.into_iter().next().unwrap())))
-        }
+        "List" if args.len() == 1 => Ok(Type::List(Box::new(args.into_iter().next().unwrap()))),
         // A named type keeps its written type arguments; whether they are the
         // right number, and whether they satisfy their bounds, is checked by
         // the semantic analyzer.

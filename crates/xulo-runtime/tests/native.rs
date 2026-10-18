@@ -91,12 +91,12 @@ fn pick(exports: ModuleExports, names: &[&str]) -> Vec<(String, Value)> {
 fn trait_dispatch_runs_mangled_impl() {
     let out = run_annotated(
         r#"
-        trait Area { fn area(self): number }
-        type Rectangle = object
+        trait Area { fn area(self): Number }
+        type Rectangle = Map<String, Number>
         impl Area for Rectangle {
-            fn area(self): number { return self.w * self.h }
+            fn area(self): Number { return self.w * self.h }
         }
-        fn rect(w: number, h: number): Rectangle {
+        fn rect(w: Number, h: Number): Rectangle {
             let r = { w: w, h: h }
             r
         }
@@ -161,7 +161,7 @@ fn fibonacci_example() {
 fn recursion_with_if_expression() {
     let out = run_ok(
         r#"
-        fn fact(n: number): number {
+        fn fact(n: Number): Number {
             if n <= 1 { return 1 } else { return n * fact(n - 1) }
         }
         fn main() { print(fact(6)) }
@@ -177,7 +177,7 @@ fn if_expression_prefix_return_short_circuits_like_js() {
     // to report "unexpected return" and diverge.
     let out = run_ok(
         r#"
-        fn main(): number {
+        fn main(): Number {
             let x = if true { return 5
                 3 } else { 2 }
             print(str(x))
@@ -201,7 +201,7 @@ fn unbounded_recursion_errors_instead_of_crashing() {
             // Unbounded *sync* recursion errors cleanly.
             let err = run_raw(
                 r#"
-                fn rec(n: number): number { rec(n - 1) }
+                fn rec(n: Number): Number { rec(n - 1) }
                 fn main() { print(str(rec(1))) }
                 "#,
             )
@@ -215,7 +215,7 @@ fn unbounded_recursion_errors_instead_of_crashing() {
             // Async recursion hits the same limit before exhausting memory.
             let err = run_raw(
                 r#"
-                async fn rec(n: number): number { await rec(n - 1) }
+                async fn rec(n: Number): Number { await rec(n - 1) }
                 async fn main() { print(str(await rec(1))) }
                 "#,
             )
@@ -230,7 +230,7 @@ fn unbounded_recursion_errors_instead_of_crashing() {
             assert_eq!(
                 run_ok(
                     r#"
-                    fn sum(n: number): number { if n <= 0 { return 0 } sum(n - 1) + n }
+                    fn sum(n: Number): Number { if n <= 0 { return 0 } sum(n - 1) + n }
                     fn main() { print(str(sum(100))) }
                     "#,
                 ),
@@ -239,7 +239,7 @@ fn unbounded_recursion_errors_instead_of_crashing() {
             assert_eq!(
                 run_ok(
                     r#"
-                    async fn step(n: number): number { if n <= 0 { return 0 } await step(n - 1) n }
+                    async fn step(n: Number): Number { if n <= 0 { return 0 } await step(n - 1) n }
                     async fn main() { print(str(await step(100))) }
                     "#,
                 ),
@@ -255,7 +255,7 @@ fn unbounded_recursion_errors_instead_of_crashing() {
 fn implicit_return() {
     let out = run_ok(
         r#"
-        fn double(x: number): number { x * 2 }
+        fn double(x: Number): Number { x * 2 }
         fn main() { print(double(21)) }
         "#,
     );
@@ -268,7 +268,7 @@ fn anonymous_function_closure() {
         r#"
         fn main() {
             let base = 100
-            let add = fn(x: number): number { x + base }
+            let add = fn(x: Number): Number { x + base }
             print(add(5))
         }
         "#,
@@ -280,9 +280,9 @@ fn anonymous_function_closure() {
 fn higher_order_function() {
     let out = run_ok(
         r#"
-        fn apply(f: fn(number): number, x: number): number { f(x) }
+        fn apply(f: fn(Number): Number, x: Number): Number { f(x) }
         fn main() {
-            print(apply(fn(n: number): number { n * n }, 7))
+            print(apply(fn(n: Number): Number { n * n }, 7))
         }
         "#,
     );
@@ -297,9 +297,9 @@ fn closure_mutates_captured_outer_variable() {
     let out = run_ok(
         r#"
         fn main() {
-            let mut count: number = 0
-            let bump = fn(): number { count = count + 1 }
-            let f = fn(x: number): number { bump(); bump(); x * 10 }
+            let mut count: Number = 0
+            let bump = fn(): Number { count = count + 1 }
+            let f = fn(x: Number): Number { bump(); bump(); x * 10 }
             print(f(3))
             print(count)
         }
@@ -312,7 +312,7 @@ fn closure_mutates_captured_outer_variable() {
 fn named_arguments_are_reordered() {
     let out = run_ok(
         r#"
-        fn sub(a: number, b: number): number { a - b }
+        fn sub(a: Number, b: Number): Number { a - b }
         fn main() { print(sub(b: 3, a: 10)) }
         "#,
     );
@@ -323,8 +323,8 @@ fn named_arguments_are_reordered() {
 fn default_and_optional_params() {
     let out = run_ok(
         r#"
-        fn greet(name: string, punctuation: string = "!"): string { "Hello, " + name + punctuation }
-        fn maybe(x: number?): number { if x == null { 0 } else { x } }
+        fn greet(name: String, punctuation: String = "!"): String { "Hello, " + name + punctuation }
+        fn maybe(x: Number?): Number { if x == null { 0 } else { x } }
         fn main() {
             print(greet("lyy"))
             print(greet(name: "lyy", punctuation: "?"))
@@ -444,7 +444,7 @@ fn while_loop() {
 fn enum_with_payload() {
     let out = run_ok(
         r#"
-        enum Result { Success(number) Failure }
+        enum Result { Success(Number) Failure }
         fn main() {
             let r = Result::Success(42)
             print(r)
@@ -463,7 +463,7 @@ fn enum_with_payload() {
 fn enum_multi_payload_binds_list() {
     let out = run_ok(
         r#"
-        enum Shape { Point(number, number) }
+        enum Shape { Point(Number, Number) }
         fn main() {
             let p = Shape::Point(3, 4)
             print(match p {
@@ -583,7 +583,7 @@ fn default_parameter_evaluates_in_callee_scope_across_modules() {
     let out = exec_module_pair(
         r#"
         let rate = 100
-        pub fn make(x: number, y: number = rate): number { y }
+        pub fn make(x: Number, y: Number = rate): Number { y }
         "#,
         r#"
         use lib::make;
@@ -606,7 +606,7 @@ fn top_level_async_without_main_is_driven_to_completion() {
     let out = run_ok(
         r#"
         async fn pause() { }
-        async fn work(): number {
+        async fn work(): Number {
             await pause()
             42
         }
@@ -627,7 +627,7 @@ fn cyclic_values_print_without_overflowing() {
     let out = run_ok(
         r#"
         fn main() {
-            let mut o: object = {}
+            let mut o: Map<String, Unknown> = {}
             o.x = o
             print(o)
         }
@@ -636,7 +636,7 @@ fn cyclic_values_print_without_overflowing() {
     assert_eq!(out, vec!["{ x: { <cycle> } }"]);
 
     // A self-referencing list (`run_raw`: the type checker rejects storing a
-    // list into a `number` slot, so the interpreter-level cycle handling is
+    // list into a `Number` slot, so the interpreter-level cycle handling is
     // exercised directly).
     let out = run_raw(
         r#"
@@ -743,7 +743,7 @@ fn call_function_value_from_member() {
     let out = run_ok(
         r#"
         fn main() {
-            let counter = { inc: fn(x: number): number { x + 1 } }
+            let counter = { inc: fn(x: Number): Number { x + 1 } }
             print(counter.inc(5))
         }
         "#,
@@ -756,7 +756,7 @@ fn method_call_on_object() {
     let out = run_ok(
         r#"
         fn main() {
-            let math = { double: fn(x: number): number { x * 2 } }
+            let math = { double: fn(x: Number): Number { x * 2 } }
             print(math.double(21))
         }
         "#,
@@ -790,7 +790,7 @@ fn ui_component_runs_headlessly() {
     // without mounting anything; a `print` in the effect is observable.
     let out = run(r#"
         fn Counter(): View {
-            @State let count: number = 0
+            @State let count: Number = 0
             @Effect fn() { print("mounted") }
             VStack(spacing: 8) {
                 Text("Count: " + str(count))
@@ -810,7 +810,7 @@ fn ui_component_state_mutation_and_for() {
     // writes it), and a `for` element spreads into the children array.
     let out = run(r#"
         fn List(): View {
-            @State let items: list<number> = [1, 2, 3]
+            @State let items: List<Number> = [1, 2, 3]
             @Effect fn() { items = [7, 8, 9] }
             VStack {
                 for item in items {
@@ -924,7 +924,7 @@ fn view_main_captures_render_tree() {
 #[test]
 fn non_view_main_leaves_view_slot_empty() {
     let src = r#"
-        fn main(): number {
+        fn main(): Number {
             42
         }
     "#;
@@ -1008,7 +1008,7 @@ fn onclick_mutates_state_across_rerender() {
     // the first render's tree writes the cell the re-render observes.
     let src = r#"
         fn Counter(): View {
-            @State let count: number = 0
+            @State let count: Number = 0
             VStack(spacing: 1) {
                 Text("Count: " + str(count))
                 Button(onClick: fn() { count = count + 1 }) {
@@ -1049,7 +1049,7 @@ fn onclick_mutates_state_across_rerender() {
 #[test]
 fn rerender_without_main_returns_none() {
     let src = r#"
-        fn main(): number {
+        fn main(): Number {
             42
         }
     "#;
@@ -1155,7 +1155,7 @@ fn type_annotation_is_erased_at_runtime() {
     // The semantic layer accepts these; the interpreter runs them.
     let out = run_ok(
         r#"
-        type Pair = (number, number)
+        type Pair = (Number, Number)
         fn main() {
             let p: Pair = (1, 2)
             print(p)
@@ -1169,7 +1169,7 @@ fn type_annotation_is_erased_at_runtime() {
 fn pub_fn_declares_and_runs_main() {
     let out = run_ok(
         r#"
-        pub fn add(a: number, b: number): number { a + b }
+        pub fn add(a: Number, b: Number): Number { a + b }
         pub fn main() { print(add(2, 3)) }
         "#,
     );
@@ -1191,7 +1191,7 @@ fn returns_null_from_plain_functions() {
 fn async_basic_await() {
     let out = run_ok(
         r#"
-        async fn half(): number { 2 }
+        async fn half(): Number { 2 }
         async fn main() {
             let a = (await half()) + 1
             let b = (await half()) * 3
@@ -1256,7 +1256,7 @@ fn async_await_on_settled_promise_defers() {
 fn async_recursion_statement_if_propagates_return() {
     let out = run_ok(
         r#"
-        async fn sum(n: number): number {
+        async fn sum(n: Number): Number {
             if n == 0 {
                 return 0
             }
@@ -1273,7 +1273,7 @@ fn async_function_value_return_type() {
     let out = run_ok(
         r#"
         async fn main() {
-            let f = async fn(x: number): number { x * 2 }
+            let f = async fn(x: Number): Number { x * 2 }
             print(await f(21))
         }
         "#,
@@ -1313,7 +1313,7 @@ fn sync_main_calls_async_prefix_runs_inline() {
 fn sync_function_recursion_statement_if_propagates_return() {
     let out = run_ok(
         r#"
-        fn sum(n: number): number {
+        fn sum(n: Number): Number {
             if n == 0 {
                 return 0
             }
@@ -1329,7 +1329,7 @@ fn sync_function_recursion_statement_if_propagates_return() {
 fn module_named_imports_bind_fn_and_const() {
     let out = exec_module_pair(
         r#"
-        pub fn add(a: number, b: number): number { a + b }
+        pub fn add(a: Number, b: Number): Number { a + b }
         pub const PI = 3.14
         "#,
         r#"
@@ -1349,7 +1349,7 @@ fn module_named_imports_bind_fn_and_const() {
 fn module_import_alias() {
     let out = exec_module_pair(
         r#"
-        pub fn add(a: number, b: number): number { a + b }
+        pub fn add(a: Number, b: Number): Number { a + b }
         "#,
         r#"
         use lib::add as plus;
@@ -1371,7 +1371,7 @@ fn module_namespace_import_exposes_named_fields() {
     let out = exec_module_pair(
         r#"
         pub const HOURS_IN_DAY = 24
-        pub fn hours(): number { HOURS_IN_DAY }
+        pub fn hours(): Number { HOURS_IN_DAY }
         "#,
         r#"
         use lib as cal;
@@ -1452,10 +1452,10 @@ fn missing_object_member_reads_null() {
     // (the language's only null-like value). The JS path yields `undefined`
     // through node's `console.log`; the divergence in the rendered text of a
     // missing member is pinned here as the intended native behavior.
-    let out = run_ok(r#"fn main() { let o: object = {} print(o.missing) }"#);
+    let out = run_ok(r#"fn main() { let o: Map<String, Unknown> = {} print(o.missing) }"#);
     assert_eq!(out, vec!["null"]);
 
-    let out = run_ok(r#"fn main() { let o: object = {} print(o["missing"]) }"#);
+    let out = run_ok(r#"fn main() { let o: Map<String, Unknown> = {} print(o["missing"]) }"#);
     assert_eq!(out, vec!["null"]);
 } // ── break / continue ──────────────────────────────────────────────────────
 
@@ -1720,7 +1720,7 @@ fn list_first() {
 #[test]
 fn list_first_empty() {
     assert_eq!(
-        run_ok(r#"fn main() { let a: list<number> = []; print(a.first()) }"#),
+        run_ok(r#"fn main() { let a: List<Number> = []; print(a.first()) }"#),
         vec!["null"]
     );
 }
@@ -1736,7 +1736,7 @@ fn list_last() {
 #[test]
 fn list_last_empty() {
     assert_eq!(
-        run_ok(r#"fn main() { let a: list<number> = []; print(a.last()) }"#),
+        run_ok(r#"fn main() { let a: List<Number> = []; print(a.last()) }"#),
         vec!["null"]
     );
 }
@@ -1795,7 +1795,7 @@ fn list_pop() {
 
 #[test]
 fn list_pop_empty_errors() {
-    let err = run(r#"fn main() { let a: list<number> = []; a.pop() }"#).unwrap_err();
+    let err = run(r#"fn main() { let a: List<Number> = []; a.pop() }"#).unwrap_err();
     assert!(
         err.message.contains("empty list"),
         "unexpected: {}",
@@ -1981,7 +1981,7 @@ fn list_reduce_without_init() {
 
 #[test]
 fn list_reduce_empty_without_init_errors() {
-    let err = run(r#"fn main() { let a: list<number> = []; a.reduce(fn(acc, x) { acc + x }) }"#)
+    let err = run(r#"fn main() { let a: List<Number> = []; a.reduce(fn(acc, x) { acc + x }) }"#)
         .unwrap_err();
     assert!(
         err.message.contains("empty list"),
@@ -2118,7 +2118,7 @@ fn list_flat_mixed() {
 #[test]
 fn list_flat_empty() {
     assert_eq!(
-        run_ok(r#"fn main() { let a: list<list<number> > = []; print(a.flat()) }"#),
+        run_ok(r#"fn main() { let a: List<List<Number> > = []; print(a.flat()) }"#),
         vec!["[]"]
     );
 }
@@ -2237,7 +2237,7 @@ fn struct_literal_and_field_access() {
     assert_eq!(
         run_ok(
             r#"
-            struct User { name: string, age: number }
+            struct User { name: String, age: Number }
             fn main() {
                 let u = { name: "Alice", age: 30 }
                 print(u.name)
@@ -2280,9 +2280,9 @@ fn inherent_impl_methods() {
     assert_eq!(
         run_ok(
             r#"
-            struct User { name: string, age: number }
+            struct User { name: String, age: Number }
             impl User {
-                fn create(name: string, age: number): User {
+                fn create(name: String, age: Number): User {
                     return { name: name, age: age }
                 }
             }
@@ -2301,7 +2301,7 @@ fn struct_name_accessible_in_main() {
     assert_eq!(
         run_ok(
             r#"
-            struct User { name: string }
+            struct User { name: String }
             fn main() {
                 print(User)
             }
@@ -2316,12 +2316,12 @@ fn struct_instance_method_dispatch() {
     assert_eq!(
         run_ok(
             r#"
-            struct User { name: string, age: number }
+            struct User { name: String, age: Number }
             impl User {
-                fn create(name: string, age: number): User {
+                fn create(name: String, age: Number): User {
                     return { name: name, age: age }
                 }
-                fn greet(self): string {
+                fn greet(self): String {
                     return "Hi " + self.name
                 }
             }
@@ -2361,14 +2361,14 @@ fn bounded_generic_impl_applies_at_runtime() {
     // (spec `types/traits.md`, "When an impl applies").
     let out = run_ok(
         r#"
-            trait Area { fn area(self): number }
+            trait Area { fn area(self): Number }
             struct Palette<T> { shape: T }
-            struct Rect { w: number, h: number }
+            struct Rect { w: Number, h: Number }
             impl Area for Rect {
-                fn area(self): number { return self.w * self.h }
+                fn area(self): Number { return self.w * self.h }
             }
             impl<T: Area> Palette<T> {
-                fn render(self): number { return 12 }
+                fn render(self): Number { return 12 }
             }
             fn main() {
                 let ok = { shape: { w: 3, h: 4 } }
@@ -2385,14 +2385,14 @@ fn generic_impl_dispatch_end_to_end() {
     // receiver's instantiation (`T = Dot`, `Dot: Show`).
     let out = run_annotated(
         r#"
-            trait Show { fn show(self): string }
-            struct Dot { r: number }
+            trait Show { fn show(self): String }
+            struct Dot { r: Number }
             struct Wrapper<T> { inner: T }
             impl Show for Dot {
-                fn show(self): string { return "d" }
+                fn show(self): String { return "d" }
             }
             impl<T: Show> Show for Wrapper<T> {
-                fn show(self): string { return "w" }
+                fn show(self): String { return "w" }
             }
             fn main() {
                 let w = { inner: { r: 1 } }
@@ -2410,10 +2410,10 @@ fn trait_member_call_on_concrete_receiver_runs() {
     // struct object carries the impl method under its bare name for the run.
     let out = run_ok(
         r#"
-            trait Area { fn area(self): number }
-            struct Rect { w: number, h: number }
+            trait Area { fn area(self): Number }
+            struct Rect { w: Number, h: Number }
             impl Area for Rect {
-                fn area(self): number { return self.w * self.h }
+                fn area(self): Number { return self.w * self.h }
             }
             fn main() {
                 let r = { w: 3, h: 4 }
@@ -2430,12 +2430,12 @@ fn bounded_generic_member_call_runs() {
     // time the concrete receiver's impl method answers under the bare name.
     let out = run_ok(
         r#"
-            trait Area { fn area(self): number }
-            struct Rect { w: number, h: number }
+            trait Area { fn area(self): Number }
+            struct Rect { w: Number, h: Number }
             impl Area for Rect {
-                fn area(self): number { return self.w * self.h }
+                fn area(self): Number { return self.w * self.h }
             }
-            fn area_of<T: Area>(s: T): number {
+            fn area_of<T: Area>(s: T): Number {
                 return s.area()
             }
             fn main() {
@@ -2454,10 +2454,10 @@ fn qualified_dispatch_concrete_receiver_runs() {
     // mangled impl answers.
     let out = run_annotated(
         r#"
-            trait Area { fn area(self): number }
-            struct Rect { w: number, h: number }
+            trait Area { fn area(self): Number }
+            struct Rect { w: Number, h: Number }
             impl Area for Rect {
-                fn area(self): number { return self.w * self.h }
+                fn area(self): Number { return self.w * self.h }
             }
             fn main() {
                 let r = { w: 3, h: 4 }
@@ -2475,15 +2475,15 @@ fn spec_palette_example_runs() {
     // `impl<T: Area> Palette<T>` resolves through the bound at run time.
     let out = run_annotated(
         r#"
-            trait Area { fn area(self): number }
+            trait Area { fn area(self): Number }
             struct Palette<T> { shape: T }
-            struct Rect { w: number, h: number }
-            struct Dot { r: number }
+            struct Rect { w: Number, h: Number }
+            struct Dot { r: Number }
             impl Area for Rect {
-                fn area(self): number { return self.w * self.h }
+                fn area(self): Number { return self.w * self.h }
             }
             impl<T: Area> Palette<T> {
-                fn render(self): number { return Area::area(self.shape) }
+                fn render(self): Number { return Area::area(self.shape) }
             }
             fn main() {
                 let ok = { shape: { w: 3, h: 4 } }
@@ -2680,7 +2680,7 @@ fn derived_struct_spec_example_all_string_forms() {
     let out = run_annotated(
         r#"
             #Derive(ToString)
-            struct User { name: string, age: number }
+            struct User { name: String, age: Number }
             fn main() {
                 let u = User(name: "Alice", age: 30)
                 print(str(u))
@@ -2700,9 +2700,9 @@ fn derived_struct_nested_and_empty_render() {
     let out = run_annotated(
         r#"
             #Derive(ToString)
-            struct User { name: string, age: number }
+            struct User { name: String, age: Number }
             #Derive(ToString)
-            struct Tagged { inner: User, label: string }
+            struct Tagged { inner: User, label: String }
             #Derive(ToString)
             struct Empty { }
             fn main() {
@@ -2729,9 +2729,9 @@ fn derived_enum_variants_render_spec_form() {
     let out = run_annotated(
         r#"
             #Derive(ToString)
-            enum Shape { Circle(number), Rect(number, number) }
+            enum Shape { Circle(Number), Rect(Number, Number) }
             #Derive(ToString)
-            enum Status { Active, Offline(string) }
+            enum Status { Active, Offline(String) }
             fn main() {
                 print(str(Shape::Circle(2.5)))
                 print(str(Shape::Rect(3, 4)))
@@ -2761,9 +2761,9 @@ fn derived_structs_do_not_cross_types() {
     let out = run_annotated(
         r#"
             #Derive(ToString)
-            struct User { name: string, age: number }
+            struct User { name: String, age: Number }
             #Derive(ToString)
-            struct Plain { n: number }
+            struct Plain { n: Number }
             fn main() {
                 let a = User(name: "A", age: 1)
                 let b = Plain(n: 7)
@@ -2795,10 +2795,10 @@ fn manual_to_string_impl_runs_on_all_forms() {
     let out = run_annotated(
         r#"
             #Derive(ToString)
-            struct Plain { n: number }
-            struct Hand { v: number }
+            struct Plain { n: Number }
+            struct Hand { v: Number }
             impl ToString for Hand {
-                fn to_string(self): string { return "Hand(" + str(self.v) + ")" }
+                fn to_string(self): String { return "Hand(" + str(self.v) + ")" }
             }
             fn main() {
                 let h = Hand(v: 1)
@@ -2818,7 +2818,7 @@ fn manual_to_string_impl_runs_on_all_forms() {
 fn struct_constructor_reads_fields_and_optional_defaults_to_null() {
     let out = run_annotated(
         r#"
-            struct Opt { name: string, alias: string? }
+            struct Opt { name: String, alias: String? }
             fn main() {
                 let a = Opt(name: "x")
                 let b = Opt(name: "y", alias: "z")
@@ -2839,10 +2839,10 @@ fn constructed_instance_reaches_inherent_impl_methods() {
     // `struct_method` match would otherwise dispatch another type's method).
     let out = run_annotated(
         r#"
-            struct S { n: number }
-            struct T { n: number }
-            impl S { fn show(self): string { return "S(" + str(self.n) + ")" } }
-            impl T { fn show(self): string { return "T(" + str(self.n) + ")" } }
+            struct S { n: Number }
+            struct T { n: Number }
+            impl S { fn show(self): String { return "S(" + str(self.n) + ")" } }
+            impl T { fn show(self): String { return "T(" + str(self.n) + ")" } }
             fn main() {
                 let s = S(n: 4)
                 let t = T(n: 5)
@@ -2879,11 +2879,11 @@ fn str_rejects_non_string_forms_at_runtime_pipeline() {
 #[test]
 fn written_type_args_run_with_inferred_and_named_forms() {
     let out = run_ok(
-        "fn first<T>(xs: list<T>): T { return xs[0] }\n\
+        "fn first<T>(xs: List<T>): T { return xs[0] }\n\
          fn main() {\n\
-         let a = first<number>([1])\n\
+         let a = first<Number>([1])\n\
          let b = first([2])\n\
-         let c = first<number>(xs: [3])\n\
+         let c = first<Number>(xs: [3])\n\
          print(str(a) + \",\" + str(b) + \",\" + str(c))\n\
          }",
     );
@@ -2896,8 +2896,8 @@ fn disambiguated_written_list_runs_as_a_call() {
     // but here `first < number > ([5])` satisfies both disambiguation
     // conditions, so it is a call with a written list (and runs).
     let out = run_ok(
-        "fn first<T>(xs: list<T>): T { return xs[0] }\n\
-         fn main() { let x = first < number > ([5]) print(str(x)) }",
+        "fn first<T>(xs: List<T>): T { return xs[0] }\n\
+         fn main() { let x = first < Number > ([5]) print(str(x)) }",
     );
     assert_eq!(out, ["5"]);
 }
@@ -2905,10 +2905,10 @@ fn disambiguated_written_list_runs_as_a_call() {
 #[test]
 fn written_bound_dispatch_runs_the_matching_impl() {
     let out = run_annotated(
-        "trait Area { fn area(self): number }\n\
-         struct Rect { w: number, h: number }\n\
-         impl Area for Rect { fn area(self): number { return self.w * self.h } }\n\
-         fn describe<T: Area>(x: T): number { return Area::area(x) }\n\
+        "trait Area { fn area(self): Number }\n\
+         struct Rect { w: Number, h: Number }\n\
+         impl Area for Rect { fn area(self): Number { return self.w * self.h } }\n\
+         fn describe<T: Area>(x: T): Number { return Area::area(x) }\n\
          fn main() { let r = { w: 3, h: 4 } print(str(describe<Rect>(r))) }",
     )
     .unwrap();

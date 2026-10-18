@@ -74,7 +74,7 @@ xulo
 
 ```xulo
 // 行注释；语句可以带分号，也可以省略
-fn fib(n: number): number {
+fn fib(n: Number): Number {
     if n <= 1 {
         return n
     } else {
@@ -100,8 +100,8 @@ fn main() {
 
 - 字面量：数字 `123` `3.14`、字符串 `"..."` / `'...'`、布尔 `true`/`false`、列表 `[...]`、对象 `{ key: value, ... }`
 - 变量绑定：`let` / `const`，可选类型注解；赋值语句
-- 函数：`fn name(p: number): number { ... }`，隐式/显式返回、递归、泛型（调用处推断）、可选/默认/命名参数、匿名函数（闭包）
-- 类型：`string` `number` `boolean` `list<T>` `object` `null` `T?` `T | U` `T & U`、字符串字面量联合、函数类型 `fn(...): T`、类型别名 `type`、枚举 `enum`（含关联数据、泛型）
+- 函数：`fn name(p: Number): Number { ... }`，隐式/显式返回、递归、泛型（调用处推断）、可选/默认/命名参数、匿名函数（闭包）
+- 类型：`String` `Number` `Boolean` `Int` `Float` `List<T>` `Map<K, V>` `Null` `T?` `T | U` `T & U`、字符串字面量联合、函数类型 `fn(...): T`、类型别名 `type`、枚举 `enum`（含关联数据、泛型）
 - 控制流：`if` / `else if` / `else`（表达式与语句）、`for x in list`、`for i in 0..<n` / `for i in 0...n`（区间：`..<` 排他上界、`...` 闭合含上界，Swift 语义）、`while`、`match`、`and`/`or`/`!`、三目、`throw`/`try`/`catch`
 - 表达式：成员访问、下标、`?.`、`??`、列表/对象展开 `...`、`$name` 双向绑定
 - 异步：`: async` 返回标注、`await`
@@ -111,7 +111,7 @@ fn main() {
 ### UI 运行时约定
 
 - `@State` / `@Store` / `@Effect` / `@Environment` 只能在返回类型为 `View` 的函数顶层使用（嵌套块/普通函数内报语义错误）。术语：**组件**（component）指构造 UI 的语法/函数形态，**`View`** 是组件函数返回的类型（渲染树值）。
-- 组件块内允许「表达式子元素」（`string` / `View` / `list<View>`，列表渲染为嵌套数组）。外部组件调用（`@xulo/ui` 包，原生无实现）按位置实参构造成 `Name({ key: value, children: [...] })` 形状的 props 对象。
+- 组件块内允许「表达式子元素」（`String` / `View` / `List<View>`，列表渲染为嵌套数组）。外部组件调用（`@xulo/ui` 包，原生无实现）按位置实参构造成 `Name({ key: value, children: [...] })` 形状的 props 对象。
 - 渲染：`xulo run --render terminal examples/ui.xulo` 把入口 `main` 返回的 `View` 布局并绘制到 ANSI 终端（字符单元、边框按钮、true-color 背景）；`--render webview`（`--features webview`）用 wry 打开原生窗口——布局/绘制引擎 `xulo-ui` 编译为 **WASM**（`xulo-ui-wasm`，原始 ABI：`xulo_layout`/`xulo_hit_test`），页面实例化后在浏览器内完成布局，JS 只做最后的画布栅格化，如同 egui/eframe 的 web 后端。Linux 下窗口走 GTK 原生主循环（`build_gtk`，wry 官方推荐路径），并把 `Screen.bg` 同时设为窗口与页面的即时背景——打开即有主题色、无黑屏过渡。渲染管线按 crate 分层：`xulo-ui`（widget 树 + 布局 + 绘制命令，零依赖）、`xulo-renderer-terminal`（字符网格后端，零外部依赖）、`xulo-ui-wasm`（同引擎的 wasm32 产物，框架构建时经 `build.rs` 编译内嵌）、`xulo-renderer-webview`（wry 窗口后端，feature 化）、`xulo-framework`（统一 `run()`：编译 → 执行 → 取渲染树 → 转换 → 布局 → 绘制 → 后端输出）。
 - 交互：`--render` 为交互式会话。终端后端每帧渲染后输入 `1..N` 点击对应按钮、`r`/回车刷新、`q` 退出；webview 后端在页面上真实响应鼠标点击（wasm 内命中测试）。点击执行 `Button.onClick`（闭包在解释器内运行、改写 `@State` 信号），随后 `main` 被重新调用以重渲染——解释器按绑定位置复用 `@State` 单元，因此状态跨帧存活。`@Effect` 每次重渲染都会重跑。已知限制：同一组件多次实例化会共享 `@State`（尚未跟踪实例身份）。
 

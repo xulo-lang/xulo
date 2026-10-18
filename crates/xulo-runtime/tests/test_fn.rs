@@ -34,7 +34,7 @@ fn run_all_tests(src: &str) -> Vec<(String, Option<String>)> {
 fn passing_test_completes() {
     let outcomes = run_all_tests(
         r#"
-        fn add(a: number, b: number): number { return a + b }
+        fn add(a: Number, b: Number): Number { return a + b }
         #Test fn addition_works() {
             assert(add(2, 3) == 5, "2+3=5")
         }
@@ -94,7 +94,7 @@ fn tests_do_not_run_under_interpreter_run() {
 fn async_test_passes_when_task_settles() {
     let outcomes = run_all_tests(
         r#"
-        async fn double(x: number): number { return x * 2 }
+        async fn double(x: Number): Number { return x * 2 }
         #Test async fn async_works() {
             let v = await double(21)
             assert(v == 42, "answer")
@@ -108,7 +108,7 @@ fn async_test_passes_when_task_settles() {
 fn async_test_fails_when_body_asserts() {
     let outcomes = run_all_tests(
         r#"
-        async fn one(): number { return 1 }
+        async fn one(): Number { return 1 }
         #Test async fn async_fails() {
             let v = await one()
             assert(v == 2, "one is not two")
@@ -125,7 +125,7 @@ fn test_body_sees_module_declarations() {
     let outcomes = run_all_tests(
         r#"
         const LIMIT = 10
-        fn helper(): number { return LIMIT * 2 }
+        fn helper(): Number { return LIMIT * 2 }
         #Test fn sees_module() {
             assert(helper() == 20, "helper")
         }

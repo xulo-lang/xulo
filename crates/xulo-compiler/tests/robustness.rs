@@ -54,7 +54,7 @@ fn adversarial_corpus_does_not_panic() {
         "fn main() { for i in 0..<5 }",
         "fn main() { while true }",
         "type T = T & T | T",
-        "fn main() { let f: fn(a: number): number = fn(x: number): number { x } print(f(1)) }",
+        "fn main() { let f: fn(a: Number): Number = fn(x: Number): Number { x } print(f(1)) }",
         "import { A as } from \"./x\"",
         "export default",
         "\u{3000}\u{3000}fn\u{3000}main\u{3000}()\u{3000}{\u{3000}}",
@@ -76,7 +76,7 @@ fn adversarial_corpus_does_not_panic() {
         "? : ? : ?",
         "fn main() { print(''' ') }",
         "$ $ $ $ $ $ $ $",
-        "enum E<T,U> { A(T, U) B(list<T>) }",
+        "enum E<T,U> { A(T, U) B(List<T>) }",
     ];
     for src in corpus {
         compile_quiet(src);
@@ -320,14 +320,13 @@ fn cross_module_trait_dispatch_loads_and_runs() {
     std::fs::write(
         dir.join("shapes.xulo"),
         r#"
-        pub trait Shape { fn area(self): number }
-        pub type Rect = object
+        pub trait Shape { fn area(self): Number }
+        pub struct Rect { w: Number, h: Number }
         impl Shape for Rect {
-            fn area(self): number { return self.w * self.h }
+            fn area(self): Number { return self.w * self.h }
         }
-        pub fn rect(w: number, h: number): Rect {
-            let r = { w: w, h: h }
-            r
+        pub fn rect(w: Number, h: Number): Rect {
+            return Rect(w: w, h: h)
         }
         "#,
     )

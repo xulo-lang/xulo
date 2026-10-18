@@ -65,7 +65,7 @@ match result {
 ## 异常：`throw` / `try` / `catch`
 
 ```xulo
-fn fetchUser(id: string): async {
+fn fetchUser(id: String): async {
   try {
     let response = await fetch("/api/users/" + id)
     return await response.json()

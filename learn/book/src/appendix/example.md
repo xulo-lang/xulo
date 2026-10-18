@@ -35,15 +35,15 @@ pub enum Status {
 
 // 类型别名
 pub type User = {
-  id: string
-  name: string
-  email: string
+  id: String
+  name: String
+  email: String
   status: Status
 }
 
 pub type Result<T> = {
   data: T?
-  error: string?
+  error: String?
 }
 ```
 
@@ -56,9 +56,9 @@ import type { User, Theme } from "../types"
 type AppState = {
   user: User?
   theme: Theme
-  notifications: list<string>
-  loading: boolean
-  error: string?
+  notifications: List<String>
+  loading: Boolean
+  error: String?
 }
 
 // ✅ 对象字面量用括号包裹
@@ -70,15 +70,15 @@ fn setTheme(state: AppState, theme: Theme): AppState {
   ({ ...state, theme: theme })
 }
 
-fn setLoading(state: AppState, loading: boolean): AppState {
+fn setLoading(state: AppState, loading: Boolean): AppState {
   ({ ...state, loading: loading })
 }
 
-fn setError(state: AppState, error: string): AppState {
+fn setError(state: AppState, error: String): AppState {
   ({ ...state, error: error, loading: false })
 }
 
-fn addNotification(state: AppState, message: string): AppState {
+fn addNotification(state: AppState, message: String): AppState {
   ({ ...state, notifications: state.notifications + [message] })
 }
 
@@ -101,7 +101,7 @@ pub const useAppStore = createStore(
 )
 
 // ✅ 异步函数直接调用 useAppStore()，不使用 @Store
-pub fn fetchUser(id: string): async {
+pub fn fetchUser(id: String): async {
   const store = useAppStore()
 
   store.actions.setLoading(true)
@@ -129,9 +129,9 @@ pub enum ButtonVariant {
 }
 
 pub fn PrimaryButton(
-  label: string,
+  label: String,
   onClick: fn()? = null,
-  disabled: boolean? = false
+  disabled: Boolean? = false
 ): View {
   Button(
     variant: ButtonVariant::Primary,
@@ -144,7 +144,7 @@ pub fn PrimaryButton(
 }
 
 pub fn OutlineButton(
-  label: string,
+  label: String,
   onClick: fn()? = null
 ): View {
   Button(variant: ButtonVariant::Outline, onClick: onClick) {
@@ -161,13 +161,13 @@ import { PrimaryButton, OutlineButton } from "../components/button"
 import type { User, Theme, Status } from "../types"
 
 type Props = {
-  id: string
+  id: String
 }
 
 pub fn UserProfile(props: Props): View {
   // ✅ @State/@Store/@Effect 只能在返回 View 的函数顶层使用
-  @State let editing: boolean = false
-  @State let editName: string = ""
+  @State let editing: Boolean = false
+  @State let editName: String = ""
   @Store const { user, theme, loading, error } = useAppStore()
   @Store const { setTheme, addNotification } = useAppStore()
 

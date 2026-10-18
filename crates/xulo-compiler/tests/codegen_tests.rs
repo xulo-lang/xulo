@@ -334,7 +334,7 @@ fn main() {
 fn test_codegen_generic_twice_int() {
     let out = compile_and_run(
         r#"
-fn twice<T>(value: T): list<T> {
+fn twice<T>(value: T): List<T> {
     [value, value]
 }
 fn main() {
@@ -349,7 +349,7 @@ fn main() {
 fn test_codegen_generic_twice_string() {
     let out = compile_and_run(
         r#"
-fn twice<T>(value: T): list<T> {
+fn twice<T>(value: T): List<T> {
     [value, value]
 }
 fn main() {
@@ -364,7 +364,7 @@ fn main() {
 fn test_codegen_generic_first() {
     let out = compile_and_run(
         r#"
-fn first<T>(list: list<T>): T {
+fn first<T>(list: List<T>): T {
     list[0]
 }
 fn main() {
@@ -379,7 +379,7 @@ fn main() {
 fn test_codegen_generic_first_string() {
     let out = compile_and_run(
         r#"
-fn first<T>(list: list<T>): T {
+fn first<T>(list: List<T>): T {
     list[0]
 }
 fn main() {
@@ -394,7 +394,7 @@ fn main() {
 fn test_codegen_generic_prepend_all() {
     let out = compile_and_run(
         r#"
-fn prependAll<T>(prefix: T, list: list<T>): list<T> {
+fn prependAll<T>(prefix: T, list: List<T>): List<T> {
     let mut out = []
     for x in list {
         out = out + [prefix, x]
