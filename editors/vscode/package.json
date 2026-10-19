@@ -2,8 +2,19 @@
   "name": "xulo-analyzer",
   "displayName": "Xulo Analyzer",
   "description": "Language support for Xulo (.xulo) via the xulo-analyzer language server: diagnostics, go-to-definition, hover, references, outline, formatting, syntax and semantic highlighting.",
-  "version": "0.2.4",
+  "version": "0.3.0",
   "publisher": "xulo",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/xulo-lang/xulo.git"
+  },
+  "keywords": [
+    "xulo",
+    "lsp",
+    "language-server",
+    "syntax",
+    "highlighting"
+  ],
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -11,6 +22,20 @@
     "Programming Languages",
     "Linters"
   ],
+  "extensionKind": [
+    "workspace",
+    "ui"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true,
+      "description": "The extension only spawns a user-configured language server binary."
+    },
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "The language server addresses documents by file:// URI."
+    }
+  },
   "activationEvents": [
     "onLanguage:xulo"
   ],
@@ -39,7 +64,13 @@
     "commands": [
       {
         "command": "xulo.restartServer",
-        "title": "Xulo: Restart Language Server"
+        "title": "Xulo: Restart Language Server",
+        "category": "Xulo"
+      },
+      {
+        "command": "xulo.showOutput",
+        "title": "Xulo: Show Language Server Output",
+        "category": "Xulo"
       }
     ],
     "configuration": {
@@ -47,8 +78,9 @@
       "properties": {
         "xulo.server.path": {
           "type": "string",
-          "default": "xulo-analyzer",
-          "description": "Path to the xulo-analyzer binary (or a name on PATH). Overrides the $XULO_LSP env var."
+          "default": "",
+          "scope": "machine-overridable",
+          "markdownDescription": "Path to the `xulo-analyzer` binary (or a name on `PATH`). When empty, `$XULO_LSP` is used, then `xulo-analyzer` on `PATH`."
         },
         "xulo.trace.server": {
           "type": "string",
@@ -57,10 +89,22 @@
             "messages",
             "verbose"
           ],
+          "enumDescriptions": [
+            "Do not log JSON-RPC traffic.",
+            "Log the method and id of every message.",
+            "Log every message including its payload."
+          ],
           "default": "off",
+          "scope": "window",
           "description": "Trace xulo-analyzer JSON-RPC traffic to the output channel."
         }
       }
     }
+  },
+  "scripts": {
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@vscode/vsce": "^3.2.1"
   }
 }

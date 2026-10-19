@@ -55,8 +55,16 @@ fn main() {
     let (id, params) = connection
         .initialize_start()
         .expect("client must send `initialize`");
-    let _params: InitializeParams =
-        serde_json::from_value(params).expect("valid `initialize` params");
+    // A client that spells `initialize` differently must not take the server
+    // down: the payload is only used for validation today, so an unparseable
+    // one degrades to the defaults instead of panicking mid-handshake.
+    let _params: InitializeParams = match serde_json::from_value(params) {
+        Ok(params) => params,
+        Err(err) => {
+            eprintln!("xulo-analyzer: ignoring invalid `initialize` params: {err}");
+            InitializeParams::default()
+        }
+    };
 
     let capabilities = ServerCapabilities {
         text_document_sync: Some(TextDocumentSyncCapability::Options(
@@ -98,12 +106,18 @@ fn main() {
         capabilities,
         server_info: None,
     };
-    connection
-        .initialize_finish(
-            id,
-            serde_json::to_value(&result).expect("serialize init result"),
-        )
-        .expect("send `initialize` response");
+    // `initialize_finish` sends the response and then blocks until the client
+    // answers `initialized`. A client that disconnects in between (editor
+    // closed, bad handshake) is a normal shutdown, not a server bug.
+    if let Err(err) = connection.initialize_finish(
+        id,
+        serde_json::to_value(&result).expect("serialize init result"),
+    ) {
+        eprintln!("xulo-analyzer: initialization ended early: {err}");
+        drop(connection);
+        io_threads.join().expect("join io threads");
+        return;
+    }
 
     let mut state = State::default();
     for msg in &connection.receiver {

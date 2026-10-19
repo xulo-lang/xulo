@@ -27,7 +27,7 @@ cargo build -p xulo-analyzer
 target/debug/xulo-analyzer
 ```
 
-VSCode：用 F5 或「Run Extension」调试启动 `editors/vscode/`（见 `.vscode/launch.json`）；在设置中把 `xulo.server.path` 指向 `target/debug/xulo-analyzer`（或加入 PATH）。扩展为无依赖手写 stdio LSP 客户端，提供定义/悬停/引用/大纲、`Format Document`、语义高亮与语法着色，`Xulo: Restart Language Server` 命令可重启服务器。也可把 `editors/vscode/` 打包为 vsix 本地安装：`code --install-extension xulo-analyzer-*.vsix`。
+VSCode：用 F5 或「Run Extension」调试启动 `editors/vscode/`（见 `.vscode/launch.json`，已带 `cargo build -p xulo-analyzer` 前置任务与 `XULO_LSP` 指向）；在设置中把 `xulo.server.path` 指向 `target/debug/xulo-analyzer`（支持 `${workspaceFolder}` 展开，留空时依次回退到 `XULO_LSP` 环境变量与 `PATH`）。扩展为无依赖手写 stdio LSP 客户端，提供定义/悬停/引用/大纲、`Format Document`、语义高亮与语法着色，`Xulo: Restart Language Server` 可重启服务器、`Xulo: Show Language Server Output` 查看服务器日志。注意：`xulo` 格式化会丢弃全部注释（`xulo-ide/src/format.rs`），因此**不要开启 format-on-save**，需要时手动执行「Format Document」。也可把 `editors/vscode/` 打包为 vsix 本地安装：`npm run package` 后 `code --install-extension xulo-analyzer-*.vsix`。
 
 ## 使用
 

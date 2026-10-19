@@ -1,0 +1,19 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run Xulo Extension",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}/editors/vscode",
+        "${workspaceFolder}/examples"
+      ],
+      "env": {
+        "XULO_LSP": "${workspaceFolder}/target/debug/xulo-analyzer"
+      },
+      "outFiles": [],
+      "preLaunchTask": "cargo: build xulo-analyzer"
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  // `xulo` formatting currently discards comments (see `xulo-ide/src/format.rs`),
+  // so format-on-save stays off here — run "Format Document" deliberately.
+  "[xulo]": {
+    "editor.tabSize": 2,
+    "editor.insertSpaces": true
+  },
+  "xulo.server.path": "${workspaceFolder}/target/debug/xulo-analyzer"
+}

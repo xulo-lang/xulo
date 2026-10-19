@@ -6,8 +6,12 @@
       "type": "extensionHost",
       "request": "launch",
       "args": [
-        "--extensionDevelopmentPath=${workspaceFolder}"
+        "--extensionDevelopmentPath=${workspaceFolder}",
+        "${workspaceFolder}/../../examples"
       ],
+      "env": {
+        "XULO_LSP": "${workspaceFolder}/../../target/debug/xulo-analyzer"
+      },
       "outFiles": []
     }
   ]

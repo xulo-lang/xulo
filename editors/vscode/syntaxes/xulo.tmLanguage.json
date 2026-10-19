@@ -5,19 +5,37 @@
   "patterns": [
     { "include": "#comments" },
     { "include": "#strings" },
+    { "include": "#templates" },
     { "include": "#numbers" },
     { "include": "#attributes" },
-    { "include": "#dollar" },
+    { "include": "#component-annotations" },
+    { "include": "#bindings" },
     { "include": "#declarations" },
+    { "include": "#reserved" },
+    { "include": "#primitive-types" },
+    { "include": "#constants" },
+    { "include": "#intrinsics" },
+    { "include": "#namespaces" },
     { "include": "#keywords" },
-    { "include": "#types" },
-    { "include": "#components" }
+    { "include": "#operators" },
+    { "include": "#types" }
   ],
   "repository": {
     "comments": {
       "patterns": [
-        { "match": "//.*$", "name": "comment.line.double-slash.xulo" },
-        { "begin": "/\\*", "end": "\\*/", "name": "comment.block.xulo" }
+        {
+          "name": "comment.line.double-slash.xulo",
+          "begin": "//",
+          "end": "$",
+          "beginCaptures": { "0": { "name": "punctuation.definition.comment.xulo" } }
+        },
+        {
+          "name": "comment.block.xulo",
+          "begin": "/\\*",
+          "end": "\\*/",
+          "beginCaptures": { "0": { "name": "punctuation.definition.comment.begin.xulo" } },
+          "endCaptures": { "0": { "name": "punctuation.definition.comment.end.xulo" } }
+        }
       ]
     },
     "strings": {
@@ -26,73 +44,213 @@
           "name": "string.quoted.double.xulo",
           "begin": "\"",
           "end": "\"",
-          "patterns": [{ "match": "\\\\[\\s\\S]|\\\\$", "name": "constant.character.escape.xulo" }]
+          "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.xulo" } },
+          "endCaptures": { "0": { "name": "punctuation.definition.string.end.xulo" } },
+          "patterns": [{ "include": "#string-escape" }]
         },
         {
           "name": "string.quoted.single.xulo",
           "begin": "'",
           "end": "'",
-          "patterns": [{ "match": "\\\\[\\s\\S]|\\\\$", "name": "constant.character.escape.xulo" }]
+          "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.xulo" } },
+          "endCaptures": { "0": { "name": "punctuation.definition.string.end.xulo" } },
+          "patterns": [{ "include": "#string-escape" }]
+        }
+      ]
+    },
+    "string-escape": {
+      "match": "\\\\(?:[\"'\\\\nrt]|u[0-9a-fA-F]{4}|u\\{[0-9a-fA-F]+\\})",
+      "name": "constant.character.escape.xulo"
+    },
+    "templates": {
+      "name": "string.template.xulo",
+      "begin": "`",
+      "end": "`",
+      "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.xulo" } },
+      "endCaptures": { "0": { "name": "punctuation.definition.string.end.xulo" } },
+      "patterns": [
+        {
+          "match": "\\\\(?:[`$\"'nrt]|u[0-9a-fA-F]{4}|u\\{[0-9a-fA-F]+\\})",
+          "name": "constant.character.escape.xulo"
+        },
+        {
+          "begin": "\\$\\{",
+          "end": "\\}",
+          "beginCaptures": { "0": { "name": "punctuation.definition.template-expression.begin.xulo" } },
+          "endCaptures": { "0": { "name": "punctuation.definition.template-expression.end.xulo" } },
+          "contentName": "meta.embedded.expression.xulo",
+          "patterns": [
+            { "begin": "\\{", "end": "\\}", "patterns": [{ "include": "$self" }] },
+            { "include": "$self" }
+          ]
         }
       ]
     },
     "numbers": {
-      "match": "\\b(?:0[xX][0-9a-fA-F_]+|\\d[\\d_]*)(?:\\.\\d[\\d_]*)?(?:[eE][+-]?\\d+)?\\b",
-      "name": "constant.numeric.xulo"
+      "patterns": [
+        {
+          "match": "\\b0[xX][0-9a-fA-F]+\\b",
+          "name": "constant.numeric.hex.xulo"
+        },
+        {
+          "match": "\\b0[bB][01]+\\b",
+          "name": "constant.numeric.binary.xulo"
+        },
+        {
+          "match": "\\b0[oO][0-7]+\\b",
+          "name": "constant.numeric.octal.xulo"
+        },
+        {
+          "match": "\\b\\d+\\.\\d+\\b",
+          "name": "constant.numeric.float.xulo"
+        },
+        {
+          "match": "\\b\\d+\\b",
+          "name": "constant.numeric.decimal.xulo"
+        }
+      ]
     },
     "attributes": {
-      "match": "@[A-Za-z_][A-Za-z0-9_]*",
-      "name": "keyword.attribute.xulo"
+      "patterns": [
+        {
+          "name": "meta.attribute.xulo",
+          "begin": "(#)([A-Za-z_][A-Za-z0-9_]*)(\\s*\\()",
+          "beginCaptures": {
+            "1": { "name": "punctuation.definition.attribute.xulo" },
+            "2": { "name": "entity.name.function.attribute.xulo" },
+            "3": { "name": "punctuation.section.group.begin.xulo" }
+          },
+          "end": "\\)",
+          "endCaptures": { "0": { "name": "punctuation.section.group.end.xulo" } },
+          "patterns": [
+            { "include": "#comments" },
+            { "include": "#strings" },
+            { "include": "#templates" },
+            { "include": "#numbers" },
+            { "include": "#types" }
+          ]
+        },
+        {
+          "match": "(#)([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "punctuation.definition.attribute.xulo" },
+            "2": { "name": "entity.name.function.attribute.xulo" }
+          }
+        }
+      ]
     },
-    "dollar": {
-      "match": "\\$[A-Za-z_][A-Za-z0-9_]*",
-      "name": "variable.language.xulo"
+    "component-annotations": {
+      "match": "(@)([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": { "name": "punctuation.definition.annotation.xulo" },
+        "2": { "name": "storage.modifier.component.xulo" }
+      }
+    },
+    "bindings": {
+      "match": "(\\$)([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": { "name": "punctuation.definition.binding.xulo" },
+        "2": { "name": "variable.other.binding.xulo" }
+      }
     },
     "declarations": {
       "patterns": [
         {
           "match": "\\b(fn)\\s+([A-Za-z_][A-Za-z0-9_]*)",
           "captures": {
-            "1": { "name": "keyword.control.xulo" },
+            "1": { "name": "keyword.declaration.xulo" },
             "2": { "name": "entity.name.function.xulo" }
           }
         },
         {
-          "match": "\\b(type)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "match": "\\b(type|trait|enum|struct)\\s+([A-Za-z_][A-Za-z0-9_]*)",
           "captures": {
             "1": { "name": "keyword.declaration.xulo" },
             "2": { "name": "entity.name.type.xulo" }
           }
         },
         {
-          "match": "\\b(trait)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "match": "\\b(mod)\\s+([A-Za-z_][A-Za-z0-9_]*)",
           "captures": {
             "1": { "name": "keyword.declaration.xulo" },
-            "2": { "name": "entity.name.type.xulo" }
+            "2": { "name": "entity.name.module.xulo" }
           }
         },
         {
-          "match": "\\b(enum)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "match": "\\b(use)\\s+(type\\s+)?([A-Za-z_][A-Za-z0-9_-]*)",
           "captures": {
-            "1": { "name": "keyword.declaration.xulo" },
-            "2": { "name": "entity.name.type.xulo" }
+            "1": { "name": "keyword.module.xulo" },
+            "2": { "name": "keyword.declaration.xulo" },
+            "3": { "name": "entity.name.namespace.xulo" }
           }
         }
       ]
     },
+    "reserved": {
+      "match": "\\b(?:abstract|actor|arguments|associatedtype|bench|case|cfg|channel|class|debugger|default|deinit|delete|derive|do|doc|eval|export|extension|fallthrough|final|function|generator|generic|global|guard|init|instanceof|interface|isolated|iterator|lazy|library|local|macro|meta|module|new|open|override|package|priv|protocol|receiver|ref|rethrows|select|sender|static|switch|task|this|typealias|unowned|unsafe|var|virtual|void|weak|with|yield)\\b",
+      "name": "invalid.illegal.reserved.xulo"
+    },
+    "primitive-types": {
+      "match": "\\b(?:bool|string|number|int|float|i8|i16|i32|i64|u8|u16|u32|u64|f32|f64|unit|unknown)\\b",
+      "name": "storage.type.primitive.xulo"
+    },
+    "constants": {
+      "match": "\\b(?:true|false|null)\\b",
+      "name": "constant.language.xulo"
+    },
+    "intrinsics": {
+      "match": "\\b(?:print|println|str|assert)\\b",
+      "name": "support.function.intrinsic.xulo"
+    },
+    "namespaces": {
+      "match": "\\b(?:Math|Time|Task)(?=::)",
+      "name": "support.class.namespace.xulo"
+    },
     "keywords": {
       "patterns": [
-        { "match": "\\b(?:fn|let|const|return|if|else|for|in|while|match|and|or|async|await|try|catch|throw)\\b", "name": "keyword.control.xulo" },
-        { "match": "\\b(?:import|pub|use|from|as|type|enum|trait|where|impl)\\b", "name": "keyword.declaration.xulo" },
-        { "match": "\\b(?:true|false|null)\\b", "name": "constant.language.xulo" },
-        { "match": "\\bprint\\b", "name": "support.function.builtin.xulo" }
+        {
+          "match": "\\b(?:break|continue|defer|else|for|if|in|match|panic|return|while)\\b",
+          "name": "keyword.control.xulo"
+        },
+        {
+          "match": "\\b(?:async|await|lock|shared|spawn)\\b",
+          "name": "keyword.control.async.xulo"
+        },
+        {
+          "match": "\\b(?:const|enum|fn|impl|let|mod|mut|self|struct|trait|type|where)\\b",
+          "name": "keyword.declaration.xulo"
+        },
+        {
+          "match": "\\b(?:as|pub|super|use)\\b",
+          "name": "keyword.module.xulo"
+        },
+        {
+          "match": "\\b(?:copy|move)\\b",
+          "name": "keyword.operator.ownership.xulo"
+        },
+        {
+          "match": "\\b(?:and|or|is|not)\\b",
+          "name": "keyword.operator.word.xulo"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "match": ":=|\\.\\.<|\\.\\.\\.|\\?\\?|\\?\\.|\\*\\*|==|!=|<=|>=|=>|<<|>>",
+          "name": "keyword.operator.xulo"
+        },
+        { "match": "::", "name": "punctuation.separator.path.xulo" },
+        { "match": "\\.", "name": "punctuation.accessor.xulo" },
+        {
+          "match": "[+\\-*/%&|^~!<>=?:]",
+          "name": "keyword.operator.xulo"
+        },
+        { "match": "[{}\\[\\]()]", "name": "punctuation.section.xulo" },
+        { "match": "[,;]", "name": "punctuation.separator.xulo" }
       ]
     },
     "types": {
-      "match": "\\b(?:string|number|boolean|object|any|list)\\b",
-      "name": "storage.type.xulo"
-    },
-    "components": {
       "match": "\\b[A-Z][A-Za-z0-9_]*\\b",
       "name": "entity.name.type.xulo"
     }
