@@ -1069,6 +1069,9 @@ fn build_native(file: &Path, output: Option<PathBuf>) -> ExitCode {
     }
 
     // 使用 cc 链接
+    // --gc-sections：归档 344 个成员整块进链接，不 gc 会把 addr2line/gimli
+    // 回溯和用不到的 std 全拉进来（.text 1.54MB -> 0.33MB）。
+    // --strip-debug：staticlib 内含工具链预编译 std 的 DWARF，实测占产物 66%。
     let exe_path = output_path.with_extension("");
     let link_status = std::process::Command::new("cc")
         .arg("-no-pie")
@@ -1079,6 +1082,8 @@ fn build_native(file: &Path, output: Option<PathBuf>) -> ExitCode {
         .arg("-lpthread")
         .arg("-lm")
         .arg("-ldl")
+        .arg("-Wl,--gc-sections")
+        .arg("-Wl,--strip-debug")
         .status();
 
     match link_status {
