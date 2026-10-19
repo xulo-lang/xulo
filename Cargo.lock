@@ -4075,7 +4075,6 @@ dependencies = [
  "xulo-core",
  "xulo-framework",
  "xulo-ide",
- "xulo-lexer",
  "xulo-parser",
  "xulo-runtime",
  "xulo-semantic",
@@ -4093,7 +4092,6 @@ dependencies = [
  "cranelift-object",
  "target-lexicon 0.13.5",
  "xulo-core",
- "xulo-lexer",
  "xulo-parser",
  "xulo-runtime",
  "xulo-semantic",
@@ -4132,10 +4130,6 @@ dependencies = [
 [[package]]
 name = "xulo-lexer"
 version = "0.1.0"
-dependencies = [
- "winnow 1.0.4",
- "xulo-core",
-]
 
 [[package]]
 name = "xulo-parser"
@@ -4144,6 +4138,7 @@ dependencies = [
  "pest",
  "pest_derive",
  "xulo-core",
+ "xulo-lexer",
 ]
 
 [[package]]
@@ -4187,7 +4182,6 @@ version = "0.1.0"
 dependencies = [
  "corosensei",
  "xulo-core",
- "xulo-lexer",
  "xulo-parser",
  "xulo-semantic",
 ]
@@ -4197,7 +4191,6 @@ name = "xulo-semantic"
 version = "0.1.0"
 dependencies = [
  "xulo-core",
- "xulo-lexer",
  "xulo-parser",
 ]
 

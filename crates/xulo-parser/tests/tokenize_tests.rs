@@ -1,5 +1,6 @@
 use xulo_lexer::token::{Token, Token::*};
-use xulo_lexer::tokenize;
+use xulo_parser::OPERATORS;
+use xulo_parser::tokenize;
 
 #[test]
 fn tokenizes_literals() {
@@ -294,9 +295,20 @@ fn number_literal_forms_preserve_text() {
 }
 
 #[test]
-fn unsupported_number_forms_are_diagnostics() {
-    // No hex/binary/exponent literals: these are located lex errors, not crashes.
-    for bad in ["0x1f", "0b101", "1e3", "1e999"] {
+fn integer_and_float_forms_lex() {
+    for good in ["0x1f", "0X1F", "0b1010", "0o77", "3.14"] {
+        let tokens = tokenize(good).unwrap();
+        let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
+        assert_eq!(kinds, vec![Number, EOF], "input {good:?}");
+    }
+}
+
+#[test]
+fn exponent_number_forms_are_diagnostics() {
+    // Exponent notation does not exist (spec: expressions/literals.md), and a
+    // number glued to an identifier is not a literal: located lex errors, not
+    // crashes.
+    for bad in ["1e3", "1e999", "1a", "0x1fg"] {
         let err = tokenize(bad).unwrap_err();
         assert_eq!(err.kind, xulo_core::error::ErrorKind::Lex, "input {bad:?}");
         assert!(err.span.is_some(), "input {bad:?} must carry a span");
@@ -663,4 +675,42 @@ fn bitwise_or_token() {
     let tokens = tokenize("a | b").unwrap();
     let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
     assert_eq!(kinds, vec![Ident, Pipe, Ident, EOF]);
+}
+
+#[test]
+fn operators_two_char_first() {
+    let tokens = tokenize("a == b <= c => d").unwrap();
+    let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
+    assert_eq!(kinds, vec![Ident, Eq, Ident, Lte, Ident, Arrow, Ident, EOF]);
+}
+
+/// `token_operator` in `grammar.pest` decides which spellings are operators;
+/// `OPERATORS` decides
+/// what each one means. This fails if the two ever drift apart.
+#[test]
+fn operator_table_matches_the_grammar() {
+    let grammar = include_str!("../grammar.pest");
+    let body = grammar
+        .split("token_operator = @{")
+        .nth(1)
+        .expect("grammar has a token_operator rule")
+        .split("\n}")
+        .next()
+        .expect("token_operator rule is terminated");
+    let mut spellings: Vec<&str> = body.split('"').skip(1).step_by(2).collect();
+    spellings.sort_unstable();
+
+    let mut table: Vec<&str> = OPERATORS.iter().map(|(spelling, _)| *spelling).collect();
+    table.sort_unstable();
+
+    assert_eq!(spellings, table);
+}
+
+#[test]
+fn every_operator_spelling_lexes_to_its_token() {
+    for &(spelling, expected) in OPERATORS {
+        let tokens = tokenize(spelling).unwrap();
+        let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
+        assert_eq!(kinds, vec![expected, EOF], "spelling {spelling:?}");
+    }
 }

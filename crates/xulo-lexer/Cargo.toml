@@ -2,7 +2,4 @@
 name = "xulo-lexer"
 version.workspace = true
 edition.workspace = true
-
-[dependencies]
-winnow = { workspace = true }
-xulo-core = { workspace = true }
+description = "Token vocabulary for the Xulo front end (rules and tokenize live in xulo-parser)"

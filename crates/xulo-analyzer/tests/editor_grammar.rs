@@ -109,7 +109,7 @@ fn grammar_text() -> serde_json::Value {
 
 #[test]
 fn grammar_highlights_every_pest_keyword() {
-    let pest = read(&parser("xulo.pest"));
+    let pest = read(&parser("grammar.pest"));
     let keywords = pest_quoted_words(&pest, "kw_word");
     let grammar_words = grammar_keyword_words(&grammar_text());
     let missing: Vec<&String> = keywords.difference(&grammar_words).collect();
@@ -121,7 +121,7 @@ fn grammar_highlights_every_pest_keyword() {
 
 #[test]
 fn grammar_marks_every_reserved_word_as_illegal() {
-    let pest = read(&parser("xulo.pest"));
+    let pest = read(&parser("grammar.pest"));
     let reserved = pest_quoted_words(&pest, "reserved_word");
     let grammar = grammar_text();
     let mut illegal = BTreeSet::new();

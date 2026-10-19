@@ -7,5 +7,4 @@ edition.workspace = true
 xulo-core = { workspace = true }
 
 [dev-dependencies]
-xulo-lexer = { workspace = true }
 xulo-parser = { workspace = true }

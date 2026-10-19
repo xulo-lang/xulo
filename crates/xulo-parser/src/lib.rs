@@ -1,14 +1,20 @@
 //! pest.rs-based parser for Xulo.
 //!
-//! The grammar lives in `xulo.pest` and mirrors `spec/grammar.md`
+//! The grammar lives in `grammar.pest` and mirrors `spec/grammar.md`
 //! production-by-production; this module wires it up, enforces the nesting
 //! depth limit, converts pest diagnostics into [`XuloError`]s, and hands the
 //! token tree to the AST builder in [`build`].
+//!
+//! `grammar.pest` also carries the token layer (`trivia` / `token`), driven by
+//! [`tokenize`], so lexing and parsing share one source of truth.
 
 mod build;
 mod depth;
 mod expr;
+mod tokenize;
 mod types;
+
+pub use tokenize::{OPERATORS, tokenize};
 
 use std::ops::Range;
 
@@ -20,7 +26,7 @@ use xulo_core::ast::Program;
 use xulo_core::error::{ErrorKind, XuloError};
 
 #[derive(Parser)]
-#[grammar = "xulo.pest"]
+#[grammar = "grammar.pest"]
 struct XuloParser;
 
 /// Maximum bracket nesting accepted by the pre-parse depth scan. Input deeper

@@ -539,6 +539,31 @@ fn string_escapes() {
 }
 
 #[test]
+fn quotes_of_the_other_kind_are_literal_text() {
+    // The two quote forms are interchangeable (spec: expressions/literals.md),
+    // so neither may be read as a delimiter inside the other.
+    let a = first_let(r#"let s = "it's""#);
+    let Some(Expression::Literal {
+        value: Literal::String(s),
+        ..
+    }) = &a.value
+    else {
+        panic!("expected string");
+    };
+    assert_eq!(s, "it's");
+
+    let b = first_let(r#"let t = 'say "hi"'"#);
+    let Some(Expression::Literal {
+        value: Literal::String(t),
+        ..
+    }) = &b.value
+    else {
+        panic!("expected string");
+    };
+    assert_eq!(t, r#"say "hi""#);
+}
+
+#[test]
 fn template_desugars_to_concat() {
     let l = first_let("let s = `a${b}c`");
     // old lowering: ("a" + str(b)) + "c"

@@ -9,7 +9,7 @@ use xulo_lexer::{self, token::Token};
 ///
 /// Known limitation: comments are discarded (the lexer does not surface them).
 pub fn format(source: &str) -> Result<String, XuloError> {
-    let tokens = xulo_lexer::tokenize(source)?;
+    let tokens = xulo_parser::tokenize(source)?;
     let toks = &tokens[..tokens.len().saturating_sub(1)];
     let mut out = String::new();
     let mut depth: usize = 0;

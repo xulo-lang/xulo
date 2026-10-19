@@ -11,6 +11,5 @@ xulo-core = { workspace = true }
 corosensei = "0.2"
 
 [dev-dependencies]
-xulo-lexer = { workspace = true }
 xulo-parser = { workspace = true }
 xulo-semantic = { workspace = true }

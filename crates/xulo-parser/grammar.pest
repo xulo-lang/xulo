@@ -12,7 +12,8 @@ program = { SOI ~ (header_item | declaration)* ~ EOI }
 // 1. Comments & whitespace
 // ============================================================
 
-WHITESPACE = _{ (" " | "\t" | "\n" | "\r" | comment)+ }
+whitespace_char = _{ " " | "\t" | "\n" | "\r" }
+WHITESPACE = _{ (whitespace_char | comment)+ }
 comment = _{ line_comment | block_comment }
 line_comment = _{ "//" ~ (!line_terminator ~ ANY)* }
 block_comment = _{ "/*" ~ (!"*/" ~ ANY)* ~ "*/" }
@@ -114,8 +115,13 @@ bin_int = @{ "0" ~ ("b" | "B") ~ ASCII_BIN_DIGIT+ }
 oct_int = @{ "0" ~ ("o" | "O") ~ ASCII_OCT_DIGIT+ }
 float_literal = @{ dec_int ~ "." ~ dec_int }
 
-string_literal = @{ "\"" ~ string_char* ~ "\"" | "'" ~ string_char* ~ "'" }
-string_char = _{ string_escape | !("\"" | "'" | "\\" | "\n" | "\r") ~ ANY }
+// The two quote forms are interchangeable: `"it's"` and `'say "hi"'` are both
+// well-formed (spec: expressions/literals.md).
+string_literal = @{ dquote_string | squote_string }
+dquote_string = _{ "\"" ~ dquote_char* ~ "\"" }
+squote_string = _{ "'" ~ squote_char* ~ "'" }
+dquote_char = _{ string_escape | !("\"" | "\\" | "\n" | "\r") ~ ANY }
+squote_char = _{ string_escape | !("'" | "\\" | "\n" | "\r") ~ ANY }
 string_escape = @{ "\\" ~ ("\"" | "'" | "\\" | "n" | "t" | "r" | unicode_body) }
 unicode_body = _{ "u" ~ (ASCII_HEX_DIGIT{4} | "{" ~ ASCII_HEX_DIGIT+ ~ "}") }
 
@@ -507,3 +513,34 @@ pattern_designator = { primitive_type | identifier }
 pattern_list = { pattern ~ ("," ~ pattern)* }
 paren_pattern = { "(" ~ pattern ~ ")" }
 wildcard_binding = { identifier }
+
+// ============================================================
+// 10. Token layer (`src/tokenize.rs`)
+// ============================================================
+// Entry rules for `tokenize`, which turns source text into the token stream
+// the formatter and the editor consume. They deliberately reuse the literal
+// and identifier rules above, so lexing and parsing can never disagree about
+// what a token is.
+
+// One run of whitespace and comments. A `/*` with no closer fails here, which
+// `tokenize` reports as "unterminated block comment".
+trivia = @{ (whitespace_char | comment)+ }
+
+// Not `identifier`: keywords and reserved words have to lex as identifiers
+// first so `Token::from_keyword` can classify them.
+token_ident = @{ ident_raw }
+
+// PEG choice is ordered, not longest-match, so the multi-character spellings
+// come first: `..<` is tried before `...`, and both before the bare `.`.
+// The `OPERATORS` table in `src/tokenize.rs` carries the same list paired with
+// its token; `operator_table_matches_the_grammar` fails if they drift apart.
+token_operator = @{
+    "..<" | "..." | "**" | "==" | "!=" | "<=" | ">=" | "=>" | ":=" | "::"
+    | "?." | "??" | "=" | "+" | "-" | "*" | "/" | "%" | "^" | "~" | "<"
+    | ">" | "|" | "&" | "?" | "!" | "." | ":" | "@" | "#" | "$" | ";"
+    | "," | "(" | ")" | "{" | "}" | "[" | "]"
+}
+
+// Compound-atomic so the matched alternative still comes through as a child
+// pair - that is how `tokenize` learns which kind of token it got.
+token = ${ string_literal | number_literal | token_ident | token_operator }

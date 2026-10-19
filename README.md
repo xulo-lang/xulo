@@ -2,7 +2,7 @@
 
 Xulo 是一门 UI First 编程语言：解析 `.xulo` 文件 → 语义检查 → 由 Rust 原生解释器执行。JS 代码生成已移除，工具链不依赖 Node.js。
 
-本仓库实现 Xulo 的 MVP（Rust + [winnow](https://github.com/winnow-rs/winnow)）：
+本仓库实现 Xulo 的 MVP（Rust + [pest](https://pest.rs)）：
 
 ```
 .xulo 文件 → 词法分析 (Token) → 语法分析 (AST) → 语义检查 → 原生 Rust 解释器
@@ -153,8 +153,8 @@ CI（GitHub Actions，见 `.github/workflows/ci.yml`）执行 `cargo fmt --check
 ├── Cargo.toml                  # 根 workspace + 共享依赖版本
 ├── crates/
 │   ├── xulo-core/              # AST + 错误类型 + 诊断渲染（零依赖基础）
-│   ├── xulo-lexer/             # 词法分析
-│   ├── xulo-parser/            # 语法分析（winnow）
+│   ├── xulo-lexer/             # Token 类型（词法规则在 grammar.pest）
+│   ├── xulo-parser/            # 词法 + 语法分析（pest, grammar.pest）
 │   ├── xulo-semantic/          # 语义检查 + 符号表 + 名称解析记录（供编辑器查询）
 │   ├── xulo-codegen/           # 生成 JavaScript（已废弃，保留但不再参与执行路径）
 │   ├── xulo-compiler/          # 前端管线 compile() + 多文件模块加载/分析
