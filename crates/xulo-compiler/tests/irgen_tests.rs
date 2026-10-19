@@ -442,3 +442,83 @@ fn main() {
         }
     )));
 }
+
+#[test]
+fn test_compile_panic_string_emits_runtime_call() {
+    let module = compile_to_ir_helper(r#"fn main() { panic("boom") }"#);
+    let func = &module.functions[0];
+    assert!(
+        func.instructions.iter().any(|i| matches!(
+            i,
+            Instruction::RuntimeCall {
+                dst: None,
+                func: RuntimeFn::Panic,
+                args
+            } if args.len() == 2
+                && matches!(&args[0], Operand::Local(_))
+                && matches!(&args[1], Operand::Const(IrValue::I64(0)))
+        )),
+        "panic(string) must lower to xulo_panic(value, 0), got {:#?}",
+        func.instructions
+    );
+}
+
+#[test]
+fn test_compile_panic_number_emits_int_tag() {
+    let module = compile_to_ir_helper("fn main() { panic(42) }");
+    let func = &module.functions[0];
+    assert!(
+        func.instructions.iter().any(|i| matches!(
+            i,
+            Instruction::RuntimeCall {
+                dst: None,
+                func: RuntimeFn::Panic,
+                args
+            } if matches!(&args[1], Operand::Const(IrValue::I64(1)))
+        )),
+        "panic(42) must carry tag 1, got {:#?}",
+        func.instructions
+    );
+}
+
+#[test]
+fn test_compile_panic_keeps_prior_statements() {
+    let module = compile_to_ir_helper(r#"fn main() { print("a"); panic("boom") }"#);
+    let func = &module.functions[0];
+    let print_count = func
+        .instructions
+        .iter()
+        .filter(|i| {
+            matches!(
+                i,
+                Instruction::RuntimeCall {
+                    func: RuntimeFn::PrintValue,
+                    ..
+                }
+            )
+        })
+        .count();
+    let panic_count = func
+        .instructions
+        .iter()
+        .filter(|i| {
+            matches!(
+                i,
+                Instruction::RuntimeCall {
+                    func: RuntimeFn::Panic,
+                    ..
+                }
+            )
+        })
+        .count();
+    assert_eq!(
+        print_count, 1,
+        "print must survive: {:#?}",
+        func.instructions
+    );
+    assert_eq!(
+        panic_count, 1,
+        "panic must not be dropped: {:#?}",
+        func.instructions
+    );
+}

@@ -241,20 +241,16 @@ pub extern "C" fn xulo_detect_tag(value: i64) -> i64 {
 }
 
 /// panic 函数
+/// tag: 0=string, 1=int, 2=float, 3=array, 4=object, 5=bool, 6=null, -1=自动检测
 #[unsafe(no_mangle)]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn xulo_panic(ptr: *const c_char) {
-    unsafe {
-        if !ptr.is_null() {
-            let c_str = CStr::from_ptr(ptr);
-            if let Ok(s) = c_str.to_str() {
-                eprintln!("panic: {}", s);
-            }
-        } else {
-            eprintln!("panic: unknown error");
-        }
-        std::process::exit(1);
-    }
+pub extern "C" fn xulo_panic(value: i64, tag: i64) {
+    let tag = if tag == -1 {
+        xulo_detect_tag(value)
+    } else {
+        tag
+    };
+    eprintln!("panic: {}", format_value(value, tag));
+    std::process::exit(1);
 }
 
 /// 分配对象

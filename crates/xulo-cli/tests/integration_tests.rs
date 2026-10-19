@@ -2272,3 +2272,42 @@ fn native_run_uncalled_import_still_warns_unused() {
         "expected W0102 for uncalled import: {stderr}"
     );
 }
+
+/// `xulo build` 链接 target/release/libxulo_runtime.a；CI 跑测试时该归档还没
+/// 构建（ci.yml 在 test 之后才 build --release），缺失时跳过。
+#[test]
+fn build_panic_program_prints_panic_and_exits_1() {
+    let staticlib = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap()
+        .join("target/release/libxulo_runtime.a");
+    if !staticlib.exists() {
+        eprintln!("skipping: {} not built", staticlib.display());
+        return;
+    }
+
+    let file = temp_file(
+        "panic.xulo",
+        r#"fn main() { print("before"); panic("boom") }"#,
+    );
+    let exe = file.with_extension("bin");
+    let out = Command::new(BIN)
+        .arg("build")
+        .arg(&file)
+        .arg("-o")
+        .arg(&exe)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "build failed: {stderr}");
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("before"),
+        "stdout: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    assert!(stderr.contains("panic: boom"), "stderr: {stderr}");
+    assert!(stderr.contains("exit status: 1"), "stderr: {stderr}");
+    let _ = std::fs::remove_file(&file);
+    let _ = std::fs::remove_file(&exe);
+}

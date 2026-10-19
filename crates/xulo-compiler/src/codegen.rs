@@ -205,7 +205,7 @@ impl CodeGen {
                 true,
             ),
             ("xulo_print_value", vec![I64, I64], false),
-            ("xulo_panic", vec![I64], true),
+            ("xulo_panic", vec![I64, I64], true),
             ("xulo_string_concat", vec![I64, I64], true),
             ("xulo_to_string", vec![I64], true),
             ("xulo_alloc_object", vec![I64], true),
@@ -606,8 +606,10 @@ impl CodeGen {
                         RuntimeFn::ObjectSet => "xulo_object_set",
                     };
 
-                    // xulo_print_value 期望 (i64, i64)，需要将 f64 参数 bitcast 到 i64
-                    let final_args = if *func == RuntimeFn::PrintValue && !arg_vals.is_empty() {
+                    // xulo_print_value / xulo_panic 期望 (i64, i64)，需要将 f64 参数 bitcast 到 i64
+                    let final_args = if matches!(*func, RuntimeFn::PrintValue | RuntimeFn::Panic)
+                        && !arg_vals.is_empty()
+                    {
                         let val_ty = builder.func.dfg.value_type(arg_vals[0]);
                         if val_ty == cranelift::codegen::ir::types::F64 {
                             let bitcasted = builder.ins().bitcast(

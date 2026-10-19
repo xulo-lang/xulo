@@ -651,6 +651,21 @@ impl IrGenerator {
             Expression::If(if_expr) => self.generate_if_expr(if_expr),
             Expression::Member(member) => self.generate_member_access(member),
             Expression::Index(index) => self.generate_index(index),
+            Expression::Panic { expr, .. } => {
+                let value = self.generate_expression(expr)?;
+                let tag = self.determine_element_tag(expr);
+                let func_idx = self.current_func.unwrap();
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::RuntimeCall {
+                        dst: None,
+                        func: RuntimeFn::Panic,
+                        args: vec![value, Operand::Const(IrValue::I64(tag))],
+                    });
+                // panic 不返回值；同 generate_call 的无返回调用，返回一个不会被使用的虚拟值
+                let local = self.module.functions[func_idx].add_local(IrType::Pointer);
+                Ok(Operand::Local(local))
+            }
             _ => {
                 // 其他表达式返回 null
                 let func_idx = self.current_func.unwrap();
