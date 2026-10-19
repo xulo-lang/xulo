@@ -1,0 +1,26 @@
+// 命名空间 Math:: / Time::：常量、常用数学函数、时钟与计时
+fn main() {
+    // 常量
+    print(Math::PI, Math::E, Math::TAU)
+    print(Math::INFINITY)
+
+    // 取整与整数运算
+    print(Math::floor(3.7), Math::ceil(3.2), Math::round(3.5))
+    print(Math::abs(-42))
+    print(Math::min(3, 9), Math::max(3, 9))
+    print(Math::pow(2.0, 10.0))
+    print(Math::sqrt(2.0))
+
+    // 定点小数格式化
+    print(Math::toFixed(3.14159, 2))
+
+    // 三角函数与对数
+    print(Math::sin(0.0), Math::cos(0.0))
+    print(Math::log(Math::E))
+
+    // 时钟
+    print(Time::now() >= 0)
+    let start = Time::monotonic_nanos()
+    print(Time::monotonic() >= 0)
+    print(start >= 0)
+}

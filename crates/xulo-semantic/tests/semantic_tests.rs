@@ -3203,8 +3203,7 @@ fn assert_rejects_non_boolean_condition() {
     "#;
     let err = analyze_src(src).unwrap_err();
     assert!(
-        err.message
-            .contains("`assert` condition must be a `bool`"),
+        err.message.contains("`assert` condition must be a `bool`"),
         "unexpected message: {}",
         err.message
     );
@@ -5032,9 +5031,8 @@ fn identifier_group_on_test_is_e0110() {
     let err = analyze_src("#Test(foo) fn t() {}").unwrap_err();
     assert_eq!(err.code(), "E0110", "unexpected: {}", err.message);
     assert!(
-        err.message.contains(
-            "attribute `Test` takes the form `#Test (\"…\")? [async] fn name() { … }`"
-        ),
+        err.message
+            .contains("attribute `Test` takes the form `#Test (\"…\")? [async] fn name() { … }`"),
         "unexpected: {}",
         err.message
     );

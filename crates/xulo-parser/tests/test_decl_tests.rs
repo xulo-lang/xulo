@@ -136,8 +136,8 @@ async fn async_titled() {}
 
 #[test]
 fn test_decl_title_decodes_escapes() {
-    let program = parse_program(r#"#Test("say \"hi\"") fn t() {}"#)
-        .unwrap_or_else(|e| panic!("{e}"));
+    let program =
+        parse_program(r#"#Test("say \"hi\"") fn t() {}"#).unwrap_or_else(|e| panic!("{e}"));
     let Statement::Test(f) = &program.statements[0] else {
         panic!("expected a test declaration");
     };

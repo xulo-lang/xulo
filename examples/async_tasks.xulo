@@ -1,14 +1,32 @@
-async fn pause() { }
-
-async fn fetch(id: number): number {
-    await pause()
+// 并发：await、Task::resolve / all / race / timeout、Time::sleep
+async fn slow(id: number): number {
+    await Time::sleep(id * 20)
     id * 10
 }
 
+async fn fast(id: number): number {
+    id + 1
+}
+
 async fn main() {
-    let a = fetch(1)
-    let b = fetch(2)
-    print(await a)
-    print(await b)
-    print(await a + await b)
+    // 顺序 await
+    print(await slow(1))
+    print(await fast(2))
+
+    // 并发发起：两个任务同时在跑，结果按顺序 await
+    let a = slow(3)
+    let b = fast(4)
+    print(await a, await b)
+
+    // Task::all：全部完成才完成，结果是列表
+    print(await Task::all([slow(1), fast(2)]))
+
+    // Task::race：谁先完成用谁
+    print(await Task::race([fast(5), slow(6)]))
+
+    // Task::resolve：已就绪的值包成任务
+    print(await Task::resolve("ready"))
+
+    // Task::timeout：超时未完成则变成 Result::Err
+    print(await Task::timeout(slow(7), 1))
 }

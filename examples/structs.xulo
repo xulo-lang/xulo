@@ -1,0 +1,43 @@
+// 结构体：字段、可选字段、默认值、固有方法（impl）、#Derive(ToString)
+struct Point { x: number, y: number }
+
+impl Point {
+    fn len(self): number {
+        Math::sqrt(self.x * self.x + self.y * self.y)
+    }
+    fn shifted(self, dx: number, dy: number): Point {
+        return Point(x: self.x + dx, y: self.y + dy)
+    }
+    fn show(self): string {
+        return `(${self.x}, ${self.y})`
+    }
+}
+
+#Derive(ToString)
+struct User { name: string, age: number, nick: string? }
+
+fn describe(u: User): string {
+    return `${u.name}${u.nick ?? ""} (${u.age})`
+}
+
+fn main() {
+    let p = Point(x: 3, y: 4)
+    print(p.x, p.y)
+    print(p.len())
+    print(p.shifted(1, 2).show())
+
+    // 可省字段 + ?? 兜底
+    let u = User(name: "lyy", age: 30)
+    print(describe(u))
+    print(u.nick ?? "no nick")
+    print(u)                       // #Derive(ToString) 生成的展示形式
+
+    // 字段可变：用 let mut 绑定后直接写
+    let mut q = Point(x: 0, y: 0)
+    q.x = 5
+    print(q.show())
+
+    // 对象字面量标注类型时按字段检查
+    let checked: Point = { x: 1, y: 2 }
+    print(checked.len())
+}

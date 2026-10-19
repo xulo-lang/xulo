@@ -1,0 +1,48 @@
+// 运算符全览：算术 / 比较 / 逻辑 / 位运算 / 一元 / 优先级与结合性
+fn main() {
+    // 算术：+ - * / % **
+    let a = 17
+    let b = 5
+    print(a + b)      // 22
+    print(a - b)      // 12
+    print(a * b)      // 85
+    print(a / b)      // 3.4 —— number 不区分整数除法与浮点除法
+    print(a % b)      // 2
+    print(2 ** 10)    // 1024 —— ** 右结合
+    print(-a)
+
+    // 比较：结果是 bool
+    print(3 == 3)
+    print(2 != 5)
+    print(1 < 2 and 2 < 3)
+    print(5 <= 5, 4 >= 6)
+
+    // 逻辑：and / or 短路，! 取反
+    print(true and false)
+    print(false or true)
+    print(!true)
+
+    // 一元：~ 按位取反
+    print(~0)
+
+    // 位运算与移位
+    print(6 & 3)      // 2
+    print(6 | 3)      // 7
+    print(6 ^ 3)      // 5
+    print(1 << 4)     // 16
+    print(256 >> 4)   // 16
+
+    // 优先级：乘除取模先于加减，括号最优先
+    print(1 + 2 * 3)        // 7
+    print((1 + 2) * 3)      // 9
+    print(2 * 3 % 4)        // 2
+
+    // 字符串 + 拼接；str() 把 number/bool 转成文本
+    print("n=" + str(a) + " ok=" + str(true))
+
+    // 三目与空合并
+    let score = 85
+    print(score >= 60 ? "pass" : "fail")
+    let maybe: string? = null
+    print(maybe ?? "default")
+}

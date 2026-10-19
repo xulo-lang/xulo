@@ -1,4 +1,0 @@
-fn main() {
-    let name = "World"
-    print("Hello, " + name + "!")
-}

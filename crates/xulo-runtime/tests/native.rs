@@ -145,7 +145,15 @@ fn hello_example() {
 fn if_else_example() {
     assert_eq!(
         run_ok(include_str!("../../../examples/if_else.xulo")),
-        vec!["7", "two is not greater than three"]
+        vec![
+            "7",
+            "two is not greater than three",
+            "A",
+            "B",
+            "C",
+            "admitted",
+            "even",
+        ]
     );
 }
 

@@ -1,3 +1,4 @@
+// if / else-if / else：语句分支、嵌套、以及求值为值的 if 表达式
 fn max(a: number, b: number): number {
     if a > b {
         return a
@@ -6,11 +7,45 @@ fn max(a: number, b: number): number {
     }
 }
 
+fn grade(score: number): string {
+    if score >= 90 {
+        return "A"
+    } else if score >= 60 {
+        return "B"
+    } else {
+        return "C"
+    }
+}
+
 fn main() {
     print(max(3, 7))
+
     if 2 > 3 {
         print("two is greater than three")
     } else {
         print("two is not greater than three")
     }
+
+    // else-if 链
+    print(grade(95))
+    print(grade(72))
+    print(grade(41))
+
+    // 嵌套 if
+    let age = 20
+    let hasTicket = true
+    if age >= 18 {
+        if hasTicket {
+            print("admitted")
+        } else {
+            print("ticket required")
+        }
+    } else {
+        print("too young")
+    }
+
+    // if 作为表达式产出值
+    let n = 4
+    let parity = if n % 2 == 0 { "even" } else { "odd" }
+    print(parity)
 }
