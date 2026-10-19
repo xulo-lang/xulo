@@ -171,7 +171,7 @@ fn main() {
 #[test]
 fn test_compile_function_call() {
     let source = r#"
-fn add(a: Number, b: Number): Number {
+fn add(a: number, b: number): number {
     return a + b
 }
 

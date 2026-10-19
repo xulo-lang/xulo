@@ -11,7 +11,7 @@ use xulo_core::ast::{
 };
 use xulo_core::error::XuloError;
 
-use super::expr::{assign_target, component_call, expression, ternary_entry};
+use super::expr::{assign_target, component_call, decode_string, expression, ternary_entry};
 use super::types::{R, check_rule, single, type_expr};
 use super::{Rule, err, span_of};
 
@@ -226,22 +226,26 @@ fn fn_decl(pair: Pair<'_, Rule>) -> R<FnDef> {
         body: body.expect("fn_decl has a body"),
         span,
         attributes,
+        title: None,
     })
 }
 
-/// Build a `#Test [async] fn name() { … }` into the fixed-shape `FnDef` the
-/// `Statement::Test` variant carries: no parameters, no return type, no
-/// generics (the grammar already forbids them; the fields are filled empty).
+/// Build a `#Test [ "(" [ StringLiteral ] ")" ] [async] fn name() { … }` into
+/// the fixed-shape `FnDef` the `Statement::Test` variant carries: no
+/// parameters, no return type, no generics (the grammar already forbids them;
+/// the fields are filled empty) and `title` from the optional group.
 fn test_decl(pair: Pair<'_, Rule>) -> R<FnDef> {
     let span = span_of(&pair);
     let mut is_async = false;
     let mut name = String::new();
     let mut name_span = 0..0;
     let mut body = None;
+    let mut title = None;
     for p in pair.into_inner() {
         match p.as_rule() {
             Rule::kw_fn => {}
             Rule::kw_async => is_async = true,
+            Rule::string_literal => title = Some(decode_string(p.as_str())),
             Rule::identifier => {
                 name = p.as_str().to_string();
                 name_span = span_of(&p);
@@ -261,6 +265,7 @@ fn test_decl(pair: Pair<'_, Rule>) -> R<FnDef> {
         body: body.expect("test_decl has a body"),
         span,
         attributes: Vec::new(),
+        title,
     })
 }
 

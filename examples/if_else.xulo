@@ -1,4 +1,4 @@
-fn max(a: Number, b: Number): Number {
+fn max(a: number, b: number): number {
     if a > b {
         return a
     } else {

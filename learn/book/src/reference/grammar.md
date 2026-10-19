@@ -47,12 +47,12 @@ type_expr           = union_type ;
 
 union_type          = intersection_type { "|" intersection_type } ;
 intersection_type   = primary_type { "&" primary_type } ;
-primary_type        = "String"
-                    | "Number"
-                    | "Boolean"
-                    | "Null"
+primary_type        = "string"
+                    | "number"
+                    | "bool"
+                    | "null"
                     | "object"
-                    | type_identifier [ type_args ]      (* generic named type, e.g. Result<Number> *)
+                    | type_identifier [ type_args ]      (* generic named type, e.g. Result<number> *)
                     | string_literal                     (* string literal type *)
                     | type_expr "?"                      (* optional type *)
                     | "List" "<" type_expr ">"         (* generic list *)

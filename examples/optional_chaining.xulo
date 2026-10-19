@@ -1,13 +1,13 @@
 // 可选类型、可选链、空合并、三目（Swift/TS 混合风格）
-fn greet(name: String?): String {
+fn greet(name: string?): string {
     // `?.` 对 null 短路得到 null，`??` 给出默认值
     let who = name ?? "stranger"
     `Hello, ${who}!`
 }
 
 fn main() {
-    let maybe: String? = "xulo"
-    let none: String? = null
+    let maybe: string? = "xulo"
+    let none: string? = null
 
     print(maybe ?? "no value")
     print(none ?? "no value")
@@ -30,7 +30,7 @@ fn main() {
     print(!false)
 
     // 可选参数：调用时可省略
-    let mut name: String? = null
+    let mut name: string? = null
     name = "set later"
     print(`name=${name}`)
 }

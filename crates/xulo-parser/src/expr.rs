@@ -307,7 +307,7 @@ fn apply_postfix(expr: Expression, op: Pair<'_, Rule>, span_start: usize) -> R<E
     match inner.as_rule() {
         Rule::call_args => {
             // `call_args` may open with a written `CallTypeArgs` list
-            // (`first<Int>(…)`); PEG backtracking already dropped the
+            // (`first<int>(…)`); PEG backtracking already dropped the
             // alternative when the material is not a type list followed by
             // `(`, so whatever matched here is a type-argument reading.
             let mut type_args = None;
@@ -627,7 +627,7 @@ fn variant_path(pair: Pair<'_, Rule>) -> R<Expression> {
         // `Time::now()` — the empty list is still a call.
         None => Vec::new(),
     };
-    // A written list after the variant (`Color::Red<Int>(…)`) is not part of
+    // A written list after the variant (`Color::Red<int>(…)`) is not part of
     // `variant_call_args`: the postfix pass reads it and the checker reports
     // `E0807` (constructors declare no type parameters).
     Ok(Expression::Call(Call {

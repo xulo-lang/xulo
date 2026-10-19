@@ -6,9 +6,9 @@
 
 ```xulo
 type User = {
-  name: String
-  age: Number
-  email: String?          // 可选类型
+  name: string
+  age: number
+  email: string?          // 可选类型
 }
 
 type Status = "active" | "inactive"   // 字符串字面量联合
@@ -21,7 +21,7 @@ enum Theme {
 
 enum Result<T> {           // 带关联数据的泛型枚举
   Success(T)
-  Error(String)
+  Error(string)
 }
 ```
 
@@ -29,12 +29,12 @@ enum Result<T> {           // 带关联数据的泛型枚举
 
 ```xulo
 // 隐式返回（Rust 风格）
-fn add(a: Number, b: Number): Number {
+fn add(a: number, b: number): number {
   a + b
 }
 
 // 可选 / 默认参数，命名实参
-fn Button(label: String, variant: String = "primary"): View {
+fn Button(label: string, variant: string = "primary"): View {
   // ...
 }
 Button(variant: "outline", label: "Submit")
@@ -58,7 +58,7 @@ let label = match theme {
 
 ```xulo
 fn Counter(): View {
-  @State let count: Number = 0
+  @State let count: number = 0
 
   VStack {
     Text("Count: " + str(count))
@@ -74,7 +74,7 @@ fn Counter(): View {
 ## 异步
 
 ```xulo
-fn fetchUser(id: String): async {
+fn fetchUser(id: string): async {
   try {
     let response = await fetch("/api/users/" + id)
     return await response.json()
@@ -89,7 +89,7 @@ fn fetchUser(id: String): async {
 
 ```xulo
 // math.xulo
-pub fn add(a: Number, b: Number): Number { a + b }
+pub fn add(a: number, b: number): number { a + b }
 pub const PI = 3.14
 
 // main.xulo

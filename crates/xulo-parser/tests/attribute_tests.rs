@@ -7,15 +7,16 @@ use xulo_parser::parse_program;
 fn attributes_parse_on_every_attributed_declaration() {
     let program = parse_program(
         r#"
-#Test fn t() {}
+#Test
+fn t() {}
 #Derive(ToString)
-struct S { a: String }
+struct S { a: string }
 #Derive(ToString)
 enum E { A B }
 #Known
-trait Named { fn name(self): String }
+trait Named { fn name(self): string }
 #Known
-impl Named for S { fn name(self): String { return self.a } }
+impl Named for S { fn name(self): string { return self.a } }
 "#,
     )
     .unwrap_or_else(|e| panic!("{}", e.message));
@@ -57,7 +58,7 @@ impl Named for S { fn name(self): String { return self.a } }
 
 #[test]
 fn derive_argument_lists_carry_every_name() {
-    let program = parse_program("#Derive(ToString, Display)\nstruct S { a: String }")
+    let program = parse_program("#Derive(ToString, Display)\nstruct S { a: string }")
         .unwrap_or_else(|e| panic!("{}", e.message));
     let Statement::Struct(s) = &program.statements[0] else {
         panic!("expected struct");
@@ -74,7 +75,7 @@ fn derive_argument_lists_carry_every_name() {
 
 #[test]
 fn empty_attribute_parens_are_recorded_as_parens() {
-    let program = parse_program("#Derive()\nstruct S { a: String }")
+    let program = parse_program("#Derive()\nstruct S { a: string }")
         .unwrap_or_else(|e| panic!("{}", e.message));
     let Statement::Struct(s) = &program.statements[0] else {
         panic!("expected struct");

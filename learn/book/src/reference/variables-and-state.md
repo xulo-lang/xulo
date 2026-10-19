@@ -9,8 +9,8 @@ Xulo 的绑定分两类：普通变量（`let` / `const`）与响应式状态（
 ```xulo
 const APP_NAME = "Xulo"       // 常量（不可变）
 let count = 0                 // 变量（可变）
-let name: String = "Alice"    // 带类型标注
-let maybe: String? = null     // 可选类型
+let name: string = "Alice"    // 带类型标注
+let maybe: string? = null     // 可选类型
 ```
 
 **规则：**
@@ -23,9 +23,9 @@ let maybe: String? = null     // 可选类型
 ## 局部状态 `@State`（SwiftUI 风格）
 
 ```xulo
-@State let count: Number = 0
-@State let name: String = ""
-@State let isActive: Boolean = true
+@State let count: number = 0
+@State let name: string = ""
+@State let isActive: bool = true
 ```
 
 - `@State` 只能在 UI 组件（返回 `View` 的函数）顶层声明
@@ -43,8 +43,8 @@ import { createStore } from "@xulo/store"
 type AppState = {
   user: User?
   theme: Theme
-  notifications: List<String>
-  loading: Boolean
+  notifications: List<string>
+  loading: bool
 }
 
 // ✅ 对象字面量用括号包裹，避免歧义
@@ -154,7 +154,7 @@ Input(value: name, onInput: fn(e) {
 ```xulo
 fn UserProfile(): View {
   @Store const { user, loading } = useAppStore()
-  @State let editing: Boolean = false
+  @State let editing: bool = false
   @Effect fn() { fetchUser(id) }
 
   VStack { ... }

@@ -20,9 +20,9 @@ fn run(src: &str) -> Vec<String> {
 #[test]
 fn service_reply_settles_send_task() {
     let out = run(r#"
-        struct Tally { total: Number }
+        struct Tally { total: number }
         impl Tally {
-            fn on_message(mut self, cmd: Number) {
+            fn on_message(mut self, cmd: number) {
                 self.total = self.total + cmd
                 reply(self.total)
             }
@@ -43,9 +43,9 @@ fn service_reply_settles_send_task() {
 #[test]
 fn service_handles_messages_in_fifo_order() {
     let out = run(r#"
-        struct Counter { n: Number }
+        struct Counter { n: number }
         impl Counter {
-            fn on_message(mut self, v: Number) {
+            fn on_message(mut self, v: number) {
                 self.n = self.n + v
                 reply(self.n)
             }
@@ -69,10 +69,10 @@ fn service_handles_messages_in_fifo_order() {
 #[test]
 fn async_on_message_defers_next_message() {
     let out = run(r#"
-        struct Box { v: Number }
-        async fn slow(x: Number): Number { x }
+        struct Box { v: number }
+        async fn slow(x: number): number { x }
         impl Box {
-            async fn on_message(mut self, x: Number) {
+            async fn on_message(mut self, x: number) {
                 self.v = await slow(x)
                 reply(self.v)
             }
@@ -95,10 +95,10 @@ fn async_on_message_defers_next_message() {
 #[test]
 fn stop_cancels_queued_messages() {
     let out = run(r#"
-        async fn slow(n: Number): Number { n }
-        struct S { n: Number }
+        async fn slow(n: number): number { n }
+        struct S { n: number }
         impl S {
-            async fn on_message(mut self, v: Number) {
+            async fn on_message(mut self, v: number) {
                 self.n = self.n + v
                 let _unused = await slow(0)
                 reply(self.n)
@@ -124,9 +124,9 @@ fn stop_cancels_queued_messages() {
 #[test]
 fn on_message_without_reply_settles_null() {
     let out = run(r#"
-        struct Nop { seen: Number }
+        struct Nop { seen: number }
         impl Nop {
-            fn on_message(mut self, v: Number) {
+            fn on_message(mut self, v: number) {
                 self.seen = v
             }
         }
@@ -145,9 +145,9 @@ fn on_message_without_reply_settles_null() {
 #[test]
 fn service_state_is_isolated_from_spawner() {
     let out = run(r#"
-        struct Acc { v: Number }
+        struct Acc { v: number }
         impl Acc {
-            fn on_message(mut self, delta: Number) {
+            fn on_message(mut self, delta: number) {
                 self.v = self.v + delta
                 reply(self.v)
             }
@@ -171,7 +171,7 @@ fn service_state_is_isolated_from_spawner() {
 #[test]
 fn task_namespace_combinators_settle() {
     let out = run(r#"
-        async fn work(n: Number): Number { n }
+        async fn work(n: number): number { n }
         async fn main() {
             let ready = Task::resolve(42)
             print(await ready)
@@ -193,7 +193,7 @@ fn task_all_propagates_rejection() {
     let interp = Interpreter::new();
     let program = parse_program(
         r#"
-        async fn boom(): Number {
+        async fn boom(): number {
             panic("nope")
         }
         async fn main() {
@@ -238,9 +238,9 @@ fn task_timeout_wraps_a_task_that_settles_in_time() {
 #[test]
 fn task_timeout_expires_on_a_task_that_never_settles() {
     let out = run(r#"
-        struct Relay { n: Number }
+        struct Relay { n: number }
         impl Relay {
-            async fn on_message(mut self, cmd: Map<String, Unknown>) {
+            async fn on_message(mut self, cmd: Map<string, unknown>) {
                 reply(await cmd.me.send({ me: cmd.me }))
             }
         }
@@ -258,7 +258,7 @@ fn task_timeout_expires_on_a_task_that_never_settles() {
 }
 
 /// `await Time::sleep(ms)` suspends the body until the deadline passes and
-/// yields `Unit` (spec `builtins/intrinsic-functions.md`): the coroutine
+/// yields `unit` (spec `builtins/intrinsic-functions.md`): the coroutine
 /// resumes with nothing to print, then continues.
 #[test]
 fn time_sleep_settles_after_the_delay() {

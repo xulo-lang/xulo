@@ -78,6 +78,13 @@ pub fn format(source: &str) -> Result<String, XuloError> {
         {
             break_before = true;
         }
+        // A declaration attribute is written on its own line: `#Name` /
+        // `#Name(...)` then the item keyword (`fn`, `pub`, `async`, `struct`,
+        // ...) on the next. The break is forced, not hinted, so a one-line
+        // `#Test fn t() {}` is rewritten into the recommended form.
+        if !break_before && is_item_keyword(cur) && closes_attribute(toks, i) {
+            break_before = true;
+        }
         if orig_blank && !at_line_start {
             blank_before = true;
         }
@@ -320,4 +327,58 @@ fn is_expr_start(t: Option<Token>) -> bool {
             | Some(Token::Minus)
             | Some(Token::Plus)
     )
+}
+
+/// Keywords that open an item declaration. An attribute is always written on
+/// its own line, so the formatter breaks before whichever of these follows it.
+fn is_item_keyword(t: Token) -> bool {
+    matches!(
+        t,
+        Token::Fn
+            | Token::Pub
+            | Token::Async
+            | Token::Struct
+            | Token::Enum
+            | Token::Trait
+            | Token::Impl
+            | Token::Type
+    )
+}
+
+/// True when the token before `i` completes a declaration attribute — `#Name`
+/// or `#Name(...)` — so the keyword at `i` starts the item the attribute
+/// decorates. Only a `#`-introduced group counts, so an ordinary call's
+/// argument list (`f(x)`) never reads as one.
+fn closes_attribute(toks: &[xulo_lexer::token::LexedToken], i: usize) -> bool {
+    if i < 2 {
+        return false;
+    }
+    match toks[i - 1].kind {
+        // `#Name` — a bare attribute with no argument group.
+        Token::Ident => toks[i - 2].kind == Token::Hash,
+        // `#Name(...)` — walk the paren group back to its open, then check
+        // the `Ident`/`Hash` that introduced it.
+        Token::RParen => {
+            let mut depth = 0usize;
+            let mut j = i - 1;
+            loop {
+                match toks[j].kind {
+                    Token::RParen => depth += 1,
+                    Token::LParen => {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+                if j == 0 {
+                    return false;
+                }
+                j -= 1;
+            }
+            j >= 2 && toks[j - 1].kind == Token::Ident && toks[j - 2].kind == Token::Hash
+        }
+        _ => false,
+    }
 }

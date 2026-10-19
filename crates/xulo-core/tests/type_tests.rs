@@ -2,10 +2,10 @@ use xulo_core::ast::*;
 
 #[test]
 fn test_type_name_primitives() {
-    assert_eq!(Type::String.name(), "String");
-    assert_eq!(Type::Number.name(), "Number");
-    assert_eq!(Type::Boolean.name(), "Boolean");
-    assert_eq!(Type::Null.name(), "Null");
+    assert_eq!(Type::String.name(), "string");
+    assert_eq!(Type::Number.name(), "number");
+    assert_eq!(Type::Boolean.name(), "bool");
+    assert_eq!(Type::Null.name(), "null");
     assert_eq!(Type::Object.name(), "object");
     assert_eq!(Type::Any.name(), "any");
 }
@@ -24,34 +24,34 @@ fn test_type_name_literal() {
 
 #[test]
 fn test_type_name_list() {
-    assert_eq!(Type::List(Box::new(Type::Number)).name(), "List<Number>");
-    assert_eq!(Type::List(Box::new(Type::String)).name(), "List<String>");
+    assert_eq!(Type::List(Box::new(Type::Number)).name(), "List<number>");
+    assert_eq!(Type::List(Box::new(Type::String)).name(), "List<string>");
 }
 
 #[test]
 fn test_type_name_nested_list() {
     assert_eq!(
         Type::List(Box::new(Type::List(Box::new(Type::Number)))).name(),
-        "List<List<Number>>"
+        "List<List<number>>"
     );
 }
 
 #[test]
 fn test_type_name_optional() {
-    assert_eq!(Type::Optional(Box::new(Type::String)).name(), "String?");
-    assert_eq!(Type::Optional(Box::new(Type::Number)).name(), "Number?");
+    assert_eq!(Type::Optional(Box::new(Type::String)).name(), "string?");
+    assert_eq!(Type::Optional(Box::new(Type::Number)).name(), "number?");
 }
 
 #[test]
 fn test_type_name_union() {
     let union = Type::Union(vec![Type::Number, Type::String]);
-    assert_eq!(union.name(), "Number | String");
+    assert_eq!(union.name(), "number | string");
 }
 
 #[test]
 fn test_type_name_union_three() {
     let union = Type::Union(vec![Type::Number, Type::String, Type::Boolean]);
-    assert_eq!(union.name(), "Number | String | Boolean");
+    assert_eq!(union.name(), "number | string | bool");
 }
 
 #[test]
@@ -69,13 +69,13 @@ fn test_type_name_object_type() {
         ("width".to_string(), Type::Number),
         ("height".to_string(), Type::Number),
     ]);
-    assert_eq!(obj.name(), "{width: Number, height: Number}");
+    assert_eq!(obj.name(), "{width: number, height: number}");
 }
 
 #[test]
 fn test_type_name_object_type_single() {
     let obj = Type::ObjectType(vec![("name".to_string(), Type::String)]);
-    assert_eq!(obj.name(), "{name: String}");
+    assert_eq!(obj.name(), "{name: string}");
 }
 
 #[test]
@@ -84,7 +84,7 @@ fn test_type_name_fn_sig() {
         params: vec![Type::Number, Type::String],
         ret: Some(Box::new(Type::Boolean)),
     };
-    assert_eq!(sig.name(), "fn(Number, String): Boolean");
+    assert_eq!(sig.name(), "fn(number, string): bool");
 }
 
 #[test]
@@ -93,7 +93,7 @@ fn test_type_name_fn_sig_no_return() {
         params: vec![Type::Number],
         ret: None,
     };
-    assert_eq!(sig.name(), "fn(Number)");
+    assert_eq!(sig.name(), "fn(number)");
 }
 
 #[test]
@@ -102,7 +102,7 @@ fn test_type_name_fn_sig_no_params() {
         params: vec![],
         ret: Some(Box::new(Type::Null)),
     };
-    assert_eq!(sig.name(), "fn(): Null");
+    assert_eq!(sig.name(), "fn(): null");
 }
 
 #[test]

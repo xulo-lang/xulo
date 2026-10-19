@@ -28,7 +28,7 @@ fn first_let(src: &str) -> xulo_core::ast::LetBinding {
 
 #[test]
 fn fn_decl_with_params_and_return() {
-    let p = parse_ok("fn add(a: Number, b: Number): Number { a + b }");
+    let p = parse_ok("fn add(a: number, b: number): number { a + b }");
     let Statement::Fn(f) = &p.statements[0] else {
         panic!("expected fn");
     };
@@ -42,13 +42,13 @@ fn fn_decl_with_params_and_return() {
 
 #[test]
 fn pub_fn_is_exported() {
-    let p = parse_ok("pub fn add(a: Number): Number { a }");
+    let p = parse_ok("pub fn add(a: number): number { a }");
     assert!(matches!(p.statements[0], Statement::Export(_)));
 }
 
 #[test]
 fn async_fn() {
-    let p = parse_ok("async fn f(): Number { await g() }");
+    let p = parse_ok("async fn f(): number { await g() }");
     let Statement::Fn(f) = &p.statements[0] else {
         panic!("expected fn");
     };
@@ -78,7 +78,7 @@ fn generic_fn_with_where_clause() {
 
 #[test]
 fn struct_decl() {
-    let p = parse_ok("struct User { name: String, age: Number }");
+    let p = parse_ok("struct User { name: string, age: number }");
     let Statement::Struct(s) = &p.statements[0] else {
         panic!("expected struct");
     };
@@ -88,7 +88,7 @@ fn struct_decl() {
 
 #[test]
 fn enum_decl_with_payloads() {
-    let p = parse_ok("enum Msg { Submit(data: String, count: Number), Ping }");
+    let p = parse_ok("enum Msg { Submit(data: string, count: number), Ping }");
     let Statement::Enum(e) = &p.statements[0] else {
         panic!("expected enum");
     };
@@ -102,8 +102,8 @@ fn enum_decl_with_payloads() {
 #[test]
 fn trait_decl_and_impl() {
     let p = parse_ok(
-        "trait Area { fn area(self, scale: Number): Number } \
-         impl Area for Rectangle { fn area(self, scale: Number): Number { self.w * self.h * scale } }",
+        "trait Area { fn area(self, scale: number): number } \
+         impl Area for Rectangle { fn area(self, scale: number): number { self.w * self.h * scale } }",
     );
     assert!(matches!(p.statements[0], Statement::Trait(_)));
     assert!(matches!(p.statements[1], Statement::Impl(_)));
@@ -111,7 +111,7 @@ fn trait_decl_and_impl() {
 
 #[test]
 fn inherent_impl_with_self_expressions() {
-    let p = parse_ok("impl Rectangle { fn area(self): Number { self.w * self.h } }");
+    let p = parse_ok("impl Rectangle { fn area(self): number { self.w * self.h } }");
     let Statement::Impl(imp) = &p.statements[0] else {
         panic!("expected impl");
     };
@@ -128,8 +128,8 @@ fn generic_impl_keeps_params_bounds_and_receiver_args() {
     // the receiver's written arguments — the pattern applicability decides
     // against (spec `types/traits.md`, `types/generics.md`).
     let p = parse_ok(
-        "trait Area { fn area(self): Number } \
-         impl<T: Area> Palette<T> { fn render(self): Number { 12 } }",
+        "trait Area { fn area(self): number } \
+         impl<T: Area> Palette<T> { fn render(self): number { 12 } }",
     );
     let Statement::Impl(imp) = &p.statements[1] else {
         panic!("expected impl");
@@ -148,7 +148,7 @@ fn generic_impl_keeps_params_bounds_and_receiver_args() {
 
 #[test]
 fn generic_impl_for_trait_keeps_repeated_receiver_pattern() {
-    let p = parse_ok("impl<T> Show for Pair<T, T> { fn show(self): Number { 1 } }");
+    let p = parse_ok("impl<T> Show for Pair<T, T> { fn show(self): number { 1 } }");
     let Statement::Impl(imp) = &p.statements[0] else {
         panic!("expected impl");
     };
@@ -167,7 +167,7 @@ fn generic_impl_for_trait_keeps_repeated_receiver_pattern() {
 
 #[test]
 fn type_alias() {
-    let p = parse_ok("type Id = Number");
+    let p = parse_ok("type Id = number");
     let Statement::TypeAlias(t) = &p.statements[0] else {
         panic!("expected type alias");
     };
@@ -176,7 +176,7 @@ fn type_alias() {
 
 #[test]
 fn tuple_type_alias() {
-    let p = parse_ok("type Pair = (String, Number)");
+    let p = parse_ok("type Pair = (string, number)");
     let Statement::TypeAlias(t) = &p.statements[0] else {
         panic!("expected type alias");
     };
@@ -284,7 +284,7 @@ fn mod_declarations() {
 #[test]
 fn let_variants() {
     let p =
-        parse_ok("let x = 1 let mut y = 2 let z: String = \"a\" let w = shared [1] const K = 5");
+        parse_ok("let x = 1 let mut y = 2 let z: string = \"a\" let w = shared [1] const K = 5");
     assert_eq!(p.statements.len(), 5);
     let x = match &p.statements[0] {
         Statement::Let(l) => l,
@@ -400,7 +400,7 @@ fn while_and_for() {
 
 #[test]
 fn return_bare_and_with_value() {
-    let p = parse_ok("fn f(): Number { return } fn g(): Number { return 1 }");
+    let p = parse_ok("fn f(): number { return } fn g(): number { return 1 }");
     assert_eq!(p.statements.len(), 2);
 }
 
@@ -481,7 +481,7 @@ fn ternary_vs_postfix_propagation() {
 
 #[test]
 fn is_and_is_not() {
-    let p = parse_ok("fn f(x: Number): Boolean { return x is Number and x is not String }");
+    let p = parse_ok("fn f(x: number): bool { return x is number and x is not string }");
     assert_eq!(p.statements.len(), 1);
 }
 
@@ -554,7 +554,7 @@ fn template_desugars_to_concat() {
 #[test]
 fn closures() {
     let p = parse_ok(
-        "let f = fn(a: Number): Number { a } let g = (a, b) => a + b let h = x => { print(x) } let i = async () => 1",
+        "let f = fn(a: number): number { a } let g = (a, b) => a + b let h = x => { print(x) } let i = async () => 1",
     );
     assert_eq!(p.statements.len(), 4);
 }
@@ -581,7 +581,7 @@ fn brace_map_with_spread() {
 
 #[test]
 fn typed_map() {
-    let p = parse_ok("let m = Map<String, Number>{ \"a\": 1 }");
+    let p = parse_ok("let m = Map<string, number>{ \"a\": 1 }");
     let Statement::Let(l) = &p.statements[0] else {
         panic!();
     };
@@ -640,18 +640,18 @@ fn panic_expression() {
 
 #[test]
 fn self_is_an_ordinary_expression_name() {
-    parse_ok("impl Box { fn get(self): Number { self.value + 1 } }");
+    parse_ok("impl Box { fn get(self): number { self.value + 1 } }");
 }
 
 #[test]
 fn nested_generics_require_space_before_gt() {
-    parse_ok("fn f(x: List<List<Number> >): List<List<Number> > { x }");
-    parse_err("fn f(x: List<List<Number>>): Number { 1 }");
+    parse_ok("fn f(x: List<List<number> >): List<List<number> > { x }");
+    parse_err("fn f(x: List<List<number>>): number { 1 }");
 }
 
 #[test]
 fn optional_and_fn_and_literal_types() {
-    parse_ok("fn f(x: Number?, y: fn(a: Number): Boolean, z: \"tag\"): Unit { }");
+    parse_ok("fn f(x: number?, y: fn(a: number): bool, z: \"tag\"): unit { }");
 }
 
 // ---------------------------------------------------------------
@@ -661,7 +661,7 @@ fn optional_and_fn_and_literal_types() {
 #[test]
 fn match_arms_or_guard_wildcard() {
     let p = parse_ok(
-        "fn f(x: Number): Number { match x { 0 | 1 => 2, 2...5 => 3, n if n > 5 => 4, _ => 5 } }",
+        "fn f(x: number): number { match x { 0 | 1 => 2, 2...5 => 3, n if n > 5 => 4, _ => 5 } }",
     );
     let Statement::Fn(f) = &p.statements[0] else {
         panic!();
@@ -682,19 +682,19 @@ fn match_arms_or_guard_wildcard() {
 
 #[test]
 fn match_arm_body_block() {
-    parse_ok("fn f(x: Number) { match x { 0 => { print(1) } _ => print(2) } }");
+    parse_ok("fn f(x: number) { match x { 0 => { print(1) } _ => print(2) } }");
 }
 
 #[test]
 fn match_enum_payload_patterns() {
     parse_ok(
-        "enum Msg { Send(to: String), Ping } fn f(m: Msg): Number { match m { Msg::Send(to) => 1, Msg::Ping => 2 } }",
+        "enum Msg { Send(to: string), Ping } fn f(m: Msg): number { match m { Msg::Send(to) => 1, Msg::Ping => 2 } }",
     );
 }
 
 #[test]
 fn match_type_pattern_with_binder() {
-    let p = parse_ok("fn f(x: Number): Number { match x { String s => 1, Int _ => 2, _ => 3 } }");
+    let p = parse_ok("fn f(x: number): number { match x { string s => 1, int _ => 2, _ => 3 } }");
     let Statement::Fn(f) = &p.statements[0] else {
         panic!();
     };
@@ -709,7 +709,7 @@ fn match_type_pattern_with_binder() {
         MatchPattern::TypePattern {
             type_name, binder, ..
         } => {
-            assert_eq!(type_name, "String");
+            assert_eq!(type_name, "string");
             assert_eq!(
                 *binder,
                 xulo_core::ast::PatternBinder::Binding("s".to_string())
@@ -721,7 +721,7 @@ fn match_type_pattern_with_binder() {
 
 #[test]
 fn match_body_shapes() {
-    let p = parse_ok("fn f(x: Number) { match x { 0 => print(0), _ => { print(1) } } }");
+    let p = parse_ok("fn f(x: number) { match x { 0 => print(0), _ => { print(1) } } }");
     let Statement::Fn(f) = &p.statements[0] else {
         panic!();
     };
@@ -742,7 +742,7 @@ fn match_body_shapes() {
 #[test]
 fn component_fn_with_state_and_children() {
     let src = r#"fn Counter(): View {
-  @State let count: Number = 0
+  @State let count: number = 0
   VStack(spacing: 8) {
     Text(str(count))
     Button("Inc", onClick: fn() { count = count + 1 })
@@ -794,7 +794,7 @@ fn bare_component_call_without_args() {
 
 #[test]
 fn component_decl_variants() {
-    let src = "fn V(): View { @State let n: Number = 0 @Store let { count } = store @Environment let theme: String @Effect fn() { print(n) }, [n] Text(str(n)) }";
+    let src = "fn V(): View { @State let n: number = 0 @Store let { count } = store @Environment let theme: string @Effect fn() { print(n) }, [n] Text(str(n)) }";
     let p = parse_ok(src);
     let Statement::Fn(f) = &p.statements[0] else {
         panic!();
@@ -837,8 +837,8 @@ fn untyped_parameters_rejected() {
 
 #[test]
 fn parameter_mode_follows_the_colon() {
-    parse_ok("fn f(x: mut Number, y: shared String) { }");
-    parse_err("fn f(mut x: Number) { }");
+    parse_ok("fn f(x: mut number, y: shared string) { }");
+    parse_err("fn f(mut x: number) { }");
 }
 
 #[test]
@@ -946,7 +946,7 @@ fn variant_path_as_call_argument() {
 
 #[test]
 fn optional_type_postfix() {
-    let p = parse_ok("let x: Number? = null let ys: List<Number>? = null");
+    let p = parse_ok("let x: number? = null let ys: List<number>? = null");
     let Statement::Let(l) = &p.statements[0] else {
         panic!("expected let");
     };

@@ -1,4 +1,4 @@
-fn fib(n: Number): Number {
+fn fib(n: number): number {
     if n <= 1 {
         return n
     } else {

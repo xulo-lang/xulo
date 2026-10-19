@@ -18,11 +18,13 @@
 | `import` `pub` `use` `from` `as` `default` | 模块 | [模块系统](reference/modules.md) |
 | `type` `enum` | 类型声明 | [数据与类型](reference/types.md) |
 | `null` `true` `false` | 字面量 | [词法结构](reference/lexical.md) |
+| `bool` `string` `number` `int` `float` | 原始类型名 | [数据与类型](reference/types.md) |
+| `i8` `i16` `i32` `i64` `u8` `u16` `u32` `u64` `f32` `f64` `unit` `unknown` | 定宽数值 / 单例类型名 | [数据与类型](reference/types.md) |
 | `print` | 内置输出 | [词法结构](reference/lexical.md) |
 
 装饰器（`@` 后，仅返回 `View` 的组件函数顶层）：`@State`、`@Store`、`@Effect`、`@Environment`。
 
-内建类型名：`String` `Number` `Boolean` `List<T>` `View`。
+内建类型名：`string` `number` `bool` `List<T>` `View`。
 
 ## 运算符优先级（高 → 低）
 
@@ -47,17 +49,17 @@
 // 变量
 let x = 1
 const NAME = "Xulo"
-let s: String? = null
+let s: string? = null
 
 // 类型
-type User = { name: String, age: Number }
+type User = { name: string, age: number }
 type Status = "active" | "inactive"
 enum Theme { Light Dark System }
 
 // 函数
-fn add(a: Number, b: Number): Number { a + b }
-fn greet(name: String = "stranger"): String { "Hello, " + name }
-let double = fn(x: Number): Number { x * 2 }
+fn add(a: number, b: number): number { a + b }
+fn greet(name: string = "stranger"): string { "Hello, " + name }
+let double = fn(x: number): number { x * 2 }
 
 // 控制流
 let m = if a > b { a } else { b }
@@ -67,7 +69,7 @@ match x { 0 => "zero" _ => "other" }
 
 // 组件与状态
 fn Counter(): View {
-  @State let n: Number = 0
+  @State let n: number = 0
   VStack {
     Text("Count: " + str(n))
     Button(onClick: fn() { n = n + 1 }) { Text("+") }
@@ -79,5 +81,5 @@ fn load(): async { let v = await fetch() return v }
 
 // 模块
 import { add } from "./math"
-pub fn f(): Number { 1 }
+pub fn f(): number { 1 }
 ```

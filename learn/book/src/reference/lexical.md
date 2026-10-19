@@ -44,6 +44,9 @@ identifier     = (letter | "_") { letter | digit | "_" } ;
 | `type` `enum` | 类型声明 |
 | `trait` `impl` `where` | 特征声明 / 实现 / 泛型约束 |
 | `null` `true` `false` | 字面量关键字 |
+| `bool` `string` `number` `int` `float` | 原始类型名关键字 |
+| `i8` `i16` `i32` `i64` `u8` `u16` `u32` `u64` `f32` `f64` | 定宽数值类型名关键字 |
+| `unit` `unknown` | 单例类型名关键字 |
 | `print` | 内置输出函数 |
 | `str` | 内置转换 `str(x)`，返回字符串 |
 
@@ -72,9 +75,9 @@ identifier     = (letter | "_") { letter | digit | "_" } ;
 
 ### 建议避免的名称（非强制）
 
-以下内建类型名建议不要作为变量名使用（当前不报错，仅约定）：
+以下内建类型名不是关键字，但建议不要作为变量名使用（当前不报错，仅约定）：
 
-`String` `Number` `Boolean` `List<T>` `View`
+`List<T>` `View`
 
 `View` 是内建**标记类型**：编译器仅用它识别「返回该类型的函数即 UI 组件」（并据此启用 `@State` / `@Store` 顶层校验），本身无运行时可执行实现——具体组件实现由标准库 `@xulo/ui` 提供。
 
@@ -85,12 +88,12 @@ identifier     = (letter | "_") { letter | digit | "_" } ;
 ## 字面量
 
 ```xulo
-123            // Number（整数）
-3.14           // Number（浮点）
-"hello"        // String（双引号）
-'world'        // String（单引号）
-true           // Boolean
-false          // Boolean
+123            // number（整数）
+3.14           // number（浮点）
+"hello"        // string（双引号）
+'world'        // string（单引号）
+true           // bool
+false          // bool
 null           // null
 [1, 2, 3]      // 列表字面量
 { name: "lyy" } // 对象字面量

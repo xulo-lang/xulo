@@ -8,9 +8,10 @@ pub struct Program {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Statement {
     Fn(FnDef),
-    /// `#Test [async] fn name() { … }` — an always-checked, inert test body
-    /// (spec testing.md). The `FnDef` carries the fixed shape: empty params,
-    /// no return type, no generics; `is_async` is the optional marker.
+    /// `#Test [ "(" [ StringLiteral ] ")" ] [async] fn name() { … }` — an
+    /// always-checked, inert test body (spec testing.md). The `FnDef` carries
+    /// the fixed shape: empty params, no return type, no generics; `is_async`
+    /// is the optional marker and `title` the optional display title.
     Test(FnDef),
     Let(LetBinding),
     Return(ReturnStmt),
@@ -96,6 +97,11 @@ pub struct FnDef {
     /// (empty for methods, closures, and the fixed-shape test form, whose
     /// `#Test` is part of the `TestDecl` production).
     pub attributes: Vec<Attribute>,
+    /// The `#Test` display title — `#Test("parse test")` — as written,
+    /// `None` when the group is absent or empty and for every declaration
+    /// that is not a test (spec testing.md, "The title"). It is metadata for
+    /// a tool's reporting: not a name, never referenceable.
+    pub title: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -199,7 +205,7 @@ pub struct ComponentStmt {
     pub children: Vec<UiElement>,
     /// Source span of the whole invocation (name through children block).
     pub span: Range<usize>,
-    /// A written `CallTypeArgs` list (`Text<Int>("Hi") { … }`); components
+    /// A written `CallTypeArgs` list (`Text<int>("Hi") { … }`); components
     /// declare no type parameters, so the checker rejects it with `E0807`.
     pub type_args: Option<Vec<Type>>,
 }
@@ -828,8 +834,8 @@ pub enum MatchPattern {
         bindings: Vec<MatchPattern>,
         span: Range<usize>,
     },
-    /// A type pattern: `String s`, `Unknown _`, or `String? p`; with a union
-    /// designator `String | Int v`. `type_name` is the (possibly rendered
+    /// A type pattern: `string s`, `unknown _`, or `string? p`; with a union
+    /// designator `string | int v`. `type_name` is the (possibly rendered
     /// union) designator text.
     TypePattern {
         type_name: String,
@@ -919,7 +925,7 @@ pub struct Call {
     /// phase annotates the mangled impl name (`impl_Area_Rectangle_area`) here.
     /// `None` for plain/enum/method calls.
     pub trait_impl: Option<String>,
-    /// A written call-site type-argument list — `first<Int>(…)` — between the
+    /// A written call-site type-argument list — `first<int>(…)` — between the
     /// callee and the argument list (spec `expressions/calls.md`
     /// `CallTypeArgs`). `None` when no list is written; `Some(vec![])` for
     /// `f<>(…)`, which must reach the arity diagnostic, not a comparison.
@@ -941,7 +947,7 @@ pub struct CallValue {
     pub arguments: Vec<CallArg>,
     pub span: Range<usize>,
     /// Call-site type arguments on a callee that is an arbitrary expression
-    /// (`xs[0]<Int>(1)`); always `E0807` — a value of function type declares
+    /// (`xs[0]<int>(1)`); always `E0807` — a value of function type declares
     /// no type parameters (spec `types/generics.md`).
     pub type_args: Option<Vec<Type>>,
 }
@@ -986,8 +992,8 @@ pub enum Type {
     Object,
     /// A named type: an alias, an enum, a generic application, or a stdlib
     /// type (`User`, `View`). The second field carries the written type
-    /// arguments of an application — `Map<String, Int>` is
-    /// `Named("Map", [String, Number])` — and is empty when no argument list
+    /// arguments of an application — `Map<string, int>` is
+    /// `Named("Map", [Type::String, Type::Number])` — and is empty when no argument list
     /// was written. Argument well-formedness (count, bare names, bounds) is
     /// checked by the semantic analyzer (spec `types/generics.md`).
     Named(String, Vec<Type>),
@@ -1001,7 +1007,7 @@ pub enum Type {
     /// language by the current spec — maps replaced object types; kept for
     /// legacy ASTs.)
     ObjectType(Vec<(String, Type)>),
-    /// A positional tuple type: `(Int, String)` (at least two elements).
+    /// A positional tuple type: `(int, string)` (at least two elements).
     Tuple(Vec<Type>),
     /// A function *type*: `fn(a: string): boolean`.
     FnSig {
@@ -1016,7 +1022,7 @@ pub enum Type {
 /// Two named types are the same type when their *names* are: the written type
 /// arguments do not take part in type identity, because they are validated
 /// separately (arity and bounds, spec E0230/E0801) and because a value's type
-/// carries no arguments — `Palette<Int>` and the `Palette` a value of it has
+/// carries no arguments — `Palette<int>` and the `Palette` a value of it has
 /// must still compare equal.
 impl PartialEq for Type {
     fn eq(&self, other: &Self) -> bool {
@@ -1054,10 +1060,10 @@ impl PartialEq for Type {
 impl Type {
     pub fn name(&self) -> String {
         match self {
-            Type::String => "String".into(),
-            Type::Number => "Number".into(),
-            Type::Boolean => "Boolean".into(),
-            Type::Null => "Null".into(),
+            Type::String => "string".into(),
+            Type::Number => "number".into(),
+            Type::Boolean => "bool".into(),
+            Type::Null => "null".into(),
             Type::Object => "object".into(),
             Type::Named(n, _) => n.clone(),
             Type::Literal(s) => format!("\"{s}\""),
@@ -1106,7 +1112,7 @@ impl Type {
     }
 
     /// Render a type the way it was written, including its type arguments
-    /// (`Map<String, Int>`). Diagnostics that quote an application use this;
+    /// (`Map<string, int>`). Diagnostics that quote an application use this;
     /// [`Type::name`] stays the bare head so existing messages keep reading
     /// the same.
     pub fn display(&self) -> String {

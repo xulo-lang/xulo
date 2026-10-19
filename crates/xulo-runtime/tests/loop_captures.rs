@@ -26,7 +26,7 @@ fn ranged_loop_function_captures_its_own_iteration() {
         fn main() {
             let mut funcs = []
             for i in 0..<3 {
-                fn get(): Number { i }
+                fn get(): number { i }
                 funcs = [...funcs, get]
             }
             for j in 0..<3 {
@@ -51,7 +51,7 @@ fn list_loop_function_captures_its_own_iteration() {
         fn main() {
             let mut funcs = []
             for x in [10, 20, 30] {
-                fn get(): Number { x }
+                fn get(): number { x }
                 funcs = [...funcs, get]
             }
             for j in 0..<3 {
@@ -73,7 +73,7 @@ fn closure_in_nested_block_captures_its_own_iteration() {
             let mut funcs = []
             for i in 0..<3 {
                 if i < 3 {
-                    fn get(): Number { i }
+                    fn get(): number { i }
                     funcs = [...funcs, get]
                 }
             }
@@ -95,7 +95,7 @@ fn closure_bound_by_let_captures_its_own_iteration() {
         fn main() {
             let mut funcs = []
             for i in 0..<3 {
-                let f = fn(): Number { i }
+                let f = fn(): number { i }
                 funcs = [...funcs, f]
             }
             for j in 0..<3 {

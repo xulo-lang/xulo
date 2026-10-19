@@ -15,7 +15,7 @@ fn tokens(src: &str) -> Vec<SemanticToken> {
 }
 
 const SAMPLE: &str = "\
-type Rectangle = Map<String, Number>
+type Rectangle = Map<string, number>
 
 enum Color {
     Red,
@@ -23,17 +23,17 @@ enum Color {
 }
 
 trait Area {
-    fn area(self): Number
+    fn area(self): number
 }
 
 impl Area for Rectangle {
-    fn area(self): Number {
+    fn area(self): number {
         return 0
     }
 }
 
 fn panel(): View {
-    @State let count: Number = 0
+    @State let count: number = 0
     print(count)
 }
 

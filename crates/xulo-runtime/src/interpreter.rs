@@ -511,7 +511,7 @@ fn native_math_sqrt(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunE
     ))
 }
 
-/// `Math::cbrt(x)`: the cube root, defined for every `Float`.
+/// `Math::cbrt(x)`: the cube root, defined for every `float`.
 fn native_math_cbrt(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     Ok(Value::Number(
         builtin_num_arg(args, 0, "Math::cbrt")?.cbrt(),
@@ -526,9 +526,9 @@ fn native_math_pow(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunEr
 }
 
 /// `Math::floor(x)` / `Math::ceil(x)` / `Math::round(x)` / `Math::trunc(x)`:
-/// the integral value, typed `Int`. `f64::round` rounds halfway cases away
+/// the integral value, typed `int`. `f64::round` rounds halfway cases away
 /// from zero (spec `builtins/intrinsic-functions.md`), matching the
-/// specified rule; every result stays an integer-valued `Float`.
+/// specified rule; every result stays an integer-valued `float`.
 fn native_math_floor(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     Ok(Value::Number(
         builtin_num_arg(args, 0, "Math::floor")?.floor(),
@@ -685,7 +685,7 @@ fn native_time_monotonic_nanos(_interp: &Interpreter, args: &[Value]) -> Result<
     Ok(Value::Number(monotonic_start().elapsed().as_nanos() as f64))
 }
 
-/// `Time::sleep(ms)`: a `Task<Unit>` that settles at least `ms` milliseconds
+/// `Time::sleep(ms)`: a `Task<unit>` that settles at least `ms` milliseconds
 /// from now. The deadline is a timer entry `drive` fires once nothing else is
 /// ready to run, exactly like a `Task::timeout` deadline; awaiting the task
 /// suspends the body until then.
@@ -730,7 +730,7 @@ fn native_str(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> 
 /// `assert(condition, message)`: a falsy condition stops the program with
 /// `panic(message)` (an uncaught throw of the message string), mirroring
 /// `Expression::Panic`. Semantic checking already enforced the
-/// `Boolean`/`String` signature; the runtime check is defensive.
+/// `bool`/`string` signature; the runtime check is defensive.
 fn native_assert(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     let condition = args.first().cloned().unwrap_or(Value::Null);
     if is_truthy(&condition) {
@@ -984,7 +984,7 @@ fn ui_has_closure(el: &xulo_core::ast::UiElement) -> bool {
     }
 }
 
-/// How a derived `to_string` renders one field or payload parameter:
+/// How a derived `toString` renders one field or payload parameter:
 /// structurally, or by delegating to that type's `ToString` impl (hand
 /// written or itself derived — both live under the same mangled name).
 enum DerivedForm {
@@ -994,7 +994,7 @@ enum DerivedForm {
 
 fn derived_form(ty: &Type) -> DerivedForm {
     match ty {
-        // `String` parses as `Type::String`, so a named type here is a
+        // `string` parses as `Type::String`, so a named type here is a
         // user type; the semantic pass has already rejected the derive
         // unless the type has a string form (E0212/E0801).
         Type::Named(name, _) => DerivedForm::ToStr(name.clone()),
@@ -1839,7 +1839,7 @@ impl Interpreter {
     }
 
     /// Register a `struct` declaration: the shared type object (inherent
-    /// methods and a derived `to_string` land on it), the constructor
+    /// methods and a derived `toString` land on it), the constructor
     /// metadata `User(name: …)` builds instances from, and the name
     /// `struct_method`/dispatch look the object up by.
     fn register_struct(&self, s: &StructDef, env: &Rc<RefCell<Env>>) {
@@ -1878,7 +1878,7 @@ impl Interpreter {
         match form {
             DerivedForm::Structural => Ok(value.format()),
             DerivedForm::ToStr(type_name) => {
-                let mangled = impl_fn_name("ToString", type_name, "to_string");
+                let mangled = impl_fn_name("ToString", type_name, "toString");
                 let func = self.global.borrow().get(&mangled);
                 match func {
                     Some(func) => {
@@ -1898,9 +1898,9 @@ impl Interpreter {
     }
 
     /// Register `#Derive(ToString)` for a struct (spec `types/traits.md`): the
-    /// generated method sits on the struct's object so `user.to_string()`
+    /// generated method sits on the struct's object so `user.toString()`
     /// resolves like a hand written member, and under its mangled name on the
-    /// shared root so `ToString::to_string(user)` and an annotated `str(user)`
+    /// shared root so `ToString::toString(user)` and an annotated `str(user)`
     /// dispatch through the same function.
     fn register_derived_struct(&self, s: &StructDef, env: &Rc<RefCell<Env>>) {
         if !Self::derives_to_string(&s.attributes) {
@@ -1919,19 +1919,19 @@ impl Interpreter {
         }));
         if let Some(Value::Object(obj)) = env.borrow().get(&s.name) {
             let mut obj = obj.borrow_mut();
-            if !obj.iter().any(|(k, _)| k == "to_string") {
-                obj.push(("to_string".to_string(), renderer.clone()));
+            if !obj.iter().any(|(k, _)| k == "toString") {
+                obj.push(("toString".to_string(), renderer.clone()));
             }
             // The qualified key is what a generic `T: ToString` bound's
             // dynamic dispatch looks for on the receiver's struct object —
             // the same slot a hand-written trait impl registers.
-            let qualified = "ToString::to_string".to_string();
+            let qualified = "ToString::toString".to_string();
             if !obj.iter().any(|(k, _)| *k == qualified) {
                 obj.push((qualified, renderer.clone()));
             }
         }
         self.global.borrow_mut().define(
-            &impl_fn_name("ToString", &s.name, "to_string"),
+            &impl_fn_name("ToString", &s.name, "toString"),
             renderer,
             false,
         );
@@ -1990,7 +1990,7 @@ impl Interpreter {
             Ok(Value::String(out.into()))
         }));
         self.global.borrow_mut().define(
-            &impl_fn_name("ToString", &e.name, "to_string"),
+            &impl_fn_name("ToString", &e.name, "toString"),
             renderer,
             false,
         );
@@ -3399,7 +3399,7 @@ impl Interpreter {
         match self.eval(expr, env)? {
             Value::Number(n) => Ok(n),
             other => Err(RunError::err(
-                format!("expected a `Number`, found {}", other.kind_name()),
+                format!("expected a `number`, found {}", other.kind_name()),
                 expr.span().clone(),
             )),
         }
@@ -3811,12 +3811,12 @@ impl Interpreter {
             None => {
                 // A derived (or hand written) `ToString` on an enum is a
                 // standalone mangled function — enum instances carry no object
-                // to hang methods on — so `variant.to_string()` dispatches
+                // to hang methods on — so `variant.toString()` dispatches
                 // through it with the receiver bound as `self`.
                 if let Value::Enum { enum_name, .. } = &receiver
-                    && method == "to_string"
+                    && method == "toString"
                 {
-                    let mangled = impl_fn_name("ToString", enum_name, "to_string");
+                    let mangled = impl_fn_name("ToString", enum_name, "toString");
                     if let Some(func) = env.borrow().get(&mangled) {
                         let arg_values = self.eval_args(&call.arguments, env)?;
                         let mut args = Vec::with_capacity(arg_values.len() + 1);
@@ -3827,7 +3827,7 @@ impl Interpreter {
                 }
                 // A constructed instance knows its struct type: the method
                 // resolves on that type's object (inherent methods, a derived
-                // `to_string`) with the receiver bound as `self`, so two
+                // `toString`) with the receiver bound as `self`, so two
                 // structs declaring the same method name never cross-fire.
                 if let Value::Object(obj) = &receiver
                     && let Some(struct_name) = self.instance_type(obj)
@@ -4880,14 +4880,14 @@ fn value_is_named_type(value: &Value, type_name: &str) -> bool {
     match type_name {
         // The spec primitive spellings (spec `types/primitive-types.md`),
         // including the fixed-bit layer of the numeric system.
-        "Number" | "Int" | "Float" | "I8" | "I16" | "I32" | "I64" | "U8" | "U16" | "U32"
-        | "U64" | "F32" | "F64" => matches!(value, Value::Number(_)),
-        "String" => matches!(value, Value::String(_)),
-        "Boolean" => matches!(value, Value::Boolean(_)),
-        "Null" => matches!(value, Value::Null),
+        "number" | "int" | "float" | "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32"
+        | "u64" | "f32" | "f64" => matches!(value, Value::Number(_)),
+        "string" => matches!(value, Value::String(_)),
+        "bool" => matches!(value, Value::Boolean(_)),
+        "null" => matches!(value, Value::Null),
         "List" => matches!(value, Value::List(_)),
         "Map" => matches!(value, Value::Object(_)),
-        "Unknown" => true,
+        "unknown" => true,
         _ => match value {
             Value::Enum { enum_name, .. } => enum_name == type_name,
             _ => false,

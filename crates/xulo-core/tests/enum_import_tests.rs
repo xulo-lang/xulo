@@ -183,6 +183,7 @@ fn test_export_fn() {
             body: Block { statements: vec![] },
             span: 0..20,
             attributes: Vec::new(),
+            title: None,
         }),
     };
     assert!(matches!(export.item, ExportItem::Fn(_)));
@@ -280,6 +281,7 @@ fn test_impl_decl() {
             body: Block { statements: vec![] },
             span: 0..20,
             attributes: Vec::new(),
+            title: None,
         }],
         span: 0..25,
         is_inherent: false,

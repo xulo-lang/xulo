@@ -20,7 +20,7 @@ fn sources() -> HashMap<PathBuf, String> {
         ),
         (
             PathBuf::from(LIB),
-            "pub fn greet(name: String): String {\n    return name\n}\n".to_string(),
+            "pub fn greet(name: string): string {\n    return name\n}\n".to_string(),
         ),
     ])
 }
@@ -65,7 +65,7 @@ fn cross_module_go_to_definition_jumps_into_exporter() {
 #[test]
 fn local_definitions_stay_in_module() {
     let src = "\
-fn helper(x: Number): Number {
+fn helper(x: number): number {
     return x
 }
 fn main() {
@@ -187,11 +187,11 @@ fn cyclic_imports_are_accepted() {
     );
     all.insert(
         PathBuf::from("/w/a.xulo"),
-        "use b::b;\npub fn a(): Number {\n    return b()\n}\n".to_string(),
+        "use b::b;\npub fn a(): number {\n    return b()\n}\n".to_string(),
     );
     all.insert(
         PathBuf::from("/w/b.xulo"),
-        "use a::a;\npub fn b(): Number {\n    return a()\n}\n".to_string(),
+        "use a::a;\npub fn b(): number {\n    return a()\n}\n".to_string(),
     );
     let ws = Workspace::open(&all, Path::new(MAIN)).expect("cycles are legal");
     assert_eq!(ws.modules().count(), 3);
@@ -216,7 +216,7 @@ fn failed_dependency_degrades_to_opaque() {
     let mut all = sources();
     all.insert(
         PathBuf::from(LIB),
-        "pub fn greet(name: String): String {\n    return 42\n}\n".to_string(),
+        "pub fn greet(name: string): string {\n    return 42\n}\n".to_string(),
     );
     let ws = Workspace::open(&all, Path::new(MAIN)).expect("open");
     let lib = ws.analysis(Path::new(LIB)).unwrap();
@@ -230,7 +230,7 @@ fn transitive_imports_work() {
     let mut all = sources();
     all.insert(
         PathBuf::from("/w/util.xulo"),
-        "pub fn loud(s: String): String {\n    return s + \"!\"\n}\n".to_string(),
+        "pub fn loud(s: string): string {\n    return s + \"!\"\n}\n".to_string(),
     );
     // Root-absolute head: `util` is claimed by the entry (spec paths), so
     // lib's `use util::loud` needs no claim of its own.
@@ -241,7 +241,7 @@ fn transitive_imports_work() {
     );
     all.insert(
         PathBuf::from(LIB),
-        "use util::loud;\npub fn greet(name: String): String {\n    return loud(name)\n}\n"
+        "use util::loud;\npub fn greet(name: string): string {\n    return loud(name)\n}\n"
             .to_string(),
     );
     let ws = Workspace::open(&all, Path::new(MAIN)).expect("open");
@@ -258,7 +258,7 @@ fn transitive_imports_work() {
     let util = ws.analysis(Path::new("/w/util.xulo")).unwrap();
     assert_eq!(
         located.range.start,
-        pos(util, &util.source, "loud(s: String")
+        pos(util, &util.source, "loud(s: string")
     );
 }
 
@@ -285,7 +285,7 @@ fn local_shadowing_beats_import_edge_in_go_to_definition() {
         ),
         (
             PathBuf::from(LIB),
-            "pub fn greet(name: String): String {\n    return name\n}\n".to_string(),
+            "pub fn greet(name: string): string {\n    return name\n}\n".to_string(),
         ),
     ]);
     let ws = Workspace::open(&all, Path::new(MAIN)).expect("open");

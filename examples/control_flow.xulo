@@ -1,5 +1,5 @@
 // 控制流：区间（半开 ..< / 闭合 ...）、while、if 表达式、match、return
-fn sumTo(n: Number): Number {
+fn sumTo(n: number): number {
     let mut acc = 0
     for i in 1...n {        // 闭合区间 1..n，含上界
         acc = acc + i

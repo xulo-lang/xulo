@@ -58,6 +58,7 @@ fn primary_type(pair: Pair<'_, Rule>) -> R<Type> {
     let inner = single(pair);
     match inner.as_rule() {
         Rule::named_type => named_type(inner),
+        Rule::primitive_type => primitive_type(inner),
         Rule::function_type => function_type(inner),
         Rule::literal_type => literal_type(inner),
         Rule::paren_or_tuple_type => {
@@ -95,26 +96,38 @@ fn named_type(pair: Pair<'_, Rule>) -> R<Type> {
     };
 
     match name.as_str() {
-        // The primitive names are the spec spellings (spec
-        // `types/primitive-types.md`) — ordinary identifiers in a type
-        // position, kept a primitive only when no argument list was written,
-        // so that `String<Int>` reaches the checker as an application and is
-        // diagnosed there (spec `types/generics.md`). `Int`/`Float` spell the
-        // numeric primitive for now; the checker does not yet separate them
-        // from `Number`.
-        "String" if args.is_empty() => Ok(Type::String),
-        "Number" | "Int" | "Float" if args.is_empty() => Ok(Type::Number),
-        "Boolean" if args.is_empty() => Ok(Type::Boolean),
-        "Null" if args.is_empty() => Ok(Type::Null),
         // `List` keeps its dedicated form only for exactly one argument; a
         // missing or surplus one stays an application so the arity rule
-        // reports it (spec E0230).
+        // reports it (spec E0230). Every primitive value type is a keyword
+        // (spec `types/primitive-types.md`), so it never reaches this rule:
+        // a capitalized spelling is an ordinary name and stays a `Named`
+        // head for the checker to resolve or reject.
         "List" if args.len() == 1 => Ok(Type::List(Box::new(args.into_iter().next().unwrap()))),
         // A named type keeps its written type arguments; whether they are the
         // right number, and whether they satisfy their bounds, is checked by
         // the semantic analyzer.
         _ => Ok(Type::Named(name, args)),
     }
+}
+
+/// Lower a `primitive_type` pair (spec: `PrimitiveType`) to its type. The
+/// spelling *is* the node: these are keywords, never identifiers, and they
+/// carry no type-argument list.
+fn primitive_type(pair: Pair<'_, Rule>) -> R<Type> {
+    let spelling = pair.as_str();
+    Ok(match spelling {
+        "bool" => Type::Boolean,
+        "string" => Type::String,
+        // `number`, `int`, and `float` all lower to the implementation's one
+        // numeric type; the checker does not yet separate the three (spec
+        // `types/primitive-types.md`, "User-facing layer").
+        "number" | "int" | "float" => Type::Number,
+        "null" => Type::Null,
+        // `unit`, `unknown`, and the fixed-bit numerics keep a named head
+        // spelled exactly as the keyword: they are known through their fixed
+        // arity and are not yet types of their own in the checker.
+        _ => Type::Named(spelling.to_string(), Vec::new()),
+    })
 }
 
 fn function_type(pair: Pair<'_, Rule>) -> R<Type> {

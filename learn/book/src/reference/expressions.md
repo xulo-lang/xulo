@@ -37,8 +37,8 @@ print("count=" + str(count))        // `str(x)` 将任意值转成字符串后�
 
 规则：
 
-- `Number + Number` → `Number`
-- `String + String`（含字符串字面量类型）→ `String`
+- `number + number` → `number`
+- `string + string`（含字符串字面量类型）→ `string`
 - `List<T> + List<U>` → 拼接成 `List`
 - **禁止混用类型**：`"hi" + 1`、`"hi" + true` 等会报错；需要拼接时用内建 `str(x)` 显式转换后再 `+`。
 

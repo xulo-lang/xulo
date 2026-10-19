@@ -1,1 +1,1 @@
-pub fn greet(name: String): String { "hello " + name }
+pub fn greet(name: string): string { "hello " + name }

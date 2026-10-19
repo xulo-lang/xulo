@@ -42,36 +42,41 @@ impl TypeEntryKind {
 /// The fixed arity of a prelude type (spec `builtins/prelude.md`): the number
 /// of type arguments an application of it must write. Names whose declaration
 /// the program provides are answered from the type table instead; these exist
-/// so an application like `Map<String>` reports the arity rule (E0230) rather
+/// so an application like `Map<string>` reports the arity rule (E0230) rather
 /// than an unknown head.
 fn builtin_type_arity(name: &str) -> Option<usize> {
     match name {
         "List" | "Set" | "Task" => Some(1),
         "Map" | "Result" => Some(2),
-        // The primitives never take arguments; the parser only forms an
-        // application for one when a list was written (`String<Int>`). The
-        // spellings are the spec's (spec `types/primitive-types.md`): the
-        // lowercase words ordinary identifiers — a lowercase annotation is
-        // an unknown type, while `let string = "s"` keeps working.
-        "String" | "Number" | "Int" | "Float" | "Boolean" | "Null" => Some(0),
-        "View" | "Unit" | "Unknown" | "Error" | "Range" => Some(0),
+        // The primitive value types are keywords (spec
+        // `lexical-structure.md`), so an annotation reaches the checker
+        // through `PrimitiveType` and not as a named head — except the ones
+        // the parser still carries spelled as a `Named`: `unit`, `unknown`,
+        // and the fixed-bit layer of the two-layer numeric system. The
+        // base types (`bool`, `string`, `number`, `int`, `float`, `null`)
+        // lower to their own `Type` variants and never get here.
+        "unit" | "unknown" => Some(0),
         // The fixed-bit layer of the two-layer numeric system.
-        "I8" | "I16" | "I32" | "I64" | "U8" | "U16" | "U32" | "U64" | "F32" | "F64" => Some(0),
+        "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" | "f32" | "f64" => Some(0),
+        // `View` and `Range` are primitive but UpperCamelCase, and `Error` is
+        // a prelude type (spec `types/primitive-types.md`).
+        "View" | "Error" | "Range" => Some(0),
         _ => None,
     }
 }
 
 /// The primitive a match pattern's type name spells (spec
-/// `types/primitive-types.md`): a pattern carries a bare name rather than a
-/// parsed type, so the canonical spellings resolve to the same primitives an
-/// annotation gets. `None` leaves the name as a `Named` type for the ordinary
-/// rules (user enums, structs, and prelude shapes).
+/// `types/primitive-types.md`): a pattern carries the designator's text
+/// rather than a parsed type, so the keyword spellings resolve to the same
+/// primitives an annotation gets. `None` leaves the name as a `Named` type
+/// for the ordinary rules (user enums, structs, prelude shapes, and the
+/// fixed-bit / singleton keywords the parser spells as a `Named`).
 fn pattern_primitive_type(name: &str) -> Option<Type> {
     match name {
-        "String" => Some(Type::String),
-        "Number" | "Int" | "Float" => Some(Type::Number),
-        "Boolean" => Some(Type::Boolean),
-        "Null" => Some(Type::Null),
+        "string" => Some(Type::String),
+        "number" | "int" | "float" => Some(Type::Number),
+        "bool" => Some(Type::Boolean),
+        "null" => Some(Type::Null),
         _ => None,
     }
 }
@@ -128,7 +133,7 @@ fn builtin_type_entries() -> HashMap<String, TypeEntry> {
             type_bounds: Vec::new(),
             kind: TypeEntryKind::Trait(TraitDef {
                 methods: vec![TraitMethodSig {
-                    name: "to_string".to_string(),
+                    name: "toString".to_string(),
                     params: Vec::new(),
                     return_type: Type::String,
                     has_self: true,
@@ -142,9 +147,9 @@ fn builtin_type_entries() -> HashMap<String, TypeEntry> {
 
 /// A parameter of an intrinsic namespace function (spec
 /// `builtins/intrinsic-functions.md`): the name its signature writes, for
-/// diagnostics, and the type it accepts. `Float`/`Int`/`U64` are written the
-/// way the spec writes them, while every numeric parameter accepts the
-/// implementation's one `Number` type.
+/// diagnostics, and the type it accepts. `float`/`int`/`u64` are written
+/// the way the spec writes them, while every numeric parameter accepts the
+/// implementation's one `number` type.
 #[derive(Clone, Copy)]
 enum BuiltinTy {
     Number,
@@ -156,10 +161,10 @@ enum BuiltinTy {
 impl BuiltinTy {
     fn display(self) -> &'static str {
         match self {
-            BuiltinTy::Number => "Number",
-            BuiltinTy::Float => "Float",
-            BuiltinTy::Int => "Int",
-            BuiltinTy::U64 => "U64",
+            BuiltinTy::Number => "number",
+            BuiltinTy::Float => "float",
+            BuiltinTy::Int => "int",
+            BuiltinTy::U64 => "u64",
         }
     }
 
@@ -185,7 +190,7 @@ impl BuiltinRet {
             BuiltinRet::String => Type::String,
             BuiltinRet::TaskUnit => Type::Named(
                 "Task".to_string(),
-                vec![Type::Named("Unit".to_string(), Vec::new())],
+                vec![Type::Named("unit".to_string(), Vec::new())],
             ),
         }
     }
@@ -425,7 +430,8 @@ pub struct Analyzer {
     /// checked; their common type is the service's reply type `R`.
     reply_operands: Vec<Type>,
     /// Per service type, the computed reply type `R` (spec `concurrency.md`):
-    /// the common type of the `on_message` reply operands, or `Null` (unit)
+    /// the common type of the `on_message` reply operands, or `Type::Null`
+    /// (unit)
     /// when the method never calls `reply`.
     service_reply_types: HashMap<String, Type>,
     /// Bindings whose `lock` section encloses the code being checked: their
@@ -803,7 +809,7 @@ fn face_derive_tostring(face: &mut ModuleFace, attrs: &[Attribute], name: &str, 
         face.impls.push((
             "ToString".to_string(),
             name.to_string(),
-            "to_string".to_string(),
+            "toString".to_string(),
         ));
     }
 }
@@ -1347,10 +1353,10 @@ fn run_analysis(
                             .with_code("E0609"),
                     );
                 } else if let Some(rt) = &f.return_type
-                    && !matches!(rt, Type::Named(n, _) if n == "View" || n == "Unit")
+                    && !matches!(rt, Type::Named(n, _) if n == "View" || n == "unit")
                 {
                     analyzer.first_error = Some(
-                        XuloError::new(ErrorKind::Semantic, "`main` must return Unit or View")
+                        XuloError::new(ErrorKind::Semantic, "`main` must return unit or View")
                             .at(f.name_span.clone())
                             .with_code("E0609"),
                     );
@@ -2350,17 +2356,20 @@ impl Analyzer {
     }
 
     /// Validate the attribute list of one function declaration: `#Test` on a
-    /// `fn` must be the test form — no parameters, no return type, no
-    /// generics, no `where` clause, no `pub` — or it is `E0110` (a correct
-    /// sequence at file scope became a `TestDecl` instead; anywhere else the
-    /// form's file-scope requirement still fails here).
+    /// `fn` must be the test form — no title group beyond the optional
+    /// string, no parameters, no return type, no generics, no `where`
+    /// clause, no `pub` — or it is `E0110` (a correct sequence at file scope
+    /// became a `TestDecl` instead; a group holding an identifier is the same
+    /// error; anywhere else the form's file-scope requirement still fails
+    /// here).
     fn validate_fn_attrs(&mut self, f: &FnDef, is_pub: bool, first: &mut Option<XuloError>) {
         for attr in &f.attributes {
             let Some(kind) = self.attr_gate(attr, DECL_PHRASE_FN, first) else {
                 continue;
             };
             if kind == AttrKind::Test {
-                let shape_ok = f.params.is_empty()
+                let shape_ok = attr.args.is_empty()
+                    && f.params.is_empty()
                     && f.return_type.is_none()
                     && f.type_params.is_empty()
                     && f.bounds.is_empty()
@@ -2370,7 +2379,7 @@ impl Analyzer {
                         *first,
                         self.err_code(
                             "E0110",
-                            "attribute `Test` takes the form `#Test [async] fn name() { … }`"
+                            "attribute `Test` takes the form `#Test (\"…\")? [async] fn name() { … }`"
                         )
                         .at(attr.name_span.clone())
                     );
@@ -2419,7 +2428,7 @@ impl Analyzer {
                     self.err_code(
                         "E0805",
                         format!(
-                            "`ToString` is already implemented for `{}` (method `to_string`)",
+                            "`ToString` is already implemented for `{}` (method `toString`)",
                             type_name
                         )
                     )
@@ -2488,14 +2497,14 @@ impl Analyzer {
         if !self.impls.insert((
             "ToString".to_string(),
             type_name.to_string(),
-            "to_string".to_string(),
+            "toString".to_string(),
         )) {
             record_first!(
                 *first,
                 self.err_code(
                     "E0805",
                     format!(
-                        "`ToString` is already implemented for `{}` (method `to_string`)",
+                        "`ToString` is already implemented for `{}` (method `toString`)",
                         type_name
                     )
                 )
@@ -2503,7 +2512,7 @@ impl Analyzer {
             );
             return;
         }
-        let mangled = impl_fn_name("ToString", type_name, "to_string");
+        let mangled = impl_fn_name("ToString", type_name, "toString");
         if !self.impl_mangled.insert(mangled.clone()) {
             record_first!(
                 *first,
@@ -2528,7 +2537,7 @@ impl Analyzer {
             .entry(type_name.to_string())
             .or_default()
             .push(ImplMethodSig {
-                name: "to_string".to_string(),
+                name: "toString".to_string(),
                 has_self: true,
                 param_count: 1,
                 param_types: vec![Type::Any],
@@ -2540,7 +2549,7 @@ impl Analyzer {
             type_args: Vec::new(),
             bounds: Vec::new(),
             methods: vec![ImplMethodType {
-                name: "to_string".to_string(),
+                name: "toString".to_string(),
                 ret: Type::String,
             }],
         });
@@ -2906,7 +2915,7 @@ impl Analyzer {
                 let condition = self.check_expression(&stmt.condition)?;
                 if !self.assignable(&condition, &Type::Boolean) {
                     return Err(self.err(format!(
-                        "while condition must be a `Boolean`, found `{}`",
+                        "while condition must be a `bool`, found `{}`",
                         condition.name()
                     )));
                 }
@@ -3133,14 +3142,14 @@ impl Analyzer {
     }
 
     /// Check a `test [async] fn` body (spec testing.md): exactly as an
-    /// implicit `fn(): Unit` body — no parameters, no return type, so a
+    /// implicit `fn(): unit` body — no parameters, no return type, so a
     /// trailing expression is a statement, not an implicit return, and
     /// `return e` checks `e` against the unit result. The identifier binds no
     /// value: it is never declared in the symbol table (any reference is the
     /// E0107 ban, enforced by [`Analyzer::lookup_symbol`] and
     /// [`Analyzer::check_call`] via the pre-scanned `test_names`), and two
     /// tests may share a name. The optional `async` marker opens an `async`
-    /// context exactly as on `fn(): Unit` (`await` legal; E0501 without it).
+    /// context exactly as on `fn(): unit` (`await` legal; E0501 without it).
     fn check_test(&mut self, f: &xulo_core::ast::FnDef) -> SResult<()> {
         self.table.push_scope();
         // No declared return type: `current_return` is the unit stand-in
@@ -4881,7 +4890,7 @@ impl Analyzer {
                 let cond = self.check_expression(condition)?;
                 if !self.assignable(&cond, &Type::Boolean) {
                     return Err(self.err(format!(
-                        "if condition must be a `Boolean`, found `{}`",
+                        "if condition must be a `bool`, found `{}`",
                         cond.name()
                     )));
                 }
@@ -5118,7 +5127,7 @@ impl Analyzer {
     }
 
     /// Fold the collected `reply` operand types into the service's reply
-    /// type `R`: `Null` (unit) when the method never replies, the operands'
+    /// type `R`: `Type::Null` (unit) when the method never replies, the operands'
     /// common type otherwise, and E0211 when they share none (spec
     /// `concurrency.md`).
     fn common_reply_type(&mut self, type_name: &str) -> SResult<()> {
@@ -5686,7 +5695,7 @@ impl Analyzer {
         Ok(())
     }
 
-    /// Validate a written call-site type-argument list (`first<Int>(…)`): a
+    /// Validate a written call-site type-argument list (`first<int>(…)`): a
     /// list before a callee that declares no type parameters is `E0807`, a
     /// list of the wrong length is `E0808`, and an accepted list yields the
     /// bindings that take the place of inference for this call (spec
@@ -5937,7 +5946,7 @@ impl Analyzer {
                 if !self.assignable(&start, &Type::Number) || !self.assignable(&end, &Type::Number)
                 {
                     return Err(self.err(format!(
-                        "range endpoints must be `Number`, found `{}` and `{}`",
+                        "range endpoints must be `number`, found `{}` and `{}`",
                         start.name(),
                         end.name()
                     )));
@@ -6097,7 +6106,7 @@ impl Analyzer {
                         }
                     }
                     // The handle is a structural value:
-                    // `{ send: fn(M): Task<R>, stop: fn(): Unit }` (spec
+                    // `{ send: fn(M): Task<R>, stop: fn(): unit }` (spec
                     // `concurrency.md`). `M` comes from `on_message`'s message
                     // parameter; `R` is left loose (`any`) until reply-operand
                     // common typing lands (E0211).
@@ -6338,7 +6347,7 @@ impl Analyzer {
                     Ok(Type::Boolean)
                 } else {
                     Err(self.err(format!(
-                        "unary `!` requires a `Boolean` operand, found `{}`",
+                        "unary `!` requires a `bool` operand, found `{}`",
                         operand.name()
                     )))
                 }
@@ -6348,7 +6357,7 @@ impl Analyzer {
                     Ok(Type::Number)
                 } else {
                     Err(self.err(format!(
-                        "unary `-` requires a `Number` operand, found `{}`",
+                        "unary `-` requires a `number` operand, found `{}`",
                         operand.name()
                     )))
                 }
@@ -6358,7 +6367,7 @@ impl Analyzer {
                     Ok(Type::Number)
                 } else {
                     Err(self.err(format!(
-                        "unary `~` requires a `Number` operand, found `{}`",
+                        "unary `~` requires a `number` operand, found `{}`",
                         operand.name()
                     )))
                 }
@@ -6408,7 +6417,7 @@ impl Analyzer {
         let condition = self.check_expression(&tr.condition)?;
         if !self.assignable(&condition, &Type::Boolean) {
             return Err(self.err(format!(
-                "ternary condition must be a `Boolean`, found `{}`",
+                "ternary condition must be a `bool`, found `{}`",
                 condition.name()
             )));
         }
@@ -6594,7 +6603,7 @@ impl Analyzer {
                         && !self.assignable(&value_type, &Type::String)
                     {
                         return Err(self.err(format!(
-                            "match arm range pattern does not match value of type `{}` (expected `Number` or `String`)",
+                            "match arm range pattern does not match value of type `{}` (expected `number` or `string`)",
                             value_type.name()
                         )));
                     }
@@ -6712,7 +6721,7 @@ impl Analyzer {
                                     let guard_type = self.check_expression(guard)?;
                                     if !self.assignable(&guard_type, &Type::Boolean) {
                                         return Err(self.err(format!(
-                                            "match guard must be a `Boolean`, found `{}`",
+                                            "match guard must be a `bool`, found `{}`",
                                             guard_type.name()
                                         )));
                                     }
@@ -6738,7 +6747,7 @@ impl Analyzer {
                 let guard_type = self.check_expression(guard)?;
                 if !self.assignable(&guard_type, &Type::Boolean) {
                     return Err(self.err(format!(
-                        "match guard must be a `Boolean`, found `{}`",
+                        "match guard must be a `bool`, found `{}`",
                         guard_type.name()
                     )));
                 }
@@ -6767,8 +6776,8 @@ impl Analyzer {
     }
 
     /// Check a match arm body: an expression checks as an expression; a block
-    /// checks as a block whose value is its trailing type (or `Unit`-less
-    /// `Type::Any` when it has no trailing expression).
+    /// checks as a block whose value is its trailing type (`Type::Any` for
+    /// a unit-less block with no trailing expression).
     fn check_match_body(&mut self, body: &xulo_core::ast::MatchBody) -> SResult<Type> {
         match body {
             xulo_core::ast::MatchBody::Expr(e) => self.check_expression(e),
@@ -7052,7 +7061,7 @@ impl Analyzer {
                 if !self.assignable(&ms, &Type::Number) {
                     return Err(self
                         .err(format!(
-                            "`Task::timeout` millisecond count must be a `Number`, found `{}`",
+                            "`Task::timeout` millisecond count must be a `number`, found `{}`",
                             ms.name()
                         ))
                         .at(ms_span));
@@ -7343,20 +7352,20 @@ impl Analyzer {
                     )
                     .at(call.arguments[0].value.span().clone()));
             }
-            // A `ToString` implementor renders through `to_string`: the call
+            // A `ToString` implementor renders through `toString`: the call
             // is annotated for dispatch exactly like `Trait::method(recv)`.
             if let Type::Named(name, _) = &operand
                 && self.string_forms.contains(name)
             {
                 self.trait_dispatch.push((
                     call.span.clone(),
-                    impl_fn_name("ToString", name, "to_string"),
+                    impl_fn_name("ToString", name, "toString"),
                 ));
             }
             return Ok(Type::String);
         }
         // `Error(message)` constructs the built-in base error type (spec
-        // `error-handling.md`): one `String` argument, typed `Error`. Like
+        // `error-handling.md`): one `string` argument, typed `Error`. Like
         // `print`/`str`, a user-declared `fn Error` shadows it (the lookup
         // above runs first).
         if call.callee == "Error" {
@@ -7373,7 +7382,7 @@ impl Analyzer {
             if !self.assignable(&message, &Type::String) {
                 return Err(self
                     .err(format!(
-                        "`Error` message must be a `String`, found `{}`",
+                        "`Error` message must be a `string`, found `{}`",
                         message.name()
                     ))
                     .at(call.arguments[0].value.span().clone()));
@@ -7394,7 +7403,7 @@ impl Analyzer {
             if !self.assignable(&cond, &Type::Boolean) {
                 return Err(self
                     .err(format!(
-                        "`assert` condition must be a `Boolean`, found `{}`",
+                        "`assert` condition must be a `bool`, found `{}`",
                         cond.name()
                     ))
                     .at(call.arguments[0].value.span().clone()));
@@ -7403,7 +7412,7 @@ impl Analyzer {
             if !self.assignable(&message, &Type::String) {
                 return Err(self
                     .err(format!(
-                        "`assert` message must be a `String`, found `{}`",
+                        "`assert` message must be a `string`, found `{}`",
                         message.name()
                     ))
                     .at(call.arguments[1].value.span().clone()));
@@ -7665,7 +7674,7 @@ impl Analyzer {
                             // The structural check does not re-run the bound
                             // rule; it is checked once per binding below.
                             // Written type arguments substitute into the
-                            // annotation first, so `first<Int>(["a"])` fails
+                            // annotation first, so `first<int>(["a"])` fails
                             // with the substituted `List<number>` (spec
                             // `types/generics.md`); otherwise it is erased.
                             let ann = param.type_annotation.as_ref().unwrap_or(&Type::Any);
@@ -8470,7 +8479,7 @@ impl Analyzer {
         let condition = self.check_expression(&if_expr.condition)?;
         if !self.assignable(&condition, &Type::Boolean) {
             return Err(self.err(format!(
-                "if condition must be a `Boolean`, found `{}`",
+                "if condition must be a `bool`, found `{}`",
                 condition.name()
             )));
         }
@@ -8676,7 +8685,7 @@ impl Analyzer {
             // A brace literal stands in for any map shape when the
             // annotation is a map (spec `types/composite-types.md`: the
             // expected type is applied to the literal — `let same:
-            // Map<String, Int> = { a: 1 }`). `Type::Object` carries no field
+            // Map<string, int> = { a: 1 }`). `Type::Object` carries no field
             // types to compare, and map types unify loosely by name the same
             // way the typed form does.
             (Type::Object, Type::Named(n, _)) if n == "Map" => true,

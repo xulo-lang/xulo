@@ -30,14 +30,19 @@ keyword = _{ kw_word ~ !ident_part }
 // NOTE: longer spellings MUST precede their prefixes — pest matches string
 // alternations through a character trie that stops at the first terminal, so
 // "as" before "async" would make `async` (and `await`) escape the keyword
-// guard and lex as identifiers.
+// guard and lex as identifiers. The same holds for `int` and `in`: `int` is
+// written first or it would lose its tail to `in` and lex as an identifier.
+// The seventeen primitive-type words are the spec's (spec
+// `lexical-structure.md`, 58 keywords); `View` and `Range` are not keywords.
 kw_word = _{
-      "and" | "async" | "await" | "as" | "break" | "const"
-    | "continue" | "copy" | "defer" | "else" | "enum" | "false" | "fn"
-    | "for" | "if" | "impl" | "in" | "is" | "let"
-    | "lock" | "match" | "mod" | "move" | "mut" | "not" | "null" | "or" | "panic"
-    | "pub" | "return" | "self" | "shared" | "spawn" | "struct"
-    | "super" | "trait" | "true" | "type" | "use" | "where" | "while"
+      "and" | "async" | "await" | "as" | "bool" | "break" | "const"
+    | "continue" | "copy" | "defer" | "else" | "enum" | "f32" | "f64"
+    | "false" | "float" | "fn" | "for" | "i8" | "i16" | "i32" | "i64"
+    | "if" | "impl" | "int" | "in" | "is" | "let"
+    | "lock" | "match" | "mod" | "move" | "mut" | "not" | "number" | "null"
+    | "or" | "panic" | "pub" | "return" | "self" | "shared" | "spawn"
+    | "string" | "struct" | "super" | "trait" | "true" | "type" | "u8"
+    | "u16" | "u32" | "u64" | "unit" | "unknown" | "use" | "where" | "while"
 }
 
 reserved = _{ reserved_word ~ !ident_part }
@@ -190,12 +195,15 @@ attribute_arg = { identifier }
 fn_decl = { attribute_list? ~ pub_marker? ~ kw_async? ~ kw_fn ~ identifier ~ generic_params?
     ~ "(" ~ parameter_list? ~ ")" ~ (":" ~ type_expr)? ~ where_clause? ~ block }
 
-// `TestDecl = "#Test" [ "async" ] "fn" Identifier "(" ")" Block` — fixed
-// shape: no pub, no parameters, no return type, no generics, no where.
-// Written at file scope (this rule exists only in `declaration`), so the
-// exact sequence is a TestDecl and runs no registry lookup; a `#Test` fn
-// whose shape deviates backtracks into `fn_decl` and is `E0110`.
-test_decl = { "#Test" ~ kw_async? ~ kw_fn ~ identifier ~ "(" ~ ")" ~ block }
+// `TestDecl = "#Test" [ "(" [ StringLiteral ] ")" ] [ "async" ] "fn"
+// Identifier "(" ")" Block` (spec grammar.md) — fixed shape: no pub, no
+// parameters, no return type, no generics, no where. Written at file scope
+// (this rule exists only in `declaration`), so the exact sequence is a
+// TestDecl and runs no registry lookup; a `#Test` whose group holds an
+// identifier backtracks into `fn_decl` and is `E0110`, and one whose shape
+// deviates backtracks into `fn_decl` and is `E0110` too.
+test_decl = { "#Test" ~ ("(" ~ string_literal? ~ ")")? ~ kw_async? ~ kw_fn
+    ~ identifier ~ "(" ~ ")" ~ block }
 
 parameter_list = { parameter ~ ("," ~ parameter)* ~ ","? }
 parameter = { receiver | identifier ~ ":" ~ param_mode? ~ type_expr ~ ("=" ~ expression)? }
@@ -252,12 +260,18 @@ intersection_type = { postfix_type ~ ("&" ~ postfix_type)* }
 // spans misfires because pest spans include trailing skipped whitespace.
 postfix_type = { primary_type ~ opt_question? }
 opt_question = @{ "?" }
-primary_type = { named_type | function_type | literal_type | paren_or_tuple_type }
+primary_type = { named_type | primitive_type | function_type | literal_type | paren_or_tuple_type }
 // A named type is a path (spec grammar.md `NamedType = Path [ TypeArgs ]`):
 // a bare name, or a qualified one — `form::types::Point`, `ui::Button`.
 // Atomic so `A::B` stays one token run (no spaces inside a path).
 named_type = { type_path ~ type_args? }
 type_path = @{ path_head ~ ("::" ~ identifier)* }
+// `PrimitiveType` (spec grammar.md): the seventeen primitive value-type
+// keywords, `null` included. They are keywords, never identifiers, and they
+// take no type arguments — `string<Int>` has no production to match.
+primitive_type = @{ ( "bool" | "string" | "number" | "int" | "float"
+    | "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64"
+    | "f32" | "f64" | "null" | "unit" | "unknown" ) ~ !ident_part }
 literal_type = { string_literal | number_literal | boolean_literal }
 // `( T )` groups, `( T1, T2, … )` is a tuple type — one pass (see the
 // parenthesized-expression note about exponential backtracking).
@@ -485,7 +499,11 @@ struct_pattern = { identifier ~ "(" ~ pattern_list? ~ ")" }
 type_pattern = { pattern_type ~ pattern_binder }
 pattern_binder = { wildcard_us | identifier }
 wildcard_us = @{ "_" ~ !ident_part }
-pattern_type = { identifier ~ "?"? ~ ("|" ~ identifier ~ "?"?)* }
+pattern_type = { pattern_designator ~ "?"? ~ ("|" ~ pattern_designator ~ "?"?)* }
+// `PatternDesignator = PrimitiveType | Identifier` (spec grammar.md): a type
+// designator admits the primitive keywords (`string s`, `unknown _`) as well
+// as an ordinary name, and still takes no type-argument list.
+pattern_designator = { primitive_type | identifier }
 pattern_list = { pattern ~ ("," ~ pattern)* }
 paren_pattern = { "(" ~ pattern ~ ")" }
 wildcard_binding = { identifier }

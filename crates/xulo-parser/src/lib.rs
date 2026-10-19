@@ -68,7 +68,7 @@ fn pest_error(e: PestError<Rule>, source: &str) -> XuloError {
                 (None, None) => "syntax error".into(),
             };
             // A written `CallTypeArgs` list whose nested closing brackets are
-            // adjacent — `first<Map<String, Int>>(m)` — fails with a note to
+            // adjacent — `first<Map<string, int>>(m)` — fails with a note to
             // insert the space: `gt_close` rejects `>>` (spec `grammar.md`,
             // the nested-bracket rule).
             if source.contains(">>(") && positives.contains(&Rule::gt_close) {

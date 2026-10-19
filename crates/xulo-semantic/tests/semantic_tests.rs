@@ -10,10 +10,10 @@ fn analyze_src(src: &str) -> Result<(), xulo_core::error::XuloError> {
 fn pub_declarations_registered_as_exports() {
     use xulo_semantic::analyze_with;
     let src = r#"
-        pub fn add(a: Number): Number { return a }
+        pub fn add(a: number): number { return a }
         pub const PI = 3.14
         pub enum Status { Active Inactive }
-        pub type User = Number
+        pub type User = number
     "#;
     let program = parse_program(src).unwrap();
     let result =
@@ -40,7 +40,7 @@ fn pub_declarations_registered_as_exports() {
 #[test]
 fn accepts_valid_program() {
     let src = r#"
-        fn fib(n: Number): Number {
+        fn fib(n: number): number {
             if n <= 1 { return n }
             else { return fib(n - 1) + fib(n - 2) }
         }
@@ -70,14 +70,14 @@ fn allows_shadowing_in_nested_scope() {
 
 #[test]
 fn rejects_type_mismatch_in_let() {
-    let err = analyze_src(r#"fn main() { let x: Number = "hi" }"#).unwrap_err();
-    assert!(err.message.contains("`String`"));
+    let err = analyze_src(r#"fn main() { let x: number = "hi" }"#).unwrap_err();
+    assert!(err.message.contains("`string`"));
 }
 
 #[test]
 fn rejects_non_boolean_if_condition() {
     let err = analyze_src("fn main() { if 1 { print(1) } }").unwrap_err();
-    assert!(err.message.contains("Boolean"));
+    assert!(err.message.contains("bool"));
 }
 
 #[test]
@@ -88,14 +88,14 @@ fn rejects_arithmetic_on_strings() {
 
 #[test]
 fn rejects_return_type_mismatch() {
-    let err = analyze_src(r#"fn f(): Number { return "hi" }"#).unwrap_err();
+    let err = analyze_src(r#"fn f(): number { return "hi" }"#).unwrap_err();
     assert!(err.message.contains("return type mismatch"));
 }
 
 #[test]
 fn rejects_wrong_argument_count() {
     let err =
-        analyze_src("fn add(a: Number, b: Number): Number { return a + b } fn main() { add(1) }")
+        analyze_src("fn add(a: number, b: number): number { return a + b } fn main() { add(1) }")
             .unwrap_err();
     assert!(err.message.contains("expects 2 argument(s)"));
 }
@@ -114,7 +114,7 @@ fn rejects_unknown_function() {
 
 #[test]
 fn accepts_const_and_null() {
-    let src = "const PI = 3.14\nfn main() { let x: String? = null print(x) }";
+    let src = "const PI = 3.14\nfn main() { let x: string? = null print(x) }";
     assert!(analyze_src(src).is_ok());
 }
 
@@ -126,10 +126,10 @@ fn rejects_const_reassignment() {
 
 #[test]
 fn rejects_let_type_mismatch_on_assignment() {
-    let err = analyze_src(r#"fn main() { let mut x: Number = 1 x = "s" }"#).unwrap_err();
+    let err = analyze_src(r#"fn main() { let mut x: number = 1 x = "s" }"#).unwrap_err();
     assert!(
         err.message
-            .contains("cannot assign a value of type `String`")
+            .contains("cannot assign a value of type `string`")
     );
 }
 
@@ -142,7 +142,7 @@ fn rejects_assigning_undefined() {
 #[test]
 fn type_alias_is_resolved() {
     let src = r#"
-        type User = Number
+        type User = number
         fn main() {
             let u = 1
             let n: User = u
@@ -160,14 +160,14 @@ fn rejects_unknown_type() {
 
 #[test]
 fn rejects_duplicate_type() {
-    let err = analyze_src("type A = Number\ntype A = Number").unwrap_err();
+    let err = analyze_src("type A = number\ntype A = number").unwrap_err();
     assert!(err.message.contains("already defined"));
 }
 
 #[test]
 fn enum_reference_and_payload_typecheck() {
     let src = r#"
-        enum Result<T> { Success(T) Error(String) }
+        enum Result<T> { Success(T) Error(string) }
         enum Theme { Light Dark }
         fn main() {
             let a = Theme::Light
@@ -190,14 +190,14 @@ fn rejects_unknown_enum_member() {
 #[test]
 fn rejects_enum_payload_type_mismatch() {
     let err =
-        analyze_src(r#"enum R { Ok(Number) } fn main() { let x = R::Ok("no") }"#).unwrap_err();
+        analyze_src(r#"enum R { Ok(number) } fn main() { let x = R::Ok("no") }"#).unwrap_err();
     assert!(err.message.contains("argument to `R::Ok`"));
 }
 
 #[test]
 fn multi_payload_enum_construction_and_match() {
     let src = r#"
-        enum Person { Nobody, Named(String, Number) }
+        enum Person { Nobody, Named(string, number) }
         fn main() {
             let p = Person::Named("Ada", 36)
             match p {
@@ -212,7 +212,7 @@ fn multi_payload_enum_construction_and_match() {
 #[test]
 fn multi_payload_enum_discards_with_underscore() {
     let src = r#"
-        enum Person { Named(String, Number) }
+        enum Person { Named(string, number) }
         fn main() {
             let p = Person::Named("Ada", 36)
             match p {
@@ -226,7 +226,7 @@ fn multi_payload_enum_discards_with_underscore() {
 #[test]
 fn rejects_wrong_multi_payload_argument_count() {
     let err =
-        analyze_src(r#"enum P { Named(String, Number) } fn main() { let p = P::Named("Ada") }"#)
+        analyze_src(r#"enum P { Named(string, number) } fn main() { let p = P::Named("Ada") }"#)
             .unwrap_err();
     assert!(
         err.message.contains("expects 2 argument(s), got 1"),
@@ -238,7 +238,7 @@ fn rejects_wrong_multi_payload_argument_count() {
 #[test]
 fn rejects_wrong_binding_count_in_match() {
     let err = analyze_src(
-        r#"enum P { Named(String, Number) }
+        r#"enum P { Named(string, number) }
         fn main() {
             let p = P::Named("Ada", 36)
             match p { P::Named(name) => print(name) }
@@ -254,7 +254,7 @@ fn rejects_wrong_binding_count_in_match() {
 
 #[test]
 fn rejects_wrong_payload_count() {
-    let err = analyze_src("enum R { Ok(Number) }\nfn main() { let x = R::Ok(1, 2) }").unwrap_err();
+    let err = analyze_src("enum R { Ok(number) }\nfn main() { let x = R::Ok(1, 2) }").unwrap_err();
     assert!(err.message.contains("expects 1 argument"));
 }
 
@@ -262,9 +262,9 @@ fn rejects_wrong_payload_count() {
 fn optional_types_accept_null_and_values() {
     let src = r#"
         fn main() {
-            let a: String? = null
-            let b: String? = "hi"
-            let c: String? = a
+            let a: string? = null
+            let b: string? = "hi"
+            let c: string? = a
             print(a == null)
             print(b)
             print(c)
@@ -275,7 +275,7 @@ fn optional_types_accept_null_and_values() {
 
 #[test]
 fn rejects_number_into_optional_string() {
-    let err = analyze_src("fn main() { let x: String? = 42 }").unwrap_err();
+    let err = analyze_src("fn main() { let x: string? = 42 }").unwrap_err();
     assert!(err.message.contains("cannot bind"));
 }
 
@@ -305,7 +305,7 @@ fn rejects_value_not_in_string_union() {
 
 #[test]
 fn union_accepts_members() {
-    let src = "fn main() { let x: Number | String = \"a\" let y: Number | String = 1 }";
+    let src = "fn main() { let x: number | string = \"a\" let y: number | string = 1 }";
     assert!(analyze_src(src).is_ok());
 }
 
@@ -320,7 +320,7 @@ fn generic_fn_type_param_is_bound() {
 
 #[test]
 fn fn_type_annotation_checks() {
-    let src = "fn main() { let h: (fn(a: Number): Number)? = null print(h) }";
+    let src = "fn main() { let h: (fn(a: number): number)? = null print(h) }";
     assert!(analyze_src(src).is_ok());
 }
 
@@ -397,7 +397,7 @@ fn match_arms_are_checked() {
 #[test]
 fn match_enum_payload_binds() {
     let src = r#"
-        enum Result<T> { Success(T) Error(String) }
+        enum Result<T> { Success(T) Error(string) }
         fn main() {
             let ok = Result::Success(1)
             let v = match ok {
@@ -413,7 +413,7 @@ fn match_enum_payload_binds() {
 #[test]
 fn match_arms_incompatible_types_are_rejected() {
     let err = analyze_src(
-        "enum Maybe { Some(Number) None }\nfn f(m: Maybe): String {\n  match m { Maybe::Some(v) => v Maybe::None => \"none\" }\n}",
+        "enum Maybe { Some(number) None }\nfn f(m: Maybe): string {\n  match m { Maybe::Some(v) => v Maybe::None => \"none\" }\n}",
     )
     .unwrap_err();
     assert!(err.message.contains("incompatible types"));
@@ -422,7 +422,7 @@ fn match_arms_incompatible_types_are_rejected() {
 #[test]
 fn match_arm_generic_payload_is_erased() {
     let src = r#"
-        enum Result<T> { Success(T) Error(String) }
+        enum Result<T> { Success(T) Error(string) }
         fn main() {
             let r = Result::Success(1)
             let v = match r { Result::Success(n) => n _ => 0 }
@@ -436,12 +436,12 @@ fn match_arm_generic_payload_is_erased() {
 fn generic_call_site_infers_type_argument() {
     let src = r#"
         fn first<T>(xs: List<T>): T { xs[0] }
-        let a: Number = first([1, 2, 3])
+        let a: number = first([1, 2, 3])
         fn main() { print(a) }
     "#;
     assert!(analyze_src(src).is_ok());
     let err = analyze_src(
-        "fn first<T>(xs: List<T>): T { xs[0] }\nlet s: String = first([1, 2])\nfn main() { print(s) }",
+        "fn first<T>(xs: List<T>): T { xs[0] }\nlet s: string = first([1, 2])\nfn main() { print(s) }",
     )
     .unwrap_err();
     assert!(err.message.contains("cannot bind a value of type"));
@@ -449,38 +449,38 @@ fn generic_call_site_infers_type_argument() {
 
 #[test]
 fn index_targets_lists() {
-    assert!(analyze_src("fn main() { let xs: List<Number> = [1, 2] print(xs[0]) }").is_ok());
-    let err = analyze_src("fn main() { let xs: Number = 1 print(xs[0]) }").unwrap_err();
+    assert!(analyze_src("fn main() { let xs: List<number> = [1, 2] print(xs[0]) }").is_ok());
+    let err = analyze_src("fn main() { let xs: number = 1 print(xs[0]) }").unwrap_err();
     assert!(err.message.contains("cannot index"));
 }
 
 #[test]
 fn nullish_checks() {
-    let src = "fn main() { let name: String? = null print(name ?? \"anon\") }";
+    let src = "fn main() { let name: string? = null print(name ?? \"anon\") }";
     assert!(analyze_src(src).is_ok());
 }
 
 #[test]
 fn default_params_may_be_omitted() {
     let src = r#"
-        fn greet(name: String = "x"): String { name }
+        fn greet(name: string = "x"): string { name }
         fn main() { print(greet()) print(greet("y")) }
     "#;
     assert!(analyze_src(src).is_ok());
-    let err = analyze_src(r#"fn greet(name: String = 5) { }"#).unwrap_err();
+    let err = analyze_src(r#"fn greet(name: string = 5) { }"#).unwrap_err();
     assert!(err.message.contains("default value"));
 }
 
 #[test]
 fn named_args_are_validated() {
     let src = r#"
-        fn greet(name: String = "x", count: Number): String { name }
+        fn greet(name: string = "x", count: number): string { name }
         fn main() { print(greet(count: 2)) }
     "#;
     assert!(analyze_src(src).is_ok());
     let err = analyze_src(
         r#"
-        fn greet(name: String): String { name }
+        fn greet(name: string): string { name }
         fn main() { print(greet(nope: "x")) }
     "#,
     )
@@ -492,7 +492,7 @@ fn named_args_are_validated() {
 fn named_args_duplicate_or_missing_are_errors() {
     let err = analyze_src(
         r#"
-        fn greet(a: Number, b: Number): Number { a + b }
+        fn greet(a: number, b: number): number { a + b }
         fn main() { print(greet(a: 1, a: 2)) }
     "#,
     )
@@ -501,7 +501,7 @@ fn named_args_duplicate_or_missing_are_errors() {
 
     let err = analyze_src(
         r#"
-        fn greet(a: Number, b: Number): Number { a + b }
+        fn greet(a: number, b: number): number { a + b }
         fn main() { print(greet(a: 1)) }
     "#,
     )
@@ -512,8 +512,8 @@ fn named_args_duplicate_or_missing_are_errors() {
 #[test]
 fn generic_named_type_arg_is_erased() {
     let src = r#"
-        enum Result<T> { Success(T) Error(String) }
-        fn describe(r: Result<Number>): String {
+        enum Result<T> { Success(T) Error(string) }
+        fn describe(r: Result<number>): string {
             match r { Result::Success(v) => "n" Result::Error(m) => m }
         }
         fn main() { print(describe(Result::Success(1))) }
@@ -524,7 +524,7 @@ fn generic_named_type_arg_is_erased() {
 #[test]
 fn allows_async_fn_and_await() {
     let src = r#"
-        async fn load(): Number { let v = 1 return v }
+        async fn load(): number { let v = 1 return v }
         async fn main() { let v = await load() print(v) }
     "#;
     assert!(analyze_src(src).is_ok());
@@ -540,7 +540,7 @@ fn rejects_await_outside_async() {
 fn awaits_sync_call_is_ok_but_non_promise_is_an_error() {
     let ok = analyze_src("async fn main() { await work() }").is_ok();
     // `work` is unknown; importing seeds it, but a non-promise await is caught:
-    let err = analyze_src("fn n(): Number { return 1 }\nasync fn main() { let v = await n() }")
+    let err = analyze_src("fn n(): number { return 1 }\nasync fn main() { let v = await n() }")
         .unwrap_err();
     assert!(err.message.contains("non-promise"));
     let _ = ok;
@@ -549,12 +549,12 @@ fn awaits_sync_call_is_ok_but_non_promise_is_an_error() {
 #[test]
 fn closures_and_higher_order_functions_analyze() {
     let src = r#"
-        fn apply(f: fn(Number): Number, x: Number): Number { f(x) }
-        fn makeAdder(n: Number): fn(Number): Number {
-            return fn(v: Number): Number { v + n }
+        fn apply(f: fn(number): number, x: number): number { f(x) }
+        fn makeAdder(n: number): fn(number): number {
+            return fn(v: number): number { v + n }
         }
         fn main() {
-            let double = fn(x: Number): Number { x * 2 }
+            let double = fn(x: number): number { x * 2 }
             let add5 = makeAdder(5)
             print(apply(double, 3))
             print(add5(10))
@@ -577,7 +577,7 @@ fn async_closure_can_be_awaited() {
 
 #[test]
 fn rejects_wrong_arity_for_function_values() {
-    let err = analyze_src("fn main() { let f = fn(x: Number): Number { x } print(f(1, 2)) }")
+    let err = analyze_src("fn main() { let f = fn(x: number): number { x } print(f(1, 2)) }")
         .unwrap_err();
     assert!(err.message.contains("at most 1 argument"));
 }
@@ -585,8 +585,8 @@ fn rejects_wrong_arity_for_function_values() {
 #[test]
 fn rejects_wrong_arg_type_for_function_values() {
     let err =
-        analyze_src(r#"fn main() { let f = fn(x: Number): Number { x } f("hi") }"#).unwrap_err();
-    assert!(err.message.contains("must be `Number`"));
+        analyze_src(r#"fn main() { let f = fn(x: number): number { x } f("hi") }"#).unwrap_err();
+    assert!(err.message.contains("must be `number`"));
 }
 
 #[test]
@@ -598,7 +598,7 @@ fn list_spread_requires_a_list() {
 #[test]
 fn list_spread_type_inferred_from_operand() {
     let src = r#"
-        fn takes(xs: List<Number>) { print(xs) }
+        fn takes(xs: List<number>) { print(xs) }
         fn main() {
             let base = [1, 2]
             takes([...base, 3])
@@ -629,7 +629,7 @@ fn rejects_spread_of_non_object() {
 fn calls_function_value_from_index() {
     let src = r#"
         fn main() {
-            let xs = [fn(a: Number, b: Number): Number { a - b }]
+            let xs = [fn(a: number, b: number): number { a - b }]
             print(xs[0](10, 4))
         }
     "#;
@@ -645,35 +645,35 @@ fn rejects_calling_non_function_expression() {
 #[test]
 fn rejects_wrong_arity_on_indexed_function_value() {
     let err =
-        analyze_src("fn main() { let xs = [fn(a: Number): Number { a }] print(xs[0](1, 2)) }")
+        analyze_src("fn main() { let xs = [fn(a: number): number { a }] print(xs[0](1, 2)) }")
             .unwrap_err();
     assert!(err.message.contains("at most 1 argument"));
 }
 
 #[test]
 fn rejects_implicit_return_type_mismatch() {
-    let err = analyze_src("fn add(a: Number): Number { \"s\" }").unwrap_err();
+    let err = analyze_src("fn add(a: number): number { \"s\" }").unwrap_err();
     assert!(err.message.contains("return type mismatch"));
 }
 
 #[test]
 fn rejects_implicit_return_mismatch_after_let() {
-    let err = analyze_src("fn add(): Number { let x = \"s\" x }").unwrap_err();
+    let err = analyze_src("fn add(): number { let x = \"s\" x }").unwrap_err();
     assert!(err.message.contains("return type mismatch"));
 }
 
 #[test]
 fn rejects_async_implicit_return_mismatch() {
-    let err = analyze_src("async fn f(): Number { \"s\" }").unwrap_err();
+    let err = analyze_src("async fn f(): number { \"s\" }").unwrap_err();
     assert!(err.message.contains("return type mismatch"));
 }
 
 #[test]
 fn accepts_matching_implicit_return() {
     let src = r#"
-        fn ok(): String { "s" }
-        fn n(): Number { 5 }
-        fn xs(): List<Number> { [1, 2, 3] }
+        fn ok(): string { "s" }
+        fn n(): number { 5 }
+        fn xs(): List<number> { [1, 2, 3] }
         fn main() { print(ok()) print(n()) print(xs()) }
     "#;
     assert!(analyze_src(src).is_ok());
@@ -681,7 +681,7 @@ fn accepts_matching_implicit_return() {
 
 #[test]
 fn rejects_incompatible_if_branch_types() {
-    let err = analyze_src("fn f(): Number { if true { 1 } else { \"x\" } }").unwrap_err();
+    let err = analyze_src("fn f(): number { if true { 1 } else { \"x\" } }").unwrap_err();
     assert!(err.message.contains("incompatible types"));
 }
 
@@ -689,8 +689,8 @@ fn rejects_incompatible_if_branch_types() {
 fn infers_if_expression_type() {
     let src = r#"
         fn main() {
-            let max: Number = if 5 > 3 { 5 } else { 3 }
-            let s: String = if false { "a" } else if true { "b" } else { "c" }
+            let max: number = if 5 > 3 { 5 } else { 3 }
+            let s: string = if false { "a" } else if true { "b" } else { "c" }
             print(max)
             print(s)
         }
@@ -701,7 +701,7 @@ fn infers_if_expression_type() {
 #[test]
 fn optional_params_may_be_omitted() {
     let src = r#"
-        fn g(a: Number?): Number { if a == null { 0 } else { a } }
+        fn g(a: number?): number { if a == null { 0 } else { a } }
         fn main() { print(g()) print(g(7)) }
     "#;
     assert!(analyze_src(src).is_ok());
@@ -710,7 +710,7 @@ fn optional_params_may_be_omitted() {
 #[test]
 fn optional_params_may_be_omitted_with_named_args() {
     let src = r#"
-        fn Button(label: String, icon: String? = null): String { label }
+        fn Button(label: string, icon: string? = null): string { label }
         fn main() { print(Button(label: "Save")) print(Button(label: "Save", icon: "disk")) }
     "#;
     assert!(analyze_src(src).is_ok());
@@ -761,7 +761,7 @@ fn component_type_is_recognized() {
 fn state_is_allowed_in_component_function() {
     let src = r#"
         fn main(): View {
-            @State let count: Number = 0
+            @State let count: number = 0
         }
     "#;
     assert!(analyze_src(src).is_ok());
@@ -769,7 +769,7 @@ fn state_is_allowed_in_component_function() {
 
 #[test]
 fn decorators_rejected_outside_component() {
-    let err = analyze_src("fn main() { @State let count: Number = 0 }").unwrap_err();
+    let err = analyze_src("fn main() { @State let count: number = 0 }").unwrap_err();
     assert!(err.message.contains("returning `View`"));
 
     let err = analyze_src("async fn helper() { @State let count = 0 }").unwrap_err();
@@ -779,18 +779,18 @@ fn decorators_rejected_outside_component() {
 #[test]
 fn decorators_rejected_in_nested_block() {
     let err =
-        analyze_src("fn main(): View { if true { @State let count: Number = 0 } }").unwrap_err();
+        analyze_src("fn main(): View { if true { @State let count: number = 0 } }").unwrap_err();
     assert!(err.message.contains("nested block"));
 }
 
 #[test]
 fn effect_and_store_and_environment_in_component() {
     let src = r#"
-        fn useAppStore(): Map<String, Unknown> { return { user: null } }
+        fn useAppStore(): Map<string, unknown> { return { user: null } }
         fn main(): View {
-            @State let editing: Boolean = false
+            @State let editing: bool = false
             @Store let { user } = useAppStore()
-            @Environment let router: Map<String, Unknown>
+            @Environment let router: Map<string, unknown>
             @Effect fn() { print(user) }
             @Effect fn() { }, [editing]
         }
@@ -802,20 +802,20 @@ fn effect_and_store_and_environment_in_component() {
 fn dollar_binding_requires_state_or_store() {
     let src = r#"
         fn main(): View {
-            @State let name: String = ""
+            @State let name: string = ""
             Input(value: $name)
         }
     "#;
     assert!(analyze_src(src).is_ok());
 
     let err =
-        analyze_src("fn main(): View { let name: String = \"\" Input(value: $name) }").unwrap_err();
+        analyze_src("fn main(): View { let name: string = \"\" Input(value: $name) }").unwrap_err();
     assert!(err.message.contains("`$` binding"));
 }
 
 #[test]
 fn state_cannot_be_redeclared() {
-    let err = analyze_src("fn main(): View { @State let x: Number = 0 @State let x: Number = 1 }")
+    let err = analyze_src("fn main(): View { @State let x: number = 0 @State let x: number = 1 }")
         .unwrap_err();
     assert!(err.message.contains("already declared"));
 }
@@ -840,20 +840,20 @@ fn component_children_are_type_checked() {
 fn expr_child_accepts_string_and_component_lists() {
     // A string variable as a bare child renders like a `Text`.
     assert!(
-        analyze_src("fn main(): View { @State let name: String = \"Xulo\" VStack { name } }")
+        analyze_src("fn main(): View { @State let name: string = \"Xulo\" VStack { name } }")
             .is_ok()
     );
 
     // A member access yielding a string is also a valid child.
     assert!(analyze_src(
-        "type User = Map<String, String>\nfn main(): View { @State let u: User = { name: \"a\" } VStack { u.name } }"
+        "type User = Map<string, string>\nfn main(): View { @State let u: User = { name: \"a\" } VStack { u.name } }"
     )
     .is_ok());
 
     // The documented custom-component pattern: a `children: List<View>`
     // parameter is forwarded as a bare element.
     let src = r#"
-        fn MyCard(title: String, children: List<View>): View {
+        fn MyCard(title: string, children: List<View>): View {
             VStack {
                 Text(title, weight: "bold")
                 children
@@ -866,9 +866,9 @@ fn expr_child_accepts_string_and_component_lists() {
 #[test]
 fn expr_child_rejects_non_renderable_types() {
     for src in [
-        "fn main(): View { @State let n: Number = 0 VStack { n } }",
-        "fn main(): View { @State let ok: Boolean = true VStack { ok } }",
-        "fn main(): View { @State let xs: List<Number> = [1, 2] VStack { xs } }",
+        "fn main(): View { @State let n: number = 0 VStack { n } }",
+        "fn main(): View { @State let ok: bool = true VStack { ok } }",
+        "fn main(): View { @State let xs: List<number> = [1, 2] VStack { xs } }",
     ] {
         let err = analyze_src(src).unwrap_err();
         assert!(
@@ -934,7 +934,7 @@ fn await_allowed_in_async_closure() {
 #[test]
 fn decorators_rejected_in_closure_inside_component() {
     let err = analyze_src(
-        "fn main(): View { fn handle() { @State let count: Number = 0 } print(\"x\") }",
+        "fn main(): View { fn handle() { @State let count: number = 0 } print(\"x\") }",
     )
     .unwrap_err();
     assert!(err.message.contains("returning `View`"));
@@ -942,7 +942,7 @@ fn decorators_rejected_in_closure_inside_component() {
 
 #[test]
 fn decorators_rejected_in_anonymous_closure_inside_component() {
-    let err = analyze_src("fn main(): View { let handle = fn() { @State let count: Number = 0 } }")
+    let err = analyze_src("fn main(): View { let handle = fn() { @State let count: number = 0 } }")
         .unwrap_err();
     assert!(err.message.contains("returning `View`"));
 }
@@ -1001,11 +1001,11 @@ fn effect_cannot_call_render_local_function() {
 #[test]
 fn effect_can_capture_state_store_and_env() {
     let src = r#"
-        fn useAppStore(): Map<String, Unknown> { return { user: null } }
+        fn useAppStore(): Map<string, unknown> { return { user: null } }
         fn main(): View {
-            @State let count: Number = 0
+            @State let count: number = 0
             @Store let { user } = useAppStore()
-            @Environment let router: Map<String, Unknown>
+            @Environment let router: Map<string, unknown>
             @Effect fn() { print(count) print(user) print(router) }
         }
     "#;
@@ -1016,7 +1016,7 @@ fn effect_can_capture_state_store_and_env() {
 fn effect_local_let_is_allowed() {
     let src = r#"
         fn main(): View {
-            @State let count: Number = 0
+            @State let count: number = 0
             @Effect fn() { let x = count + 1 print(x) }
         }
     "#;
@@ -1036,7 +1036,7 @@ fn no_implicit_return_warning_without_declared_return_type() {
 
 #[test]
 fn implicit_return_warning_only_with_declared_return_type() {
-    let program = parse_program("fn f(): Number { 1; }").unwrap();
+    let program = parse_program("fn f(): number { 1; }").unwrap();
     let result = xulo_semantic::analyze_with(&program, &[], &[], &[]).unwrap();
     assert_eq!(result.warnings.len(), 1, "warnings: {:?}", result.warnings);
     assert!(result.warnings[0].message.contains("ignored return value"));
@@ -1045,14 +1045,14 @@ fn implicit_return_warning_only_with_declared_return_type() {
 #[test]
 fn rejects_unary_not_on_non_boolean() {
     let err = analyze_src("fn main() { print(!5) }").unwrap_err();
-    assert!(err.message.contains("unary `!` requires a `Boolean`"));
+    assert!(err.message.contains("unary `!` requires a `bool`"));
     assert!(analyze_src("fn main() { print(!true) }").is_ok());
 }
 
 #[test]
 fn rejects_unary_minus_on_string() {
     let err = analyze_src("fn main() { print(-\"a\") }").unwrap_err();
-    assert!(err.message.contains("unary `-` requires a `Number`"));
+    assert!(err.message.contains("unary `-` requires a `number`"));
     assert!(analyze_src("fn main() { let a = 5 print(-a) }").is_ok());
 }
 
@@ -1061,7 +1061,7 @@ fn rejects_equality_between_number_and_string() {
     let err = analyze_src("fn main() { print(1 == \"1\") }").unwrap_err();
     assert!(
         err.message
-            .contains("cannot compare `Number` with `String`")
+            .contains("cannot compare `number` with `string`")
     );
     assert!(analyze_src("fn main() { print(1 == 1) print(\"a\" != \"b\") }").is_ok());
 }
@@ -1072,7 +1072,7 @@ fn string_relational_comparison_is_allowed() {
     let err = analyze_src("fn main() { print(1 < \"a\") }").unwrap_err();
     assert!(
         err.message
-            .contains("cannot compare `Number` with `String`")
+            .contains("cannot compare `number` with `string`")
     );
 }
 
@@ -1090,28 +1090,28 @@ fn list_literal_rejects_heterogeneous_elements() {
     assert!(analyze_src("fn main() { let xs = [1, 2] print(xs) }").is_ok());
     assert!(analyze_src(r#"fn main() { let xs = ["a", "b"] print(xs) }"#).is_ok());
     // A string in a *number-annotated* list must be rejected instead of
-    // silently producing a `List<Number>` whose runtime value is corrupted.
+    // silently producing a `List<number>` whose runtime value is corrupted.
     let err =
-        analyze_src(r#"fn main() { let xs: List<Number> = [1, "a"] print(xs) }"#).unwrap_err();
+        analyze_src(r#"fn main() { let xs: List<number> = [1, "a"] print(xs) }"#).unwrap_err();
     assert!(
         err.message
-            .contains("cannot bind a value of type `List<Number | String>`"),
+            .contains("cannot bind a value of type `List<number | string>`"),
         "got: {}",
         err.message
     );
     // An unannotated mixed literal infers a union element type...
     assert!(
         analyze_src(r#"fn main() { let xs = [1, "a"] print(xs) }"#).is_ok(),
-        "unannotated mixed list must infer `List<Number | String>`"
+        "unannotated mixed list must infer `List<number | string>`"
     );
     // ...and an explicit union annotation is the legal escape hatch.
     assert!(
-        analyze_src(r#"fn main() { let xs: List<Number | String> = [1, "a"] print(xs) }"#).is_ok()
+        analyze_src(r#"fn main() { let xs: List<number | string> = [1, "a"] print(xs) }"#).is_ok()
     );
-    // Spread elements participate: `List<String>` into a numeric list yields
-    // a union, which a `List<Number>` binding still rejects.
+    // Spread elements participate: `List<string>` into a numeric list yields
+    // a union, which a `List<number>` binding still rejects.
     let err = analyze_src(
-        r#"fn main() { let strs: List<String> = ["x"] let xs: List<Number> = [1, ...strs] print(xs) }"#,
+        r#"fn main() { let strs: List<string> = ["x"] let xs: List<number> = [1, ...strs] print(xs) }"#,
     )
     .unwrap_err();
     assert!(err.message.contains("cannot bind"), "got: {}", err.message);
@@ -1122,18 +1122,18 @@ fn default_value_can_reference_earlier_parameter() {
     // `fn f(a, b = a)` is legal: the default runs in the callee scope where
     // `a` is already bound (matching the emitted JS `function f(a, b = a)`).
     assert!(
-        analyze_src("fn f(a: Number, b: Number = a): Number { b } fn main() { print(str(f(5))) }")
+        analyze_src("fn f(a: number, b: number = a): number { b } fn main() { print(str(f(5))) }")
             .is_ok()
     );
     // A default cannot reference a *later* parameter (JS TDZ semantics) or
     // itself.
-    let err = analyze_src("fn f(a: Number = b, b: Number): Number { a }").unwrap_err();
+    let err = analyze_src("fn f(a: number = b, b: number): number { a }").unwrap_err();
     assert!(
         err.message.contains("undefined variable `b`"),
         "got: {}",
         err.message
     );
-    let err = analyze_src("fn f(x: Number = x): Number { x }").unwrap_err();
+    let err = analyze_src("fn f(x: number = x): number { x }").unwrap_err();
     assert!(
         err.message.contains("undefined variable `x`"),
         "got: {}",
@@ -1189,9 +1189,9 @@ fn enum_payload_accepts_string_literal_union_member() {
 fn trait_dispatch_resolves_type_aliases() {
     // A value typed by an alias of an impl'd type dispatches to the same impl.
     let src = r#"
-        trait Area { fn area(self): Number }
-        type Rect = Map<String, Number>
-        impl Area for Rect { fn area(self): Number { return self.w * self.h } }
+        trait Area { fn area(self): number }
+        type Rect = Map<string, number>
+        impl Area for Rect { fn area(self): number { return self.w * self.h } }
         type RectAlias = Rect
         fn mk(): RectAlias { let r = { w: 3, h: 4 } r }
         fn main() { print(str(Area::area(mk()))) }
@@ -1206,10 +1206,10 @@ fn nested_async_fn_inside_if_arm_can_await() {
     // arm's no-await restriction.
     let src = r#"
         async fn pause() { }
-        async fn g(): Number { await pause() 1 }
+        async fn g(): number { await pause() 1 }
         async fn main() {
             let x = if true {
-                async fn inner(): Number { await g() }
+                async fn inner(): number { await g() }
                 inner()
             } else {
                 0
@@ -1228,7 +1228,7 @@ fn effect_closure_rejects_parameters() {
     let err = analyze_src(
         r#"
         fn main(): View {
-            @Effect fn(x: Number) { print(str(x)) }
+            @Effect fn(x: number) { print(str(x)) }
             Screen { }
         }
         "#,
@@ -1245,74 +1245,74 @@ fn effect_closure_rejects_parameters() {
 #[test]
 fn index_assignment_is_type_checked_on_typed_list() {
     assert!(
-        analyze_src("fn main() { let mut xs: List<Number> = [1] xs[0] = 5 print(xs) }").is_ok()
+        analyze_src("fn main() { let mut xs: List<number> = [1] xs[0] = 5 print(xs) }").is_ok()
     );
-    let err = analyze_src("fn main() { let mut xs: List<Number> = [1] xs[0] = \"s\" print(xs) }")
+    let err = analyze_src("fn main() { let mut xs: List<number> = [1] xs[0] = \"s\" print(xs) }")
         .unwrap_err();
     assert!(
         err.message
-            .contains("cannot assign a value of type `String` to `xs[...]: Number`")
+            .contains("cannot assign a value of type `string` to `xs[...]: number`")
     );
 }
 
 #[test]
 fn non_list_index_assignment_is_rejected() {
-    let err = analyze_src("fn main() { print(5) let mut n: Number = 1 n[0] = 2 }").unwrap_err();
-    assert!(err.message.contains("cannot assign into `Number` by index"));
+    let err = analyze_src("fn main() { print(5) let mut n: number = 1 n[0] = 2 }").unwrap_err();
+    assert!(err.message.contains("cannot assign into `number` by index"));
 }
 
 #[test]
 fn default_param_type_mismatch_is_rejected() {
-    let err = analyze_src("fn f(a: Number = \"s\"): Number { a }").unwrap_err();
+    let err = analyze_src("fn f(a: number = \"s\"): number { a }").unwrap_err();
     assert!(
         err.message
-            .contains("default value for parameter `a` must be `Number`")
+            .contains("default value for parameter `a` must be `number`")
     );
-    assert!(analyze_src("fn f(a: Number = 0): Number { a }").is_ok());
+    assert!(analyze_src("fn f(a: number = 0): number { a }").is_ok());
 }
 
 #[test]
 fn optional_list_type_accepts_null_and_values() {
     let ok = r#"
         type Status = "active" | "inactive"
-        fn same(a: List<Number>?, b: List<Number>?): Boolean { a == b }
+        fn same(a: List<number>?, b: List<number>?): bool { a == b }
         fn main() { print(same(null, null)) print(same([1], [1])) }
     "#;
     assert!(analyze_src(ok).is_ok());
     // An optional list cannot be indexed directly (no narrowing).
-    let err = analyze_src("fn g(xs: List<Number>?): Number { xs[0] }").unwrap_err();
-    assert!(err.message.contains("cannot index into `List<Number>?`"));
+    let err = analyze_src("fn g(xs: List<number>?): number { xs[0] }").unwrap_err();
+    assert!(err.message.contains("cannot index into `List<number>?`"));
 }
 
 #[test]
 fn nested_generic_list_indexing_types_check() {
     let src =
-        "fn main() { let m: List<List<Number> > = [[1, 2], [3]] let n: Number = m[0][1] print(n) }";
+        "fn main() { let m: List<List<number> > = [[1, 2], [3]] let n: number = m[0][1] print(n) }";
     assert!(analyze_src(src).is_ok());
-    let err = "fn main() { let m: List<List<Number> > = [[1, 2], [3]] let s: String = m[0][1] }";
+    let err = "fn main() { let m: List<List<number> > = [[1, 2], [3]] let s: string = m[0][1] }";
     assert!(analyze_src(err).is_err());
 }
 
 #[test]
 fn state_assignment_is_type_checked_inside_component() {
     let ok = r#"
-        fn main(): View { @State let n: Number = 0 n = 1 VStack { Text(str(n)) } }
+        fn main(): View { @State let n: number = 0 n = 1 VStack { Text(str(n)) } }
     "#;
     assert!(analyze_src(ok).is_ok());
     let bad = r#"
-        fn main(): View { @State let n: Number = 0 n = "x" VStack { Text(str(n)) } }
+        fn main(): View { @State let n: number = 0 n = "x" VStack { Text(str(n)) } }
     "#;
     let err = analyze_src(bad).unwrap_err();
     assert!(
         err.message
-            .contains("cannot assign a value of type `String` to `n")
+            .contains("cannot assign a value of type `string` to `n")
     );
 }
 
 #[test]
 fn store_destructure_is_immutable() {
     let src = r#"
-        fn makeStore(): Map<String, Unknown> { let o = { theme: { x: 1 } } o }
+        fn makeStore(): Map<string, unknown> { let o = { theme: { x: 1 } } o }
         fn main(): View { @Store let { theme } = makeStore() theme = { x: 2 } VStack { Text("x") } }
     "#;
     let err = analyze_src(src).unwrap_err();
@@ -1332,8 +1332,8 @@ fn component_call_props_are_loosely_typed() {
     // Uppercase calls lower to external UI components (`Name({ key: value })`);
     // props are not validated against the function signature.
     let ok = r#"
-        fn Counter(x: Number): String { str(x) }
-        fn main(): String { Counter(x: "a") }
+        fn Counter(x: number): string { str(x) }
+        fn main(): string { Counter(x: "a") }
     "#;
     assert!(analyze_src(ok).is_ok());
 }
@@ -1342,7 +1342,7 @@ fn component_call_props_are_loosely_typed() {
 fn nested_generic_call_inference() {
     let src = r#"
         fn id<T>(x: T): T { x }
-        fn main() { let a: Number = id(id(5)) let b: String = id(id("s")) print(a + 1) print(b) }
+        fn main() { let a: number = id(id(5)) let b: string = id(id("s")) print(a + 1) print(b) }
     "#;
     assert!(analyze_src(src).is_ok());
 }
@@ -1351,7 +1351,7 @@ fn nested_generic_call_inference() {
 fn generic_list_argument_inference() {
     let src = r#"
         fn first<T>(xs: List<T>): T { xs[0] }
-        fn main() { let n: Number = first([1, 2]) print(n) }
+        fn main() { let n: number = first([1, 2]) print(n) }
     "#;
     assert!(analyze_src(src).is_ok());
     let err = r#"
@@ -1405,11 +1405,11 @@ fn local_function_params_are_checked_even_when_empty() {
 
 #[test]
 fn mixed_positional_and_named_arguments_rejected() {
-    let err = analyze_src("fn greet(name: String) { } fn main() { greet(\"a\", punct: \"!\") }")
+    let err = analyze_src("fn greet(name: string) { } fn main() { greet(\"a\", punct: \"!\") }")
         .unwrap_err();
     assert!(err.message.contains("cannot mix positional and named"));
     assert!(
-        analyze_src("fn greet(name: String, punct: String): String { name + punct } fn main() { greet(name: \"a\", punct: \"!\") }")
+        analyze_src("fn greet(name: string, punct: string): string { name + punct } fn main() { greet(name: \"a\", punct: \"!\") }")
             .is_ok()
     );
 }
@@ -1418,7 +1418,7 @@ fn mixed_positional_and_named_arguments_rejected() {
 fn named_generic_call_infers_return_type() {
     let ok = r#"
         fn id<T>(x: T): T { return x }
-        fn main() { let s: String = id(x: "hi") print(s) let n: Number = id(x: 5) print(n) }
+        fn main() { let s: string = id(x: "hi") print(s) let n: number = id(x: 5) print(n) }
     "#;
     assert!(analyze_src(ok).is_ok());
 }
@@ -1447,7 +1447,7 @@ fn match_pattern_must_match_enum_being_matched() {
 
 #[test]
 fn duplicate_parameter_names_rejected() {
-    let err = analyze_src("fn f(a: Number, a: Number) { }").unwrap_err();
+    let err = analyze_src("fn f(a: number, a: number) { }").unwrap_err();
     assert!(err.message.contains("shadows an earlier parameter"));
 }
 
@@ -1474,9 +1474,9 @@ fn tail_await_rule_uses_statement_position() {
 fn call_value_alias_aliases_callable() {
     // An alias to a function type makes an indirect call type-checkable.
     let ok = r#"
-        type Handler = fn(a: Number): Number
-        fn apply(h: Handler, x: Number): Number { h(x) }
-        fn main() { print(apply(fn(n: Number): Number { n + 1 }, 1)) }
+        type Handler = fn(a: number): number
+        fn apply(h: Handler, x: number): number { h(x) }
+        fn main() { print(apply(fn(n: number): number { n + 1 }, 1)) }
     "#;
     assert!(analyze_src(ok).is_ok());
 }
@@ -1484,7 +1484,7 @@ fn call_value_alias_aliases_callable() {
 #[test]
 fn user_str_shadows_builtin() {
     let ok = r#"
-        fn str(prefix: String): String { "[[" + prefix + "]]" }
+        fn str(prefix: string): string { "[[" + prefix + "]]" }
         fn main() { print(str("hi")) }
     "#;
     assert!(analyze_src(ok).is_ok());
@@ -1496,12 +1496,12 @@ fn user_str_shadows_builtin() {
     assert!(analyze_src(ok2).is_ok());
     // And the user `str` no longer accepts the builtin's single numeric arg.
     let err = r#"
-        fn str(prefix: String): String { prefix }
+        fn str(prefix: string): string { prefix }
         fn main() { str(42) }
     "#;
     let err = analyze_src(err).unwrap_err();
     assert!(
-        err.message.contains("must be `String`"),
+        err.message.contains("must be `string`"),
         "unexpected {}",
         err.message
     );
@@ -1511,11 +1511,11 @@ fn user_str_shadows_builtin() {
 fn trait_and_impl_check_cleanly() {
     let src = r#"
         trait Shape {
-            fn area(self): Number
+            fn area(self): number
         }
-        type Circle = Map<String, Number>
+        type Circle = Map<string, number>
         impl Shape for Circle {
-            fn area(self): Number { return 100 }
+            fn area(self): number { return 100 }
         }
         fn main() {
             let c: Circle = { radius: 1 }
@@ -1529,12 +1529,12 @@ fn trait_and_impl_check_cleanly() {
 fn trait_dispatch_wrong_receiver_type_is_rejected() {
     let src = r#"
         trait Shape {
-            fn area(self): Number
+            fn area(self): number
         }
-        type Circle = Map<String, Number>
-        type Square = Map<String, Number>
+        type Circle = Map<string, number>
+        type Square = Map<string, number>
         impl Shape for Circle {
-            fn area(self): Number { return 100 }
+            fn area(self): number { return 100 }
         }
         fn main() {
             let s: Square = { side: 1 }
@@ -1553,11 +1553,11 @@ fn trait_dispatch_wrong_receiver_type_is_rejected() {
 fn trait_dispatch_unknown_method_is_rejected() {
     let src = r#"
         trait Shape {
-            fn area(self): Number
+            fn area(self): number
         }
-        type Circle = Map<String, Number>
+        type Circle = Map<string, number>
         impl Shape for Circle {
-            fn area(self): Number { return 100 }
+            fn area(self): number { return 100 }
         }
         fn main() {
             let c: Circle = { radius: 1 }
@@ -1576,13 +1576,13 @@ fn trait_dispatch_unknown_method_is_rejected() {
 fn trait_dispatch_generic_receiver_is_rejected() {
     let src = r#"
         trait Shape {
-            fn area(self): Number
+            fn area(self): number
         }
-        type Circle = Map<String, Number>
+        type Circle = Map<string, number>
         impl Shape for Circle {
-            fn area(self): Number { return 100 }
+            fn area(self): number { return 100 }
         }
-        fn apply<T>(t: T): Number {
+        fn apply<T>(t: T): number {
             // `Shape::area(t)` cannot dispatch: `T` is unbounded, and a
             // parameter is a dispatch receiver only when its declaration
             // bounds it by the trait (spec `types/generics.md`).
@@ -1609,11 +1609,11 @@ fn trait_dispatch_rejects_named_arguments() {
     // arguments would silently mis-bind in the runtimes; reject them.
     let src = r#"
         trait Shape {
-            fn area(self): Number
+            fn area(self): number
         }
-        type Circle = Map<String, Number>
+        type Circle = Map<string, number>
         impl Shape for Circle {
-            fn area(self): Number { return 100 }
+            fn area(self): number { return 100 }
         }
         fn main() {
             let c: Circle = { radius: 1 }
@@ -1635,18 +1635,18 @@ fn impl_underscore_mangle_collision_is_rejected() {
     // silently overwriting the first in the JS/native runtimes.
     let src = r#"
         trait a_b {
-            fn m(self): Number
+            fn m(self): number
         }
         trait a {
-            fn m(self): Number
+            fn m(self): number
         }
-        type c = Map<String, Number>
-        type b_c = Map<String, Number>
+        type c = Map<string, number>
+        type b_c = Map<string, number>
         impl a_b for c {
-            fn m(self): Number { return 1 }
+            fn m(self): number { return 1 }
         }
         impl a for b_c {
-            fn m(self): Number { return 2 }
+            fn m(self): number { return 2 }
         }
         fn main() { print(1) }
     "#;
@@ -1666,13 +1666,13 @@ fn impl_underscore_mangle_collision_is_rejected() {
 #[test]
 fn impl_mangled_name_collides_with_user_function_is_rejected() {
     let src = r#"
-        fn impl_Shape_Circle_area(): Number { return 1 }
+        fn impl_Shape_Circle_area(): number { return 1 }
         trait Shape {
-            fn area(self): Number
+            fn area(self): number
         }
-        type Circle = Map<String, Number>
+        type Circle = Map<string, number>
         impl Shape for Circle {
-            fn area(self): Number { return 100 }
+            fn area(self): number { return 100 }
         }
         fn main() { print(1) }
     "#;
@@ -1691,13 +1691,13 @@ fn user_function_after_impl_collision_is_rejected() {
     // through and silently overwrite the mangled impl in the native runtime.
     let src = r#"
         trait Shape {
-            fn area(self): Number
+            fn area(self): number
         }
-        type Circle = Map<String, Number>
+        type Circle = Map<string, number>
         impl Shape for Circle {
-            fn area(self): Number { return 100 }
+            fn area(self): number { return 100 }
         }
-        fn impl_Shape_Circle_area(): Number { return 1 }
+        fn impl_Shape_Circle_area(): number { return 1 }
         fn main() { print(1) }
     "#;
     let err = analyze_src(src).unwrap_err();
@@ -1710,14 +1710,14 @@ fn user_function_after_impl_collision_is_rejected() {
 
 #[test]
 fn main_rejects_required_parameters() {
-    let err = analyze_src("fn main(x: Number) { print(str(x)) }").unwrap_err();
+    let err = analyze_src("fn main(x: number) { print(str(x)) }").unwrap_err();
     assert!(
         err.message.contains("`main` must not require arguments"),
         "got: {}",
         err.message
     );
     // Defaulted parameters are fine: both runtimes fall back to the default.
-    assert!(analyze_src("fn main(x: Number = 5) { print(str(x)) }").is_ok());
+    assert!(analyze_src("fn main(x: number = 5) { print(str(x)) }").is_ok());
     assert!(analyze_src("fn main() { print(1) }").is_ok());
 }
 
@@ -1742,7 +1742,7 @@ fn enum_name_can_be_reexported() {
             .is_ok()
     );
     let err =
-        analyze_src("pub use { Rect };\ntype Rect = Map<String, Number>\nfn main() { print(1) }")
+        analyze_src("pub use { Rect };\ntype Rect = Map<string, number>\nfn main() { print(1) }")
             .unwrap_err();
     assert!(
         err.message.contains("no runtime value"),
@@ -1771,14 +1771,14 @@ fn bounded_generic_refines_member_access() {
     // Bound satisfaction is impl-based (spec `types/traits.md`), so the
     // argument is a nominal type with a `Shape` impl, not a structural match.
     let src = r#"
-        enum Marker { Marker(Number) }
+        enum Marker { Marker(number) }
         trait Shape {
-            fn area(self): Number
+            fn area(self): number
         }
         impl Shape for Marker {
-            fn area(self): Number { return 5 }
+            fn area(self): number { return 5 }
         }
-        fn apply<T: Shape>(t: T): Number {
+        fn apply<T: Shape>(t: T): number {
             let area = t.area
             return area()
         }
@@ -1796,9 +1796,9 @@ fn bounded_generic_missing_bound_member_is_rejected() {
     // bound does not have is E0102 on the parameter (spec `types/traits.md`).
     let src = r#"
         trait Shape {
-            fn area(self): Number
+            fn area(self): number
         }
-        fn apply<T: Shape>(t: T): Number {
+        fn apply<T: Shape>(t: T): number {
             let volume = t.volume
             return volume()
         }
@@ -1817,17 +1817,17 @@ fn bounded_generic_missing_bound_member_is_rejected() {
 fn impl_method_signature_mismatch_is_rejected() {
     let src = r#"
         trait Shape {
-            fn area(self): Number
+            fn area(self): number
         }
-        type Circle = Map<String, Number>
+        type Circle = Map<string, number>
         impl Shape for Circle {
-            fn area(self): String { return "x" }
+            fn area(self): string { return "x" }
         }
         fn main() { print(1) }
     "#;
     let err = analyze_src(src).unwrap_err();
     assert!(
-        err.message.contains("must return `Number`"),
+        err.message.contains("must return `number`"),
         "unexpected: {}",
         err.message
     );
@@ -1837,12 +1837,12 @@ fn impl_method_signature_mismatch_is_rejected() {
 fn impl_undeclared_method_is_rejected() {
     let src = r#"
         trait Shape {
-            fn area(self): Number
+            fn area(self): number
         }
-        type Circle = Map<String, Number>
+        type Circle = Map<string, number>
         impl Shape for Circle {
-            fn area(self): Number { return 1 }
-            fn volume(self): Number { return 1 }
+            fn area(self): number { return 1 }
+            fn volume(self): number { return 1 }
         }
         fn main() { print(1) }
     "#;
@@ -1862,11 +1862,11 @@ fn impl_self_receiver_mismatch_is_rejected() {
     // would silently drop or mis-bind it.
     let src = r#"
         trait Shape {
-            fn area(self): Number
+            fn area(self): number
         }
-        type Circle = Map<String, Number>
+        type Circle = Map<string, number>
         impl Shape for Circle {
-            fn area(): Number { return 1 }
+            fn area(): number { return 1 }
         }
         fn main() { print(1) }
     "#;
@@ -1880,11 +1880,11 @@ fn impl_self_receiver_mismatch_is_rejected() {
 
     let src = r#"
         trait Shape {
-            fn area(): Number
+            fn area(): number
         }
-        type Circle = Map<String, Number>
+        type Circle = Map<string, number>
         impl Shape for Circle {
-            fn area(self): Number { return 1 }
+            fn area(self): number { return 1 }
         }
         fn main() { print(1) }
     "#;
@@ -1900,11 +1900,11 @@ fn impl_self_receiver_mismatch_is_rejected() {
 fn impl_asyncness_mismatch_is_rejected() {
     let src = r#"
         trait Shape {
-            fn area(self): Number
+            fn area(self): number
         }
-        type Circle = Map<String, Number>
+        type Circle = Map<string, number>
         impl Shape for Circle {
-            async fn area(self): Number { return 1 }
+            async fn area(self): number { return 1 }
         }
         fn main() { print(1) }
     "#;
@@ -1918,11 +1918,11 @@ fn impl_asyncness_mismatch_is_rejected() {
 
     let src = r#"
         trait Shape {
-            async fn area(self): Number
+            async fn area(self): number
         }
-        type Circle = Map<String, Number>
+        type Circle = Map<string, number>
         impl Shape for Circle {
-            fn area(self): Number { return 1 }
+            fn area(self): number { return 1 }
         }
         fn main() { print(1) }
     "#;
@@ -1941,11 +1941,11 @@ fn selfless_trait_method_cannot_be_dispatched() {
     // real parameter at run time.
     let src = r#"
         trait Calc {
-            fn add(x: Number, y: Number): Number
+            fn add(x: number, y: number): number
         }
-        type C = Map<String, Number>
+        type C = Map<string, number>
         impl Calc for C {
-            fn add(x: Number, y: Number): Number { return x + y }
+            fn add(x: number, y: number): number { return x + y }
         }
         fn main() {
             let c: C = {}
@@ -1965,11 +1965,11 @@ fn selfless_trait_method_cannot_be_dispatched() {
 fn dispatch_on_optional_receiver_is_rejected() {
     let src = r#"
         trait Shape {
-            fn area(self): Number
+            fn area(self): number
         }
-        type Circle = Map<String, Number>
+        type Circle = Map<string, number>
         impl Shape for Circle {
-            fn area(self): Number { return self.r }
+            fn area(self): number { return self.r }
         }
         fn main() {
             let c: Circle? = null
@@ -1991,12 +1991,12 @@ fn impl_missing_trait_method_is_rejected() {
     // at the `impl` site instead of surfacing later at a dispatch call site.
     let src = r#"
         trait Shape {
-            fn area(self): Number;
-            fn perimeter(self): Number
+            fn area(self): number;
+            fn perimeter(self): number
         }
-        type Rect = Map<String, Number>
+        type Rect = Map<string, number>
         impl Shape for Rect {
-            fn area(self): Number { return self.w * self.h }
+            fn area(self): number { return self.w * self.h }
         }
         fn main() { print(1) }
     "#;
@@ -2021,14 +2021,14 @@ fn generic_bound_member_call_resolves() {
     // a concrete receiver; the call site only has to satisfy the bound.
     let src = r#"
         trait Shape {
-            fn area(self): Number
+            fn area(self): number
         }
-        fn area_of<T: Shape>(s: T): Number {
+        fn area_of<T: Shape>(s: T): number {
             return s.area()
         }
-        struct Circle { r: Number }
+        struct Circle { r: number }
         impl Shape for Circle {
-            fn area(self): Number { return 5 }
+            fn area(self): number { return 5 }
         }
         fn main() {
             let c = { r: 1 }
@@ -2044,9 +2044,9 @@ fn generic_unbounded_member_call_is_e0102() {
     // `types/traits.md`): `s.area()` inside `fn area_of<T>` is E0102.
     let src = r#"
         trait Shape {
-            fn area(self): Number
+            fn area(self): number
         }
-        fn area_of<T>(s: T): Number {
+        fn area_of<T>(s: T): number {
             return s.area()
         }
         fn main() { print(1) }
@@ -2064,10 +2064,10 @@ fn generic_unbounded_member_call_is_e0102() {
 fn impl_for_unknown_type_is_rejected() {
     let src = r#"
         trait Shape {
-            fn area(self): Number
+            fn area(self): number
         }
         impl Shape for Nope {
-            fn area(self): Number { return 1 }
+            fn area(self): number { return 1 }
         }
         fn main() { print(1) }
     "#;
@@ -2084,7 +2084,7 @@ fn exported_trait_is_registered() {
     use xulo_semantic::analyze_with;
     let src = r#"
         pub trait Area {
-            fn area(self): Number
+            fn area(self): number
         }
         pub fn main() { print(1) }
     "#;
@@ -2099,8 +2099,8 @@ fn exported_trait_is_registered() {
 #[test]
 fn duplicate_trait_registration_is_rejected() {
     let src = r#"
-        trait Shape { fn area(self): Number }
-        type Shape = Map<String, Number>
+        trait Shape { fn area(self): number }
+        type Shape = Map<string, number>
         fn main() { print(1) }
     "#;
     let err = analyze_src(src).unwrap_err();
@@ -2114,8 +2114,8 @@ fn duplicate_trait_registration_is_rejected() {
 #[test]
 fn where_clause_bound_is_validated() {
     let src = r#"
-        trait Shape { fn area(self): Number }
-        fn f<T>(t: T): Number where T: Shape { let area = t.area; return 1 }
+        trait Shape { fn area(self): number }
+        fn f<T>(t: T): number where T: Shape { let area = t.area; return 1 }
         fn main() { print(1) }
     "#;
     assert!(analyze_src(src).is_ok());
@@ -2124,7 +2124,7 @@ fn where_clause_bound_is_validated() {
 #[test]
 fn unknown_trait_in_bound_is_rejected() {
     let src = r#"
-        fn f<T: Mystery>(t: T): Number { return 1 }
+        fn f<T: Mystery>(t: T): number { return 1 }
         fn main() { print(1) }
     "#;
     let err = analyze_src(src).unwrap_err();
@@ -2138,8 +2138,8 @@ fn unknown_trait_in_bound_is_rejected() {
 #[test]
 fn trait_method_arity_mismatch_is_rejected() {
     let src = r#"
-        trait Shape { fn scale(self, by: Number): Shape }
-        type Circle = Map<String, Number>
+        trait Shape { fn scale(self, by: number): Shape }
+        type Circle = Map<string, number>
         impl Shape for Circle {
             fn scale(self): Circle { return 1 }
         }
@@ -2156,17 +2156,17 @@ fn trait_method_arity_mismatch_is_rejected() {
 #[test]
 fn self_resolves_only_inside_impl_methods() {
     let ok = r#"
-        trait Shape { fn area(self): Number }
-        type Circle = Map<String, Number>
+        trait Shape { fn area(self): number }
+        type Circle = Map<string, number>
         impl Shape for Circle {
-            fn area(self): Number { return self.radius }
+            fn area(self): number { return self.radius }
         }
         fn main() { print(1) }
     "#;
     assert!(analyze_src(ok).is_ok());
 
     let bad = r#"
-        fn f(): Number { return self }
+        fn f(): number { return self }
     "#;
     let err = analyze_src(bad).unwrap_err();
     assert!(
@@ -2179,10 +2179,10 @@ fn self_resolves_only_inside_impl_methods() {
 #[test]
 fn dispatch_annotations_are_applied_to_the_ast() {
     let src = r#"
-        trait Shape { fn area(self): Number }
-        type Circle = Map<String, Number>
+        trait Shape { fn area(self): number }
+        type Circle = Map<string, number>
         impl Shape for Circle {
-            fn area(self): Number { return self.radius }
+            fn area(self): number { return self.radius }
         }
         fn main() {
             let c: Circle = { radius: 5 }
@@ -2211,7 +2211,7 @@ fn dispatch_annotations_are_applied_to_the_ast() {
 #[test]
 fn component_names_are_recorded_as_uses() {
     let src = r#"
-        fn Card(title: String): View {
+        fn Card(title: string): View {
             View {
                 Text(title)
             }
@@ -2291,7 +2291,7 @@ fn analyze_with_still_fails_fast() {
 fn memo_requires_initializer() {
     let src = r#"
         fn main() {
-            @Memo let x: Number
+            @Memo let x: number
         }
     "#;
     assert!(analyze_src(src).is_err());
@@ -2515,7 +2515,7 @@ fn bitwise_not_requires_number() {
     let err = analyze_src(src).unwrap_err();
     assert!(
         err.message
-            .contains("unary `~` requires a `Number` operand")
+            .contains("unary `~` requires a `number` operand")
     );
 }
 
@@ -2588,7 +2588,7 @@ fn list_length_returns_number() {
     let src = r#"
         fn f() {
             let a = [1, 2, 3]
-            let n: Number = a.length
+            let n: number = a.length
         }
     "#;
     assert!(analyze_src(src).is_ok());
@@ -2599,7 +2599,7 @@ fn list_capacity_returns_number() {
     let src = r#"
         fn f() {
             let a = [1, 2, 3]
-            let n: Number = a.capacity
+            let n: number = a.capacity
         }
     "#;
     assert!(analyze_src(src).is_ok());
@@ -2610,7 +2610,7 @@ fn list_is_empty_returns_bool() {
     let src = r#"
         fn f() {
             let a = [1, 2]
-            let b: Boolean = a.isEmpty()
+            let b: bool = a.isEmpty()
         }
     "#;
     assert!(analyze_src(src).is_ok());
@@ -2621,7 +2621,7 @@ fn list_first_returns_optional() {
     let src = r#"
         fn f() {
             let a = [1, 2, 3]
-            let n: Number? = a.first()
+            let n: number? = a.first()
         }
     "#;
     assert!(analyze_src(src).is_ok());
@@ -2632,7 +2632,7 @@ fn list_last_returns_optional() {
     let src = r#"
         fn f() {
             let a = [1, 2, 3]
-            let n: Number? = a.last()
+            let n: number? = a.last()
         }
     "#;
     assert!(analyze_src(src).is_ok());
@@ -2643,7 +2643,7 @@ fn list_get_returns_optional() {
     let src = r#"
         fn f() {
             let a = [1, 2, 3]
-            let n: Number? = a.get(0)
+            let n: number? = a.get(0)
         }
     "#;
     assert!(analyze_src(src).is_ok());
@@ -2654,7 +2654,7 @@ fn list_push_returns_self() {
     let src = r#"
         fn f() {
             let a = [1, 2]
-            let b: List<Number> = a.push(3)
+            let b: List<number> = a.push(3)
         }
     "#;
     assert!(analyze_src(src).is_ok());
@@ -2665,7 +2665,7 @@ fn list_pop_returns_element() {
     let src = r#"
         fn f() {
             let a = [1, 2, 3]
-            let n: Number = a.pop()
+            let n: number = a.pop()
         }
     "#;
     assert!(analyze_src(src).is_ok());
@@ -2676,7 +2676,7 @@ fn list_contains_returns_bool() {
     let src = r#"
         fn f() {
             let a = [1, 2, 3]
-            let b: Boolean = a.contains(2)
+            let b: bool = a.contains(2)
         }
     "#;
     assert!(analyze_src(src).is_ok());
@@ -2687,7 +2687,7 @@ fn list_index_of_returns_number() {
     let src = r#"
         fn f() {
             let a = [1, 2, 3]
-            let n: Number = a.indexOf(2)
+            let n: number = a.indexOf(2)
         }
     "#;
     assert!(analyze_src(src).is_ok());
@@ -2698,7 +2698,7 @@ fn list_join_returns_string() {
     let src = r#"
         fn f() {
             let a = ["a", "b"]
-            let s: String = a.join(", ")
+            let s: string = a.join(", ")
         }
     "#;
     assert!(analyze_src(src).is_ok());
@@ -2709,7 +2709,7 @@ fn list_sort_returns_self() {
     let src = r#"
         fn f() {
             let a = [3, 1, 2]
-            let b: List<Number> = a.sort()
+            let b: List<number> = a.sort()
         }
     "#;
     assert!(analyze_src(src).is_ok());
@@ -2720,7 +2720,7 @@ fn list_reverse_returns_self() {
     let src = r#"
         fn f() {
             let a = [1, 2, 3]
-            let b: List<Number> = a.reverse()
+            let b: List<number> = a.reverse()
         }
     "#;
     assert!(analyze_src(src).is_ok());
@@ -2732,7 +2732,7 @@ fn list_concat_returns_list() {
         fn f() {
             let a = [1, 2]
             let b = [3, 4]
-            let c: List<Number> = a.concat(b)
+            let c: List<number> = a.concat(b)
         }
     "#;
     assert!(analyze_src(src).is_ok());
@@ -2743,7 +2743,7 @@ fn list_slice_returns_list() {
     let src = r#"
         fn f() {
             let a = [1, 2, 3, 4]
-            let b: List<Number> = a.slice(1, 3)
+            let b: List<number> = a.slice(1, 3)
         }
     "#;
     assert!(analyze_src(src).is_ok());
@@ -2754,7 +2754,7 @@ fn list_remove_value_returns_bool() {
     let src = r#"
         fn f() {
             let a = [1, 2, 3]
-            let b: Boolean = a.removeValue(2)
+            let b: bool = a.removeValue(2)
         }
     "#;
     assert!(analyze_src(src).is_ok());
@@ -2765,7 +2765,7 @@ fn list_map_returns_list() {
     let src = r#"
         fn f() {
             let a = [1, 2, 3]
-            let b: List<Number> = a.map(fn(x) { x * 2 })
+            let b: List<number> = a.map(fn(x) { x * 2 })
         }
     "#;
     assert!(analyze_src(src).is_ok());
@@ -2776,7 +2776,7 @@ fn list_filter_returns_list() {
     let src = r#"
         fn f() {
             let a = [1, 2, 3, 4]
-            let b: List<Number> = a.filter(fn(x) { x > 2 })
+            let b: List<number> = a.filter(fn(x) { x > 2 })
         }
     "#;
     assert!(analyze_src(src).is_ok());
@@ -2787,7 +2787,7 @@ fn list_some_returns_bool() {
     let src = r#"
         fn f() {
             let a = [1, 2, 3]
-            let b: Boolean = a.some(fn(x) { x > 2 })
+            let b: bool = a.some(fn(x) { x > 2 })
         }
     "#;
     assert!(analyze_src(src).is_ok());
@@ -2798,7 +2798,7 @@ fn list_every_returns_bool() {
     let src = r#"
         fn f() {
             let a = [2, 4, 6]
-            let b: Boolean = a.every(fn(x) { x > 0 })
+            let b: bool = a.every(fn(x) { x > 0 })
         }
     "#;
     assert!(analyze_src(src).is_ok());
@@ -2849,8 +2849,8 @@ fn tuple_destructure_binds_correct_types() {
     let src = r#"
         fn f() {
             let (x, y) = [10, 20]
-            let a: Number = x
-            let b: Number = y
+            let a: number = x
+            let b: number = y
         }
     "#;
     assert!(analyze_src(src).is_ok());
@@ -2871,7 +2871,7 @@ fn tuple_destructure_non_list_is_error() {
 #[test]
 fn struct_definition_registers_type() {
     let src = r#"
-        struct User { name: String, age: Number }
+        struct User { name: string, age: number }
     "#;
     assert!(analyze_src(src).is_ok());
 }
@@ -2879,7 +2879,7 @@ fn struct_definition_registers_type() {
 #[test]
 fn struct_duplicate_field_is_error() {
     let src = r#"
-        struct User { name: String, name: Number }
+        struct User { name: string, name: number }
     "#;
     assert!(analyze_src(src).is_err());
 }
@@ -2887,8 +2887,8 @@ fn struct_duplicate_field_is_error() {
 #[test]
 fn struct_duplicate_type_is_error() {
     let src = r#"
-        struct User { name: String }
-        struct User { age: Number }
+        struct User { name: string }
+        struct User { age: number }
     "#;
     assert!(analyze_src(src).is_err());
 }
@@ -2896,10 +2896,10 @@ fn struct_duplicate_type_is_error() {
 #[test]
 fn struct_literal_infers_named_type() {
     let src = r#"
-        struct User { name: String, age: Number }
+        struct User { name: string, age: number }
         fn f() {
             let u = { name: "Alice", age: 30 }
-            let n: String = u.name
+            let n: string = u.name
         }
     "#;
     assert!(analyze_src(src).is_ok());
@@ -2908,7 +2908,7 @@ fn struct_literal_infers_named_type() {
 #[test]
 fn struct_literal_wrong_field_name_is_error() {
     let src = r#"
-        struct User { name: String, age: Number }
+        struct User { name: string, age: number }
         fn f() {
             let u = { name: "Alice", wrong: 30 }
         }
@@ -2921,7 +2921,7 @@ fn struct_literal_wrong_field_name_is_error() {
 #[test]
 fn struct_literal_with_type_annotation_checks_fields() {
     let src = r#"
-        struct User { name: String, age: Number }
+        struct User { name: string, age: number }
         fn f() {
             let u: User = { name: "Alice", age: 30 }
         }
@@ -2932,12 +2932,12 @@ fn struct_literal_with_type_annotation_checks_fields() {
 #[test]
 fn inherent_impl_block() {
     let src = r#"
-        struct User { name: String, age: Number }
+        struct User { name: string, age: number }
         impl User {
-            fn create(name: String, age: Number): User {
+            fn create(name: string, age: number): User {
                 return { name: name, age: age }
             }
-            fn greet(self): String {
+            fn greet(self): string {
                 return "Hello, " + self.name
             }
         }
@@ -2948,8 +2948,8 @@ fn inherent_impl_block() {
 #[test]
 fn inherent_impl_unknown_type_is_error() {
     let src = r#"
-        impl Unknown {
-            fn new(): Unknown { return {} }
+        impl unknown {
+            fn new(): unknown { return {} }
         }
     "#;
     assert!(analyze_src(src).is_err());
@@ -2961,8 +2961,8 @@ fn object_destructuring() {
         fn f() {
             let obj = { name: "Alice", age: 30 }
             let { name, age } = obj
-            let n: String = name
-            let a: Number = age
+            let n: string = name
+            let a: number = age
         }
     "#;
     assert!(analyze_src(src).is_ok());
@@ -2996,8 +2996,9 @@ fn object_destructuring_duplicate_binding_is_error() {
 #[test]
 fn test_fn_body_is_checked() {
     let src = r#"
-        #Test fn checked() {
-            let x: Number = "not a number"
+        #Test
+        fn checked() {
+            let x: number = "not a number"
         }
     "#;
     let err = analyze_src(src).unwrap_err();
@@ -3011,9 +3012,10 @@ fn test_fn_body_is_checked() {
 #[test]
 fn test_fn_body_sees_module_declarations() {
     let src = r#"
-        fn helper(): Number { return 42 }
+        fn helper(): number { return 42 }
         const LIMIT = 10
-        #Test fn sees_module() {
+        #Test
+        fn sees_module() {
             let a = helper()
             let b = LIMIT
             assert(a == 42, "helper")
@@ -3026,7 +3028,8 @@ fn test_fn_body_sees_module_declarations() {
 #[test]
 fn test_fn_reference_is_forbidden() {
     let src = r#"
-        #Test fn forbidden() {
+        #Test
+        fn forbidden() {
             assert(true, "ok")
         }
         fn main() {
@@ -3045,7 +3048,8 @@ fn test_fn_reference_is_forbidden() {
 #[test]
 fn test_fn_value_reference_is_forbidden() {
     let src = r#"
-        #Test fn forbidden() {
+        #Test
+        fn forbidden() {
             assert(true, "ok")
         }
         fn main() {
@@ -3064,7 +3068,8 @@ fn test_fn_value_reference_is_forbidden() {
 #[test]
 fn test_fn_self_reference_is_forbidden() {
     let src = r#"
-        #Test fn recursive() {
+        #Test
+        fn recursive() {
             recursive()
         }
     "#;
@@ -3083,7 +3088,8 @@ fn test_fn_reference_before_declaration_is_forbidden() {
         fn main() {
             later()
         }
-        #Test fn later() {
+        #Test
+        fn later() {
             assert(true, "ok")
         }
     "#;
@@ -3099,7 +3105,8 @@ fn test_fn_reference_before_declaration_is_forbidden() {
 #[test]
 fn test_fn_await_needs_async_marker() {
     let src = r#"
-        #Test fn sync_test() {
+        #Test
+        fn sync_test() {
             await Time::sleep(1)
         }
     "#;
@@ -3114,8 +3121,9 @@ fn test_fn_await_needs_async_marker() {
 #[test]
 fn test_async_fn_await_is_allowed() {
     let src = r#"
-        async fn load(): Number { return 1 }
-        #Test async fn async_test() {
+        async fn load(): number { return 1 }
+        #Test
+        async fn async_test() {
             let v = await load()
             assert(v == 1, "loaded")
         }
@@ -3126,10 +3134,12 @@ fn test_async_fn_await_is_allowed() {
 #[test]
 fn test_fn_duplicate_names_are_allowed() {
     let src = r#"
-        #Test fn same_name() {
+        #Test
+        fn same_name() {
             assert(true, "first")
         }
-        #Test fn same_name() {
+        #Test
+        fn same_name() {
             assert(true, "second")
         }
     "#;
@@ -3138,16 +3148,17 @@ fn test_fn_duplicate_names_are_allowed() {
 
 #[test]
 fn test_fn_trailing_expression_is_not_an_implicit_return() {
-    // The body is an implicit `fn(): Unit`: a trailing expression is a
+    // The body is an implicit `fn(): unit`: a trailing expression is a
     // statement, and `return e` checks `e` against the unit result — here a
     // number-returning call in `return` position must fail.
     let src = r#"
-        fn num(): Number { return 1 }
-        #Test fn t() {
+        fn num(): number { return 1 }
+        #Test
+        fn t() {
             return num()
         }
     "#;
-    // `return e` checks e against Unit (Any here — the unit stand-in), so this
+    // `return e` checks e against unit (Any here — the unit stand-in), so this
     // is accepted at the type level; the statement-value rule still applies
     // to a bare trailing expression. Pin the accepted form:
     assert!(analyze_src(src).is_ok());
@@ -3193,7 +3204,7 @@ fn assert_rejects_non_boolean_condition() {
     let err = analyze_src(src).unwrap_err();
     assert!(
         err.message
-            .contains("`assert` condition must be a `Boolean`"),
+            .contains("`assert` condition must be a `bool`"),
         "unexpected message: {}",
         err.message
     );
@@ -3208,7 +3219,7 @@ fn assert_rejects_non_string_message() {
     "#;
     let err = analyze_src(src).unwrap_err();
     assert!(
-        err.message.contains("`assert` message must be a `String`"),
+        err.message.contains("`assert` message must be a `string`"),
         "unexpected message: {}",
         err.message
     );
@@ -3217,7 +3228,7 @@ fn assert_rejects_non_string_message() {
 #[test]
 fn user_function_named_assert_shadows_intrinsic() {
     let src = r#"
-        fn assert(a: Number, b: Number): Number { return a }
+        fn assert(a: number, b: number): number { return a }
         fn main() {
             print(assert(1, 2))
         }
@@ -3230,7 +3241,7 @@ fn type_application_arity_mismatch_is_e0230() {
     let src = r#"
         struct Pair<A, B> { a: A, b: B }
         fn main() {
-            let bad: Pair<String> = { a: 1, b: 2 }
+            let bad: Pair<string> = { a: 1, b: 2 }
             print(str(bad))
         }
     "#;
@@ -3249,8 +3260,8 @@ fn well_formed_type_application_is_accepted() {
     let src = r#"
         struct Pair<A, B> { a: A, b: B }
         fn main() {
-            let ok: Pair<String, Number> = { a: "x", b: 2 }
-            let also_ok: Pair<Number, String> = { a: 1, b: "y" }
+            let ok: Pair<string, number> = { a: "x", b: 2 }
+            let also_ok: Pair<number, string> = { a: 1, b: "y" }
         }
     "#;
     assert!(analyze_src(src).is_ok());
@@ -3261,7 +3272,7 @@ fn type_application_checks_its_arguments() {
     let src = r#"
         struct Pair<A, B> { a: A, b: B }
         fn main() {
-            let bad: Pair<Bogus, Number> = { a: 1, b: 2 }
+            let bad: Pair<Bogus, number> = { a: 1, b: 2 }
             print(str(bad))
         }
     "#;
@@ -3293,9 +3304,12 @@ fn bare_generic_name_is_e0230() {
 
 #[test]
 fn arguments_on_a_non_generic_name_are_e0230() {
+    // The primitive words are keywords now (spec `lexical-structure.md`), so
+    // a written argument list after one is a syntax error; `View` keeps the
+    // E0230 shape check for a zero-arity non-keyword name.
     let src = r#"
         fn main() {
-            let x: Number<Int> = 1
+            let x: View<int> = 1
             print(str(x))
         }
     "#;
@@ -3303,7 +3317,7 @@ fn arguments_on_a_non_generic_name_are_e0230() {
     assert_eq!(err.code(), "E0230");
     assert!(
         err.message
-            .contains("`Number` expects 0 type arguments, found 1"),
+            .contains("`View` expects 0 type arguments, found 1"),
         "unexpected message: {}",
         err.message
     );
@@ -3312,7 +3326,7 @@ fn arguments_on_a_non_generic_name_are_e0230() {
 #[test]
 fn applied_type_parameter_is_e0230() {
     let src = r#"
-        fn f<T>(x: T<Int>): T { x }
+        fn f<T>(x: T<int>): T { x }
         fn main() { print(str(f(1))) }
     "#;
     let err = analyze_src(src).unwrap_err();
@@ -3327,8 +3341,8 @@ fn applied_type_parameter_is_e0230() {
 
 #[test]
 fn type_parameter_list_has_no_defaults() {
-    // `T = Int` is not a form the grammar accepts at all.
-    let src = "fn f<T = Int>(x: T): T { x }\nfn main() { print(str(f(1))) }";
+    // `T = int` is not a form the grammar accepts at all.
+    let src = "fn f<T = int>(x: T): T { x }\nfn main() { print(str(f(1))) }";
     let err = analyze_src(src).unwrap_err();
     assert_eq!(err.code(), "E0002");
 }
@@ -3336,7 +3350,7 @@ fn type_parameter_list_has_no_defaults() {
 #[test]
 fn trait_declaring_type_parameters_is_e0810() {
     let src = r#"
-        trait Convert<T> { fn convert(self): String }
+        trait Convert<T> { fn convert(self): string }
         fn main() { print("x") }
     "#;
     let err = analyze_src(src).unwrap_err();
@@ -3352,15 +3366,15 @@ fn trait_declaring_type_parameters_is_e0810() {
 #[test]
 fn bound_applying_type_arguments_is_e0811() {
     let src = r#"
-        trait Convert { fn convert(self): String }
-        fn f<T: Convert<String> >(x: T): String { x.convert() }
+        trait Convert { fn convert(self): string }
+        fn f<T: Convert<string> >(x: T): string { x.convert() }
         fn main() { print("x") }
     "#;
     let err = analyze_src(src).unwrap_err();
     assert_eq!(err.code(), "E0811");
     assert!(
         err.message
-            .contains("`Convert<String>` applies type arguments; a trait has none"),
+            .contains("`Convert<string>` applies type arguments; a trait has none"),
         "unexpected message: {}",
         err.message
     );
@@ -3369,8 +3383,8 @@ fn bound_applying_type_arguments_is_e0811() {
 #[test]
 fn where_bound_applying_type_arguments_is_e0811() {
     let src = r#"
-        trait Convert { fn convert(self): String }
-        fn f<T>(x: T): String where T: Convert<String> { x.convert() }
+        trait Convert { fn convert(self): string }
+        fn f<T>(x: T): string where T: Convert<string> { x.convert() }
         fn main() { print("x") }
     "#;
     let err = analyze_src(src).unwrap_err();
@@ -3380,13 +3394,13 @@ fn where_bound_applying_type_arguments_is_e0811() {
 #[test]
 fn bound_that_is_not_a_trait_is_e0806() {
     let src = r#"
-        fn f<T: Number>(x: T): T { x }
+        fn f<T: number>(x: T): T { x }
         fn main() { print(str(f(1))) }
     "#;
     let err = analyze_src(src).unwrap_err();
     assert_eq!(err.code(), "E0806");
     assert!(
-        err.message.contains("unknown trait `Number`"),
+        err.message.contains("unknown trait `number`"),
         "unexpected message: {}",
         err.message
     );
@@ -3396,33 +3410,33 @@ fn bound_that_is_not_a_trait_is_e0806() {
 fn bounded_generic_argument_without_impl_is_e0801() {
     let src = r#"
         trait Shape {
-            fn area(self): Number
+            fn area(self): number
         }
-        fn apply<T: Shape>(t: T): Number { return 0 }
+        fn apply<T: Shape>(t: T): number { return 0 }
         fn main() {
             print(apply(1))
         }
     "#;
     let err = analyze_src(src).unwrap_err();
     assert_eq!(err.code(), "E0801");
-    assert!(err.message.contains("`Number` does not implement `Shape`"));
+    assert!(err.message.contains("`number` does not implement `Shape`"));
 }
 
 #[test]
 fn bounded_type_argument_at_a_written_position_is_e0801() {
     let src = r#"
         trait Area {
-            fn area(self): Number
+            fn area(self): number
         }
         type Palette<T: Area> = List<T>
         fn main() {
-            let p: Palette<String> = ["a"]
+            let p: Palette<string> = ["a"]
             print(p)
         }
     "#;
     let err = analyze_src(src).unwrap_err();
     assert_eq!(err.code(), "E0801");
-    assert!(err.message.contains("`String` does not implement `Area`"));
+    assert!(err.message.contains("`string` does not implement `Area`"));
 }
 
 #[test]
@@ -3437,22 +3451,22 @@ fn conflicting_type_argument_inference_is_e0202() {
     assert_eq!(err.code(), "E0202");
     assert!(
         err.message
-            .contains("expected `Number` for `T`, found `String`")
+            .contains("expected `number` for `T`, found `string`")
     );
 }
 
 #[test]
 fn bound_satisfied_by_a_type_alias_is_accepted() {
     let src = r#"
-        enum Marker { Marker(Number) }
+        enum Marker { Marker(number) }
         trait Shape {
-            fn area(self): Number
+            fn area(self): number
         }
         impl Shape for Marker {
-            fn area(self): Number { return 5 }
+            fn area(self): number { return 5 }
         }
         type Dot = Marker
-        fn apply<T: Shape>(t: T): Number { return 0 }
+        fn apply<T: Shape>(t: T): number { return 0 }
         fn main() {
             let d: Dot = Marker::Marker(1)
             print(apply(d))
@@ -3465,11 +3479,11 @@ fn bound_satisfied_by_a_type_alias_is_accepted() {
 fn structural_object_alone_does_not_satisfy_a_bound() {
     let src = r#"
         trait Shape {
-            fn area(self): Number
+            fn area(self): number
         }
-        fn apply<T: Shape>(t: T): Number { return 0 }
+        fn apply<T: Shape>(t: T): number { return 0 }
         fn main() {
-            let c: Map<String, Unknown> = { area: fn(): Number { return 5 } }
+            let c: Map<string, unknown> = { area: fn(): number { return 5 } }
             print(apply(c))
         }
     "#;
@@ -3480,8 +3494,8 @@ fn structural_object_alone_does_not_satisfy_a_bound() {
 #[test]
 fn await_inside_lock_is_e0410() {
     let src = r#"
-        async fn fetch_count(): Number { return 1 }
-        async fn refresh(state: shared Number) {
+        async fn fetch_count(): number { return 1 }
+        async fn refresh(state: shared number) {
             lock state {
                 let n = await fetch_count()
                 print(n)
@@ -3496,8 +3510,8 @@ fn await_inside_lock_is_e0410() {
 #[test]
 fn await_outside_lock_is_accepted() {
     let src = r#"
-        async fn fetch_count(): Number { return 1 }
-        async fn refresh(state: shared Number) {
+        async fn fetch_count(): number { return 1 }
+        async fn refresh(state: shared number) {
             let fresh = await fetch_count()
             lock state {
                 print(fresh)
@@ -3511,10 +3525,10 @@ fn await_outside_lock_is_accepted() {
 fn await_in_a_closure_declared_inside_lock_is_accepted() {
     // The closure body runs when it is called, outside the critical section.
     let src = r#"
-        async fn fetch_count(): Number { return 1 }
-        async fn holder(state: shared Number) {
+        async fn fetch_count(): number { return 1 }
+        async fn holder(state: shared number) {
             lock state {
-                let f = async fn(): Number { return await fetch_count() }
+                let f = async fn(): number { return await fetch_count() }
                 print(0)
             }
         }
@@ -3525,7 +3539,7 @@ fn await_in_a_closure_declared_inside_lock_is_accepted() {
 #[test]
 fn mut_param_can_be_written_through() {
     let src = r#"
-        fn fill(p: mut List<Number>) {
+        fn fill(p: mut List<number>) {
             p[0] = 7
         }
         fn main() {
@@ -3540,7 +3554,7 @@ fn mut_param_can_be_written_through() {
 #[test]
 fn immutable_param_cannot_be_written_through_is_e0401() {
     let src = r#"
-        fn fill(p: List<Number>) {
+        fn fill(p: List<number>) {
             p[0] = 7
         }
         fn main() {
@@ -3570,7 +3584,7 @@ fn index_assignment_through_immutable_binding_is_e0401() {
 #[test]
 fn capture_of_mut_param_cannot_be_assigned_is_e0401() {
     let src = r#"
-        enum Counter { Counter(Number) }
+        enum Counter { Counter(number) }
         fn broken(p: mut Counter) {
             let f = fn() { p.value = 1 }
             print(f)
@@ -3584,7 +3598,7 @@ fn capture_of_mut_param_cannot_be_assigned_is_e0401() {
 #[test]
 fn capture_of_let_mut_binding_may_be_assigned() {
     let src = r#"
-        enum Counter { Counter(Number) }
+        enum Counter { Counter(number) }
         fn ok() {
             let mut c = Counter::Counter(0)
             let f = fn() { c.value = 1 }
@@ -3597,7 +3611,7 @@ fn capture_of_let_mut_binding_may_be_assigned() {
 #[test]
 fn move_of_a_parameter_is_e0403() {
     let src = r#"
-        fn steal(p: List<Number>): Number {
+        fn steal(p: List<number>): number {
             let owned = move p
             return owned[0]
         }
@@ -3624,7 +3638,7 @@ fn move_of_a_part_of_a_binding_is_e0403() {
 #[test]
 fn move_of_a_local_binding_is_accepted() {
     let src = r#"
-        fn take(owned: List<Number>): Number {
+        fn take(owned: List<number>): number {
             return owned[0]
         }
         fn main() {
@@ -3639,7 +3653,7 @@ fn move_of_a_local_binding_is_accepted() {
 #[test]
 fn mutable_argument_must_be_a_mut_place_is_e0404() {
     let src = r#"
-        fn bump(n: mut Number): Number { return n + 1 }
+        fn bump(n: mut number): number { return n + 1 }
         fn main() {
             let n = 1
             print(bump(n))
@@ -3653,7 +3667,7 @@ fn mutable_argument_must_be_a_mut_place_is_e0404() {
 #[test]
 fn overlapping_arguments_where_either_param_is_mut_are_e0404() {
     let src = r#"
-        fn pair(a: mut Number, b: Number): Number { return a + b }
+        fn pair(a: mut number, b: number): number { return a + b }
         fn main() {
             let mut xs = [1, 2]
             print(pair(xs[0], xs[0]))
@@ -3666,7 +3680,7 @@ fn overlapping_arguments_where_either_param_is_mut_are_e0404() {
 #[test]
 fn non_literal_subscript_is_never_assumed_distinct_is_e0404() {
     let src = r#"
-        fn pair(a: mut Number, b: Number): Number { return a + b }
+        fn pair(a: mut number, b: number): number { return a + b }
         fn main() {
             let mut xs = [1, 2]
             let i = 0
@@ -3680,7 +3694,7 @@ fn non_literal_subscript_is_never_assumed_distinct_is_e0404() {
 #[test]
 fn distinct_literal_subscripts_are_disjoint() {
     let src = r#"
-        fn pair(a: mut Number, b: Number): Number { return a + b }
+        fn pair(a: mut number, b: number): number { return a + b }
         fn main() {
             let mut xs = [1, 2]
             print(pair(xs[0], xs[1]))
@@ -3692,8 +3706,8 @@ fn distinct_literal_subscripts_are_disjoint() {
 #[test]
 fn mut_parameter_lends_its_borrow_onward() {
     let src = r#"
-        fn bump(n: mut Number): Number { return n + 1 }
-        fn outer(n: mut Number): Number { return bump(n) }
+        fn bump(n: mut number): number { return n + 1 }
+        fn outer(n: mut number): number { return bump(n) }
         fn main() {
             let mut n = 1
             print(outer(n))
@@ -3705,8 +3719,8 @@ fn mut_parameter_lends_its_borrow_onward() {
 #[test]
 fn immutable_parameter_cannot_lend_a_mutable_borrow() {
     let src = r#"
-        fn bump(n: mut Number): Number { return n + 1 }
-        fn outer(n: Number): Number { return bump(n) }
+        fn bump(n: mut number): number { return n + 1 }
+        fn outer(n: number): number { return bump(n) }
         fn main() {
             let mut n = 1
             print(outer(n))
@@ -3719,8 +3733,8 @@ fn immutable_parameter_cannot_lend_a_mutable_borrow() {
 #[test]
 fn write_during_an_outstanding_immutable_borrow_is_e0411() {
     let src = r#"
-        async fn peek(xs: List<Number>): Number { return xs[0] }
-        async fn watch(xs: mut List<Number>) {
+        async fn peek(xs: List<number>): number { return xs[0] }
+        async fn watch(xs: mut List<number>) {
             let t = peek(xs)
             xs[0] = 9
             await t
@@ -3734,8 +3748,8 @@ fn write_during_an_outstanding_immutable_borrow_is_e0411() {
 #[test]
 fn reads_during_an_immutable_borrow_are_allowed() {
     let src = r#"
-        async fn peek(xs: List<Number>): Number { return xs[0] }
-        async fn watch(xs: mut List<Number>) {
+        async fn peek(xs: List<number>): number { return xs[0] }
+        async fn watch(xs: mut List<number>) {
             let t = peek(xs)
             let a = xs[0]
             print(a)
@@ -3749,7 +3763,7 @@ fn reads_during_an_immutable_borrow_are_allowed() {
 #[test]
 fn use_during_an_outstanding_mutable_borrow_is_e0405() {
     let src = r#"
-        async fn fill(p: mut List<Number>) {
+        async fn fill(p: mut List<number>) {
             p[0] = 7
         }
         async fn main() {
@@ -3767,7 +3781,7 @@ fn use_during_an_outstanding_mutable_borrow_is_e0405() {
 #[test]
 fn the_borrow_ends_where_control_passes_an_await_of_the_task() {
     let src = r#"
-        async fn fill(p: mut List<Number>) {
+        async fn fill(p: mut List<number>) {
             p[0] = 7
         }
         async fn main() {
@@ -3783,8 +3797,8 @@ fn the_borrow_ends_where_control_passes_an_await_of_the_task() {
 #[test]
 fn a_mutable_borrow_may_not_start_during_an_immutable_one() {
     let src = r#"
-        async fn peek(xs: List<Number>): Number { return xs[0] }
-        async fn fill(p: mut List<Number>) {
+        async fn peek(xs: List<number>): number { return xs[0] }
+        async fn fill(p: mut List<number>) {
             p[0] = 7
         }
         async fn main() {
@@ -3803,7 +3817,7 @@ fn a_mutable_borrow_may_not_start_during_an_immutable_one() {
 #[test]
 fn a_sync_call_leaves_nothing_outstanding() {
     let src = r#"
-        fn bump(p: mut List<Number>) {
+        fn bump(p: mut List<number>) {
             p[0] = 7
         }
         fn main() {
@@ -3876,7 +3890,7 @@ fn lock_requires_a_shared_binding_is_e0407() {
 #[test]
 fn a_non_shared_argument_to_a_shared_parameter_is_e0407() {
     let src = r#"
-        fn tick(state: shared List<Number>) {
+        fn tick(state: shared List<number>) {
             lock state {
                 print(state[0])
             }
@@ -3896,7 +3910,7 @@ fn a_shared_parameter_reaches_its_contents_without_its_own_lock() {
     // the callee's own `lock`) is what guards it, so the parameter is not
     // barred from its own contents.
     let src = r#"
-        fn peek(state: shared List<Number>): Number {
+        fn peek(state: shared List<number>): number {
             return state[0]
         }
         fn main() {
@@ -3961,8 +3975,8 @@ fn a_move_capture_makes_the_binding_visible_to_the_spawn_block() {
 #[test]
 fn declarations_constants_and_literals_need_no_capture() {
     let src = r#"
-        const LIMIT: Number = 10
-        fn helper(): Number {
+        const LIMIT: number = 10
+        fn helper(): number {
             return 1
         }
         async fn main() {
@@ -3984,7 +3998,7 @@ fn a_nested_function_inside_spawn_may_read_the_blocks_own_bindings() {
             let outer = 1
             let job = spawn async {
                 let inner = 2
-                fn helper(): Number {
+                fn helper(): number {
                     return inner
                 }
                 print(helper())
@@ -4015,7 +4029,7 @@ fn await_unwraps_a_spawned_task() {
 #[test]
 fn using_a_binding_after_move_is_e0403() {
     let src = r#"
-        fn consume(items: List<Number>) {
+        fn consume(items: List<number>) {
             print(items)
         }
         fn main() {
@@ -4032,7 +4046,7 @@ fn using_a_binding_after_move_is_e0403() {
 #[test]
 fn moving_twice_is_e0403() {
     let src = r#"
-        fn consume(items: List<Number>) {
+        fn consume(items: List<number>) {
             print(items)
         }
         fn main() {
@@ -4063,10 +4077,10 @@ fn move_outside_let_argument_or_return_is_e0403() {
 #[test]
 fn move_in_let_argument_and_return_positions_is_legal() {
     let src = r#"
-        fn consume(items: List<Number>) {
+        fn consume(items: List<number>) {
             print(items)
         }
-        fn pick(): List<Number> {
+        fn pick(): List<number> {
             let a = [1]
             return move a
         }
@@ -4083,7 +4097,7 @@ fn move_in_let_argument_and_return_positions_is_legal() {
 #[test]
 fn a_service_must_declare_on_message_is_e0409() {
     let src = r#"
-        struct Tally { total: Number }
+        struct Tally { total: number }
         async fn main() {
             let worker = spawn.process Tally { total: 0 }
         }
@@ -4099,12 +4113,12 @@ fn a_service_must_declare_on_message_is_e0409() {
 #[test]
 fn a_service_impl_may_appear_after_the_spawn() {
     let src = r#"
-        struct Tally { total: Number }
+        struct Tally { total: number }
         async fn main() {
             let worker = spawn.process Tally { total: 0 }
         }
         impl Tally {
-            fn on_message(mut self, cmd: Number) {
+            fn on_message(mut self, cmd: number) {
                 self.total = self.total + cmd
             }
         }
@@ -4115,12 +4129,12 @@ fn a_service_impl_may_appear_after_the_spawn() {
 #[test]
 fn an_on_message_without_a_receiver_is_e0409() {
     let src = r#"
-        struct Tally { total: Number }
+        struct Tally { total: number }
         async fn main() {
             let worker = spawn.process Tally { total: 0 }
         }
         impl Tally {
-            fn on_message(cmd: Number) {
+            fn on_message(cmd: number) {
                 print(cmd)
             }
         }
@@ -4133,7 +4147,7 @@ fn an_on_message_without_a_receiver_is_e0409() {
 #[test]
 fn reply_outside_on_message_is_an_error() {
     let src = r#"
-        fn leak(n: Number) {
+        fn leak(n: number) {
             reply(n)
         }
     "#;
@@ -4147,9 +4161,9 @@ fn reply_outside_on_message_is_an_error() {
 #[test]
 fn reply_inside_on_message_checks() {
     let src = r#"
-        struct Tally { total: Number }
+        struct Tally { total: number }
         impl Tally {
-            fn on_message(mut self, cmd: Number) {
+            fn on_message(mut self, cmd: number) {
                 self.total = self.total + cmd
                 reply(self.total)
             }
@@ -4167,7 +4181,7 @@ fn reply_inside_on_message_checks() {
 #[test]
 fn task_all_of_async_calls_unwraps_to_a_list() {
     let src = r#"
-        async fn work(n: Number): Number { n }
+        async fn work(n: number): number { n }
         async fn main() {
             let a = work(1)
             let b = work(2)
@@ -4181,7 +4195,7 @@ fn task_all_of_async_calls_unwraps_to_a_list() {
 #[test]
 fn task_race_and_resolve_check() {
     let src = r#"
-        async fn work(n: Number): Number { n }
+        async fn work(n: number): number { n }
         async fn main() {
             let a = work(1)
             let b = work(2)
@@ -4196,9 +4210,9 @@ fn task_race_and_resolve_check() {
 #[test]
 fn task_timeout_wraps_the_task_in_a_result() {
     let src = r#"
-        async fn work(): Number { 1 }
+        async fn work(): number { 1 }
         async fn main() {
-            let r: Result<Number, Error> = await Task::timeout(work(), 100)
+            let r: Result<number, Error> = await Task::timeout(work(), 100)
             match r {
                 Result::Ok(v) => print(v)
                 Result::Err(e) => print(e.message)
@@ -4229,7 +4243,7 @@ fn task_timeout_requires_a_number_deadline() {
     let err = analyze_src(src).unwrap_err();
     assert!(
         err.message
-            .contains("`Task::timeout` millisecond count must be a `Number`")
+            .contains("`Task::timeout` millisecond count must be a `number`")
     );
 }
 
@@ -4251,8 +4265,8 @@ fn task_timeout_requires_two_arguments() {
 fn builtin_result_and_error_construct_and_annotate() {
     let src = r#"
         async fn main() {
-            let ok: Result<Number, Error> = Result::Ok(1)
-            let err: Result<Number, Error> = Result::Err(Error("boom"))
+            let ok: Result<number, Error> = Result::Ok(1)
+            let err: Result<number, Error> = Result::Err(Error("boom"))
             let e: Error = Error("boom")
             print(e.message)
             match ok {
@@ -4269,7 +4283,7 @@ fn builtin_result_and_error_construct_and_annotate() {
 fn builtin_result_takes_two_type_arguments() {
     let src = r#"
         async fn main() {
-            let r: Result<Number> = Result::Ok(1)
+            let r: Result<number> = Result::Ok(1)
             print(r)
         }
     "#;
@@ -4286,7 +4300,7 @@ fn error_call_requires_a_string_message() {
         }
     "#;
     let err = analyze_src(src).unwrap_err();
-    assert!(err.message.contains("`Error` message must be a `String`"));
+    assert!(err.message.contains("`Error` message must be a `string`"));
 }
 
 #[test]
@@ -4294,11 +4308,11 @@ fn user_declared_result_shadows_the_builtin() {
     let src = r#"
         enum Result<T> {
             Success(T),
-            Failure(String),
+            Failure(string),
         }
         async fn main() {
-            let ok: Result<Number> = Result::Success(1)
-            let bad: Result<Number> = Result::Failure("nope")
+            let ok: Result<number> = Result::Success(1)
+            let bad: Result<number> = Result::Failure("nope")
             match ok {
                 Result::Success(v) => print(v)
                 Result::Failure(m) => print(m)
@@ -4334,9 +4348,9 @@ fn task_all_requires_a_list() {
 #[test]
 fn conflicting_reply_operands_are_e0211() {
     let src = r#"
-        struct S { n: Number }
+        struct S { n: number }
         impl S {
-            fn on_message(mut self, cmd: Number) {
+            fn on_message(mut self, cmd: number) {
                 if cmd > 0 {
                     reply(1)
                 } else {
@@ -4357,15 +4371,15 @@ fn conflicting_reply_operands_are_e0211() {
 #[test]
 fn reply_type_flows_into_the_send_task() {
     let src = r#"
-        struct S { n: Number }
+        struct S { n: number }
         impl S {
-            fn on_message(mut self, cmd: Number) {
+            fn on_message(mut self, cmd: number) {
                 reply(cmd)
             }
         }
         async fn main() {
             let h = spawn.process S { n: 0 }
-            let r: Number = await h.send(1)
+            let r: number = await h.send(1)
             print(r)
             h.stop()
         }
@@ -4376,29 +4390,29 @@ fn reply_type_flows_into_the_send_task() {
 #[test]
 fn send_task_rejects_a_mismatched_binding() {
     let src = r#"
-        struct S { n: Number }
+        struct S { n: number }
         impl S {
-            fn on_message(mut self, cmd: Number) {
+            fn on_message(mut self, cmd: number) {
                 reply(cmd)
             }
         }
         async fn main() {
             let h = spawn.process S { n: 0 }
-            let r: String = await h.send(1)
+            let r: string = await h.send(1)
             print(r)
             h.stop()
         }
     "#;
     let err = analyze_src(src).unwrap_err();
-    assert!(err.message.contains("cannot bind a value of type `Number`"));
+    assert!(err.message.contains("cannot bind a value of type `number`"));
 }
 
 #[test]
 fn on_message_without_reply_settles_unit() {
     let src = r#"
-        struct S { n: Number }
+        struct S { n: number }
         impl S {
-            fn on_message(mut self, cmd: Number) {
+            fn on_message(mut self, cmd: number) {
                 self.n = cmd
             }
         }
@@ -4422,18 +4436,18 @@ fn generic_impl_applies_to_instantiated_receiver() {
     // The spec's `Palette<T: Area>` example: `Rect: Area`, so the impl
     // applies and `render` resolves with its declared return type.
     let src = r#"
-        trait Area { fn area(self): Number }
+        trait Area { fn area(self): number }
         struct Palette<T> { shape: T }
-        struct Rect { w: Number, h: Number }
+        struct Rect { w: number, h: number }
         impl Area for Rect {
-            fn area(self): Number { return self.w * self.h }
+            fn area(self): number { return self.w * self.h }
         }
         impl<T: Area> Palette<T> {
-            fn render(self): Number { return 12 }
+            fn render(self): number { return 12 }
         }
         fn main() {
             let ok = { shape: { w: 3, h: 4 } }
-            let n: Number = ok.render()
+            let n: number = ok.render()
             print(str(n))
         }
     "#;
@@ -4446,15 +4460,15 @@ fn generic_impl_bound_unsatisfied_is_e0102() {
     // impl contributes nothing for `Palette<Dot>`, so `render` is missing
     // (spec `types/traits.md`: error[E0102], `no member ... on ...`).
     let src = r#"
-        trait Area { fn area(self): Number }
+        trait Area { fn area(self): number }
         struct Palette<T> { shape: T }
-        struct Rect { w: Number, h: Number }
-        struct Dot { r: Number }
+        struct Rect { w: number, h: number }
+        struct Dot { r: number }
         impl Area for Rect {
-            fn area(self): Number { return self.w * self.h }
+            fn area(self): number { return self.w * self.h }
         }
         impl<T: Area> Palette<T> {
-            fn render(self): Number { return 12 }
+            fn render(self): number { return 12 }
         }
         fn main() {
             let bad = { shape: { r: 1 } }
@@ -4473,7 +4487,7 @@ fn generic_impl_bound_unsatisfied_is_e0102() {
 #[test]
 fn generic_inherent_impl_member_returns_instantiated_type() {
     // `impl<T> Holder<T> { fn get(self): T }` resolves for a
-    // `Holder<Number>` receiver with `T` substituted back to `Number`.
+    // `Holder<number>` receiver with `T` substituted back to `number`.
     let src = r#"
         struct Holder<T> { value: T }
         impl<T> Holder<T> {
@@ -4481,7 +4495,7 @@ fn generic_inherent_impl_member_returns_instantiated_type() {
         }
         fn main() {
             let h = { value: 42 }
-            let n: Number = h.get()
+            let n: number = h.get()
             print(str(n))
         }
     "#;
@@ -4490,7 +4504,7 @@ fn generic_inherent_impl_member_returns_instantiated_type() {
 
 #[test]
 fn repeated_pattern_parameter_must_bind_one_type() {
-    // `impl<T> Pair<T, T>` applies to `Pair<Number, Number>`; a literal
+    // `impl<T> Pair<T, T>` applies to `Pair<number, number>`; a literal
     // whose fields disagree cannot instantiate it (inference conflict
     // falls back to the argument-less type, which the pattern's arity then
     // rejects).
@@ -4508,7 +4522,7 @@ fn repeated_pattern_parameter_must_bind_one_type() {
     assert_eq!(err.code(), "E0102");
     assert!(
         err.message
-            .contains("no member `duplicated` on `Pair<Number, String>`"),
+            .contains("no member `duplicated` on `Pair<number, string>`"),
         "unexpected message: {}",
         err.message
     );
@@ -4519,7 +4533,7 @@ fn member_missing_on_plain_struct_is_e0102() {
     // Step 1 and step 2 of member-call resolution both find nothing for a
     // struct with no applicable impl: E0102, not the loose `any`.
     let src = r#"
-        struct User { name: String }
+        struct User { name: string }
         fn main() {
             let u = { name: "a" }
             print(str(u.nope()))
@@ -4540,14 +4554,14 @@ fn ambiguous_trait_member_is_e0809() {
     // more than one candidate and must be disambiguated with explicit
     // dispatch (spec `types/traits.md`).
     let src = r#"
-        trait Grow { fn grow(self): Number }
-        trait Spurt { fn grow(self): Number }
-        struct Rect { w: Number }
+        trait Grow { fn grow(self): number }
+        trait Spurt { fn grow(self): number }
+        struct Rect { w: number }
         impl Grow for Rect {
-            fn grow(self): Number { return 1 }
+            fn grow(self): number { return 1 }
         }
         impl Spurt for Rect {
-            fn grow(self): Number { return 2 }
+            fn grow(self): number { return 2 }
         }
         fn main() {
             let r = { w: 1 }
@@ -4571,13 +4585,13 @@ fn bound_check_requires_applicable_impl_not_mere_name() {
     // nothing: inferring `T = Wrapper<Dot>` against `T: Show` must reject
     // it (E0801) instead of answering from the registered name alone.
     let src = r#"
-        trait Show { fn show(self): String }
-        struct Dot { r: Number }
+        trait Show { fn show(self): string }
+        struct Dot { r: number }
         struct Wrapper<T> { inner: T }
         impl<T: Show> Show for Wrapper<T> {
-            fn show(self): String { return "w" }
+            fn show(self): string { return "w" }
         }
-        fn accept<T: Show>(x: T): String { return "s" }
+        fn accept<T: Show>(x: T): string { return "s" }
         fn main() {
             let w = { inner: { r: 1 } }
             print(accept(w))
@@ -4599,11 +4613,11 @@ fn dispatch_on_generic_impl_receiver_is_gated_by_applicability() {
     // instantiated for `Wrapper<Dot>`: dispatch reports "does not implement"
     // the same way a missing impl does.
     let src = r#"
-        trait Show { fn show(self): String }
-        struct Dot { r: Number }
+        trait Show { fn show(self): string }
+        struct Dot { r: number }
         struct Wrapper<T> { inner: T }
         impl<T: Show> Show for Wrapper<T> {
-            fn show(self): String { return "w" }
+            fn show(self): string { return "w" }
         }
         fn main() {
             let w = { inner: { r: 1 } }
@@ -4623,18 +4637,18 @@ fn dispatch_applies_when_generic_impl_instantiates() {
     // Same shape, but `Dot` does implement `Show`: the bound holds for the
     // instantiation `T = Dot`, so dispatch resolves.
     let src = r#"
-        trait Show { fn show(self): String }
-        struct Dot { r: Number }
+        trait Show { fn show(self): string }
+        struct Dot { r: number }
         struct Wrapper<T> { inner: T }
         impl Show for Dot {
-            fn show(self): String { return "d" }
+            fn show(self): string { return "d" }
         }
         impl<T: Show> Show for Wrapper<T> {
-            fn show(self): String { return "w" }
+            fn show(self): string { return "w" }
         }
         fn main() {
             let w = { inner: { r: 1 } }
-            let s: String = Show::show(w)
+            let s: string = Show::show(w)
             print(s)
         }
     "#;
@@ -4644,11 +4658,11 @@ fn dispatch_applies_when_generic_impl_instantiates() {
 #[test]
 fn impl_receiver_argument_count_must_match_declaration() {
     // The receiver of an `impl` is a type application too: `Pair` takes two
-    // arguments, so `impl Pair<Number>` is E0230 at the impl site.
+    // arguments, so `impl Pair<number>` is E0230 at the impl site.
     let src = r#"
         struct Pair<A, B> { first: A, second: B }
-        impl Pair<Number> {
-            fn first_of(self): Number { return self.first }
+        impl Pair<number> {
+            fn first_of(self): number { return self.first }
         }
         fn main() { print(1) }
     "#;
@@ -4668,14 +4682,14 @@ fn qualified_trait_dispatch_resolves() {
     // `Area::area(r)` is the explicit dispatch form — the trait name is a
     // path namespace, not a value of its own.
     let src = r#"
-        trait Area { fn area(self): Number }
-        struct Rect { w: Number, h: Number }
+        trait Area { fn area(self): number }
+        struct Rect { w: number, h: number }
         impl Area for Rect {
-            fn area(self): Number { return self.w * self.h }
+            fn area(self): number { return self.w * self.h }
         }
         fn main() {
             let r = { w: 3, h: 4 }
-            let n: Number = Area::area(r)
+            let n: number = Area::area(r)
             print(str(n))
         }
     "#;
@@ -4688,18 +4702,18 @@ fn generic_bound_explicit_dispatch_resolves() {
     // `impl<T: Area> Palette<T>` — explicit dispatch through the bound, with
     // the member form denoting the same call (spec `types/generics.md`).
     let src = r#"
-        trait Area { fn area(self): Number }
+        trait Area { fn area(self): number }
         struct Palette<T> { shape: T }
-        struct Rect { w: Number, h: Number }
+        struct Rect { w: number, h: number }
         impl Area for Rect {
-            fn area(self): Number { return self.w * self.h }
+            fn area(self): number { return self.w * self.h }
         }
         impl<T: Area> Palette<T> {
-            fn render(self): Number { return Area::area(self.shape) }
+            fn render(self): number { return Area::area(self.shape) }
         }
         fn main() {
             let ok = { shape: { w: 3, h: 4 } }
-            let n: Number = ok.render()
+            let n: number = ok.render()
             print(str(n))
         }
     "#;
@@ -4711,9 +4725,9 @@ fn generic_dispatch_without_bound_is_rejected() {
     // Explicit dispatch through a parameter requires that the parameter's
     // declaration bounds it by the dispatched trait (spec `types/generics.md`).
     let src = r#"
-        trait Area { fn area(self): Number }
-        trait Show { fn show(self): String }
-        fn describe<T: Show>(t: T): Number {
+        trait Area { fn area(self): number }
+        trait Show { fn show(self): string }
+        fn describe<T: Show>(t: T): number {
             return Area::area(t)
         }
         fn main() { print(1) }
@@ -4732,7 +4746,7 @@ fn member_field_missing_on_struct_is_e0102() {
     // E0102 with the receiver's type in the message (spec
     // `expressions/path-and-access.md`).
     let src = r#"
-        struct User { name: String }
+        struct User { name: string }
         fn main() {
             let u = { name: "a" }
             print(u.nope)
@@ -4775,7 +4789,7 @@ fn math_call_argument_type_is_e0202() {
     assert_eq!(err.code(), "E0202");
     assert!(
         err.message
-            .contains("argument to `Math::sqrt` must be `Float`"),
+            .contains("argument to `Math::sqrt` must be `float`"),
         "unexpected message: {}",
         err.message
     );
@@ -4862,10 +4876,10 @@ fn task_namespace_dot_form_is_rejected() {
 #[test]
 fn trait_name_dot_dispatch_is_rejected() {
     let src = r#"
-        trait Area { fn area(self): Number }
-        struct Rect { w: Number, h: Number }
+        trait Area { fn area(self): number }
+        struct Rect { w: number, h: number }
         impl Area for Rect {
-            fn area(self): Number { return self.w * self.h }
+            fn area(self): number { return self.w * self.h }
         }
         fn main() {
             let r = { w: 3, h: 4 }
@@ -4941,7 +4955,7 @@ fn derive_on_a_function_is_e0109() {
 
 #[test]
 fn test_on_a_struct_is_e0109() {
-    let err = analyze_src("#Test\nstruct S { a: String }").unwrap_err();
+    let err = analyze_src("#Test\nstruct S { a: string }").unwrap_err();
     assert_eq!(err.code(), "E0109", "unexpected: {}", err.message);
     assert!(
         err.message
@@ -4955,8 +4969,8 @@ fn test_on_a_struct_is_e0109() {
 fn derive_shape_errors_are_e0110() {
     // Bare and empty-paren forms both lack the required list.
     for src in [
-        "#Derive\nstruct S { a: String }",
-        "#Derive()\nstruct S { a: String }",
+        "#Derive\nstruct S { a: string }",
+        "#Derive()\nstruct S { a: string }",
     ] {
         let err = analyze_src(src).unwrap_err();
         assert_eq!(err.code(), "E0110", "{src}: {}", err.message);
@@ -4977,15 +4991,16 @@ fn wrong_test_shape_is_e0110() {
     // insignificant, so `#Test` + `fn t() {}` on separate lines stays a
     // well-formed `TestDecl` and is not in this list.
     for src in [
-        "#Test fn t(x: Number) {}",
-        "#Test fn t(): Number { return 1 }",
+        "#Test fn t(x: number) {}",
+        "#Test fn t(): number { return 1 }",
         "#Test fn t<T>() {}",
     ] {
         let err = analyze_src(src).unwrap_err();
         assert_eq!(err.code(), "E0110", "{src}: {}", err.message);
         assert!(
-            err.message
-                .contains("attribute `Test` takes the form `#Test [async] fn name() { … }`"),
+            err.message.contains(
+                "attribute `Test` takes the form `#Test (\"…\")? [async] fn name() { … }`"
+            ),
             "{src}: {}",
             err.message
         );
@@ -4993,8 +5008,56 @@ fn wrong_test_shape_is_e0110() {
 }
 
 #[test]
+fn titled_test_decl_is_accepted() {
+    // spec `testing.md` / `add-test-title`: the optional string group is a
+    // display title and changes nothing else about the fixed shape.
+    let src = r#"
+        #Test("adds two numbers")
+        fn passes() { let x: number = 1 }
+
+        #Test()
+        fn empty_group() { let y: number = 2 }
+
+        #Test("await works")
+        async fn also_passes() { await Time::sleep(0) }
+    "#;
+    analyze_src(src).unwrap_or_else(|err| panic!("{}: {}", err.code(), err.message));
+}
+
+#[test]
+fn identifier_group_on_test_is_e0110() {
+    // `#Test(foo)` cannot match `TestDecl` (its group is a `StringLiteral`),
+    // so the sequence parses as an attribute on `fn` and the shape check
+    // rejects it (spec `add-test-title`).
+    let err = analyze_src("#Test(foo) fn t() {}").unwrap_err();
+    assert_eq!(err.code(), "E0110", "unexpected: {}", err.message);
+    assert!(
+        err.message.contains(
+            "attribute `Test` takes the form `#Test (\"…\")? [async] fn name() { … }`"
+        ),
+        "unexpected: {}",
+        err.message
+    );
+}
+
+#[test]
+fn primitive_type_names_are_keywords() {
+    // The seventeen primitive words are keywords (spec
+    // `lexical-structure.md`), so a lowercase binding name is a syntax
+    // error and an argument list on one no longer forms a type application.
+    for src in [
+        "fn main() { let string = \"s\" }",
+        "fn main() { let number = 42 }",
+        "fn main() { let x: number<int> = 1 }",
+    ] {
+        let err = analyze_src(src).unwrap_err();
+        assert_eq!(err.code(), "E0002", "{src}: {}", err.message);
+    }
+}
+
+#[test]
 fn unregistered_derive_target_is_e0111_with_note() {
-    let err = analyze_src("#Derive(Display)\nstruct S { a: String }").unwrap_err();
+    let err = analyze_src("#Derive(Display)\nstruct S { a: string }").unwrap_err();
     assert_eq!(err.code(), "E0111", "unexpected: {}", err.message);
     assert!(
         err.message
@@ -5028,11 +5091,11 @@ fn referencing_a_test_fn_is_e0107() {
 
 #[test]
 fn derive_field_without_string_form_is_e0801() {
-    let err = analyze_src("#Derive(ToString)\nstruct S { xs: List<Number> }").unwrap_err();
+    let err = analyze_src("#Derive(ToString)\nstruct S { xs: List<number> }").unwrap_err();
     assert_eq!(err.code(), "E0801", "unexpected: {}", err.message);
     assert!(
         err.message
-            .contains("`List<Number>` does not implement `ToString`"),
+            .contains("`List<number>` does not implement `ToString`"),
         "unexpected: {}",
         err.message
     );
@@ -5041,7 +5104,7 @@ fn derive_field_without_string_form_is_e0801() {
 #[test]
 fn second_derive_is_e0805() {
     let err =
-        analyze_src("#Derive(ToString)\n#Derive(ToString)\nstruct S { a: String }").unwrap_err();
+        analyze_src("#Derive(ToString)\n#Derive(ToString)\nstruct S { a: string }").unwrap_err();
     assert_eq!(err.code(), "E0805", "unexpected: {}", err.message);
 }
 
@@ -5051,8 +5114,8 @@ fn derive_after_manual_impl_is_e0805() {
     // the same type collides however the two are ordered (spec
     // `types/traits.md`).
     let err = analyze_src(
-        "#Derive(ToString)\nstruct S { a: String }\n\
-         impl ToString for S { fn to_string(self): String { return self.a } }",
+        "#Derive(ToString)\nstruct S { a: string }\n\
+         impl ToString for S { fn toString(self): string { return self.a } }",
     )
     .unwrap_err();
     assert_eq!(err.code(), "E0805", "unexpected: {}", err.message);
@@ -5065,23 +5128,25 @@ fn well_formed_attributes_and_derive_are_accepted() {
     // interpolation — spec `types/traits.md`).
     let src = r#"
         #Derive(ToString)
-        struct User { name: String, age: Number }
+        struct User { name: string, age: number }
         #Derive(ToString)
         struct Tagged { inner: User }
         #Derive(ToString)
-        enum Shape { Circle(Number) Rect(Number, Number) }
-        #Test fn passes() { let x: Number = 1 }
-        #Test async fn also_passes() { await Time::sleep(0) }
-        trait Named { fn name(self): String }
-        impl Named for User { fn name(self): String { return self.name } }
+        enum Shape { Circle(number) Rect(number, number) }
+        #Test
+        fn passes() { let x: number = 1 }
+        #Test
+        async fn also_passes() { await Time::sleep(0) }
+        trait Named { fn name(self): string }
+        impl Named for User { fn name(self): string { return self.name } }
         fn main() {
             let u = User(name: "Alice", age: 30)
-            let s: String = u.to_string()
-            let t: String = ToString::to_string(u)
-            let b: String = str(u)
-            let c: String = str(Tagged(inner: u))
-            let d: String = str(Shape::Rect(3, 4))
-            let e: String = `${u}`
+            let s: string = u.toString()
+            let t: string = ToString::toString(u)
+            let b: string = str(u)
+            let c: string = str(Tagged(inner: u))
+            let d: string = str(Shape::Rect(3, 4))
+            let e: string = `${u}`
         }
     "#;
     analyze_src(src).unwrap_or_else(|err| panic!("{}: {}", err.code(), err.message));
@@ -5103,12 +5168,12 @@ fn struct_construction_happy_path_and_type() {
     // Named construction with defaults/optional omitted infers the struct
     // type; the values check against the field types.
     let src = r#"
-        struct Config { name: String, alias: String? }
+        struct Config { name: string, alias: string? }
         fn main() {
             let a: Config = Config(name: "x")
             let b = Config(name: "y", alias: "z")
-            let n: String = a.name
-            let m: String? = b.alias
+            let n: string = a.name
+            let m: string? = b.alias
         }
     "#;
     analyze_src(src).unwrap_or_else(|err| panic!("{}: {}", err.code(), err.message));
@@ -5116,7 +5181,7 @@ fn struct_construction_happy_path_and_type() {
 
 #[test]
 fn struct_construction_errors_are_e0205_e0206_e0208_e0202() {
-    let err = analyze_src("struct R { name: String }\nfn main() { let r = R() }").unwrap_err();
+    let err = analyze_src("struct R { name: string }\nfn main() { let r = R() }").unwrap_err();
     assert_eq!(err.code(), "E0205", "unexpected: {}", err.message);
     assert!(
         err.message
@@ -5126,7 +5191,7 @@ fn struct_construction_errors_are_e0205_e0206_e0208_e0202() {
     );
 
     let err =
-        analyze_src("struct R { name: String }\nfn main() { let r = R(nam: \"x\") }").unwrap_err();
+        analyze_src("struct R { name: string }\nfn main() { let r = R(nam: \"x\") }").unwrap_err();
     assert_eq!(err.code(), "E0206", "unexpected: {}", err.message);
     assert!(
         err.message.contains("`R` has no field `nam`"),
@@ -5134,7 +5199,7 @@ fn struct_construction_errors_are_e0205_e0206_e0208_e0202() {
         err.message
     );
 
-    let err = analyze_src("struct R { name: String }\nfn main() { let r = R(\"x\") }").unwrap_err();
+    let err = analyze_src("struct R { name: string }\nfn main() { let r = R(\"x\") }").unwrap_err();
     assert_eq!(err.code(), "E0208", "unexpected: {}", err.message);
     assert!(
         err.message
@@ -5144,11 +5209,11 @@ fn struct_construction_errors_are_e0205_e0206_e0208_e0202() {
     );
 
     let err =
-        analyze_src("struct R { name: String }\nfn main() { let r = R(name: 42) }").unwrap_err();
+        analyze_src("struct R { name: string }\nfn main() { let r = R(name: 42) }").unwrap_err();
     assert_eq!(err.code(), "E0202", "unexpected: {}", err.message);
     assert!(
         err.message
-            .contains("field `name` of `R` expects `String`, found `Number`"),
+            .contains("field `name` of `R` expects `string`, found `number`"),
         "unexpected: {}",
         err.message
     );
@@ -5157,7 +5222,7 @@ fn struct_construction_errors_are_e0205_e0206_e0208_e0202() {
 #[test]
 fn struct_construction_duplicate_label_is_rejected() {
     let err =
-        analyze_src("struct R { name: String }\nfn main() { let r = R(name: \"a\", name: \"b\") }")
+        analyze_src("struct R { name: string }\nfn main() { let r = R(name: \"a\", name: \"b\") }")
             .unwrap_err();
     assert!(
         err.message.contains("provided twice"),
@@ -5167,14 +5232,14 @@ fn struct_construction_duplicate_label_is_rejected() {
 }
 
 // ------------------------------------------------------------------
-// Call-site type arguments: `first<Int>(…)` — spec expressions/calls.md,
+// Call-site type arguments: `first<int>(…)` — spec expressions/calls.md,
 // types/generics.md (`E0801`/`E0807`/`E0808`, written-argument rules).
 // ------------------------------------------------------------------
 
 #[test]
 fn written_type_args_on_non_generic_function_are_e0807() {
     let err = analyze_src(
-        "fn greet(name: String): String { name }\nfn main() { print(greet<int>(\"x\")) }",
+        "fn greet(name: string): string { name }\nfn main() { print(greet<int>(\"x\")) }",
     )
     .unwrap_err();
     assert_eq!(err.code(), "E0807", "unexpected: {}", err.message);
@@ -5187,7 +5252,7 @@ fn written_type_args_on_non_generic_function_are_e0807() {
 #[test]
 fn written_type_arg_arity_is_e0808() {
     let err = analyze_src(
-        "fn first<T>(xs: List<T>): T { return xs[0] }\nfn main() { let x = first<Number, String>([1]) }",
+        "fn first<T>(xs: List<T>): T { return xs[0] }\nfn main() { let x = first<number, string>([1]) }",
     )
     .unwrap_err();
     assert_eq!(err.code(), "E0808", "unexpected: {}", err.message);
@@ -5211,7 +5276,7 @@ fn written_type_arg_arity_is_e0808() {
 
 #[test]
 fn empty_list_on_non_generic_function_is_e0807() {
-    let err = analyze_src("fn greet(name: String): String { name }\nfn main() { greet<>(\"x\") }")
+    let err = analyze_src("fn greet(name: string): string { name }\nfn main() { greet<>(\"x\") }")
         .unwrap_err();
     assert_eq!(err.code(), "E0807", "unexpected: {}", err.message);
 }
@@ -5219,11 +5284,11 @@ fn empty_list_on_non_generic_function_is_e0807() {
 #[test]
 fn written_type_arg_bound_violation_is_e0801() {
     let src = "\
-trait Area { fn area(self): Number }
-struct Rect { w: Number, h: Number }
-struct Dot { r: Number }
-impl Area for Rect { fn area(self): Number { return self.w * self.h } }
-fn describe<T: Area>(x: T): Number { return Area::area(x) }
+trait Area { fn area(self): number }
+struct Rect { w: number, h: number }
+struct Dot { r: number }
+impl Area for Rect { fn area(self): number { return self.w * self.h } }
+fn describe<T: Area>(x: T): number { return Area::area(x) }
 fn main() {
   let d = { r: 1 }
   print(str(describe<Dot>(d)))
@@ -5238,10 +5303,10 @@ fn main() {
 
     // A written argument that does satisfy the bound checks clean.
     let ok_src = "\
-trait Area { fn area(self): Number }
-struct Rect { w: Number, h: Number }
-impl Area for Rect { fn area(self): Number { return self.w * self.h } }
-fn describe<T: Area>(x: T): Number { return Area::area(x) }
+trait Area { fn area(self): number }
+struct Rect { w: number, h: number }
+impl Area for Rect { fn area(self): number { return self.w * self.h } }
+fn describe<T: Area>(x: T): number { return Area::area(x) }
 fn main() {
   let r = { w: 3, h: 4 }
   print(str(describe<Rect>(r)))
@@ -5254,29 +5319,29 @@ fn e0807_reaches_every_non_generic_call_path() {
     let cases: &[(&str, &str)] = &[
         (
             "namespace",
-            "async fn main() { let xs = Task::all<Number>([]) }",
+            "async fn main() { let xs = Task::all<number>([]) }",
         ),
         (
             "namespace-math",
-            "fn main() { print(str(Math::max<Number>(1, 2))) }",
+            "fn main() { print(str(Math::max<number>(1, 2))) }",
         ),
         (
             "constructor",
-            "struct User { name: String }\nfn main() { let u = User<Number>(name: \"a\") }",
+            "struct User { name: string }\nfn main() { let u = User<number>(name: \"a\") }",
         ),
-        ("intrinsic", "fn main() { print(str(str<Number>(1))) }"),
+        ("intrinsic", "fn main() { print(str(str<number>(1))) }"),
         (
             "method",
-            "struct S { n: Number }\nimpl S { fn get(self): Number { return self.n } }\nfn main() { let s = { n: 1 } print(str(s.get<Number>())) }",
+            "struct S { n: number }\nimpl S { fn get(self): number { return self.n } }\nfn main() { let s = { n: 1 } print(str(s.get<number>())) }",
         ),
         (
             "enum-ctor",
-            "enum Shape { Circle(Number) }\nfn main() { print(str(Shape::Circle<Number>(2.5))) }",
+            "enum Shape { Circle(number) }\nfn main() { print(str(Shape::Circle<number>(2.5))) }",
         ),
-        ("component", "fn main() { Text<Number>(\"Hi\") { } }"),
+        ("component", "fn main() { Text<number>(\"Hi\") { } }"),
         (
             "fn-value",
-            "fn get(): fn(Number): Number { return fn(x: Number): Number { x * 2 } }\nfn main() { let f = get() let n = f<Number>(1) print(str(n)) }",
+            "fn get(): fn(number): number { return fn(x: number): number { x * 2 } }\nfn main() { let f = get() let n = f<number>(1) print(str(n)) }",
         ),
     ];
     for (what, src) in cases {
@@ -5295,8 +5360,8 @@ fn e0807_reaches_every_non_generic_call_path() {
 #[test]
 fn written_list_on_a_value_callee_is_e0807() {
     let src = "\
-fn getFn(): fn(Number): Number { return fn(x: Number): Number { x * 2 } }
-fn main() { let n = getFn()<Number>(1) print(str(n)) }";
+fn getFn(): fn(number): number { return fn(x: number): number { x * 2 } }
+fn main() { let n = getFn()<number>(1) print(str(n)) }";
     let err = analyze_src(src).unwrap_err();
     assert_eq!(err.code(), "E0807", "unexpected: {}", err.message);
     assert!(
@@ -5312,12 +5377,12 @@ fn written_type_args_substitute_before_the_value_check() {
     // checked against the substituted parameter types — the expected type of
     // the binding must not rescue a mismatched argument.
     let err = analyze_src(
-        "fn first<T>(xs: List<T>): T { return xs[0] }\nfn main() { let x = first<Number>([\"a\"]) }",
+        "fn first<T>(xs: List<T>): T { return xs[0] }\nfn main() { let x = first<number>([\"a\"]) }",
     )
     .unwrap_err();
     assert_eq!(err.code(), "E0202", "unexpected: {}", err.message);
     assert!(
-        err.message.contains("`List<Number>`") && err.message.contains("`List<String>`"),
+        err.message.contains("`List<number>`") && err.message.contains("`List<string>`"),
         "unexpected: {}",
         err.message
     );
@@ -5328,9 +5393,9 @@ fn written_type_args_replace_inference_and_the_result_binds() {
     let src = "\
 fn first<T>(xs: List<T>): T { return xs[0] }
 fn main() {
-  let a = first<Number>([1])
+  let a = first<number>([1])
   let b = first([\"x\"])
-  let c: String = first<String>([\"y\"])
+  let c: string = first<string>([\"y\"])
   print(str(a) + str(b) + c)
 }";
     analyze_src(src).unwrap();
@@ -5339,7 +5404,7 @@ fn main() {
 #[test]
 fn expected_binding_type_over_a_written_list_is_e0201() {
     let err = analyze_src(
-        "fn first<T>(xs: List<T>): T { return xs[0] }\nfn main() { let ys: String = first<Number>([1]) }",
+        "fn first<T>(xs: List<T>): T { return xs[0] }\nfn main() { let ys: string = first<number>([1]) }",
     )
     .unwrap_err();
     assert_eq!(err.code(), "E0201", "unexpected: {}", err.message);
@@ -5348,12 +5413,12 @@ fn expected_binding_type_over_a_written_list_is_e0201() {
 #[test]
 fn written_type_args_work_with_named_arguments() {
     analyze_src(
-        "fn first<T>(items: List<T>): T { return items[0] }\nfn main() { let x = first<Number>(items: [1]) print(str(x)) }",
+        "fn first<T>(items: List<T>): T { return items[0] }\nfn main() { let x = first<number>(items: [1]) print(str(x)) }",
     )
     .unwrap();
 
     let err = analyze_src(
-        "fn first<T>(items: List<T>): T { return items[0] }\nfn main() { let x = first<Number>(items: [\"a\"]) }",
+        "fn first<T>(items: List<T>): T { return items[0] }\nfn main() { let x = first<number>(items: [\"a\"]) }",
     )
     .unwrap_err();
     assert_eq!(err.code(), "E0202", "unexpected: {}", err.message);
@@ -5369,6 +5434,6 @@ fn comparison_fallback_still_typechecks_as_comparison() {
     .unwrap();
     // Single comparison with the type-arg-shaped material and no paren is
     // non-associative per the grammar — it must be a parse error, not a call.
-    let err = analyze_src("fn main() { let a = 1 let b = 2 let x = a < Number > [1] }");
+    let err = analyze_src("fn main() { let a = 1 let b = 2 let x = a < number > [1] }");
     assert!(err.is_err(), "two relational operators cannot chain");
 }

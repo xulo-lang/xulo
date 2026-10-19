@@ -6,17 +6,17 @@
 
 ```xulo
 // 无返回值
-fn log(message: String) {
+fn log(message: string) {
   print(message)
 }
 
 // 有返回值（隐式返回，Rust 风格）
-fn add(a: Number, b: Number): Number {
+fn add(a: number, b: number): number {
   a + b
 }
 
 // 显式 return
-fn subtract(a: Number, b: Number): Number {
+fn subtract(a: number, b: number): number {
   return a - b
 }
 ```
@@ -35,7 +35,7 @@ fn subtract(a: Number, b: Number): Number {
 ### 可选参数（`?`）
 
 ```xulo
-fn greet(name: String?): String {
+fn greet(name: string?): string {
   if name != null {
     "Hello, " + name
   } else {
@@ -50,7 +50,7 @@ greet("A")   // ✅
 ### 默认参数值（`=`）
 
 ```xulo
-fn greet(name: String = "stranger"): String {
+fn greet(name: string = "stranger"): string {
   "Hello, " + name
 }
 ```
@@ -58,7 +58,7 @@ fn greet(name: String = "stranger"): String {
 ### 命名参数
 
 ```xulo
-fn Button(label: String, variant: String = "primary"): View
+fn Button(label: string, variant: string = "primary"): View
 
 Button(variant: "outline", label: "Submit")  // ✅ 命名参数，可乱序
 ```
@@ -73,29 +73,29 @@ fn first<T>(list: List<T>): T {
   list[0]
 }
 
-// 调用处推断类型实参：first([1, 2, 3]) 把 T 绑定为 Number
-let n: Number = first([1, 2, 3])
-let s: String = first(["a"])      // ✅ T = String
-let bad: String = first([1, 2])   // ❌ 推断 T = Number，与 String 不兼容
+// 调用处推断类型实参：first([1, 2, 3]) 把 T 绑定为 number
+let n: number = first([1, 2, 3])
+let s: string = first(["a"])      // ✅ T = string
+let bad: string = first([1, 2])   // ❌ 推断 T = number，与 string 不兼容
 ```
 
-> 当前实现支持**调用处推断**泛型实参；**显式**类型实参（`first<Number>(...)`）暂不支持。
+> 当前实现支持**调用处推断**泛型实参；**显式**类型实参（`first<number>(...)`）暂不支持。
 
 ## 匿名函数 / 闭包（Function Values）
 
 `fn` 也可在表达式位置出现，作为值传递（闭包捕获外层作用域，等价 JS 闭包）：
 
 ```xulo
-fn apply(f: fn(Number): Number, x: Number): Number {
+fn apply(f: fn(number): number, x: number): number {
   f(x)
 }
 
-fn makeAdder(n: Number): fn(Number): Number {
-  fn(v: Number): Number { v + n }   // ✅ 捕获 n
+fn makeAdder(n: number): fn(number): number {
+  fn(v: number): number { v + n }   // ✅ 捕获 n
 }
 
 fn main() {
-  let double = fn(x: Number): Number {
+  let double = fn(x: number): number {
     x * 2
   }
 

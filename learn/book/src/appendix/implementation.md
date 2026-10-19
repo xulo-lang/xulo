@@ -15,7 +15,7 @@ UIBlock {
 }
 
 // UIElement::Expr 承载组件块内的「表达式子元素」，语义阶段限定其类型为
-// string / View / Any / List<View|String|Any> 之一；list 渲染为
+// string / View / Any / List<View|string|Any> 之一；list 渲染为
 // 嵌套数组，由运行时渲染器展平（与 if/for 产物同一约定）。
 
 // 代码块 — 只能包含普通语句
@@ -38,12 +38,12 @@ Block {
 
 ```xulo
 // 函数体末尾无分号 → 隐式返回
-fn add(a: Number, b: Number): Number {
+fn add(a: number, b: number): number {
   a + b  // ✅ 隐式返回
 }
 
 // 函数体末尾有分号 → 语句，警告
-fn add(a: Number, b: Number): Number {
+fn add(a: number, b: number): number {
   a + b;  // ⚠️ 警告：忽略返回值
 }
 ```
@@ -83,10 +83,10 @@ fn add(a: Number, b: Number): Number {
 从词法到语义的所有节点都在 AST 上携带源码 `span`，因此错误与警告都能给出精确位置：
 
 ```text
-error[E0003]: return type mismatch: expected `Number`, found `String`
+error[E0003]: return type mismatch: expected `number`, found `string`
   --> bad.xulo:3:17
      |
-  3  |   fn f(): Number { "hi" }
+  3  |   fn f(): number { "hi" }
      |                  ^^^^^^^^
 ```
 

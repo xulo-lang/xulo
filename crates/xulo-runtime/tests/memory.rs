@@ -41,7 +41,7 @@ fn dropping_interpreter_releases_global_env_without_cycle() {
 #[test]
 fn dropping_interpreter_releases_global_env() {
     assert!(
-        !root_alive_after_drop("fn a(): Number { return 1 }"),
+        !root_alive_after_drop("fn a(): number { return 1 }"),
         "global env still alive after interpreter dropped (Rc cycle: fn value \
          captures its defining env, which binds the fn)"
     );
