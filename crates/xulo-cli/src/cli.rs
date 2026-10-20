@@ -190,6 +190,13 @@ fn native_run(file: &Path) -> ExitCode {
                 eprintln!("runtime error: uncaught exception: {}", v.format());
                 return ExitCode::from(1);
             }
+            Err(RunError::Propagate(v)) => {
+                eprintln!(
+                    "runtime error: `?` propagated with no enclosing function: {}",
+                    v.format()
+                );
+                return ExitCode::from(1);
+            }
         }
     }
     let out = interp.take_output();
@@ -388,6 +395,10 @@ fn test_file(file: &Path) -> ExitCode {
                         RunError::Throw(v) => XuloError::new(
                             ErrorKind::Runtime,
                             format!("uncaught exception: {}", v.format()),
+                        ),
+                        RunError::Propagate(v) => XuloError::new(
+                            ErrorKind::Runtime,
+                            format!("`?` propagated with no enclosing function: {}", v.format()),
                         ),
                     });
                     break;

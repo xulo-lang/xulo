@@ -58,6 +58,10 @@ fn exec_module_pair(
             .exec_module(&program, imports, run_main)
             .map_err(|e| match e {
                 RunError::Err(e) => e,
+                RunError::Propagate(v) => XuloError::new(
+                    ErrorKind::Runtime,
+                    format!("`?` propagated with no enclosing function: {}", v.format()),
+                ),
                 RunError::Throw(v) => XuloError::new(
                     ErrorKind::Runtime,
                     format!("uncaught exception: {}", v.format()),
@@ -856,6 +860,9 @@ fn external_import_binds_null_placeholder() {
             "external placeholder program must run: {}",
             match e {
                 RunError::Err(err) => err.message,
+                RunError::Propagate(v) => {
+                    format!("`?` propagated with no enclosing function: {}", v.format())
+                }
                 RunError::Throw(v) => format!("uncaught exception: {}", v.format()),
             }
         );
@@ -1074,6 +1081,9 @@ fn unwrap_run<T>(result: Result<T, RunError>) -> T {
     match result {
         Ok(value) => value,
         Err(RunError::Err(e)) => panic!("{}", e.message),
+        Err(RunError::Propagate(v)) => {
+            panic!("`?` propagated with no enclosing function: {}", v.format())
+        }
         Err(RunError::Throw(v)) => panic!("uncaught exception: {}", v.format()),
     }
 }

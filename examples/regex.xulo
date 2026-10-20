@@ -1,0 +1,88 @@
+// 正则表达式：use regex::{RegExp, RegexError} 编译为 Result，
+// RegexMatch 在 null 测试后读取，字符串 replace 支持模板与闭包，
+// `?` 传播编译错误，`x != null` 收窄可选绑定
+use regex::{RegExp, RegexError};
+
+struct User {
+    email: string
+}
+
+fn compile_any(pattern: string): Result<RegExp, RegexError> {
+    let re = RegExp::compile(pattern)?
+    Result::Ok(re)
+}
+
+fn show(u: User?): string {
+    if u != null {
+        u.email
+    } else {
+        "none"
+    }
+}
+
+fn main() {
+    // 编译：成功 / 模式与标志错误都是数据
+    match RegExp::compile("[a-z]+", "i") {
+        Result::Ok(re) => {
+            print(re.test("ABC123")) // true
+            print(re.test("123")) // false
+        }
+        Result::Err(e) => print(e.message)
+    }
+    match RegExp::compile("[a-z") {
+        Result::Ok(_) => print("compiled")
+        Result::Err(e) => print(e.message) // 未闭合字符类
+    }
+    match RegExp::compile("a", "z") {
+        Result::Ok(_) => print("compiled")
+        Result::Err(e) => print(e.message) // unknown flag `z`
+    }
+
+    // 查找：null 测试通过后读 value 与捕获组
+    match RegExp::compile("(\\d+)-(\\d+)") {
+        Result::Ok(re) => {
+            let m = re.find("room 42-7")
+            if m != null {
+                print(m.value, m.group(1), m.group(2)) // 42-7 42 7
+            } else {
+                print("miss")
+            }
+            for hit in re.find_all("x 42-7 y 8-9") {
+                print(hit.value) // 42-7 8-9
+            }
+        }
+        Result::Err(e) => print(e.message)
+    }
+
+    // 替换：模板展开捕获组；g 决定替换全部还是仅首个
+    match RegExp::compile("(\\w+)@(\\w+)") {
+        Result::Ok(re) => {
+            print("ada@example".replace(re, "$2.$1")) // example.ada
+        }
+        Result::Err(e) => print(e.message)
+    }
+    match RegExp::compile("oo", "g") {
+        Result::Ok(re) => {
+            print("foo boo".replace(re, fn(m) { "[" + m.value + "]" })) // f[oo] b[oo]
+        }
+        Result::Err(e) => print(e.message)
+    }
+
+    // 字符串辅助方法
+    print("abc".to_uppercase()) // ABC
+
+    // `?`：错误值传播成调用者的 Result
+    match compile_any("[a-z]+") {
+        Result::Ok(re) => print(re.test("az")) // true
+        Result::Err(e) => print(e.message)
+    }
+    match compile_any("[a-z") {
+        Result::Ok(_) => print("compiled")
+        Result::Err(e) => print("failed") // failed
+    }
+
+    // 收窄：null 测试后按内部类型访问成员
+    let u: User? = { email: "ada@example.com" }
+    print(show(u)) // ada@example.com
+    print(show(null)) // none
+}

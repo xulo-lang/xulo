@@ -110,6 +110,20 @@ impl SymbolTable {
         None
     }
 
+    /// Overwrite the symbol `name` resolves to in its own scope — the entry
+    /// point flow-sensitive narrowing uses to give a `T?` binding its
+    /// narrowed type for one `if` branch — and return the previous entry for
+    /// restoration. `None` when the name is unbound. The declaration span
+    /// map is untouched: the binding still has the same declaration site.
+    pub fn replace_symbol(&mut self, name: &str, symbol: Symbol) -> Option<Symbol> {
+        let scope = self
+            .scopes
+            .iter_mut()
+            .rev()
+            .find(|scope| scope.contains_key(name))?;
+        scope.insert(name.to_string(), symbol)
+    }
+
     /// The declaration span of the symbol `name` resolves to, or `None` when
     /// the name is unbound. The span itself is `Option` because some symbols
     /// (imports, synthesized bindings) have no static declaration site.

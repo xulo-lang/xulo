@@ -526,5 +526,12 @@ pub(crate) fn map_run_error(e: xulo_runtime::interpreter::RunError) -> XuloError
             xulo_core::error::ErrorKind::Runtime,
             format!("uncaught exception: {}", value.format()),
         ),
+        xulo_runtime::interpreter::RunError::Propagate(value) => XuloError::new(
+            xulo_core::error::ErrorKind::Runtime,
+            format!(
+                "`?` propagated with no enclosing function: {}",
+                value.format()
+            ),
+        ),
     }
 }

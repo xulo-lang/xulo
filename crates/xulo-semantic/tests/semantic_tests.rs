@@ -5512,3 +5512,492 @@ fn comparison_fallback_still_typechecks_as_comparison() {
     let err = analyze_src("fn main() { let a = 1 let b = 2 let x = a < number > [1] }");
     assert!(err.is_err(), "two relational operators cannot chain");
 }
+
+// ──────────────────────────────────────────────────────────────────────
+//  The `regex` module: `use regex::…` imports, `RegExp::compile`, the
+//  instance method signatures, and the string methods (spec
+//  `regular-expressions.mdx`).
+// ──────────────────────────────────────────────────────────────────────
+
+#[test]
+fn regex_head_requires_the_import() {
+    let src = r#"
+        fn main() {
+            let built = RegExp::compile("a+")
+            print(str(built))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(
+        err.message
+            .contains("`RegExp` belongs to the built-in `regex` module"),
+        "unexpected message: {}",
+        err.message
+    );
+    assert!(
+        err.message.contains("use regex::{RegExp}"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn regex_compile_signature_typechecks() {
+    let src = r#"
+        use regex::{RegExp, RegexError};
+        fn main() {
+            let built: Result<RegExp, RegexError> = RegExp::compile("[a-z]+", "i")
+            let bare: Result<RegExp, RegexError> = RegExp::compile("\\d+")
+            print(built)
+            print(bare)
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn regex_compile_arity_is_e0207() {
+    let src = r#"
+        use regex::RegExp;
+        fn main() {
+            let built = RegExp::compile()
+            print(str(built))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0207");
+    assert!(
+        err.message.contains("expected 1 or 2 arguments, found 0"),
+        "unexpected message: {}",
+        err.message
+    );
+
+    let src = r#"
+        use regex::RegExp;
+        fn main() {
+            let built = RegExp::compile("a", "g", "i")
+            print(str(built))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0207");
+    assert!(
+        err.message.contains("expected 1 or 2 arguments, found 3"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn regex_compile_argument_type_is_e0202() {
+    let src = r#"
+        use regex::RegExp;
+        fn main() {
+            let built = RegExp::compile(42)
+            print(str(built))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0202");
+    assert!(
+        err.message
+            .contains("argument to `RegExp::compile` must be `string`"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn regex_unknown_member_is_rejected() {
+    let src = r#"
+        use regex::RegExp;
+        fn main() {
+            let built = RegExp::typo("x")
+            print(str(built))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(
+        err.message.contains("`RegExp` has no member `typo`"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn regex_unknown_export_is_e0601() {
+    let src = r#"
+        use regex::Pattern;
+        fn main() {
+            print("hi")
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0601");
+    assert!(
+        err.message
+            .contains("module `regex` does not export `Pattern`"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn regex_namespace_form_is_e0607() {
+    let src = r#"
+        use regex as rx;
+        fn main() {
+            print("hi")
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0607");
+    assert!(
+        err.message.contains("has no namespace"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn regex_glob_form_is_e0607() {
+    let src = r#"
+        use regex::*;
+        fn main() {
+            print("hi")
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0607");
+    assert!(
+        err.message.contains("has no glob"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn regex_methods_answer_their_declared_types() {
+    let src = r#"
+        use regex::{RegExp, RegexError};
+        fn probe(re: RegExp) {
+            let ok: bool = re.test("ABC123")
+            let m = re.find("abc123")
+            if m != null {
+                let found: string = m.value
+                let one: string? = m.group(1)
+                print(found)
+                print(str(one))
+            }
+            let all = re.find_all("ab cd")
+            for item in all {
+                let value: string = item.value
+                print(value)
+            }
+            print(str(ok))
+        }
+        fn main() {
+            match RegExp::compile("[a-z]+", "i") {
+                Result::Ok(re) => probe(re)
+                Result::Err(e) => print(e.message)
+            }
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn regex_test_returns_a_bool() {
+    // The declared signature, not the loose `any` a broken lookup would
+    // leave behind: `bool` is not a `number`.
+    let src = r#"
+        use regex::RegExp;
+        fn f(re: RegExp): number {
+            re.test("a")
+        }
+        fn main() {
+            print("x")
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(
+        err.message.contains("expected `number`, found `bool`"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn regex_member_on_an_optional_without_a_test_is_rejected() {
+    let src = r#"
+        use regex::RegExp;
+        fn probe(re: RegExp) {
+            let m = re.find("a")
+            print(m.value)
+        }
+        fn main() {
+            print("x")
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(
+        err.message.contains("without `?.`"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+// ──────────────────────────────────────────────────────────────────────
+//  Flow-sensitive narrowing: `x != null` splits a `T?` binding (spec
+//  `types/composite-types.md`).
+// ──────────────────────────────────────────────────────────────────────
+
+#[test]
+fn null_comparison_narrows_a_member_access() {
+    let src = r#"
+        struct User { email: string }
+        fn contact(u: User?): string {
+            if u != null {
+                u.email
+            } else {
+                "unknown"
+            }
+        }
+        fn main() {
+            print(contact(null))
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn member_access_on_an_optional_without_a_test_is_rejected() {
+    let src = r#"
+        struct User { email: string }
+        fn contact(u: User?): string {
+            u.email
+        }
+        fn main() {
+            print(contact(null))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(
+        err.message.contains("without `?.`"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn narrowing_exposes_the_inner_types_members() {
+    // Inside `u != null` the binding is the inner `User`, so the member
+    // resolves on the struct — without narrowing this is E0003.
+    let src = r#"
+        struct User { email: string }
+        fn contact(u: User?): string {
+            if u != null {
+                let email: string = u.email
+                email
+            } else {
+                "unknown"
+            }
+        }
+        fn main() {
+            print(contact(null))
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn narrowing_does_not_leak_past_its_branch() {
+    // The narrowed symbol lives only while the branch checks: the access
+    // inside resolves on `User`, and the one after the `if` sees the
+    // binding as optional again and needs `?.` (spec
+    // `types/composite-types.md`: narrowing is restored after the branch).
+    let src = r#"
+        struct User { email: string }
+        fn f(u: User?): string {
+            if u != null {
+                print(u.email)
+            }
+            print(u.email)
+            "x"
+        }
+        fn main() {
+            print(f(null))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(
+        err.message.contains("without `?.`"),
+        "unexpected: {}",
+        err.message
+    );
+}
+
+// ──────────────────────────────────────────────────────────────────────
+//  The `?` operator: success typing and the E0217/E0229 admission rules
+//  (spec `error-handling.md`).
+// ──────────────────────────────────────────────────────────────────────
+
+#[test]
+fn propagate_on_a_result_unwraps_to_its_success_type() {
+    let src = r#"
+        use regex::{RegExp, RegexError};
+        fn build(pattern: string): Result<RegExp, RegexError> {
+            let re = RegExp::compile(pattern)?
+            Result::Ok(re)
+        }
+        fn main() {
+            print(build("a"))
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn propagate_on_an_optional_yields_its_inner_type() {
+    let src = r#"
+        fn domain(email: string?): string? {
+            let e = email?
+            e
+        }
+        fn main() {
+            print(domain(null) ?? "none")
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn propagate_without_a_declared_return_is_e0217() {
+    let src = r#"
+        use regex::RegExp;
+        fn build(pattern: string) {
+            let re = RegExp::compile(pattern)?
+            print(str(re))
+        }
+        fn main() {
+            build("a")
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0217");
+    assert!(
+        err.message.contains("no declared return type"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn propagate_on_a_plain_operand_is_e0217() {
+    let src = r#"
+        fn f(): number {
+            let n = 41?
+            print(str(n))
+            0
+        }
+        fn main() {
+            print(str(f()))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0217");
+    assert!(
+        err.message
+            .contains("`?` requires a `T?` or `Result<T, E>` operand"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn propagate_failure_must_fit_the_return_type_is_e0217() {
+    let src = r#"
+        use regex::RegExp;
+        fn f(): number {
+            let re = RegExp::compile("a")?
+            print(str(re))
+            0
+        }
+        fn main() {
+            print(str(f()))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0217");
+    assert!(
+        err.message
+            .contains("not assignable to the declared return type"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn propagate_in_a_defer_operand_is_e0229() {
+    let src = r#"
+        use regex::{RegExp, RegexError};
+        fn build(pattern: string): Result<RegExp, RegexError> {
+            defer print(str(RegExp::compile(pattern)?))
+            let re = RegExp::compile(pattern)?
+            Result::Ok(re)
+        }
+        fn main() {
+            print(str(build("a")))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0229", "unexpected: {}", err.message);
+    assert!(
+        err.message.contains("`defer` operand"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+// ──────────────────────────────────────────────────────────────────────
+//  The string methods `replace` and `to_uppercase` (spec
+//  `regular-expressions.mdx`).
+// ──────────────────────────────────────────────────────────────────────
+
+#[test]
+fn string_methods_typecheck() {
+    let src = r##"
+        use regex::RegExp;
+        fn main() {
+            match RegExp::compile("\\d+", "g") {
+                Result::Ok(re) => {
+                    let text = "a1 b2 c3"
+                    let upper: string = text.to_uppercase()
+                    let swapped: string = text.replace(re, "#")
+                    print(upper + " " + swapped)
+                }
+                Result::Err(e) => print(e.message)
+            }
+        }
+    "##;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn string_replace_must_bind_a_string() {
+    let src = r##"
+        use regex::RegExp;
+        fn main() {
+            match RegExp::compile("a") {
+                Result::Ok(re) => {
+                    let text = "a1"
+                    let bad: number = text.replace(re, "#")
+                    print(str(bad))
+                }
+                Result::Err(e) => print(e.message)
+            }
+        }
+    "##;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0201", "unexpected: {}", err.message);
+}

@@ -34,12 +34,17 @@ pub enum Flow {
     LoopContinue,
 }
 
-/// A run-time failure: a fatal error (optionally with a source span) or a value
-/// thrown by `throw` that a surrounding `try`/`catch` may handle.
+/// A run-time failure: a fatal error (optionally with a source span), a value
+/// thrown by `throw` that a surrounding `try`/`catch` may handle, or the
+/// failure value of a `?` in flight — [`RunError::Propagate`] carries it to
+/// the enclosing function's call boundary, which returns it as that
+/// function's value (spec `error-handling.md`). A `try`/`catch` does not
+/// intercept propagation.
 #[derive(Clone)]
 pub enum RunError {
     Err(XuloError),
     Throw(Value),
+    Propagate(Value),
 }
 
 impl RunError {
@@ -398,6 +403,19 @@ fn result_err(error: Value) -> Value {
         tag: "Err".to_string(),
         payload: Some(Box::new(error)),
     }
+}
+
+/// A `?` failure value that reached a program entry point with no function
+/// boundary left to return to (semantic checking rejects every such `?`;
+/// this is the runtime's defensive line).
+fn stray_propagate(value: &Value) -> XuloError {
+    XuloError::new(
+        ErrorKind::Runtime,
+        format!(
+            "`?` propagated with no enclosing function: {}",
+            value.format()
+        ),
+    )
 }
 
 /// `Task::timeout(t, ms)`: settles with `Result::Ok(t's result)` when `t`
@@ -766,6 +784,142 @@ fn native_fs_remove(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunE
 fn native_fs_mkdir(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     let path = builtin_str_arg(args, 0, "Fs::mkdir")?;
     Ok(fs_result(xulo_std::fs::mkdir(&path).map(|()| Value::Null)))
+}
+
+/// `RegExp::compile(pattern, flags)` (spec `regular-expressions.mdx`):
+/// `Result::Ok` of a pattern object carrying its operations, or
+/// `Result::Err` of the `RegexError` message the engine reported — an
+/// illegal pattern or an unknown flag is data, not a crash.
+fn native_regex_compile(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    let pattern = builtin_str_arg(args, 0, "RegExp::compile")?;
+    let flags = match args.get(1) {
+        None => String::new().into(),
+        Some(Value::String(s)) => s.clone(),
+        Some(other) => {
+            return Err(RunError::err(
+                format!(
+                    "argument to `RegExp::compile` must be `string`, found `{}`",
+                    other.kind_name()
+                ),
+                0..0,
+            ));
+        }
+    };
+    match xulo_std::regex::compile(&pattern, &flags) {
+        Ok(re) => Ok(result_ok(regexp_object(re))),
+        Err(message) => Ok(result_err(error_value(message.into()))),
+    }
+}
+
+/// One compiled `RegExp` as the object instance methods hang on: `test`,
+/// `find`, and `find_all` are the engine's queries, each capturing the
+/// pattern. `__replace` is the substitution entry point `text.replace(re, …)`
+/// hands its arguments to (it needs the pattern behind the string); it is
+/// internal — semantic checking answers `no member` for it on `RegExp`.
+fn regexp_object(re: xulo_std::regex::RegExp) -> Value {
+    let re = Rc::new(re);
+    let test_re = re.clone();
+    let find_re = re.clone();
+    let find_all_re = re.clone();
+    let replace_re = re;
+    let fields: Vec<(String, Value)> = vec![
+        (
+            "test".to_string(),
+            Value::Native(Rc::new(move |_interp, call_args| {
+                let input = builtin_str_arg(call_args, 0, "RegExp::test")?;
+                Ok(Value::Boolean(test_re.test(&input)))
+            })),
+        ),
+        (
+            "find".to_string(),
+            Value::Native(Rc::new(move |_interp, call_args| {
+                let input = builtin_str_arg(call_args, 0, "RegExp::find")?;
+                Ok(match find_re.find(&input) {
+                    Some(m) => regex_match_value(&m),
+                    None => Value::Null,
+                })
+            })),
+        ),
+        (
+            "find_all".to_string(),
+            Value::Native(Rc::new(move |_interp, call_args| {
+                let input = builtin_str_arg(call_args, 0, "RegExp::find_all")?;
+                let matches = find_all_re
+                    .find_all(&input)
+                    .iter()
+                    .map(regex_match_value)
+                    .collect();
+                Ok(Value::List(Rc::new(RefCell::new(matches))))
+            })),
+        ),
+        (
+            "__replace".to_string(),
+            Value::Native(Rc::new(move |interp, call_args| {
+                let input = builtin_str_arg(call_args, 0, "replace")?;
+                match call_args.get(1) {
+                    Some(Value::String(template)) => {
+                        Ok(Value::String(replace_re.replace(&input, template).into()))
+                    }
+                    Some(func @ (Value::Function(_) | Value::Native(_))) => {
+                        let func = func.clone();
+                        let out = replace_re.replace_with(&input, |m| {
+                            let replacement =
+                                interp.call_value_with_values(&func, &[regex_match_value(m)])?;
+                            match replacement {
+                                Value::String(s) => Ok::<String, RunError>(s.to_string()),
+                                other => Err(RunError::err(
+                                    format!(
+                                        "replacement function must return a `string`, found {}",
+                                        other.kind_name()
+                                    ),
+                                    0..0,
+                                )),
+                            }
+                        })?;
+                        Ok(Value::String(out.into()))
+                    }
+                    Some(other) => Err(RunError::err(
+                        format!(
+                            "`replace` expects a string template or a function, found {}",
+                            other.kind_name()
+                        ),
+                        0..0,
+                    )),
+                    None => Err(RunError::err(
+                        "`replace` expects a string template or a function, found nothing",
+                        0..0,
+                    )),
+                }
+            })),
+        ),
+    ];
+    Value::Object(Rc::new(RefCell::new(fields)))
+}
+
+/// One match as the object the language reads: `value` is the matched text,
+/// `group(i)` the i-th capture — `null` when that group did not participate
+/// or the index is out of range (group 0 is not exposed; `value` already
+/// carries the whole match).
+fn regex_match_value(m: &xulo_std::regex::Match) -> Value {
+    let groups: Vec<Option<String>> = m.groups.clone();
+    Value::Object(Rc::new(RefCell::new(vec![
+        ("value".to_string(), Value::String(m.value.clone().into())),
+        (
+            "group".to_string(),
+            Value::Native(Rc::new(move |_interp, call_args| {
+                let index = builtin_num_arg(call_args, 0, "RegexMatch::group")?;
+                if !index.is_finite() || index < 1.0 {
+                    return Ok(Value::Null);
+                }
+                Ok(groups
+                    .get(index as usize - 1)
+                    .cloned()
+                    .flatten()
+                    .map(|s| Value::String(s.into()))
+                    .unwrap_or(Value::Null))
+            })),
+        ),
+    ])))
 }
 
 fn native_print(interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
@@ -1274,6 +1428,19 @@ impl Interpreter {
             Value::Object(Rc::new(RefCell::new(fs_members))),
             false,
         );
+        // The `regex` module behind the language's `RegExp` type (spec
+        // `regular-expressions.mdx`): `RegExp::compile(…)` resolves to this
+        // object the way a namespace head resolves to its intrinsic table,
+        // and a `use regex::RegExp` import reaches the same head.
+        let regex_members: Vec<(String, Value)> = vec![(
+            "compile".to_string(),
+            Value::Native(Rc::new(native_regex_compile)),
+        )];
+        global.borrow_mut().define(
+            "RegExp",
+            Value::Object(Rc::new(RefCell::new(regex_members))),
+            false,
+        );
         Interpreter {
             out: RefCell::new(Vec::new()),
             global,
@@ -1320,6 +1487,7 @@ impl Interpreter {
             match self.exec_stmt(statement, &global) {
                 Ok(_) => {}
                 Err(RunError::Err(e)) => return Err(e),
+                Err(RunError::Propagate(v)) => return Err(stray_propagate(&v)),
                 Err(RunError::Throw(v)) => {
                     return Err(self.uncaught(&v));
                 }
@@ -1365,6 +1533,7 @@ impl Interpreter {
                     }
                     crate::value::PromiseState::Rejected(e) => Err(match e {
                         RunError::Err(e) => e.clone(),
+                        RunError::Propagate(v) => stray_propagate(v),
                         RunError::Throw(v) => self.uncaught(v),
                     }),
                     crate::value::PromiseState::Pending => Err(XuloError::new(
@@ -1380,6 +1549,7 @@ impl Interpreter {
                 Ok(())
             }
             Err(RunError::Err(e)) => Err(e),
+            Err(RunError::Propagate(v)) => Err(stray_propagate(&v)),
             Err(RunError::Throw(v)) => Err(self.uncaught(&v)),
         }
     }
@@ -1483,6 +1653,7 @@ impl Interpreter {
     ) -> Result<Vec<String>, XuloError> {
         let global = self.setup_module(program, imports).map_err(|e| match e {
             RunError::Err(e) => e,
+            RunError::Propagate(v) => stray_propagate(&v),
             RunError::Throw(v) => self.uncaught(&v),
         })?;
         *self.entry_env.borrow_mut() = Some(global.clone());
@@ -1495,6 +1666,7 @@ impl Interpreter {
                     crate::value::PromiseState::Fulfilled(_) => Ok(self.out.take()),
                     crate::value::PromiseState::Rejected(e) => Err(match e {
                         RunError::Err(e) => e.clone(),
+                        RunError::Propagate(v) => stray_propagate(v),
                         RunError::Throw(v) => self.uncaught(v),
                     }),
                     crate::value::PromiseState::Pending => Err(XuloError::new(
@@ -1505,6 +1677,7 @@ impl Interpreter {
             }
             Ok(_) => Ok(self.out.take()),
             Err(RunError::Err(e)) => Err(e),
+            Err(RunError::Propagate(v)) => Err(stray_propagate(&v)),
             Err(RunError::Throw(v)) => Err(self.uncaught(&v)),
         }
     }
@@ -3121,7 +3294,35 @@ impl Interpreter {
                 let value = self.eval(expr, env)?;
                 Err(RunError::Throw(value))
             }
-            Expression::Propagate { expr, .. } => self.eval(expr, env),
+            Expression::Propagate { expr, .. } => {
+                let value = self.eval(expr, env)?;
+                match value {
+                    // `Result::Err` leaves the function carrying the whole
+                    // `Result`; `Result::Ok` unwraps to its payload; `null`
+                    // leaves the function with `null`; anything else (an
+                    // optional's value) passes through (spec
+                    // `error-handling.md`). The boundary that collects the
+                    // failure value is the enclosing function's call.
+                    Value::Enum {
+                        enum_name,
+                        tag,
+                        payload,
+                    } if enum_name == "Result" && tag == "Err" => {
+                        Err(RunError::Propagate(Value::Enum {
+                            enum_name,
+                            tag,
+                            payload,
+                        }))
+                    }
+                    Value::Enum {
+                        enum_name: _,
+                        tag,
+                        payload,
+                    } if tag == "Ok" => Ok(payload.map(|p| *p).unwrap_or(Value::Null)),
+                    Value::Null => Err(RunError::Propagate(Value::Null)),
+                    other => Ok(other),
+                }
+            }
             Expression::Arrow(arrow) => {
                 let body = match &arrow.body {
                     xulo_core::ast::ArrowBody::Expr(e) => Block {
@@ -3905,6 +4106,9 @@ impl Interpreter {
             Value::List(list) => {
                 return self.list_method(method, list.clone(), &call.arguments, &call.span, env);
             }
+            Value::String(s) => {
+                return self.string_method(method, s.clone(), &call.arguments, &call.span, env);
+            }
             _ => None,
         };
         match callee {
@@ -4005,6 +4209,63 @@ impl Interpreter {
     // ──────────────────────────────────────────────────────────────────
     //  Built-in list methods
     // ──────────────────────────────────────────────────────────────────
+
+    /// The methods a `string` receiver carries (spec
+    /// `regular-expressions.mdx`): `replace` consumes a compiled `RegExp`
+    /// and a template or replacement function; `to_uppercase` reshapes the
+    /// text. Both yield a new string — the receiver is never mutated.
+    fn string_method(
+        &self,
+        method: &str,
+        receiver: Rc<str>,
+        args: &[CallArg],
+        span: &std::ops::Range<usize>,
+        env: &Rc<RefCell<crate::env::Env>>,
+    ) -> Result<Value, RunError> {
+        match method {
+            "to_uppercase" => {
+                if !args.is_empty() {
+                    return Err(RunError::err(
+                        format!("`to_uppercase()` takes no arguments, found {}", args.len()),
+                        span.clone(),
+                    ));
+                }
+                Ok(Value::String(receiver.to_uppercase().into()))
+            }
+            "replace" => {
+                if args.len() != 2 {
+                    return Err(RunError::err(
+                        format!(
+                            "`replace()` requires exactly 2 arguments (a RegExp and a replacement), found {}",
+                            args.len()
+                        ),
+                        span.clone(),
+                    ));
+                }
+                let pattern = self.eval(&args[0].value, env)?;
+                let replacement = self.eval(&args[1].value, env)?;
+                let replace_impl = match &pattern {
+                    Value::Object(fields) => fields
+                        .borrow()
+                        .iter()
+                        .find(|(k, _)| k == "__replace")
+                        .map(|(_, v)| v.clone()),
+                    _ => None,
+                };
+                let Some(replace_impl) = replace_impl else {
+                    return Err(RunError::err(
+                        "`replace` expects a compiled `RegExp` pattern",
+                        span.clone(),
+                    ));
+                };
+                self.call_value_with_values(&replace_impl, &[Value::String(receiver), replacement])
+            }
+            _ => Err(RunError::err(
+                format!("`{method}` is not a function of a string"),
+                span.clone(),
+            )),
+        }
+    }
 
     fn list_method(
         &self,
@@ -4633,16 +4894,29 @@ impl Interpreter {
                 let env = Env::child(&func.closure);
                 with_interp(|interp| {
                     interp.bind_callee_args(&env, &func.params, args)?;
-                    interp.run_body(&func.body, &env, func.return_type.is_some())
+                    // The async body's call boundary: a `?` in flight becomes
+                    // this function's return value (spec `error-handling.md`).
+                    match interp.run_body(&func.body, &env, func.return_type.is_some()) {
+                        Err(RunError::Propagate(v)) => Ok(v),
+                        other => other,
+                    }
                 })
             }));
         }
         let env = Env::child(&func.closure);
         self.bind_callee_args(&env, &func.params, args)?;
-        if is_component_return(&func.return_type) {
+        let result = if is_component_return(&func.return_type) {
             self.run_component_body(&func.body, &env)
         } else {
             self.run_body(&func.body, &env, func.return_type.is_some())
+        };
+        // The call boundary: a `?` in flight becomes this function's return
+        // value (spec `error-handling.md`) — `Result::Err` returned whole,
+        // `null` for an optional operand, exactly as a `return` written at
+        // that point would be.
+        match result {
+            Err(RunError::Propagate(v)) => Ok(v),
+            other => other,
         }
     }
 
@@ -4671,7 +4945,12 @@ impl Interpreter {
                     let env = Env::child(&call_env);
                     with_interp(|interp| {
                         interp.bind_callee_args(&env, &params, bound)?;
-                        interp.run_body(&body, &env, return_type.is_some())
+                        // The async body's call boundary: a `?` in flight
+                        // becomes this function's return value.
+                        match interp.run_body(&body, &env, return_type.is_some()) {
+                            Err(RunError::Propagate(v)) => Ok(v),
+                            other => other,
+                        }
                     })
                 }));
             }
@@ -4684,7 +4963,12 @@ impl Interpreter {
             }
         })();
         self.call_depth.set(depth);
-        result
+        // The call boundary: a `?` in flight becomes this function's return
+        // value (spec `error-handling.md`).
+        match result {
+            Err(RunError::Propagate(v)) => Ok(v),
+            other => other,
+        }
     }
 
     /// Execute a function body in its call environment, honoring the implicit

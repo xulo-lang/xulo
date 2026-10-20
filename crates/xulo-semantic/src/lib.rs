@@ -16,6 +16,12 @@ use xulo_core::error::{ErrorKind, XuloError};
 /// attached by the lexer/parser; semantic checks target names).
 type SResult<T> = Result<T, XuloError>;
 
+/// The virtual module id the `regex` module resolves to. It carries a
+/// control-byte prefix so it can never collide with a real module id (spec
+/// `regular-expressions.mdx`: the module's types are reached directly, with
+/// no loader graph behind the head).
+const BUILTIN_REGEX: &str = "\u{1}regex";
+
 /// One walk's derive targets pending field checks: attribute span -> declared
 /// target types as (type, label span).
 type DeriveList = Vec<(Range<usize>, Vec<(Type, Range<usize>)>)>;
@@ -142,7 +148,124 @@ fn builtin_type_entries() -> HashMap<String, TypeEntry> {
             }),
         },
     );
+    // `RegexMatch` needs no import: an annotation of the name answers from
+    // here, while `use regex::RegexMatch` binds the same shape locally.
+    builtins.insert("RegexMatch".to_string(), regex_match_type_entry());
     builtins
+}
+
+/// The result type of `RegExp::compile`: the built-in `Result` carrying the
+/// compiled `RegExp` or the `RegexError` describing what failed to compile.
+fn regex_compile_result_type() -> Type {
+    Type::Named(
+        "Result".to_string(),
+        vec![
+            Type::Named("RegExp".to_string(), Vec::new()),
+            Type::Named("RegexError".to_string(), Vec::new()),
+        ],
+    )
+}
+
+/// The `RegExp` type entry (spec `regular-expressions.mdx`): a compiled
+/// pattern's three operations, typed here as method signatures so a member
+/// call through the imported name answers with its declared result. The
+/// runtime object carries matching natives of the same names.
+fn regex_regexp_type_entry() -> TypeEntry {
+    let match_ty = Type::Named("RegexMatch".to_string(), Vec::new());
+    TypeEntry {
+        type_params: Vec::new(),
+        type_bounds: Vec::new(),
+        kind: TypeEntryKind::Struct(vec![
+            (
+                "test".to_string(),
+                Type::FnSig {
+                    params: vec![Type::String],
+                    ret: Some(Box::new(Type::Boolean)),
+                },
+                None,
+            ),
+            (
+                "find".to_string(),
+                Type::FnSig {
+                    params: vec![Type::String],
+                    ret: Some(Box::new(Type::Optional(Box::new(match_ty.clone())))),
+                },
+                None,
+            ),
+            (
+                "find_all".to_string(),
+                Type::FnSig {
+                    params: vec![Type::String],
+                    ret: Some(Box::new(Type::List(Box::new(match_ty)))),
+                },
+                None,
+            ),
+        ]),
+    }
+}
+
+/// The `RegexError` type entry: `RegExp::compile`'s failure payload carries
+/// one `message` field, shaped like the base `Error` type.
+fn regex_error_type_entry() -> TypeEntry {
+    TypeEntry {
+        type_params: Vec::new(),
+        type_bounds: Vec::new(),
+        kind: TypeEntryKind::Struct(vec![("message".to_string(), Type::String, None)]),
+    }
+}
+
+/// The `RegexMatch` type entry: one match's text (`value`) and capture
+/// groups by 1-based index (`group`, `null` for an absent group). It lives in
+/// the always-consulted `builtins` map as well, so an annotation of the name
+/// needs no import (spec `regular-expressions.mdx`).
+fn regex_match_type_entry() -> TypeEntry {
+    TypeEntry {
+        type_params: Vec::new(),
+        type_bounds: Vec::new(),
+        kind: TypeEntryKind::Struct(vec![
+            ("value".to_string(), Type::String, None),
+            (
+                "group".to_string(),
+                Type::FnSig {
+                    params: vec![Type::Number],
+                    ret: Some(Box::new(Type::Optional(Box::new(Type::String)))),
+                },
+                None,
+            ),
+        ]),
+    }
+}
+
+/// A comparison of a binding against `null`: the binding's name and whether
+/// the operator was `==` (`false` for `!=`), in either operand order. This is
+/// the shape `if x != null` must have for flow-sensitive narrowing (spec
+/// `types/composite-types.md`).
+fn match_null_test(cond: &Expression) -> Option<(String, bool)> {
+    let Expression::BinaryOp(b) = cond else {
+        return None;
+    };
+    let eq = match b.operator {
+        BinaryOperator::Eq => true,
+        BinaryOperator::Neq => false,
+        _ => return None,
+    };
+    match (&b.left, &b.right) {
+        (
+            Expression::Identifier { name, .. },
+            Expression::Literal {
+                value: Literal::Null,
+                ..
+            },
+        ) => Some((name.clone(), eq)),
+        (
+            Expression::Literal {
+                value: Literal::Null,
+                ..
+            },
+            Expression::Identifier { name, .. },
+        ) => Some((name.clone(), eq)),
+        _ => None,
+    }
 }
 
 /// A parameter of an intrinsic namespace function (spec
@@ -492,6 +615,11 @@ pub struct Analyzer {
     opaque: std::collections::HashSet<String>,
     /// Imported type/alias names available to this module.
     imported_types: HashMap<String, TypeEntry>,
+    /// Local names bound from the built-in `regex` module (`use regex::RegExp`):
+    /// the heads whose static members are the module's (`RegExp::compile`).
+    /// A program-declared type of the same name shadows the import, so this
+    /// records only what the import bound — never what the program declared.
+    regex_names: std::collections::HashSet<String>,
     /// Value symbols seeded by the caller (the editor workspace): consulted
     /// only by the lenient no-world binds, never by strict analysis.
     imports: HashMap<String, Symbol>,
@@ -515,6 +643,11 @@ pub struct Analyzer {
     /// Depth of enclosing `for`/`while` loops; `break`/`continue` are only
     /// valid when > 0.
     in_loop: usize,
+    /// Depth of enclosing `defer` bodies: `?` may not appear in a `defer`
+    /// operand, since control is already leaving the block when it runs
+    /// (spec `error-handling.md`, E0229). Closures formed inside reset it —
+    /// their body does not run as part of the defer.
+    in_defer: usize,
     /// Span of the expression most recently entered by `check_expression`;
     /// semantic errors are attached to it (they cannot name their own span).
     current_span: Range<usize>,
@@ -1192,6 +1325,7 @@ fn run_analysis(
         table: SymbolTable::new(),
         current_return: None,
         declared_return: false,
+        regex_names: std::collections::HashSet::new(),
         type_table: HashMap::new(),
         builtins: builtin_type_entries(),
         generics: Vec::new(),
@@ -1239,6 +1373,7 @@ fn run_analysis(
         render_locals: Vec::new(),
         in_effect: false,
         in_loop: 0,
+        in_defer: 0,
         current_span: 0..0,
         expr_types: Vec::new(),
         resolutions: Vec::new(),
@@ -3017,10 +3152,13 @@ impl Analyzer {
     }
 
     fn check_defer(&mut self, d: &xulo_core::ast::DeferStmt) -> SResult<()> {
-        match &d.body {
+        self.in_defer += 1;
+        let result = match &d.body {
             xulo_core::ast::DeferBody::Block(b) => self.check_block(b),
             xulo_core::ast::DeferBody::Expr(e) => self.check_expression(e).map(|_| ()),
-        }
+        };
+        self.in_defer -= 1;
+        result
     }
 
     fn check_fn(&mut self, f: &xulo_core::ast::FnDef) -> SResult<()> {
@@ -3368,6 +3506,14 @@ impl Analyzer {
                 if segments.is_empty() {
                     // `use form;` / `use form as f;` — bind the namespace.
                     let id = self.resolve_path_head(head, &u.span)?;
+                    if id == BUILTIN_REGEX {
+                        return Err(self
+                            .err_code(
+                                "E0607",
+                                "the built-in `regex` module has no namespace: import its names with `use regex::{RegExp, RegexError}`",
+                            )
+                            .at(u.span.clone()));
+                    }
                     let local = alias.clone().unwrap_or_else(|| match head {
                         xulo_core::ast::PathHead::Name(n)
                         | xulo_core::ast::PathHead::Package(n) => n.clone(),
@@ -3392,6 +3538,14 @@ impl Analyzer {
             }
             xulo_core::ast::UseTarget::Glob { head } => {
                 let id = self.resolve_path_head(head, &u.span)?;
+                if id == BUILTIN_REGEX {
+                    return Err(self
+                        .err_code(
+                            "E0607",
+                            "the built-in `regex` module has no glob: import its names with `use regex::{RegExp, RegexError}`",
+                        )
+                        .at(u.span.clone()));
+                }
                 let Some(face) = self.world.as_ref().and_then(|w| w.modules.get(&id)) else {
                     if self.lenient {
                         // Editor partial mode has no face to enumerate:
@@ -3531,6 +3685,13 @@ impl Analyzer {
                         return Ok(child.clone());
                     }
                 }
+                // The `regex` module behind the language's `RegExp` type
+                // (spec `regular-expressions.mdx`): its names are reached
+                // directly, so the head resolves after any package or root
+                // module of the same name — a program's own module wins.
+                if n == "regex" {
+                    return Ok(BUILTIN_REGEX.to_string());
+                }
                 if self.lenient {
                     // Editor partial mode has no loader graph to verify the
                     // head against: resolve through under a virtual id and
@@ -3554,6 +3715,11 @@ impl Analyzer {
         u: &xulo_core::ast::UseDecl,
     ) -> SResult<()> {
         let start = self.resolve_path_head(head, &u.span)?;
+        // The built-in `regex` module has no module graph behind it: its
+        // members bind straight from the builtin face (`use regex::RegExp`).
+        if start == BUILTIN_REGEX {
+            return self.bind_regex_member(segments, local, u);
+        }
         // An external dependency's module tree is invisible: every path into
         // it binds opaquely under `local` (spec `modules/import-export.md`).
         if self
@@ -3635,6 +3801,58 @@ impl Analyzer {
             }
             return self.bind_member(&current, seg, info, local, u);
         }
+        Ok(())
+    }
+
+    /// Bind one exported name of the built-in `regex` module under `local`:
+    /// its three types — `RegExp` (compiled pattern), `RegexError` (the
+    /// failure message `RegExp::compile` reports), and `RegexMatch` (one
+    /// match's text, span, and capture groups). Like an enum import, a type
+    /// binds with no constructor value of its own: `RegExp::compile` is
+    /// reached through the type name (spec `regular-expressions.mdx`).
+    fn bind_regex_member(
+        &mut self,
+        segments: &[String],
+        local: &str,
+        u: &xulo_core::ast::UseDecl,
+    ) -> SResult<()> {
+        if segments.len() != 1 {
+            return Err(self
+                .err_code(
+                    "E0607",
+                    format!(
+                        "cannot resolve `regex`{}",
+                        if segments.is_empty() {
+                            String::new()
+                        } else {
+                            format!("::{}", segments[1..].join("::"))
+                        }
+                    ),
+                )
+                .at(u.span.clone()));
+        }
+        let entry = match segments[0].as_str() {
+            "RegExp" => regex_regexp_type_entry(),
+            "RegexError" => regex_error_type_entry(),
+            "RegexMatch" => regex_match_type_entry(),
+            other => {
+                return Err(self
+                    .err_code("E0601", format!("module `regex` does not export `{other}`"))
+                    .at(u.span.clone()));
+            }
+        };
+        self.imported_types.insert(local.to_string(), entry);
+        self.regex_names.insert(local.to_string());
+        if u.is_pub {
+            self.own_interface.insert(local.to_string());
+            if let Some(e) = self.imported_types.get(local).cloned() {
+                self.exported_types_for_iface.push((local.to_string(), e));
+            }
+            self.exported.push(local.to_string());
+        }
+        self.use_bound
+            .borrow_mut()
+            .insert(local.to_string(), u.span.clone());
         Ok(())
     }
 
@@ -6068,8 +6286,12 @@ impl Analyzer {
                 Ok(Type::Any)
             }
             Expression::Propagate { expr: inner, .. } => {
-                self.check_expression(inner)?;
-                Ok(Type::Any)
+                let inner_ty = self.check_expression(inner)?;
+                let (success, failures) = self.propagate_shape(&inner_ty, inner.span().clone())?;
+                for failure in &failures {
+                    self.check_propagate_admission(failure, inner.span().clone())?;
+                }
+                Ok(success)
             }
             Expression::Arrow(arrow) => {
                 let mut params = Vec::with_capacity(arrow.params.len());
@@ -6082,10 +6304,15 @@ impl Analyzer {
                     }
                 }
                 self.closure_depth += 1;
+                // A closure's body is not the `defer` operand itself: it runs
+                // whenever it is called, so `?` inside it is not E0229.
+                let saved_defer = self.in_defer;
+                self.in_defer = 0;
                 let ret = match &arrow.body {
                     xulo_core::ast::ArrowBody::Expr(e) => Some(Box::new(self.check_expression(e)?)),
                     xulo_core::ast::ArrowBody::Block(b) => self.check_block_tail(b)?.map(Box::new),
                 };
+                self.in_defer = saved_defer;
                 self.closure_depth -= 1;
                 let ret = match ret {
                     Some(r) if arrow.is_async => Some(Box::new(Type::Async(r))),
@@ -6949,6 +7176,48 @@ impl Analyzer {
         }
     }
 
+    /// `RegExp::compile(pattern, flags)` — the regex module's only static
+    /// member (spec `regular-expressions.mdx`): one or two string arguments,
+    /// a `Result<RegExp, RegexError>` back. Arity is `E0207`, an
+    /// inadmissible argument `E0202` (spec `expressions/calls.md`).
+    fn check_regex_static_call(&mut self, call: &Call, head: &str, variant: &str) -> SResult<Type> {
+        if (head, variant) != ("RegExp", "compile") {
+            return Err(self
+                .err(format!("`{head}` has no member `{variant}`"))
+                .at(call.span.clone()));
+        }
+        if call.arguments.iter().any(|a| a.name.is_some()) {
+            return Err(self
+                .err("`RegExp::compile` takes positional arguments")
+                .at(call.span.clone()));
+        }
+        if !(1..=2).contains(&call.arguments.len()) {
+            return Err(self
+                .err_code(
+                    "E0207",
+                    format!("expected 1 or 2 arguments, found {}", call.arguments.len()),
+                )
+                .at(call.span.clone()));
+        }
+        for arg in &call.arguments {
+            let found = self.check_arg_value(&arg.value)?;
+            if !self.assignable(&found, &Type::String)
+                && !self.literal_matches(&arg.value, &Type::String)
+            {
+                return Err(self
+                    .err_code(
+                        "E0202",
+                        format!(
+                            "argument to `RegExp::compile` must be `string`, found `{}`",
+                            found.name()
+                        ),
+                    )
+                    .at(arg.value.span().clone()));
+            }
+        }
+        Ok(regex_compile_result_type())
+    }
+
     /// Type-check a call to a member of the built-in `Task` namespace.
     /// Returns `Task<T>` (spec signatures), which `await` unwraps to `T`.
     /// `Math::max(a, b)` / `Time::sleep(ms)`: check a call to an intrinsic
@@ -7160,6 +7429,24 @@ impl Analyzer {
             if let Some(ret) = self.check_module_path_call(call, enum_name, variant)? {
                 return Ok(ret);
             }
+            // The `regex` module's types reached through their imported name
+            // (`RegExp::compile(pattern, flags)`): `regex_names` records what
+            // `use regex::…` bound, so a program-declared type of the same
+            // name — or a module that resolved above — shadows the builtin.
+            if self.regex_names.contains(enum_name) {
+                return self.check_regex_static_call(call, enum_name, variant);
+            }
+            // The same heads without their import: name the fix instead of
+            // reporting an unknown enum.
+            if matches!(enum_name, "RegExp" | "RegexError" | "RegexMatch")
+                && self.type_entry(enum_name).is_none()
+            {
+                return Err(self
+                    .err(format!(
+                        "`{enum_name}` belongs to the built-in `regex` module: import it with `use regex::{{{enum_name}}}` or `use regex::{{RegExp, RegexError}}`"
+                    ))
+                    .at(call.span.clone()));
+            }
             let args: Vec<&Expression> = call.arguments.iter().map(|a| &a.value).collect();
             return self.check_enum_call(enum_name.to_string(), variant.to_string(), &args);
         }
@@ -7321,6 +7608,17 @@ impl Analyzer {
                     "filter" | "slice" | "concat" | "map" | "flat" => Type::List(inner.clone()),
                     "join" => Type::String,
                     "reduce" | "find" | "forEach" => Type::Any,
+                    _ => Type::Any,
+                });
+            }
+            // Infer the return type of the known string methods (spec
+            // `regular-expressions.mdx`): the two that consume a pattern or
+            // reshape the text both yield a new string.
+            if matches!(receiver, Type::String)
+                && let Some(method) = &call.method
+            {
+                return Ok(match method.as_str() {
+                    "replace" | "to_uppercase" => Type::String,
                     _ => Type::Any,
                 });
             }
@@ -7956,6 +8254,19 @@ impl Analyzer {
     }
 
     fn check_enum_ref(&self, enum_name: String, variant: &str) -> SResult<Type> {
+        // The `regex` module's static member as a value (`let f =
+        // RegExp::compile`), reached through the imported name — only what
+        // `use regex::…` bound, so a program's own type of the name shadows
+        // it like any other declaration.
+        if self.regex_names.contains(&enum_name) {
+            return match (enum_name.as_str(), variant) {
+                ("RegExp", "compile") => Ok(Type::FnSig {
+                    params: vec![Type::String, Type::String],
+                    ret: Some(Box::new(regex_compile_result_type())),
+                }),
+                _ => Err(self.err(format!("`{enum_name}` has no member `{variant}`"))),
+            };
+        }
         // A built-in namespace's members are constants (`Math::PI`) or
         // functions reached by call (`Math::max(...)`); a bare function
         // reference types as a function value (spec
@@ -7983,6 +8294,15 @@ impl Analyzer {
         // before the enum fallback: its head is a namespace binding.
         if let Some(ty) = self.module_path_value_type(&enum_name, variant)? {
             return Ok(ty);
+        }
+        // The regex module's heads without their import: name the fix
+        // instead of reporting an unknown enum.
+        if matches!(enum_name.as_str(), "RegExp" | "RegexError" | "RegexMatch")
+            && self.type_entry(&enum_name).is_none()
+        {
+            return Err(self.err(format!(
+                "`{enum_name}` belongs to the built-in `regex` module: import it with `use regex::{{{enum_name}}}` or `use regex::{{RegExp, RegexError}}`"
+            )));
         }
         let Some(entry) = self.type_entry(&enum_name) else {
             return Err(self.err(format!("unknown enum `{enum_name}`")));
@@ -8509,6 +8829,105 @@ impl Analyzer {
         }
     }
 
+    /// The success type of `operand?` and the failure values it may leave the
+    /// function with (spec `error-handling.md`): `T?` succeeds with `T` and
+    /// fails with `null`; `Result<T, E>` succeeds with `T` and fails with the
+    /// whole `Result::Err`. `Result<T, E>?` composes the two — the Ok payload
+    /// succeeds, and both `null` and the `Result` are possible failures. Any
+    /// other operand is `E0217`.
+    fn propagate_shape(&self, ty: &Type, span: Range<usize>) -> SResult<(Type, Vec<Type>)> {
+        let resolved = self.resolve_alias(ty, 0);
+        match &resolved {
+            Type::Named(name, args) if name == "Result" && args.len() == 2 => {
+                Ok((args[0].clone(), vec![resolved.clone()]))
+            }
+            Type::Optional(inner) => {
+                let inner_resolved = self.resolve_alias(inner, 0);
+                if matches!(&inner_resolved, Type::Named(n, a) if n == "Result" && a.len() == 2) {
+                    let (success, mut failures) = self.propagate_shape(inner, span)?;
+                    failures.push(Type::Null);
+                    Ok((success, failures))
+                } else {
+                    Ok((inner_resolved, vec![Type::Null]))
+                }
+            }
+            other => Err(self
+                .err_code(
+                    "E0217",
+                    format!(
+                        "`?` requires a `T?` or `Result<T, E>` operand, found `{}`",
+                        other.name()
+                    ),
+                )
+                .at(span)),
+        }
+    }
+
+    /// A `?` needs an enclosing function whose declared return type accepts
+    /// this failure value (spec `error-handling.md`, E0217/E0229): `null` for
+    /// an optional operand, the whole `Result` for a `Result` operand — and
+    /// never inside `defer`, whose operand runs as the block is already
+    /// leaving.
+    fn check_propagate_admission(&self, failure: &Type, span: Range<usize>) -> SResult<()> {
+        if self.in_defer > 0 {
+            return Err(self
+                .err_code(
+                    "E0229",
+                    "`?` may not appear in a `defer` operand: control is already leaving the block when it runs",
+                )
+                .at(span));
+        }
+        let Some(ret) = self.current_return.clone() else {
+            return Err(self
+                .err_code(
+                    "E0217",
+                    "cannot use `?` here: there is no enclosing function return type",
+                )
+                .at(span));
+        };
+        if !self.declared_return {
+            return Err(self
+                .err_code(
+                    "E0217",
+                    "cannot use `?` in a function with no declared return type",
+                )
+                .at(span));
+        }
+        let mut ret = self.resolve_alias(&ret, 0);
+        if let Type::Async(inner) = &ret {
+            ret = self.resolve_alias(inner, 0);
+        }
+        if !self.assignable(failure, &ret) {
+            return Err(self
+                .err_code(
+                    "E0217",
+                    format!(
+                        "`?` failure value of type `{}` is not assignable to the declared return type `{}`",
+                        failure.name(),
+                        ret.name()
+                    ),
+                )
+                .at(span));
+        }
+        Ok(())
+    }
+
+    /// Narrow the binding `name` for one `if` branch: `to_null` selects the
+    /// `null` type, otherwise the optional's inner type. Returns the name
+    /// and the symbol to restore once the branch has checked. Nothing to
+    /// restore means nothing narrowed (not a `T?` binding, or unbound).
+    fn narrow_binding(&mut self, name: &str, to_null: bool) -> Option<(String, Symbol)> {
+        let sym = self.table.lookup(name)?.clone();
+        let resolved = self.resolve_alias(&sym.type_, 0);
+        let Type::Optional(inner) = resolved else {
+            return None;
+        };
+        let mut narrowed = sym;
+        narrowed.type_ = if to_null { Type::Null } else { *inner };
+        let old = self.table.replace_symbol(name, narrowed)?;
+        Some((name.to_string(), old))
+    }
+
     fn check_if(&mut self, if_expr: &IfExpr) -> SResult<Type> {
         let condition = self.check_expression(&if_expr.condition)?;
         if !self.assignable(&condition, &Type::Boolean) {
@@ -8517,11 +8936,36 @@ impl Analyzer {
                 condition.name()
             )));
         }
-        let then_type = self.check_block_tail(&if_expr.then_branch)?;
-        let else_type = match &if_expr.else_branch {
-            Some(branch) => self.check_block_tail(branch)?,
-            None => None,
+        // Flow-sensitive narrowing (spec `types/composite-types.md`): a
+        // comparison against `null` splits a `T?` binding — `x != null`
+        // gives `x` type `T` in then and `null` in else, `x == null` the
+        // reverse. The narrowed symbol shadows the declaration for the
+        // branch check and is restored right after, so nested and sibling
+        // `if`s compose. Only `T?` narrows: `unknown`, `any`, and plain `T`
+        // are left untouched.
+        let null_test = match_null_test(&if_expr.condition);
+        let then_narrow = null_test
+            .as_ref()
+            .and_then(|(name, eq)| self.narrow_binding(name, *eq));
+        let then_res = self.check_block_tail(&if_expr.then_branch);
+        if let Some((name, old)) = then_narrow {
+            self.table.replace_symbol(&name, old);
+        }
+        let then_type = then_res?;
+        let else_res = match &if_expr.else_branch {
+            Some(branch) => {
+                let else_narrow = null_test
+                    .as_ref()
+                    .and_then(|(name, eq)| self.narrow_binding(name, !*eq));
+                let res = self.check_block_tail(branch);
+                if let Some((name, old)) = else_narrow {
+                    self.table.replace_symbol(&name, old);
+                }
+                res
+            }
+            None => Ok(None),
         };
+        let else_type = else_res?;
         // An `if` in value position takes the then-branch tail type; when both
         // branches have values they must be compatible (Rust/Swift style).
         match (then_type, else_type) {
