@@ -308,6 +308,25 @@ impl CodeGen {
                         builder.def_var(var, val);
                     }
                 }
+                Instruction::Sqrt { dst, src } => {
+                    let s = resolve_operand(&mut builder, src, &vars);
+                    let f64_ty = cranelift::codegen::ir::types::F64;
+                    let s_ty = builder.func.dfg.value_type(s);
+                    let f = if s_ty == f64_ty {
+                        s
+                    } else {
+                        builder.ins().fcvt_from_sint(f64_ty, s)
+                    };
+                    let root = builder.ins().sqrt(f);
+                    // F64 位模式放进 I64 槽（number 签名是整数域；打印配合 tag=2 还原小数）
+                    let bits =
+                        builder
+                            .ins()
+                            .bitcast(I64, cranelift::codegen::ir::MemFlags::new(), root);
+                    if let Some(&var) = vars.get(dst) {
+                        builder.def_var(var, bits);
+                    }
+                }
                 Instruction::BitAnd { dst, left, right } => {
                     let l = resolve_operand(&mut builder, left, &vars);
                     let r = resolve_operand(&mut builder, right, &vars);
@@ -484,7 +503,7 @@ impl CodeGen {
                         RuntimeFn::PrintValue => "xulo_print_value",
                         RuntimeFn::Panic => "xulo_panic",
                         RuntimeFn::StringConcat => "xulo_string_concat",
-                        RuntimeFn::ToString => "xulo_to_string",
+                        RuntimeFn::Stringify => "xulo_stringify",
                         RuntimeFn::AllocObject => "xulo_alloc_object",
                         RuntimeFn::AllocArray => "xulo_alloc_array",
                         RuntimeFn::ArrayPush => "xulo_array_push",
@@ -497,9 +516,11 @@ impl CodeGen {
                         RuntimeFn::ObjectSet => "xulo_object_set",
                     };
 
-                    // xulo_print_value / xulo_panic 期望 (i64, i64)，需要将 f64 参数 bitcast 到 i64
-                    let final_args = if matches!(*func, RuntimeFn::PrintValue | RuntimeFn::Panic)
-                        && !arg_vals.is_empty()
+                    // xulo_print_value / xulo_panic / xulo_stringify 期望 (i64, i64)，需要将 f64 参数 bitcast 到 i64
+                    let final_args = if matches!(
+                        *func,
+                        RuntimeFn::PrintValue | RuntimeFn::Panic | RuntimeFn::Stringify
+                    ) && !arg_vals.is_empty()
                     {
                         let val_ty = builder.func.dfg.value_type(arg_vals[0]);
                         if val_ty == cranelift::codegen::ir::types::F64 {

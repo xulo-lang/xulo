@@ -158,7 +158,8 @@ fn test_codegen_print_array() {
 #[test]
 fn test_codegen_print_object() {
     let out = compile_and_run(r#"fn main() { print({a: 1, b: 2}) }"#);
-    assert_eq!(out, vec!["{a: 1, b: 2}"]);
+    // 与解释器 Value::format 一致：{ a: 1, b: 2 }
+    assert_eq!(out, vec!["{ a: 1, b: 2 }"]);
 }
 
 #[test]

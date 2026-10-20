@@ -81,9 +81,9 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
         has_return: true,
     },
     RuntimeFnDesc {
-        name: "xulo_to_string",
-        addr: xulo_runtime::runtime::xulo_to_string as *const u8,
-        params: &[I64],
+        name: "xulo_stringify",
+        addr: xulo_runtime::runtime::xulo_stringify as *const u8,
+        params: &[I64, I64],
         has_return: true,
     },
     RuntimeFnDesc {
@@ -401,7 +401,7 @@ fn _ensure_runtime_linked() {
     let _ = xulo_runtime::runtime::xulo_print as *const u8;
     let _ = xulo_runtime::runtime::xulo_print_value as *const u8;
     let _ = xulo_runtime::runtime::xulo_string_concat as *const u8;
-    let _ = xulo_runtime::runtime::xulo_to_string as *const u8;
+    let _ = xulo_runtime::runtime::xulo_stringify as *const u8;
     let _ = xulo_runtime::runtime::xulo_alloc_object as *const u8;
     let _ = xulo_runtime::runtime::xulo_alloc_array as *const u8;
     let _ = xulo_runtime::runtime::xulo_array_push as *const u8;

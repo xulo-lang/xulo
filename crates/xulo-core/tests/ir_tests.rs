@@ -294,7 +294,7 @@ fn test_runtime_fn_equality() {
     assert_eq!(RuntimeFn::AllocObject, RuntimeFn::AllocObject);
     assert_eq!(RuntimeFn::AllocArray, RuntimeFn::AllocArray);
     assert_eq!(RuntimeFn::StringConcat, RuntimeFn::StringConcat);
-    assert_eq!(RuntimeFn::ToString, RuntimeFn::ToString);
+    assert_eq!(RuntimeFn::Stringify, RuntimeFn::Stringify);
     assert_eq!(RuntimeFn::ArrayPush, RuntimeFn::ArrayPush);
     assert_eq!(RuntimeFn::ArrayLen, RuntimeFn::ArrayLen);
     assert_eq!(RuntimeFn::ArrayGet, RuntimeFn::ArrayGet);
@@ -303,7 +303,7 @@ fn test_runtime_fn_equality() {
     assert_eq!(RuntimeFn::ObjectSet, RuntimeFn::ObjectSet);
 
     assert_ne!(RuntimeFn::Print, RuntimeFn::PrintInt);
-    assert_ne!(RuntimeFn::Panic, RuntimeFn::ToString);
+    assert_ne!(RuntimeFn::Panic, RuntimeFn::Stringify);
 }
 
 // ========== Error tests ==========

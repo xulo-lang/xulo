@@ -160,7 +160,7 @@ fn format_value(value: i64, tag: i64) -> String {
                             format!("{}: {}", k, format_value(*v, t))
                         })
                         .collect();
-                    format!("{{{}}}", strs.join(", "))
+                    format!("{{ {} }}", strs.join(", "))
                 }
             }
         }
@@ -314,16 +314,11 @@ pub extern "C" fn xulo_string_concat(a: *const c_char, b: *const c_char) -> *con
     }
 }
 
-/// 转换为字符串
+/// 把带类型标签的值格式化成字符串（str() 转换与多参数 print 的参数拼接用）
 #[unsafe(no_mangle)]
-pub extern "C" fn xulo_to_string(value: i64) -> *const c_char {
-    let result = if value == 0 {
-        "null".to_string()
-    } else {
-        value.to_string()
-    };
-
-    let c_str = CString::new(result).unwrap();
+pub extern "C" fn xulo_stringify(value: i64, tag: i64) -> *const c_char {
+    let s = format_value(value, tag);
+    let c_str = CString::new(s).unwrap();
     let ptr = c_str.as_ptr();
 
     STRINGS.with(|strings| {

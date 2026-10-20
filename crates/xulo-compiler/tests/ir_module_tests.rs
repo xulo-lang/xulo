@@ -77,7 +77,7 @@ fn test_runtime_fn_all_variants() {
         RuntimeFn::AllocObject,
         RuntimeFn::AllocArray,
         RuntimeFn::StringConcat,
-        RuntimeFn::ToString,
+        RuntimeFn::Stringify,
         RuntimeFn::ArrayPush,
         RuntimeFn::ArrayLen,
         RuntimeFn::ArrayGet,

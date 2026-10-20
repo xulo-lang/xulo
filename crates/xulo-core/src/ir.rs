@@ -58,7 +58,8 @@ pub enum RuntimeFn {
     AllocObject,
     AllocArray,
     StringConcat,
-    ToString,
+    /// 带标签的值格式化成字符串（多参数 print 的参数拼接 / str() 转换）
+    Stringify,
     ArrayPush,
     ArrayLen,
     ArrayGet,
@@ -112,6 +113,13 @@ pub enum Instruction {
     Neg {
         dst: LocalId,
         operand: Operand,
+    },
+
+    /// 浮点平方根：src 转 F64 开方，结果以 F64 位模式放在 I64 槽里。
+    /// （xulo 的 number 签名在 IR 层是整数域；打印端配合 tag=2 把位模式还原成小数）
+    Sqrt {
+        dst: LocalId,
+        src: Operand,
     },
 
     // 位运算

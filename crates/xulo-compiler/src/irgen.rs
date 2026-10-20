@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use xulo_core::ast::*;
 use xulo_core::error::{ErrorKind, XuloError};
@@ -16,6 +16,16 @@ pub struct IrGenerator {
     func_return_types: HashMap<String, Option<Type>>,
     label_map: HashMap<String, Label>,
     loop_stack: Vec<LoopContext>,
+    /// struct 定义（结构体构造需要字段顺序与默认值）
+    structs: HashMap<String, Vec<StructField>>,
+    /// `Type::method` -> IR 函数（impl 固有方法）
+    methods: HashMap<String, FuncId>,
+    /// 方法名 -> 定义它的类型列表（唯一时可按方法名分派）
+    method_types: HashMap<String, Vec<String>>,
+    /// IR 函数名 -> self 的源级类型（方法体里 self 字段的类型推断）
+    self_types: HashMap<String, Type>,
+    /// 返回值以 F64 位模式穿过整数签名的函数（Math::sqrt 落点，print 需要 tag=2）
+    float_bit_returns: HashSet<String>,
 }
 
 struct LoopContext {
@@ -40,6 +50,11 @@ impl IrGenerator {
             func_return_types: HashMap::new(),
             label_map: HashMap::new(),
             loop_stack: Vec::new(),
+            structs: HashMap::new(),
+            methods: HashMap::new(),
+            method_types: HashMap::new(),
+            self_types: HashMap::new(),
+            float_bit_returns: HashSet::new(),
         }
     }
 
@@ -59,6 +74,48 @@ impl IrGenerator {
             }
         }
 
+        // 记录 struct 定义（结构体构造需要字段顺序与默认值）
+        for stmt in &program.statements {
+            if let Statement::Struct(def) = stmt {
+                self.structs.insert(def.name.clone(), def.fields.clone());
+            }
+        }
+
+        // 注册 impl 固有方法：按 `Type::method` 命名，避免与顶层函数重名冲突
+        for stmt in &program.statements {
+            let Statement::Impl(imp) = stmt else { continue };
+            for m in &imp.methods {
+                let key = format!("{}::{}", imp.type_name, m.name);
+                let fid = self.register_named_function(&key, m)?;
+                self.methods.insert(key.clone(), fid);
+                self.method_types
+                    .entry(m.name.clone())
+                    .or_default()
+                    .push(imp.type_name.clone());
+                self.self_types
+                    .insert(key, Type::Named(imp.type_name.clone(), Vec::new()));
+            }
+        }
+
+        // 返回 Math::sqrt 位模式的函数：print 端要用 tag=2 还原小数
+        for stmt in &program.statements {
+            match stmt {
+                Statement::Fn(f) => self.note_float_bit_returns(&f.name.clone(), f),
+                Statement::Export(export) => {
+                    if let ExportItem::Fn(f) = &export.item {
+                        self.note_float_bit_returns(&f.name.clone(), f);
+                    }
+                }
+                Statement::Impl(imp) => {
+                    for m in &imp.methods {
+                        let key = format!("{}::{}", imp.type_name, m.name);
+                        self.note_float_bit_returns(&key, m);
+                    }
+                }
+                _ => {}
+            }
+        }
+
         // 查找 main 函数索引
         let main_idx = self.module.functions.iter().position(|f| f.name == "main");
 
@@ -70,34 +127,47 @@ impl IrGenerator {
 
         self.module.entry_point = FuncId(main_idx.unwrap_or(self.module.functions.len() - 1));
 
-        // Generate IR for ALL functions
-        let func_defs: Vec<(usize, FnDef)> = program
-            .statements
-            .iter()
-            .filter_map(|stmt| match stmt {
+        // Generate IR for ALL functions（含 impl 方法）
+        let mut func_defs: Vec<(usize, FnDef)> = Vec::new();
+        for stmt in &program.statements {
+            match stmt {
                 Statement::Fn(f) => {
-                    let idx = self
+                    if let Some(idx) = self
                         .module
                         .functions
                         .iter()
-                        .position(|ir_f| ir_f.name == f.name);
-                    idx.map(|i| (i, f.clone()))
+                        .position(|ir_f| ir_f.name == f.name)
+                    {
+                        func_defs.push((idx, f.clone()));
+                    }
                 }
                 Statement::Export(export) => {
-                    if let ExportItem::Fn(f) = &export.item {
-                        let idx = self
+                    if let ExportItem::Fn(f) = &export.item
+                        && let Some(idx) = self
                             .module
                             .functions
                             .iter()
-                            .position(|ir_f| ir_f.name == f.name);
-                        idx.map(|i| (i, f.clone()))
-                    } else {
-                        None
+                            .position(|ir_f| ir_f.name == f.name)
+                    {
+                        func_defs.push((idx, f.clone()));
                     }
                 }
-                _ => None,
-            })
-            .collect();
+                Statement::Impl(imp) => {
+                    for m in &imp.methods {
+                        let key = format!("{}::{}", imp.type_name, m.name);
+                        if let Some(idx) = self
+                            .module
+                            .functions
+                            .iter()
+                            .position(|ir_f| ir_f.name == key)
+                        {
+                            func_defs.push((idx, m.clone()));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
 
         for (idx, func_def) in func_defs {
             self.current_func = Some(idx);
@@ -105,19 +175,53 @@ impl IrGenerator {
             self.local_types.clear();
             self.source_types.clear();
             self.label_map.clear();
+            // impl 方法：self 的源级类型
+            let fn_name = self.module.functions[idx].name.clone();
+            if let Some(ty) = self.self_types.get(&fn_name) {
+                self.source_types.insert("self".to_string(), ty.clone());
+            }
             self.generate_function_body(&func_def)?;
         }
 
         Ok(self.module.clone())
     }
 
+    /// 函数返回值是 Math::sqrt 的 F64 位模式时记下（print 需要 tag=2 还原小数）
+    fn note_float_bit_returns(&mut self, ir_name: &str, f: &FnDef) {
+        if !matches!(f.return_type, Some(Type::Number)) {
+            return;
+        }
+        let is_sqrt = f.body.statements.iter().any(|s| match s {
+            Statement::Return(r) => r.value.as_ref().is_some_and(|e| self.expr_is_sqrt_call(e)),
+            Statement::Expr(e) => self.expr_is_sqrt_call(&e.expr),
+            _ => false,
+        });
+        if is_sqrt {
+            self.float_bit_returns.insert(ir_name.to_string());
+        }
+    }
+
+    fn expr_is_sqrt_call(&self, expr: &Expression) -> bool {
+        matches!(expr, Expression::Call(call)
+            if call.object.is_none() && call.callee == "Math::sqrt")
+    }
+
     fn register_function(&mut self, f: &FnDef) -> Result<FuncId, XuloError> {
+        self.register_named_function(&f.name.clone(), f)
+    }
+
+    /// 以指定的 IR 名注册函数（impl 方法用 `Type::method` 作名）
+    fn register_named_function(&mut self, name: &str, f: &FnDef) -> Result<FuncId, XuloError> {
         let params: Vec<(LocalId, IrType)> = f
             .params
             .iter()
             .enumerate()
             .map(|(i, p)| {
-                let ty = self.type_to_ir(p.type_annotation.as_ref());
+                let mut ty = self.type_to_ir(p.type_annotation.as_ref());
+                // 形参不允许 Void（self 等无注解参数按槽位处理）
+                if matches!(ty, IrType::Void) {
+                    ty = IrType::I64;
+                }
                 (LocalId(i), ty)
             })
             .collect();
@@ -130,9 +234,9 @@ impl IrGenerator {
 
         // 保存 AST 返回类型注解（用于泛型函数推断）
         self.func_return_types
-            .insert(f.name.clone(), f.return_type.clone());
+            .insert(name.to_string(), f.return_type.clone());
 
-        let func = IrFunction::new(f.name.clone(), params, return_type);
+        let func = IrFunction::new(name.to_string(), params, return_type);
         Ok(self.module.add_function(func))
     }
 
@@ -302,46 +406,6 @@ impl IrGenerator {
     }
 
     /// 检查操作数是否是数组类型（通过源级类型推断和指令分析）
-    fn is_array_operand(&self, operand: &Operand, func_idx: usize) -> bool {
-        match operand {
-            Operand::Local(local_id) => {
-                // 从 source_types 查找变量名
-                for (name, lid) in &self.locals {
-                    if lid == local_id
-                        && let Some(src_ty) = self.source_types.get(name)
-                    {
-                        return matches!(src_ty, Type::List(_));
-                    }
-                }
-                // 检查是否是 NewArray 指令的结果
-                let func = &self.module.functions[func_idx];
-                for instr in &func.instructions {
-                    match instr {
-                        Instruction::NewArray { dst, .. } if dst == local_id => return true,
-                        Instruction::RuntimeCall {
-                            dst: Some(d),
-                            func: RuntimeFn::ArrayConcat,
-                            ..
-                        } if d == local_id => return true,
-                        Instruction::RuntimeCall {
-                            dst: Some(d),
-                            func: RuntimeFn::ArrayPush,
-                            ..
-                        } if d == local_id => return true,
-                        Instruction::RuntimeCall {
-                            dst: Some(d),
-                            func: RuntimeFn::AllocArray,
-                            ..
-                        } if d == local_id => return true,
-                        _ => {}
-                    }
-                }
-                false
-            }
-            _ => false,
-        }
-    }
-
     /// 检查表达式是否产生数组（列表字面量、列表变量、数组拼接等）
     fn is_array_like_expr(&self, expr: &Expression) -> bool {
         match expr {
@@ -422,25 +486,49 @@ impl IrGenerator {
                     if let (_, Some(Type::List(_))) = (&left_ty, &right_ty) {
                         return right_ty;
                     }
+                    // 字符串拼接（模板字面量 desugar 成 +）结果是字符串
+                    if left_ty == Some(Type::String) || right_ty == Some(Type::String) {
+                        return Some(Type::String);
+                    }
                 }
                 None
             }
             Expression::Identifier { name, .. } => self.source_types.get(name).cloned(),
             Expression::Call(call) => {
-                // 查找被调用函数的返回类型
-                for func in &self.module.functions {
-                    if func.name == call.callee {
-                        // 返回类型为 Pointer 的可能是 array/object
-                        // 这里无法精确判断，返回 None 让调用方处理
-                        break;
+                if call.object.is_none() {
+                    if call.callee == "str" {
+                        return Some(Type::String);
+                    }
+                    // 结构体构造：Point(x: 1) -> Point
+                    if self.structs.contains_key(&call.callee) {
+                        return Some(Type::Named(call.callee.clone(), Vec::new()));
                     }
                 }
-                None
+                // 方法调用用 `Type::method` 作键；否则用函数名
+                let key = if let Some(recv) = &call.object
+                    && let Some(recv_ty) = self.struct_name_of_expr(recv)
+                    && let Some(method) = call.method.as_deref()
+                {
+                    format!("{}::{}", recv_ty, method)
+                } else {
+                    call.callee.clone()
+                };
+                self.func_return_types.get(&key).cloned().flatten()
             }
             Expression::If(if_expr) => {
                 // 取 then 分支的类型
                 if let Some(Statement::Expr(e)) = if_expr.then_branch.statements.last() {
                     return self.infer_source_type_from_expr(&e.expr);
+                }
+                None
+            }
+            Expression::Member(member) => {
+                // 结构体字段类型
+                if let Some(recv_ty) = self.struct_name_of_expr(&member.object)
+                    && let Some(fields) = self.structs.get(&recv_ty)
+                    && let Some(field) = fields.iter().find(|f| f.name == member.property)
+                {
+                    return Some(field.type_.clone());
                 }
                 None
             }
@@ -512,6 +600,10 @@ impl IrGenerator {
                             || self.is_array_like_expr(&binop.right)
                         {
                             3 // array
+                        } else if self.is_string_like(&binop.left)
+                            || self.is_string_like(&binop.right)
+                        {
+                            0 // string（模板/字符串拼接）
                         } else if self.has_float_operand(&binop.left)
                             || self.has_float_operand(&binop.right)
                         {
@@ -558,8 +650,29 @@ impl IrGenerator {
                 }
             },
             Expression::Call(call) => {
+                // 方法调用用 `Type::method` 作键查找返回类型注解
+                let key = if call.object.is_some() {
+                    let method = call.method.as_deref().unwrap_or(&call.callee);
+                    match call
+                        .object
+                        .as_ref()
+                        .and_then(|o| self.struct_name_of_expr(o))
+                    {
+                        Some(ty) => format!("{}::{}", ty, method),
+                        None => method.to_string(),
+                    }
+                } else {
+                    call.callee.clone()
+                };
+                // str() 产出字符串；Math::sqrt 与其实现按 F64 位模式返回
+                if key == "str" {
+                    return 0;
+                }
+                if key == "Math::sqrt" || self.float_bit_returns.contains(&key) {
+                    return 2;
+                }
                 // 优先使用 AST 返回类型注解推断 tag
-                if let Some(Some(ast_ret)) = self.func_return_types.get(&call.callee) {
+                if let Some(Some(ast_ret)) = self.func_return_types.get(&key) {
                     match ast_ret {
                         Type::String => 0,
                         Type::Number => 1,
@@ -575,11 +688,7 @@ impl IrGenerator {
                     }
                 } else {
                     // 退化到 IR 类型
-                    if let Some(func_idx) = self
-                        .module
-                        .functions
-                        .iter()
-                        .position(|f| f.name == call.callee)
+                    if let Some(func_idx) = self.module.functions.iter().position(|f| f.name == key)
                     {
                         match self.module.functions[func_idx].return_type {
                             IrType::I64 => 1,
@@ -596,8 +705,27 @@ impl IrGenerator {
                     }
                 }
             }
+            Expression::Nullish(nullish) => self.determine_element_tag(&nullish.right),
             Expression::Index(_) => -1, // 数组元素类型未知，运行时自动检测
-            Expression::Member(_) => -1, // 对象字段类型未知，运行时自动检测
+            Expression::Member(member) => {
+                // 结构体字段类型已知
+                if let Some(recv_ty) = self.struct_name_of_expr(&member.object)
+                    && let Some(fields) = self.structs.get(&recv_ty)
+                    && let Some(field) = fields.iter().find(|f| f.name == member.property)
+                {
+                    return match &field.type_ {
+                        Type::String => 0,
+                        Type::Number => 1,
+                        Type::Boolean => 5,
+                        Type::Null => 6,
+                        Type::List(_) => 3,
+                        Type::Object | Type::ObjectType(_) => 4,
+                        // 可选字段可能是 null，运行时自动检测
+                        _ => -1,
+                    };
+                }
+                -1 // 对象字段类型未知，运行时自动检测
+            }
             _ => 1,
         }
     }
@@ -613,6 +741,16 @@ impl IrGenerator {
             }
             _ => false,
         }
+    }
+
+    /// 表达式是否是字符串（用于 `+` 拼接与 str() 直通的 tag 判断）
+    fn is_string_like(&self, expr: &Expression) -> bool {
+        if matches!(self.infer_source_type_from_expr(expr), Some(Type::String)) {
+            return true;
+        }
+        // str() 的返回值
+        matches!(expr, Expression::Call(call)
+            if call.object.is_none() && call.callee == "str")
     }
 
     fn generate_return(&mut self, r: &ReturnStmt) -> Result<(), XuloError> {
@@ -649,6 +787,7 @@ impl IrGenerator {
             Expression::Unary(unary) => self.generate_unary(unary),
             Expression::Call(call) => self.generate_call(call),
             Expression::If(if_expr) => self.generate_if_expr(if_expr),
+            Expression::Nullish(nullish) => self.generate_nullish(nullish),
             Expression::Member(member) => self.generate_member_access(member),
             Expression::Index(index) => self.generate_index(index),
             Expression::Panic { expr, .. } => {
@@ -750,40 +889,35 @@ impl IrGenerator {
         let left = self.generate_expression(&binop.left)?;
         let right = self.generate_expression(&binop.right)?;
 
-        // Check if this is a string concatenation or array concatenation
-        let left_ty = self.infer_type_from_operand(&left, func_idx);
-        let right_ty = self.infer_type_from_operand(&right, func_idx);
-        let is_pointer_op = matches!(binop.operator, BinaryOperator::Add)
-            && (matches!(left_ty, IrType::Pointer) || matches!(right_ty, IrType::Pointer));
+        // String/array concatenation is decided by source-level types, not the
+        // IR slot type: struct fields are Pointer slots that hold numbers, so
+        // `self.x + dx` must lower to integer Add, not StringConcat.
+        if matches!(binop.operator, BinaryOperator::Add)
+            && (self.is_string_like(&binop.left) || self.is_string_like(&binop.right))
+        {
+            let local = self.module.functions[func_idx].add_local(IrType::Pointer);
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::RuntimeCall {
+                    dst: Some(local),
+                    func: RuntimeFn::StringConcat,
+                    args: vec![left, right],
+                });
+            return Ok(Operand::Local(local));
+        }
 
-        if is_pointer_op {
-            // 检查是否是数组拼接
-            let left_is_array = self.is_array_operand(&left, func_idx);
-            let right_is_array = self.is_array_operand(&right, func_idx);
-
-            if left_is_array || right_is_array {
-                // Array concatenation: call runtime function
-                let local = self.module.functions[func_idx].add_local(IrType::Pointer);
-                self.module.functions[func_idx]
-                    .instructions
-                    .push(Instruction::RuntimeCall {
-                        dst: Some(local),
-                        func: RuntimeFn::ArrayConcat,
-                        args: vec![left, right],
-                    });
-                return Ok(Operand::Local(local));
-            } else {
-                // String concatenation: call runtime function
-                let local = self.module.functions[func_idx].add_local(IrType::Pointer);
-                self.module.functions[func_idx]
-                    .instructions
-                    .push(Instruction::RuntimeCall {
-                        dst: Some(local),
-                        func: RuntimeFn::StringConcat,
-                        args: vec![left, right],
-                    });
-                return Ok(Operand::Local(local));
-            }
+        if matches!(binop.operator, BinaryOperator::Add)
+            && (self.is_array_like_expr(&binop.left) || self.is_array_like_expr(&binop.right))
+        {
+            let local = self.module.functions[func_idx].add_local(IrType::Pointer);
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::RuntimeCall {
+                    dst: Some(local),
+                    func: RuntimeFn::ArrayConcat,
+                    args: vec![left, right],
+                });
+            return Ok(Operand::Local(local));
         }
 
         let ty = match binop.operator {
@@ -955,6 +1089,23 @@ impl IrGenerator {
 
     fn generate_call(&mut self, call: &Call) -> Result<Operand, XuloError> {
         let func_idx = self.current_func.unwrap();
+
+        // 多参数 print：逐参数 stringify 后用空格拼接（与解释器 native_print 一致）
+        if call.object.is_none()
+            && matches!(call.callee.as_str(), "print" | "println")
+            && call.arguments.len() > 1
+        {
+            return self.generate_print_multi(call);
+        }
+
+        // 结构体构造：Point(x: 1) -> NewObject
+        if call.object.is_none()
+            && call.method.is_none()
+            && let Some(fields) = self.structs.get(&call.callee).cloned()
+        {
+            return self.generate_struct_ctor(call, &fields);
+        }
+
         let mut args = Vec::new();
 
         // 对于方法调用，先生成 receiver 并作为第一个参数
@@ -965,6 +1116,20 @@ impl IrGenerator {
 
         for arg in &call.arguments {
             args.push(self.generate_expression(&arg.value)?);
+        }
+
+        // str(字符串) 直通：模板 desugar 会对字符串也包一层 str()
+        if call.object.is_none()
+            && call.callee == "str"
+            && args.len() == 1
+            && self.determine_element_tag(&call.arguments[0].value) == 0
+        {
+            return Ok(args.swap_remove(0));
+        }
+
+        // Math::sqrt：开方后以 F64 位模式放进 I64 槽（打印端 tag=2 还原）
+        if call.object.is_none() && call.callee == "Math::sqrt" {
+            return self.generate_sqrt(&args);
         }
 
         // 检查是否是内置函数或内置方法
@@ -1000,7 +1165,19 @@ impl IrGenerator {
                     Some(RuntimeFn::PrintValue)
                 }
                 "panic" => Some(RuntimeFn::Panic),
-                "str" => Some(RuntimeFn::ToString),
+                "str" => {
+                    // 带标签转换：整数 0 不能被当成 null（旧 xulo_to_string 是 tag-blind 的）
+                    if args.is_empty() {
+                        args.push(Operand::Const(IrValue::I64(0)));
+                    }
+                    let tag = if let Some(arg) = call.arguments.first() {
+                        self.determine_element_tag(&arg.value)
+                    } else {
+                        6 // null
+                    };
+                    args.push(Operand::Const(IrValue::I64(tag)));
+                    Some(RuntimeFn::Stringify)
+                }
                 _ => None,
             }
         };
@@ -1039,23 +1216,15 @@ impl IrGenerator {
                 Ok(Operand::Local(local))
             }
         } else {
-            // 查找用户定义的函数
-            let callee_name = if call.object.is_some() {
-                call.method.as_deref().unwrap_or(&call.callee)
-            } else {
-                &call.callee
-            };
-            let callee_idx = self
-                .module
-                .functions
-                .iter()
-                .position(|f| f.name == callee_name)
-                .ok_or_else(|| {
-                    XuloError::new(
-                        ErrorKind::Semantic,
-                        format!("undefined function: {}", callee_name),
-                    )
-                })?;
+            // 用户定义函数 / impl 方法
+            let callee_idx = self.resolve_callee(call).ok_or_else(|| {
+                let name = if call.object.is_some() {
+                    call.method.as_deref().unwrap_or(&call.callee).to_string()
+                } else {
+                    call.callee.clone()
+                };
+                XuloError::new(ErrorKind::Semantic, format!("undefined function: {}", name))
+            })?;
             let ret_type = self.module.functions[callee_idx].return_type.clone();
             let local = self.module.functions[func_idx].add_local(ret_type);
             self.module.functions[func_idx]
@@ -1067,6 +1236,233 @@ impl IrGenerator {
                 });
             Ok(Operand::Local(local))
         }
+    }
+
+    /// 解析被调函数：方法分派优先按 `Type::method`，退化到方法名唯一分派与顶层函数
+    fn resolve_callee(&self, call: &Call) -> Option<usize> {
+        if let Some(obj) = &call.object {
+            let method = call.method.as_deref().unwrap_or(&call.callee);
+            // 1) receiver 静态类型 -> Type::method
+            if let Some(recv_ty) = self.struct_name_of_expr(obj)
+                && let Some(&fid) = self.methods.get(&format!("{}::{}", recv_ty, method))
+            {
+                return Some(fid.0);
+            }
+            // 2) 方法名唯一分派
+            if let Some(types) = self.method_types.get(method)
+                && types.len() == 1
+                && let Some(&fid) = self.methods.get(&format!("{}::{}", types[0], method))
+            {
+                return Some(fid.0);
+            }
+            // 3) 裸名顶层函数
+            self.module.functions.iter().position(|f| f.name == method)
+        } else {
+            self.module
+                .functions
+                .iter()
+                .position(|f| f.name == call.callee)
+        }
+    }
+
+    /// 从表达式取结构体（Named）类型名
+    fn struct_name_of_expr(&self, expr: &Expression) -> Option<String> {
+        match self.infer_source_type_from_expr(expr) {
+            Some(Type::Named(name, _)) => Some(name),
+            _ => None,
+        }
+    }
+
+    /// 结构体构造：按字段顺序 NewObject；命名参数、位置参数、默认值、缺省 null
+    fn generate_struct_ctor(
+        &mut self,
+        call: &Call,
+        fields: &[StructField],
+    ) -> Result<Operand, XuloError> {
+        let func_idx = self.current_func.unwrap();
+        let mut used = vec![false; call.arguments.len()];
+        let mut field_ops: Vec<(String, Operand, i64)> = Vec::new();
+
+        for field in fields {
+            // 命名参数优先，其次按位置顺序；都没有则用默认值，最后退化到 null
+            let named = call
+                .arguments
+                .iter()
+                .enumerate()
+                .position(|(i, a)| !used[i] && a.name.as_deref() == Some(field.name.as_str()));
+            let positional = call
+                .arguments
+                .iter()
+                .enumerate()
+                .position(|(i, a)| !used[i] && a.name.is_none());
+
+            if let Some(i) = named.or(positional) {
+                used[i] = true;
+                let arg = &call.arguments[i];
+                let tag = self.determine_element_tag(&arg.value);
+                let op = self.generate_expression(&arg.value)?;
+                field_ops.push((field.name.clone(), op, tag));
+            } else if let Some(default) = &field.default {
+                let tag = self.determine_element_tag(default);
+                let op = self.generate_expression(default)?;
+                field_ops.push((field.name.clone(), op, tag));
+            } else {
+                // 可选字段缺省 -> null
+                let local = self.module.functions[func_idx].add_local(IrType::Pointer);
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::Const {
+                        dst: local,
+                        value: IrValue::Null,
+                    });
+                field_ops.push((field.name.clone(), Operand::Local(local), 6));
+            }
+        }
+
+        let local = self.module.functions[func_idx].add_local(IrType::Pointer);
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::NewObject {
+                dst: local,
+                fields: field_ops,
+            });
+        Ok(Operand::Local(local))
+    }
+
+    /// Math::sqrt：F64 sqrt，结果按位放进 I64 槽（打印端配合 tag=2 还原小数）
+    fn generate_sqrt(&mut self, args: &[Operand]) -> Result<Operand, XuloError> {
+        let func_idx = self.current_func.unwrap();
+        let src = args
+            .first()
+            .cloned()
+            .unwrap_or(Operand::Const(IrValue::I64(0)));
+        let local = self.module.functions[func_idx].add_local(IrType::I64);
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Sqrt { dst: local, src });
+        Ok(Operand::Local(local))
+    }
+
+    /// 多参数 print：每个参数 xulo_stringify(value, tag) 后用 " " 折叠拼接，最终 PrintValue
+    fn generate_print_multi(&mut self, call: &Call) -> Result<Operand, XuloError> {
+        let func_idx = self.current_func.unwrap();
+
+        // 分隔符 " " 先物化进 local（Const String 不能直接作 RuntimeCall 实参）
+        let space_local = self.module.functions[func_idx].add_local(IrType::Pointer);
+        let space_idx = self.module.add_string(" ".to_string());
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Const {
+                dst: space_local,
+                value: IrValue::String(space_idx),
+            });
+
+        let mut joined: Option<Operand> = None;
+        for arg in &call.arguments {
+            let v = self.generate_expression(&arg.value)?;
+            let tag = self.determine_element_tag(&arg.value);
+            let s_local = self.module.functions[func_idx].add_local(IrType::Pointer);
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::RuntimeCall {
+                    dst: Some(s_local),
+                    func: RuntimeFn::Stringify,
+                    args: vec![v, Operand::Const(IrValue::I64(tag))],
+                });
+            let next = Operand::Local(s_local);
+            joined = Some(match joined {
+                None => next,
+                Some(prev) => {
+                    let cat = self.module.functions[func_idx].add_local(IrType::Pointer);
+                    self.module.functions[func_idx]
+                        .instructions
+                        .push(Instruction::RuntimeCall {
+                            dst: Some(cat),
+                            func: RuntimeFn::StringConcat,
+                            args: vec![prev, Operand::Local(space_local)],
+                        });
+                    let cat2 = self.module.functions[func_idx].add_local(IrType::Pointer);
+                    self.module.functions[func_idx]
+                        .instructions
+                        .push(Instruction::RuntimeCall {
+                            dst: Some(cat2),
+                            func: RuntimeFn::StringConcat,
+                            args: vec![Operand::Local(cat), next],
+                        });
+                    Operand::Local(cat2)
+                }
+            });
+        }
+
+        let acc = joined.unwrap_or(Operand::Const(IrValue::String(space_idx)));
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::RuntimeCall {
+                dst: None,
+                func: RuntimeFn::PrintValue,
+                args: vec![acc, Operand::Const(IrValue::I64(0))],
+            });
+        let local = self.module.functions[func_idx].add_local(IrType::Pointer);
+        Ok(Operand::Local(local))
+    }
+
+    /// `a ?? b`：a 非 null 取 a，否则取 b（null 在运行时表示为 0）
+    fn generate_nullish(&mut self, nullish: &NullishExpr) -> Result<Operand, XuloError> {
+        let func_idx = self.current_func.unwrap();
+        let left = self.generate_expression(&nullish.left)?;
+        let right = self.generate_expression(&nullish.right)?;
+
+        let keep_label = self.module.functions[func_idx].add_label();
+        let alt_label = self.module.functions[func_idx].add_label();
+        let end_label = self.module.functions[func_idx].add_label();
+        let cond = self.module.functions[func_idx].add_local(IrType::Bool);
+        let result = self.module.functions[func_idx].add_local(IrType::Pointer);
+
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Neq {
+                dst: cond,
+                left: left.clone(),
+                right: Operand::Const(IrValue::Null),
+            });
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Branch {
+                condition: Operand::Local(cond),
+                then_label: keep_label,
+                else_label: alt_label,
+            });
+
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Label(keep_label));
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::SetLocal {
+                dst: result,
+                src: left,
+            });
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Jump(end_label));
+
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Label(alt_label));
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::SetLocal {
+                dst: result,
+                src: right,
+            });
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Jump(end_label));
+
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Label(end_label));
+        Ok(Operand::Local(result))
     }
 
     fn generate_if(&mut self, if_expr: &IfExpr) -> Result<(), XuloError> {
