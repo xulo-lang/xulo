@@ -68,6 +68,16 @@ pub enum RuntimeFn {
     ArrayConcat,
     ObjectGet,
     ObjectSet,
+    /// 枚举值：分配 + payload 写入 + match 的 tag/payload 读取
+    AllocEnum,
+    EnumSet,
+    EnumVariant,
+    EnumGet,
+    EnumGetTag,
+    /// 动态数值转 f64（match 绑定等标签未知的操作数）
+    AsF64,
+    /// 注册 f64 位模式，供打印端的自动检测（tag=-1）还原小数
+    RegisterFloat,
     /// 命名空间内建（`std::math::*` / `std::time::*`）：携带已映射好的运行时符号名
     Intrinsic(&'static str),
 }

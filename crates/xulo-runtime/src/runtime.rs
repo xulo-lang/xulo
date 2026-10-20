@@ -18,8 +18,20 @@ pub struct XuloArray {
     pub tags: Vec<i64>,
 }
 
+/// xulo 枚举值：变体序号 + 供打印的名字 + payload 槽（值与类型标签）。
+/// 名字指针指向编译产物里的静态字符串，生命周期与进程相同。
+#[repr(C)]
+pub struct XuloEnum {
+    pub variant: i64,
+    pub variant_name: *const c_char,
+    pub type_name: *const c_char,
+    pub elements: Vec<i64>,
+    pub tags: Vec<i64>,
+}
+
 thread_local! {
     static OBJECTS: RefCell<Vec<*mut XuloObject>> = const { RefCell::new(Vec::new()) };
+    static ENUMS: RefCell<Vec<*mut XuloEnum>> = const { RefCell::new(Vec::new()) };
     static ARRAYS: RefCell<Vec<*mut XuloArray>> = const { RefCell::new(Vec::new()) };
     static STRINGS: RefCell<Vec<CString>> = const { RefCell::new(Vec::new()) };
     static FLOATS: RefCell<Vec<i64>> = const { RefCell::new(Vec::new()) };
@@ -160,6 +172,42 @@ fn format_value(value: i64, tag: i64) -> String {
         }
         5 => format!("{}", value != 0),
         6 => "null".to_string(),
+        7 => {
+            let e = value as *const XuloEnum;
+            unsafe {
+                if e.is_null() {
+                    "null".to_string()
+                } else {
+                    let cstr = |p: *const c_char| {
+                        if p.is_null() {
+                            String::new()
+                        } else {
+                            CStr::from_ptr(p).to_str().unwrap_or("").to_string()
+                        }
+                    };
+                    let ty = cstr((*e).type_name);
+                    let vn = cstr((*e).variant_name);
+                    let elements = &(*e).elements;
+                    let tags = &(*e).tags;
+                    if elements.is_empty() {
+                        format!("{}.{}", ty, vn)
+                    } else if elements.len() == 1 {
+                        let t = if tags.is_empty() { 1 } else { tags[0] };
+                        format!("{}.{}({})", ty, vn, format_value(elements[0], t))
+                    } else {
+                        let strs: Vec<String> = elements
+                            .iter()
+                            .enumerate()
+                            .map(|(i, v)| {
+                                let t = if i < tags.len() { tags[i] } else { 1 };
+                                format_value(*v, t)
+                            })
+                            .collect();
+                        format!("{}.{}([{}])", ty, vn, strs.join(", "))
+                    }
+                }
+            }
+        }
         _ => format!("{}", value),
     }
 }
@@ -224,6 +272,17 @@ pub extern "C" fn xulo_detect_tag(value: i64) -> i64 {
         return 4;
     }
 
+    // 检查是否是已知枚举值
+    found = ENUMS.with(|enums| {
+        enums
+            .borrow()
+            .iter()
+            .any(|e| std::ptr::eq(*e as *const c_char, ptr))
+    });
+    if found {
+        return 7;
+    }
+
     // 检查是否是已知浮点数
     found = FLOATS.with(|floats| floats.borrow().contains(&value));
     if found {
@@ -277,6 +336,93 @@ pub extern "C" fn xulo_alloc_array(size: usize) -> *mut XuloArray {
     });
 
     ptr
+}
+
+/// 分配枚举值（名字指针借用编译产物的静态字符串，不复制）
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_alloc_enum(
+    type_name: *const c_char,
+    variant_name: *const c_char,
+    variant: i64,
+    len: usize,
+) -> *mut XuloEnum {
+    let e = Box::new(XuloEnum {
+        variant,
+        variant_name,
+        type_name,
+        elements: Vec::with_capacity(len),
+        tags: Vec::with_capacity(len),
+    });
+    let ptr = Box::into_raw(e);
+    ENUMS.with(|enums| {
+        enums.borrow_mut().push(ptr);
+    });
+    ptr
+}
+
+/// 写入枚举 payload 槽（值 + 类型标签）
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_enum_set(e: *mut XuloEnum, index: usize, value: i64, tag: i64) {
+    unsafe {
+        if !e.is_null() {
+            (*e).elements.push(value);
+            (*e).tags.push(tag);
+            let _ = index; // 槽位按写入顺序即索引，保留参数对齐调用约定
+        }
+    }
+}
+
+/// 枚举值的变体序号（match 的 tag 测试）
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_enum_variant(e: *const XuloEnum) -> i64 {
+    unsafe { if e.is_null() { -1 } else { (*e).variant } }
+}
+
+/// 读取枚举 payload 值
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_enum_get(e: *const XuloEnum, index: usize) -> i64 {
+    unsafe {
+        if e.is_null() || index >= (*e).elements.len() {
+            0
+        } else {
+            (&(*e).elements)[index]
+        }
+    }
+}
+
+/// 读取枚举 payload 的类型标签
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_enum_get_tag(e: *const XuloEnum, index: usize) -> i64 {
+    unsafe {
+        if e.is_null() || index >= (*e).tags.len() {
+            1
+        } else {
+            (&(*e).tags)[index]
+        }
+    }
+}
+
+/// 动态数值转 f64：tag=2 按位模式还原，其余按数值转换。
+/// 运行时算术的操作数标签在编译期未知（match 绑定等），统一走这里。
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_as_f64(value: i64, tag: i64) -> f64 {
+    match tag {
+        2 => f64::from_bits(value as u64),
+        5 => {
+            if value != 0 {
+                1.0
+            } else {
+                0.0
+            }
+        }
+        6 => 0.0,
+        _ => value as f64,
+    }
 }
 
 /// 字符串连接
@@ -511,6 +657,14 @@ pub extern "C" fn xulo_cleanup() {
 
     ARRAYS.with(|arrays| {
         for ptr in arrays.borrow_mut().drain(..) {
+            unsafe {
+                let _ = Box::from_raw(ptr);
+            }
+        }
+    });
+
+    ENUMS.with(|enums| {
+        for ptr in enums.borrow_mut().drain(..) {
             unsafe {
                 let _ = Box::from_raw(ptr);
             }

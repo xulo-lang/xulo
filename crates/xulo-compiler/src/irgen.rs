@@ -26,6 +26,12 @@ pub struct IrGenerator {
     self_types: HashMap<String, Type>,
     /// 返回值以 F64 位模式穿过整数签名的函数（Math::sqrt 落点，print 需要 tag=2）
     float_bit_returns: HashSet<String>,
+    /// 枚举定义：类型名 -> 按声明序的变体名（序号即 match/构造的 tag）。
+    /// 内置 `Result` 预置，模块自己的 `enum Result` 覆盖之。
+    enums: HashMap<String, Vec<String>>,
+    /// match 绑定名 -> 运行时标签操作数（payload 是 int 还是 f64 位模式，
+    /// 编译期不知道，构造侧的 tag 在绑定时摘出来伴随使用）
+    dyn_tag_of: HashMap<String, Operand>,
 }
 
 struct LoopContext {
@@ -55,6 +61,8 @@ impl IrGenerator {
             method_types: HashMap::new(),
             self_types: HashMap::new(),
             float_bit_returns: HashSet::new(),
+            enums: HashMap::new(),
+            dyn_tag_of: HashMap::new(),
         }
     }
 
@@ -78,6 +86,32 @@ impl IrGenerator {
         for stmt in &program.statements {
             if let Statement::Struct(def) = stmt {
                 self.structs.insert(def.name.clone(), def.fields.clone());
+            }
+        }
+
+        // 枚举定义：内置 Result 预置，模块自己的 enum 覆盖同名（spec：
+        // Result 既是 prelude 类型，也是程序可以重定义的名字）
+        self.enums.insert(
+            "Result".to_string(),
+            vec!["Ok".to_string(), "Err".to_string()],
+        );
+        for stmt in &program.statements {
+            match stmt {
+                Statement::Enum(def) => {
+                    self.enums.insert(
+                        def.name.clone(),
+                        def.variants.iter().map(|v| v.name.clone()).collect(),
+                    );
+                }
+                Statement::Export(export) => {
+                    if let ExportItem::Enum(def) = &export.item {
+                        self.enums.insert(
+                            def.name.clone(),
+                            def.variants.iter().map(|v| v.name.clone()).collect(),
+                        );
+                    }
+                }
+                _ => {}
             }
         }
 
@@ -242,6 +276,7 @@ impl IrGenerator {
 
     fn generate_function_body(&mut self, f: &FnDef) -> Result<(), XuloError> {
         let func_idx = self.current_func.unwrap();
+        self.dyn_tag_of.clear();
 
         // 使用 register_function 中已创建的参数 LocalId
         for (i, param) in f.params.iter().enumerate() {
@@ -282,6 +317,9 @@ impl IrGenerator {
                 if !ret_type.is_void() {
                     if let Some(Statement::Expr(expr_stmt)) = f.body.statements.last() {
                         let operand = self.generate_expression(&expr_stmt.expr)?;
+                        if self.determine_element_tag(&expr_stmt.expr) == 2 {
+                            self.emit_register_float(operand.clone());
+                        }
                         self.module.functions[func_idx]
                             .instructions
                             .push(Instruction::Return(Some(operand)));
@@ -361,7 +399,18 @@ impl IrGenerator {
 
         // 推断类型
         let ty = if let Some(ann) = &binding.type_annotation {
-            self.type_to_ir(Some(ann))
+            // number 绑定若初始化是 f64（小字面量/浮点运算），槽位用 F64
+            // 承载，打印与后续算术都按小数走
+            if matches!(ann, Type::Number)
+                && binding
+                    .value
+                    .as_ref()
+                    .is_some_and(|e| self.determine_element_tag(e) == 2)
+            {
+                IrType::F64
+            } else {
+                self.type_to_ir(Some(ann))
+            }
         } else {
             // 根据表达式推断类型
             self.infer_type_from_operand(&init_val, func_idx)
@@ -561,6 +610,10 @@ impl IrGenerator {
                 Literal::Object(_) => 4,
             },
             Expression::Identifier { name, .. } => {
+                // match 绑定：payload 标签运行时才知道
+                if self.is_dyn_name(name) {
+                    return -1;
+                }
                 // `use std::math::*` 导入的裸名常量走 F64 槽（tag=2）
                 if Self::bare_math_const(name).is_some() && !self.locals.contains_key(name) {
                     return 2;
@@ -627,7 +680,9 @@ impl IrGenerator {
                             || self.is_string_like(&binop.right)
                         {
                             0 // string（模板/字符串拼接）
-                        } else if self.has_float_operand(&binop.left)
+                        } else if self.expr_is_dyn(&binop.left)
+                            || self.expr_is_dyn(&binop.right)
+                            || self.has_float_operand(&binop.left)
                             || self.has_float_operand(&binop.right)
                         {
                             2
@@ -645,7 +700,10 @@ impl IrGenerator {
                     | BinaryOperator::Xor
                     | BinaryOperator::Shl
                     | BinaryOperator::Shr => {
-                        if self.has_float_operand(&binop.left)
+                        // 动态绑定参与的数值运算走 f64，结果按位模式承载
+                        if self.expr_is_dyn(&binop.left)
+                            || self.expr_is_dyn(&binop.right)
+                            || self.has_float_operand(&binop.left)
                             || self.has_float_operand(&binop.right)
                         {
                             2
@@ -697,11 +755,20 @@ impl IrGenerator {
                 if self.float_bit_returns.contains(&key) {
                     return 2;
                 }
+                // `Enum::Variant(...)` 构造值
+                if call.object.is_none()
+                    && let Some((enum_name, variant)) = key.split_once("::")
+                    && self.enum_variant_index(enum_name, variant).is_some()
+                {
+                    return 7;
+                }
                 // 优先使用 AST 返回类型注解推断 tag
                 if let Some(Some(ast_ret)) = self.func_return_types.get(&key) {
                     match ast_ret {
                         Type::String => 0,
-                        Type::Number => 1,
+                        // number 的返回可能是 f64 位模式（float 结果在返回边界
+                        // 按位打包），交给运行时自动检测
+                        Type::Number => -1,
                         Type::Boolean => 5,
                         Type::Null => 6,
                         Type::List(_) => 3,
@@ -733,6 +800,10 @@ impl IrGenerator {
             }
             // `std::math` 常量（PI/E/TAU/INFINITY/NAN）都是 float
             Expression::EnumRef(e) if e.enum_name == "std::math" => 2,
+            // 其余枚举值（含无 payload 的变体引用）
+            Expression::EnumRef(_) => 7,
+            // match 表达式：分支结果各异，运行时检测
+            Expression::Match(_) => -1,
             Expression::Nullish(nullish) => self.determine_element_tag(&nullish.right),
             Expression::Index(_) => -1, // 数组元素类型未知，运行时自动检测
             Expression::Member(member) => {
@@ -756,6 +827,116 @@ impl IrGenerator {
             }
             _ => 1,
         }
+    }
+
+    /// 名字是否是 match 绑定（payload 标签运行时才知道）
+    fn is_dyn_name(&self, name: &str) -> bool {
+        self.dyn_tag_of.contains_key(name)
+    }
+
+    fn expr_is_dyn(&self, expr: &Expression) -> bool {
+        matches!(expr, Expression::Identifier { name, .. } if self.is_dyn_name(name))
+    }
+
+    /// 动态绑定的操作数经 `xulo_as_f64` 转成 f64 槽；tag 取绑定时摘出的
+    /// companion 槽（构造侧记录的是真实 payload 标签）
+    fn as_f64_operand(&mut self, operand: Operand, name: &str) -> Result<Operand, XuloError> {
+        let Some(tag_op) = self.dyn_tag_of.get(name).cloned() else {
+            return Ok(operand);
+        };
+        let func_idx = self.current_func.unwrap();
+        let local = self.module.functions[func_idx].add_local(IrType::F64);
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::RuntimeCall {
+                dst: Some(local),
+                func: RuntimeFn::AsF64,
+                args: vec![operand, tag_op],
+            });
+        Ok(Operand::Local(local))
+    }
+
+    /// f64 值在按位模式进 I64/Pointer 槽（return / match 结果）前注册位模式，
+    /// 打印端的自动检测（tag=-1）才能还原成小数
+    fn emit_register_float(&mut self, operand: Operand) {
+        let func_idx = self.current_func.unwrap();
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::RuntimeCall {
+                dst: None,
+                func: RuntimeFn::RegisterFloat,
+                args: vec![operand],
+            });
+    }
+
+    /// `Enum::Variant` 的变体序号（声明序）
+    fn enum_variant_index(&self, enum_name: &str, variant: &str) -> Option<usize> {
+        self.enums
+            .get(enum_name)
+            .and_then(|vs| vs.iter().position(|v| v == variant))
+    }
+
+    /// 枚举构造：AllocEnum + 逐 payload 槽 EnumSet（值 + 静态推断的标签）
+    fn generate_enum_construct(
+        &mut self,
+        enum_name: &str,
+        variant: &str,
+        args: &[CallArg],
+    ) -> Result<Operand, XuloError> {
+        let Some(variant_idx) = self.enum_variant_index(enum_name, variant) else {
+            return Err(XuloError::new(
+                ErrorKind::Semantic,
+                format!("undefined variant: {}::{}", enum_name, variant),
+            ));
+        };
+        let func_idx = self.current_func.unwrap();
+        let type_str_local = self.module.functions[func_idx].add_local(IrType::I64);
+        let type_idx = self.module.add_string(enum_name.to_string());
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Const {
+                dst: type_str_local,
+                value: IrValue::String(type_idx),
+            });
+        let variant_str_local = self.module.functions[func_idx].add_local(IrType::I64);
+        let variant_str_idx = self.module.add_string(variant.to_string());
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Const {
+                dst: variant_str_local,
+                value: IrValue::String(variant_str_idx),
+            });
+
+        let dst = self.module.functions[func_idx].add_local(IrType::Pointer);
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::RuntimeCall {
+                dst: Some(dst),
+                func: RuntimeFn::AllocEnum,
+                args: vec![
+                    Operand::Local(type_str_local),
+                    Operand::Local(variant_str_local),
+                    Operand::Const(IrValue::I64(variant_idx as i64)),
+                    Operand::Const(IrValue::I64(args.len() as i64)),
+                ],
+            });
+        for (i, arg) in args.iter().enumerate() {
+            let value = self.generate_expression(&arg.value)?;
+            let tag = self.determine_element_tag(&arg.value);
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::RuntimeCall {
+                    dst: None,
+                    func: RuntimeFn::EnumSet,
+                    args: vec![
+                        Operand::Local(dst),
+                        Operand::Const(IrValue::I64(i as i64)),
+                        value,
+                        Operand::Const(IrValue::I64(tag)),
+                    ],
+                });
+        }
+        Ok(Operand::Local(dst))
     }
 
     fn has_float_operand(&self, expr: &Expression) -> bool {
@@ -786,6 +967,9 @@ impl IrGenerator {
 
         if let Some(value) = &r.value {
             let operand = self.generate_expression(value)?;
+            if self.determine_element_tag(value) == 2 {
+                self.emit_register_float(operand.clone());
+            }
             self.module.functions[func_idx]
                 .instructions
                 .push(Instruction::Return(Some(operand)));
@@ -853,6 +1037,9 @@ impl IrGenerator {
                     });
                 Ok(Operand::Local(local))
             }
+            // 无 payload 的枚举变体引用：`Direction::East`
+            Expression::EnumRef(e) => self.generate_enum_construct(&e.enum_name, &e.variant, &[]),
+            Expression::Match(m) => self.generate_match(m),
             Expression::Panic { expr, .. } => {
                 let value = self.generate_expression(expr)?;
                 let tag = self.determine_element_tag(expr);
@@ -952,6 +1139,37 @@ impl IrGenerator {
         let left = self.generate_expression(&binop.left)?;
         let right = self.generate_expression(&binop.right)?;
 
+        // match 绑定参与的数值运算：payload 的 int/f64 标签运行时才知道，
+        // 两侧先经 xulo_as_f64 归一到 f64
+        let dyn_math = matches!(
+            binop.operator,
+            BinaryOperator::Add
+                | BinaryOperator::Sub
+                | BinaryOperator::Mul
+                | BinaryOperator::Div
+                | BinaryOperator::Lt
+                | BinaryOperator::Gt
+                | BinaryOperator::Lte
+                | BinaryOperator::Gte
+        ) && (self.expr_is_dyn(&binop.left) || self.expr_is_dyn(&binop.right));
+        let (left, right) = if dyn_math {
+            let left = match &binop.left {
+                Expression::Identifier { name, .. } if self.is_dyn_name(name) => {
+                    self.as_f64_operand(left, name)?
+                }
+                _ => left,
+            };
+            let right = match &binop.right {
+                Expression::Identifier { name, .. } if self.is_dyn_name(name) => {
+                    self.as_f64_operand(right, name)?
+                }
+                _ => right,
+            };
+            (left, right)
+        } else {
+            (left, right)
+        };
+
         // String/array concatenation is decided by source-level types, not the
         // IR slot type: struct fields are Pointer slots that hold numbers, so
         // `self.x + dx` must lower to integer Add, not StringConcat.
@@ -987,9 +1205,18 @@ impl IrGenerator {
             BinaryOperator::Add
             | BinaryOperator::Sub
             | BinaryOperator::Mul
-            | BinaryOperator::Div
-            | BinaryOperator::Mod
-            | BinaryOperator::Pow => IrType::I64,
+            | BinaryOperator::Div => {
+                // 任一侧是 f64（小字面量或动态归一后的绑定）→ 结果走 F64 槽
+                if dyn_math
+                    || self.has_float_operand(&binop.left)
+                    || self.has_float_operand(&binop.right)
+                {
+                    IrType::F64
+                } else {
+                    IrType::I64
+                }
+            }
+            BinaryOperator::Mod | BinaryOperator::Pow => IrType::I64,
             _ => IrType::Bool,
         };
 
@@ -1193,6 +1420,15 @@ impl IrGenerator {
             return self.generate_struct_ctor(call, &fields);
         }
 
+        // `Enum::Variant(...)` 构造（语义层已校验；内置 Result 与本模块
+        // 自己声明的 enum 都在这里落地）
+        if call.object.is_none()
+            && let Some((enum_name, variant)) = call.callee.split_once("::")
+            && self.enum_variant_index(enum_name, variant).is_some()
+        {
+            return self.generate_enum_construct(enum_name, variant, &call.arguments);
+        }
+
         let mut args = Vec::new();
 
         // 对于方法调用，先生成 receiver 并作为第一个参数
@@ -1249,9 +1485,17 @@ impl IrGenerator {
                         args.push(Operand::Const(IrValue::I64(0)));
                         args.push(Operand::Const(IrValue::I64(6)));
                     } else {
-                        // 从原始 AST 表达式推断类型标签（而非生成后的 operand）
-                        let tag = self.determine_element_tag(&call.arguments[0].value);
-                        args.push(Operand::Const(IrValue::I64(tag)));
+                        // 从原始 AST 表达式推断类型标签（而非生成后的 operand）；
+                        // match 绑定用伴随的运行时标签槽
+                        let arg_expr = &call.arguments[0].value;
+                        if let Expression::Identifier { name, .. } = arg_expr
+                            && let Some(tag_op) = self.dyn_tag_of.get(name).cloned()
+                        {
+                            args.push(tag_op);
+                        } else {
+                            let tag = self.determine_element_tag(arg_expr);
+                            args.push(Operand::Const(IrValue::I64(tag)));
+                        }
                     }
                     Some(RuntimeFn::PrintValue)
                 }
@@ -1261,12 +1505,18 @@ impl IrGenerator {
                     if args.is_empty() {
                         args.push(Operand::Const(IrValue::I64(0)));
                     }
-                    let tag = if let Some(arg) = call.arguments.first() {
-                        self.determine_element_tag(&arg.value)
+                    let tag_op = if let Some(arg) = call.arguments.first() {
+                        if let Expression::Identifier { name, .. } = &arg.value
+                            && let Some(tag_op) = self.dyn_tag_of.get(name).cloned()
+                        {
+                            tag_op
+                        } else {
+                            Operand::Const(IrValue::I64(self.determine_element_tag(&arg.value)))
+                        }
                     } else {
-                        6 // null
+                        Operand::Const(IrValue::I64(6)) // null
                     };
-                    args.push(Operand::Const(IrValue::I64(tag)));
+                    args.push(tag_op);
                     Some(RuntimeFn::Stringify)
                 }
                 _ => None,
@@ -1753,6 +2003,220 @@ impl IrGenerator {
             .push(Instruction::Label(end_label));
 
         Ok(Operand::Local(result_local))
+    }
+
+    /// `match` 表达式：按变体 tag 顺序测试，payload 槽摘出值与运行时标签，
+    /// 分支结果写入统一的结果槽（spec control-flow.md；AOT 目前支持枚举
+    /// 模式、通配与绑定，字面量/范围等模式语义层已另行检查）
+    fn generate_match(&mut self, m: &MatchExpr) -> Result<Operand, XuloError> {
+        let func_idx = self.current_func.unwrap();
+        let scrut = self.generate_expression(&m.value)?;
+        let scrut_local = self.module.functions[func_idx].add_local(IrType::Pointer);
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::SetLocal {
+                dst: scrut_local,
+                src: scrut,
+            });
+        let scrut_op = Operand::Local(scrut_local);
+
+        let result_local = self.module.functions[func_idx].add_local(IrType::Pointer);
+        let end_label = self.module.functions[func_idx].add_label();
+        // 最后一个枚举臂的 next_label 落空，需要补一条跳到 end
+        let mut dangling_next = false;
+
+        for arm in &m.arms {
+            if arm.guard.is_some() {
+                return Err(XuloError::new(
+                    ErrorKind::Semantic,
+                    "AOT codegen does not support match guards yet".to_string(),
+                ));
+            }
+            let body_label = self.module.functions[func_idx].add_label();
+            let next_label = self.module.functions[func_idx].add_label();
+            match &arm.pattern {
+                MatchPattern::Enum(r) => {
+                    self.emit_enum_tag_branch(
+                        func_idx,
+                        scrut_op.clone(),
+                        &r.enum_name,
+                        &r.variant,
+                        body_label,
+                        next_label,
+                    )?;
+                    self.module.functions[func_idx]
+                        .instructions
+                        .push(Instruction::Label(body_label));
+                    self.generate_match_arm_body(arm, result_local)?;
+                    self.module.functions[func_idx]
+                        .instructions
+                        .push(Instruction::Jump(end_label));
+                    self.module.functions[func_idx]
+                        .instructions
+                        .push(Instruction::Label(next_label));
+                    dangling_next = true;
+                }
+                MatchPattern::EnumPayload {
+                    enum_name,
+                    variant,
+                    bindings,
+                    ..
+                } => {
+                    self.emit_enum_tag_branch(
+                        func_idx,
+                        scrut_op.clone(),
+                        enum_name,
+                        variant,
+                        body_label,
+                        next_label,
+                    )?;
+                    self.module.functions[func_idx]
+                        .instructions
+                        .push(Instruction::Label(body_label));
+                    for (i, bind) in bindings.iter().enumerate() {
+                        if bind == "_" {
+                            continue;
+                        }
+                        let raw = self.module.functions[func_idx].add_local(IrType::Pointer);
+                        self.module.functions[func_idx].instructions.push(
+                            Instruction::RuntimeCall {
+                                dst: Some(raw),
+                                func: RuntimeFn::EnumGet,
+                                args: vec![
+                                    scrut_op.clone(),
+                                    Operand::Const(IrValue::I64(i as i64)),
+                                ],
+                            },
+                        );
+                        let tag = self.module.functions[func_idx].add_local(IrType::I64);
+                        self.module.functions[func_idx].instructions.push(
+                            Instruction::RuntimeCall {
+                                dst: Some(tag),
+                                func: RuntimeFn::EnumGetTag,
+                                args: vec![
+                                    scrut_op.clone(),
+                                    Operand::Const(IrValue::I64(i as i64)),
+                                ],
+                            },
+                        );
+                        self.locals.insert(bind.clone(), raw);
+                        self.dyn_tag_of.insert(bind.clone(), Operand::Local(tag));
+                    }
+                    self.generate_match_arm_body(arm, result_local)?;
+                    self.module.functions[func_idx]
+                        .instructions
+                        .push(Instruction::Jump(end_label));
+                    self.module.functions[func_idx]
+                        .instructions
+                        .push(Instruction::Label(next_label));
+                    dangling_next = true;
+                }
+                MatchPattern::Wildcard => {
+                    self.generate_match_arm_body(arm, result_local)?;
+                    self.module.functions[func_idx]
+                        .instructions
+                        .push(Instruction::Jump(end_label));
+                }
+                MatchPattern::Binding { name, .. } => {
+                    self.locals.insert(name.clone(), scrut_local);
+                    self.dyn_tag_of
+                        .insert(name.clone(), Operand::Const(IrValue::I64(7)));
+                    self.generate_match_arm_body(arm, result_local)?;
+                    self.module.functions[func_idx]
+                        .instructions
+                        .push(Instruction::Jump(end_label));
+                }
+                _ => {
+                    return Err(XuloError::new(
+                        ErrorKind::Semantic,
+                        "AOT codegen supports only enum, `_`, and binding match patterns"
+                            .to_string(),
+                    ));
+                }
+            }
+        }
+
+        if dangling_next {
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::Jump(end_label));
+        }
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Label(end_label));
+        Ok(Operand::Local(result_local))
+    }
+
+    /// 枚举变体的 tag 分支：`EnumVariant(scrut) == idx` 为真走本臂，否则下一臂
+    fn emit_enum_tag_branch(
+        &mut self,
+        func_idx: usize,
+        scrut: Operand,
+        enum_name: &str,
+        variant: &str,
+        body_label: Label,
+        next_label: Label,
+    ) -> Result<(), XuloError> {
+        let Some(variant_idx) = self.enum_variant_index(enum_name, variant) else {
+            return Err(XuloError::new(
+                ErrorKind::Semantic,
+                format!("undefined variant: {}::{}", enum_name, variant),
+            ));
+        };
+        let vt = self.module.functions[func_idx].add_local(IrType::I64);
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::RuntimeCall {
+                dst: Some(vt),
+                func: RuntimeFn::EnumVariant,
+                args: vec![scrut],
+            });
+        let cmp = self.module.functions[func_idx].add_local(IrType::Bool);
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Eq {
+                dst: cmp,
+                left: Operand::Local(vt),
+                right: Operand::Const(IrValue::I64(variant_idx as i64)),
+            });
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Branch {
+                condition: Operand::Local(cmp),
+                then_label: body_label,
+                else_label: next_label,
+            });
+        Ok(())
+    }
+
+    /// 一个 match 臂的求值：分支体的末表达式写入结果槽；f64 结果在按位
+    /// 模式进 Pointer 槽前注册位模式
+    fn generate_match_arm_body(
+        &mut self,
+        arm: &MatchArm,
+        result_local: LocalId,
+    ) -> Result<(), XuloError> {
+        let func_idx = self.current_func.unwrap();
+        let value_expr = match &arm.value {
+            MatchBody::Expr(e) => Some(e),
+            MatchBody::Block(b) => b.statements.last().and_then(|s| match s {
+                Statement::Expr(e) => Some(&e.expr),
+                _ => None,
+            }),
+        };
+        if let Some(expr) = value_expr {
+            let val = self.generate_expression(expr)?;
+            if self.determine_element_tag(expr) == 2 {
+                self.emit_register_float(val.clone());
+            }
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::SetLocal {
+                    dst: result_local,
+                    src: val,
+                });
+        }
+        Ok(())
     }
 
     fn generate_for(&mut self, for_stmt: &ForStmt) -> Result<(), XuloError> {

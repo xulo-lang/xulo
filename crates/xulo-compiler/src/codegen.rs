@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 
+use cranelift::codegen::ir::condcodes::FloatCC;
 use cranelift::codegen::ir::condcodes::*;
 use cranelift::codegen::ir::entities::Block;
 use cranelift::codegen::ir::types::{F64, I64, Type};
@@ -268,7 +269,7 @@ impl CodeGen {
                 Instruction::Add { dst, left, right } => {
                     let l = resolve_operand(&mut builder, left, &vars);
                     let r = resolve_operand(&mut builder, right, &vars);
-                    let val = builder.ins().iadd(l, r);
+                    let val = numeric_binop(&mut builder, l, r, NumericOp::Add);
                     if let Some(&var) = vars.get(dst) {
                         builder.def_var(var, val);
                     }
@@ -276,7 +277,7 @@ impl CodeGen {
                 Instruction::Sub { dst, left, right } => {
                     let l = resolve_operand(&mut builder, left, &vars);
                     let r = resolve_operand(&mut builder, right, &vars);
-                    let val = builder.ins().isub(l, r);
+                    let val = numeric_binop(&mut builder, l, r, NumericOp::Sub);
                     if let Some(&var) = vars.get(dst) {
                         builder.def_var(var, val);
                     }
@@ -284,7 +285,7 @@ impl CodeGen {
                 Instruction::Mul { dst, left, right } => {
                     let l = resolve_operand(&mut builder, left, &vars);
                     let r = resolve_operand(&mut builder, right, &vars);
-                    let val = builder.ins().imul(l, r);
+                    let val = numeric_binop(&mut builder, l, r, NumericOp::Mul);
                     if let Some(&var) = vars.get(dst) {
                         builder.def_var(var, val);
                     }
@@ -292,7 +293,7 @@ impl CodeGen {
                 Instruction::Div { dst, left, right } => {
                     let l = resolve_operand(&mut builder, left, &vars);
                     let r = resolve_operand(&mut builder, right, &vars);
-                    let val = builder.ins().sdiv(l, r);
+                    let val = numeric_binop(&mut builder, l, r, NumericOp::Div);
                     if let Some(&var) = vars.get(dst) {
                         builder.def_var(var, val);
                     }
@@ -369,7 +370,14 @@ impl CodeGen {
                 Instruction::Eq { dst, left, right } => {
                     let l = resolve_operand(&mut builder, left, &vars);
                     let r = resolve_operand(&mut builder, right, &vars);
-                    let cmp = builder.ins().icmp(IntCC::Equal, l, r);
+                    let cmp = if builder.func.dfg.value_type(l) == F64
+                        || builder.func.dfg.value_type(r) == F64
+                    {
+                        let (l, r) = promote_pair(&mut builder, l, r);
+                        builder.ins().fcmp(FloatCC::Equal, l, r)
+                    } else {
+                        builder.ins().icmp(IntCC::Equal, l, r)
+                    };
                     let val = builder.ins().uextend(I64, cmp);
                     if let Some(&var) = vars.get(dst) {
                         builder.def_var(var, val);
@@ -378,7 +386,14 @@ impl CodeGen {
                 Instruction::Neq { dst, left, right } => {
                     let l = resolve_operand(&mut builder, left, &vars);
                     let r = resolve_operand(&mut builder, right, &vars);
-                    let cmp = builder.ins().icmp(IntCC::NotEqual, l, r);
+                    let cmp = if builder.func.dfg.value_type(l) == F64
+                        || builder.func.dfg.value_type(r) == F64
+                    {
+                        let (l, r) = promote_pair(&mut builder, l, r);
+                        builder.ins().fcmp(FloatCC::NotEqual, l, r)
+                    } else {
+                        builder.ins().icmp(IntCC::NotEqual, l, r)
+                    };
                     let val = builder.ins().uextend(I64, cmp);
                     if let Some(&var) = vars.get(dst) {
                         builder.def_var(var, val);
@@ -387,7 +402,14 @@ impl CodeGen {
                 Instruction::Lt { dst, left, right } => {
                     let l = resolve_operand(&mut builder, left, &vars);
                     let r = resolve_operand(&mut builder, right, &vars);
-                    let cmp = builder.ins().icmp(IntCC::SignedLessThan, l, r);
+                    let cmp = if builder.func.dfg.value_type(l) == F64
+                        || builder.func.dfg.value_type(r) == F64
+                    {
+                        let (l, r) = promote_pair(&mut builder, l, r);
+                        builder.ins().fcmp(FloatCC::LessThan, l, r)
+                    } else {
+                        builder.ins().icmp(IntCC::SignedLessThan, l, r)
+                    };
                     let val = builder.ins().uextend(I64, cmp);
                     if let Some(&var) = vars.get(dst) {
                         builder.def_var(var, val);
@@ -396,7 +418,14 @@ impl CodeGen {
                 Instruction::Gt { dst, left, right } => {
                     let l = resolve_operand(&mut builder, left, &vars);
                     let r = resolve_operand(&mut builder, right, &vars);
-                    let cmp = builder.ins().icmp(IntCC::SignedGreaterThan, l, r);
+                    let cmp = if builder.func.dfg.value_type(l) == F64
+                        || builder.func.dfg.value_type(r) == F64
+                    {
+                        let (l, r) = promote_pair(&mut builder, l, r);
+                        builder.ins().fcmp(FloatCC::GreaterThan, l, r)
+                    } else {
+                        builder.ins().icmp(IntCC::SignedGreaterThan, l, r)
+                    };
                     let val = builder.ins().uextend(I64, cmp);
                     if let Some(&var) = vars.get(dst) {
                         builder.def_var(var, val);
@@ -405,7 +434,14 @@ impl CodeGen {
                 Instruction::Lte { dst, left, right } => {
                     let l = resolve_operand(&mut builder, left, &vars);
                     let r = resolve_operand(&mut builder, right, &vars);
-                    let cmp = builder.ins().icmp(IntCC::SignedLessThanOrEqual, l, r);
+                    let cmp = if builder.func.dfg.value_type(l) == F64
+                        || builder.func.dfg.value_type(r) == F64
+                    {
+                        let (l, r) = promote_pair(&mut builder, l, r);
+                        builder.ins().fcmp(FloatCC::LessThanOrEqual, l, r)
+                    } else {
+                        builder.ins().icmp(IntCC::SignedLessThanOrEqual, l, r)
+                    };
                     let val = builder.ins().uextend(I64, cmp);
                     if let Some(&var) = vars.get(dst) {
                         builder.def_var(var, val);
@@ -414,7 +450,14 @@ impl CodeGen {
                 Instruction::Gte { dst, left, right } => {
                     let l = resolve_operand(&mut builder, left, &vars);
                     let r = resolve_operand(&mut builder, right, &vars);
-                    let cmp = builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, l, r);
+                    let cmp = if builder.func.dfg.value_type(l) == F64
+                        || builder.func.dfg.value_type(r) == F64
+                    {
+                        let (l, r) = promote_pair(&mut builder, l, r);
+                        builder.ins().fcmp(FloatCC::GreaterThanOrEqual, l, r)
+                    } else {
+                        builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, l, r)
+                    };
                     let val = builder.ins().uextend(I64, cmp);
                     if let Some(&var) = vars.get(dst) {
                         builder.def_var(var, val);
@@ -462,7 +505,10 @@ impl CodeGen {
                 }
                 Instruction::Return(value) => {
                     if let Some(v) = value {
-                        let ret_val = resolve_operand(&mut builder, v, &vars);
+                        let mut ret_val = resolve_operand(&mut builder, v, &vars);
+                        if let Some(sig_ret) = builder.func.signature.returns.first().copied() {
+                            ret_val = coerce_to(&mut builder, ret_val, sig_ret.value_type);
+                        }
                         builder.ins().return_(&[ret_val]);
                     } else {
                         builder.ins().return_(&[]);
@@ -471,6 +517,8 @@ impl CodeGen {
                 Instruction::SetLocal { dst, src } => {
                     let val = resolve_operand(&mut builder, src, &vars);
                     if let Some(&var) = vars.get(dst) {
+                        let dst_ty = var_types.get(var.as_u32() as usize).copied().unwrap_or(I64);
+                        let val = coerce_to(&mut builder, val, dst_ty);
                         builder.def_var(var, val);
                     }
                 }
@@ -506,6 +554,13 @@ impl CodeGen {
                         RuntimeFn::ArrayConcat => "xulo_array_concat",
                         RuntimeFn::ObjectGet => "xulo_object_get",
                         RuntimeFn::ObjectSet => "xulo_object_set",
+                        RuntimeFn::AllocEnum => "xulo_alloc_enum",
+                        RuntimeFn::EnumSet => "xulo_enum_set",
+                        RuntimeFn::EnumVariant => "xulo_enum_variant",
+                        RuntimeFn::EnumGet => "xulo_enum_get",
+                        RuntimeFn::EnumGetTag => "xulo_enum_get_tag",
+                        RuntimeFn::AsF64 => "xulo_as_f64",
+                        RuntimeFn::RegisterFloat => "xulo_register_float",
                         RuntimeFn::Intrinsic(name) => name,
                     };
 
@@ -722,6 +777,54 @@ impl CodeGen {
 
         Ok(())
     }
+}
+
+#[derive(Clone, Copy)]
+enum NumericOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+}
+
+/// 数值算术：两侧都是整数走整数指令；任一侧是 f64（或动态转换出来的
+/// f64 操作数）则把整数侧按数值提升后走浮点指令。
+fn numeric_binop(builder: &mut FunctionBuilder, l: Value, r: Value, op: NumericOp) -> Value {
+    let lt = builder.func.dfg.value_type(l);
+    let rt = builder.func.dfg.value_type(r);
+    if lt == F64 || rt == F64 {
+        let (l, r) = promote_pair(builder, l, r);
+        match op {
+            NumericOp::Add => builder.ins().fadd(l, r),
+            NumericOp::Sub => builder.ins().fsub(l, r),
+            NumericOp::Mul => builder.ins().fmul(l, r),
+            NumericOp::Div => builder.ins().fdiv(l, r),
+        }
+    } else {
+        match op {
+            NumericOp::Add => builder.ins().iadd(l, r),
+            NumericOp::Sub => builder.ins().isub(l, r),
+            NumericOp::Mul => builder.ins().imul(l, r),
+            NumericOp::Div => builder.ins().sdiv(l, r),
+        }
+    }
+}
+
+/// 把混合的 (I64, F64) 操作数对齐到双 f64（整数按数值转换）。
+fn promote_pair(builder: &mut FunctionBuilder, l: Value, r: Value) -> (Value, Value) {
+    let lt = builder.func.dfg.value_type(l);
+    let rt = builder.func.dfg.value_type(r);
+    let l = if lt == F64 {
+        l
+    } else {
+        builder.ins().fcvt_from_sint(F64, l)
+    };
+    let r = if rt == F64 {
+        r
+    } else {
+        builder.ins().fcvt_from_sint(F64, r)
+    };
+    (l, r)
 }
 
 /// 运行时调用的实参/返回值在 I64 与 F64 槽之间对齐：

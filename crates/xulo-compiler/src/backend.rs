@@ -141,6 +141,42 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
         returns: &[],
     },
     RuntimeFnDesc {
+        name: "xulo_alloc_enum",
+        addr: xulo_runtime::runtime::xulo_alloc_enum as *const u8,
+        params: &[I64, I64, I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_enum_set",
+        addr: xulo_runtime::runtime::xulo_enum_set as *const u8,
+        params: &[I64, I64, I64, I64],
+        returns: &[],
+    },
+    RuntimeFnDesc {
+        name: "xulo_enum_variant",
+        addr: xulo_runtime::runtime::xulo_enum_variant as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_enum_get",
+        addr: xulo_runtime::runtime::xulo_enum_get as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_enum_get_tag",
+        addr: xulo_runtime::runtime::xulo_enum_get_tag as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_as_f64",
+        addr: xulo_runtime::runtime::xulo_as_f64 as *const u8,
+        params: &[I64, I64],
+        returns: &[cranelift::codegen::ir::types::F64],
+    },
+    RuntimeFnDesc {
         name: "xulo_register_float",
         addr: xulo_runtime::runtime::xulo_register_float as *const u8,
         params: &[I64],
