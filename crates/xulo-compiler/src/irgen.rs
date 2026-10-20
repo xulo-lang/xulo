@@ -499,6 +499,10 @@ impl IrGenerator {
                     if call.callee == "str" {
                         return Some(Type::String);
                     }
+                    // Math::/Time:: 内建：按 lowering 表的 tag 映射返回类型
+                    if let Some((_, _, tag)) = Self::intrinsic_lowering(&call.callee) {
+                        return Some(if tag == 0 { Type::String } else { Type::Number });
+                    }
                     // 结构体构造：Point(x: 1) -> Point
                     if self.structs.contains_key(&call.callee) {
                         return Some(Type::Named(call.callee.clone(), Vec::new()));
@@ -532,6 +536,8 @@ impl IrGenerator {
                 }
                 None
             }
+            // Math 常量（PI/E/TAU/INFINITY/NAN）都是 float
+            Expression::EnumRef(e) if e.enum_name == "Math" => Some(Type::Number),
             _ => None,
         }
     }
@@ -559,7 +565,20 @@ impl IrGenerator {
                 if let Some(src_ty) = self.source_types.get(name) {
                     match src_ty {
                         Type::String => 0,
-                        Type::Number => 1,
+                        Type::Number => {
+                            // number 绑定若以 F64 槽承载（小数字面量），值是位模式，按 tag=2 打印
+                            if let Some(local_id) = self.locals.get(name)
+                                && let Some(func_idx) = self.current_func
+                                && self.module.functions[func_idx]
+                                    .locals
+                                    .iter()
+                                    .any(|(id, ty)| id == local_id && matches!(ty, IrType::F64))
+                            {
+                                2
+                            } else {
+                                1
+                            }
+                        }
                         Type::Boolean => 5,
                         Type::Null => 6,
                         Type::List(_) => 3,
@@ -664,11 +683,14 @@ impl IrGenerator {
                 } else {
                     call.callee.clone()
                 };
-                // str() 产出字符串；Math::sqrt 与其实现按 F64 位模式返回
+                // str() 产出字符串；Math::Time:: 内建与 float 位模式返回按表打 tag
                 if key == "str" {
                     return 0;
                 }
-                if key == "Math::sqrt" || self.float_bit_returns.contains(&key) {
+                if let Some((_, _, tag)) = Self::intrinsic_lowering(&key) {
+                    return tag;
+                }
+                if self.float_bit_returns.contains(&key) {
                     return 2;
                 }
                 // 优先使用 AST 返回类型注解推断 tag
@@ -705,6 +727,8 @@ impl IrGenerator {
                     }
                 }
             }
+            // Math 常量（PI/E/TAU/INFINITY/NAN）都是 float
+            Expression::EnumRef(e) if e.enum_name == "Math" => 2,
             Expression::Nullish(nullish) => self.determine_element_tag(&nullish.right),
             Expression::Index(_) => -1, // 数组元素类型未知，运行时自动检测
             Expression::Member(member) => {
@@ -790,6 +814,29 @@ impl IrGenerator {
             Expression::Nullish(nullish) => self.generate_nullish(nullish),
             Expression::Member(member) => self.generate_member_access(member),
             Expression::Index(index) => self.generate_index(index),
+            // Math 常量：F64 槽常量（打印端按 tag=2 还原）
+            Expression::EnumRef(e)
+                if e.enum_name == "Math"
+                    && matches!(e.variant.as_str(), "PI" | "E" | "TAU" | "INFINITY" | "NAN") =>
+            {
+                let value = match e.variant.as_str() {
+                    "PI" => std::f64::consts::PI,
+                    "E" => std::f64::consts::E,
+                    "TAU" => std::f64::consts::TAU,
+                    "INFINITY" => f64::INFINITY,
+                    "NAN" => f64::NAN,
+                    _ => unreachable!(),
+                };
+                let func_idx = self.current_func.unwrap();
+                let local = self.module.functions[func_idx].add_local(IrType::F64);
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::Const {
+                        dst: local,
+                        value: IrValue::F64(value),
+                    });
+                Ok(Operand::Local(local))
+            }
             Expression::Panic { expr, .. } => {
                 let value = self.generate_expression(expr)?;
                 let tag = self.determine_element_tag(expr);
@@ -1034,13 +1081,37 @@ impl IrGenerator {
         Ok(Operand::Local(local))
     }
 
+    /// IR 操作数的槽类型（Neg 等按类型选择本地变量类型与指令）
+    fn operand_slot_type(&self, op: &Operand) -> IrType {
+        match op {
+            Operand::Const(IrValue::F64(_)) => IrType::F64,
+            Operand::Const(IrValue::String(_)) | Operand::Const(IrValue::Null) => IrType::Pointer,
+            Operand::Const(_) => IrType::I64,
+            Operand::Local(id) => {
+                let Some(func_idx) = self.current_func else {
+                    return IrType::I64;
+                };
+                self.module.functions[func_idx]
+                    .locals
+                    .iter()
+                    .find(|(lid, _)| lid == id)
+                    .map(|(_, ty)| ty.clone())
+                    .unwrap_or(IrType::I64)
+            }
+        }
+    }
+
     fn generate_unary(&mut self, unary: &UnaryOp) -> Result<Operand, XuloError> {
         let func_idx = self.current_func.unwrap();
         let operand = self.generate_expression(&unary.operand)?;
 
         let ty = match unary.operator {
             UnaryOperator::Not => IrType::Bool,
-            UnaryOperator::Neg => IrType::I64,
+            UnaryOperator::Neg => match self.operand_slot_type(&operand) {
+                // 小数取负仍是 float（codegen 对 F64 操作数用 fneg）
+                IrType::F64 => IrType::F64,
+                _ => IrType::I64,
+            },
             UnaryOperator::BitNot => IrType::I64,
             UnaryOperator::Move | UnaryOperator::Copy => IrType::Pointer,
         };
@@ -1127,9 +1198,11 @@ impl IrGenerator {
             return Ok(args.swap_remove(0));
         }
 
-        // Math::sqrt：开方后以 F64 位模式放进 I64 槽（打印端 tag=2 还原）
-        if call.object.is_none() && call.callee == "Math::sqrt" {
-            return self.generate_sqrt(&args);
+        // Math:: / Time:: 命名空间内建（语义层已按 builtin_member 校验成员存在）
+        if call.object.is_none()
+            && (call.callee.starts_with("Math::") || call.callee.starts_with("Time::"))
+        {
+            return self.generate_intrinsic_call(&call.callee, &args);
         }
 
         // 检查是否是内置函数或内置方法
@@ -1329,17 +1402,65 @@ impl IrGenerator {
         Ok(Operand::Local(local))
     }
 
-    /// Math::sqrt：F64 sqrt，结果按位放进 I64 槽（打印端配合 tag=2 还原小数）
-    fn generate_sqrt(&mut self, args: &[Operand]) -> Result<Operand, XuloError> {
+    /// Math/Time 命名空间内建的 lowering 表（对齐语义 `builtin_member`，spec
+    /// `builtins/intrinsic-functions.md`）：返回 (运行时符号, 结果槽类型, 打印 tag)。
+    /// float 组返回 f64，但 xulo 的 number 在 IR 层是整数域——按 F64 位模式放进
+    /// I64 槽（打印端 tag=2 还原小数）；toFixed 返回字符串；Time 读数返回整数。
+    fn intrinsic_lowering(callee: &str) -> Option<(&'static str, IrType, i64)> {
+        let lowering = match callee {
+            "Math::abs" => ("xulo_math_abs", IrType::I64, 2),
+            "Math::min" => ("xulo_math_min", IrType::I64, 2),
+            "Math::max" => ("xulo_math_max", IrType::I64, 2),
+            "Math::floor" => ("xulo_math_floor", IrType::I64, 2),
+            "Math::ceil" => ("xulo_math_ceil", IrType::I64, 2),
+            "Math::round" => ("xulo_math_round", IrType::I64, 2),
+            "Math::trunc" => ("xulo_math_trunc", IrType::I64, 2),
+            "Math::sqrt" => ("xulo_math_sqrt", IrType::I64, 2),
+            "Math::cbrt" => ("xulo_math_cbrt", IrType::I64, 2),
+            "Math::pow" => ("xulo_math_pow", IrType::I64, 2),
+            "Math::sin" => ("xulo_math_sin", IrType::I64, 2),
+            "Math::cos" => ("xulo_math_cos", IrType::I64, 2),
+            "Math::tan" => ("xulo_math_tan", IrType::I64, 2),
+            "Math::asin" => ("xulo_math_asin", IrType::I64, 2),
+            "Math::acos" => ("xulo_math_acos", IrType::I64, 2),
+            "Math::atan" => ("xulo_math_atan", IrType::I64, 2),
+            "Math::atan2" => ("xulo_math_atan2", IrType::I64, 2),
+            "Math::log" => ("xulo_math_log", IrType::I64, 2),
+            "Math::log2" => ("xulo_math_log2", IrType::I64, 2),
+            "Math::log10" => ("xulo_math_log10", IrType::I64, 2),
+            "Math::exp" => ("xulo_math_exp", IrType::I64, 2),
+            "Math::toFixed" => ("xulo_math_to_fixed", IrType::Pointer, 0),
+            "Time::now" => ("xulo_time_now", IrType::I64, 1),
+            "Time::now_nanos" => ("xulo_time_now_nanos", IrType::I64, 1),
+            "Time::monotonic" => ("xulo_time_monotonic", IrType::I64, 1),
+            "Time::monotonic_nanos" => ("xulo_time_monotonic_nanos", IrType::I64, 1),
+            _ => return None,
+        };
+        Some(lowering)
+    }
+
+    /// Math::/Time:: 内建调用：RuntimeCall 落到对应运行时符号
+    fn generate_intrinsic_call(
+        &mut self,
+        callee: &str,
+        args: &[Operand],
+    ) -> Result<Operand, XuloError> {
+        let Some((sym, ty, _tag)) = Self::intrinsic_lowering(callee) else {
+            // 未知成员语义层已拦（E0212/E0003）；此处兜底防御
+            return Err(XuloError::new(
+                ErrorKind::Semantic,
+                format!("undefined function: {}", callee),
+            ));
+        };
         let func_idx = self.current_func.unwrap();
-        let src = args
-            .first()
-            .cloned()
-            .unwrap_or(Operand::Const(IrValue::I64(0)));
-        let local = self.module.functions[func_idx].add_local(IrType::I64);
+        let local = self.module.functions[func_idx].add_local(ty);
         self.module.functions[func_idx]
             .instructions
-            .push(Instruction::Sqrt { dst: local, src });
+            .push(Instruction::RuntimeCall {
+                dst: Some(local),
+                func: RuntimeFn::Intrinsic(sym),
+                args: args.to_vec(),
+            });
         Ok(Operand::Local(local))
     }
 

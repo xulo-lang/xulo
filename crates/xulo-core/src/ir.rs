@@ -68,6 +68,8 @@ pub enum RuntimeFn {
     ArrayConcat,
     ObjectGet,
     ObjectSet,
+    /// 命名空间内建（`Math::*` / `Time::*`）：携带已映射好的运行时符号名
+    Intrinsic(&'static str),
 }
 
 /// IR 指令
@@ -113,13 +115,6 @@ pub enum Instruction {
     Neg {
         dst: LocalId,
         operand: Operand,
-    },
-
-    /// 浮点平方根：src 转 F64 开方，结果以 F64 位模式放在 I64 槽里。
-    /// （xulo 的 number 签名在 IR 层是整数域；打印端配合 tag=2 把位模式还原成小数）
-    Sqrt {
-        dst: LocalId,
-        src: Operand,
     },
 
     // 位运算

@@ -7,8 +7,8 @@ use std::collections::HashMap;
 
 use cranelift::codegen::ir::condcodes::*;
 use cranelift::codegen::ir::entities::Block;
-use cranelift::codegen::ir::types::I64;
-use cranelift::codegen::ir::{InstBuilder, Signature};
+use cranelift::codegen::ir::types::{F64, I64, Type};
+use cranelift::codegen::ir::{InstBuilder, Signature, Value};
 use cranelift::codegen::isa::CallConv;
 use cranelift::codegen::verify_function;
 use cranelift::frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
@@ -32,6 +32,8 @@ pub struct CodeGen {
     backend: CompilerModule,
     builder_ctx: FunctionBuilderContext,
     runtime_func_ids: HashMap<String, FuncId>,
+    /// 运行时函数签名（参数/返回的 Cranelift 类型），RuntimeCall 处做实参对齐
+    runtime_sigs: HashMap<String, (Vec<Type>, Vec<Type>)>,
     /// IR 字符串表（对应 ir_module.strings）；入口处注册给运行时做自动类型检测
     strings: Vec<String>,
 }
@@ -54,6 +56,7 @@ impl CodeGen {
             backend: CompilerModule::new(mode)?,
             builder_ctx: FunctionBuilderContext::new(),
             runtime_func_ids: HashMap::new(),
+            runtime_sigs: HashMap::new(),
             strings: Vec::new(),
         })
     }
@@ -119,13 +122,17 @@ impl CodeGen {
             for pt in desc.params {
                 sig.params.push(cranelift::codegen::ir::AbiParam::new(*pt));
             }
-            if desc.has_return {
-                sig.returns.push(cranelift::codegen::ir::AbiParam::new(I64));
+            for rt in desc.returns {
+                sig.returns.push(cranelift::codegen::ir::AbiParam::new(*rt));
             }
             let id = self
                 .backend
                 .declare_function(desc.name, Linkage::Import, &sig)?;
             self.runtime_func_ids.insert(desc.name.to_string(), id);
+            self.runtime_sigs.insert(
+                desc.name.to_string(),
+                (desc.params.to_vec(), desc.returns.to_vec()),
+            );
         }
         Ok(())
     }
@@ -303,28 +310,13 @@ impl CodeGen {
                 }
                 Instruction::Neg { dst, operand } => {
                     let o = resolve_operand(&mut builder, operand, &vars);
-                    let val = builder.ins().ineg(o);
+                    let val = if builder.func.dfg.value_type(o) == F64 {
+                        builder.ins().fneg(o)
+                    } else {
+                        builder.ins().ineg(o)
+                    };
                     if let Some(&var) = vars.get(dst) {
                         builder.def_var(var, val);
-                    }
-                }
-                Instruction::Sqrt { dst, src } => {
-                    let s = resolve_operand(&mut builder, src, &vars);
-                    let f64_ty = cranelift::codegen::ir::types::F64;
-                    let s_ty = builder.func.dfg.value_type(s);
-                    let f = if s_ty == f64_ty {
-                        s
-                    } else {
-                        builder.ins().fcvt_from_sint(f64_ty, s)
-                    };
-                    let root = builder.ins().sqrt(f);
-                    // F64 位模式放进 I64 槽（number 签名是整数域；打印配合 tag=2 还原小数）
-                    let bits =
-                        builder
-                            .ins()
-                            .bitcast(I64, cranelift::codegen::ir::MemFlags::new(), root);
-                    if let Some(&var) = vars.get(dst) {
-                        builder.def_var(var, bits);
                     }
                 }
                 Instruction::BitAnd { dst, left, right } => {
@@ -514,46 +506,47 @@ impl CodeGen {
                         RuntimeFn::ArrayConcat => "xulo_array_concat",
                         RuntimeFn::ObjectGet => "xulo_object_get",
                         RuntimeFn::ObjectSet => "xulo_object_set",
-                    };
-
-                    // xulo_print_value / xulo_panic / xulo_stringify 期望 (i64, i64)，需要将 f64 参数 bitcast 到 i64
-                    let final_args = if matches!(
-                        *func,
-                        RuntimeFn::PrintValue | RuntimeFn::Panic | RuntimeFn::Stringify
-                    ) && !arg_vals.is_empty()
-                    {
-                        let val_ty = builder.func.dfg.value_type(arg_vals[0]);
-                        if val_ty == cranelift::codegen::ir::types::F64 {
-                            let bitcasted = builder.ins().bitcast(
-                                I64,
-                                cranelift::codegen::ir::MemFlags::new(),
-                                arg_vals[0],
-                            );
-                            let mut new_args = vec![bitcasted];
-                            new_args.extend_from_slice(&arg_vals[1..]);
-                            new_args
-                        } else {
-                            arg_vals
-                        }
-                    } else {
-                        arg_vals
+                        RuntimeFn::Intrinsic(name) => name,
                     };
 
                     if let Some(&func_id) = self.runtime_func_ids.get(fn_name) {
+                        let (decl_params, decl_returns) =
+                            self.runtime_sigs.get(fn_name).cloned().unwrap_or_default();
+
+                        // 实参对齐声明的参数类型：int 上下文按数值转进 f64 形参，
+                        // f64 值进 i64 形参（打印/入槽）按位模式
+                        let final_args: Vec<_> = arg_vals
+                            .iter()
+                            .enumerate()
+                            .map(|(i, v)| match decl_params.get(i) {
+                                Some(&declared) => coerce_to(&mut builder, *v, declared),
+                                None => *v,
+                            })
+                            .collect();
+
                         let fref = self.backend.declare_func_in_func(func_id, builder.func);
                         let call = builder.ins().call(fref, &final_args);
+                        let call_result = builder.inst_results(call).first().copied();
                         if let Some(d) = dst
                             && let Some(&var) = vars.get(d)
-                            && let Some(result) = builder.inst_results(call).first()
+                            && !decl_returns.is_empty()
+                            && let Some(result) = call_result
                         {
-                            builder.def_var(var, *result);
+                            // 返回值对齐 dst 槽类型（f64 结果按位模式进 I64 槽）
+                            let dst_ty =
+                                var_types.get(var.as_u32() as usize).copied().unwrap_or(I64);
+                            let coerced = coerce_to(&mut builder, result, dst_ty);
+                            builder.def_var(var, coerced);
                         }
                     }
                 }
                 Instruction::Call { dst, func, args } => {
                     let arg_vals: Vec<_> = args
                         .iter()
-                        .map(|a| resolve_operand(&mut builder, a, &vars))
+                        .map(|a| {
+                            let v = resolve_operand(&mut builder, a, &vars);
+                            coerce_to(&mut builder, v, I64)
+                        })
                         .collect();
 
                     if let Some(call_id) = all_func_ids.get(func.0) {
@@ -580,7 +573,8 @@ impl CodeGen {
                             builder.def_var(var, *result);
                             for (field_name, field_val, tag) in fields.iter() {
                                 let obj_val = builder.use_var(var);
-                                let val = resolve_operand(&mut builder, field_val, &vars);
+                                let raw_val = resolve_operand(&mut builder, field_val, &vars);
+                                let val = coerce_to(&mut builder, raw_val, I64);
                                 let tag_val = builder.ins().iconst(I64, *tag);
                                 let field_ptr = self.backend.string_value(field_name, &mut builder);
                                 if let Some(&set_id) = self.runtime_func_ids.get("xulo_object_set")
@@ -606,7 +600,8 @@ impl CodeGen {
                             builder.def_var(var, *result);
                             for (elem, tag) in elements.iter() {
                                 let arr_val = builder.use_var(var);
-                                let elem_val = resolve_operand(&mut builder, elem, &vars);
+                                let raw_elem = resolve_operand(&mut builder, elem, &vars);
+                                let elem_val = coerce_to(&mut builder, raw_elem, I64);
                                 let tag_val = builder.ins().iconst(I64, *tag);
                                 if let Some(&push_id) = self.runtime_func_ids.get("xulo_array_push")
                                 {
@@ -638,7 +633,8 @@ impl CodeGen {
                     tag,
                 } => {
                     let obj_val = resolve_operand(&mut builder, object, &vars);
-                    let val = resolve_operand(&mut builder, value, &vars);
+                    let raw_val = resolve_operand(&mut builder, value, &vars);
+                    let val = coerce_to(&mut builder, raw_val, I64);
                     let tag_val = builder.ins().iconst(I64, *tag);
                     let field_val = self.backend.string_value(field, &mut builder);
                     if let Some(&func_id) = self.runtime_func_ids.get("xulo_object_set") {
@@ -669,7 +665,8 @@ impl CodeGen {
                 } => {
                     let arr_val = resolve_operand(&mut builder, array, &vars);
                     let idx_val = resolve_operand(&mut builder, index, &vars);
-                    let val = resolve_operand(&mut builder, value, &vars);
+                    let raw_val = resolve_operand(&mut builder, value, &vars);
+                    let val = coerce_to(&mut builder, raw_val, I64);
                     let tag_val = builder.ins().iconst(I64, *tag);
                     if let Some(&func_id) = self.runtime_func_ids.get("xulo_array_set") {
                         let fref = self.backend.declare_func_in_func(func_id, builder.func);
@@ -724,6 +721,25 @@ impl CodeGen {
         self.backend.define_function(func_id, &mut ctx)?;
 
         Ok(())
+    }
+}
+
+/// 运行时调用的实参/返回值在 I64 与 F64 槽之间对齐：
+/// I64 值进 f64 形参按数值转换（int 上下文进入 float 数学）；
+/// f64 值进 i64 形参或 I64 槽按位模式（打印配合 tag=2 还原小数）。
+fn coerce_to(builder: &mut FunctionBuilder, val: Value, declared: Type) -> Value {
+    let actual = builder.func.dfg.value_type(val);
+    if actual == declared {
+        return val;
+    }
+    if declared == F64 && actual == I64 {
+        builder.ins().fcvt_from_sint(F64, val)
+    } else if declared == I64 && actual == F64 {
+        builder
+            .ins()
+            .bitcast(I64, cranelift::codegen::ir::MemFlags::new(), val)
+    } else {
+        val
     }
 }
 
