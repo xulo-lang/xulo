@@ -14,7 +14,7 @@ use xulo_core::ast::{
 use xulo_core::error::{ErrorKind, XuloError};
 
 use crate::env::Env;
-use crate::value::{FunctionValue, Value, equal, format_number, is_truthy};
+use crate::value::{FunctionValue, Value, equal, is_truthy};
 
 pub use xulo_core::ast::CallArg;
 
@@ -479,7 +479,11 @@ fn builtin_num_arg(args: &[Value], i: usize, name: &str) -> Result<f64, RunError
 
 /// `Math::abs(x)`: the absolute value (spec `builtins/intrinsic-functions.md`).
 fn native_math_abs(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    Ok(Value::Number(builtin_num_arg(args, 0, "Math::abs")?.abs()))
+    Ok(Value::Number(xulo_std::math::abs(builtin_num_arg(
+        args,
+        0,
+        "Math::abs",
+    )?)))
 }
 
 /// `Math::min(a, b)` / `Math::max(a, b)`: the smaller / larger operand, with
@@ -487,70 +491,74 @@ fn native_math_abs(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunEr
 fn native_math_min(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     let a = builtin_num_arg(args, 0, "Math::min")?;
     let b = builtin_num_arg(args, 1, "Math::min")?;
-    Ok(Value::Number(if a.is_nan() || b.is_nan() {
-        f64::NAN
-    } else {
-        a.min(b)
-    }))
+    Ok(Value::Number(xulo_std::math::min(a, b)))
 }
 
 fn native_math_max(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     let a = builtin_num_arg(args, 0, "Math::max")?;
     let b = builtin_num_arg(args, 1, "Math::max")?;
-    Ok(Value::Number(if a.is_nan() || b.is_nan() {
-        f64::NAN
-    } else {
-        a.max(b)
-    }))
+    Ok(Value::Number(xulo_std::math::max(a, b)))
 }
 
 /// `Math::sqrt(x)`: the square root; a negative operand yields `NaN`.
 fn native_math_sqrt(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    Ok(Value::Number(
-        builtin_num_arg(args, 0, "Math::sqrt")?.sqrt(),
-    ))
+    Ok(Value::Number(xulo_std::math::sqrt(builtin_num_arg(
+        args,
+        0,
+        "Math::sqrt",
+    )?)))
 }
 
 /// `Math::cbrt(x)`: the cube root, defined for every `float`.
 fn native_math_cbrt(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    Ok(Value::Number(
-        builtin_num_arg(args, 0, "Math::cbrt")?.cbrt(),
-    ))
+    Ok(Value::Number(xulo_std::math::cbrt(builtin_num_arg(
+        args,
+        0,
+        "Math::cbrt",
+    )?)))
 }
 
 /// `Math::pow(base, exp)`: `base` raised to `exp`.
 fn native_math_pow(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     let base = builtin_num_arg(args, 0, "Math::pow")?;
     let exp = builtin_num_arg(args, 1, "Math::pow")?;
-    Ok(Value::Number(base.powf(exp)))
+    Ok(Value::Number(xulo_std::math::pow(base, exp)))
 }
 
 /// `Math::floor(x)` / `Math::ceil(x)` / `Math::round(x)` / `Math::trunc(x)`:
-/// the integral value, typed `int`. `f64::round` rounds halfway cases away
-/// from zero (spec `builtins/intrinsic-functions.md`), matching the
-/// specified rule; every result stays an integer-valued `float`.
+/// the integral value, typed `int`. `Math::round` rounds halfway cases away
+/// from zero (spec `builtins/intrinsic-functions.md`); every result stays an
+/// integer-valued `float`.
 fn native_math_floor(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    Ok(Value::Number(
-        builtin_num_arg(args, 0, "Math::floor")?.floor(),
-    ))
+    Ok(Value::Number(xulo_std::math::floor(builtin_num_arg(
+        args,
+        0,
+        "Math::floor",
+    )?)))
 }
 
 fn native_math_ceil(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    Ok(Value::Number(
-        builtin_num_arg(args, 0, "Math::ceil")?.ceil(),
-    ))
+    Ok(Value::Number(xulo_std::math::ceil(builtin_num_arg(
+        args,
+        0,
+        "Math::ceil",
+    )?)))
 }
 
 fn native_math_round(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    Ok(Value::Number(
-        builtin_num_arg(args, 0, "Math::round")?.round(),
-    ))
+    Ok(Value::Number(xulo_std::math::round(builtin_num_arg(
+        args,
+        0,
+        "Math::round",
+    )?)))
 }
 
 fn native_math_trunc(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    Ok(Value::Number(
-        builtin_num_arg(args, 0, "Math::trunc")?.trunc(),
-    ))
+    Ok(Value::Number(xulo_std::math::trunc(builtin_num_arg(
+        args,
+        0,
+        "Math::trunc",
+    )?)))
 }
 
 /// `Math::toFixed(x, digits)`: the decimal numeral of `x` with exactly
@@ -580,20 +588,7 @@ fn native_math_to_fixed(_interp: &Interpreter, args: &[Value]) -> Result<Value, 
             ));
         }
     };
-    if x.is_nan() || x.is_infinite() {
-        return Ok(Value::String(format_number(x).into()));
-    }
-    let factor = 10f64.powi(digits as i32);
-    let scaled = x * factor;
-    // Scaling an enormous operand can overflow to infinity; its decimal
-    // numeral then carries no meaningful fractional part and formatting the
-    // operand directly is the fixed-width answer.
-    let formatted = if scaled.is_infinite() {
-        format!("{x:.*}", digits)
-    } else {
-        format!("{:.*}", digits, scaled.round() / factor)
-    };
-    Ok(Value::String(formatted.into()))
+    Ok(Value::String(xulo_std::math::to_fixed(x, digits).into()))
 }
 
 /// The one-argument trigonometric functions (`Math::sin` … `Math::atan`);
@@ -609,30 +604,42 @@ fn native_math_unary_float(
 fn native_math_atan2(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     let y = builtin_num_arg(args, 0, "Math::atan2")?;
     let x = builtin_num_arg(args, 1, "Math::atan2")?;
-    Ok(Value::Number(y.atan2(x)))
+    Ok(Value::Number(xulo_std::math::atan2(y, x)))
 }
 
 /// `Math::log(x)` / `Math::log2(x)` / `Math::log10(x)`: `-Infinity` at `0`,
 /// `NaN` for a negative argument; `Math::exp(x)`: `e` raised to `x`,
 /// `Infinity` once the result overflows.
 fn native_math_log(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    Ok(Value::Number(builtin_num_arg(args, 0, "Math::log")?.ln()))
+    Ok(Value::Number(xulo_std::math::log(builtin_num_arg(
+        args,
+        0,
+        "Math::log",
+    )?)))
 }
 
 fn native_math_log2(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    Ok(Value::Number(
-        builtin_num_arg(args, 0, "Math::log2")?.log2(),
-    ))
+    Ok(Value::Number(xulo_std::math::log2(builtin_num_arg(
+        args,
+        0,
+        "Math::log2",
+    )?)))
 }
 
 fn native_math_log10(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    Ok(Value::Number(
-        builtin_num_arg(args, 0, "Math::log10")?.log10(),
-    ))
+    Ok(Value::Number(xulo_std::math::log10(builtin_num_arg(
+        args,
+        0,
+        "Math::log10",
+    )?)))
 }
 
 fn native_math_exp(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    Ok(Value::Number(builtin_num_arg(args, 0, "Math::exp")?.exp()))
+    Ok(Value::Number(xulo_std::math::exp(builtin_num_arg(
+        args,
+        0,
+        "Math::exp",
+    )?)))
 }
 
 /// The zero-argument clock members of `Time` reject a stray argument the
@@ -648,41 +655,26 @@ fn no_arg_guard(args: &[Value], name: &str) -> Result<(), RunError> {
 /// `Time::now`: milliseconds since the Unix epoch (wall clock).
 fn native_time_now(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     no_arg_guard(args, "Time::now")?;
-    let ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as f64)
-        .unwrap_or(0.0);
-    Ok(Value::Number(ms))
+    Ok(Value::Number(xulo_std::time::now_millis() as f64))
 }
 
 /// `Time::now_nanos`: nanoseconds since the Unix epoch (wall clock).
 fn native_time_now_nanos(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     no_arg_guard(args, "Time::now_nanos")?;
-    let ns = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos() as f64)
-        .unwrap_or(0.0);
-    Ok(Value::Number(ns))
+    Ok(Value::Number(xulo_std::time::now_nanos() as f64))
 }
 
-/// The process's monotonic baseline: `Instant::now()` at first use, so every
-/// `Time::monotonic` reading is a difference from a fixed origin that never
-/// runs backwards.
-fn monotonic_start() -> std::time::Instant {
-    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
-    *START.get_or_init(std::time::Instant::now)
-}
-
-/// `Time::monotonic`: milliseconds on the monotonic clock.
+/// `Time::monotonic`: milliseconds on the monotonic clock, measured from the
+/// process-wide baseline `xulo-std` fixes at first use.
 fn native_time_monotonic(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     no_arg_guard(args, "Time::monotonic")?;
-    Ok(Value::Number(monotonic_start().elapsed().as_millis() as f64))
+    Ok(Value::Number(xulo_std::time::monotonic_millis() as f64))
 }
 
 /// `Time::monotonic_nanos`: nanoseconds on the monotonic clock.
 fn native_time_monotonic_nanos(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     no_arg_guard(args, "Time::monotonic_nanos")?;
-    Ok(Value::Number(monotonic_start().elapsed().as_nanos() as f64))
+    Ok(Value::Number(xulo_std::time::monotonic_nanos() as f64))
 }
 
 /// `Time::sleep(ms)`: a `Task<unit>` that settles at least `ms` milliseconds
@@ -1077,11 +1069,14 @@ impl Interpreter {
         // `builtins/intrinsic-functions.md`): reached as `Math::PI` /
         // `Math::max(a, b)`, never as a value of its own.
         let math_members: Vec<(String, Value)> = vec![
-            ("PI".to_string(), Value::Number(std::f64::consts::PI)),
-            ("E".to_string(), Value::Number(std::f64::consts::E)),
-            ("TAU".to_string(), Value::Number(std::f64::consts::TAU)),
-            ("INFINITY".to_string(), Value::Number(f64::INFINITY)),
-            ("NAN".to_string(), Value::Number(f64::NAN)),
+            ("PI".to_string(), Value::Number(xulo_std::math::PI)),
+            ("E".to_string(), Value::Number(xulo_std::math::E)),
+            ("TAU".to_string(), Value::Number(xulo_std::math::TAU)),
+            (
+                "INFINITY".to_string(),
+                Value::Number(xulo_std::math::INFINITY),
+            ),
+            ("NAN".to_string(), Value::Number(xulo_std::math::NAN)),
             ("abs".to_string(), Value::Native(Rc::new(native_math_abs))),
             ("min".to_string(), Value::Native(Rc::new(native_math_min))),
             ("max".to_string(), Value::Native(Rc::new(native_math_max))),
@@ -1107,27 +1102,45 @@ impl Interpreter {
             ),
             (
                 "sin".to_string(),
-                Value::Native(Rc::new(native_math_unary_float("Math::sin", f64::sin))),
+                Value::Native(Rc::new(native_math_unary_float(
+                    "Math::sin",
+                    xulo_std::math::sin,
+                ))),
             ),
             (
                 "cos".to_string(),
-                Value::Native(Rc::new(native_math_unary_float("Math::cos", f64::cos))),
+                Value::Native(Rc::new(native_math_unary_float(
+                    "Math::cos",
+                    xulo_std::math::cos,
+                ))),
             ),
             (
                 "tan".to_string(),
-                Value::Native(Rc::new(native_math_unary_float("Math::tan", f64::tan))),
+                Value::Native(Rc::new(native_math_unary_float(
+                    "Math::tan",
+                    xulo_std::math::tan,
+                ))),
             ),
             (
                 "asin".to_string(),
-                Value::Native(Rc::new(native_math_unary_float("Math::asin", f64::asin))),
+                Value::Native(Rc::new(native_math_unary_float(
+                    "Math::asin",
+                    xulo_std::math::asin,
+                ))),
             ),
             (
                 "acos".to_string(),
-                Value::Native(Rc::new(native_math_unary_float("Math::acos", f64::acos))),
+                Value::Native(Rc::new(native_math_unary_float(
+                    "Math::acos",
+                    xulo_std::math::acos,
+                ))),
             ),
             (
                 "atan".to_string(),
-                Value::Native(Rc::new(native_math_unary_float("Math::atan", f64::atan))),
+                Value::Native(Rc::new(native_math_unary_float(
+                    "Math::atan",
+                    xulo_std::math::atan,
+                ))),
             ),
             (
                 "atan2".to_string(),

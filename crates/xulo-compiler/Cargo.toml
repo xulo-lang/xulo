@@ -8,6 +8,7 @@ xulo-core = { workspace = true }
 xulo-parser = { workspace = true }
 xulo-semantic = { workspace = true }
 xulo-runtime = { workspace = true }
+xulo-std = { workspace = true }
 cranelift = "0.110"
 cranelift-frontend = "0.110"
 cranelift-module = "0.110"

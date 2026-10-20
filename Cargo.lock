@@ -4095,6 +4095,7 @@ dependencies = [
  "xulo-parser",
  "xulo-runtime",
  "xulo-semantic",
+ "xulo-std",
 ]
 
 [[package]]
@@ -4184,6 +4185,7 @@ dependencies = [
  "xulo-core",
  "xulo-parser",
  "xulo-semantic",
+ "xulo-std",
 ]
 
 [[package]]
@@ -4193,6 +4195,10 @@ dependencies = [
  "xulo-core",
  "xulo-parser",
 ]
+
+[[package]]
+name = "xulo-std"
+version = "0.1.0"
 
 [[package]]
 name = "xulo-ui"

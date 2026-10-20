@@ -42,7 +42,7 @@ pub(crate) struct RuntimeFnDesc {
     pub(crate) returns: &'static [Type],
 }
 
-/// xulo-runtime 导出函数表（JIT 符号注册与两后端 import 声明共用一份事实）
+/// xulo-runtime / xulo-std 导出函数表（JIT 符号注册与两后端 import 声明共用一份事实）
 pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
     RuntimeFnDesc {
         name: "xulo_print",
@@ -155,158 +155,158 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
     // Math 命名空间：float 组返回 f64（对齐语义 builtin_member 的 BuiltinRet）
     RuntimeFnDesc {
         name: "xulo_math_abs",
-        addr: xulo_runtime::runtime::xulo_math_abs as *const u8,
+        addr: xulo_std::ffi::xulo_math_abs as *const u8,
         params: &[F64],
         returns: &[F64],
     },
     RuntimeFnDesc {
         name: "xulo_math_min",
-        addr: xulo_runtime::runtime::xulo_math_min as *const u8,
+        addr: xulo_std::ffi::xulo_math_min as *const u8,
         params: &[F64, F64],
         returns: &[F64],
     },
     RuntimeFnDesc {
         name: "xulo_math_max",
-        addr: xulo_runtime::runtime::xulo_math_max as *const u8,
+        addr: xulo_std::ffi::xulo_math_max as *const u8,
         params: &[F64, F64],
         returns: &[F64],
     },
     RuntimeFnDesc {
         name: "xulo_math_floor",
-        addr: xulo_runtime::runtime::xulo_math_floor as *const u8,
+        addr: xulo_std::ffi::xulo_math_floor as *const u8,
         params: &[F64],
         returns: &[F64],
     },
     RuntimeFnDesc {
         name: "xulo_math_ceil",
-        addr: xulo_runtime::runtime::xulo_math_ceil as *const u8,
+        addr: xulo_std::ffi::xulo_math_ceil as *const u8,
         params: &[F64],
         returns: &[F64],
     },
     RuntimeFnDesc {
         name: "xulo_math_round",
-        addr: xulo_runtime::runtime::xulo_math_round as *const u8,
+        addr: xulo_std::ffi::xulo_math_round as *const u8,
         params: &[F64],
         returns: &[F64],
     },
     RuntimeFnDesc {
         name: "xulo_math_trunc",
-        addr: xulo_runtime::runtime::xulo_math_trunc as *const u8,
+        addr: xulo_std::ffi::xulo_math_trunc as *const u8,
         params: &[F64],
         returns: &[F64],
     },
     RuntimeFnDesc {
         name: "xulo_math_sqrt",
-        addr: xulo_runtime::runtime::xulo_math_sqrt as *const u8,
+        addr: xulo_std::ffi::xulo_math_sqrt as *const u8,
         params: &[F64],
         returns: &[F64],
     },
     RuntimeFnDesc {
         name: "xulo_math_cbrt",
-        addr: xulo_runtime::runtime::xulo_math_cbrt as *const u8,
+        addr: xulo_std::ffi::xulo_math_cbrt as *const u8,
         params: &[F64],
         returns: &[F64],
     },
     RuntimeFnDesc {
         name: "xulo_math_pow",
-        addr: xulo_runtime::runtime::xulo_math_pow as *const u8,
+        addr: xulo_std::ffi::xulo_math_pow as *const u8,
         params: &[F64, F64],
         returns: &[F64],
     },
     RuntimeFnDesc {
         name: "xulo_math_sin",
-        addr: xulo_runtime::runtime::xulo_math_sin as *const u8,
+        addr: xulo_std::ffi::xulo_math_sin as *const u8,
         params: &[F64],
         returns: &[F64],
     },
     RuntimeFnDesc {
         name: "xulo_math_cos",
-        addr: xulo_runtime::runtime::xulo_math_cos as *const u8,
+        addr: xulo_std::ffi::xulo_math_cos as *const u8,
         params: &[F64],
         returns: &[F64],
     },
     RuntimeFnDesc {
         name: "xulo_math_tan",
-        addr: xulo_runtime::runtime::xulo_math_tan as *const u8,
+        addr: xulo_std::ffi::xulo_math_tan as *const u8,
         params: &[F64],
         returns: &[F64],
     },
     RuntimeFnDesc {
         name: "xulo_math_asin",
-        addr: xulo_runtime::runtime::xulo_math_asin as *const u8,
+        addr: xulo_std::ffi::xulo_math_asin as *const u8,
         params: &[F64],
         returns: &[F64],
     },
     RuntimeFnDesc {
         name: "xulo_math_acos",
-        addr: xulo_runtime::runtime::xulo_math_acos as *const u8,
+        addr: xulo_std::ffi::xulo_math_acos as *const u8,
         params: &[F64],
         returns: &[F64],
     },
     RuntimeFnDesc {
         name: "xulo_math_atan",
-        addr: xulo_runtime::runtime::xulo_math_atan as *const u8,
+        addr: xulo_std::ffi::xulo_math_atan as *const u8,
         params: &[F64],
         returns: &[F64],
     },
     RuntimeFnDesc {
         name: "xulo_math_atan2",
-        addr: xulo_runtime::runtime::xulo_math_atan2 as *const u8,
+        addr: xulo_std::ffi::xulo_math_atan2 as *const u8,
         params: &[F64, F64],
         returns: &[F64],
     },
     RuntimeFnDesc {
         name: "xulo_math_log",
-        addr: xulo_runtime::runtime::xulo_math_log as *const u8,
+        addr: xulo_std::ffi::xulo_math_log as *const u8,
         params: &[F64],
         returns: &[F64],
     },
     RuntimeFnDesc {
         name: "xulo_math_log2",
-        addr: xulo_runtime::runtime::xulo_math_log2 as *const u8,
+        addr: xulo_std::ffi::xulo_math_log2 as *const u8,
         params: &[F64],
         returns: &[F64],
     },
     RuntimeFnDesc {
         name: "xulo_math_log10",
-        addr: xulo_runtime::runtime::xulo_math_log10 as *const u8,
+        addr: xulo_std::ffi::xulo_math_log10 as *const u8,
         params: &[F64],
         returns: &[F64],
     },
     RuntimeFnDesc {
         name: "xulo_math_exp",
-        addr: xulo_runtime::runtime::xulo_math_exp as *const u8,
+        addr: xulo_std::ffi::xulo_math_exp as *const u8,
         params: &[F64],
         returns: &[F64],
     },
     RuntimeFnDesc {
         name: "xulo_math_to_fixed",
-        addr: xulo_runtime::runtime::xulo_math_to_fixed as *const u8,
+        addr: xulo_std::ffi::xulo_math_to_fixed as *const u8,
         params: &[F64, I64],
         returns: &[I64],
     },
     // Time 命名空间：返回自 epoch/进程原点的整数读数
     RuntimeFnDesc {
         name: "xulo_time_now",
-        addr: xulo_runtime::runtime::xulo_time_now as *const u8,
+        addr: xulo_std::ffi::xulo_time_now as *const u8,
         params: &[],
         returns: &[I64],
     },
     RuntimeFnDesc {
         name: "xulo_time_now_nanos",
-        addr: xulo_runtime::runtime::xulo_time_now_nanos as *const u8,
+        addr: xulo_std::ffi::xulo_time_now_nanos as *const u8,
         params: &[],
         returns: &[I64],
     },
     RuntimeFnDesc {
         name: "xulo_time_monotonic",
-        addr: xulo_runtime::runtime::xulo_time_monotonic as *const u8,
+        addr: xulo_std::ffi::xulo_time_monotonic as *const u8,
         params: &[],
         returns: &[I64],
     },
     RuntimeFnDesc {
         name: "xulo_time_monotonic_nanos",
-        addr: xulo_runtime::runtime::xulo_time_monotonic_nanos as *const u8,
+        addr: xulo_std::ffi::xulo_time_monotonic_nanos as *const u8,
         params: &[],
         returns: &[I64],
     },
@@ -553,7 +553,7 @@ impl InternedString {
     }
 }
 
-/// 引用 xulo-runtime，确保链接器包含运行时库（JIT 进程内执行时需要）
+/// 引用 xulo-runtime 与 xulo-std，确保链接器包含运行时库（JIT 进程内执行时需要）
 #[allow(dead_code)]
 fn _ensure_runtime_linked() {
     let _ = xulo_runtime::runtime::xulo_print as *const u8;
@@ -568,7 +568,7 @@ fn _ensure_runtime_linked() {
     let _ = xulo_runtime::runtime::xulo_array_set as *const u8;
     let _ = xulo_runtime::runtime::xulo_object_get as *const u8;
     let _ = xulo_runtime::runtime::xulo_object_set as *const u8;
-    let _ = xulo_runtime::runtime::xulo_math_floor as *const u8;
-    let _ = xulo_runtime::runtime::xulo_math_to_fixed as *const u8;
-    let _ = xulo_runtime::runtime::xulo_time_monotonic as *const u8;
+    let _ = xulo_std::ffi::xulo_math_floor as *const u8;
+    let _ = xulo_std::ffi::xulo_math_to_fixed as *const u8;
+    let _ = xulo_std::ffi::xulo_time_monotonic as *const u8;
 }

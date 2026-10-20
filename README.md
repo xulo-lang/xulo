@@ -159,6 +159,7 @@ CI（GitHub Actions，见 `.github/workflows/ci.yml`）执行 `cargo fmt --check
 │   ├── xulo-codegen/           # 生成 JavaScript（已废弃，保留但不再参与执行路径）
 │   ├── xulo-compiler/          # 前端管线 compile() + 多文件模块加载/分析
 │   ├── xulo-runtime/           # 原生树遍历解释器（xulo run 默认路径）
+│   ├── xulo-std/               # 标准库原生实现：Math/Time 纯语义 + 编译路径 extern "C" 入口
 │   ├── xulo-ui/                # 纯 UI 逻辑：widget 树 + 布局 + 绘制命令（零依赖，对应 egui）
 │   ├── xulo-ui-wasm/           # 同一布局引擎的 wasm32 产物（原始 ABI，框架 build.rs 编译内嵌）
 │   ├── xulo-renderer-terminal/ # 终端渲染后端：PaintOp → 字符网格 + ANSI（零外部依赖）

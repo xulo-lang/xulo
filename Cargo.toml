@@ -24,6 +24,7 @@ xulo-semantic = { path = "crates/xulo-semantic" }
 xulo-codegen = { path = "crates/xulo-codegen" }
 xulo-compiler = { path = "crates/xulo-compiler" }
 xulo-runtime = { path = "crates/xulo-runtime" }
+xulo-std = { path = "crates/xulo-std" }
 xulo-cli = { path = "crates/xulo-cli" }
 xulo-ide = { path = "crates/xulo-ide" }
 xulo-analyzer = { path = "crates/xulo-analyzer" }

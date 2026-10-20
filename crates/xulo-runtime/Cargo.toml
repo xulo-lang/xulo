@@ -8,6 +8,7 @@ crate-type = ["staticlib", "lib"]
 
 [dependencies]
 xulo-core = { workspace = true }
+xulo-std = { workspace = true }
 corosensei = "0.2"
 
 [dev-dependencies]

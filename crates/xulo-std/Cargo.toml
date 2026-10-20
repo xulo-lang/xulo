@@ -1,0 +1,6 @@
+[package]
+name = "xulo-std"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]

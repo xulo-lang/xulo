@@ -144,22 +144,10 @@ impl Value {
 
 /// Format a number the way JS `String()` does for the common cases: `3.0` ->
 /// `"3"`, `NaN` -> `"NaN"`, `Infinity` -> `"Infinity"`, and `-0` -> `"0"`.
-pub fn format_number(n: f64) -> String {
-    if n.is_nan() {
-        return "NaN".into();
-    }
-    if n.is_infinite() {
-        return if n > 0.0 {
-            "Infinity".into()
-        } else {
-            "-Infinity".into()
-        };
-    }
-    if n == 0.0 && n.is_sign_negative() {
-        return "0".into();
-    }
-    format!("{n}")
-}
+///
+/// The implementation lives in `xulo-std` so the interpreter and the compiled
+/// path render identically; this re-export keeps the `crate::value` path.
+pub use xulo_std::format_number;
 
 /// Xulo `==`: numeric/string/boolean/null compare by value, lists and objects
 /// by identity (like JS `===` on references), enums structurally (name + tag +
