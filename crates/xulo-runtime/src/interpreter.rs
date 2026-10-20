@@ -477,6 +477,23 @@ fn builtin_num_arg(args: &[Value], i: usize, name: &str) -> Result<f64, RunError
     }
 }
 
+/// A string argument of a built-in namespace call, the counterpart of
+/// [`builtin_num_arg`] for the path/content parameters of `Fs`.
+fn builtin_str_arg(args: &[Value], i: usize, name: &str) -> Result<Rc<str>, RunError> {
+    match args.get(i) {
+        Some(Value::String(s)) => Ok(s.clone()),
+        other => Err(RunError::err(
+            format!(
+                "`{name}` expects a string, found {}",
+                other
+                    .map(|v| v.kind_name())
+                    .unwrap_or_else(|| "nothing".into())
+            ),
+            0..0,
+        )),
+    }
+}
+
 /// `Math::abs(x)`: the absolute value (spec `builtins/intrinsic-functions.md`).
 fn native_math_abs(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     Ok(Value::Number(xulo_std::math::abs(builtin_num_arg(
@@ -700,6 +717,55 @@ fn native_time_sleep(interp: &Interpreter, args: &[Value]) -> Result<Value, RunE
         .borrow_mut()
         .push((deadline, promise.clone(), Value::Null));
     Ok(Value::Promise(promise))
+}
+
+/// Wrap a fallible `Fs` outcome in the built-in `Result`: success carries
+/// its payload, a failure message becomes `Result::Err(Error(message))`
+/// (spec `error-handling.md`), so a program matches it like any other
+/// `Result` (the same construction `Task::timeout` uses).
+fn fs_result(result: Result<Value, String>) -> Value {
+    match result {
+        Ok(value) => result_ok(value),
+        Err(message) => result_err(error_value(message.into())),
+    }
+}
+
+/// `Fs::read(path)`: the file's contents as a string, or `Err(Error(...))`
+/// for a missing directory, an unreadable file, or non-UTF-8 bytes.
+fn native_fs_read(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    let path = builtin_str_arg(args, 0, "Fs::read")?;
+    Ok(fs_result(
+        xulo_std::fs::read(&path).map(|s| Value::String(s.into())),
+    ))
+}
+
+/// `Fs::write(path, content)`: create or truncate the file, or `Err(...)` —
+/// a missing parent directory is a failure, not a `mkdir`.
+fn native_fs_write(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    let path = builtin_str_arg(args, 0, "Fs::write")?;
+    let content = builtin_str_arg(args, 1, "Fs::write")?;
+    Ok(fs_result(
+        xulo_std::fs::write(&path, &content).map(|()| Value::Null),
+    ))
+}
+
+/// `Fs::exists(path)`: total, so a probe that cannot be answered (permission,
+/// invalid syntax) simply reads as `false`.
+fn native_fs_exists(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    let path = builtin_str_arg(args, 0, "Fs::exists")?;
+    Ok(Value::Boolean(xulo_std::fs::exists(&path)))
+}
+
+/// `Fs::remove(path)`: delete one file; a non-empty directory fails.
+fn native_fs_remove(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    let path = builtin_str_arg(args, 0, "Fs::remove")?;
+    Ok(fs_result(xulo_std::fs::remove(&path).map(|()| Value::Null)))
+}
+
+/// `Fs::mkdir(path)`: create the directory with its missing parents.
+fn native_fs_mkdir(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    let path = builtin_str_arg(args, 0, "Fs::mkdir")?;
+    Ok(fs_result(xulo_std::fs::mkdir(&path).map(|()| Value::Null)))
 }
 
 fn native_print(interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
@@ -1184,6 +1250,28 @@ impl Interpreter {
         global.borrow_mut().define(
             "Time",
             Value::Object(Rc::new(RefCell::new(time_members))),
+            false,
+        );
+        // The `Fs` namespace of filesystem primitives (implementation-first;
+        // the language itself has no I/O, spec `memory-and-runtime.md`):
+        // reached as `Fs::read(...)` / `Fs::write(...)`, each fallible
+        // member returning the built-in `Result`.
+        let fs_members: Vec<(String, Value)> = vec![
+            ("read".to_string(), Value::Native(Rc::new(native_fs_read))),
+            ("write".to_string(), Value::Native(Rc::new(native_fs_write))),
+            (
+                "exists".to_string(),
+                Value::Native(Rc::new(native_fs_exists)),
+            ),
+            (
+                "remove".to_string(),
+                Value::Native(Rc::new(native_fs_remove)),
+            ),
+            ("mkdir".to_string(), Value::Native(Rc::new(native_fs_mkdir))),
+        ];
+        global.borrow_mut().define(
+            "Fs",
+            Value::Object(Rc::new(RefCell::new(fs_members))),
             false,
         );
         Interpreter {
@@ -2867,7 +2955,7 @@ impl Interpreter {
                 // constant value, `Math::sqrt` the native function (spec
                 // `builtins/intrinsic-functions.md`). A member the table does
                 // not have falls through to the enum reading.
-                if matches!(r.enum_name.as_str(), "Math" | "Time" | "Task")
+                if matches!(r.enum_name.as_str(), "Math" | "Time" | "Task" | "Fs")
                     && let Some(value) = self.builtin_ns_member(&r.enum_name, &r.variant)
                 {
                     return Ok(value);
@@ -3625,15 +3713,15 @@ impl Interpreter {
             })?;
             return self.call_value(&callee, &call.arguments, env);
         }
-        // A built-in namespace head (`Math::max`, `Time::sleep`, `Task::all`)
-        // resolves to its intrinsic object in the root environment (spec
-        // `builtins/intrinsic-functions.md`). A member the table does not
+        // A built-in namespace head (`Math::max`, `Time::sleep`, `Task::all`,
+        // `Fs::read`) resolves to its intrinsic object in the root environment
+        // (spec `builtins/intrinsic-functions.md`). A member the table does not
         // have falls through to enum construction, which is what a
         // program-declared `enum Math`-style shadowing head needs (the
         // semantic pass rejects an unknown member on a genuine namespace).
         if let Some((head, member)) = call.callee.split_once("::")
             && !member.contains("::")
-            && matches!(head, "Math" | "Time" | "Task")
+            && matches!(head, "Math" | "Time" | "Task" | "Fs")
             && let Some(func) = self.builtin_ns_member(head, member)
         {
             return self.call_value(&func, &call.arguments, env);

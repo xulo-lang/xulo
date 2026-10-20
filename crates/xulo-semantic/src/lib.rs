@@ -149,13 +149,15 @@ fn builtin_type_entries() -> HashMap<String, TypeEntry> {
 /// `builtins/intrinsic-functions.md`): the name its signature writes, for
 /// diagnostics, and the type it accepts. `float`/`int`/`u64` are written
 /// the way the spec writes them, while every numeric parameter accepts the
-/// implementation's one `number` type.
+/// implementation's one `number` type. `string` (`Fs`) is implementation-first
+/// and has no spec entry yet.
 #[derive(Clone, Copy)]
 enum BuiltinTy {
     Number,
     Float,
     Int,
     U64,
+    String,
 }
 
 impl BuiltinTy {
@@ -165,11 +167,15 @@ impl BuiltinTy {
             BuiltinTy::Float => "float",
             BuiltinTy::Int => "int",
             BuiltinTy::U64 => "u64",
+            BuiltinTy::String => "string",
         }
     }
 
     fn ty(self) -> Type {
-        Type::Number
+        match self {
+            BuiltinTy::String => Type::String,
+            _ => Type::Number,
+        }
     }
 }
 
@@ -180,7 +186,14 @@ enum BuiltinRet {
     Float,
     Int,
     String,
+    Bool,
     TaskUnit,
+    /// `Result<string, Error>` — a fallible operation whose success payload is
+    /// a string (`Fs::read`).
+    ResultStrErr,
+    /// `Result<unit, Error>` — a fallible operation with no success payload
+    /// (`Fs::write`, `Fs::remove`, `Fs::mkdir`).
+    ResultUnitErr,
 }
 
 impl BuiltinRet {
@@ -188,9 +201,21 @@ impl BuiltinRet {
         match self {
             BuiltinRet::Number | BuiltinRet::Float | BuiltinRet::Int => Type::Number,
             BuiltinRet::String => Type::String,
+            BuiltinRet::Bool => Type::Boolean,
             BuiltinRet::TaskUnit => Type::Named(
                 "Task".to_string(),
                 vec![Type::Named("unit".to_string(), Vec::new())],
+            ),
+            BuiltinRet::ResultStrErr => Type::Named(
+                "Result".to_string(),
+                vec![Type::String, Type::Named("Error".to_string(), Vec::new())],
+            ),
+            BuiltinRet::ResultUnitErr => Type::Named(
+                "Result".to_string(),
+                vec![
+                    Type::Named("unit".to_string(), Vec::new()),
+                    Type::Named("Error".to_string(), Vec::new()),
+                ],
             ),
         }
     }
@@ -209,7 +234,9 @@ enum BuiltinMember {
 }
 
 /// The intrinsic table of `Math` and `Time` (spec
-/// `builtins/intrinsic-functions.md`). `Task` calls route through
+/// `builtins/intrinsic-functions.md`), plus `Fs`, which is
+/// implementation-first (the language itself has no I/O — the host runtime
+/// supplies it, spec `memory-and-runtime.md`). `Task` calls route through
 /// [`Analyzer::check_task_utility`], which infers the task element types a
 /// static table cannot.
 fn builtin_member(ns: &str, member: &str) -> Option<BuiltinMember> {
@@ -234,6 +261,13 @@ fn builtin_member(ns: &str, member: &str) -> Option<BuiltinMember> {
         "Time" => match member {
             "now" | "now_nanos" | "monotonic" | "monotonic_nanos" => f(&[], R::Number),
             "sleep" => f(&[T::U64], R::TaskUnit),
+            _ => None,
+        },
+        "Fs" => match member {
+            "read" => f(&[T::String], R::ResultStrErr),
+            "write" => f(&[T::String, T::String], R::ResultUnitErr),
+            "exists" => f(&[T::String], R::Bool),
+            "remove" | "mkdir" => f(&[T::String], R::ResultUnitErr),
             _ => None,
         },
         _ => None,
@@ -7106,15 +7140,15 @@ impl Analyzer {
                 self.trait_dispatch.push((call.span.clone(), mangled));
                 return Ok(ret);
             }
-            // Built-in namespaces (`Task::all`, `Math::max`, `Time::sleep`)
-            // are not enums: their heads are the intrinsic tables of spec
+            // Built-in namespaces (`Task::all`, `Math::max`, `Time::sleep`,
+            // `Fs::read`) are not enums: their heads are the intrinsic tables of spec
             // `builtins/intrinsic-functions.md`. A program-declared type of
             // the same name shadows the namespace, as elsewhere.
             if self.type_entry(enum_name).is_none() {
                 if enum_name == "Task" {
                     return self.check_task_utility(call, variant);
                 }
-                if matches!(enum_name, "Math" | "Time") {
+                if matches!(enum_name, "Math" | "Time" | "Fs") {
                     return self.check_builtin_fn_call(enum_name, variant, call);
                 }
             }
@@ -7928,7 +7962,7 @@ impl Analyzer {
         // `builtins/intrinsic-functions.md`). A program-declared type of the
         // head's name shadows the namespace, as elsewhere.
         if self.type_entry(&enum_name).is_none() {
-            if matches!(enum_name.as_str(), "Math" | "Time") {
+            if matches!(enum_name.as_str(), "Math" | "Time" | "Fs") {
                 return match builtin_member(&enum_name, variant) {
                     Some(BuiltinMember::Constant) => Ok(Type::Number),
                     Some(BuiltinMember::Fn(sig)) => Ok(Type::FnSig {

@@ -4923,6 +4923,83 @@ fn time_unknown_member_is_rejected() {
     );
 }
 
+#[test]
+fn fs_namespace_signatures_typecheck() {
+    let src = r#"
+        fn main() {
+            let path = "f.txt"
+            let wrote: Result<unit, Error> = Fs::write(path, "hi")
+            let present: bool = Fs::exists(path)
+            let content: Result<string, Error> = Fs::read(path)
+            let made: Result<unit, Error> = Fs::mkdir("a/b/c")
+            let gone: Result<unit, Error> = Fs::remove(path)
+            print(str(present))
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn fs_read_result_matches_like_the_builtin_result() {
+    let src = r#"
+        fn main() {
+            match Fs::read("f.txt") {
+                Result::Ok(content) => print(content)
+                Result::Err(e) => print(e.message)
+            }
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn fs_call_arity_is_e0207() {
+    let src = r#"
+        fn main() {
+            print(str(Fs::read()))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0207");
+    assert!(
+        err.message.contains("expected 1 argument, found 0"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn fs_call_argument_type_is_e0202() {
+    let src = r#"
+        fn main() {
+            print(str(Fs::exists(42)))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0202");
+    assert!(
+        err.message
+            .contains("argument to `Fs::exists` must be `string`"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn fs_unknown_member_is_rejected() {
+    let src = r#"
+        fn main() {
+            Fs::typo("x")
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(
+        err.message.contains("`Fs` has no member `typo`"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
 // ──────────────────────────────────────────────────────────────────────
 //  Declaration attributes: the closed registry (`#Test`, `#Derive`) and
 //  struct construction — spec `types/traits.md` "Attributes",
