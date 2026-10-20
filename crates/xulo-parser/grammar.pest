@@ -153,14 +153,14 @@ mod_decl = { pub_marker? ~ kw_mod ~ identifier ~ (module_body | ";") }
 module_body = { "{" ~ (header_item | declaration)* ~ "}" }
 use_decl = { kw_use ~ kw_type? ~ use_target ~ ";" }
 pub_use = { kw_pub ~ kw_use ~ (use_target | pub_use_local) ~ ";" }
-use_target = { use_path | use_group | use_glob }
+use_target = { use_glob | use_group | use_path }
 // `use PathHead as Alias` binds the namespace itself; every other path form
 // carries at least one segment after its head.
 use_path = { path_head ~ ("::" ~ identifier)+ ~ (kw_as ~ identifier)?
     | path_head ~ kw_as ~ identifier }
-use_group = { path_head ~ "::" ~ "{" ~ (use_entry ~ ("," ~ use_entry)* ~ ","?)? ~ "}" }
+use_group = { path_head ~ ("::" ~ identifier)* ~ "::" ~ "{" ~ (use_entry ~ ("," ~ use_entry)* ~ ","?)? ~ "}" }
 use_entry = { relative_path ~ (kw_as ~ identifier)? }
-use_glob = { path_head ~ "::" ~ "*" }
+use_glob = { path_head ~ ("::" ~ identifier)* ~ "::" ~ "*" }
 pub_use_local = { "{" ~ (identifier ~ ("," ~ identifier)* ~ ","?)? ~ "}" }
 // A relative path inside a use group (`form::{validate, fields::Field}`):
 // written tight, so an atomic rule keeps `{` reachable for the group's end.

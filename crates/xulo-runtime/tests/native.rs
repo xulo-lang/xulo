@@ -2522,10 +2522,10 @@ fn math_namespace_spec_example_runs() {
             fn main() {
                 let a = 3.0
                 let b = 4.0
-                let hypotenuse = Math::sqrt(a * a + b * b)
+                let hypotenuse = std::math::sqrt(a * a + b * b)
                 let value = 120
-                let clamped = Math::min(Math::max(value, 0), 100)
-                let whole = Math::floor(3.7)
+                let clamped = std::math::min(std::math::max(value, 0), 100)
+                let whole = std::math::floor(3.7)
                 print(str(hypotenuse))
                 print(str(clamped))
                 print(str(whole))
@@ -2540,11 +2540,11 @@ fn math_constants_render_as_specified() {
     let out = run_ok(
         r#"
             fn main() {
-                print(str(Math::PI))
-                print(str(Math::E))
-                print(str(Math::TAU))
-                print(str(Math::INFINITY))
-                print(str(Math::NAN))
+                print(str(std::math::PI))
+                print(str(std::math::E))
+                print(str(std::math::TAU))
+                print(str(std::math::INFINITY))
+                print(str(std::math::NAN))
             }
         "#,
     );
@@ -2565,14 +2565,14 @@ fn math_round_rounds_halfway_cases_away_from_zero() {
     let out = run_ok(
         r#"
             fn main() {
-                print(str(Math::round(2.5)))
-                print(str(Math::round(-2.5)))
-                print(str(Math::round(0.5)))
-                print(str(Math::round(-0.5)))
-                print(str(Math::round(2.4)))
-                print(str(Math::floor(-3.2)))
-                print(str(Math::ceil(-3.2)))
-                print(str(Math::trunc(-3.2)))
+                print(str(std::math::round(2.5)))
+                print(str(std::math::round(-2.5)))
+                print(str(std::math::round(0.5)))
+                print(str(std::math::round(-0.5)))
+                print(str(std::math::round(2.4)))
+                print(str(std::math::floor(-3.2)))
+                print(str(std::math::ceil(-3.2)))
+                print(str(std::math::trunc(-3.2)))
             }
         "#,
     );
@@ -2584,13 +2584,13 @@ fn math_domain_edges_follow_ieee754() {
     let out = run_ok(
         r#"
             fn main() {
-                print(str(Math::sqrt(-1.0)))
-                print(str(Math::log(0.0)))
-                print(str(Math::log(-1.0)))
-                print(str(Math::asin(2.0)))
-                print(str(Math::exp(0.0)))
-                print(str(Math::sin(0.0)))
-                print(str(Math::atan2(1.0, 1.0)))
+                print(str(std::math::sqrt(-1.0)))
+                print(str(std::math::log(0.0)))
+                print(str(std::math::log(-1.0)))
+                print(str(std::math::asin(2.0)))
+                print(str(std::math::exp(0.0)))
+                print(str(std::math::sin(0.0)))
+                print(str(std::math::atan2(1.0, 1.0)))
             }
         "#,
     );
@@ -2613,10 +2613,10 @@ fn math_to_fixed_spec_examples_run() {
     let out = run_ok(
         r#"
             fn main() {
-                print(Math::toFixed(3.14159, 2))
-                print(Math::toFixed(2.5, 0))
-                print(Math::toFixed(-2.5, 0))
-                print(Math::toFixed(3.1, 2))
+                print(std::math::toFixed(3.14159, 2))
+                print(std::math::toFixed(2.5, 0))
+                print(std::math::toFixed(-2.5, 0))
+                print(std::math::toFixed(3.1, 2))
             }
         "#,
     );
@@ -2628,11 +2628,11 @@ fn math_to_fixed_special_values_and_negative_zero() {
     let out = run_ok(
         r#"
             fn main() {
-                print(Math::toFixed(Math::NAN, 3))
-                print(Math::toFixed(Math::INFINITY, 3))
-                print(Math::toFixed(-Math::INFINITY, 3))
-                print(Math::toFixed(0.0, 0))
-                print(Math::toFixed(-0.0, 0))
+                print(std::math::toFixed(std::math::NAN, 3))
+                print(std::math::toFixed(std::math::INFINITY, 3))
+                print(std::math::toFixed(-std::math::INFINITY, 3))
+                print(std::math::toFixed(0.0, 0))
+                print(std::math::toFixed(-0.0, 0))
             }
         "#,
     );
@@ -2645,7 +2645,7 @@ fn math_to_fixed_out_of_range_digits_is_a_runtime_failure() {
         let err = run(format!(
             r#"
             fn main() {{
-                print(Math::toFixed(1.5, {digits}))
+                print(std::math::toFixed(1.5, {digits}))
             }}
         "#
         )
@@ -2653,7 +2653,7 @@ fn math_to_fixed_out_of_range_digits_is_a_runtime_failure() {
         .unwrap_err();
         assert!(
             err.message
-                .contains("`Math::toFixed` digits must be an integer in 0..=15"),
+                .contains("`std::math::toFixed` digits must be an integer in 0..=15"),
             "digits {digits}: {}",
             err.message
         );
@@ -2665,7 +2665,7 @@ fn bare_builtin_function_reference_is_callable() {
     let out = run_ok(
         r#"
             fn main() {
-                let f = Math::sqrt
+                let f = std::math::sqrt
                 print(str(f(4.0)))
             }
         "#,
@@ -2678,11 +2678,11 @@ fn time_clocks_read_sane_values() {
     let out = run_ok(
         r#"
             fn main() {
-                let wall = Time::now()
-                let mono = Time::monotonic()
-                let nanos = Time::monotonic_nanos()
+                let wall = std::time::now()
+                let mono = std::time::monotonic()
+                let nanos = std::time::monotonic_nanos()
                 print(str(wall > 0 and mono >= 0 and nanos >= 0))
-                print(str(Time::now_nanos() >= 0))
+                print(str(std::time::now_nanos() >= 0))
             }
         "#,
     );
@@ -2944,4 +2944,21 @@ fn comparison_fallback_still_compares_at_runtime() {
          }",
     );
     assert_eq!(out, ["yes"]);
+}
+
+#[test]
+fn std_glob_alias_and_qualified_forms_run() {
+    let out = run_ok(
+        r#"
+        use std::math::*;
+        use std::math as m;
+        fn main() {
+            print(str(floor(3.7) + std::math::ceil(1.2)))
+            print(str(min(max(1, 9), m::abs(-4))))
+            print(str(m::pow(2, 3)))
+            print(str(PI > 3.0))
+        }
+        "#,
+    );
+    assert_eq!(out, ["5", "4", "8", "true"]);
 }

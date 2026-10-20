@@ -3,7 +3,7 @@ struct Point { x: number, y: number }
 
 impl Point {
     fn len(self): number {
-        Math::sqrt(self.x * self.x + self.y * self.y)
+        std::math::sqrt(self.x * self.x + self.y * self.y)
     }
     fn shifted(self, dx: number, dy: number): Point {
         return Point(x: self.x + dx, y: self.y + dy)

@@ -20,7 +20,37 @@ type SResult<T> = Result<T, XuloError>;
 /// control-byte prefix so it can never collide with a real module id (spec
 /// `regular-expressions.mdx`: the module's types are reached directly, with
 /// no loader graph behind the head).
-const BUILTIN_REGEX: &str = "\u{1}regex";
+/// Id of the built-in `std` module root: the four std modules
+/// (`std::math` / `std::time` / `std::fs` / `std::regex`) are not package
+/// sources, so they resolve against this synthetic id instead of the world
+/// (spec `builtins/README.md`).
+const BUILTIN_STD: &str = "\u{1}std";
+
+/// The synthetic id of one std module (`\u{1}std::math`).
+fn std_module_id(module: &str) -> String {
+    format!("{BUILTIN_STD}::{module}")
+}
+
+/// The module name of a synthetic std id, or `None` for any other id.
+fn std_module_name(id: &str) -> Option<&str> {
+    id.strip_prefix(&format!("{BUILTIN_STD}::"))
+}
+
+/// The std module behind a resolved `use` path head, given the id the head
+/// resolved to and the segments that followed it.
+fn std_path_module<'a>(start: &'a str, segments: &'a [String]) -> Option<&'a str> {
+    if start == BUILTIN_STD {
+        segments.first().map(|s| s.as_str())
+    } else {
+        std_module_name(start)
+    }
+}
+
+/// The std module behind a `Head::member` callee (`std::math` in
+/// `std::math::floor(…)`), keyed the same way [`builtin_member`] is.
+fn std_ns_key(enum_name: &str) -> Option<&str> {
+    matches!(enum_name, "std::math" | "std::time" | "std::fs").then_some(enum_name)
+}
 
 /// One walk's derive targets pending field checks: attribute span -> declared
 /// target types as (type, label span).
@@ -368,7 +398,7 @@ fn builtin_member(ns: &str, member: &str) -> Option<BuiltinMember> {
     use BuiltinTy as T;
     let f = |params: &'static [T], ret: R| Some(M::Fn(BuiltinSig { params, ret }));
     match ns {
-        "Math" => match member {
+        "std::math" => match member {
             "PI" | "E" | "TAU" | "INFINITY" | "NAN" => Some(M::Constant),
             "abs" => f(&[T::Number], R::Number),
             "min" | "max" => f(&[T::Number, T::Number], R::Number),
@@ -381,12 +411,12 @@ fn builtin_member(ns: &str, member: &str) -> Option<BuiltinMember> {
             "log" | "log2" | "log10" | "exp" => f(&[T::Float], R::Float),
             _ => None,
         },
-        "Time" => match member {
+        "std::time" => match member {
             "now" | "now_nanos" | "monotonic" | "monotonic_nanos" => f(&[], R::Number),
             "sleep" => f(&[T::U64], R::TaskUnit),
             _ => None,
         },
-        "Fs" => match member {
+        "std::fs" => match member {
             "read" => f(&[T::String], R::ResultStrErr),
             "write" => f(&[T::String, T::String], R::ResultUnitErr),
             "exists" => f(&[T::String], R::Bool),
@@ -395,6 +425,42 @@ fn builtin_member(ns: &str, member: &str) -> Option<BuiltinMember> {
         },
         _ => None,
     }
+}
+
+/// The public member list of one built-in std module, as a glob or group
+/// `use` enumerates it — kept parallel to [`builtin_member`] (constants
+/// first, then functions; `regex` exports only its three types).
+fn std_face_members(module: &str) -> Option<Vec<(String, FaceKind)>> {
+    let values = |names: &[&str]| {
+        names
+            .iter()
+            .map(|n| (n.to_string(), FaceKind::Value))
+            .collect()
+    };
+    let fns = |names: &[&str]| {
+        names
+            .iter()
+            .map(|n| (n.to_string(), FaceKind::Fn))
+            .collect()
+    };
+    Some(match module {
+        "math" => [
+            values(&["PI", "E", "TAU", "INFINITY", "NAN"]),
+            fns(&[
+                "abs", "min", "max", "sqrt", "cbrt", "pow", "floor", "ceil", "round", "trunc",
+                "toFixed", "sin", "cos", "tan", "asin", "acos", "atan", "atan2", "log", "log2",
+                "log10", "exp",
+            ]),
+        ]
+        .concat(),
+        "time" => fns(&["now", "now_nanos", "monotonic", "monotonic_nanos", "sleep"]),
+        "fs" => fns(&["read", "write", "exists", "remove", "mkdir"]),
+        "regex" => ["RegExp", "RegexError", "RegexMatch"]
+            .iter()
+            .map(|n| (n.to_string(), FaceKind::Type))
+            .collect(),
+        _ => return None,
+    })
 }
 
 /// A loose signature for a bare `Task::all`-style reference (the combinator
@@ -531,6 +597,13 @@ pub struct Analyzer {
     declared_impls: Vec<ImplRecord>,
     /// Trait-dispatch call sites found during checking: `(span, method name)`.
     /// These are applied back onto the AST (`Call.trait_impl`) by
+    /// Bare calls resolved to a built-in std member (`use std::math::*` then
+    /// `floor(…)`): `(callee name span, qualified callee)` applied with
+    /// [`apply_std_calls`] after analysis, keeping the checker call-site
+    /// knowledge (the runtime binds the bare name itself; the AOT lowering
+    /// only understands qualified intrinsic callees).
+    std_calls: Vec<(Range<usize>, String)>,
+
     /// [`apply_trait_dispatch`] after analysis, keeping the checker call-site
     /// signatures shareable.
     trait_dispatch: Vec<(Range<usize>, String)>,
@@ -620,6 +693,10 @@ pub struct Analyzer {
     /// A program-declared type of the same name shadows the import, so this
     /// records only what the import bound — never what the program declared.
     regex_names: std::collections::HashSet<String>,
+    /// Locals a std `use` bound to an intrinsic function
+    /// (`use std::math::*` → `floor`), keyed by local name: their value maps
+    /// to the builtin table so bare calls keep `std::` diagnostics.
+    std_fns: HashMap<String, (String, String)>,
     /// Value symbols seeded by the caller (the editor workspace): consulted
     /// only by the lenient no-world binds, never by strict analysis.
     imports: HashMap<String, Symbol>,
@@ -778,6 +855,9 @@ pub struct AnalysisResult {
     /// Resolved `use` bindings (see [`UseBinding`]), for the runtime to wire
     /// each module's environment.
     pub use_bindings: Vec<UseBinding>,
+    /// Bare calls resolved to a built-in std member: `(callee name span,
+    /// qualified callee)`; see [`apply_std_calls`].
+    pub std_calls: Vec<(Range<usize>, String)>,
 }
 
 /// Every named type reachable from `ty` (E0604's signature walk).
@@ -1326,6 +1406,7 @@ fn run_analysis(
         current_return: None,
         declared_return: false,
         regex_names: std::collections::HashSet::new(),
+        std_fns: HashMap::new(),
         type_table: HashMap::new(),
         builtins: builtin_type_entries(),
         generics: Vec::new(),
@@ -1336,6 +1417,7 @@ fn run_analysis(
         impl_mangled: std::collections::HashSet::new(),
         declared_impls: Vec::new(),
         trait_dispatch: Vec::new(),
+        std_calls: Vec::new(),
         list_concat: Vec::new(),
         async_depth: 0,
         component_depth: 0,
@@ -1678,6 +1760,7 @@ fn run_analysis(
         exported_types: Vec::new(),
         warnings: analyzer.warnings.clone(),
         trait_dispatch: analyzer.trait_dispatch.clone(),
+        std_calls: analyzer.std_calls.clone(),
         list_concat: analyzer.list_concat.clone(),
         impls: analyzer.impls.iter().cloned().collect(),
         expr_types: analyzer.expr_types.clone(),
@@ -1723,6 +1806,21 @@ fn run_analysis(
 /// AST, setting `Call.trait_impl` for each `Trait::method(recv, ...)` call.
 /// The checker never holds `&mut Expression`, so annotations travel out-of-band
 /// and are applied here in a single pass after checking.
+/// Rewrite the bare callees that resolved to a built-in std member
+/// (`floor(…)` → `std::math::floor(…)`) so AOT lowering sees only the
+/// qualified intrinsic form. The interpreter is unaffected: it binds the
+/// bare name itself from the `use` import.
+pub fn apply_std_calls(program: &mut Program, calls: &[(Range<usize>, String)]) {
+    walk_program(program, &mut |expr| {
+        if let Expression::Call(call) = expr
+            && call.object.is_none()
+            && let Some((_, qualified)) = calls.iter().find(|(span, _)| *span == call.span)
+        {
+            call.callee = qualified.clone();
+        }
+    });
+}
+
 pub fn apply_trait_dispatch(program: &mut Program, dispatch: &[(Range<usize>, String)]) {
     walk_program(program, &mut |expr| {
         if let Expression::Call(call) = expr
@@ -3506,11 +3604,19 @@ impl Analyzer {
                 if segments.is_empty() {
                     // `use form;` / `use form as f;` — bind the namespace.
                     let id = self.resolve_path_head(head, &u.span)?;
-                    if id == BUILTIN_REGEX {
+                    if id == BUILTIN_STD {
                         return Err(self
                             .err_code(
                                 "E0607",
-                                "the built-in `regex` module has no namespace: import its names with `use regex::{RegExp, RegexError}`",
+                                "`std` is a namespace root: pick a module, e.g. `use std::math::*`",
+                            )
+                            .at(u.span.clone()));
+                    }
+                    if std_module_name(&id) == Some("regex") {
+                        return Err(self
+                            .err_code(
+                                "E0607",
+                                "the built-in `std::regex` module has no namespace: import its names with `use std::regex::{RegExp, RegexError}`",
                             )
                             .at(u.span.clone()));
                     }
@@ -3536,15 +3642,42 @@ impl Analyzer {
                 }
                 Ok(())
             }
-            xulo_core::ast::UseTarget::Glob { head } => {
+            xulo_core::ast::UseTarget::Glob { head, segments } => {
                 let id = self.resolve_path_head(head, &u.span)?;
-                if id == BUILTIN_REGEX {
-                    return Err(self
-                        .err_code(
-                            "E0607",
-                            "the built-in `regex` module has no glob: import its names with `use regex::{RegExp, RegexError}`",
-                        )
-                        .at(u.span.clone()));
+                // The built-in `std` tree globs without a world: `use
+                // std::math::*`, or `use m::*` through a std alias.
+                if id == BUILTIN_STD {
+                    let module = match segments.as_slice() {
+                        [module] => module.as_str(),
+                        _ => {
+                            return Err(self
+                                .err_code(
+                                    "E0607",
+                                    if segments.is_empty() {
+                                        "`std` has no direct members: glob a module, e.g. `use std::math::*`".to_string()
+                                    } else {
+                                        format!("cannot resolve `std::{}…`", segments.join("::"))
+                                    },
+                                )
+                                .at(u.span.clone()));
+                        }
+                    };
+                    return self.bind_std_glob(module, u);
+                }
+                if let Some(module) = std_module_name(&id) {
+                    if !segments.is_empty() {
+                        return Err(self
+                            .err_code(
+                                "E0607",
+                                format!(
+                                    "cannot resolve `{}::{}`",
+                                    segments[..segments.len() - 1].join("::"),
+                                    segments.last().unwrap()
+                                ),
+                            )
+                            .at(u.span.clone()));
+                    }
+                    return self.bind_std_glob(module, u);
                 }
                 let Some(face) = self.world.as_ref().and_then(|w| w.modules.get(&id)) else {
                     if self.lenient {
@@ -3685,12 +3818,22 @@ impl Analyzer {
                         return Ok(child.clone());
                     }
                 }
-                // The `regex` module behind the language's `RegExp` type
-                // (spec `regular-expressions.mdx`): its names are reached
-                // directly, so the head resolves after any package or root
-                // module of the same name — a program's own module wins.
-                if n == "regex" {
-                    return Ok(BUILTIN_REGEX.to_string());
+                // The built-in `std` root resolves after any package or
+                // root module of the same name — a program's own module
+                // wins — and before the world-less fallthrough: `std` is the
+                // one head that exists without a loader graph.
+                if n == "std" {
+                    return Ok(BUILTIN_STD.to_string());
+                }
+                // Heads that name a std module in its old top-level home:
+                // name the new path instead of a bare "cannot resolve".
+                if matches!(n.as_str(), "regex" | "math" | "time" | "fs") {
+                    return Err(self
+                        .err_code(
+                            "E0607",
+                            format!("`{n}` lives under `std`: import it with `use std::{n}::*` or reach it as `std::{n}::<member>`"),
+                        )
+                        .at(span.clone()));
                 }
                 if self.lenient {
                     // Editor partial mode has no loader graph to verify the
@@ -3715,10 +3858,11 @@ impl Analyzer {
         u: &xulo_core::ast::UseDecl,
     ) -> SResult<()> {
         let start = self.resolve_path_head(head, &u.span)?;
-        // The built-in `regex` module has no module graph behind it: its
-        // members bind straight from the builtin face (`use regex::RegExp`).
-        if start == BUILTIN_REGEX {
-            return self.bind_regex_member(segments, local, u);
+        // The built-in `std` tree has no module graph behind it: its
+        // namespaces and members bind straight from the builtin tables
+        // (`use std::math as m`, `use std::math::{floor}`).
+        if start == BUILTIN_STD || std_module_name(&start).is_some() {
+            return self.bind_std_path(&start, segments, local, u);
         }
         // An external dependency's module tree is invisible: every path into
         // it binds opaquely under `local` (spec `modules/import-export.md`).
@@ -3837,7 +3981,10 @@ impl Analyzer {
             "RegexMatch" => regex_match_type_entry(),
             other => {
                 return Err(self
-                    .err_code("E0601", format!("module `regex` does not export `{other}`"))
+                    .err_code(
+                        "E0601",
+                        format!("module `std::regex` does not export `{other}`"),
+                    )
                     .at(u.span.clone()));
             }
         };
@@ -3850,6 +3997,132 @@ impl Analyzer {
             }
             self.exported.push(local.to_string());
         }
+        self.use_bound
+            .borrow_mut()
+            .insert(local.to_string(), u.span.clone());
+        Ok(())
+    }
+
+    /// Bind a path that resolved inside the built-in `std` tree: the module
+    /// namespace itself (`use std::math as m`), one of its values
+    /// (`use std::math::{floor}`), or `std::regex`'s three types.
+    fn bind_std_path(
+        &mut self,
+        start: &str,
+        segments: &[String],
+        local: &str,
+        u: &xulo_core::ast::UseDecl,
+    ) -> SResult<()> {
+        let Some(module) = std_path_module(start, segments).map(str::to_string) else {
+            return Err(self
+                .err_code(
+                    "E0607",
+                    format!("cannot resolve `std::{}`", segments.join("::")),
+                )
+                .at(u.span.clone()));
+        };
+        // From the `std` root the module is the first segment and the member
+        // follows it; from an already-resolved std id every segment is a member.
+        let rest: &[String] = if start == BUILTIN_STD {
+            &segments[1..]
+        } else {
+            segments
+        };
+        let Some(member) = rest.first() else {
+            if module == "regex" {
+                return Err(self
+                    .err_code(
+                        "E0607",
+                        "the built-in `std::regex` module has no namespace: import its names with `use std::regex::{RegExp, RegexError}`",
+                    )
+                    .at(u.span.clone()));
+            }
+            return self.bind_namespace(local, &std_module_id(&module), u);
+        };
+        if rest.len() > 1 {
+            return Err(self
+                .err_code("E0607", format!("cannot resolve `{}`", rest.join("::")))
+                .at(u.span.clone()));
+        }
+        if module == "regex" {
+            return self.bind_regex_member(std::slice::from_ref(member), local, u);
+        }
+        let ns = format!("std::{module}");
+        self.bind_std_value_member(&ns, member, local, u)
+    }
+
+    /// Bind every public member of one built-in std module
+    /// (`use std::math::*`, `use m::*` on a std alias).
+    fn bind_std_glob(&mut self, module: &str, u: &xulo_core::ast::UseDecl) -> SResult<()> {
+        let Some(members) = std_face_members(module) else {
+            return Err(self
+                .err_code("E0607", format!("cannot resolve `std::{module}`"))
+                .at(u.span.clone()));
+        };
+        let mut contributed = std::collections::HashSet::new();
+        for (name, kind) in members {
+            if kind == FaceKind::Type {
+                self.bind_regex_member(std::slice::from_ref(&name), &name, u)?;
+            } else {
+                let ns = format!("std::{module}");
+                self.bind_std_value_member(&ns, &name, &name, u)?;
+            }
+            contributed.insert(name);
+        }
+        self.glob_unused
+            .borrow_mut()
+            .push((u.span.clone(), contributed));
+        Ok(())
+    }
+
+    /// Bind one intrinsic of a std module under `local`: constants as
+    /// `number` symbols, functions carrying their builtin table entry so a
+    /// bare call keeps the qualified form's diagnostics.
+    fn bind_std_value_member(
+        &mut self,
+        ns: &str,
+        member: &str,
+        local: &str,
+        u: &xulo_core::ast::UseDecl,
+    ) -> SResult<()> {
+        let Some(registered) = builtin_member(ns, member) else {
+            return Err(self
+                .err_code("E0601", format!("module `{ns}` does not export `{member}`"))
+                .at(u.span.clone()));
+        };
+        if u.type_only {
+            // `use type std::math::floor` — the name exists for types only;
+            // a later value-position use is `E0606`.
+            self.type_only.insert(local.to_string(), u.span.clone());
+            return Ok(());
+        }
+        let type_ = match &registered {
+            BuiltinMember::Constant => Type::Number,
+            BuiltinMember::Fn(sig) => Type::FnSig {
+                params: sig.params.iter().map(|p| p.ty()).collect(),
+                ret: Some(Box::new(sig.ret.ty())),
+            },
+        };
+        let symbol = Symbol {
+            name: local.to_string(),
+            type_,
+            kind: SymbolKind::Variable,
+            is_const: true,
+            is_mutable: false,
+            is_param: false,
+            is_shared: false,
+        };
+        if !self.table.declare(symbol) {
+            return Err(self
+                .err_code("E0104", format!("`{local}` is already declared"))
+                .at(u.span.clone()));
+        }
+        if matches!(registered, BuiltinMember::Fn(_)) {
+            self.std_fns
+                .insert(local.to_string(), (ns.to_string(), member.to_string()));
+        }
+        self.use_origins
+            .insert(local.to_string(), (ns.to_string(), FaceKind::Fn));
         self.use_bound
             .borrow_mut()
             .insert(local.to_string(), u.span.clone());
@@ -7276,6 +7549,39 @@ impl Analyzer {
         Ok(sig.ret.ty())
     }
 
+    /// A qualified call inside the built-in `std` tree: `rest` is the callee
+    /// with the `std::` prefix removed (`math::floor`, `regex::RegExp::compile`).
+    fn check_std_call(&mut self, rest: &str, call: &Call) -> SResult<Type> {
+        if rest.starts_with("regex") && rest.split("::").nth(1).is_some() {
+            // Any path under `std::regex` names a type reached through its
+            // imported name, never a static call.
+            return Err(self
+                .err(
+                    "`std::regex` types are reached through their imported name: use `use std::regex::{RegExp, RegexError}` and call `RegExp::compile(…)`",
+                )
+                .at(call.span.clone()));
+        }
+        let Some((module, member)) = rest.split_once("::") else {
+            return Err(self
+                .err_code(
+                    "E0607",
+                    format!("`std::{rest}` is a namespace: call one of its members, e.g. `std::math::floor(…)`"),
+                )
+                .at(call.span.clone()));
+        };
+        if member.contains("::") {
+            return Err(self
+                .err_code("E0607", format!("cannot resolve `std::{rest}`"))
+                .at(call.span.clone()));
+        }
+        if !matches!(module, "math" | "time" | "fs") {
+            return Err(self
+                .err_code("E0607", format!("cannot resolve `std::{module}`"))
+                .at(call.span.clone()));
+        }
+        self.check_builtin_fn_call(&format!("std::{module}"), member, call)
+    }
+
     fn check_task_utility(&mut self, call: &Call, method: &str) -> SResult<Type> {
         self.no_type_args(call)?;
         match method {
@@ -7388,6 +7694,13 @@ impl Analyzer {
 
     fn check_call(&mut self, call: &xulo_core::ast::Call) -> SResult<Type> {
         if call.is_enum() {
+            // The built-in `std` tree splits at the last `::` of its module
+            // path (`std::math::floor`), so the first-`::` enum split below
+            // cannot see it — dispatch on the raw callee first.
+            if let Some(rest) = call.callee.strip_prefix("std::") {
+                self.no_type_args(call)?;
+                return self.check_std_call(rest, call);
+            }
             let (enum_name, variant) = call.enum_parts().unwrap();
             // Trait dispatch, built-in namespace members, and enum
             // construction alike declare no type parameters, so a written
@@ -7409,16 +7722,25 @@ impl Analyzer {
                 self.trait_dispatch.push((call.span.clone(), mangled));
                 return Ok(ret);
             }
-            // Built-in namespaces (`Task::all`, `Math::max`, `Time::sleep`,
-            // `Fs::read`) are not enums: their heads are the intrinsic tables of spec
-            // `builtins/intrinsic-functions.md`. A program-declared type of
-            // the same name shadows the namespace, as elsewhere.
+            // Built-in namespaces (`Task::all`, `std::math::max`,
+            // `std::time::sleep`, `std::fs::read`) are not enums: their heads
+            // are the intrinsic tables of spec `builtins/intrinsic-functions.md`.
+            // A program-declared type of the same name shadows the
+            // namespace, as elsewhere.
             if self.type_entry(enum_name).is_none() {
                 if enum_name == "Task" {
                     return self.check_task_utility(call, variant);
                 }
+                if let Some(ns) = std_ns_key(enum_name) {
+                    return self.check_builtin_fn_call(ns, variant, call);
+                }
                 if matches!(enum_name, "Math" | "Time" | "Fs") {
-                    return self.check_builtin_fn_call(enum_name, variant, call);
+                    return Err(self
+                        .err(format!(
+                            "`{enum_name}` lives under `std`: use `std::{0}::{variant}` or import it with `use std::{0}::*`",
+                            enum_name.to_lowercase()
+                        ))
+                        .at(call.span.clone()));
                 }
             }
             // A module or package path (`form::validate(…)`,
@@ -7443,8 +7765,15 @@ impl Analyzer {
             {
                 return Err(self
                     .err(format!(
-                        "`{enum_name}` belongs to the built-in `regex` module: import it with `use regex::{{{enum_name}}}` or `use regex::{{RegExp, RegexError}}`"
+                        "`{enum_name}` belongs to the built-in `std::regex` module: import it with `use std::regex::{{{enum_name}}}` or `use std::regex::{{RegExp, RegexError}}`"
                     ))
+                    .at(call.span.clone()));
+            }
+            if enum_name.starts_with("std::regex::") {
+                return Err(self
+                    .err(
+                        "`std::regex` types are reached through their imported name: use `use std::regex::{RegExp, RegexError}` and call `RegExp::compile(…)`",
+                    )
                     .at(call.span.clone()));
             }
             let args: Vec<&Expression> = call.arguments.iter().map(|a| &a.value).collect();
@@ -7627,6 +7956,16 @@ impl Analyzer {
         // A user-declared `str`/`print` shadows the builtin of the same name
         // (the builtins only apply when no user symbol matches).
         if let Some(sym) = self.table.lookup(&call.callee).cloned() {
+            // A std intrinsic imported bare (`use std::math::*` → `floor(…)`):
+            // type it from the builtin table so its diagnostics match the
+            // qualified `std::math::floor(…)` form.
+            if let Some((ns, member)) = self.std_fns.get(&call.callee).cloned() {
+                if let Some(span) = &call.callee_span {
+                    self.std_calls
+                        .push((span.clone(), format!("{ns}::{member}")));
+                }
+                return self.check_builtin_fn_call(&ns, &member, call);
+            }
             self.record_call_callee(call, &sym);
             return self.check_call_symbol(call, &sym);
         }
@@ -8254,6 +8593,17 @@ impl Analyzer {
     }
 
     fn check_enum_ref(&self, enum_name: String, variant: &str) -> SResult<Type> {
+        if enum_name == "std" {
+            return Err(self.err_code(
+                "E0607",
+                "`std` is a namespace root: pick a module, e.g. `std::math::PI`",
+            ));
+        }
+        if enum_name == "std::regex" || enum_name.starts_with("std::regex::") {
+            return Err(self.err(
+                "`std::regex` types are reached through their imported name: use `use std::regex::{RegExp, RegexError}`",
+            ));
+        }
         // The `regex` module's static member as a value (`let f =
         // RegExp::compile`), reached through the imported name — only what
         // `use regex::…` bound, so a program's own type of the name shadows
@@ -8273,15 +8623,21 @@ impl Analyzer {
         // `builtins/intrinsic-functions.md`). A program-declared type of the
         // head's name shadows the namespace, as elsewhere.
         if self.type_entry(&enum_name).is_none() {
-            if matches!(enum_name.as_str(), "Math" | "Time" | "Fs") {
-                return match builtin_member(&enum_name, variant) {
+            if let Some(ns) = std_ns_key(&enum_name) {
+                return match builtin_member(ns, variant) {
                     Some(BuiltinMember::Constant) => Ok(Type::Number),
                     Some(BuiltinMember::Fn(sig)) => Ok(Type::FnSig {
                         params: sig.params.iter().map(|p| p.ty()).collect(),
                         ret: Some(Box::new(sig.ret.ty())),
                     }),
-                    None => Err(self.err(format!("`{enum_name}` has no member `{variant}`"))),
+                    None => Err(self.err(format!("`{ns}` has no member `{variant}`"))),
                 };
+            }
+            if matches!(enum_name.as_str(), "Math" | "Time" | "Fs") {
+                return Err(self.err(format!(
+                    "`{enum_name}` lives under `std`: use `std::{0}::{variant}` or import it with `use std::{0}::*`",
+                    enum_name.to_lowercase()
+                )));
             }
             if enum_name == "Task" {
                 return match task_bare_member_sig(variant) {
@@ -8301,7 +8657,7 @@ impl Analyzer {
             && self.type_entry(&enum_name).is_none()
         {
             return Err(self.err(format!(
-                "`{enum_name}` belongs to the built-in `regex` module: import it with `use regex::{{{enum_name}}}` or `use regex::{{RegExp, RegexError}}`"
+                "`{enum_name}` belongs to the built-in `std::regex` module: import it with `use std::regex::{{{enum_name}}}` or `use std::regex::{{RegExp, RegexError}}`"
             )));
         }
         let Some(entry) = self.type_entry(&enum_name) else {
@@ -8352,6 +8708,22 @@ impl Analyzer {
             }
         };
         self.mark_name_used(head);
+        // A std alias/namespace head (`use std::math as m` → `m::floor(…)`):
+        // the synthetic modules carry no world face — dispatch on the table.
+        if let Some(std_module) = std_module_name(&module) {
+            if member.contains("::") || std_module == "regex" {
+                return Err(self
+                    .err(
+                        "`std::regex` types are reached through their imported name: use `use std::regex::{RegExp, RegexError}` and call `RegExp::compile(…)`",
+                    )
+                    .at(call.span.clone()));
+            }
+            return Ok(Some(self.check_builtin_fn_call(
+                &format!("std::{std_module}"),
+                member,
+                call,
+            )?));
+        }
         let Some(face) = self
             .world
             .as_ref()
@@ -8524,6 +8896,24 @@ impl Analyzer {
                 }
             }
         };
+        // A std alias/namespace head in value position (`m::PI`).
+        if let Some(std_module) = std_module_name(&module) {
+            if std_module == "regex" || member.contains("::") {
+                return Err(self.err(
+                    "`std::regex` types are reached through their imported name: use `use std::regex::{RegExp, RegexError}`",
+                ));
+            }
+            let Some(registered) = builtin_member(&format!("std::{std_module}"), member) else {
+                return Err(self.err(format!("`std::{std_module}` has no member `{member}`")));
+            };
+            return Ok(Some(match registered {
+                BuiltinMember::Constant => Type::Number,
+                BuiltinMember::Fn(sig) => Type::FnSig {
+                    params: sig.params.iter().map(|p| p.ty()).collect(),
+                    ret: Some(Box::new(sig.ret.ty())),
+                },
+            }));
+        }
         let Some(face) = self
             .world
             .as_ref()

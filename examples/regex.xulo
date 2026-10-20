@@ -1,7 +1,7 @@
-// 正则表达式：use regex::{RegExp, RegexError} 编译为 Result，
+// 正则表达式：use std::regex::{RegExp, RegexError} 编译为 Result，
 // RegexMatch 在 null 测试后读取，字符串 replace 支持模板与闭包，
 // `?` 传播编译错误，`x != null` 收窄可选绑定
-use regex::{RegExp, RegexError};
+use std::regex::{RegExp, RegexError};
 
 struct User {
     email: string

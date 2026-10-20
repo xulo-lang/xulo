@@ -636,7 +636,7 @@ fn complete_faces(
                             );
                         }
                     }
-                    UseTarget::Glob { head } => {
+                    UseTarget::Glob { head, .. } => {
                         let Some(start) = fixup_head(head, i, &module_id, world, local_ns) else {
                             continue;
                         };

@@ -148,6 +148,7 @@ fn test_use_glob() {
         type_only: false,
         target: UseTarget::Glob {
             head: PathHead::Name("polyfill".to_string()),
+            segments: Vec::new(),
         },
         span: 0..20,
     };

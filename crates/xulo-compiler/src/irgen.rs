@@ -203,7 +203,7 @@ impl IrGenerator {
 
     fn expr_is_sqrt_call(&self, expr: &Expression) -> bool {
         matches!(expr, Expression::Call(call)
-            if call.object.is_none() && call.callee == "Math::sqrt")
+            if call.object.is_none() && call.callee == "std::math::sqrt")
     }
 
     fn register_function(&mut self, f: &FnDef) -> Result<FuncId, XuloError> {
@@ -536,8 +536,8 @@ impl IrGenerator {
                 }
                 None
             }
-            // Math 常量（PI/E/TAU/INFINITY/NAN）都是 float
-            Expression::EnumRef(e) if e.enum_name == "Math" => Some(Type::Number),
+            // `std::math` 常量（PI/E/TAU/INFINITY/NAN）都是 float
+            Expression::EnumRef(e) if e.enum_name == "std::math" => Some(Type::Number),
             _ => None,
         }
     }
@@ -561,6 +561,10 @@ impl IrGenerator {
                 Literal::Object(_) => 4,
             },
             Expression::Identifier { name, .. } => {
+                // `use std::math::*` 导入的裸名常量走 F64 槽（tag=2）
+                if Self::bare_math_const(name).is_some() && !self.locals.contains_key(name) {
+                    return 2;
+                }
                 // 优先从 source_types 查找
                 if let Some(src_ty) = self.source_types.get(name) {
                     match src_ty {
@@ -727,8 +731,8 @@ impl IrGenerator {
                     }
                 }
             }
-            // Math 常量（PI/E/TAU/INFINITY/NAN）都是 float
-            Expression::EnumRef(e) if e.enum_name == "Math" => 2,
+            // `std::math` 常量（PI/E/TAU/INFINITY/NAN）都是 float
+            Expression::EnumRef(e) if e.enum_name == "std::math" => 2,
             Expression::Nullish(nullish) => self.determine_element_tag(&nullish.right),
             Expression::Index(_) => -1, // 数组元素类型未知，运行时自动检测
             Expression::Member(member) => {
@@ -800,6 +804,18 @@ impl IrGenerator {
             Expression::Identifier { name, .. } => {
                 if let Some(local) = self.locals.get(name) {
                     Ok(Operand::Local(*local))
+                } else if let Some(value) = Self::bare_math_const(name) {
+                    // `use std::math::*` 导入的裸名常量（locals 优先，遮蔽已被
+                    // 语义层的重名检查排除）
+                    let func_idx = self.current_func.unwrap();
+                    let local = self.module.functions[func_idx].add_local(IrType::F64);
+                    self.module.functions[func_idx]
+                        .instructions
+                        .push(Instruction::Const {
+                            dst: local,
+                            value: IrValue::F64(value),
+                        });
+                    Ok(Operand::Local(local))
                 } else {
                     Err(XuloError::new(
                         ErrorKind::Semantic,
@@ -814,9 +830,9 @@ impl IrGenerator {
             Expression::Nullish(nullish) => self.generate_nullish(nullish),
             Expression::Member(member) => self.generate_member_access(member),
             Expression::Index(index) => self.generate_index(index),
-            // Math 常量：F64 槽常量（打印端按 tag=2 还原）
+            // `std::math` 常量：F64 槽常量（打印端按 tag=2 还原）
             Expression::EnumRef(e)
-                if e.enum_name == "Math"
+                if e.enum_name == "std::math"
                     && matches!(e.variant.as_str(), "PI" | "E" | "TAU" | "INFINITY" | "NAN") =>
             {
                 let value = match e.variant.as_str() {
@@ -1198,9 +1214,11 @@ impl IrGenerator {
             return Ok(args.swap_remove(0));
         }
 
-        // Math:: / Time:: 命名空间内建（语义层已按 builtin_member 校验成员存在）
+        // `std::math::` / `std::time::` 命名空间内建（语义层已按
+        // builtin_member 校验成员存在；裸名调用已被 apply_std_calls 改写为
+        // 限定形式）
         if call.object.is_none()
-            && (call.callee.starts_with("Math::") || call.callee.starts_with("Time::"))
+            && (call.callee.starts_with("std::math::") || call.callee.starts_with("std::time::"))
         {
             return self.generate_intrinsic_call(&call.callee, &args);
         }
@@ -1406,8 +1424,29 @@ impl IrGenerator {
     /// `builtins/intrinsic-functions.md`）：返回 (运行时符号, 结果槽类型, 打印 tag)。
     /// float 组返回 f64，但 xulo 的 number 在 IR 层是整数域——按 F64 位模式放进
     /// I64 槽（打印端 tag=2 还原小数）；toFixed 返回字符串；Time 读数返回整数。
+    /// `use std::math::*` 导入的裸名常量在 locals 缺席时的 F64 值。
+    fn bare_math_const(name: &str) -> Option<f64> {
+        match name {
+            "PI" => Some(std::f64::consts::PI),
+            "E" => Some(std::f64::consts::E),
+            "TAU" => Some(std::f64::consts::TAU),
+            "INFINITY" => Some(f64::INFINITY),
+            "NAN" => Some(f64::NAN),
+            _ => None,
+        }
+    }
+
     fn intrinsic_lowering(callee: &str) -> Option<(&'static str, IrType, i64)> {
-        let lowering = match callee {
+        // `std::math::abs` / `std::time::now` 归一到表键 `Math::abs` 等
+        let normalized: std::borrow::Cow<str> =
+            if let Some(rest) = callee.strip_prefix("std::math::") {
+                std::borrow::Cow::Owned(format!("Math::{rest}"))
+            } else if let Some(rest) = callee.strip_prefix("std::time::") {
+                std::borrow::Cow::Owned(format!("Time::{rest}"))
+            } else {
+                std::borrow::Cow::Borrowed(callee)
+            };
+        let lowering = match normalized.as_ref() {
             "Math::abs" => ("xulo_math_abs", IrType::I64, 2),
             "Math::min" => ("xulo_math_min", IrType::I64, 2),
             "Math::max" => ("xulo_math_max", IrType::I64, 2),

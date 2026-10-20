@@ -521,6 +521,6 @@ pub extern "C" fn xulo_cleanup() {
         strings.borrow_mut().clear();
     });
 
-    // Math::toFixed 交给编译产物的字符串由 xulo-std 持有，一并释放。
+    // std::math::toFixed 交给编译产物的字符串由 xulo-std 持有，一并释放。
     xulo_std::ffi::release_strings();
 }

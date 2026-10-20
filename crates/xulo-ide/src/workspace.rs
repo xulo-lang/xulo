@@ -255,7 +255,7 @@ impl Builder<'_> {
                     match &u.target {
                         UseTarget::Path { head, .. }
                         | UseTarget::Group { head, .. }
-                        | UseTarget::Glob { head } => {
+                        | UseTarget::Glob { head, .. } => {
                             if let PathHead::Name(n) | PathHead::Package(n) = head {
                                 let target = resolve_local(self.sources, file, n);
                                 if let Some(target) = &target {

@@ -3107,7 +3107,7 @@ fn test_fn_await_needs_async_marker() {
     let src = r#"
         #Test
         fn sync_test() {
-            await Time::sleep(1)
+            await std::time::sleep(1)
         }
     "#;
     let err = analyze_src(src).unwrap_err();
@@ -4765,11 +4765,11 @@ fn math_namespace_constant_and_calls_typecheck() {
     let src = r#"
         fn main() {
             let r = 2.5
-            let circumference = 2.0 * Math::PI * r
-            let hypotenuse = Math::sqrt(3.0 * 3.0 + 4.0 * 4.0)
-            let clamped = Math::min(Math::max(120, 0), 100)
-            let whole = Math::floor(3.7)
-            let fixed = Math::toFixed(3.14159, 2)
+            let circumference = 2.0 * std::math::PI * r
+            let hypotenuse = std::math::sqrt(3.0 * 3.0 + 4.0 * 4.0)
+            let clamped = std::math::min(std::math::max(120, 0), 100)
+            let whole = std::math::floor(3.7)
+            let fixed = std::math::toFixed(3.14159, 2)
             print(str(circumference + hypotenuse + clamped + whole))
             print(fixed)
         }
@@ -4781,14 +4781,14 @@ fn math_namespace_constant_and_calls_typecheck() {
 fn math_call_argument_type_is_e0202() {
     let src = r#"
         fn main() {
-            print(str(Math::sqrt(true)))
+            print(str(std::math::sqrt(true)))
         }
     "#;
     let err = analyze_src(src).unwrap_err();
     assert_eq!(err.code(), "E0202");
     assert!(
         err.message
-            .contains("argument to `Math::sqrt` must be `float`"),
+            .contains("argument to `std::math::sqrt` must be `float`"),
         "unexpected message: {}",
         err.message
     );
@@ -4798,7 +4798,7 @@ fn math_call_argument_type_is_e0202() {
 fn math_call_arity_is_e0207() {
     let src = r#"
         fn main() {
-            print(str(Math::max(1)))
+            print(str(std::math::max(1)))
         }
     "#;
     let err = analyze_src(src).unwrap_err();
@@ -4814,12 +4814,12 @@ fn math_call_arity_is_e0207() {
 fn math_unknown_member_is_rejected() {
     let src = r#"
         fn main() {
-            print(str(Math::typo(1)))
+            print(str(std::math::typo(1)))
         }
     "#;
     let err = analyze_src(src).unwrap_err();
     assert!(
-        err.message.contains("`Math` has no member `typo`"),
+        err.message.contains("`std::math` has no member `typo`"),
         "unexpected message: {}",
         err.message
     );
@@ -4829,12 +4829,13 @@ fn math_unknown_member_is_rejected() {
 fn math_constant_as_a_call_is_rejected() {
     let src = r#"
         fn main() {
-            print(str(Math::PI()))
+            print(str(std::math::PI()))
         }
     "#;
     let err = analyze_src(src).unwrap_err();
     assert!(
-        err.message.contains("member `Math::PI` is not a function"),
+        err.message
+            .contains("member `std::math::PI` is not a function"),
         "unexpected message: {}",
         err.message
     );
@@ -4898,10 +4899,10 @@ fn trait_name_dot_dispatch_is_rejected() {
 fn time_namespace_types_and_await_check() {
     let src = r#"
         async fn later() {
-            await Time::sleep(1)
+            await std::time::sleep(1)
         }
         fn main() {
-            let now = Time::now()
+            let now = std::time::now()
             print(str(now))
         }
     "#;
@@ -4912,12 +4913,12 @@ fn time_namespace_types_and_await_check() {
 fn time_unknown_member_is_rejected() {
     let src = r#"
         fn main() {
-            print(str(Time::nope()))
+            print(str(std::time::nope()))
         }
     "#;
     let err = analyze_src(src).unwrap_err();
     assert!(
-        err.message.contains("`Time` has no member `nope`"),
+        err.message.contains("`std::time` has no member `nope`"),
         "unexpected message: {}",
         err.message
     );
@@ -4928,11 +4929,11 @@ fn fs_namespace_signatures_typecheck() {
     let src = r#"
         fn main() {
             let path = "f.txt"
-            let wrote: Result<unit, Error> = Fs::write(path, "hi")
-            let present: bool = Fs::exists(path)
-            let content: Result<string, Error> = Fs::read(path)
-            let made: Result<unit, Error> = Fs::mkdir("a/b/c")
-            let gone: Result<unit, Error> = Fs::remove(path)
+            let wrote: Result<unit, Error> = std::fs::write(path, "hi")
+            let present: bool = std::fs::exists(path)
+            let content: Result<string, Error> = std::fs::read(path)
+            let made: Result<unit, Error> = std::fs::mkdir("a/b/c")
+            let gone: Result<unit, Error> = std::fs::remove(path)
             print(str(present))
         }
     "#;
@@ -4943,7 +4944,7 @@ fn fs_namespace_signatures_typecheck() {
 fn fs_read_result_matches_like_the_builtin_result() {
     let src = r#"
         fn main() {
-            match Fs::read("f.txt") {
+            match std::fs::read("f.txt") {
                 Result::Ok(content) => print(content)
                 Result::Err(e) => print(e.message)
             }
@@ -4956,7 +4957,7 @@ fn fs_read_result_matches_like_the_builtin_result() {
 fn fs_call_arity_is_e0207() {
     let src = r#"
         fn main() {
-            print(str(Fs::read()))
+            print(str(std::fs::read()))
         }
     "#;
     let err = analyze_src(src).unwrap_err();
@@ -4972,14 +4973,14 @@ fn fs_call_arity_is_e0207() {
 fn fs_call_argument_type_is_e0202() {
     let src = r#"
         fn main() {
-            print(str(Fs::exists(42)))
+            print(str(std::fs::exists(42)))
         }
     "#;
     let err = analyze_src(src).unwrap_err();
     assert_eq!(err.code(), "E0202");
     assert!(
         err.message
-            .contains("argument to `Fs::exists` must be `string`"),
+            .contains("argument to `std::fs::exists` must be `string`"),
         "unexpected message: {}",
         err.message
     );
@@ -4989,12 +4990,12 @@ fn fs_call_argument_type_is_e0202() {
 fn fs_unknown_member_is_rejected() {
     let src = r#"
         fn main() {
-            Fs::typo("x")
+            std::fs::typo("x")
         }
     "#;
     let err = analyze_src(src).unwrap_err();
     assert!(
-        err.message.contains("`Fs` has no member `typo`"),
+        err.message.contains("`std::fs` has no member `typo`"),
         "unexpected message: {}",
         err.message
     );
@@ -5095,7 +5096,7 @@ fn titled_test_decl_is_accepted() {
         fn empty_group() { let y: number = 2 }
 
         #Test("await works")
-        async fn also_passes() { await Time::sleep(0) }
+        async fn also_passes() { await std::time::sleep(0) }
     "#;
     analyze_src(src).unwrap_or_else(|err| panic!("{}: {}", err.code(), err.message));
 }
@@ -5211,7 +5212,7 @@ fn well_formed_attributes_and_derive_are_accepted() {
         #Test
         fn passes() { let x: number = 1 }
         #Test
-        async fn also_passes() { await Time::sleep(0) }
+        async fn also_passes() { await std::time::sleep(0) }
         trait Named { fn name(self): string }
         impl Named for User { fn name(self): string { return self.name } }
         fn main() {
@@ -5398,7 +5399,7 @@ fn e0807_reaches_every_non_generic_call_path() {
         ),
         (
             "namespace-math",
-            "fn main() { print(str(Math::max<number>(1, 2))) }",
+            "fn main() { print(str(std::math::max<number>(1, 2))) }",
         ),
         (
             "constructor",
@@ -5514,7 +5515,7 @@ fn comparison_fallback_still_typechecks_as_comparison() {
 }
 
 // ──────────────────────────────────────────────────────────────────────
-//  The `regex` module: `use regex::…` imports, `RegExp::compile`, the
+//  The `regex` module: `use std::regex::…` imports, `RegExp::compile`, the
 //  instance method signatures, and the string methods (spec
 //  `regular-expressions.mdx`).
 // ──────────────────────────────────────────────────────────────────────
@@ -5530,12 +5531,12 @@ fn regex_head_requires_the_import() {
     let err = analyze_src(src).unwrap_err();
     assert!(
         err.message
-            .contains("`RegExp` belongs to the built-in `regex` module"),
+            .contains("`RegExp` belongs to the built-in `std::regex` module"),
         "unexpected message: {}",
         err.message
     );
     assert!(
-        err.message.contains("use regex::{RegExp}"),
+        err.message.contains("use std::regex::{RegExp}"),
         "unexpected message: {}",
         err.message
     );
@@ -5544,7 +5545,7 @@ fn regex_head_requires_the_import() {
 #[test]
 fn regex_compile_signature_typechecks() {
     let src = r#"
-        use regex::{RegExp, RegexError};
+        use std::regex::{RegExp, RegexError};
         fn main() {
             let built: Result<RegExp, RegexError> = RegExp::compile("[a-z]+", "i")
             let bare: Result<RegExp, RegexError> = RegExp::compile("\\d+")
@@ -5558,7 +5559,7 @@ fn regex_compile_signature_typechecks() {
 #[test]
 fn regex_compile_arity_is_e0207() {
     let src = r#"
-        use regex::RegExp;
+        use std::regex::RegExp;
         fn main() {
             let built = RegExp::compile()
             print(str(built))
@@ -5573,7 +5574,7 @@ fn regex_compile_arity_is_e0207() {
     );
 
     let src = r#"
-        use regex::RegExp;
+        use std::regex::RegExp;
         fn main() {
             let built = RegExp::compile("a", "g", "i")
             print(str(built))
@@ -5591,7 +5592,7 @@ fn regex_compile_arity_is_e0207() {
 #[test]
 fn regex_compile_argument_type_is_e0202() {
     let src = r#"
-        use regex::RegExp;
+        use std::regex::RegExp;
         fn main() {
             let built = RegExp::compile(42)
             print(str(built))
@@ -5610,7 +5611,7 @@ fn regex_compile_argument_type_is_e0202() {
 #[test]
 fn regex_unknown_member_is_rejected() {
     let src = r#"
-        use regex::RegExp;
+        use std::regex::RegExp;
         fn main() {
             let built = RegExp::typo("x")
             print(str(built))
@@ -5627,7 +5628,7 @@ fn regex_unknown_member_is_rejected() {
 #[test]
 fn regex_unknown_export_is_e0601() {
     let src = r#"
-        use regex::Pattern;
+        use std::regex::Pattern;
         fn main() {
             print("hi")
         }
@@ -5636,7 +5637,7 @@ fn regex_unknown_export_is_e0601() {
     assert_eq!(err.code(), "E0601");
     assert!(
         err.message
-            .contains("module `regex` does not export `Pattern`"),
+            .contains("module `std::regex` does not export `Pattern`"),
         "unexpected message: {}",
         err.message
     );
@@ -5645,7 +5646,7 @@ fn regex_unknown_export_is_e0601() {
 #[test]
 fn regex_namespace_form_is_e0607() {
     let src = r#"
-        use regex as rx;
+        use std::regex as rx;
         fn main() {
             print("hi")
         }
@@ -5670,7 +5671,7 @@ fn regex_glob_form_is_e0607() {
     let err = analyze_src(src).unwrap_err();
     assert_eq!(err.code(), "E0607");
     assert!(
-        err.message.contains("has no glob"),
+        err.message.contains("`regex` lives under `std`"),
         "unexpected message: {}",
         err.message
     );
@@ -5679,7 +5680,7 @@ fn regex_glob_form_is_e0607() {
 #[test]
 fn regex_methods_answer_their_declared_types() {
     let src = r#"
-        use regex::{RegExp, RegexError};
+        use std::regex::{RegExp, RegexError};
         fn probe(re: RegExp) {
             let ok: bool = re.test("ABC123")
             let m = re.find("abc123")
@@ -5711,7 +5712,7 @@ fn regex_test_returns_a_bool() {
     // The declared signature, not the loose `any` a broken lookup would
     // leave behind: `bool` is not a `number`.
     let src = r#"
-        use regex::RegExp;
+        use std::regex::RegExp;
         fn f(re: RegExp): number {
             re.test("a")
         }
@@ -5730,7 +5731,7 @@ fn regex_test_returns_a_bool() {
 #[test]
 fn regex_member_on_an_optional_without_a_test_is_rejected() {
     let src = r#"
-        use regex::RegExp;
+        use std::regex::RegExp;
         fn probe(re: RegExp) {
             let m = re.find("a")
             print(m.value)
@@ -5845,7 +5846,7 @@ fn narrowing_does_not_leak_past_its_branch() {
 #[test]
 fn propagate_on_a_result_unwraps_to_its_success_type() {
     let src = r#"
-        use regex::{RegExp, RegexError};
+        use std::regex::{RegExp, RegexError};
         fn build(pattern: string): Result<RegExp, RegexError> {
             let re = RegExp::compile(pattern)?
             Result::Ok(re)
@@ -5874,7 +5875,7 @@ fn propagate_on_an_optional_yields_its_inner_type() {
 #[test]
 fn propagate_without_a_declared_return_is_e0217() {
     let src = r#"
-        use regex::RegExp;
+        use std::regex::RegExp;
         fn build(pattern: string) {
             let re = RegExp::compile(pattern)?
             print(str(re))
@@ -5917,7 +5918,7 @@ fn propagate_on_a_plain_operand_is_e0217() {
 #[test]
 fn propagate_failure_must_fit_the_return_type_is_e0217() {
     let src = r#"
-        use regex::RegExp;
+        use std::regex::RegExp;
         fn f(): number {
             let re = RegExp::compile("a")?
             print(str(re))
@@ -5940,7 +5941,7 @@ fn propagate_failure_must_fit_the_return_type_is_e0217() {
 #[test]
 fn propagate_in_a_defer_operand_is_e0229() {
     let src = r#"
-        use regex::{RegExp, RegexError};
+        use std::regex::{RegExp, RegexError};
         fn build(pattern: string): Result<RegExp, RegexError> {
             defer print(str(RegExp::compile(pattern)?))
             let re = RegExp::compile(pattern)?
@@ -5967,7 +5968,7 @@ fn propagate_in_a_defer_operand_is_e0229() {
 #[test]
 fn string_methods_typecheck() {
     let src = r##"
-        use regex::RegExp;
+        use std::regex::RegExp;
         fn main() {
             match RegExp::compile("\\d+", "g") {
                 Result::Ok(re) => {
@@ -5986,7 +5987,7 @@ fn string_methods_typecheck() {
 #[test]
 fn string_replace_must_bind_a_string() {
     let src = r##"
-        use regex::RegExp;
+        use std::regex::RegExp;
         fn main() {
             match RegExp::compile("a") {
                 Result::Ok(re) => {
@@ -6000,4 +6001,219 @@ fn string_replace_must_bind_a_string() {
     "##;
     let err = analyze_src(src).unwrap_err();
     assert_eq!(err.code(), "E0201", "unexpected: {}", err.message);
+}
+
+// ──────────────────────────────────────────────────────────────────────
+//  The `std` tree: `use std::<mod>::…` imports, qualified names without
+//  an import, aliases, and the removal of the bare `Math`/`Time`/`Fs`/
+//  `regex` heads (spec `builtins/intrinsic-functions.md`).
+// ──────────────────────────────────────────────────────────────────────
+
+#[test]
+fn std_glob_binds_bare_names() {
+    let src = r#"
+        use std::math::*;
+        fn main() {
+            let whole = floor(3.7)
+            let clamped = min(max(120, 0), 100)
+            print(str(whole + clamped + PI))
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn std_qualified_forms_need_no_import() {
+    let src = r#"
+        fn main() {
+            let whole = std::math::floor(3.7)
+            print(str(whole + std::math::PI))
+            let taken = std::time::now()
+            print(str(taken))
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn std_alias_binds_the_namespace() {
+    let src = r#"
+        use std::math as m;
+        fn main() {
+            print(str(m::floor(3.7) + m::PI))
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn std_namespace_binding_reaches_members() {
+    let src = r#"
+        use std::math;
+        fn main() {
+            print(str(math::floor(3.7) + math::PI))
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn std_regex_glob_imports_the_types() {
+    let src = r#"
+        use std::regex::*;
+        fn main() {
+            match RegExp::compile("a+") {
+                Result::Ok(re) => print(str(re.test("aaa")))
+                Result::Err(e) => print(e.message)
+            }
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn bare_math_head_is_e0003_with_a_migration_hint() {
+    let src = r#"
+        fn main() {
+            print(str(Math::PI))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0003");
+    assert!(
+        err.message.contains("`Math` lives under `std`"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn bare_time_head_is_e0003_with_a_migration_hint() {
+    let src = r#"
+        fn main() {
+            let now = Time::now()
+            print(str(now))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0003");
+    assert!(
+        err.message.contains("`Time` lives under `std`"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn bare_fs_head_is_e0003_with_a_migration_hint() {
+    let src = r#"
+        fn main() {
+            print(str(Fs::exists("f.txt")))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0003");
+    assert!(
+        err.message.contains("`Fs` lives under `std`"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn bare_regex_group_is_e0607_with_a_migration_hint() {
+    let src = r#"
+        use regex::{RegExp, RegexError};
+        fn main() {
+            print("hi")
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0607");
+    assert!(
+        err.message.contains("`regex` lives under `std`"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn std_root_use_is_e0607() {
+    let src = r#"
+        use std as x;
+        fn main() {
+            print("hi")
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0607");
+    assert!(
+        err.message.contains("`std` is a namespace root"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn std_unknown_module_is_e0607() {
+    let src = r#"
+        use std::nope::*;
+        fn main() {
+            print("hi")
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0607");
+    assert!(
+        err.message.contains("cannot resolve `std::nope`"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn std_math_unknown_member_is_rejected() {
+    let src = r#"
+        fn main() {
+            print(str(std::math::typo(1)))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(
+        err.message.contains("`std::math` has no member `typo`"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn std_regex_qualified_static_call_is_guided() {
+    let src = r#"
+        fn main() {
+            let built = std::regex::RegExp::compile("a+")
+            print(str(built))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(
+        err.message.contains("imported name"),
+        "unexpected message: {}",
+        err.message
+    );
+    assert!(
+        err.message.contains("use std::regex::{RegExp, RegexError}"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn bare_std_member_without_import_is_undefined() {
+    let src = r#"
+        fn main() {
+            print(str(floor(3.7)))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0003");
 }

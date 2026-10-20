@@ -37,7 +37,7 @@ struct Point { x: number, y: number }
 
 impl Point {
     fn len(self): number {
-        Math::sqrt(self.x * self.x + self.y * self.y)
+        std::math::sqrt(self.x * self.x + self.y * self.y)
     }
     fn shifted(self, dx: number, dy: number): Point {
         return Point(x: self.x + dx, y: self.y + dy)
@@ -165,7 +165,8 @@ fn main() {
 
 #[test]
 fn test_sqrt_tagged_as_float() {
-    let out = compile_and_run(r#"fn main() { print(Math::sqrt(4)); print(Math::sqrt(5)) }"#);
+    let out =
+        compile_and_run(r#"fn main() { print(std::math::sqrt(4)); print(std::math::sqrt(5)) }"#);
     assert_eq!(out, vec!["2".to_string(), "2.23606797749979".to_string()]);
 }
 

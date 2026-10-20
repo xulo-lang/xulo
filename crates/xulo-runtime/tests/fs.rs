@@ -55,11 +55,11 @@ fn write_read_roundtrips_through_result_ok() {
         r#"
         fn main() {{
             let path = "{}"
-            match Fs::write(path, "hello xulo") {{
+            match std::fs::write(path, "hello xulo") {{
                 Result::Ok(_) => print("wrote")
                 Result::Err(e) => print(e.message)
             }}
-            match Fs::read(path) {{
+            match std::fs::read(path) {{
                 Result::Ok(content) => print(content)
                 Result::Err(e) => print(e.message)
             }}
@@ -78,7 +78,7 @@ fn read_missing_file_surfaces_the_error_message() {
     let out = run_ok(&format!(
         r#"
         fn main() {{
-            match Fs::read("{}") {{
+            match std::fs::read("{}") {{
                 Result::Ok(content) => print(content)
                 Result::Err(e) => print(e.message)
             }}
@@ -107,10 +107,10 @@ fn exists_is_a_total_predicate() {
         r#"
         fn main() {{
             let path = "{}"
-            print(str(Fs::exists(path)))
-            Fs::write(path, "x")
-            print(str(Fs::exists(path)))
-            print(str(Fs::exists("{}")))
+            print(str(std::fs::exists(path)))
+            std::fs::write(path, "x")
+            print(str(std::fs::exists(path)))
+            print(str(std::fs::exists("{}")))
         }}
         "#,
         p(&file),
@@ -130,18 +130,18 @@ fn mkdir_creates_parents_and_remove_deletes() {
     let out = run_ok(&format!(
         r#"
         fn main() {{
-            match Fs::mkdir("{}") {{
+            match std::fs::mkdir("{}") {{
                 Result::Ok(_) => print("made")
                 Result::Err(e) => print(e.message)
             }}
-            print(str(Fs::exists("{}")))
+            print(str(std::fs::exists("{}")))
             let file = "{}/leaf.txt"
-            Fs::write(file, "x")
-            match Fs::remove(file) {{
+            std::fs::write(file, "x")
+            match std::fs::remove(file) {{
                 Result::Ok(_) => print("removed")
                 Result::Err(e) => print(e.message)
             }}
-            print(str(Fs::exists(file)))
+            print(str(std::fs::exists(file)))
         }}
         "#,
         p(&deep),
@@ -168,8 +168,8 @@ fn exists_result_can_be_bound_and_matched_like_any_result() {
         r#"
         fn main() {{
             let path = "{}"
-            Fs::write(path, "42")
-            let r: Result<string, Error> = Fs::read(path)
+            std::fs::write(path, "42")
+            let r: Result<string, Error> = std::fs::read(path)
             match r {{
                 Result::Ok(v) => print(v)
                 Result::Err(e) => print(e.message)
@@ -187,13 +187,13 @@ fn wrong_argument_type_is_an_interpreter_guard() {
     let err = run_raw(
         r#"
         fn main() {
-            print(str(Fs::exists(42)))
+            print(str(std::fs::exists(42)))
         }
         "#,
     )
     .unwrap_err();
     assert!(
-        err.message.contains("`Fs::exists` expects a string"),
+        err.message.contains("`std::fs::exists` expects a string"),
         "unexpected message: {}",
         err.message
     );
@@ -201,9 +201,9 @@ fn wrong_argument_type_is_an_interpreter_guard() {
 
 #[test]
 fn unknown_fs_member_is_rejected_by_the_semantic_pass() {
-    let err = run(r#"fn main() { Fs::typo("x") }"#).unwrap_err();
+    let err = run(r#"fn main() { std::fs::typo("x") }"#).unwrap_err();
     assert!(
-        err.message.contains("`Fs` has no member `typo`"),
+        err.message.contains("`std::fs` has no member `typo`"),
         "unexpected message: {}",
         err.message
     );

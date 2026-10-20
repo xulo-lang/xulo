@@ -68,7 +68,7 @@ pub enum RuntimeFn {
     ArrayConcat,
     ObjectGet,
     ObjectSet,
-    /// 命名空间内建（`Math::*` / `Time::*`）：携带已映射好的运行时符号名
+    /// 命名空间内建（`std::math::*` / `std::time::*`）：携带已映射好的运行时符号名
     Intrinsic(&'static str),
 }
 

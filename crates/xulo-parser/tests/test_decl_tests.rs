@@ -14,7 +14,7 @@ fn basic_works() {
 
 #Test
 async fn async_test_works() {
-  await Time::sleep(0)
+  await std::time::sleep(0)
 }
 
 fn main() {

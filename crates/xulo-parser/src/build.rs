@@ -1256,9 +1256,13 @@ fn use_target(pair: Pair<'_, Rule>) -> R<UseTarget> {
         Rule::use_group => {
             let mut head = None;
             let mut entries = Vec::new();
+            // The segments between the head and `{` (`use std::regex::{…}`)
+            // are a path prefix shared by every entry.
+            let mut prefix: Vec<String> = Vec::new();
             for p in inner.into_inner() {
                 match p.as_rule() {
                     Rule::path_head => head = Some(path_head(p)?),
+                    Rule::identifier => prefix.push(p.as_str().to_string()),
                     Rule::use_entry => {
                         let mut segments = Vec::new();
                         let mut alias = None;
@@ -1278,7 +1282,12 @@ fn use_target(pair: Pair<'_, Rule>) -> R<UseTarget> {
                                 _ => unreachable!("use_entry child {:?}", e.as_rule()),
                             }
                         }
-                        entries.push(UseEntry { segments, alias });
+                        let mut full = prefix.clone();
+                        full.append(&mut segments);
+                        entries.push(UseEntry {
+                            segments: full,
+                            alias,
+                        });
                     }
                     _ => unreachable!("use_group child {:?}", p.as_rule()),
                 }
@@ -1290,14 +1299,17 @@ fn use_target(pair: Pair<'_, Rule>) -> R<UseTarget> {
         }
         Rule::use_glob => {
             let mut head = None;
+            let mut segments = Vec::new();
             for p in inner.into_inner() {
                 match p.as_rule() {
                     Rule::path_head => head = Some(path_head(p)?),
+                    Rule::identifier => segments.push(p.as_str().to_string()),
                     _ => unreachable!("use_glob child {:?}", p.as_rule()),
                 }
             }
             Ok(UseTarget::Glob {
                 head: head.expect("use_glob has a head"),
+                segments,
             })
         }
         _ => unreachable!("use_target alternative {:?}", inner.as_rule()),

@@ -512,63 +512,63 @@ fn builtin_str_arg(args: &[Value], i: usize, name: &str) -> Result<Rc<str>, RunE
     }
 }
 
-/// `Math::abs(x)`: the absolute value (spec `builtins/intrinsic-functions.md`).
+/// `std::math::abs(x)`: the absolute value (spec `builtins/intrinsic-functions.md`).
 fn native_math_abs(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     Ok(Value::Number(xulo_std::math::abs(builtin_num_arg(
         args,
         0,
-        "Math::abs",
+        "std::math::abs",
     )?)))
 }
 
-/// `Math::min(a, b)` / `Math::max(a, b)`: the smaller / larger operand, with
+/// `std::math::min(a, b)` / `std::math::max(a, b)`: the smaller / larger operand, with
 /// the IEEE-754 special values propagating (a `NaN` operand yields `NaN`).
 fn native_math_min(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    let a = builtin_num_arg(args, 0, "Math::min")?;
-    let b = builtin_num_arg(args, 1, "Math::min")?;
+    let a = builtin_num_arg(args, 0, "std::math::min")?;
+    let b = builtin_num_arg(args, 1, "std::math::min")?;
     Ok(Value::Number(xulo_std::math::min(a, b)))
 }
 
 fn native_math_max(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    let a = builtin_num_arg(args, 0, "Math::max")?;
-    let b = builtin_num_arg(args, 1, "Math::max")?;
+    let a = builtin_num_arg(args, 0, "std::math::max")?;
+    let b = builtin_num_arg(args, 1, "std::math::max")?;
     Ok(Value::Number(xulo_std::math::max(a, b)))
 }
 
-/// `Math::sqrt(x)`: the square root; a negative operand yields `NaN`.
+/// `std::math::sqrt(x)`: the square root; a negative operand yields `NaN`.
 fn native_math_sqrt(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     Ok(Value::Number(xulo_std::math::sqrt(builtin_num_arg(
         args,
         0,
-        "Math::sqrt",
+        "std::math::sqrt",
     )?)))
 }
 
-/// `Math::cbrt(x)`: the cube root, defined for every `float`.
+/// `std::math::cbrt(x)`: the cube root, defined for every `float`.
 fn native_math_cbrt(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     Ok(Value::Number(xulo_std::math::cbrt(builtin_num_arg(
         args,
         0,
-        "Math::cbrt",
+        "std::math::cbrt",
     )?)))
 }
 
-/// `Math::pow(base, exp)`: `base` raised to `exp`.
+/// `std::math::pow(base, exp)`: `base` raised to `exp`.
 fn native_math_pow(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    let base = builtin_num_arg(args, 0, "Math::pow")?;
-    let exp = builtin_num_arg(args, 1, "Math::pow")?;
+    let base = builtin_num_arg(args, 0, "std::math::pow")?;
+    let exp = builtin_num_arg(args, 1, "std::math::pow")?;
     Ok(Value::Number(xulo_std::math::pow(base, exp)))
 }
 
-/// `Math::floor(x)` / `Math::ceil(x)` / `Math::round(x)` / `Math::trunc(x)`:
-/// the integral value, typed `int`. `Math::round` rounds halfway cases away
+/// `std::math::floor(x)` / `std::math::ceil(x)` / `std::math::round(x)` / `std::math::trunc(x)`:
+/// the integral value, typed `int`. `std::math::round` rounds halfway cases away
 /// from zero (spec `builtins/intrinsic-functions.md`); every result stays an
 /// integer-valued `float`.
 fn native_math_floor(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     Ok(Value::Number(xulo_std::math::floor(builtin_num_arg(
         args,
         0,
-        "Math::floor",
+        "std::math::floor",
     )?)))
 }
 
@@ -576,7 +576,7 @@ fn native_math_ceil(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunE
     Ok(Value::Number(xulo_std::math::ceil(builtin_num_arg(
         args,
         0,
-        "Math::ceil",
+        "std::math::ceil",
     )?)))
 }
 
@@ -584,7 +584,7 @@ fn native_math_round(_interp: &Interpreter, args: &[Value]) -> Result<Value, Run
     Ok(Value::Number(xulo_std::math::round(builtin_num_arg(
         args,
         0,
-        "Math::round",
+        "std::math::round",
     )?)))
 }
 
@@ -592,29 +592,29 @@ fn native_math_trunc(_interp: &Interpreter, args: &[Value]) -> Result<Value, Run
     Ok(Value::Number(xulo_std::math::trunc(builtin_num_arg(
         args,
         0,
-        "Math::trunc",
+        "std::math::trunc",
     )?)))
 }
 
-/// `Math::toFixed(x, digits)`: the decimal numeral of `x` with exactly
+/// `std::math::toFixed(x, digits)`: the decimal numeral of `x` with exactly
 /// `digits` digits after the decimal point, rounded halfway away from zero
 /// and keeping trailing zeros (spec `builtins/intrinsic-functions.md`).
 /// Special values ignore `digits`. A `digits` value outside `0..=15` is a
 /// runtime failure (spec `memory-and-runtime.md`).
 fn native_math_to_fixed(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    let x = builtin_num_arg(args, 0, "Math::toFixed")?;
+    let x = builtin_num_arg(args, 0, "std::math::toFixed")?;
     let digits = match args.get(1) {
         Some(Value::Number(d)) if d.fract() == 0.0 && (0.0..=15.0).contains(d) => *d as usize,
         Some(Value::Number(d)) => {
             return Err(RunError::err(
-                format!("`Math::toFixed` digits must be an integer in 0..=15, found {d}"),
+                format!("`std::math::toFixed` digits must be an integer in 0..=15, found {d}"),
                 0..0,
             ));
         }
         other => {
             return Err(RunError::err(
                 format!(
-                    "`Math::toFixed` expects a number for `digits`, found {}",
+                    "`std::math::toFixed` expects a number for `digits`, found {}",
                     other
                         .map(|v| v.kind_name())
                         .unwrap_or_else(|| "nothing".into())
@@ -626,7 +626,7 @@ fn native_math_to_fixed(_interp: &Interpreter, args: &[Value]) -> Result<Value, 
     Ok(Value::String(xulo_std::math::to_fixed(x, digits).into()))
 }
 
-/// The one-argument trigonometric functions (`Math::sin` … `Math::atan`);
+/// The one-argument trigonometric functions (`std::math::sin` … `std::math::atan`);
 /// outside an arcsine/arccosine's domain the `f64` operation yields `NaN`.
 fn native_math_unary_float(
     name: &'static str,
@@ -635,21 +635,21 @@ fn native_math_unary_float(
     move |_interp, args| Ok(Value::Number(f(builtin_num_arg(args, 0, name)?)))
 }
 
-/// `Math::atan2(y, x)`: the quadrant-aware arctangent of `y / x`.
+/// `std::math::atan2(y, x)`: the quadrant-aware arctangent of `y / x`.
 fn native_math_atan2(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    let y = builtin_num_arg(args, 0, "Math::atan2")?;
-    let x = builtin_num_arg(args, 1, "Math::atan2")?;
+    let y = builtin_num_arg(args, 0, "std::math::atan2")?;
+    let x = builtin_num_arg(args, 1, "std::math::atan2")?;
     Ok(Value::Number(xulo_std::math::atan2(y, x)))
 }
 
-/// `Math::log(x)` / `Math::log2(x)` / `Math::log10(x)`: `-Infinity` at `0`,
-/// `NaN` for a negative argument; `Math::exp(x)`: `e` raised to `x`,
+/// `std::math::log(x)` / `std::math::log2(x)` / `std::math::log10(x)`: `-Infinity` at `0`,
+/// `NaN` for a negative argument; `std::math::exp(x)`: `e` raised to `x`,
 /// `Infinity` once the result overflows.
 fn native_math_log(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     Ok(Value::Number(xulo_std::math::log(builtin_num_arg(
         args,
         0,
-        "Math::log",
+        "std::math::log",
     )?)))
 }
 
@@ -657,7 +657,7 @@ fn native_math_log2(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunE
     Ok(Value::Number(xulo_std::math::log2(builtin_num_arg(
         args,
         0,
-        "Math::log2",
+        "std::math::log2",
     )?)))
 }
 
@@ -665,7 +665,7 @@ fn native_math_log10(_interp: &Interpreter, args: &[Value]) -> Result<Value, Run
     Ok(Value::Number(xulo_std::math::log10(builtin_num_arg(
         args,
         0,
-        "Math::log10",
+        "std::math::log10",
     )?)))
 }
 
@@ -673,7 +673,7 @@ fn native_math_exp(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunEr
     Ok(Value::Number(xulo_std::math::exp(builtin_num_arg(
         args,
         0,
-        "Math::exp",
+        "std::math::exp",
     )?)))
 }
 
@@ -687,40 +687,40 @@ fn no_arg_guard(args: &[Value], name: &str) -> Result<(), RunError> {
     }
 }
 
-/// `Time::now`: milliseconds since the Unix epoch (wall clock).
+/// `std::time::now`: milliseconds since the Unix epoch (wall clock).
 fn native_time_now(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    no_arg_guard(args, "Time::now")?;
+    no_arg_guard(args, "std::time::now")?;
     Ok(Value::Number(xulo_std::time::now_millis() as f64))
 }
 
-/// `Time::now_nanos`: nanoseconds since the Unix epoch (wall clock).
+/// `std::time::now_nanos`: nanoseconds since the Unix epoch (wall clock).
 fn native_time_now_nanos(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    no_arg_guard(args, "Time::now_nanos")?;
+    no_arg_guard(args, "std::time::now_nanos")?;
     Ok(Value::Number(xulo_std::time::now_nanos() as f64))
 }
 
-/// `Time::monotonic`: milliseconds on the monotonic clock, measured from the
+/// `std::time::monotonic`: milliseconds on the monotonic clock, measured from the
 /// process-wide baseline `xulo-std` fixes at first use.
 fn native_time_monotonic(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    no_arg_guard(args, "Time::monotonic")?;
+    no_arg_guard(args, "std::time::monotonic")?;
     Ok(Value::Number(xulo_std::time::monotonic_millis() as f64))
 }
 
-/// `Time::monotonic_nanos`: nanoseconds on the monotonic clock.
+/// `std::time::monotonic_nanos`: nanoseconds on the monotonic clock.
 fn native_time_monotonic_nanos(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    no_arg_guard(args, "Time::monotonic_nanos")?;
+    no_arg_guard(args, "std::time::monotonic_nanos")?;
     Ok(Value::Number(xulo_std::time::monotonic_nanos() as f64))
 }
 
-/// `Time::sleep(ms)`: a `Task<unit>` that settles at least `ms` milliseconds
+/// `std::time::sleep(ms)`: a `Task<unit>` that settles at least `ms` milliseconds
 /// from now. The deadline is a timer entry `drive` fires once nothing else is
 /// ready to run, exactly like a `Task::timeout` deadline; awaiting the task
 /// suspends the body until then.
 fn native_time_sleep(interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    let ms = builtin_num_arg(args, 0, "Time::sleep")?;
+    let ms = builtin_num_arg(args, 0, "std::time::sleep")?;
     if !ms.is_finite() || ms < 0.0 {
         return Err(RunError::err(
-            format!("`Time::sleep` expects a non-negative millisecond count, found {ms}"),
+            format!("`std::time::sleep` expects a non-negative millisecond count, found {ms}"),
             0..0,
         ));
     }
@@ -748,41 +748,41 @@ fn fs_result(result: Result<Value, String>) -> Value {
     }
 }
 
-/// `Fs::read(path)`: the file's contents as a string, or `Err(Error(...))`
+/// `std::fs::read(path)`: the file's contents as a string, or `Err(Error(...))`
 /// for a missing directory, an unreadable file, or non-UTF-8 bytes.
 fn native_fs_read(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    let path = builtin_str_arg(args, 0, "Fs::read")?;
+    let path = builtin_str_arg(args, 0, "std::fs::read")?;
     Ok(fs_result(
         xulo_std::fs::read(&path).map(|s| Value::String(s.into())),
     ))
 }
 
-/// `Fs::write(path, content)`: create or truncate the file, or `Err(...)` —
+/// `std::fs::write(path, content)`: create or truncate the file, or `Err(...)` —
 /// a missing parent directory is a failure, not a `mkdir`.
 fn native_fs_write(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    let path = builtin_str_arg(args, 0, "Fs::write")?;
-    let content = builtin_str_arg(args, 1, "Fs::write")?;
+    let path = builtin_str_arg(args, 0, "std::fs::write")?;
+    let content = builtin_str_arg(args, 1, "std::fs::write")?;
     Ok(fs_result(
         xulo_std::fs::write(&path, &content).map(|()| Value::Null),
     ))
 }
 
-/// `Fs::exists(path)`: total, so a probe that cannot be answered (permission,
+/// `std::fs::exists(path)`: total, so a probe that cannot be answered (permission,
 /// invalid syntax) simply reads as `false`.
 fn native_fs_exists(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    let path = builtin_str_arg(args, 0, "Fs::exists")?;
+    let path = builtin_str_arg(args, 0, "std::fs::exists")?;
     Ok(Value::Boolean(xulo_std::fs::exists(&path)))
 }
 
-/// `Fs::remove(path)`: delete one file; a non-empty directory fails.
+/// `std::fs::remove(path)`: delete one file; a non-empty directory fails.
 fn native_fs_remove(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    let path = builtin_str_arg(args, 0, "Fs::remove")?;
+    let path = builtin_str_arg(args, 0, "std::fs::remove")?;
     Ok(fs_result(xulo_std::fs::remove(&path).map(|()| Value::Null)))
 }
 
-/// `Fs::mkdir(path)`: create the directory with its missing parents.
+/// `std::fs::mkdir(path)`: create the directory with its missing parents.
 fn native_fs_mkdir(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    let path = builtin_str_arg(args, 0, "Fs::mkdir")?;
+    let path = builtin_str_arg(args, 0, "std::fs::mkdir")?;
     Ok(fs_result(xulo_std::fs::mkdir(&path).map(|()| Value::Null)))
 }
 
@@ -1285,9 +1285,9 @@ impl Interpreter {
             Value::Object(Rc::new(RefCell::new(task_methods))),
             false,
         );
-        // The `Math` namespace of constants and functions (spec
-        // `builtins/intrinsic-functions.md`): reached as `Math::PI` /
-        // `Math::max(a, b)`, never as a value of its own.
+        // The `std::math` namespace of constants and functions (spec
+        // `builtins/intrinsic-functions.md`): reached as `std::math::PI` /
+        // `std::math::max(a, b)`, never as a value of its own.
         let math_members: Vec<(String, Value)> = vec![
             ("PI".to_string(), Value::Number(xulo_std::math::PI)),
             ("E".to_string(), Value::Number(xulo_std::math::E)),
@@ -1323,42 +1323,42 @@ impl Interpreter {
             (
                 "sin".to_string(),
                 Value::Native(Rc::new(native_math_unary_float(
-                    "Math::sin",
+                    "std::math::sin",
                     xulo_std::math::sin,
                 ))),
             ),
             (
                 "cos".to_string(),
                 Value::Native(Rc::new(native_math_unary_float(
-                    "Math::cos",
+                    "std::math::cos",
                     xulo_std::math::cos,
                 ))),
             ),
             (
                 "tan".to_string(),
                 Value::Native(Rc::new(native_math_unary_float(
-                    "Math::tan",
+                    "std::math::tan",
                     xulo_std::math::tan,
                 ))),
             ),
             (
                 "asin".to_string(),
                 Value::Native(Rc::new(native_math_unary_float(
-                    "Math::asin",
+                    "std::math::asin",
                     xulo_std::math::asin,
                 ))),
             ),
             (
                 "acos".to_string(),
                 Value::Native(Rc::new(native_math_unary_float(
-                    "Math::acos",
+                    "std::math::acos",
                     xulo_std::math::acos,
                 ))),
             ),
             (
                 "atan".to_string(),
                 Value::Native(Rc::new(native_math_unary_float(
-                    "Math::atan",
+                    "std::math::atan",
                     xulo_std::math::atan,
                 ))),
             ),
@@ -1374,14 +1374,10 @@ impl Interpreter {
             ),
             ("exp".to_string(), Value::Native(Rc::new(native_math_exp))),
         ];
-        global.borrow_mut().define(
-            "Math",
-            Value::Object(Rc::new(RefCell::new(math_members))),
-            false,
-        );
-        // The `Time` namespace of clocks and async sleep (spec
-        // `builtins/intrinsic-functions.md`): reached as `Time::now` /
-        // `await Time::sleep(ms)`.
+        let math_obj = Value::Object(Rc::new(RefCell::new(math_members)));
+        // The `std::time` namespace of clocks and async sleep (spec
+        // `builtins/intrinsic-functions.md`): reached as `std::time::now` /
+        // `await std::time::sleep(ms)`.
         let time_members: Vec<(String, Value)> = vec![
             ("now".to_string(), Value::Native(Rc::new(native_time_now))),
             (
@@ -1401,14 +1397,10 @@ impl Interpreter {
                 Value::Native(Rc::new(native_time_sleep)),
             ),
         ];
-        global.borrow_mut().define(
-            "Time",
-            Value::Object(Rc::new(RefCell::new(time_members))),
-            false,
-        );
-        // The `Fs` namespace of filesystem primitives (implementation-first;
+        let time_obj = Value::Object(Rc::new(RefCell::new(time_members)));
+        // The `std::fs` namespace of filesystem primitives (implementation-first;
         // the language itself has no I/O, spec `memory-and-runtime.md`):
-        // reached as `Fs::read(...)` / `Fs::write(...)`, each fallible
+        // reached as `std::fs::read(...)` / `std::fs::write(...)`, each fallible
         // member returning the built-in `Result`.
         let fs_members: Vec<(String, Value)> = vec![
             ("read".to_string(), Value::Native(Rc::new(native_fs_read))),
@@ -1423,22 +1415,32 @@ impl Interpreter {
             ),
             ("mkdir".to_string(), Value::Native(Rc::new(native_fs_mkdir))),
         ];
-        global.borrow_mut().define(
-            "Fs",
-            Value::Object(Rc::new(RefCell::new(fs_members))),
-            false,
-        );
-        // The `regex` module behind the language's `RegExp` type (spec
-        // `regular-expressions.mdx`): `RegExp::compile(…)` resolves to this
-        // object the way a namespace head resolves to its intrinsic table,
-        // and a `use regex::RegExp` import reaches the same head.
-        let regex_members: Vec<(String, Value)> = vec![(
+        let fs_obj = Value::Object(Rc::new(RefCell::new(fs_members)));
+        // The `std::regex` module behind the language's `RegExp` type (spec
+        // `regular-expressions.mdx`): `RegExp::compile(…)` resolves through
+        // the imported name, which `setup_module` materializes from this
+        // object for `use std::regex::{RegExp, …}`.
+        let regexp_static: Vec<(String, Value)> = vec![(
             "compile".to_string(),
             Value::Native(Rc::new(native_regex_compile)),
         )];
+        let regex_obj = Value::Object(Rc::new(RefCell::new(vec![(
+            "RegExp".to_string(),
+            Value::Object(Rc::new(RefCell::new(regexp_static))),
+        )])));
+        // The whole built-in tree hangs off a single `std` namespace object:
+        // `std::math::floor(…)` walks `std` → `math` → `floor` through the
+        // generic namespace dispatch, and `setup_module` copies members out
+        // of it for bare-name imports.
+        let std_members: Vec<(String, Value)> = vec![
+            ("math".to_string(), math_obj),
+            ("time".to_string(), time_obj),
+            ("fs".to_string(), fs_obj),
+            ("regex".to_string(), regex_obj),
+        ];
         global.borrow_mut().define(
-            "RegExp",
-            Value::Object(Rc::new(RefCell::new(regex_members))),
+            "std",
+            Value::Object(Rc::new(RefCell::new(std_members))),
             false,
         );
         Interpreter {
@@ -1468,6 +1470,17 @@ impl Interpreter {
     /// printed by `print`.
     pub fn run(&self, program: &Program) -> Result<Vec<String>, XuloError> {
         let global = self.global.clone();
+        // `use std::…` binds from the global `std` object, as in
+        // `setup_module` (the single-module entry point skips the import table).
+        for statement in &program.statements {
+            if let Statement::Use(u) = statement {
+                self.bind_std_use(u, &global).map_err(|e| match e {
+                    RunError::Err(e) => e,
+                    RunError::Propagate(v) => stray_propagate(&v),
+                    RunError::Throw(v) => self.uncaught(&v),
+                })?;
+            }
+        }
         for statement in &program.statements {
             match statement {
                 Statement::Fn(f) => self.register_fn(f, &global),
@@ -1610,6 +1623,162 @@ impl Interpreter {
     /// Bind a module's imports, register its declarations, and execute its
     /// top-level statements (skipping `import`s, which the caller pre-binds).
     /// Shared by [`Interpreter::exec_module`] and [`Interpreter::run_test`].
+    /// The namespace object a `use` head resolves to in `env`, descended
+    /// through the middle segments (`std` + `[math]` → the math table).
+    fn use_container(
+        &self,
+        head: &xulo_core::ast::PathHead,
+        mids: &[String],
+        env: &Rc<RefCell<Env>>,
+    ) -> Option<Value> {
+        let head_name = match head {
+            xulo_core::ast::PathHead::Name(n) | xulo_core::ast::PathHead::Package(n) => n.as_str(),
+            xulo_core::ast::PathHead::SelfModule => "self",
+            xulo_core::ast::PathHead::Super => return None,
+        };
+        let mut current = match env.borrow().get(head_name) {
+            Some(Value::Object(obj)) => Value::Object(obj),
+            _ => return None,
+        };
+        for seg in mids {
+            let Value::Object(ref obj) = current else {
+                return None;
+            };
+            let next = obj
+                .borrow()
+                .iter()
+                .find(|(k, _)| k == seg)
+                .map(|(_, v)| v.clone());
+            match next {
+                Some(Value::Object(child)) => current = Value::Object(child),
+                _ => return None,
+            }
+        }
+        Some(current)
+    }
+
+    /// Materialize one `use` declaration's values in `env`.
+    ///
+    /// The CLI's import table covers module-graph imports; the built-in
+    /// `std` tree has no graph behind it, so `use std::math::*`, `use
+    /// std::math as m`, and `use std::regex::{RegExp}` bind straight from
+    /// the global `std` object here. Names already in `env` (module imports
+    /// the table supplied) are left alone, and a non-std head whose
+    /// namespace is not in scope binds nothing.
+    fn bind_std_use(
+        &self,
+        u: &xulo_core::ast::UseDecl,
+        env: &Rc<RefCell<Env>>,
+    ) -> Result<(), RunError> {
+        let head_is_std = matches!(&u.target, xulo_core::ast::UseTarget::Path { head, .. } | xulo_core::ast::UseTarget::Group { head, .. } | xulo_core::ast::UseTarget::Glob { head, .. }
+            if matches!(head, xulo_core::ast::PathHead::Name(n) if n == "std"));
+        match &u.target {
+            xulo_core::ast::UseTarget::Path {
+                head,
+                segments,
+                alias,
+            } => {
+                if segments.is_empty() {
+                    return Ok(());
+                }
+                let (mids, member) = segments.split_at(segments.len() - 1);
+                let Some(container) = self.use_container(head, mids, env) else {
+                    if head_is_std {
+                        return Err(RunError::err(
+                            format!("cannot resolve `std::{}`", segments.join("::")),
+                            u.span.clone(),
+                        ));
+                    }
+                    return Ok(());
+                };
+                let Value::Object(ref obj) = container else {
+                    return Ok(());
+                };
+                let value = obj
+                    .borrow()
+                    .iter()
+                    .find(|(k, _)| k == member[0].as_str())
+                    .map(|(_, v)| v.clone());
+                let Some(value) = value else {
+                    // A std member with no runtime value (`RegexError`,
+                    // `RegexMatch` — types only) binds nothing: the semantic
+                    // pass already rejected any value-position use.
+                    return Ok(());
+                };
+                let local = alias.clone().unwrap_or_else(|| member[0].clone());
+                if env.borrow().get(&local).is_none() {
+                    env.borrow_mut().define(&local, value, false);
+                }
+                Ok(())
+            }
+            xulo_core::ast::UseTarget::Group { head, entries } => {
+                for entry in entries {
+                    if entry.segments.is_empty() {
+                        continue;
+                    }
+                    let (mids, member) = entry.segments.split_at(entry.segments.len() - 1);
+                    let Some(container) = self.use_container(head, mids, env) else {
+                        if head_is_std {
+                            return Err(RunError::err(
+                                format!("cannot resolve `std::{}`", entry.segments.join("::")),
+                                u.span.clone(),
+                            ));
+                        }
+                        continue;
+                    };
+                    let Value::Object(ref obj) = container else {
+                        continue;
+                    };
+                    let value = obj
+                        .borrow()
+                        .iter()
+                        .find(|(k, _)| k == member[0].as_str())
+                        .map(|(_, v)| v.clone());
+                    let Some(value) = value else {
+                        // A std member with no runtime value (a type like
+                        // `RegexError`) binds nothing.
+                        continue;
+                    };
+                    let local = entry.alias.clone().unwrap_or_else(|| member[0].clone());
+                    if env.borrow().get(&local).is_none() {
+                        env.borrow_mut().define(&local, value, false);
+                    }
+                }
+                Ok(())
+            }
+            xulo_core::ast::UseTarget::Glob { head, segments } => {
+                let Some(container) = self.use_container(head, segments, env) else {
+                    if head_is_std {
+                        return Err(RunError::err(
+                            if segments.is_empty() {
+                                "`std` has no direct members".to_string()
+                            } else {
+                                format!("cannot resolve `std::{}`", segments.join("::"))
+                            },
+                            u.span.clone(),
+                        ));
+                    }
+                    return Ok(());
+                };
+                let Value::Object(ref obj) = container else {
+                    return Ok(());
+                };
+                let members: Vec<(String, Value)> = obj
+                    .borrow()
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
+                for (name, value) in members {
+                    if env.borrow().get(&name).is_none() {
+                        env.borrow_mut().define(&name, value, false);
+                    }
+                }
+                Ok(())
+            }
+            xulo_core::ast::UseTarget::Local(_) => Ok(()),
+        }
+    }
+
     fn setup_module(
         &self,
         program: &Program,
@@ -1618,6 +1787,14 @@ impl Interpreter {
         let global = Env::child(&self.global);
         for (name, value) in imports {
             global.borrow_mut().define(name, value.clone(), false);
+        }
+        // The built-in `std` imports carry no module graph, so the CLI's
+        // import table cannot supply them: resolve `use std::…` (and uses of
+        // a std alias) against the global `std` object right here.
+        for statement in &program.statements {
+            if let Statement::Use(u) = statement {
+                self.bind_std_use(u, &global)?;
+            }
         }
         for statement in &program.statements {
             match statement {
@@ -3124,21 +3301,35 @@ impl Interpreter {
             }
             Expression::Call(call) => self.call(call, env),
             Expression::EnumRef(r) => {
-                // A built-in namespace's bare member: `Math::PI` is its
-                // constant value, `Math::sqrt` the native function (spec
-                // `builtins/intrinsic-functions.md`). A member the table does
-                // not have falls through to the enum reading.
-                if matches!(r.enum_name.as_str(), "Math" | "Time" | "Task" | "Fs")
-                    && let Some(value) = self.builtin_ns_member(&r.enum_name, &r.variant)
+                // The `Task` combinator namespace (spec
+                // `builtins/intrinsic-functions.md`).
+                if r.enum_name == "Task"
+                    && let Some(value) = self.builtin_ns_member("Task", &r.variant)
                 {
                     return Ok(value);
                 }
-                // A module-namespace member in value position (`ns::CONST`):
-                // the head is not a declared enum and names an object in
-                // scope — read the member out of the namespace object.
+                // A module-namespace member in value position (`ns::CONST`,
+                // `std::math::PI`): the head is not a declared enum and names
+                // an object in scope — walk to it and read the member.
                 if !self.enum_names.borrow().iter().any(|n| n == &r.enum_name) {
-                    let ns = env.borrow().get(&r.enum_name);
-                    if let Some(Value::Object(ns)) = ns {
+                    let parts: Vec<&str> = r.enum_name.split("::").collect();
+                    let mut current = env.borrow().get(parts[0]);
+                    for seg in &parts[1..] {
+                        let next = match &current {
+                            Some(Value::Object(obj)) => obj
+                                .borrow()
+                                .iter()
+                                .find(|(k, _)| k == seg)
+                                .map(|(_, v)| v.clone()),
+                            _ => None,
+                        };
+                        if next.is_none() {
+                            current = None;
+                            break;
+                        }
+                        current = next;
+                    }
+                    if let Some(Value::Object(ns)) = current {
                         let found = ns
                             .borrow()
                             .iter()
@@ -3914,15 +4105,16 @@ impl Interpreter {
             })?;
             return self.call_value(&callee, &call.arguments, env);
         }
-        // A built-in namespace head (`Math::max`, `Time::sleep`, `Task::all`,
-        // `Fs::read`) resolves to its intrinsic object in the root environment
-        // (spec `builtins/intrinsic-functions.md`). A member the table does not
+        // A built-in namespace head (`Task::all`) resolves to its intrinsic
+        // object in the root environment (spec
+        // `builtins/intrinsic-functions.md`). The `std` tree walks the
+        // generic namespace path below instead. A member the table does not
         // have falls through to enum construction, which is what a
-        // program-declared `enum Math`-style shadowing head needs (the
-        // semantic pass rejects an unknown member on a genuine namespace).
+        // program-declared `enum`-style shadowing head needs (the semantic
+        // pass rejects an unknown member on a genuine namespace).
         if let Some((head, member)) = call.callee.split_once("::")
             && !member.contains("::")
-            && matches!(head, "Math" | "Time" | "Task" | "Fs")
+            && head == "Task"
             && let Some(func) = self.builtin_ns_member(head, member)
         {
             return self.call_value(&func, &call.arguments, env);

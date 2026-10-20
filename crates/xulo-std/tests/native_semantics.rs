@@ -27,7 +27,7 @@ fn min_max_propagate_nan() {
     assert_eq!(math::max(3.0, 9.0), 9.0);
 }
 
-// 3.14159 是 spec/回归用例的既定字面量（`Math::toFixed(3.14159, 2)`），非 PI 近似。
+// 3.14159 是 spec/回归用例的既定字面量（`std::math::toFixed(3.14159, 2)`），非 PI 近似。
 #[allow(clippy::approx_constant)]
 #[test]
 fn to_fixed_keeps_trailing_zeros_and_rounds_away_from_zero() {

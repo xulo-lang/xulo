@@ -257,14 +257,14 @@ fn task_timeout_expires_on_a_task_that_never_settles() {
     assert_eq!(out, vec!["timed out"]);
 }
 
-/// `await Time::sleep(ms)` suspends the body until the deadline passes and
+/// `await std::time::sleep(ms)` suspends the body until the deadline passes and
 /// yields `unit` (spec `builtins/intrinsic-functions.md`): the coroutine
 /// resumes with nothing to print, then continues.
 #[test]
 fn time_sleep_settles_after_the_delay() {
     let out = run(r#"
         async fn main() {
-            await Time::sleep(10)
+            await std::time::sleep(10)
             print("slept")
         }
         "#);

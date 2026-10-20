@@ -483,6 +483,9 @@ pub enum UseTarget {
     },
     Glob {
         head: PathHead,
+        /// Middle segments between the head and `*` (`std::math` in
+        /// `use std::math::*`); empty for a single-segment glob.
+        segments: Vec<String>,
     },
     /// `pub use { a, b }` — re-exports names already bound in this module.
     Local(Vec<String>),

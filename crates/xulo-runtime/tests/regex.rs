@@ -23,7 +23,7 @@ fn run_ok(src: &str) -> Vec<String> {
 fn compile_test_honours_the_case_insensitive_flag() {
     let out = run_ok(
         r#"
-        use regex::{RegExp, RegexError};
+        use std::regex::{RegExp, RegexError};
         fn main() {
             match RegExp::compile("[a-z]+", "i") {
                 Result::Ok(re) => {
@@ -42,7 +42,7 @@ fn compile_test_honours_the_case_insensitive_flag() {
 fn compile_reports_a_bad_pattern_as_error_data() {
     let out = run_ok(
         r#"
-        use regex::{RegExp, RegexError};
+        use std::regex::{RegExp, RegexError};
         fn main() {
             match RegExp::compile("[a-z") {
                 Result::Ok(_) => print("compiled")
@@ -63,7 +63,7 @@ fn compile_reports_a_bad_pattern_as_error_data() {
 fn compile_rejects_an_unknown_flag() {
     let out = run_ok(
         r#"
-        use regex::{RegExp, RegexError};
+        use std::regex::{RegExp, RegexError};
         fn main() {
             match RegExp::compile("a", "z") {
                 Result::Ok(_) => print("compiled")
@@ -79,7 +79,7 @@ fn compile_rejects_an_unknown_flag() {
 fn find_read_value_and_groups_behind_a_null_test() {
     let out = run_ok(
         r#"
-        use regex::{RegExp, RegexError};
+        use std::regex::{RegExp, RegexError};
         fn main() {
             match RegExp::compile("(\\d+)-(\\d+)") {
                 Result::Ok(re) => {
@@ -117,7 +117,7 @@ fn find_read_value_and_groups_behind_a_null_test() {
 fn find_all_iterates_every_match() {
     let out = run_ok(
         r#"
-        use regex::{RegExp, RegexError};
+        use std::regex::{RegExp, RegexError};
         fn main() {
             match RegExp::compile("[a-c]") {
                 Result::Ok(re) => {
@@ -137,7 +137,7 @@ fn find_all_iterates_every_match() {
 fn replace_expands_capture_groups_in_the_template() {
     let out = run_ok(
         r#"
-        use regex::{RegExp, RegexError};
+        use std::regex::{RegExp, RegexError};
         fn main() {
             match RegExp::compile("(a)(b)") {
                 Result::Ok(re) => print("ab".replace(re, "$2-$1"))
@@ -158,7 +158,7 @@ fn replace_expands_capture_groups_in_the_template() {
 fn replace_accepts_a_function_replacer() {
     let out = run_ok(
         r#"
-        use regex::{RegExp, RegexError};
+        use std::regex::{RegExp, RegexError};
         fn main() {
             match RegExp::compile("(cat|dog)") {
                 Result::Ok(re) => {
@@ -199,7 +199,7 @@ fn string_to_uppercase_runs_on_a_receiver() {
 fn question_mark_returns_the_compile_error_to_the_caller() {
     let out = run_ok(
         r#"
-        use regex::{RegExp, RegexError};
+        use std::regex::{RegExp, RegexError};
         fn compile_any(pattern: string): Result<RegExp, RegexError> {
             let re = RegExp::compile(pattern)?
             Result::Ok(re)
@@ -225,7 +225,7 @@ fn question_mark_inside_an_async_function_crosses_the_spawn_boundary() {
     // own frame (the spawned task), not escape as a stray top-level error.
     let out = run_ok(
         r#"
-        use regex::{RegExp, RegexError};
+        use std::regex::{RegExp, RegexError};
         async fn compile_any(pattern: string): Result<RegExp, RegexError> {
             let re = RegExp::compile(pattern)?
             Result::Ok(re)

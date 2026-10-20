@@ -241,7 +241,7 @@ fn group_and_glob_use() {
         panic!("expected use");
     };
     assert!(
-        matches!(&u.target, UseTarget::Glob { head } if matches!(head, PathHead::Package(n) if n == "lsp-server"))
+        matches!(&u.target, UseTarget::Glob { head, .. } if matches!(head, PathHead::Package(n) if n == "lsp-server"))
     );
 }
 

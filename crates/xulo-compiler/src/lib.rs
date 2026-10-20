@@ -33,6 +33,9 @@ pub fn compile_to_ir(source: &str, file: &Path) -> Result<IrModule, XuloError> {
     let mut ast = program;
     xulo_semantic::apply_trait_dispatch(&mut ast, &result.trait_dispatch);
     xulo_semantic::apply_list_concat(&mut ast, &result.list_concat);
+    // 裸名 std 内建调用（`use std::math::*` 后的 `floor(…)`）改写为限定形式，
+    // AOT lowering 只认 `std::math::…` 键。
+    xulo_semantic::apply_std_calls(&mut ast, &result.std_calls);
 
     // 生成 IR
     irgen::generate_ir(&ast)
