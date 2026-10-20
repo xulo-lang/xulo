@@ -1039,84 +1039,35 @@ fn build_native(file: &Path, output: Option<PathBuf>) -> ExitCode {
 
     // 写入 .o 文件
     let obj_path = output_path.with_extension("o");
-    let obj_file = match std::fs::File::create(&obj_path) {
-        Ok(f) => f,
-        Err(e) => {
-            eprintln!("error: cannot create {}: {}", obj_path.display(), e);
-            return ExitCode::from(1);
-        }
-    };
-    if let Err(e) = product.object.write_stream(obj_file) {
-        eprintln!("error: cannot write object file: {}", e);
+    if let Err(e) = xulo_compiler::aot::write_object_file(&product, &obj_path) {
+        eprintln!("error: {}", e);
         return ExitCode::from(1);
     }
 
-    // 查找 libxulo_runtime.a
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let workspace_root = manifest_dir
-        .parent()
-        .and_then(|p| p.parent())
-        .unwrap_or(Path::new("."));
-    let runtime_lib = workspace_root.join("target/release/libxulo_runtime.a");
-
-    if !runtime_lib.exists() {
-        eprintln!(
-            "error: runtime library not found at {}",
-            runtime_lib.display()
-        );
-        eprintln!("hint: run `cargo build --release -p xulo-runtime` first");
-        return ExitCode::from(1);
-    }
-
-    // 使用 cc 链接
-    // --gc-sections：归档 344 个成员整块进链接，不 gc 会把 addr2line/gimli
-    // 回溯和用不到的 std 全拉进来（.text 1.54MB -> 0.33MB）。
-    // --strip-debug：staticlib 内含工具链预编译 std 的 DWARF，实测占产物 66%。
+    // 用 cc 与 libxulo_runtime.a 链接（链接参数与运行时库定位见 aot::link_executable）
     let exe_path = output_path.with_extension("");
-    let link_status = std::process::Command::new("cc")
-        .arg("-no-pie")
-        .arg("-o")
-        .arg(&exe_path)
-        .arg(&obj_path)
-        .arg(&runtime_lib)
-        .arg("-lpthread")
-        .arg("-lm")
-        .arg("-ldl")
-        .arg("-Wl,--gc-sections")
-        .arg("-Wl,--strip-debug")
-        .status();
+    if let Err(e) = xulo_compiler::aot::link_executable(&obj_path, &exe_path) {
+        let _ = std::fs::remove_file(&obj_path);
+        eprintln!("error: {}", e);
+        return ExitCode::from(1);
+    }
 
-    match link_status {
-        Ok(status) if status.success() => {
-            // 清理 .o 文件
-            let _ = std::fs::remove_file(&obj_path);
-            println!("build successful: {}", exe_path.display());
-            println!("\nRunning compiled program:");
-            println!("-------------------------");
+    // 清理 .o 文件
+    let _ = std::fs::remove_file(&obj_path);
+    println!("build successful: {}", exe_path.display());
+    println!("\nRunning compiled program:");
+    println!("-------------------------");
 
-            // 运行生成的可执行文件 (使用绝对路径)
-            let abs_exe = std::fs::canonicalize(&exe_path).unwrap_or(exe_path.clone());
-            match std::process::Command::new(&abs_exe).status() {
-                Ok(status) => {
-                    if !status.success() {
-                        eprintln!("program exited with status: {}", status);
-                    }
-                }
-                Err(e) => {
-                    eprintln!("error: failed to run {}: {}", abs_exe.display(), e);
-                }
+    // 运行生成的可执行文件 (使用绝对路径)
+    let abs_exe = std::fs::canonicalize(&exe_path).unwrap_or(exe_path.clone());
+    match std::process::Command::new(&abs_exe).status() {
+        Ok(status) => {
+            if !status.success() {
+                eprintln!("program exited with status: {}", status);
             }
         }
-        Ok(status) => {
-            eprintln!("error: linker failed with status: {}", status);
-            let _ = std::fs::remove_file(&obj_path);
-            return ExitCode::from(1);
-        }
         Err(e) => {
-            eprintln!("error: failed to run linker: {}", e);
-            eprintln!("hint: make sure 'cc' (gcc/clang) is installed");
-            let _ = std::fs::remove_file(&obj_path);
-            return ExitCode::from(1);
+            eprintln!("error: failed to run {}: {}", abs_exe.display(), e);
         }
     }
 

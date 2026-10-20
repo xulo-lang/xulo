@@ -1,4 +1,5 @@
 pub mod aot;
+pub mod backend;
 pub mod codegen;
 pub mod irgen;
 /// JavaScript generation has been retired: programs run on the native
