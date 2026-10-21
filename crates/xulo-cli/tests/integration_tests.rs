@@ -2311,3 +2311,330 @@ fn build_panic_program_prints_panic_and_exits_1() {
     let _ = std::fs::remove_file(&file);
     let _ = std::fs::remove_file(&exe);
 }
+
+/// AOT 编译 `examples/control_flow.xulo` 并直接执行产物，输出须与解释器
+/// `xulo run` 逐字节一致（覆盖字面量 pattern、Range 列表、if/while 里的
+/// break/continue 流转）。链接静态运行时，归档未构建时跳过。
+#[test]
+fn build_control_flow_matches_interpreter_output() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap()
+        .to_path_buf();
+    let staticlib = root.join("target/release/libxulo_runtime.a");
+    if !staticlib.exists() {
+        eprintln!("skipping: {} not built", staticlib.display());
+        return;
+    }
+    let src = root.join("examples/control_flow.xulo");
+    let interp = Command::new(BIN).arg("run").arg(&src).output().unwrap();
+    assert!(
+        interp.status.success(),
+        "interpreter failed: {}",
+        String::from_utf8_lossy(&interp.stderr)
+    );
+
+    // 不预创建文件：链接器新建产物才带可执行位
+    let exe = std::env::temp_dir().join(format!(
+        "xulo_cf_aot_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let build = Command::new(BIN)
+        .arg("build")
+        .arg(&src)
+        .arg("-o")
+        .arg(&exe)
+        .output()
+        .unwrap();
+    assert!(
+        build.status.success(),
+        "build failed: {}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let aot = Command::new(&exe).output().unwrap();
+    assert!(
+        aot.status.success(),
+        "aot binary failed: {}",
+        String::from_utf8_lossy(&aot.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&aot.stdout),
+        String::from_utf8_lossy(&interp.stdout),
+        "AOT output diverged from interpreter"
+    );
+    let _ = std::fs::remove_file(&exe);
+}
+
+/// AOT 编译 `examples/trait_shapes.xulo`：`Trait::method(recv)` 静态派发
+/// 与 `str()` 的 ToString 派发都要能落地产物，输出与解释器逐字节一致。
+#[test]
+fn build_trait_shapes_matches_interpreter_output() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap()
+        .to_path_buf();
+    let staticlib = root.join("target/release/libxulo_runtime.a");
+    if !staticlib.exists() {
+        eprintln!("skipping: {} not built", staticlib.display());
+        return;
+    }
+    let src = root.join("examples/trait_shapes.xulo");
+    let interp = Command::new(BIN).arg("run").arg(&src).output().unwrap();
+    assert!(
+        interp.status.success(),
+        "interpreter failed: {}",
+        String::from_utf8_lossy(&interp.stderr)
+    );
+
+    let exe = std::env::temp_dir().join(format!(
+        "xulo_ts_aot_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let build = Command::new(BIN)
+        .arg("build")
+        .arg(&src)
+        .arg("-o")
+        .arg(&exe)
+        .output()
+        .unwrap();
+    assert!(
+        build.status.success(),
+        "build failed: {}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let aot = Command::new(&exe).output().unwrap();
+    assert!(
+        aot.status.success(),
+        "aot binary failed: {}",
+        String::from_utf8_lossy(&aot.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&aot.stdout),
+        String::from_utf8_lossy(&interp.stdout),
+        "AOT output diverged from interpreter"
+    );
+    let _ = std::fs::remove_file(&exe);
+}
+
+/// 多模块 AOT：`examples/modules/main.xulo`（`mod`/`use`/`use as`/`pub const`）
+/// 编译成产物并执行，输出与解释器逐字节一致。
+#[test]
+fn build_modules_example_matches_interpreter_output() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap()
+        .to_path_buf();
+    let staticlib = root.join("target/release/libxulo_runtime.a");
+    if !staticlib.exists() {
+        eprintln!("skipping: {} not built", staticlib.display());
+        return;
+    }
+    let src = root.join("examples/modules/main.xulo");
+    let interp = Command::new(BIN).arg("run").arg(&src).output().unwrap();
+    assert!(
+        interp.status.success(),
+        "interpreter failed: {}",
+        String::from_utf8_lossy(&interp.stderr)
+    );
+
+    let exe = std::env::temp_dir().join(format!(
+        "xulo_mods_aot_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let build = Command::new(BIN)
+        .arg("build")
+        .arg(&src)
+        .arg("-o")
+        .arg(&exe)
+        .output()
+        .unwrap();
+    assert!(
+        build.status.success(),
+        "build failed: {}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let aot = Command::new(&exe).output().unwrap();
+    assert!(
+        aot.status.success(),
+        "aot binary failed: {}",
+        String::from_utf8_lossy(&aot.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&aot.stdout),
+        String::from_utf8_lossy(&interp.stdout),
+        "AOT output diverged from interpreter"
+    );
+    let _ = std::fs::remove_file(&exe);
+}
+
+/// 跨模块 AOT：命名空间/成员导入、`pub const`、`use type`、跨模块 trait
+/// 派发与 ToString，以及入口模块里的 `#Derive(ToString)`。
+#[test]
+fn build_cross_module_trait_dispatch_matches_interpreter() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap()
+        .to_path_buf();
+    let staticlib = root.join("target/release/libxulo_runtime.a");
+    if !staticlib.exists() {
+        eprintln!("skipping: {} not built", staticlib.display());
+        return;
+    }
+    let (dir, entry) = temp_dir(
+        &[
+            (
+                "shapes.xulo",
+                r#"
+pub trait Shape { fn area(self): number }
+pub struct Rect { w: number, h: number }
+impl Shape for Rect {
+    fn area(self): number { return self.w * self.h }
+}
+impl ToString for Rect {
+    fn toString(self): string { return "Rect(" + str(self.w) + "x" + str(self.h) + ")" }
+}
+pub const PI = 3.14
+pub fn rect(w: number, h: number): Rect { return Rect(w: w, h: h) }
+"#,
+            ),
+            (
+                "main.xulo",
+                r#"
+mod shapes;
+use type shapes::{Shape, Rect};
+use shapes::{rect, PI};
+use shapes as sh;
+
+#Derive(ToString)
+struct Box2 { r: Rect, n: number }
+
+fn main() {
+    print(Shape::area(rect(3, 4)))
+    print(PI)
+    print(sh::rect(1, 2).w)
+    print(sh::PI)
+    let b = Box2(r: rect(2, 5), n: 7)
+    print(str(b))
+    print(shapes::rect(6, 7).w)
+}
+"#,
+            ),
+        ],
+        "main.xulo",
+    );
+    let interp = Command::new(BIN).arg("run").arg(&entry).output().unwrap();
+    assert!(
+        interp.status.success(),
+        "interpreter failed: {}",
+        String::from_utf8_lossy(&interp.stderr)
+    );
+
+    let exe = dir.join("main_aot");
+    let build = Command::new(BIN)
+        .arg("build")
+        .arg(&entry)
+        .arg("-o")
+        .arg(&exe)
+        .output()
+        .unwrap();
+    assert!(
+        build.status.success(),
+        "build failed: {}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let aot = Command::new(&exe).output().unwrap();
+    assert!(
+        aot.status.success(),
+        "aot binary failed: {}",
+        String::from_utf8_lossy(&aot.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&aot.stdout),
+        "12\n3.14\n1\n3.14\nBox2(r: Rect(2x5), n: 7)\n6\n"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// AOT 编译 `examples/std.xulo`（`std::math` / `std::time` / `std::fs`）并执行
+/// 产物；工作目录设为临时目录，避免示例写出的文件落进仓库。
+#[test]
+fn build_std_example_matches_interpreter_output() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap()
+        .to_path_buf();
+    let staticlib = root.join("target/release/libxulo_runtime.a");
+    if !staticlib.exists() {
+        eprintln!("skipping: {} not built", staticlib.display());
+        return;
+    }
+    let src = root.join("examples/std.xulo");
+    let work = std::env::temp_dir().join(format!(
+        "xulo_std_work_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&work).unwrap();
+
+    let interp = Command::new(BIN)
+        .arg("run")
+        .arg(&src)
+        .current_dir(&work)
+        .output()
+        .unwrap();
+    assert!(
+        interp.status.success(),
+        "interpreter failed: {}",
+        String::from_utf8_lossy(&interp.stderr)
+    );
+
+    let exe = work.join("std_aot");
+    let build = Command::new(BIN)
+        .arg("build")
+        .arg(&src)
+        .arg("-o")
+        .arg(&exe)
+        .output()
+        .unwrap();
+    assert!(
+        build.status.success(),
+        "build failed: {}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let aot = Command::new(&exe).current_dir(&work).output().unwrap();
+    assert!(
+        aot.status.success(),
+        "aot binary failed: {}",
+        String::from_utf8_lossy(&aot.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&aot.stdout),
+        String::from_utf8_lossy(&interp.stdout),
+        "AOT output diverged from interpreter"
+    );
+    let _ = std::fs::remove_dir_all(&work);
+}

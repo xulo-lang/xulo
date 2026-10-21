@@ -67,6 +67,9 @@ pub enum RuntimeFn {
     ArraySet,
     ArrayConcat,
     ObjectGet,
+    /// 读对象字段的运行时标签（派生 ToString 按字段真实标签渲染，
+    /// 字段值 0 分不清 null 与整数 0）
+    ObjectGetTag,
     ObjectSet,
     /// 枚举值：分配 + payload 写入 + match 的 tag/payload 读取
     AllocEnum,
@@ -109,6 +112,10 @@ pub enum RuntimeFn {
     RegexReplace,
     RegexReplaceWith,
     StringToUppercase,
+    /// match 字面量 pattern 判定（返回 1/0）
+    LiteralMatch,
+    /// 区间表达式 `0..<3` / `1...4` 求值为列表
+    RangeList,
     /// 命名空间内建（`std::math::*` / `std::time::*`）：携带已映射好的运行时符号名
     Intrinsic(&'static str),
 }

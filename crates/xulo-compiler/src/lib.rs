@@ -40,3 +40,11 @@ pub fn compile_to_ir(source: &str, file: &Path) -> Result<IrModule, XuloError> {
     // 生成 IR
     irgen::generate_ir(&ast)
 }
+
+/// 编译整棵模块树为一个 IR 模块：入口模块（id `""`）的顶层名字保留原样，
+/// 其余模块按 `模块 id::名字` 加前缀；`use`/`mod` 绑定在 IR 生成期静态解析。
+/// 调用前须先 [`module::load`] + [`module::analyze`]，并应用
+/// [`module::apply_trait_dispatch`] / [`module::apply_std_calls`] 的标注。
+pub fn compile_modules_to_ir(loaded: &module::LoadedModules) -> Result<IrModule, XuloError> {
+    irgen::IrGenerator::new().generate_modules(loaded)
+}

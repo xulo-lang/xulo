@@ -1536,6 +1536,13 @@ fn run_analysis(
             analyzer.string_forms.insert(imp.type_name.clone());
         }
     }
+    // 导入模块的 `impl ToString for T` / `#Derive(ToString)` 同样赋予 T
+    // 字符串形式：跨模块 `str(v)`（E0212）与派生字段检查（E0801）要能看到。
+    for (trait_name, type_name, method) in imported_impls {
+        if trait_name == "ToString" && method == "toString" {
+            analyzer.string_forms.insert(type_name.clone());
+        }
+    }
     // Header forms (`mod`, `use`, `pub use`) may appear only before any
     // other top-level declaration (spec modules/source-files.md, E0605).
     if analyzer.first_error.is_none() || lenient {
@@ -1762,7 +1769,10 @@ fn run_analysis(
         trait_dispatch: analyzer.trait_dispatch.clone(),
         std_calls: analyzer.std_calls.clone(),
         list_concat: analyzer.list_concat.clone(),
-        impls: analyzer.impls.iter().cloned().collect(),
+        // `impls` 只含本模块自己声明的 impl（派生也在此列）。导入的 impl
+        // 已经出现在声明模块的 face 里，每个模块都能看到，重复导出会让
+        // 后来者把「已导入的 impl」误当成重复声明（`#Derive` 的 E0805）。
+        impls: module_face(program, &analyzer.module_id).impls,
         expr_types: analyzer.expr_types.clone(),
         resolutions: analyzer.resolutions.clone(),
         use_bindings: analyzer.use_bindings,
@@ -6586,20 +6596,13 @@ impl Analyzer {
             Expression::Arrow(arrow) => {
                 self.table.push_scope();
                 let param_types = self.declare_params_with_defaults(&arrow.params)?;
-                let saved_return = self.current_return.replace(
-                    arrow
-                        .return_type
-                        .clone()
-                        .unwrap_or(Type::Any),
-                );
+                let saved_return = self
+                    .current_return
+                    .replace(arrow.return_type.clone().unwrap_or(Type::Any));
                 let saved_declared = self.declared_return;
                 self.declared_return = arrow.return_type.is_some();
                 let saved_async = self.async_depth;
-                self.async_depth = if arrow.is_async {
-                    saved_async + 1
-                } else {
-                    0
-                };
+                self.async_depth = if arrow.is_async { saved_async + 1 } else { 0 };
                 let saved_component = self.component_depth;
                 let saved_block = self.block_depth;
                 let saved_no_await = self.no_await_depth;
@@ -6615,12 +6618,8 @@ impl Analyzer {
                 self.lock_depth = 0;
                 let saved_moved = std::mem::take(&mut self.moved);
                 let ret = match &arrow.body {
-                    xulo_core::ast::ArrowBody::Expr(e) => {
-                        Some(Box::new(self.check_expression(e)?))
-                    }
-                    xulo_core::ast::ArrowBody::Block(b) => {
-                        self.check_block_tail(b)?.map(Box::new)
-                    }
+                    xulo_core::ast::ArrowBody::Expr(e) => Some(Box::new(self.check_expression(e)?)),
+                    xulo_core::ast::ArrowBody::Block(b) => self.check_block_tail(b)?.map(Box::new),
                 };
                 self.moved = saved_moved;
                 self.in_defer = saved_defer;

@@ -135,6 +135,12 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
         returns: &[I64],
     },
     RuntimeFnDesc {
+        name: "xulo_object_get_tag",
+        addr: xulo_runtime::runtime::xulo_object_get_tag as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
         name: "xulo_object_set",
         addr: xulo_runtime::runtime::xulo_object_set as *const u8,
         params: &[I64, I64, I64, I64],
@@ -304,6 +310,19 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
         params: &[I64],
         returns: &[I64],
     },
+    // match 字面量 pattern / 区间表达式求值
+    RuntimeFnDesc {
+        name: "xulo_literal_match",
+        addr: xulo_runtime::runtime::xulo_literal_match as *const u8,
+        params: &[I64, I64, I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_range_list",
+        addr: xulo_runtime::runtime::xulo_range_list as *const u8,
+        params: &[F64, F64, I64],
+        returns: &[I64],
+    },
     // Math 命名空间：float 组返回 f64（对齐语义 builtin_member 的 BuiltinRet）
     RuntimeFnDesc {
         name: "xulo_math_abs",
@@ -460,6 +479,37 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
         name: "xulo_time_monotonic_nanos",
         addr: xulo_std::ffi::xulo_time_monotonic_nanos as *const u8,
         params: &[],
+        returns: &[I64],
+    },
+    // `std::fs`：可失败操作返回 Result 枚举指针，exists 返回 0/1
+    RuntimeFnDesc {
+        name: "xulo_fs_read",
+        addr: xulo_runtime::runtime::xulo_fs_read as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_fs_write",
+        addr: xulo_runtime::runtime::xulo_fs_write as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_fs_exists",
+        addr: xulo_runtime::runtime::xulo_fs_exists as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_fs_remove",
+        addr: xulo_runtime::runtime::xulo_fs_remove as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_fs_mkdir",
+        addr: xulo_runtime::runtime::xulo_fs_mkdir as *const u8,
+        params: &[I64],
         returns: &[I64],
     },
 ];

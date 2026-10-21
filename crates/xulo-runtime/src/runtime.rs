@@ -137,7 +137,12 @@ pub extern "C" fn xulo_cell_get(cell: i64) -> i64 {
     if cell == 0 {
         return 0;
     }
-    unsafe { (cell as *mut XuloCell).as_ref().map(|c| c.value).unwrap_or(0) }
+    unsafe {
+        (cell as *mut XuloCell)
+            .as_ref()
+            .map(|c| c.value)
+            .unwrap_or(0)
+    }
 }
 
 /// 读 cell 中的 f64 位模式（返回真正的 f64；空 cell 指针读作 0.0）
@@ -462,7 +467,11 @@ pub extern "C" fn xulo_detect_tag(value: i64) -> i64 {
     }
 
     // 检查是否是已知编译正则
-    found = REGEXPS.with(|rs| rs.borrow().iter().any(|r| std::ptr::eq(*r as *const c_char, ptr)));
+    found = REGEXPS.with(|rs| {
+        rs.borrow()
+            .iter()
+            .any(|r| std::ptr::eq(*r as *const c_char, ptr))
+    });
     if found {
         return 9;
     }
@@ -607,6 +616,103 @@ pub extern "C" fn xulo_as_f64(value: i64, tag: i64) -> f64 {
         6 => 0.0,
         _ => value as f64,
     }
+}
+
+/// match 字面量 pattern 判定（对齐解释器 `literal_matches`），返回 1/0。
+/// scrut_tag/lit_tag: 0=string,1=int,2=float,3=array,4=object,5=bool,6=null,7=enum,-1=运行时检测。
+/// value==0 分不清 null 与整数 0：null 字面量按「值为 0 且标签是 null/数字」
+/// 判定，与 JIT 既有 `== null` 的判等语义一致。
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_literal_match(scrut: i64, scrut_tag: i64, lit: i64, lit_tag: i64) -> i64 {
+    let st = if scrut_tag == -1 {
+        xulo_detect_tag(scrut)
+    } else {
+        scrut_tag
+    };
+    let matched = match lit_tag {
+        // 字符串字面量：字符串按内容比对；枚举值按 "Type.Variant" 或变体名
+        0 => {
+            if scrut == 0 || lit == 0 {
+                false
+            } else {
+                unsafe {
+                    let lit_s = CStr::from_ptr(lit as *const c_char);
+                    if st == 0 {
+                        CStr::from_ptr(scrut as *const c_char) == lit_s
+                    } else if st == 7 {
+                        let e = scrut as *const XuloEnum;
+                        let ty = (*e).type_name;
+                        let vn = (*e).variant_name;
+                        if ty.is_null() || vn.is_null() {
+                            false
+                        } else {
+                            let ty = CStr::from_ptr(ty);
+                            let vn = CStr::from_ptr(vn);
+                            let lit_str = lit_s.to_str().unwrap_or("");
+                            vn.to_str().unwrap_or("") == lit_str
+                                || format!(
+                                    "{}.{}",
+                                    ty.to_str().unwrap_or(""),
+                                    vn.to_str().unwrap_or("")
+                                ) == lit_str
+                        }
+                    } else {
+                        false
+                    }
+                }
+            }
+        }
+        // 数字字面量：scrut 须是数字（int/float 归一成 f64 比较；NaN 自然不等）
+        1 | 2 => {
+            let lit_f = if lit_tag == 2 {
+                f64::from_bits(lit as u64)
+            } else {
+                lit as f64
+            };
+            match st {
+                1 => (scrut as f64) == lit_f,
+                2 => f64::from_bits(scrut as u64) == lit_f,
+                _ => false,
+            }
+        }
+        // 布尔字面量：静态标签直接比；动态标签按非零归一（分不清 int 1 与 true）
+        5 => (st == 5 || (scrut_tag == -1 && st == 1)) && (scrut != 0) == (lit != 0),
+        // null 字面量：值为 0 且确实是 null/数字（0 无法与整数 0 区分）
+        6 => scrut == 0 && (st == 1 || st == 6),
+        // 列表/对象字面量 pattern 恒不匹配（与解释器一致）
+        _ => false,
+    };
+    i64::from(matched)
+}
+
+/// 区间表达式求值为列表：从 start 起步长 1，inclusive 决定是否含上界
+/// （对齐解释器 `Expression::Range`）。整数值入 int 槽；小数/超大值按 f64
+/// 位模式入 float 槽并登记，保证打印与自动检测正确。
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_range_list(start: f64, end: f64, inclusive: i64) -> *mut XuloArray {
+    let arr = xulo_alloc_array(0);
+    let mut i = start;
+    loop {
+        let has_next = if inclusive != 0 { i <= end } else { i < end };
+        if !has_next {
+            break;
+        }
+        if i.is_finite() && i.fract() == 0.0 && i.abs() < 9.007_199_254_740_992e15 {
+            xulo_array_push(arr, i as i64, 1);
+        } else {
+            let bits = i.to_bits() as i64;
+            xulo_register_float(bits);
+            xulo_array_push(arr, bits, 2);
+        }
+        let next = i + 1.0;
+        if next == i {
+            // ±inf 或超出 f64 步进精度：终止死循环（解释器在此会无限循环）
+            break;
+        }
+        i = next;
+    }
+    arr
 }
 
 /// 字符串连接
@@ -792,6 +898,30 @@ pub extern "C" fn xulo_object_get(obj: *const XuloObject, field: *const c_char) 
     }
 }
 
+/// 对象字段的运行时标签。缺失字段与取值缺省（0）配对成 null 标签，
+/// 与 `Value::Null` 的渲染一致。
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_object_get_tag(obj: *const XuloObject, field: *const c_char) -> i64 {
+    unsafe {
+        if obj.is_null() || field.is_null() {
+            return 6;
+        }
+
+        let field_name = match CStr::from_ptr(field).to_str() {
+            Ok(s) => s,
+            Err(_) => return 6,
+        };
+
+        let obj = &*obj;
+        obj.fields
+            .iter()
+            .position(|(name, _)| name == field_name)
+            .and_then(|i| obj.field_tags.get(i).copied())
+            .unwrap_or(6)
+    }
+}
+
 /// 对象设置字段（带类型标签）
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
@@ -843,15 +973,111 @@ fn intern_string(s: impl Into<String>) -> *const c_char {
     ptr
 }
 
+/// `std::fs` 的 AOT 落地：`Result` 枚举的 Ok/Err 构造与解释器一致（Err 携带
+/// `Error(message)` 对象，字段 `message` 是字符串）。
+fn fs_ok(value: i64, tag: i64) -> *mut XuloEnum {
+    let e = xulo_alloc_enum(c"Result".as_ptr(), c"Ok".as_ptr(), 0, 1);
+    xulo_enum_set(e, 0, value, tag);
+    e
+}
+
+fn fs_err(message: String) -> *mut XuloEnum {
+    let err_obj = xulo_alloc_object(1);
+    xulo_object_set(
+        err_obj,
+        c"message".as_ptr(),
+        intern_string(message) as i64,
+        0,
+    );
+    let e = xulo_alloc_enum(c"Result".as_ptr(), c"Err".as_ptr(), 1, 1);
+    xulo_enum_set(e, 0, err_obj as i64, 4);
+    e
+}
+
+/// `std::fs::read(path)` -> `Result<string, Error>`
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_fs_read(path: *const c_char) -> *mut XuloEnum {
+    let path = if path.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(path).to_str().unwrap_or("").to_string() }
+    };
+    match xulo_std::fs::read(&path) {
+        Ok(text) => fs_ok(intern_string(text) as i64, 0),
+        Err(message) => fs_err(message),
+    }
+}
+
+/// `std::fs::write(path, content)` -> `Result<null, Error>`
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_fs_write(path: *const c_char, content: *const c_char) -> *mut XuloEnum {
+    let path = if path.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(path).to_str().unwrap_or("").to_string() }
+    };
+    let content = if content.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(content).to_str().unwrap_or("").to_string() }
+    };
+    match xulo_std::fs::write(&path, &content) {
+        Ok(()) => fs_ok(0, 6),
+        Err(message) => fs_err(message),
+    }
+}
+
+/// `std::fs::exists(path)` -> bool（总谓词，不失败）
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_fs_exists(path: *const c_char) -> i64 {
+    let path = if path.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(path).to_str().unwrap_or("").to_string() }
+    };
+    i64::from(xulo_std::fs::exists(&path))
+}
+
+/// `std::fs::remove(path)` -> `Result<null, Error>`
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_fs_remove(path: *const c_char) -> *mut XuloEnum {
+    let path = if path.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(path).to_str().unwrap_or("").to_string() }
+    };
+    match xulo_std::fs::remove(&path) {
+        Ok(()) => fs_ok(0, 6),
+        Err(message) => fs_err(message),
+    }
+}
+
+/// `std::fs::mkdir(path)` -> `Result<null, Error>`
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_fs_mkdir(path: *const c_char) -> *mut XuloEnum {
+    let path = if path.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(path).to_str().unwrap_or("").to_string() }
+    };
+    match xulo_std::fs::mkdir(&path) {
+        Ok(()) => fs_ok(0, 6),
+        Err(message) => fs_err(message),
+    }
+}
+
 /// 一次正则匹配结果：普通对象（`value` 字段）+ 旁路登记的捕获组
 fn regex_match_object(m: &xulo_std::regex::Match) -> *mut XuloObject {
     let value_ptr = intern_string(m.value.clone());
     let obj = xulo_alloc_object(1);
     xulo_object_set(obj, c"value".as_ptr(), value_ptr as i64, 0);
     MATCH_GROUPS.with(|groups| {
-        groups
-            .borrow_mut()
-            .insert(obj as usize, m.groups.clone());
+        groups.borrow_mut().insert(obj as usize, m.groups.clone());
     });
     obj
 }
@@ -861,7 +1087,10 @@ fn regex_match_object(m: &xulo_std::regex::Match) -> *mut XuloObject {
 /// 字段的 RegexError 对象）——非法模式与未知标志都是数据
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn xulo_regex_compile(pattern: *const c_char, flags: *const c_char) -> *mut XuloEnum {
+pub extern "C" fn xulo_regex_compile(
+    pattern: *const c_char,
+    flags: *const c_char,
+) -> *mut XuloEnum {
     unsafe {
         let pattern = if pattern.is_null() {
             String::new()
@@ -993,8 +1222,7 @@ pub extern "C" fn xulo_regex_replace_with(
     input: *const c_char,
     closure: i64,
 ) -> *const c_char {
-    type ClosureEntry =
-        extern "C" fn(i64, i64, i64, i64, i64, i64, i64, i64, i64) -> i64;
+    type ClosureEntry = extern "C" fn(i64, i64, i64, i64, i64, i64, i64, i64, i64) -> i64;
     unsafe {
         if re == 0 || input.is_null() {
             return input;

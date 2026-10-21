@@ -206,3 +206,80 @@ fn test_math_time_aot_references_runtime_symbols() {
     assert!(references_symbol(&bytes, "xulo_time_monotonic_nanos"));
     assert!(!references_symbol(&bytes, "xulo_to_string"));
 }
+
+/// `std::fs` 的 AOT lowering：write / read / exists / remove 都落到运行时，
+/// Result 的 Ok/Err 与解释器同构（Err 携带 message）。
+#[test]
+fn test_std_fs_roundtrip() {
+    let base = std::env::temp_dir().join(format!(
+        "xulo_cg_fs_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let path = base.to_string_lossy().replace('\\', "\\\\");
+    let missing = format!("{path}-missing");
+    let out = compile_and_run(&format!(
+        r#"
+fn main() {{
+    let path = "{path}"
+    match std::fs::write(path, "xulo fs") {{
+        Result::Ok(_) => print("written")
+        Result::Err(e) => print(e.message)
+    }}
+    print(std::fs::exists(path))
+    match std::fs::read(path) {{
+        Result::Ok(text) => print(text)
+        Result::Err(_) => print("unexpected")
+    }}
+    match std::fs::remove(path) {{
+        Result::Ok(_) => print("removed")
+        Result::Err(e) => print(e.message)
+    }}
+    print(std::fs::exists(path))
+    match std::fs::read("{missing}") {{
+        Result::Ok(_) => print("unexpected")
+        Result::Err(_) => print("missing")
+    }}
+}}
+"#
+    ));
+    assert_eq!(
+        out,
+        vec![
+            "written".to_string(),
+            "true".to_string(),
+            "xulo fs".to_string(),
+            "removed".to_string(),
+            "false".to_string(),
+            "missing".to_string(),
+        ]
+    );
+}
+
+/// AOT 对象文件引用 `std::fs` 的运行时符号（链接期接线回归）
+#[test]
+fn test_aot_object_references_fs_symbols() {
+    let bytes = object_bytes(
+        r#"
+fn main() {
+    print(std::fs::exists("x"))
+    std::fs::write("x", "y")
+    std::fs::read("x")
+    std::fs::remove("x")
+    std::fs::mkdir("x")
+}
+"#,
+    );
+    for symbol in [
+        "xulo_fs_read",
+        "xulo_fs_write",
+        "xulo_fs_exists",
+        "xulo_fs_remove",
+        "xulo_fs_mkdir",
+    ] {
+        assert!(references_symbol(&bytes, symbol), "object missing {symbol}");
+    }
+}

@@ -194,6 +194,19 @@ pub fn apply_trait_dispatch(loaded: &mut LoadedModules) {
     }
 }
 
+/// Rewrite bare callees that resolved to a std built-in (`floor(…)` →
+/// `std::math::floor(…)`) across every module. The interpreter resolves the
+/// bare names from its `use` bindings, so only the IR backend needs this;
+/// call it before [`crate::compile_modules_to_ir`].
+pub fn apply_std_calls(loaded: &mut LoadedModules) {
+    for module in &mut loaded.modules {
+        if let Some(analysis) = &module.analysis {
+            let calls = analysis.std_calls.clone();
+            xulo_semantic::apply_std_calls(&mut module.program, &calls);
+        }
+    }
+}
+
 struct Loader {
     /// canonical file path -> module id: every claimed body, deps included.
     claimed: HashMap<PathBuf, String>,

@@ -141,16 +141,14 @@ impl CodeGen {
     /// 物化目标函数的地址（I64 指针）：以 namespace-0 用户符号创建
     /// `GlobalValueData::Symbol`，JIT 在 finalize 时解析为编译后入口，
     /// AOT 经系统链接器解析
-    fn function_addr(
-        func_id: FuncId,
-        builder: &mut FunctionBuilder,
-    ) -> Value {
-        let user_name_ref = builder.func.declare_imported_user_function(
-            cranelift::codegen::ir::UserExternalName {
-                namespace: 0,
-                index: func_id.as_u32(),
-            },
-        );
+    fn function_addr(func_id: FuncId, builder: &mut FunctionBuilder) -> Value {
+        let user_name_ref =
+            builder
+                .func
+                .declare_imported_user_function(cranelift::codegen::ir::UserExternalName {
+                    namespace: 0,
+                    index: func_id.as_u32(),
+                });
         let gv = builder.create_global_value(cranelift::codegen::ir::GlobalValueData::Symbol {
             name: cranelift::codegen::ir::ExternalName::user(user_name_ref),
             offset: cranelift::codegen::ir::immediates::Imm64::new(0),
@@ -589,6 +587,7 @@ impl CodeGen {
                         RuntimeFn::ArraySet => "xulo_array_set",
                         RuntimeFn::ArrayConcat => "xulo_array_concat",
                         RuntimeFn::ObjectGet => "xulo_object_get",
+                        RuntimeFn::ObjectGetTag => "xulo_object_get_tag",
                         RuntimeFn::ObjectSet => "xulo_object_set",
                         RuntimeFn::AllocEnum => "xulo_alloc_enum",
                         RuntimeFn::EnumSet => "xulo_enum_set",
@@ -616,6 +615,8 @@ impl CodeGen {
                         RuntimeFn::RegexReplace => "xulo_regex_replace",
                         RuntimeFn::RegexReplaceWith => "xulo_regex_replace_with",
                         RuntimeFn::StringToUppercase => "xulo_string_to_uppercase",
+                        RuntimeFn::LiteralMatch => "xulo_literal_match",
+                        RuntimeFn::RangeList => "xulo_range_list",
                         RuntimeFn::Intrinsic(name) => name,
                     };
 
@@ -786,8 +787,7 @@ impl CodeGen {
                 Instruction::MakeClosure { dst, func, env } => {
                     let env_val = resolve_operand(&mut builder, env, &vars);
                     if let Some(&alloc_id) = self.runtime_func_ids.get("xulo_alloc_closure") {
-                        let func_addr =
-                            Self::function_addr(all_func_ids[func.0], &mut builder);
+                        let func_addr = Self::function_addr(all_func_ids[func.0], &mut builder);
                         let fref = self.backend.declare_func_in_func(alloc_id, builder.func);
                         let call = builder.ins().call(fref, &[func_addr, env_val]);
                         if let Some(&var) = vars.get(dst)

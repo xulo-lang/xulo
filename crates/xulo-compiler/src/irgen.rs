@@ -4,6 +4,8 @@ use xulo_core::ast::*;
 use xulo_core::error::{ErrorKind, XuloError};
 use xulo_core::ir::*;
 
+use crate::module::LoadedModules;
+
 /// IR 生成器
 pub struct IrGenerator {
     module: IrModule,
@@ -20,6 +22,10 @@ pub struct IrGenerator {
     structs: HashMap<String, Vec<StructField>>,
     /// `Type::method` -> IR 函数（impl 固有方法）
     methods: HashMap<String, FuncId>,
+    /// 派发名 `impl_{Trait}_{Type}_{method}` -> impl 函数的 IR 函数。
+    /// 语义层把 `Trait::method(recv)` 与 `str(v)` 标注成派发名；AOT 在此
+    /// 静态解析（派生 `#Derive(ToString)` 注册到同一张表）。
+    trait_impls: HashMap<String, FuncId>,
     /// 方法名 -> 定义它的类型列表（唯一时可按方法名分派）
     method_types: HashMap<String, Vec<String>>,
     /// IR 函数名 -> self 的源级类型（方法体里 self 字段的类型推断）
@@ -45,6 +51,14 @@ pub struct IrGenerator {
     func_thunks: HashMap<String, FuncId>,
     /// 内嵌 fn / 闭包体的 IR 名计数（同名函数在不同作用域需要唯一名）
     inner_fn_counter: usize,
+    /// 模块 id -> 名字解析上下文（单文件程序只有入口模块 `""`）
+    modules: HashMap<String, ModuleCtx>,
+    /// 当前正在注册/生成正文的模块 id
+    current_module: String,
+    /// 模块级 `const`：IR 名 -> 定义（使用点内联初始化表达式）
+    consts: HashMap<String, ConstDef>,
+    /// const 内联的递归栈（自引用检测）
+    const_stack: Vec<String>,
 }
 
 struct LoopContext {
@@ -80,6 +94,104 @@ impl Default for IrGenerator {
     }
 }
 
+/// 带 `#Derive` 声明的可派生目标
+enum DerivedDecl<'a> {
+    Struct(&'a [StructField]),
+    Enum(&'a [EnumVariant]),
+}
+
+/// 一个模块在 IR 生成期的名字解析上下文。入口模块（id `""`）的顶层声明
+/// 保留原名；其余模块按 `{模块 id}::名字` 加前缀，避免跨模块同名冲突。
+/// `use` 成员导入与 `use … as`/`mod` 命名空间绑定把本地名映射到目标模块
+/// （语义层已解析好，见 `Module::uses` / `Module::mods`）。
+struct ModuleCtx {
+    prefix: String,
+    /// 命名空间本地名 -> 目标模块 id
+    namespaces: HashMap<String, String>,
+    /// 成员导入本地名 -> (目标模块 id, 导出成员名)
+    aliases: HashMap<String, (String, String)>,
+    /// 本模块声明的值名（函数/常量）
+    own_values: HashSet<String>,
+    /// 本模块声明的类型名（struct/enum/trait/alias）
+    own_types: HashSet<String>,
+}
+
+impl ModuleCtx {
+    fn new(module_id: &str, program: &Program) -> Self {
+        let prefix = if module_id.is_empty() {
+            String::new()
+        } else {
+            format!("{module_id}::")
+        };
+        let mut ctx = ModuleCtx {
+            prefix,
+            namespaces: HashMap::new(),
+            aliases: HashMap::new(),
+            own_values: HashSet::new(),
+            own_types: HashSet::new(),
+        };
+        for stmt in &program.statements {
+            match stmt {
+                Statement::Fn(f) => {
+                    ctx.own_values.insert(f.name.clone());
+                }
+                Statement::Let(b) => {
+                    ctx.own_values.insert(b.name.clone());
+                }
+                Statement::Struct(def) => {
+                    ctx.own_types.insert(def.name.clone());
+                }
+                Statement::Enum(def) => {
+                    ctx.own_types.insert(def.name.clone());
+                }
+                Statement::Trait(t) => {
+                    ctx.own_types.insert(t.name.clone());
+                }
+                Statement::TypeAlias(t) => {
+                    ctx.own_types.insert(t.name.clone());
+                }
+                Statement::Export(export) => match &export.item {
+                    ExportItem::Fn(f) => {
+                        ctx.own_values.insert(f.name.clone());
+                    }
+                    ExportItem::Let(b) => {
+                        ctx.own_values.insert(b.name.clone());
+                    }
+                    ExportItem::Struct(def) => {
+                        ctx.own_types.insert(def.name.clone());
+                    }
+                    ExportItem::Enum(def) => {
+                        ctx.own_types.insert(def.name.clone());
+                    }
+                    ExportItem::Trait(t) => {
+                        ctx.own_types.insert(t.name.clone());
+                    }
+                    ExportItem::Type(t) => {
+                        ctx.own_types.insert(t.name.clone());
+                    }
+                    ExportItem::Names(names) => {
+                        ctx.own_values.extend(names.iter().cloned());
+                    }
+                },
+                _ => {}
+            }
+        }
+        ctx
+    }
+}
+
+/// 模块级 `const`：不可变，AOT 在使用点内联初始化表达式（在定义模块的
+/// 上下文里生成，因此跨模块 `use` 的常量也能解析）。
+#[derive(Clone)]
+struct ConstDef {
+    module_id: String,
+    expr: Expression,
+    /// 初始化表达式可静态判定的值标签（-1 = 运行时检测）
+    tag: i64,
+    /// 初始化表达式可静态判定的源级类型（仅字面量/取负）
+    ty: Option<Type>,
+}
+
 impl IrGenerator {
     pub fn new() -> Self {
         IrGenerator {
@@ -93,6 +205,7 @@ impl IrGenerator {
             loop_stack: Vec::new(),
             structs: HashMap::new(),
             methods: HashMap::new(),
+            trait_impls: HashMap::new(),
             method_types: HashMap::new(),
             self_types: HashMap::new(),
             float_bit_returns: HashSet::new(),
@@ -103,147 +216,231 @@ impl IrGenerator {
             closure_env: None,
             func_thunks: HashMap::new(),
             inner_fn_counter: 0,
+            modules: HashMap::new(),
+            current_module: String::new(),
+            consts: HashMap::new(),
+            const_stack: Vec::new(),
         }
     }
 
+    /// 单文件入口：一个 id 为 `""` 的入口模块。
     pub fn generate(&mut self, program: &Program) -> Result<IrModule, XuloError> {
-        // 首先注册所有函数（但不生成函数体）
-        for stmt in &program.statements {
-            match stmt {
-                Statement::Fn(f) => {
-                    let _func_id = self.register_function(f)?;
-                }
-                Statement::Export(export) => {
-                    if let ExportItem::Fn(f) = &export.item {
-                        self.register_function(f)?;
+        self.modules
+            .insert(String::new(), ModuleCtx::new("", program));
+        self.compile_programs(&[(String::new(), program)])
+    }
+
+    /// 多模块入口：编译整棵模块树（入口模块 id 为 `""`，子模块/内联模块
+    /// 按 `mod` 路径命名）。模块按加载器的初始化顺序传入。
+    pub fn generate_modules(&mut self, loaded: &LoadedModules) -> Result<IrModule, XuloError> {
+        for m in &loaded.modules {
+            let mut ctx = ModuleCtx::new(&m.id, &m.program);
+            for (local, child_idx) in &m.mods {
+                ctx.namespaces
+                    .insert(local.clone(), loaded.modules[*child_idx].id.clone());
+            }
+            for u in &m.uses {
+                match &u.member {
+                    Some(member) => {
+                        ctx.aliases
+                            .insert(u.local.clone(), (u.module_id.clone(), member.clone()));
+                    }
+                    None => {
+                        ctx.namespaces.insert(u.local.clone(), u.module_id.clone());
                     }
                 }
-                _ => {}
+            }
+            self.modules.insert(m.id.clone(), ctx);
+        }
+        let programs: Vec<(String, &Program)> = loaded
+            .modules
+            .iter()
+            .map(|m| (m.id.clone(), &m.program))
+            .collect();
+        self.compile_programs(&programs)
+    }
+
+    /// 模块集合的编译流水线：注册 -> 定义收集 -> 派生/impl 注册 ->
+    /// 函数体 -> 派生正文。每个阶段切换 `current_module` 以解析本地名。
+    fn compile_programs(&mut self, programs: &[(String, &Program)]) -> Result<IrModule, XuloError> {
+        // 1. 注册所有函数（不生成函数体）
+        for (id, program) in programs {
+            self.current_module = id.clone();
+            for stmt in &program.statements {
+                match stmt {
+                    Statement::Fn(f) => {
+                        self.register_function(f)?;
+                    }
+                    Statement::Export(export) => {
+                        if let ExportItem::Fn(f) = &export.item {
+                            self.register_function(f)?;
+                        }
+                    }
+                    _ => {}
+                }
             }
         }
 
-        // 记录 struct 定义（结构体构造需要字段顺序与默认值）
-        for stmt in &program.statements {
-            if let Statement::Struct(def) = stmt {
-                self.structs.insert(def.name.clone(), def.fields.clone());
-            }
-        }
-
-        // 枚举定义：内置 Result 预置，模块自己的 enum 覆盖同名（spec：
-        // Result 既是 prelude 类型，也是程序可以重定义的名字）
+        // 2. struct / enum / 模块级 const 定义（键为规范化后的名字）
+        //    内置 Result 预置，程序自己的 enum 覆盖同名（spec：Result 既是
+        //    prelude 类型，也是程序可以重定义的名字）
         self.enums.insert(
             "Result".to_string(),
             vec!["Ok".to_string(), "Err".to_string()],
         );
-        for stmt in &program.statements {
-            match stmt {
-                Statement::Enum(def) => {
-                    self.enums.insert(
-                        def.name.clone(),
-                        def.variants.iter().map(|v| v.name.clone()).collect(),
-                    );
+        for (id, program) in programs {
+            self.current_module = id.clone();
+            for stmt in &program.statements {
+                match stmt {
+                    Statement::Struct(def) => self.collect_struct(def),
+                    Statement::Enum(def) => self.collect_enum(def),
+                    Statement::Let(b) => self.collect_const(id, b),
+                    Statement::Export(export) => match &export.item {
+                        ExportItem::Struct(def) => self.collect_struct(def),
+                        ExportItem::Enum(def) => self.collect_enum(def),
+                        ExportItem::Let(b) => self.collect_const(id, b),
+                        _ => {}
+                    },
+                    _ => {}
                 }
-                Statement::Export(export) => {
-                    if let ExportItem::Enum(def) = &export.item {
-                        self.enums.insert(
-                            def.name.clone(),
-                            def.variants.iter().map(|v| v.name.clone()).collect(),
-                        );
-                    }
-                }
-                _ => {}
             }
         }
 
-        // 注册 impl 固有方法：按 `Type::method` 命名，避免与顶层函数重名冲突
-        for stmt in &program.statements {
-            let Statement::Impl(imp) = stmt else { continue };
-            for m in &imp.methods {
-                let key = format!("{}::{}", imp.type_name, m.name);
-                let fid = self.register_named_function(&key, m)?;
-                self.methods.insert(key.clone(), fid);
-                self.method_types
-                    .entry(m.name.clone())
-                    .or_default()
-                    .push(imp.type_name.clone());
-                self.self_types
-                    .insert(key, Type::Named(imp.type_name.clone(), Vec::new()));
+        // 3. `#Derive(ToString)`：语义层只登记派发名，不生成 AST impl；
+        //    这里先注册派生函数（正文在所有注册完成后统一生成，可互引）。
+        //    先于 impl 方法注册：手写固有方法同名时覆盖派发表项，与解释器
+        //    「派生只在未有 toString 时落到结构体对象」的优先级一致。
+        for (id, program) in programs {
+            self.current_module = id.clone();
+            for stmt in &program.statements {
+                let Some((type_name, attributes, decl)) = Self::derived_decl(stmt) else {
+                    continue;
+                };
+                if Self::derives_to_string(attributes) {
+                    let is_struct = matches!(decl, DerivedDecl::Struct(_));
+                    self.register_derived_tostring(type_name, is_struct);
+                }
             }
         }
 
-        // 返回 Math::sqrt 位模式的函数：print 端要用 tag=2 还原小数
-        for stmt in &program.statements {
-            match stmt {
-                Statement::Fn(f) => self.note_float_bit_returns(&f.name.clone(), f),
-                Statement::Export(export) => {
-                    if let ExportItem::Fn(f) = &export.item {
-                        self.note_float_bit_returns(&f.name.clone(), f);
+        // 4. 注册 impl 方法：按 `{规范化类型}::{method}` 命名，trait impl 另有
+        //    包全局唯一的派发名（语义层的 `Trait::method`/`str` 标注用它，
+        //    用源级类型名，与跨模块 impl 表一致）。
+        for (id, program) in programs {
+            self.current_module = id.clone();
+            for stmt in &program.statements {
+                let Statement::Impl(imp) = stmt else { continue };
+                let type_key = self.resolve_type(&imp.type_name);
+                for m in &imp.methods {
+                    let key = format!("{type_key}::{}", m.name);
+                    let fid = self.register_named_function(&key, m)?;
+                    self.methods.insert(key.clone(), fid);
+                    if !imp.is_inherent {
+                        self.trait_impls
+                            .insert(impl_fn_name(&imp.trait_name, &imp.type_name, &m.name), fid);
                     }
+                    self.method_types
+                        .entry(m.name.clone())
+                        .or_default()
+                        .push(type_key.clone());
+                    self.self_types
+                        .insert(key, Type::Named(imp.type_name.clone(), Vec::new()));
                 }
-                Statement::Impl(imp) => {
-                    for m in &imp.methods {
-                        let key = format!("{}::{}", imp.type_name, m.name);
-                        self.note_float_bit_returns(&key, m);
-                    }
-                }
-                _ => {}
             }
         }
 
-        // 查找 main 函数索引
+        // 5. 返回 Math::sqrt 位模式的函数：print 端要用 tag=2 还原小数
+        for (id, program) in programs {
+            self.current_module = id.clone();
+            for stmt in &program.statements {
+                match stmt {
+                    Statement::Fn(f) => {
+                        let name = self.resolve_value(&f.name);
+                        self.note_float_bit_returns(&name, f);
+                    }
+                    Statement::Export(export) => {
+                        if let ExportItem::Fn(f) = &export.item {
+                            let name = self.resolve_value(&f.name);
+                            self.note_float_bit_returns(&name, f);
+                        }
+                    }
+                    Statement::Impl(imp) => {
+                        let type_key = self.resolve_type(&imp.type_name);
+                        for m in &imp.methods {
+                            let key = format!("{type_key}::{}", m.name);
+                            self.note_float_bit_returns(&key, m);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // 6. 入口：入口模块的 `main`（其余模块的函数名带模块前缀）
+        self.current_module = programs
+            .iter()
+            .find(|(id, _)| id.is_empty())
+            .map(|(id, _)| id.clone())
+            .unwrap_or_default();
         let main_idx = self.module.functions.iter().position(|f| f.name == "main");
-
         if main_idx.is_none() {
             // 没有 main 函数，创建一个空的
             let main_func = IrFunction::new("main".to_string(), Vec::new(), IrType::Void);
             self.module.add_function(main_func);
         }
-
         self.module.entry_point = FuncId(main_idx.unwrap_or(self.module.functions.len() - 1));
 
-        // Generate IR for ALL functions（含 impl 方法）
-        let mut func_defs: Vec<(usize, FnDef)> = Vec::new();
-        for stmt in &program.statements {
-            match stmt {
-                Statement::Fn(f) => {
-                    if let Some(idx) = self
-                        .module
-                        .functions
-                        .iter()
-                        .position(|ir_f| ir_f.name == f.name)
-                    {
-                        func_defs.push((idx, f.clone()));
-                    }
-                }
-                Statement::Export(export) => {
-                    if let ExportItem::Fn(f) = &export.item
-                        && let Some(idx) = self
-                            .module
-                            .functions
-                            .iter()
-                            .position(|ir_f| ir_f.name == f.name)
-                    {
-                        func_defs.push((idx, f.clone()));
-                    }
-                }
-                Statement::Impl(imp) => {
-                    for m in &imp.methods {
-                        let key = format!("{}::{}", imp.type_name, m.name);
+        // 7. 生成所有函数体（含 impl 方法），记录每个函数所属模块
+        let mut func_defs: Vec<(usize, FnDef, String)> = Vec::new();
+        for (id, program) in programs {
+            self.current_module = id.clone();
+            for stmt in &program.statements {
+                match stmt {
+                    Statement::Fn(f) => {
+                        let name = self.resolve_value(&f.name);
                         if let Some(idx) = self
                             .module
                             .functions
                             .iter()
-                            .position(|ir_f| ir_f.name == key)
+                            .position(|ir_f| ir_f.name == name)
                         {
-                            func_defs.push((idx, m.clone()));
+                            func_defs.push((idx, f.clone(), id.clone()));
                         }
                     }
+                    Statement::Export(export) => {
+                        if let ExportItem::Fn(f) = &export.item {
+                            let name = self.resolve_value(&f.name);
+                            if let Some(idx) = self
+                                .module
+                                .functions
+                                .iter()
+                                .position(|ir_f| ir_f.name == name)
+                            {
+                                func_defs.push((idx, f.clone(), id.clone()));
+                            }
+                        }
+                    }
+                    Statement::Impl(imp) => {
+                        let type_key = self.resolve_type(&imp.type_name);
+                        for m in &imp.methods {
+                            let key = format!("{type_key}::{}", m.name);
+                            if let Some(idx) = self
+                                .module
+                                .functions
+                                .iter()
+                                .position(|ir_f| ir_f.name == key)
+                            {
+                                func_defs.push((idx, m.clone(), id.clone()));
+                            }
+                        }
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
         }
 
-        for (idx, func_def) in func_defs {
+        for (idx, func_def, module_id) in func_defs {
+            self.current_module = module_id;
             self.current_func = Some(idx);
             self.locals.clear();
             self.local_types.clear();
@@ -257,7 +454,217 @@ impl IrGenerator {
             self.generate_function_body(&func_def)?;
         }
 
+        // 8. 派生 `#Derive(ToString)` 正文：所有目标注册完成后生成，
+        //    嵌套派生/手写 ToString 的互相引用都能解析。
+        for (id, program) in programs {
+            self.current_module = id.clone();
+            for stmt in &program.statements {
+                let Some((type_name, attributes, decl)) = Self::derived_decl(stmt) else {
+                    continue;
+                };
+                if !Self::derives_to_string(attributes) {
+                    continue;
+                }
+                let mangled = impl_fn_name("ToString", type_name, "toString");
+                let Some(&fid) = self.trait_impls.get(&mangled) else {
+                    continue;
+                };
+                self.current_func = Some(fid.0);
+                self.locals.clear();
+                self.local_types.clear();
+                self.source_types.clear();
+                self.label_map.clear();
+                self.dyn_tag_of.clear();
+                self.boxed_names.clear();
+                self.boxed_logical.clear();
+                self.closure_env = None;
+                // 派生函数的接收者参数：`self` 是 LocalId(0)
+                self.locals.insert("self".to_string(), LocalId(0));
+                match decl {
+                    DerivedDecl::Struct(fields) => {
+                        self.generate_derived_struct_body(type_name, fields)?;
+                    }
+                    DerivedDecl::Enum(variants) => {
+                        self.generate_derived_enum_body(type_name, variants)?;
+                    }
+                }
+            }
+        }
+
         Ok(self.module.clone())
+    }
+
+    /// 记录 struct 定义（键为规范化类型名，结构体构造按字段顺序/默认值）
+    fn collect_struct(&mut self, def: &StructDef) {
+        let key = self.resolve_type(&def.name);
+        self.structs.insert(key, def.fields.clone());
+    }
+
+    /// 记录 enum 定义（键为规范化类型名，变体序号即构造/match 的 tag）
+    fn collect_enum(&mut self, def: &EnumDef) {
+        let key = self.resolve_type(&def.name);
+        self.enums
+            .insert(key, def.variants.iter().map(|v| v.name.clone()).collect());
+    }
+
+    /// 记录模块级 `const`：使用点内联初始化表达式
+    fn collect_const(&mut self, module_id: &str, b: &LetBinding) {
+        if !b.is_const {
+            return;
+        }
+        let Some(expr) = &b.value else { return };
+        let key = self.resolve_value(&b.name);
+        self.consts.insert(
+            key,
+            ConstDef {
+                module_id: module_id.to_string(),
+                tag: Self::const_static_tag(expr),
+                ty: Self::const_static_type(expr),
+                expr: expr.clone(),
+            },
+        );
+    }
+
+    /// 字面量（含取负）的静态标签
+    fn const_static_tag(expr: &Expression) -> i64 {
+        match expr {
+            Expression::Literal { value, .. } => match value {
+                Literal::String(_) => 0,
+                Literal::Number(n) => {
+                    if n.fract() == 0.0 {
+                        1
+                    } else {
+                        2
+                    }
+                }
+                Literal::Boolean(_) => 5,
+                Literal::Null => 6,
+                Literal::List(_) => 3,
+                Literal::Object(_) => 4,
+            },
+            Expression::Unary(u)
+                if matches!(
+                    u.operator,
+                    UnaryOperator::Neg | UnaryOperator::Move | UnaryOperator::Copy
+                ) =>
+            {
+                Self::const_static_tag(&u.operand)
+            }
+            _ => -1,
+        }
+    }
+
+    /// 字面量（含取负）的静态源级类型
+    fn const_static_type(expr: &Expression) -> Option<Type> {
+        match expr {
+            Expression::Literal { value, .. } => Some(match value {
+                Literal::String(_) => Type::String,
+                Literal::Number(_) => Type::Number,
+                Literal::Boolean(_) => Type::Boolean,
+                Literal::Null => Type::Null,
+                Literal::List(_) => Type::List(Box::new(Type::Any)),
+                Literal::Object(_) => Type::Object,
+            }),
+            Expression::Unary(u) if matches!(u.operator, UnaryOperator::Neg) => {
+                Self::const_static_type(&u.operand)
+            }
+            _ => None,
+        }
+    }
+
+    fn ctx(&self) -> Option<&ModuleCtx> {
+        self.modules.get(&self.current_module)
+    }
+
+    /// 模块 id + 成员名 -> 规范化名（入口模块无前缀）
+    fn join_item(module_id: &str, member: &str) -> String {
+        if module_id.is_empty() {
+            member.to_string()
+        } else {
+            format!("{module_id}::{member}")
+        }
+    }
+
+    /// 值名（函数/常量）-> IR 名：成员导入按别名目标解析，本模块声明加前缀
+    fn resolve_value(&self, name: &str) -> String {
+        let Some(ctx) = self.ctx() else {
+            return name.to_string();
+        };
+        if let Some((mid, member)) = ctx.aliases.get(name) {
+            return Self::join_item(mid, member);
+        }
+        if ctx.own_values.contains(name) {
+            return format!("{}{}", ctx.prefix, name);
+        }
+        name.to_string()
+    }
+
+    /// 类型名 -> 规范化名：导入的类型按目标解析，本模块声明加前缀；
+    /// 限定名把模块命名空间头换成模块 id。
+    fn resolve_type(&self, name: &str) -> String {
+        let Some(ctx) = self.ctx() else {
+            return name.to_string();
+        };
+        if let Some((mid, member)) = ctx.aliases.get(name) {
+            return Self::join_item(mid, member);
+        }
+        if ctx.own_types.contains(name) {
+            return format!("{}{}", ctx.prefix, name);
+        }
+        if let Some((head, rest)) = name.split_once("::")
+            && let Some(target) = ctx.namespaces.get(head)
+        {
+            return Self::join_item(target, rest);
+        }
+        name.to_string()
+    }
+
+    /// 调用名 -> IR 名：限定调用先解析模块命名空间头，其余按值名解析。
+    /// `std::` 内建与 `Trait::method`（带 `trait_impl` 标注、不走这里）原样返回。
+    fn resolve_callee_name(&self, callee: &str) -> String {
+        if let Some(ctx) = self.ctx()
+            && let Some((head, rest)) = callee.split_once("::")
+        {
+            if let Some(target) = ctx.namespaces.get(head) {
+                return Self::join_item(target, rest);
+            }
+            return callee.to_string();
+        }
+        self.resolve_value(callee)
+    }
+
+    /// 枚举/类型引用的展示名（运行时 `Enum::Variant` 用声明名，别名导入
+    /// 不应把本地别名写进输出）
+    fn enum_display_name(&self, name: &str) -> String {
+        if let Some(ctx) = self.ctx()
+            && let Some((_, member)) = ctx.aliases.get(name)
+        {
+            return member.clone();
+        }
+        name.to_string()
+    }
+
+    /// 当前模块里 `name` 指向的模块级常量
+    fn const_def(&self, name: &str) -> Option<&ConstDef> {
+        let key = self.resolve_value(name);
+        self.consts.get(&key)
+    }
+
+    /// 内联 const 的初始化表达式：切到定义模块的上下文生成（`use` 绑定/
+    /// 模块前缀都按定义处解析），并检测自引用。
+    fn generate_const_ref(&mut self, name: &str, def: &ConstDef) -> Result<Operand, XuloError> {
+        if self.const_stack.iter().any(|n| n == name) {
+            return Err(XuloError::new(
+                ErrorKind::Semantic,
+                format!("cyclic `const` initializer: {name}"),
+            ));
+        }
+        self.const_stack.push(name.to_string());
+        let saved = std::mem::replace(&mut self.current_module, def.module_id.clone());
+        let out = self.generate_expression(&def.expr);
+        self.current_module = saved;
+        self.const_stack.pop();
+        out
     }
 
     /// 函数返回值是 Math::sqrt 的 F64 位模式时记下（print 需要 tag=2 还原小数）
@@ -281,7 +688,8 @@ impl IrGenerator {
     }
 
     fn register_function(&mut self, f: &FnDef) -> Result<FuncId, XuloError> {
-        self.register_named_function(&f.name.clone(), f)
+        let name = self.resolve_value(&f.name);
+        self.register_named_function(&name, f)
     }
 
     /// 以指定的 IR 名注册函数（impl 方法用 `Type::method` 作名）
@@ -312,6 +720,320 @@ impl IrGenerator {
 
         let func = IrFunction::new(name.to_string(), params, return_type);
         Ok(self.module.add_function(func))
+    }
+
+    /// 声明是否带 `#Derive(ToString)`（与语义层/解释器同一判定）
+    fn derives_to_string(attributes: &[Attribute]) -> bool {
+        attributes
+            .iter()
+            .any(|attr| attr.name == "Derive" && attr.args.iter().any(|(arg, _)| arg == "ToString"))
+    }
+
+    /// 取出一条可派生声明的（类型名、属性、目标）
+    fn derived_decl(stmt: &Statement) -> Option<(&str, &[Attribute], DerivedDecl<'_>)> {
+        match stmt {
+            Statement::Struct(def) => {
+                Some((&def.name, &def.attributes, DerivedDecl::Struct(&def.fields)))
+            }
+            Statement::Enum(def) => {
+                Some((&def.name, &def.attributes, DerivedDecl::Enum(&def.variants)))
+            }
+            Statement::Export(export) => match &export.item {
+                ExportItem::Struct(def) => {
+                    Some((&def.name, &def.attributes, DerivedDecl::Struct(&def.fields)))
+                }
+                ExportItem::Enum(def) => {
+                    Some((&def.name, &def.attributes, DerivedDecl::Enum(&def.variants)))
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// 注册 `#Derive(ToString)` 的派生函数：IR 名为派发名
+    /// `impl_ToString_{Type}_toString`，签名 `(self: ptr) -> string`。
+    /// 结构体的派生同时挂到 `Type::toString`（成员调用 `u.toString()`
+    /// 走与手写 impl 相同的既有解析路径），枚举只有派发名——与解释器
+    /// 的注册位置一致。
+    fn register_derived_tostring(&mut self, type_name: &str, is_struct: bool) -> FuncId {
+        let mangled = impl_fn_name("ToString", type_name, "toString");
+        // 返回字符串：Pointer 槽承载 C 字符串
+        let func = IrFunction::new(
+            mangled.clone(),
+            vec![(LocalId(0), IrType::Pointer)],
+            IrType::Pointer,
+        );
+        let fid = self.module.add_function(func);
+        self.func_return_types
+            .insert(mangled.clone(), Some(Type::String));
+        self.trait_impls.insert(mangled, fid);
+        if is_struct {
+            let type_key = self.resolve_type(type_name);
+            let method_key = format!("{type_key}::toString");
+            self.methods.insert(method_key.clone(), fid);
+            // 成员调用 `u.toString()` 的返回标签也按这个键查表
+            self.func_return_types
+                .insert(method_key, Some(Type::String));
+            self.method_types
+                .entry("toString".to_string())
+                .or_default()
+                .push(type_key);
+        }
+        fid
+    }
+
+    /// 物化一个字符串字面量到本地槽（Const String 不能直接作 RuntimeCall
+    /// 实参，只有本地槽能跨指令传递）。
+    fn const_string_local(&mut self, s: &str) -> Operand {
+        let func_idx = self.current_func.unwrap();
+        let idx = self.module.add_string(s.to_string());
+        let local = self.module.functions[func_idx].add_local(IrType::Pointer);
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Const {
+                dst: local,
+                value: IrValue::String(idx),
+            });
+        Operand::Local(local)
+    }
+
+    /// 字符串拼接（`+` 的字符串路径与派生渲染共用）
+    fn string_concat(&mut self, left: Operand, right: Operand) -> Operand {
+        let func_idx = self.current_func.unwrap();
+        let dst = self.module.functions[func_idx].add_local(IrType::Pointer);
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::RuntimeCall {
+                dst: Some(dst),
+                func: RuntimeFn::StringConcat,
+                args: vec![left, right],
+            });
+        Operand::Local(dst)
+    }
+
+    /// 派生渲染一个字段/payload 值：Named 类型有 ToString 派发时递归调用
+    /// 其实现（手写或派生），否则按调用方给的运行时标签做结构化渲染。
+    /// 与解释器 `derived_to_string` 的 `DerivedForm` 分派一致。
+    fn derive_render(&mut self, value: Operand, tag: Operand, ty: &Type) -> Operand {
+        let func_idx = self.current_func.unwrap();
+        if let Type::Named(name, _) = ty {
+            // 派发名用声明名（语义层如此 mangling；别名导入取解析后的末段）
+            let resolved = self.resolve_type(name);
+            let decl_name = resolved
+                .rsplit("::")
+                .next()
+                .unwrap_or(&resolved)
+                .to_string();
+            if let Some(&fid) = self
+                .trait_impls
+                .get(&impl_fn_name("ToString", &decl_name, "toString"))
+            {
+                let dst = self.module.functions[func_idx].add_local(IrType::Pointer);
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::Call {
+                        dst: Some(dst),
+                        func: fid,
+                        args: vec![value],
+                    });
+                return Operand::Local(dst);
+            }
+        }
+        let dst = self.module.functions[func_idx].add_local(IrType::Pointer);
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::RuntimeCall {
+                dst: Some(dst),
+                func: RuntimeFn::Stringify,
+                args: vec![value, tag],
+            });
+        Operand::Local(dst)
+    }
+
+    /// 派生 struct 的 `toString` 正文：`Type(name: v, …)`，字段按声明序，
+    /// 每段 `名字: 渲染值` 用 `", "` 连接（spec `types/traits.md` 的派生
+    /// 示例，与解释器 `render_derived_struct` 一致）。
+    fn generate_derived_struct_body(
+        &mut self,
+        type_name: &str,
+        fields: &[StructField],
+    ) -> Result<(), XuloError> {
+        let func_idx = self.current_func.unwrap();
+        let self_op = Operand::Local(LocalId(0));
+        let mut cur = self.const_string_local(&format!("{type_name}("));
+        for (i, field) in fields.iter().enumerate() {
+            if i > 0 {
+                let sep = self.const_string_local(", ");
+                cur = self.string_concat(cur, sep);
+            }
+            let label = self.const_string_local(&format!("{}: ", field.name));
+            cur = self.string_concat(cur, label);
+            let value = self.module.functions[func_idx].add_local(IrType::Pointer);
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::GetField {
+                    dst: value,
+                    object: self_op.clone(),
+                    field: field.name.clone(),
+                });
+            let name_op = self.const_string_local(&field.name);
+            let tag = self.module.functions[func_idx].add_local(IrType::I64);
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::RuntimeCall {
+                    dst: Some(tag),
+                    func: RuntimeFn::ObjectGetTag,
+                    args: vec![self_op.clone(), name_op],
+                });
+            let rendered =
+                self.derive_render(Operand::Local(value), Operand::Local(tag), &field.type_);
+            cur = self.string_concat(cur, rendered);
+        }
+        let close = self.const_string_local(")");
+        let result = self.string_concat(cur, close);
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Return(Some(result)));
+        Ok(())
+    }
+
+    /// 派生 enum 的 `toString` 正文：逐个变体测试 `EnumVariant(self) == i`，
+    /// 渲染 `Type::Variant` 或 `Type::Variant(p0, …)`；payload 槽的标签取
+    /// `EnumGetTag`（构造侧写入的真实标签）。
+    fn generate_derived_enum_body(
+        &mut self,
+        type_name: &str,
+        variants: &[EnumVariant],
+    ) -> Result<(), XuloError> {
+        let func_idx = self.current_func.unwrap();
+        let self_op = Operand::Local(LocalId(0));
+        let result_local = self.module.functions[func_idx].add_local(IrType::Pointer);
+        let end_label = self.module.functions[func_idx].add_label();
+
+        if variants.is_empty() {
+            // 无变体的枚举：解释器退化为结构性 format
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::RuntimeCall {
+                    dst: Some(result_local),
+                    func: RuntimeFn::Stringify,
+                    args: vec![self_op, Operand::Const(IrValue::I64(7))],
+                });
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::Return(Some(Operand::Local(result_local))));
+            return Ok(());
+        }
+
+        let vt = self.module.functions[func_idx].add_local(IrType::I64);
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::RuntimeCall {
+                dst: Some(vt),
+                func: RuntimeFn::EnumVariant,
+                args: vec![self_op.clone()],
+            });
+
+        // 前 n-1 个变体逐个测试；最后一个变体作为落空默认分支
+        let mut tested: Vec<(Label, usize)> = Vec::new();
+        for i in 0..variants.len() - 1 {
+            let body_label = self.module.functions[func_idx].add_label();
+            let next_label = self.module.functions[func_idx].add_label();
+            let cmp = self.module.functions[func_idx].add_local(IrType::Bool);
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::Eq {
+                    dst: cmp,
+                    left: Operand::Local(vt),
+                    right: Operand::Const(IrValue::I64(i as i64)),
+                });
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::Branch {
+                    condition: Operand::Local(cmp),
+                    then_label: body_label,
+                    else_label: next_label,
+                });
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::Label(next_label));
+            tested.push((body_label, i));
+        }
+
+        let last = variants.len() - 1;
+        self.render_derived_variant(type_name, &variants[last], &self_op, result_local);
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Jump(end_label));
+
+        for (body_label, i) in tested {
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::Label(body_label));
+            self.render_derived_variant(type_name, &variants[i], &self_op, result_local);
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::Jump(end_label));
+        }
+
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Label(end_label));
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Return(Some(Operand::Local(result_local))));
+        Ok(())
+    }
+
+    /// 渲染一个枚举变体到结果槽：`Type::Variant` 或 `Type::Variant(p0, …)`
+    fn render_derived_variant(
+        &mut self,
+        type_name: &str,
+        variant: &EnumVariant,
+        self_op: &Operand,
+        result_local: LocalId,
+    ) {
+        let func_idx = self.current_func.unwrap();
+        let mut cur = self.const_string_local(&format!("{type_name}::{}", variant.name));
+        let payload: &[EnumPayloadParam] = variant.payload.as_deref().unwrap_or(&[]);
+        if !payload.is_empty() {
+            let open = self.const_string_local("(");
+            cur = self.string_concat(cur, open);
+            for (j, param) in payload.iter().enumerate() {
+                if j > 0 {
+                    let sep = self.const_string_local(", ");
+                    cur = self.string_concat(cur, sep);
+                }
+                let value = self.module.functions[func_idx].add_local(IrType::Pointer);
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::RuntimeCall {
+                        dst: Some(value),
+                        func: RuntimeFn::EnumGet,
+                        args: vec![self_op.clone(), Operand::Const(IrValue::I64(j as i64))],
+                    });
+                let tag = self.module.functions[func_idx].add_local(IrType::I64);
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::RuntimeCall {
+                        dst: Some(tag),
+                        func: RuntimeFn::EnumGetTag,
+                        args: vec![self_op.clone(), Operand::Const(IrValue::I64(j as i64))],
+                    });
+                let rendered =
+                    self.derive_render(Operand::Local(value), Operand::Local(tag), &param.type_);
+                cur = self.string_concat(cur, rendered);
+            }
+            let close = self.const_string_local(")");
+            cur = self.string_concat(cur, close);
+        }
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::SetLocal {
+                dst: result_local,
+                src: cur,
+            });
     }
 
     /// 分析一个字面量函数作用域：本层绑定、自由变量与需装箱的名字。
@@ -721,6 +1443,19 @@ impl IrGenerator {
                 }
                 Ok(())
             }
+            // UI 运行期（组件挂载、@State/@Effect、渲染）尚无 AOT 实现：
+            // 静默跳过会产出「成功但什么都不做」的二进制，这里明确拒绝。
+            // UI 运行期（组件挂载、@State/@Effect、渲染）尚无 AOT 实现：
+            // 静默跳过会产出「成功但什么都不做」的二进制，这里明确拒绝。
+            Statement::State(_)
+            | Statement::Effect(_)
+            | Statement::Environment(_)
+            | Statement::Component(_)
+            | Statement::Store(_) => Err(XuloError::new(
+                ErrorKind::Semantic,
+                "AOT codegen does not support UI state/effect/component declarations; run UI programs with `xulo run`"
+                    .to_string(),
+            )),
             _ => Ok(()), // 其他语句暂时忽略
         }
     }
@@ -764,8 +1499,7 @@ impl IrGenerator {
             self.local_types.insert(cell, IrType::Pointer);
             self.boxed_logical.insert(binding.name.clone(), ty);
 
-            let init_val = self
-                .generate_expression(binding.value.as_ref().unwrap())?;
+            let init_val = self.generate_expression(binding.value.as_ref().unwrap())?;
             self.module.functions[func_idx]
                 .instructions
                 .push(Instruction::RuntimeCall {
@@ -862,11 +1596,15 @@ impl IrGenerator {
     fn is_array_like_expr(&self, expr: &Expression) -> bool {
         match expr {
             Expression::Literal { value, .. } => matches!(value, Literal::List(_)),
+            Expression::Range(_) => true,
             Expression::Identifier { name, .. } => {
                 if let Some(src_ty) = self.source_types.get(name) {
                     matches!(src_ty, Type::List(_))
                 } else {
-                    false
+                    matches!(
+                        self.const_def(name).and_then(|d| d.ty.as_ref()),
+                        Some(Type::List(_))
+                    )
                 }
             }
             Expression::BinaryOp(binop) => {
@@ -881,7 +1619,10 @@ impl IrGenerator {
                         return true; // push 返回新数组
                     }
                     self.is_array_like_expr(obj)
-                } else if let Some(Some(ast_ret)) = self.func_return_types.get(&call.callee) {
+                } else if let Some(Some(ast_ret)) = self
+                    .func_return_types
+                    .get(&self.resolve_callee_name(&call.callee))
+                {
                     matches!(ast_ret, Type::List(_))
                 } else {
                     false
@@ -945,29 +1686,47 @@ impl IrGenerator {
                 }
                 None
             }
-            Expression::Identifier { name, .. } => self.source_types.get(name).cloned(),
+            Expression::Identifier { name, .. } => self
+                .source_types
+                .get(name)
+                .cloned()
+                .or_else(|| self.const_def(name).and_then(|d| d.ty.clone())),
             Expression::Call(call) => {
                 if call.object.is_none() {
                     if call.callee == "str" {
                         return Some(Type::String);
+                    }
+                    // `std::fs::exists` 是布尔谓词（可失败成员返回 Result，
+                    // 由 print/tag 路径按枚举处理，类型推断只需 bool）
+                    if call.callee.starts_with("std::fs::") {
+                        return (call.callee == "std::fs::exists").then_some(Type::Boolean);
                     }
                     // Math::/Time:: 内建：按 lowering 表的 tag 映射返回类型
                     if let Some((_, _, tag)) = Self::intrinsic_lowering(&call.callee) {
                         return Some(if tag == 0 { Type::String } else { Type::Number });
                     }
                     // 结构体构造：Point(x: 1) -> Point
-                    if self.structs.contains_key(&call.callee) {
-                        return Some(Type::Named(call.callee.clone(), Vec::new()));
+                    let ctor = self.resolve_type(&call.callee);
+                    if self.structs.contains_key(&ctor) {
+                        return Some(Type::Named(ctor, Vec::new()));
                     }
                 }
-                // 方法调用用 `Type::method` 作键；否则用函数名
+                // 方法调用用 `Type::method` 作键；否则用（规范化后的）函数名
                 let key = if let Some(recv) = &call.object
                     && let Some(recv_ty) = self.struct_name_of_expr(recv)
                     && let Some(method) = call.method.as_deref()
                 {
                     format!("{}::{}", recv_ty, method)
                 } else {
-                    call.callee.clone()
+                    self.resolve_callee_name(&call.callee)
+                };
+                // Trait 派发：按派发目标对应的 `Type::method` 查返回类型
+                let key = if let Some(mangled) = &call.trait_impl
+                    && let Some(&fid) = self.trait_impls.get(mangled)
+                {
+                    self.module.functions[fid.0].name.clone()
+                } else {
+                    key
                 };
                 self.func_return_types.get(&key).cloned().flatten()
             }
@@ -990,6 +1749,17 @@ impl IrGenerator {
             }
             // `std::math` 常量（PI/E/TAU/INFINITY/NAN）都是 float
             Expression::EnumRef(e) if e.enum_name == "std::math" => Some(Type::Number),
+            // 命名空间成员引用（`m::PI`）：常量/函数的静态类型
+            Expression::EnumRef(e) => {
+                let target = self.ctx()?.namespaces.get(&e.enum_name)?.clone();
+                let canonical = Self::join_item(&target, &e.variant);
+                if let Some(def) = self.consts.get(&canonical) {
+                    return def.ty.clone();
+                }
+                self.func_return_types.get(&canonical).cloned().flatten()
+            }
+            // 区间表达式求值为数字列表
+            Expression::Range(_) => Some(Type::List(Box::new(Type::Number))),
             _ => None,
         }
     }
@@ -1016,6 +1786,12 @@ impl IrGenerator {
                 // match 绑定：payload 标签运行时才知道
                 if self.is_dyn_name(name) {
                     return -1;
+                }
+                // 模块级 const：按初始化表达式的静态标签（字面量）打 tag
+                if !self.locals.contains_key(name)
+                    && let Some(def) = self.const_def(name)
+                {
+                    return def.tag;
                 }
                 // `use std::math::*` 导入的裸名常量走 F64 槽（tag=2）
                 if Self::bare_math_const(name).is_some() && !self.locals.contains_key(name) {
@@ -1160,8 +1936,24 @@ impl IrGenerator {
                         None => method.to_string(),
                     }
                 } else {
-                    call.callee.clone()
+                    self.resolve_callee_name(&call.callee)
                 };
+                // Trait 派发：返回类型按派发目标的 `Type::method` 查表，
+                // 否则 `Area::area(...)` 会退化成未知标签（小数被当整数打印）
+                let key = if call.callee != "str"
+                    && let Some(mangled) = &call.trait_impl
+                    && let Some(&fid) = self.trait_impls.get(mangled)
+                {
+                    self.module.functions[fid.0].name.clone()
+                } else {
+                    key
+                };
+                // 结构体构造产出对象（tag=4）
+                if call.object.is_none()
+                    && self.structs.contains_key(&self.resolve_type(&call.callee))
+                {
+                    return 4;
+                }
                 // str() 产出字符串；Math::Time:: 内建与 float 位模式返回按表打 tag
                 if key == "str" {
                     return 0;
@@ -1236,10 +2028,34 @@ impl IrGenerator {
             }
             // `std::math` 常量（PI/E/TAU/INFINITY/NAN）都是 float
             Expression::EnumRef(e) if e.enum_name == "std::math" => 2,
-            // 其余枚举值（含无 payload 的变体引用）
-            Expression::EnumRef(_) => 7,
+            // 命名空间成员引用（`m::PI`）：常量按定义标签，函数按返回标签
+            Expression::EnumRef(e) => {
+                if let Some(ctx) = self.ctx()
+                    && let Some(target) = ctx.namespaces.get(&e.enum_name)
+                {
+                    let canonical = Self::join_item(target, &e.variant);
+                    if let Some(def) = self.consts.get(&canonical) {
+                        return def.tag;
+                    }
+                    if let Some(Some(ast_ret)) = self.func_return_types.get(&canonical) {
+                        return match ast_ret {
+                            Type::String => 0,
+                            Type::Number => -1,
+                            Type::Boolean => 5,
+                            Type::Null => 6,
+                            Type::List(_) => 3,
+                            Type::Object | Type::ObjectType(_) => 4,
+                            _ => -1,
+                        };
+                    }
+                }
+                // 其余枚举值（含无 payload 的变体引用）
+                7
+            }
             // match 表达式：分支结果各异，运行时检测
             Expression::Match(_) => -1,
+            // 区间表达式求值为列表
+            Expression::Range(_) => 3,
             // `expr?`：Ok payload 类型不定，运行时检测
             Expression::Propagate { .. } => -1,
             // 函数值（闭包/箭头字面量）：tag=8
@@ -1256,7 +2072,9 @@ impl IrGenerator {
                 {
                     return match &field.type_ {
                         Type::String => 0,
-                        Type::Number => 1,
+                        // number 字段可能以 f64 位模式承载（整数/小数由构造侧
+                        // 标签决定），静态无法区分，交给运行时自动检测
+                        Type::Number => -1,
                         Type::Boolean => 5,
                         Type::Null => 6,
                         Type::List(_) => 3,
@@ -1313,8 +2131,9 @@ impl IrGenerator {
 
     /// `Enum::Variant` 的变体序号（声明序）
     fn enum_variant_index(&self, enum_name: &str, variant: &str) -> Option<usize> {
+        let key = self.resolve_type(enum_name);
         self.enums
-            .get(enum_name)
+            .get(&key)
             .and_then(|vs| vs.iter().position(|v| v == variant))
     }
 
@@ -1333,7 +2152,8 @@ impl IrGenerator {
         };
         let func_idx = self.current_func.unwrap();
         let type_str_local = self.module.functions[func_idx].add_local(IrType::I64);
-        let type_idx = self.module.add_string(enum_name.to_string());
+        // 运行时展示用声明名（别名导入不把本地别名写进 `E::V` 输出）
+        let type_idx = self.module.add_string(self.enum_display_name(enum_name));
         self.module.functions[func_idx]
             .instructions
             .push(Instruction::Const {
@@ -1395,9 +2215,7 @@ impl IrGenerator {
             });
         let scrut_op = Operand::Local(scrut_local);
 
-        let err_idx = self
-            .enum_variant_index("Result", "Err")
-            .unwrap_or(1) as i64;
+        let err_idx = self.enum_variant_index("Result", "Err").unwrap_or(1) as i64;
         let vt = self.module.functions[func_idx].add_local(IrType::I64);
         self.module.functions[func_idx]
             .instructions
@@ -1512,11 +2330,7 @@ impl IrGenerator {
                 if let Some(local) = self.locals.get(name).copied() {
                     if self.boxed_names.contains(name) {
                         // 装箱变量：从 cell 读出（f64 位模式走专用读回）
-                        let logical = self
-                            .boxed_logical
-                            .get(name)
-                            .cloned()
-                            .unwrap_or(IrType::I64);
+                        let logical = self.boxed_logical.get(name).cloned().unwrap_or(IrType::I64);
                         let dst = self.module.functions[self.current_func.unwrap()]
                             .add_local(logical.clone());
                         let func = if matches!(logical, IrType::F64) {
@@ -1534,6 +2348,9 @@ impl IrGenerator {
                         return Ok(Operand::Local(dst));
                     }
                     Ok(Operand::Local(local))
+                } else if let Some(def) = self.const_def(name).cloned() {
+                    // 模块级 const：在定义模块的上下文里内联初始化表达式
+                    self.generate_const_ref(name, &def)
                 } else if let Some(value) = Self::bare_math_const(name) {
                     // `use std::math::*` 导入的裸名常量（locals 优先，遮蔽已被
                     // 语义层的重名检查排除）
@@ -1546,9 +2363,15 @@ impl IrGenerator {
                             value: IrValue::F64(value),
                         });
                     Ok(Operand::Local(local))
-                } else if self.module.functions.iter().any(|f| f.name == *name) {
-                    // 顶层函数引用作函数值：经 thunk 适配成闭包
-                    self.generate_func_value(name)
+                } else if self
+                    .module
+                    .functions
+                    .iter()
+                    .any(|f| f.name == self.resolve_value(name))
+                {
+                    // 顶层函数引用作函数值：经 thunk 适配成闭包（名字按模块解析）
+                    let resolved = self.resolve_value(name);
+                    self.generate_func_value(&resolved)
                 } else {
                     Err(XuloError::new(
                         ErrorKind::Semantic,
@@ -1609,8 +2432,27 @@ impl IrGenerator {
                     });
                 Ok(Operand::Local(local))
             }
-            // 无 payload 的枚举变体引用：`Direction::East`
-            Expression::EnumRef(e) => self.generate_enum_construct(&e.enum_name, &e.variant, &[]),
+            // 无 payload 的枚举变体引用：`Direction::East`；`m::PI` 这类
+            // 命名空间成员引用按模块解析成常量/函数值
+            Expression::EnumRef(e) => {
+                let namespace_target = self
+                    .ctx()
+                    .and_then(|ctx| ctx.namespaces.get(&e.enum_name).cloned());
+                if let Some(target) = namespace_target {
+                    let canonical = Self::join_item(&target, &e.variant);
+                    if let Some(def) = self.consts.get(&canonical).cloned() {
+                        return self.generate_const_ref(&canonical, &def);
+                    }
+                    if self.module.functions.iter().any(|f| f.name == canonical) {
+                        return self.generate_func_value(&canonical);
+                    }
+                    return Err(XuloError::new(
+                        ErrorKind::Semantic,
+                        format!("undefined variable: {}::{}", e.enum_name, e.variant),
+                    ));
+                }
+                self.generate_enum_construct(&e.enum_name, &e.variant, &[])
+            }
             Expression::Match(m) => self.generate_match(m),
             Expression::Propagate { expr, .. } => self.generate_propagate(expr),
             Expression::Panic { expr, .. } => {
@@ -1626,6 +2468,26 @@ impl IrGenerator {
                     });
                 // panic 不返回值；同 generate_call 的无返回调用，返回一个不会被使用的虚拟值
                 let local = self.module.functions[func_idx].add_local(IrType::Pointer);
+                Ok(Operand::Local(local))
+            }
+            // 区间表达式 `0..<3` / `1...4` 求值为列表（for 循环已在
+            // generate_for 单独降级，不会走到这里）
+            Expression::Range(r) => {
+                let start = self.generate_expression(&r.start)?;
+                let end = self.generate_expression(&r.end)?;
+                let func_idx = self.current_func.unwrap();
+                let local = self.module.functions[func_idx].add_local(IrType::Pointer);
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::RuntimeCall {
+                        dst: Some(local),
+                        func: RuntimeFn::RangeList,
+                        args: vec![
+                            start,
+                            end,
+                            Operand::Const(IrValue::I64(if r.end_inclusive { 1 } else { 0 })),
+                        ],
+                    });
                 Ok(Operand::Local(local))
             }
             _ => {
@@ -1985,10 +2847,10 @@ impl IrGenerator {
             return self.generate_print_multi(call);
         }
 
-        // 结构体构造：Point(x: 1) -> NewObject
+        // 结构体构造：Point(x: 1) -> NewObject（类型名按模块解析）
         if call.object.is_none()
             && call.method.is_none()
-            && let Some(fields) = self.structs.get(&call.callee).cloned()
+            && let Some(fields) = self.structs.get(&self.resolve_type(&call.callee)).cloned()
         {
             return self.generate_struct_ctor(call, &fields);
         }
@@ -2014,6 +2876,43 @@ impl IrGenerator {
             args.push(self.generate_expression(&arg.value)?);
         }
 
+        // Trait 派发：语义层把 `Trait::method(recv)` 与 `str(v)` 标注成
+        // `impl_{Trait}_{Type}_{method}`（泛型参数上的派发标注为 `dyn:`）。
+        // AOT 把派发名静态解析到已注册的 impl 函数，位置与解释器 call()
+        // 的前置分支一致：接收者就是实参序列的第一项。
+        if let Some(impl_name) = &call.trait_impl {
+            let Some(fid) = self.trait_impls.get(impl_name).copied().or_else(|| {
+                self.module
+                    .functions
+                    .iter()
+                    .position(|f| &f.name == impl_name)
+                    .map(FuncId)
+            }) else {
+                if let Some(rest) = impl_name.strip_prefix("dyn:") {
+                    return Err(XuloError::new(
+                        ErrorKind::Semantic,
+                        format!(
+                            "AOT codegen does not support dynamic trait dispatch through a generic parameter (`{rest}`): the receiver's type is not static in a generic body"
+                        ),
+                    ));
+                }
+                return Err(XuloError::new(
+                    ErrorKind::Semantic,
+                    format!("undefined impl function `{impl_name}`"),
+                ));
+            };
+            let ret_type = self.module.functions[fid.0].return_type.clone();
+            let local = self.module.functions[func_idx].add_local(ret_type);
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::Call {
+                    dst: Some(local),
+                    func: fid,
+                    args,
+                });
+            return Ok(Operand::Local(local));
+        }
+
         // str(字符串) 直通：模板 desugar 会对字符串也包一层 str()
         if call.object.is_none()
             && call.callee == "str"
@@ -2027,7 +2926,9 @@ impl IrGenerator {
         // builtin_member 校验成员存在；裸名调用已被 apply_std_calls 改写为
         // 限定形式）
         if call.object.is_none()
-            && (call.callee.starts_with("std::math::") || call.callee.starts_with("std::time::"))
+            && (call.callee.starts_with("std::math::")
+                || call.callee.starts_with("std::time::")
+                || call.callee.starts_with("std::fs::"))
         {
             return self.generate_intrinsic_call(&call.callee, &args);
         }
@@ -2085,9 +2986,7 @@ impl IrGenerator {
                     let use_closure = call.arguments.get(1).is_some_and(|a| {
                         matches!(
                             &a.value,
-                            Expression::CallValue(_)
-                                | Expression::FnExpr(_)
-                                | Expression::Arrow(_)
+                            Expression::CallValue(_) | Expression::FnExpr(_) | Expression::Arrow(_)
                         ) || matches!(
                             self.infer_source_type_from_expr(&a.value),
                             Some(Type::FnSig { .. })
@@ -2289,7 +3188,9 @@ impl IrGenerator {
         }
         let mut func = IrFunction::new(format!("thunk${}", target_name), fparams, ret.clone());
         func.closure_entry = true;
-        let call_args: Vec<Operand> = (0..n_params).map(|i| Operand::Local(LocalId(i + 1))).collect();
+        let call_args: Vec<Operand> = (0..n_params)
+            .map(|i| Operand::Local(LocalId(i + 1)))
+            .collect();
         let dst = if ret.is_void() {
             None
         } else {
@@ -2301,7 +3202,8 @@ impl IrGenerator {
             func: FuncId(target_idx),
             args: call_args,
         });
-        func.instructions.push(Instruction::Return(dst.map(Operand::Local)));
+        func.instructions
+            .push(Instruction::Return(dst.map(Operand::Local)));
         let fid = self.module.add_function(func);
         self.func_thunks.insert(target_name.to_string(), fid);
         Ok(fid)
@@ -2376,7 +3278,13 @@ impl IrGenerator {
                 });
         }
 
-        self.generate_closure_body(func_id.0, &f.params, &f.body, &capture, f.return_type.as_ref())?;
+        self.generate_closure_body(
+            func_id.0,
+            &f.params,
+            &f.body,
+            &capture,
+            f.return_type.as_ref(),
+        )?;
         Ok(())
     }
 
@@ -2443,10 +3351,7 @@ impl IrGenerator {
             });
         for (i, name) in free.iter().enumerate() {
             let cell = self.locals.get(name).copied().ok_or_else(|| {
-                XuloError::new(
-                    ErrorKind::Semantic,
-                    format!("undefined variable: {}", name),
-                )
+                XuloError::new(ErrorKind::Semantic, format!("undefined variable: {}", name))
             })?;
             self.module.functions[host]
                 .instructions
@@ -2665,17 +3570,16 @@ impl IrGenerator {
             // 3) 裸名顶层函数
             self.module.functions.iter().position(|f| f.name == method)
         } else {
-            self.module
-                .functions
-                .iter()
-                .position(|f| f.name == call.callee)
+            let name = self.resolve_callee_name(&call.callee);
+            self.module.functions.iter().position(|f| f.name == name)
         }
     }
 
     /// 从表达式取结构体（Named）类型名
     fn struct_name_of_expr(&self, expr: &Expression) -> Option<String> {
         match self.infer_source_type_from_expr(expr) {
-            Some(Type::Named(name, _)) => Some(name),
+            // 类型名的规范化（模块前缀/导入别名）在查表处统一进行
+            Some(Type::Named(name, _)) => Some(self.resolve_type(&name)),
             _ => None,
         }
     }
@@ -2759,6 +3663,8 @@ impl IrGenerator {
                 std::borrow::Cow::Owned(format!("Math::{rest}"))
             } else if let Some(rest) = callee.strip_prefix("std::time::") {
                 std::borrow::Cow::Owned(format!("Time::{rest}"))
+            } else if let Some(rest) = callee.strip_prefix("std::fs::") {
+                std::borrow::Cow::Owned(format!("Fs::{rest}"))
             } else {
                 std::borrow::Cow::Borrowed(callee)
             };
@@ -2789,6 +3695,12 @@ impl IrGenerator {
             "Time::now_nanos" => ("xulo_time_now_nanos", IrType::I64, 1),
             "Time::monotonic" => ("xulo_time_monotonic", IrType::I64, 1),
             "Time::monotonic_nanos" => ("xulo_time_monotonic_nanos", IrType::I64, 1),
+            // `std::fs`：可失败操作返回内置 Result 枚举（tag=7），exists 是 bool
+            "Fs::read" => ("xulo_fs_read", IrType::Pointer, 7),
+            "Fs::write" => ("xulo_fs_write", IrType::Pointer, 7),
+            "Fs::exists" => ("xulo_fs_exists", IrType::Bool, 5),
+            "Fs::remove" => ("xulo_fs_remove", IrType::Pointer, 7),
+            "Fs::mkdir" => ("xulo_fs_mkdir", IrType::Pointer, 7),
             _ => return None,
         };
         Some(lowering)
@@ -2963,11 +3875,18 @@ impl IrGenerator {
         for stmt in &if_expr.then_branch.statements {
             self.generate_statement(stmt)?;
         }
-        let then_has_return = matches!(
-            self.module.functions[func_idx].instructions.last(),
-            Some(Instruction::Return(_))
-        );
-        if !then_has_return {
+        // 分支可能以 break/continue（Jump）或 return 收尾：已有终结指令就不再
+        // 追加 Jump(end)，否则同一块里出现双终结指令（codegen 验证器必错）
+        let then_has_terminator = self.module.functions[func_idx]
+            .instructions
+            .last()
+            .is_some_and(|i| {
+                matches!(
+                    i,
+                    Instruction::Return(_) | Instruction::Jump(_) | Instruction::Branch { .. }
+                )
+            });
+        if !then_has_terminator {
             self.module.functions[func_idx]
                 .instructions
                 .push(Instruction::Jump(end_label));
@@ -2981,18 +3900,23 @@ impl IrGenerator {
                 self.generate_statement(stmt)?;
             }
         }
-        let else_has_return = matches!(
-            self.module.functions[func_idx].instructions.last(),
-            Some(Instruction::Return(_))
-        );
-        if !else_has_return {
+        let else_has_terminator = self.module.functions[func_idx]
+            .instructions
+            .last()
+            .is_some_and(|i| {
+                matches!(
+                    i,
+                    Instruction::Return(_) | Instruction::Jump(_) | Instruction::Branch { .. }
+                )
+            });
+        if !else_has_terminator {
             self.module.functions[func_idx]
                 .instructions
                 .push(Instruction::Jump(end_label));
         }
 
         // Only emit end_label if at least one branch jumps to it
-        if !then_has_return || !else_has_return {
+        if !then_has_terminator || !else_has_terminator {
             self.module.functions[func_idx]
                 .instructions
                 .push(Instruction::Label(end_label));
@@ -3089,6 +4013,16 @@ impl IrGenerator {
             });
         let scrut_op = Operand::Local(scrut_local);
 
+        // 字面量 pattern 需要 scrutinee 的标签：match 绑定用伴随槽，其余静态
+        // 推断（-1 表示运行时检测）
+        let scrut_tag_op = if let Expression::Identifier { name, .. } = &m.value
+            && let Some(tag_op) = self.dyn_tag_of.get(name).cloned()
+        {
+            tag_op
+        } else {
+            Operand::Const(IrValue::I64(self.determine_element_tag(&m.value)))
+        };
+
         let result_local = self.module.functions[func_idx].add_local(IrType::Pointer);
         let end_label = self.module.functions[func_idx].add_label();
         // 最后一个枚举臂的 next_label 落空，需要补一条跳到 end
@@ -3171,8 +4105,7 @@ impl IrGenerator {
                         if self.boxed_names.contains(bind) {
                             // 被嵌套字面量捕获的绑定：装箱（伴随标签不入
                             // cell，读出时按 -1 运行时检测）
-                            let cell =
-                                self.module.functions[func_idx].add_local(IrType::Pointer);
+                            let cell = self.module.functions[func_idx].add_local(IrType::Pointer);
                             self.module.functions[func_idx].instructions.push(
                                 Instruction::RuntimeCall {
                                     dst: Some(cell),
@@ -3181,8 +4114,7 @@ impl IrGenerator {
                                 },
                             );
                             self.locals.insert(bind.clone(), cell);
-                            self.boxed_logical
-                                .insert(bind.clone(), IrType::Pointer);
+                            self.boxed_logical.insert(bind.clone(), IrType::Pointer);
                         } else {
                             self.locals.insert(bind.clone(), raw);
                         }
@@ -3197,22 +4129,61 @@ impl IrGenerator {
                         .push(Instruction::Label(next_label));
                     dangling_next = true;
                 }
+                MatchPattern::Literal(lit) => {
+                    let (lit_val, lit_tag) = self.literal_pattern_operand(lit)?;
+                    let cmp = self.module.functions[func_idx].add_local(IrType::I64);
+                    self.module.functions[func_idx]
+                        .instructions
+                        .push(Instruction::RuntimeCall {
+                            dst: Some(cmp),
+                            func: RuntimeFn::LiteralMatch,
+                            args: vec![
+                                scrut_op.clone(),
+                                scrut_tag_op.clone(),
+                                lit_val,
+                                Operand::Const(IrValue::I64(lit_tag)),
+                            ],
+                        });
+                    self.module.functions[func_idx]
+                        .instructions
+                        .push(Instruction::Branch {
+                            condition: Operand::Local(cmp),
+                            then_label: body_label,
+                            else_label: next_label,
+                        });
+                    self.module.functions[func_idx]
+                        .instructions
+                        .push(Instruction::Label(body_label));
+                    self.generate_match_arm_body(arm, result_local)?;
+                    self.module.functions[func_idx]
+                        .instructions
+                        .push(Instruction::Jump(end_label));
+                    self.module.functions[func_idx]
+                        .instructions
+                        .push(Instruction::Label(next_label));
+                    dangling_next = true;
+                }
                 MatchPattern::Wildcard => {
                     self.generate_match_arm_body(arm, result_local)?;
                     self.module.functions[func_idx]
                         .instructions
                         .push(Instruction::Jump(end_label));
+                    // next 落点留空块：后续臂或收尾跳转都从这里接续
+                    self.module.functions[func_idx]
+                        .instructions
+                        .push(Instruction::Label(next_label));
+                    dangling_next = true;
                 }
                 MatchPattern::Binding { name, .. } => {
                     if self.boxed_names.contains(name) {
                         let cell = self.module.functions[func_idx].add_local(IrType::Pointer);
-                        self.module.functions[func_idx]
-                            .instructions
-                            .push(Instruction::RuntimeCall {
+                        self.module.functions[func_idx].instructions.push(
+                            Instruction::RuntimeCall {
                                 dst: Some(cell),
                                 func: RuntimeFn::AllocCell,
                                 args: vec![scrut_op.clone()],
-                            });
+                            },
+                        );
                         self.locals.insert(name.clone(), cell);
                         self.boxed_logical.insert(name.clone(), IrType::Pointer);
                     } else {
@@ -3224,11 +4195,15 @@ impl IrGenerator {
                     self.module.functions[func_idx]
                         .instructions
                         .push(Instruction::Jump(end_label));
+                    self.module.functions[func_idx]
+                        .instructions
+                        .push(Instruction::Label(next_label));
+                    dangling_next = true;
                 }
                 _ => {
                     return Err(XuloError::new(
                         ErrorKind::Semantic,
-                        "AOT codegen supports only enum, `_`, and binding match patterns"
+                        "AOT codegen does not support range, struct, type, or or-patterns in match yet"
                             .to_string(),
                     ));
                 }
@@ -3244,6 +4219,37 @@ impl IrGenerator {
             .instructions
             .push(Instruction::Label(end_label));
         Ok(Operand::Local(result_local))
+    }
+
+    /// 字面量 pattern 的比对操作数：返回 (值操作数, 标签)。字符串先物化进
+    /// 本地槽（Const String 不能直接作 RuntimeCall 实参），小数走 f64 位模式。
+    fn literal_pattern_operand(&mut self, lit: &Literal) -> Result<(Operand, i64), XuloError> {
+        let func_idx = self.current_func.unwrap();
+        Ok(match lit {
+            Literal::Number(n) => {
+                // i64 槽只承载精确可表示的整数，其余按 f64 位模式比对
+                if n.fract() == 0.0 && n.is_finite() && n.abs() <= 9.007_199_254_740_992e15 {
+                    (Operand::Const(IrValue::I64(*n as i64)), 1)
+                } else {
+                    (Operand::Const(IrValue::F64(*n)), 2)
+                }
+            }
+            Literal::String(s) => {
+                let idx = self.module.add_string(s.clone());
+                let local = self.module.functions[func_idx].add_local(IrType::Pointer);
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::Const {
+                        dst: local,
+                        value: IrValue::String(idx),
+                    });
+                (Operand::Local(local), 0)
+            }
+            Literal::Boolean(b) => (Operand::Const(IrValue::Bool(*b)), 5),
+            Literal::Null => (Operand::Const(IrValue::Null), 6),
+            Literal::List(_) => (Operand::Const(IrValue::Null), 3),
+            Literal::Object(_) => (Operand::Const(IrValue::Null), 4),
+        })
     }
 
     /// 枚举变体的 tag 分支：`EnumVariant(scrut) == idx` 为真走本臂，否则下一臂
@@ -3299,12 +4305,10 @@ impl IrGenerator {
         // 块内所有语句依序执行；末尾若是表达式语句，其值写入结果槽
         let (stmts, value_expr) = match &arm.value {
             MatchBody::Expr(e) => (Vec::new(), Some(e)),
-            MatchBody::Block(b) => {
-                match b.statements.split_last() {
-                    Some((Statement::Expr(last), init)) => (init.to_vec(), Some(&last.expr)),
-                    _ => (b.statements.clone(), None),
-                }
-            }
+            MatchBody::Block(b) => match b.statements.split_last() {
+                Some((Statement::Expr(last), init)) => (init.to_vec(), Some(&last.expr)),
+                _ => (b.statements.clone(), None),
+            },
         };
         for stmt in &stmts {
             self.generate_statement(stmt)?;
@@ -3338,8 +4342,11 @@ impl IrGenerator {
         // 创建循环变量（被捕获时本地槽持有 cell；每次迭代换新 cell，
         // 同一轮迭代里创建的闭包共享该轮的值）
         let boxed = self.boxed_names.contains(&for_stmt.iter_var);
-        let iter_local = self.module.functions[func_idx]
-            .add_local(if boxed { IrType::Pointer } else { IrType::I64 });
+        let iter_local = self.module.functions[func_idx].add_local(if boxed {
+            IrType::Pointer
+        } else {
+            IrType::I64
+        });
         self.locals.insert(for_stmt.iter_var.clone(), iter_local);
         if boxed {
             let logical = if matches!(for_stmt.iterable, Expression::Range(_)) {
@@ -3351,7 +4358,8 @@ impl IrGenerator {
             } else {
                 IrType::Pointer
             };
-            self.boxed_logical.insert(for_stmt.iter_var.clone(), logical);
+            self.boxed_logical
+                .insert(for_stmt.iter_var.clone(), logical);
         }
 
         // 推断迭代变量的源级类型
@@ -3643,7 +4651,10 @@ impl IrGenerator {
             continue_label,
         });
 
-        // 循环开始
+        // 循环开始：先补一条跳转终结前一块（codegen 的 Label 会开新块）
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Jump(start_label));
         self.module.functions[func_idx]
             .instructions
             .push(Instruction::Label(start_label));
@@ -3664,6 +4675,22 @@ impl IrGenerator {
             .push(Instruction::Label(body_label));
         for stmt in &while_stmt.body.statements {
             self.generate_statement(stmt)?;
+        }
+        // 语句块可能以非终结指令收尾（如末尾是赋值），补跳转接住 fall-through；
+        // 已以 break/return 等终结则不再追加，避免双终结指令
+        let last_is_terminator = self.module.functions[func_idx]
+            .instructions
+            .last()
+            .is_some_and(|i| {
+                matches!(
+                    i,
+                    Instruction::Jump(_) | Instruction::Branch { .. } | Instruction::Return(_)
+                )
+            });
+        if !last_is_terminator {
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::Jump(continue_label));
         }
 
         // continue 标签
@@ -3691,13 +4718,13 @@ impl IrGenerator {
                 if let Some(local) = self.locals.get(name).copied() {
                     if self.boxed_names.contains(name) {
                         // 装箱变量：写入既有 cell（别名的闭包共享同一 cell）
-                        self.module.functions[func_idx]
-                            .instructions
-                            .push(Instruction::RuntimeCall {
+                        self.module.functions[func_idx].instructions.push(
+                            Instruction::RuntimeCall {
                                 dst: None,
                                 func: RuntimeFn::CellSet,
                                 args: vec![Operand::Local(local), value],
-                            });
+                            },
+                        );
                     } else {
                         self.module.functions[func_idx]
                             .instructions

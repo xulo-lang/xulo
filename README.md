@@ -75,7 +75,8 @@ xulo
 | `templates.xulo` | 反引号模板字面量 `${...}`、转义、多行、嵌套、Unicode |
 | `collections.xulo` | 列表 / 对象：下标、`+` 拼接、`...` 展开、成员访问 |
 | `optional_chaining.xulo` | `T?` 可选类型、`?.`、`??`、三目、`and` / `or` / `!` |
-| `math_time.xulo` | `Math::`（常量、取整、幂与开方、`toFixed`）与 `Time::`（时钟）命名空间 |
+| `math_time.xulo` | `std::math::`（常量、取整、幂与开方、`toFixed`）与 `std::time::`（时钟）命名空间 |
+| `std.xulo` | `std` 标准库：`std::math::` / `std::time::` / `std::fs::`（`Result` 与 `match` 错误处理） |
 | `async_tasks.xulo` | `async` / `await`、`Time::sleep`、`Task::resolve` / `all` / `race` / `timeout` |
 | `test_functions.xulo` | `#Test("标题") fn` 测试函数 + `assert` |
 | `layout.xulo` / `ui.xulo` | `main(): View` 返回值、渲染布局（`xulo run --render terminal`） |

@@ -1,0 +1,33 @@
+// std 标准库：数学 / 时钟 / 文件系统（正则表达式见 regex.xulo）
+fn main() {
+    // std::math：常量、取整、幂与开方、三角函数、对数、定点格式化
+    print(std::math::PI, std::math::E)
+    print(std::math::floor(3.7), std::math::ceil(3.2), std::math::round(3.5))
+    print(std::math::abs(-42), std::math::min(3, 9), std::math::max(3, 9))
+    print(std::math::pow(2.0, 10.0), std::math::sqrt(2.25))
+    print(std::math::sin(0.0), std::math::cos(0.0))
+    print(std::math::log(std::math::E))
+    print(std::math::toFixed(std::math::PI, 3))
+
+    // std::time：毫秒 / 纳秒时钟（只做布尔与相对检查，输出保持稳定）
+    print(std::time::now() > 0)
+    let start = std::time::monotonic_nanos()
+    let end = std::time::monotonic_nanos()
+    print(end >= start)
+
+    // std::fs：可失败操作返回 Result，可 match 或配合 `?` 传播
+    let path = "./std_demo.txt"
+    match std::fs::write(path, "hello std") {
+        Result::Ok(_) => match std::fs::read(path) {
+            Result::Ok(text) => print(text) // hello std
+            Result::Err(e) => print(e.message)
+        }
+        Result::Err(e) => print(e.message)
+    }
+    print(std::fs::exists(path)) // true
+    match std::fs::remove(path) {
+        Result::Ok(_) => print("removed")
+        Result::Err(e) => print(e.message)
+    }
+    print(std::fs::exists(path)) // false
+}

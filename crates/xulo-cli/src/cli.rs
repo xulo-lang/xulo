@@ -999,16 +999,33 @@ fn write_file(path: &Path, content: &str) -> Result<(), String> {
 
 /// Build a .xulo file to a native executable using Cranelift AOT compilation
 fn build_native(file: &Path, output: Option<PathBuf>) -> ExitCode {
-    let source = match std::fs::read_to_string(file) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("error: cannot read {}: {}", file.display(), e);
+    // 多模块：加载入口文件所在的模块树（单文件程序就是一个模块），
+    // 分析后把 `use`/`mod` 绑定与 trait 派发标注应用到各模块 AST。
+    let mut loaded = match xulo_compiler::module::load(file) {
+        Ok(loaded) => loaded,
+        Err(err) => {
+            let src_file = err.file.clone().unwrap_or_else(|| file.to_path_buf());
+            let source = std::fs::read_to_string(&src_file).unwrap_or_default();
+            print_compile_error(&err, &source, &src_file);
             return ExitCode::from(1);
         }
     };
+    let warnings = match xulo_compiler::module::analyze(&mut loaded, true) {
+        Ok(warnings) => warnings,
+        Err(err) => {
+            let src_file = err.file.clone().unwrap_or_else(|| file.to_path_buf());
+            let source = std::fs::read_to_string(&src_file).unwrap_or_default();
+            print_compile_error(&err, &source, &src_file);
+            return ExitCode::from(1);
+        }
+    };
+    xulo_compiler::module::apply_trait_dispatch(&mut loaded);
+    // IR 后端只认限定的 `std::math::…` 键（解释器从 use 绑定解析裸名）
+    xulo_compiler::module::apply_std_calls(&mut loaded);
+    print_warnings(&warnings, None);
 
-    // 编译到 IR
-    let ir = match xulo_compiler::compile_to_ir(&source, file) {
+    // 编译整棵模块树到 IR
+    let ir = match xulo_compiler::compile_modules_to_ir(&loaded) {
         Ok(ir) => ir,
         Err(err) => {
             let src_file = err.file.clone().unwrap_or_else(|| file.to_path_buf());
