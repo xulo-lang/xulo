@@ -401,7 +401,9 @@ impl IrGenerator {
             }
             Statement::Assign(a) => {
                 match &a.target {
-                    AssignTarget::Name(n) => push_unique(binds, n),
+                    // 赋值目标是「写已存在的绑定」而非声明：被捕获时它是
+                    // 自由引用（`fn(){ count = count + 1 }` 捕获外层 count）
+                    AssignTarget::Name(n) => push_unique(refs, n),
                     AssignTarget::Member(obj, _) => {
                         self.collect_scope_expr(obj, binds, refs, children_free)
                     }

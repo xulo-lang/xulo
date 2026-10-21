@@ -219,6 +219,30 @@ fn main() {
     assert_eq!(out, vec!["42"]);
 }
 
+// -- mutable capture --
+
+#[test]
+fn closure_mutates_captured_let() {
+    let out = compile_and_run(
+        r#"
+fn makeCounter(): fn(): number {
+    let mut count = 0
+    fn(): number {
+        count = count + 1
+        count
+    }
+}
+
+fn main() {
+    let c = makeCounter()
+    print(c())
+    print(c())
+}
+"#,
+    );
+    assert_eq!(out, vec!["1", "2"]);
+}
+
 // -- float capture --
 
 #[test]
