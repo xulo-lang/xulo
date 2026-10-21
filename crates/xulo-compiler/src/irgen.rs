@@ -1172,6 +1172,25 @@ impl IrGenerator {
                 if self.float_bit_returns.contains(&key) {
                     return 2;
                 }
+                // RegExp / 字符串正则方法
+                if call.object.is_some()
+                    && call
+                        .object
+                        .as_ref()
+                        .is_none_or(|o| self.struct_name_of_expr(o).is_none())
+                {
+                    match key.as_str() {
+                        "test" => return 5,
+                        "group" | "replace" | "to_uppercase" => return 0,
+                        "find" => return -1, // match 对象或 null
+                        "find_all" => return 3,
+                        _ => {}
+                    }
+                }
+                // `RegExp::compile` -> Result::Ok/Err（运行时检测）
+                if call.object.is_none() && key == "RegExp::compile" {
+                    return -1;
+                }
                 // `Enum::Variant(...)` 构造值
                 if call.object.is_none()
                     && let Some((enum_name, variant)) = key.split_once("::")
@@ -1221,6 +1240,8 @@ impl IrGenerator {
             Expression::EnumRef(_) => 7,
             // match 表达式：分支结果各异，运行时检测
             Expression::Match(_) => -1,
+            // `expr?`：Ok payload 类型不定，运行时检测
+            Expression::Propagate { .. } => -1,
             // 函数值（闭包/箭头字面量）：tag=8
             Expression::FnExpr(_) | Expression::Arrow(_) => 8,
             // 经任意表达式的函数值调用：返回标签未知
@@ -1358,6 +1379,72 @@ impl IrGenerator {
                 });
         }
         Ok(Operand::Local(dst))
+    }
+
+    /// `expr?`：expr 求值为 Result；Err 时提前 `Return` 该 Err 枚举值
+    /// （调用方函数返回类型同为 Result），Ok 时取出 payload 继续
+    fn generate_propagate(&mut self, expr: &Expression) -> Result<Operand, XuloError> {
+        let func_idx = self.current_func.unwrap();
+        let scrut = self.generate_expression(expr)?;
+        let scrut_local = self.module.functions[func_idx].add_local(IrType::Pointer);
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::SetLocal {
+                dst: scrut_local,
+                src: scrut,
+            });
+        let scrut_op = Operand::Local(scrut_local);
+
+        let err_idx = self
+            .enum_variant_index("Result", "Err")
+            .unwrap_or(1) as i64;
+        let vt = self.module.functions[func_idx].add_local(IrType::I64);
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::RuntimeCall {
+                dst: Some(vt),
+                func: RuntimeFn::EnumVariant,
+                args: vec![scrut_op.clone()],
+            });
+        let is_err = self.module.functions[func_idx].add_local(IrType::Bool);
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Eq {
+                dst: is_err,
+                left: Operand::Local(vt),
+                right: Operand::Const(IrValue::I64(err_idx)),
+            });
+        let err_label = self.module.functions[func_idx].add_label();
+        let ok_label = self.module.functions[func_idx].add_label();
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Branch {
+                condition: Operand::Local(is_err),
+                then_label: err_label,
+                else_label: ok_label,
+            });
+
+        // Err：整个枚举值即调用方要传播的结果
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Label(err_label));
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Return(Some(scrut_op.clone())));
+
+        // Ok：摘 payload 继续求值
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Label(ok_label));
+        let payload = self.module.functions[func_idx].add_local(IrType::Pointer);
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::RuntimeCall {
+                dst: Some(payload),
+                func: RuntimeFn::EnumGet,
+                args: vec![scrut_op, Operand::Const(IrValue::I64(0))],
+            });
+        Ok(Operand::Local(payload))
     }
 
     fn has_float_operand(&self, expr: &Expression) -> bool {
@@ -1525,6 +1612,7 @@ impl IrGenerator {
             // 无 payload 的枚举变体引用：`Direction::East`
             Expression::EnumRef(e) => self.generate_enum_construct(&e.enum_name, &e.variant, &[]),
             Expression::Match(m) => self.generate_match(m),
+            Expression::Propagate { expr, .. } => self.generate_propagate(expr),
             Expression::Panic { expr, .. } => {
                 let value = self.generate_expression(expr)?;
                 let tag = self.determine_element_tag(expr);
@@ -1944,7 +2032,36 @@ impl IrGenerator {
             return self.generate_intrinsic_call(&call.callee, &args);
         }
 
+        // `RegExp::compile(pattern[, flags])` -> Result<RegExp, RegexError>
+        if call.object.is_none() && call.callee == "RegExp::compile" {
+            if args.len() == 1 {
+                let empty = self.module.functions[func_idx].add_local(IrType::Pointer);
+                let empty_idx = self.module.add_string(String::new());
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::Const {
+                        dst: empty,
+                        value: IrValue::String(empty_idx),
+                    });
+                args.push(Operand::Local(empty));
+            }
+            let local = self.module.functions[func_idx].add_local(IrType::Pointer);
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::RuntimeCall {
+                    dst: Some(local),
+                    func: RuntimeFn::RegexCompile,
+                    args,
+                });
+            return Ok(Operand::Local(local));
+        }
+
         // 检查是否是内置函数或内置方法
+        // receiver 是用户结构体时不抢方法名（用户 impl 方法优先）
+        let receiver_is_struct = call
+            .object
+            .as_ref()
+            .is_some_and(|o| self.struct_name_of_expr(o).is_some());
         let runtime_fn = if call.object.is_some() {
             // 方法调用：根据方法名匹配
             match call.method.as_deref().unwrap_or(&call.callee) {
@@ -1958,6 +2075,35 @@ impl IrGenerator {
                     }
                     Some(RuntimeFn::ArrayPush)
                 }
+                // RegExp 实例查询（receiver 是 RegExp 指针）
+                "test" if !receiver_is_struct => Some(RuntimeFn::RegexTest),
+                "find" if !receiver_is_struct => Some(RuntimeFn::RegexFind),
+                "find_all" if !receiver_is_struct => Some(RuntimeFn::RegexFindAll),
+                "group" if !receiver_is_struct => Some(RuntimeFn::RegexMatchGroup),
+                // 字符串替换：模板 or 替换闭包（JIT 闭包经固定入口协议回调）
+                "replace" => {
+                    let use_closure = call.arguments.get(1).is_some_and(|a| {
+                        matches!(
+                            &a.value,
+                            Expression::CallValue(_)
+                                | Expression::FnExpr(_)
+                                | Expression::Arrow(_)
+                        ) || matches!(
+                            self.infer_source_type_from_expr(&a.value),
+                            Some(Type::FnSig { .. })
+                        )
+                    });
+                    // receiver 是 input；运行时签名 (re, input, 第三参)
+                    if args.len() >= 2 {
+                        args.swap(0, 1);
+                    }
+                    if use_closure {
+                        Some(RuntimeFn::RegexReplaceWith)
+                    } else {
+                        Some(RuntimeFn::RegexReplace)
+                    }
+                }
+                "to_uppercase" => Some(RuntimeFn::StringToUppercase),
                 _ => None,
             }
         } else {
@@ -2262,7 +2408,11 @@ impl IrGenerator {
 
         let ir_name = format!("closure${}", self.inner_fn_counter);
         self.inner_fn_counter += 1;
-        let ret_ty = self.type_to_ir(return_type);
+        // 无返回类型标注：动态返回（尾表达式作返回值，指针槽 + 运行时检测）
+        let ret_ty = match return_type {
+            None => IrType::Pointer,
+            Some(t) => self.type_to_ir(Some(t)),
+        };
         let mut fparams = vec![(LocalId(0), IrType::Pointer)];
         for i in 1..=8 {
             fparams.push((LocalId(i), IrType::I64));
@@ -2390,10 +2540,12 @@ impl IrGenerator {
             }
         }
 
-        // 体语句（尾表达式若作为返回值则延后、只生成一次）
+        // 体语句（尾表达式若作为返回值则延后、只生成一次）；
+        // 无返回类型标注 = 动态返回，尾表达式同样作为返回值
         let ret_type = self.type_to_ir(return_type);
+        let returns_value = return_type.is_none() || !ret_type.is_void();
         let last_stmt_is_return = matches!(body.statements.last(), Some(Statement::Return(_)));
-        let skip_last = !ret_type.is_void()
+        let skip_last = returns_value
             && !last_stmt_is_return
             && matches!(body.statements.last(), Some(Statement::Expr(_)));
         let total = body.statements.len();
@@ -2410,7 +2562,7 @@ impl IrGenerator {
                 Some(Instruction::Return(_))
             );
             if !last_is_terminator {
-                if !ret_type.is_void() {
+                if returns_value {
                     if let Some(Statement::Expr(expr_stmt)) = body.statements.last() {
                         let operand = self.generate_expression(&expr_stmt.expr)?;
                         if self.determine_element_tag(&expr_stmt.expr) == 2 {
@@ -3144,13 +3296,19 @@ impl IrGenerator {
         result_local: LocalId,
     ) -> Result<(), XuloError> {
         let func_idx = self.current_func.unwrap();
-        let value_expr = match &arm.value {
-            MatchBody::Expr(e) => Some(e),
-            MatchBody::Block(b) => b.statements.last().and_then(|s| match s {
-                Statement::Expr(e) => Some(&e.expr),
-                _ => None,
-            }),
+        // 块内所有语句依序执行；末尾若是表达式语句，其值写入结果槽
+        let (stmts, value_expr) = match &arm.value {
+            MatchBody::Expr(e) => (Vec::new(), Some(e)),
+            MatchBody::Block(b) => {
+                match b.statements.split_last() {
+                    Some((Statement::Expr(last), init)) => (init.to_vec(), Some(&last.expr)),
+                    _ => (b.statements.clone(), None),
+                }
+            }
         };
+        for stmt in &stmts {
+            self.generate_statement(stmt)?;
+        }
         if let Some(expr) = value_expr {
             let val = self.generate_expression(expr)?;
             if self.determine_element_tag(expr) == 2 {
@@ -3161,6 +3319,14 @@ impl IrGenerator {
                 .push(Instruction::SetLocal {
                     dst: result_local,
                     src: val,
+                });
+        } else {
+            // 无尾表达式（如 for 收尾）：结果槽置 null
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::Const {
+                    dst: result_local,
+                    value: IrValue::I64(0),
                 });
         }
         Ok(())

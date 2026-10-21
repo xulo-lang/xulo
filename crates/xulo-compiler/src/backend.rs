@@ -255,6 +255,55 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
         params: &[I64],
         returns: &[I64],
     },
+    // 正则：指针一律按 I64 传递（与 string/array/object 同规）
+    RuntimeFnDesc {
+        name: "xulo_regex_compile",
+        addr: xulo_runtime::runtime::xulo_regex_compile as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_regex_test",
+        addr: xulo_runtime::runtime::xulo_regex_test as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_regex_find",
+        addr: xulo_runtime::runtime::xulo_regex_find as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_regex_find_all",
+        addr: xulo_runtime::runtime::xulo_regex_find_all as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_regex_match_group",
+        addr: xulo_runtime::runtime::xulo_regex_match_group as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_regex_replace",
+        addr: xulo_runtime::runtime::xulo_regex_replace as *const u8,
+        params: &[I64, I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_regex_replace_with",
+        addr: xulo_runtime::runtime::xulo_regex_replace_with as *const u8,
+        params: &[I64, I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_string_to_uppercase",
+        addr: xulo_runtime::runtime::xulo_string_to_uppercase as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
     // Math 命名空间：float 组返回 f64（对齐语义 builtin_member 的 BuiltinRet）
     RuntimeFnDesc {
         name: "xulo_math_abs",

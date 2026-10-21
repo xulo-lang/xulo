@@ -100,6 +100,15 @@ pub enum RuntimeFn {
     ClosureEnv,
     /// 校验值是可调用的闭包（否则 panic），返回闭包指针本身
     CheckCallable,
+    /// 正则：`RegExp::compile` / 实例查询 / 字符串替换 / 大写
+    RegexCompile,
+    RegexTest,
+    RegexFind,
+    RegexFindAll,
+    RegexMatchGroup,
+    RegexReplace,
+    RegexReplaceWith,
+    StringToUppercase,
     /// 命名空间内建（`std::math::*` / `std::time::*`）：携带已映射好的运行时符号名
     Intrinsic(&'static str),
 }

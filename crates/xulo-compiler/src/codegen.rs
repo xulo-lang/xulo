@@ -608,6 +608,14 @@ impl CodeGen {
                         RuntimeFn::ClosureFunc => "xulo_closure_func",
                         RuntimeFn::ClosureEnv => "xulo_closure_env",
                         RuntimeFn::CheckCallable => "xulo_check_callable",
+                        RuntimeFn::RegexCompile => "xulo_regex_compile",
+                        RuntimeFn::RegexTest => "xulo_regex_test",
+                        RuntimeFn::RegexFind => "xulo_regex_find",
+                        RuntimeFn::RegexFindAll => "xulo_regex_find_all",
+                        RuntimeFn::RegexMatchGroup => "xulo_regex_match_group",
+                        RuntimeFn::RegexReplace => "xulo_regex_replace",
+                        RuntimeFn::RegexReplaceWith => "xulo_regex_replace_with",
+                        RuntimeFn::StringToUppercase => "xulo_string_to_uppercase",
                         RuntimeFn::Intrinsic(name) => name,
                     };
 

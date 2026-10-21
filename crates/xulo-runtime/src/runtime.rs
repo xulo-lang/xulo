@@ -68,6 +68,12 @@ thread_local! {
     static CLOSURES: RefCell<Vec<*mut XuloClosure>> = const { RefCell::new(Vec::new()) };
     /// 闭包指针集合：O(1) 判定一个 i64 是否是可调用闭包（detect/check）
     static CLOSURE_PTRS: RefCell<std::collections::HashSet<usize>> = RefCell::new(std::collections::HashSet::new());
+    /// 活跃的编译正则（JIT/AOT 侧 RegExp 值的所有者）
+    static REGEXPS: RefCell<Vec<*mut xulo_std::regex::RegExp>> = const { RefCell::new(Vec::new()) };
+    /// 正则匹配对象的捕获组（match 对象本身是普通 XuloObject，
+    /// `group(i)` 经此表取回组内容）
+    static MATCH_GROUPS: RefCell<std::collections::HashMap<usize, Vec<Option<String>>>> =
+        RefCell::new(std::collections::HashMap::new());
 }
 
 /// 取走输出缓冲区（测试用）
@@ -337,6 +343,7 @@ fn format_value(value: i64, tag: i64) -> String {
         5 => format!("{}", value != 0),
         6 => "null".to_string(),
         8 => "<function>".to_string(),
+        9 => "<regex>".to_string(),
         7 => {
             let e = value as *const XuloEnum;
             unsafe {
@@ -452,6 +459,12 @@ pub extern "C" fn xulo_detect_tag(value: i64) -> i64 {
     found = CLOSURE_PTRS.with(|ps| ps.borrow().contains(&(value as usize)));
     if found {
         return 8;
+    }
+
+    // 检查是否是已知编译正则
+    found = REGEXPS.with(|rs| rs.borrow().iter().any(|r| std::ptr::eq(*r as *const c_char, ptr)));
+    if found {
+        return 9;
     }
 
     // 检查是否是已知浮点数
@@ -628,6 +641,11 @@ pub extern "C" fn xulo_string_concat(a: *const c_char, b: *const c_char) -> *con
 /// 把带类型标签的值格式化成字符串（str() 转换与多参数 print 的参数拼接用）
 #[unsafe(no_mangle)]
 pub extern "C" fn xulo_stringify(value: i64, tag: i64) -> *const c_char {
+    let tag = if tag == -1 {
+        xulo_detect_tag(value)
+    } else {
+        tag
+    };
     let s = format_value(value, tag);
     let c_str = CString::new(s).unwrap();
     let ptr = c_str.as_ptr();
@@ -815,6 +833,214 @@ pub extern "C" fn xulo_object_set(
     }
 }
 
+/// 把一个 Rust 字符串驻留为运行时字符串（返回可交给 JIT 的 C 指针）
+fn intern_string(s: impl Into<String>) -> *const c_char {
+    let c_str = CString::new(s.into()).unwrap();
+    let ptr = c_str.as_ptr();
+    STRINGS.with(|strings| {
+        strings.borrow_mut().push(c_str);
+    });
+    ptr
+}
+
+/// 一次正则匹配结果：普通对象（`value` 字段）+ 旁路登记的捕获组
+fn regex_match_object(m: &xulo_std::regex::Match) -> *mut XuloObject {
+    let value_ptr = intern_string(m.value.clone());
+    let obj = xulo_alloc_object(1);
+    xulo_object_set(obj, c"value".as_ptr(), value_ptr as i64, 0);
+    MATCH_GROUPS.with(|groups| {
+        groups
+            .borrow_mut()
+            .insert(obj as usize, m.groups.clone());
+    });
+    obj
+}
+
+/// `RegExp::compile(pattern, flags)`：成功返回 `Result::Ok`（payload 为
+/// 编译正则指针，tag=9），失败返回 `Result::Err`（payload 为带 `message`
+/// 字段的 RegexError 对象）——非法模式与未知标志都是数据
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_regex_compile(pattern: *const c_char, flags: *const c_char) -> *mut XuloEnum {
+    unsafe {
+        let pattern = if pattern.is_null() {
+            String::new()
+        } else {
+            CStr::from_ptr(pattern).to_str().unwrap_or("").to_string()
+        };
+        let flags = if flags.is_null() {
+            String::new()
+        } else {
+            CStr::from_ptr(flags).to_str().unwrap_or("").to_string()
+        };
+        match xulo_std::regex::compile(&pattern, &flags) {
+            Ok(re) => {
+                let ptr = Box::into_raw(Box::new(re));
+                REGEXPS.with(|rs| rs.borrow_mut().push(ptr));
+                let e = xulo_alloc_enum(c"Result".as_ptr(), c"Ok".as_ptr(), 0, 1);
+                xulo_enum_set(e, 0, ptr as i64, 9);
+                e
+            }
+            Err(message) => {
+                let msg_ptr = intern_string(message);
+                let err_obj = xulo_alloc_object(1);
+                xulo_object_set(err_obj, c"message".as_ptr(), msg_ptr as i64, 0);
+                let e = xulo_alloc_enum(c"Result".as_ptr(), c"Err".as_ptr(), 1, 1);
+                xulo_enum_set(e, 0, err_obj as i64, 4);
+                e
+            }
+        }
+    }
+}
+
+/// `re.test(input)` -> bool
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_regex_test(re: i64, input: *const c_char) -> i64 {
+    unsafe {
+        if re == 0 || input.is_null() {
+            return 0;
+        }
+        let re = &*(re as *const xulo_std::regex::RegExp);
+        let input = CStr::from_ptr(input).to_str().unwrap_or("");
+        i64::from(re.test(input))
+    }
+}
+
+/// `re.find(input)` -> 匹配对象或 null
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_regex_find(re: i64, input: *const c_char) -> i64 {
+    unsafe {
+        if re == 0 || input.is_null() {
+            return 0;
+        }
+        let re = &*(re as *const xulo_std::regex::RegExp);
+        let input = CStr::from_ptr(input).to_str().unwrap_or("");
+        match re.find(input) {
+            Some(m) => regex_match_object(&m) as i64,
+            None => 0,
+        }
+    }
+}
+
+/// `re.find_all(input)` -> 匹配对象列表
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_regex_find_all(re: i64, input: *const c_char) -> i64 {
+    unsafe {
+        if re == 0 || input.is_null() {
+            return 0;
+        }
+        let re = &*(re as *const xulo_std::regex::RegExp);
+        let input = CStr::from_ptr(input).to_str().unwrap_or("");
+        let ms = re.find_all(input);
+        let arr = xulo_alloc_array(ms.len());
+        for m in &ms {
+            let obj = regex_match_object(m);
+            xulo_array_push(arr, obj as i64, 4);
+        }
+        arr as i64
+    }
+}
+
+/// `m.group(i)`：i 从 1 起（组 0 不对外，`value` 已携带整个匹配）；
+/// 未参与或越界返回 null
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_regex_match_group(m: i64, index: i64) -> *const c_char {
+    if m == 0 || index < 1 {
+        return std::ptr::null();
+    }
+    let groups = MATCH_GROUPS.with(|g| g.borrow().get(&(m as usize)).cloned());
+    let Some(groups) = groups else {
+        return std::ptr::null();
+    };
+    match groups.get((index - 1) as usize).and_then(|g| g.as_ref()) {
+        Some(s) => intern_string(s.clone()),
+        None => std::ptr::null(),
+    }
+}
+
+/// `"input".replace(re, "$2.$1")`：模板展开捕获组
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_regex_replace(
+    re: i64,
+    input: *const c_char,
+    template: *const c_char,
+) -> *const c_char {
+    unsafe {
+        if re == 0 || input.is_null() {
+            return input;
+        }
+        let re = &*(re as *const xulo_std::regex::RegExp);
+        let input = CStr::from_ptr(input).to_str().unwrap_or("");
+        let template = if template.is_null() {
+            ""
+        } else {
+            CStr::from_ptr(template).to_str().unwrap_or("")
+        };
+        intern_string(re.replace(input, template))
+    }
+}
+
+/// `"input".replace(re, fn(m) { ... })`：替换函数是 JIT 闭包
+/// （入口签名固定 `(env, a0..a7) -> i64`，返回字符串指针）
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_regex_replace_with(
+    re: i64,
+    input: *const c_char,
+    closure: i64,
+) -> *const c_char {
+    type ClosureEntry =
+        extern "C" fn(i64, i64, i64, i64, i64, i64, i64, i64, i64) -> i64;
+    unsafe {
+        if re == 0 || input.is_null() {
+            return input;
+        }
+        let re = &*(re as *const xulo_std::regex::RegExp);
+        let input = CStr::from_ptr(input).to_str().unwrap_or("").to_string();
+        let cl = closure as *const XuloClosure;
+        if cl.is_null() || (*cl).func.is_null() {
+            // 防御：语义层已校验可调用
+            return std::ptr::null();
+        }
+        let func: ClosureEntry = std::mem::transmute((*cl).func);
+        let env = (*cl).env as i64;
+        let out = re
+            .replace_with(&input, |m| {
+                let obj = regex_match_object(m);
+                let ret = func(env, obj as i64, 0, 0, 0, 0, 0, 0, 0);
+                if ret == 0 {
+                    Ok::<String, ()>(String::new())
+                } else {
+                    Ok::<String, ()>(
+                        CStr::from_ptr(ret as *const c_char)
+                            .to_str()
+                            .unwrap_or("")
+                            .to_string(),
+                    )
+                }
+            })
+            .unwrap_or_default();
+        intern_string(out)
+    }
+}
+
+/// `"abc".to_uppercase()`
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_string_to_uppercase(s: *const c_char) -> *const c_char {
+    unsafe {
+        if s.is_null() {
+            return intern_string(String::new());
+        }
+        let s = CStr::from_ptr(s).to_str().unwrap_or("");
+        intern_string(s.to_uppercase())
+    }
+}
+
 /// 清理所有分配的内存
 #[unsafe(no_mangle)]
 pub extern "C" fn xulo_cleanup() {
@@ -825,7 +1051,6 @@ pub extern "C" fn xulo_cleanup() {
             }
         }
     });
-
     ARRAYS.with(|arrays| {
         for ptr in arrays.borrow_mut().drain(..) {
             unsafe {
@@ -850,6 +1075,15 @@ pub extern "C" fn xulo_cleanup() {
         }
     });
     CLOSURE_PTRS.with(|ps| ps.borrow_mut().clear());
+
+    REGEXPS.with(|rs| {
+        for ptr in rs.borrow_mut().drain(..) {
+            unsafe {
+                let _ = Box::from_raw(ptr);
+            }
+        }
+    });
+    MATCH_GROUPS.with(|groups| groups.borrow_mut().clear());
 
     ENVS.with(|envs| {
         for ptr in envs.borrow_mut().drain(..) {
