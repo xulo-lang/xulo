@@ -188,6 +188,73 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
         params: &[I64],
         returns: &[],
     },
+    // 闭包运行时：捕获单元 / 环境 / 闭包值
+    RuntimeFnDesc {
+        name: "xulo_alloc_cell",
+        addr: xulo_runtime::runtime::xulo_alloc_cell as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_cell_get",
+        addr: xulo_runtime::runtime::xulo_cell_get as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_cell_get_f64",
+        addr: xulo_runtime::runtime::xulo_cell_get_f64 as *const u8,
+        params: &[I64],
+        returns: &[F64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_cell_set",
+        addr: xulo_runtime::runtime::xulo_cell_set as *const u8,
+        params: &[I64, I64],
+        returns: &[],
+    },
+    RuntimeFnDesc {
+        name: "xulo_alloc_env",
+        addr: xulo_runtime::runtime::xulo_alloc_env as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_env_set",
+        addr: xulo_runtime::runtime::xulo_env_set as *const u8,
+        params: &[I64, I64, I64],
+        returns: &[],
+    },
+    RuntimeFnDesc {
+        name: "xulo_env_get",
+        addr: xulo_runtime::runtime::xulo_env_get as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_alloc_closure",
+        addr: xulo_runtime::runtime::xulo_alloc_closure as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_closure_func",
+        addr: xulo_runtime::runtime::xulo_closure_func as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_closure_env",
+        addr: xulo_runtime::runtime::xulo_closure_env as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_check_callable",
+        addr: xulo_runtime::runtime::xulo_check_callable as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
     // Math 命名空间：float 组返回 f64（对齐语义 builtin_member 的 BuiltinRet）
     RuntimeFnDesc {
         name: "xulo_math_abs",

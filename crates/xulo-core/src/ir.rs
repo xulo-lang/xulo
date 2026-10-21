@@ -78,6 +78,28 @@ pub enum RuntimeFn {
     AsF64,
     /// 注册 f64 位模式，供打印端的自动检测（tag=-1）还原小数
     RegisterFloat,
+    /// 闭包捕获单元：分配一个 cell（持有原始位模式的 i64 槽）
+    AllocCell,
+    /// 读 cell 的原始位模式
+    CellGet,
+    /// 读 cell 中的 f64 位模式（返回真正的 f64，避免按位读回时走整数槽）
+    CellGetF64,
+    /// 写 cell
+    CellSet,
+    /// 分配捕获环境（容纳 n 个 cell 指针）
+    AllocEnv,
+    /// 向环境槽位写入 cell 指针
+    EnvSet,
+    /// 读环境槽位的 cell 指针（env 为空/越界时返回 0）
+    EnvGet,
+    /// 分配闭包值（函数地址 + 环境指针）
+    AllocClosure,
+    /// 读闭包的函数地址
+    ClosureFunc,
+    /// 读闭包的环境指针
+    ClosureEnv,
+    /// 校验值是可调用的闭包（否则 panic），返回闭包指针本身
+    CheckCallable,
     /// 命名空间内建（`std::math::*` / `std::time::*`）：携带已映射好的运行时符号名
     Intrinsic(&'static str),
 }
@@ -227,6 +249,20 @@ pub enum Instruction {
         args: Vec<Operand>,
     },
 
+    // 闭包
+    /// dst = MakeClosure(func, env)：打包函数地址与捕获环境
+    MakeClosure {
+        dst: LocalId,
+        func: FuncId,
+        env: Operand,
+    },
+    /// dst = callee(env, a0..aN)：经函数值间接调用（callee 是闭包指针）
+    CallIndirect {
+        dst: Option<LocalId>,
+        callee: Operand,
+        args: Vec<Operand>,
+    },
+
     // 局部变量
     GetLocal {
         dst: LocalId,
@@ -287,6 +323,9 @@ pub struct IrFunction {
     pub locals: Vec<(LocalId, IrType)>,
     pub instructions: Vec<Instruction>,
     pub labels: Vec<Label>,
+    /// 闭包入口：签名固定为 `(env, a0..a7) -> i64`，经 CallIndirect 间接调用。
+    /// 实参少于 8 个时由调用方以 0 补齐；无返回值时也返回 0。
+    pub closure_entry: bool,
     /// 下一个可用的 LocalId，从 params.len() 开始以避免与参数冲突
     next_local_id: usize,
 }
@@ -337,6 +376,7 @@ impl IrFunction {
             locals: Vec::new(),
             instructions: Vec::new(),
             labels: Vec::new(),
+            closure_entry: false,
             next_local_id,
         }
     }

@@ -29,6 +29,27 @@ pub struct XuloEnum {
     pub tags: Vec<i64>,
 }
 
+/// 闭包捕获单元：持有被装箱变量的原始位模式。
+/// 标签不入 cell——读出时与未装箱路径一样按槽位/伴随标签推断。
+#[repr(C)]
+pub struct XuloCell {
+    pub value: i64,
+}
+
+/// 闭包捕获环境：按自由变量的确定顺序容纳 cell 指针。
+#[repr(C)]
+pub struct XuloEnv {
+    pub cells: Vec<i64>,
+}
+
+/// 闭包值：目标函数地址 + 捕获环境。函数地址是编译产物里闭包入口的
+/// 实地址（JIT 下是 finalize 后的机器码指针，AOT 下经链接器解析）。
+#[repr(C)]
+pub struct XuloClosure {
+    pub func: *const std::ffi::c_void,
+    pub env: *mut XuloEnv,
+}
+
 thread_local! {
     static OBJECTS: RefCell<Vec<*mut XuloObject>> = const { RefCell::new(Vec::new()) };
     static ENUMS: RefCell<Vec<*mut XuloEnum>> = const { RefCell::new(Vec::new()) };
@@ -39,6 +60,14 @@ thread_local! {
     static JIT_STRINGS: RefCell<Vec<*const c_char>> = const { RefCell::new(Vec::new()) };
     /// 输出缓冲区（用于测试捕获 print 输出）
     static OUTPUT: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    /// 活跃的闭包捕获单元
+    static CELLS: RefCell<Vec<*mut XuloCell>> = const { RefCell::new(Vec::new()) };
+    /// 活跃的捕获环境
+    static ENVS: RefCell<Vec<*mut XuloEnv>> = const { RefCell::new(Vec::new()) };
+    /// 活跃的闭包值（清理所有者）
+    static CLOSURES: RefCell<Vec<*mut XuloClosure>> = const { RefCell::new(Vec::new()) };
+    /// 闭包指针集合：O(1) 判定一个 i64 是否是可调用闭包（detect/check）
+    static CLOSURE_PTRS: RefCell<std::collections::HashSet<usize>> = RefCell::new(std::collections::HashSet::new());
 }
 
 /// 取走输出缓冲区（测试用）
@@ -85,6 +114,141 @@ pub extern "C" fn xulo_register_string(ptr: *const c_char) {
             strings.borrow_mut().push(ptr);
         }
     });
+}
+
+/// 分配一个捕获单元（持有原始位模式）
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_alloc_cell(value: i64) -> i64 {
+    let cell = Box::into_raw(Box::new(XuloCell { value }));
+    CELLS.with(|cells| cells.borrow_mut().push(cell));
+    cell as i64
+}
+
+/// 读 cell 的原始位模式（空 cell 指针读作 0）
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_cell_get(cell: i64) -> i64 {
+    if cell == 0 {
+        return 0;
+    }
+    unsafe { (cell as *mut XuloCell).as_ref().map(|c| c.value).unwrap_or(0) }
+}
+
+/// 读 cell 中的 f64 位模式（返回真正的 f64；空 cell 指针读作 0.0）
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_cell_get_f64(cell: i64) -> f64 {
+    if cell == 0 {
+        return 0.0;
+    }
+    unsafe {
+        (cell as *mut XuloCell)
+            .as_ref()
+            .map(|c| f64::from_bits(c.value as u64))
+            .unwrap_or(0.0)
+    }
+}
+
+/// 写 cell 的原始位模式（空 cell 指针是 no-op）
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_cell_set(cell: i64, value: i64) {
+    if cell == 0 {
+        return;
+    }
+    unsafe {
+        if let Some(c) = (cell as *mut XuloCell).as_mut() {
+            c.value = value;
+        }
+    }
+}
+
+/// 分配捕获环境（容纳 len 个 cell 指针）
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_alloc_env(len: i64) -> i64 {
+    let env = Box::into_raw(Box::new(XuloEnv {
+        cells: vec![0; len.max(0) as usize],
+    }));
+    ENVS.with(|envs| envs.borrow_mut().push(env));
+    env as i64
+}
+
+/// 向环境槽位写入 cell 指针
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_env_set(env: i64, idx: i64, cell: i64) {
+    if env == 0 || idx < 0 {
+        return;
+    }
+    unsafe {
+        if let Some(e) = (env as *mut XuloEnv).as_mut()
+            && let Some(slot) = e.cells.get_mut(idx as usize)
+        {
+            *slot = cell;
+        }
+    }
+}
+
+/// 读环境槽位的 cell 指针（空 env / 越界读作 0）
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_env_get(env: i64, idx: i64) -> i64 {
+    if env == 0 || idx < 0 {
+        return 0;
+    }
+    unsafe {
+        (env as *mut XuloEnv)
+            .as_ref()
+            .and_then(|e| e.cells.get(idx as usize).copied())
+            .unwrap_or(0)
+    }
+}
+
+/// 分配闭包值（函数地址 + 捕获环境）
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_alloc_closure(func: i64, env: i64) -> i64 {
+    let closure = Box::into_raw(Box::new(XuloClosure {
+        func: func as *const std::ffi::c_void,
+        env: env as *mut XuloEnv,
+    }));
+    CLOSURES.with(|cs| cs.borrow_mut().push(closure));
+    CLOSURE_PTRS.with(|ps| ps.borrow_mut().insert(closure as usize));
+    closure as i64
+}
+
+/// 读闭包的函数地址（调用方须先经 xulo_check_callable 校验）
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_closure_func(closure: i64) -> i64 {
+    unsafe {
+        (closure as *mut XuloClosure)
+            .as_ref()
+            .map(|c| c.func as i64)
+            .unwrap_or(0)
+    }
+}
+
+/// 读闭包的环境指针（调用方须先经 xulo_check_callable 校验）
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_closure_env(closure: i64) -> i64 {
+    unsafe {
+        (closure as *mut XuloClosure)
+            .as_ref()
+            .map(|c| c.env as i64)
+            .unwrap_or(0)
+    }
+}
+
+/// 校验值是可调用的闭包；否则 panic。返回闭包指针本身。
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_check_callable(value: i64) -> i64 {
+    let known = CLOSURE_PTRS.with(|ps| ps.borrow().contains(&(value as usize)));
+    if value == 0 || !known {
+        xulo_panic(value, -1);
+        unreachable!();
+    }
+    value
 }
 
 /// 打印函数
@@ -172,6 +336,7 @@ fn format_value(value: i64, tag: i64) -> String {
         }
         5 => format!("{}", value != 0),
         6 => "null".to_string(),
+        8 => "<function>".to_string(),
         7 => {
             let e = value as *const XuloEnum;
             unsafe {
@@ -213,7 +378,7 @@ fn format_value(value: i64, tag: i64) -> String {
 }
 
 /// 带类型标签的打印函数
-/// tag: 0=string, 1=int, 2=float, 3=array, 4=object, 5=bool, 6=null, -1=自动检测
+/// tag: 0=string, 1=int, 2=float, 3=array, 4=object, 5=bool, 6=null, 7=enum, 8=function, -1=自动检测
 #[unsafe(no_mangle)]
 pub extern "C" fn xulo_print_value(value: i64, tag: i64) {
     let tag = if tag == -1 {
@@ -227,7 +392,7 @@ pub extern "C" fn xulo_print_value(value: i64, tag: i64) {
 }
 
 /// 自动检测值的类型标签
-/// tag: 0=string, 1=int, 2=float, 3=array, 4=object, 5=bool, 6=null
+/// tag: 0=string, 1=int, 2=float, 3=array, 4=object, 5=bool, 6=null, 7=enum, 8=function
 /// 注意：value==0 无法区分 null 和 integer 0，因此不在此处判定 null
 #[unsafe(no_mangle)]
 pub extern "C" fn xulo_detect_tag(value: i64) -> i64 {
@@ -281,6 +446,12 @@ pub extern "C" fn xulo_detect_tag(value: i64) -> i64 {
     });
     if found {
         return 7;
+    }
+
+    // 检查是否是已知闭包值
+    found = CLOSURE_PTRS.with(|ps| ps.borrow().contains(&(value as usize)));
+    if found {
+        return 8;
     }
 
     // 检查是否是已知浮点数
@@ -665,6 +836,31 @@ pub extern "C" fn xulo_cleanup() {
 
     ENUMS.with(|enums| {
         for ptr in enums.borrow_mut().drain(..) {
+            unsafe {
+                let _ = Box::from_raw(ptr);
+            }
+        }
+    });
+
+    CLOSURES.with(|closures| {
+        for ptr in closures.borrow_mut().drain(..) {
+            unsafe {
+                let _ = Box::from_raw(ptr);
+            }
+        }
+    });
+    CLOSURE_PTRS.with(|ps| ps.borrow_mut().clear());
+
+    ENVS.with(|envs| {
+        for ptr in envs.borrow_mut().drain(..) {
+            unsafe {
+                let _ = Box::from_raw(ptr);
+            }
+        }
+    });
+
+    CELLS.with(|cells| {
+        for ptr in cells.borrow_mut().drain(..) {
             unsafe {
                 let _ = Box::from_raw(ptr);
             }

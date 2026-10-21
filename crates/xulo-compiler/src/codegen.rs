@@ -138,8 +138,39 @@ impl CodeGen {
         Ok(())
     }
 
+    /// 物化目标函数的地址（I64 指针）：以 namespace-0 用户符号创建
+    /// `GlobalValueData::Symbol`，JIT 在 finalize 时解析为编译后入口，
+    /// AOT 经系统链接器解析
+    fn function_addr(
+        func_id: FuncId,
+        builder: &mut FunctionBuilder,
+    ) -> Value {
+        let user_name_ref = builder.func.declare_imported_user_function(
+            cranelift::codegen::ir::UserExternalName {
+                namespace: 0,
+                index: func_id.as_u32(),
+            },
+        );
+        let gv = builder.create_global_value(cranelift::codegen::ir::GlobalValueData::Symbol {
+            name: cranelift::codegen::ir::ExternalName::user(user_name_ref),
+            offset: cranelift::codegen::ir::immediates::Imm64::new(0),
+            colocated: true,
+            tls: false,
+        });
+        builder.ins().global_value(I64, gv)
+    }
+
     fn create_signature(&self, func: &IrFunction) -> Signature {
         let mut sig = Signature::new(CallConv::SystemV);
+        if func.closure_entry {
+            // 闭包入口固定 `(env, a0..a7) -> i64`：CallIndirect 总是传满 9 个
+            // I64 实参（缺省补 0），无返回值也返回 0
+            for _ in 0..9 {
+                sig.params.push(cranelift::codegen::ir::AbiParam::new(I64));
+            }
+            sig.returns.push(cranelift::codegen::ir::AbiParam::new(I64));
+            return sig;
+        }
         for _ in &func.params {
             sig.params.push(cranelift::codegen::ir::AbiParam::new(I64));
         }
@@ -510,8 +541,13 @@ impl CodeGen {
                             ret_val = coerce_to(&mut builder, ret_val, sig_ret.value_type);
                         }
                         builder.ins().return_(&[ret_val]);
-                    } else {
+                    } else if builder.func.signature.returns.is_empty() {
                         builder.ins().return_(&[]);
+                    } else {
+                        // 无值 return 但签名有返回值（闭包入口）：补 0
+                        let ret_ty = builder.func.signature.returns[0].value_type;
+                        let zero = builder.ins().iconst(ret_ty, 0);
+                        builder.ins().return_(&[zero]);
                     }
                 }
                 Instruction::SetLocal { dst, src } => {
@@ -561,6 +597,17 @@ impl CodeGen {
                         RuntimeFn::EnumGetTag => "xulo_enum_get_tag",
                         RuntimeFn::AsF64 => "xulo_as_f64",
                         RuntimeFn::RegisterFloat => "xulo_register_float",
+                        RuntimeFn::AllocCell => "xulo_alloc_cell",
+                        RuntimeFn::CellGet => "xulo_cell_get",
+                        RuntimeFn::CellGetF64 => "xulo_cell_get_f64",
+                        RuntimeFn::CellSet => "xulo_cell_set",
+                        RuntimeFn::AllocEnv => "xulo_alloc_env",
+                        RuntimeFn::EnvSet => "xulo_env_set",
+                        RuntimeFn::EnvGet => "xulo_env_get",
+                        RuntimeFn::AllocClosure => "xulo_alloc_closure",
+                        RuntimeFn::ClosureFunc => "xulo_closure_func",
+                        RuntimeFn::ClosureEnv => "xulo_closure_env",
+                        RuntimeFn::CheckCallable => "xulo_check_callable",
                         RuntimeFn::Intrinsic(name) => name,
                     };
 
@@ -728,6 +775,72 @@ impl CodeGen {
                         builder.ins().call(fref, &[arr_val, idx_val, val, tag_val]);
                     }
                 }
+                Instruction::MakeClosure { dst, func, env } => {
+                    let env_val = resolve_operand(&mut builder, env, &vars);
+                    if let Some(&alloc_id) = self.runtime_func_ids.get("xulo_alloc_closure") {
+                        let func_addr =
+                            Self::function_addr(all_func_ids[func.0], &mut builder);
+                        let fref = self.backend.declare_func_in_func(alloc_id, builder.func);
+                        let call = builder.ins().call(fref, &[func_addr, env_val]);
+                        if let Some(&var) = vars.get(dst)
+                            && let Some(result) = builder.inst_results(call).first()
+                        {
+                            builder.def_var(var, *result);
+                        }
+                    }
+                }
+                Instruction::CallIndirect { dst, callee, args } => {
+                    let callee_val = resolve_operand(&mut builder, callee, &vars);
+                    let mut cl_args: Vec<Value> = Vec::with_capacity(9);
+                    let mut call_target = builder.ins().iconst(I64, 0);
+                    if let Some(&check_id) = self.runtime_func_ids.get("xulo_check_callable")
+                        && let Some(&func_id) = self.runtime_func_ids.get("xulo_closure_func")
+                        && let Some(&env_id) = self.runtime_func_ids.get("xulo_closure_env")
+                    {
+                        // 校验 + 拆出函数地址与环境指针
+                        let check_ref = self.backend.declare_func_in_func(check_id, builder.func);
+                        let checked = {
+                            let call = builder.ins().call(check_ref, &[callee_val]);
+                            builder.inst_results(call)[0]
+                        };
+                        let func_ref = self.backend.declare_func_in_func(func_id, builder.func);
+                        call_target = {
+                            let call = builder.ins().call(func_ref, &[checked]);
+                            builder.inst_results(call)[0]
+                        };
+                        let env_ref = self.backend.declare_func_in_func(env_id, builder.func);
+                        let env_ptr = {
+                            let call = builder.ins().call(env_ref, &[checked]);
+                            builder.inst_results(call)[0]
+                        };
+                        cl_args.push(env_ptr);
+                        for a in args.iter().take(8) {
+                            let v = resolve_operand(&mut builder, a, &vars);
+                            cl_args.push(coerce_to(&mut builder, v, I64));
+                        }
+                    } else {
+                        cl_args.push(builder.ins().iconst(I64, 0));
+                    }
+                    // 不足 8 个实参补 0（闭包入口签名固定 9 个 I64）
+                    while cl_args.len() < 9 {
+                        cl_args.push(builder.ins().iconst(I64, 0));
+                    }
+                    let mut sig = Signature::new(CallConv::SystemV);
+                    for _ in 0..9 {
+                        sig.params.push(cranelift::codegen::ir::AbiParam::new(I64));
+                    }
+                    sig.returns.push(cranelift::codegen::ir::AbiParam::new(I64));
+                    let sig_ref = builder.import_signature(sig);
+                    let call = builder.ins().call_indirect(sig_ref, call_target, &cl_args);
+                    if let Some(d) = dst
+                        && let Some(&var) = vars.get(d)
+                        && let Some(result) = builder.inst_results(call).first().copied()
+                    {
+                        let dst_ty = var_types.get(var.as_u32() as usize).copied().unwrap_or(I64);
+                        let coerced = coerce_to(&mut builder, result, dst_ty);
+                        builder.def_var(var, coerced);
+                    }
+                }
                 Instruction::Nop => {}
             }
         }
@@ -737,11 +850,12 @@ impl CodeGen {
         if let Some(current_block) = builder.current_block()
             && !block_has_terminator(builder.func, current_block)
         {
-            if !ir_func.return_type.is_void() {
-                let zero = builder.ins().iconst(I64, 0);
-                builder.ins().return_(&[zero]);
-            } else {
+            if builder.func.signature.returns.is_empty() {
                 builder.ins().return_(&[]);
+            } else {
+                let ret_ty = builder.func.signature.returns[0].value_type;
+                let zero = builder.ins().iconst(ret_ty, 0);
+                builder.ins().return_(&[zero]);
             }
         }
         // Also ensure entry_block has a terminator (it may have been switched away from)
@@ -753,11 +867,12 @@ impl CodeGen {
                 }
             } else {
                 builder.switch_to_block(entry_block);
-                if !ir_func.return_type.is_void() {
-                    let zero = builder.ins().iconst(I64, 0);
-                    builder.ins().return_(&[zero]);
-                } else {
+                if builder.func.signature.returns.is_empty() {
                     builder.ins().return_(&[]);
+                } else {
+                    let ret_ty = builder.func.signature.returns[0].value_type;
+                    let zero = builder.ins().iconst(ret_ty, 0);
+                    builder.ins().return_(&[zero]);
                 }
             }
         }

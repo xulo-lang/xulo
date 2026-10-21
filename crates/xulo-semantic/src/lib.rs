@@ -3159,10 +3159,14 @@ impl Analyzer {
                     }
                 }
                 self.table.push_scope();
+                let iter_type = match &iterable_type {
+                    Type::List(elem) => (**elem).clone(),
+                    _ => Type::Any,
+                };
                 self.table.declare_with_def(
                     Symbol {
                         name: stmt.iter_var.clone(),
-                        type_: Type::Any,
+                        type_: iter_type,
                         kind: SymbolKind::Variable,
                         is_shared: false,
                         is_param: false,
@@ -6453,6 +6457,19 @@ impl Analyzer {
                 }
                 let sym = self.lookup_symbol(name)?;
                 self.record_use(expr.span().clone(), name, &sym);
+                // A function name used as a value has its function type,
+                // not its return type: `let f = double; f(21)`.
+                if let SymbolKind::Function(type_params, params, ret, _) = &sym.kind
+                    && type_params.is_empty()
+                {
+                    return Ok(Type::FnSig {
+                        params: params
+                            .iter()
+                            .map(|p| p.type_annotation.clone().unwrap_or(Type::Any))
+                            .collect(),
+                        ret: Some(Box::new(ret.clone())),
+                    });
+                }
                 Ok(sym.type_.clone())
             }
             Expression::BinaryOp(bin) => self.check_binary(bin),
@@ -6567,31 +6584,63 @@ impl Analyzer {
                 Ok(success)
             }
             Expression::Arrow(arrow) => {
-                let mut params = Vec::with_capacity(arrow.params.len());
-                for p in &arrow.params {
-                    if let Some(annotation) = &p.type_annotation {
-                        self.check_type(annotation)?;
-                        params.push(annotation.clone());
-                    } else {
-                        params.push(Type::Any);
-                    }
-                }
-                self.closure_depth += 1;
+                self.table.push_scope();
+                let param_types = self.declare_params_with_defaults(&arrow.params)?;
+                let saved_return = self.current_return.replace(
+                    arrow
+                        .return_type
+                        .clone()
+                        .unwrap_or(Type::Any),
+                );
+                let saved_declared = self.declared_return;
+                self.declared_return = arrow.return_type.is_some();
+                let saved_async = self.async_depth;
+                self.async_depth = if arrow.is_async {
+                    saved_async + 1
+                } else {
+                    0
+                };
+                let saved_component = self.component_depth;
+                let saved_block = self.block_depth;
+                let saved_no_await = self.no_await_depth;
+                let saved_lock = self.lock_depth;
                 // A closure's body is not the `defer` operand itself: it runs
                 // whenever it is called, so `?` inside it is not E0229.
                 let saved_defer = self.in_defer;
                 self.in_defer = 0;
+                self.closure_depth += 1;
+                self.component_depth = 0;
+                self.block_depth = 0;
+                self.no_await_depth = 0;
+                self.lock_depth = 0;
+                let saved_moved = std::mem::take(&mut self.moved);
                 let ret = match &arrow.body {
-                    xulo_core::ast::ArrowBody::Expr(e) => Some(Box::new(self.check_expression(e)?)),
-                    xulo_core::ast::ArrowBody::Block(b) => self.check_block_tail(b)?.map(Box::new),
+                    xulo_core::ast::ArrowBody::Expr(e) => {
+                        Some(Box::new(self.check_expression(e)?))
+                    }
+                    xulo_core::ast::ArrowBody::Block(b) => {
+                        self.check_block_tail(b)?.map(Box::new)
+                    }
                 };
+                self.moved = saved_moved;
                 self.in_defer = saved_defer;
                 self.closure_depth -= 1;
+                self.no_await_depth = saved_no_await;
+                self.lock_depth = saved_lock;
+                self.component_depth = saved_component;
+                self.block_depth = saved_block;
+                self.async_depth = saved_async;
+                self.current_return = saved_return;
+                self.declared_return = saved_declared;
+                self.table.pop_scope();
                 let ret = match ret {
                     Some(r) if arrow.is_async => Some(Box::new(Type::Async(r))),
                     other => other,
                 };
-                Ok(Type::FnSig { params, ret })
+                Ok(Type::FnSig {
+                    params: param_types,
+                    ret,
+                })
             }
             Expression::Spawn(spawn) => match &spawn.body {
                 xulo_core::ast::SpawnBody::Async(b) => {
