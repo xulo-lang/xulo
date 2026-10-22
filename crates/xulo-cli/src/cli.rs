@@ -229,10 +229,17 @@ fn module_imports(
     }
     for binding in &module.uses {
         let target = match loaded.index_of(&binding.module_id) {
-            // No local sources (version-only dependency): a named import is
-            // an opaque `null` placeholder, a namespace binding an empty
-            // object (`ns::member` reads then fail with a member error).
+            // No local sources: a named import is an opaque `null`
+            // placeholder, a namespace binding an empty object (`ns::member`
+            // reads then fail with a member error). A built-in `std` module
+            // has no sources by design — the interpreter resolves
+            // `use std::…` against the global `std` object itself
+            // (`bind_std_use`), and a placeholder here would shadow that
+            // binding with an empty namespace.
             None => {
+                if xulo_semantic::is_std_module_id(&binding.module_id) {
+                    continue;
+                }
                 let value = match &binding.member {
                     None => Value::Object(std::rc::Rc::new(std::cell::RefCell::new(Vec::new()))),
                     Some(_) => Value::Null,

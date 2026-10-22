@@ -283,3 +283,116 @@ fn main() {
         assert!(references_symbol(&bytes, symbol), "object missing {symbol}");
     }
 }
+
+/// `std::io` 的 lowering：写入成员经运行时落真实流，`Result` 的 Ok/Err 与
+/// 解释器同构（断言走缓冲的 `print` 标记，空载荷不打扰测试输出）。
+#[test]
+fn test_std_io_result_dispatch() {
+    let out = compile_and_run(
+        r#"
+fn main() {
+    match std::io::print("") {
+        Result::Ok(_) => print("print ok")
+        Result::Err(e) => print(e.message)
+    }
+    match std::io::eprint("") {
+        Result::Ok(_) => print("eprint ok")
+        Result::Err(e) => print(e.message)
+    }
+    match std::io::flush() {
+        Result::Ok(_) => print("flush ok")
+        Result::Err(e) => print(e.message)
+    }
+}
+"#,
+    );
+    assert_eq!(
+        out,
+        vec![
+            "print ok".to_string(),
+            "eprint ok".to_string(),
+            "flush ok".to_string(),
+        ]
+    );
+}
+
+/// AOT 对象文件引用 `std::io` 的全部七个运行时符号（链接期接线回归）。
+/// 只编译不运行：两个读取成员会消费调用方的 stdin。
+#[test]
+fn test_aot_object_references_io_symbols() {
+    let bytes = object_bytes(
+        r#"
+fn main() {
+    std::io::print("")
+    std::io::println("")
+    std::io::eprint("")
+    std::io::eprintln("")
+    std::io::flush()
+    std::io::readLine()
+    std::io::read()
+}
+"#,
+    );
+    for symbol in [
+        "xulo_io_print",
+        "xulo_io_println",
+        "xulo_io_eprint",
+        "xulo_io_eprintln",
+        "xulo_io_flush",
+        "xulo_io_read_line",
+        "xulo_io_read",
+    ] {
+        assert!(references_symbol(&bytes, symbol), "object missing {symbol}");
+    }
+}
+
+/// 裸名（group import）与别名头（`use std::io as io`）经 `apply_std_calls`
+/// 改写成同一个限定键，IR 侧与解释器看到同一批成员。标记用 prelude 的
+/// `println`——io 的 `print`/`println` 不进 import 面，裸名不会撞 prelude。
+#[test]
+fn test_bare_and_alias_io_heads_lower_like_the_qualified_form() {
+    let bare = compile_and_run(
+        r#"
+use std::io::{flush, eprint};
+
+fn main() {
+    match eprint("") {
+        Result::Ok(_) => println("bare ok")
+        Result::Err(e) => println(e.message)
+    }
+    match flush() {
+        Result::Ok(_) => println("bare flush")
+        Result::Err(e) => println(e.message)
+    }
+}
+"#,
+    );
+    assert_eq!(bare, vec!["bare ok".to_string(), "bare flush".to_string()]);
+
+    let alias = compile_and_run(
+        r#"
+use std::io as io;
+
+fn main() {
+    match io::flush() {
+        Result::Ok(_) => println("alias flush")
+        Result::Err(e) => println(e.message)
+    }
+}
+"#,
+    );
+    assert_eq!(alias, vec!["alias flush".to_string()]);
+
+    let bytes = object_bytes(
+        r#"
+use std::io as io;
+
+fn main() {
+    io::flush()
+    io::read()
+}
+"#,
+    );
+    assert!(references_symbol(&bytes, "xulo_io_flush"));
+    assert!(references_symbol(&bytes, "xulo_io_read"));
+}

@@ -1,5 +1,20 @@
-// std 标准库：数学 / 时钟 / 文件系统（正则表达式见 regex.xulo）
+// std 标准库：标准流 / 数学 / 时钟 / 文件系统（正则表达式见 regex.xulo）
 fn main() {
+    // std::io：写真实 stdout / stderr，写完即刷，返回的 Result 与 fs 一节
+    // 一样可 match（失败也只走 stderr）。内建 print 的缓冲要到程序结束才输出、
+    // AOT 的 print 却是立即写——所以这一节只用 io 成员、且排在所有 print
+    // 之前，解释器与 AOT 的输出才逐行一致。
+    std::io::print("io: ")
+    std::io::println("hello stdout")
+    std::io::eprintln("io: hello stderr")
+    match std::io::flush() {
+        Result::Ok(_) => null
+        Result::Err(e) => {
+            std::io::eprintln(e.message)
+            null
+        }
+    }
+
     // std::math：常量、取整、幂与开方、三角函数、对数、定点格式化
     print(std::math::PI, std::math::E)
     print(std::math::floor(3.7), std::math::ceil(3.2), std::math::round(3.5))

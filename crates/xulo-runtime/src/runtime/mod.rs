@@ -6,6 +6,7 @@ use crate::value::format_number;
 
 mod fs;
 mod heap;
+mod io;
 mod regex;
 mod scalar;
 mod string;
@@ -14,6 +15,7 @@ mod string;
 // 路径取函数地址，这里保持该路径不变（`no_mangle` 符号本身与模块布局无关）。
 pub use fs::*;
 pub use heap::*;
+pub use io::*;
 pub use regex::*;
 pub use scalar::*;
 pub use string::*;

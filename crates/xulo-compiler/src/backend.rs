@@ -512,6 +512,50 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
         params: &[I64],
         returns: &[I64],
     },
+    // `std::io`：写真实 stdout/stderr、读真实 stdin，七个成员一律返回
+    // Result 枚举指针（载荷 tag 区分 null/字符串）
+    RuntimeFnDesc {
+        name: "xulo_io_print",
+        addr: xulo_runtime::runtime::xulo_io_print as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_io_println",
+        addr: xulo_runtime::runtime::xulo_io_println as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_io_eprint",
+        addr: xulo_runtime::runtime::xulo_io_eprint as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_io_eprintln",
+        addr: xulo_runtime::runtime::xulo_io_eprintln as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_io_flush",
+        addr: xulo_runtime::runtime::xulo_io_flush as *const u8,
+        params: &[],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_io_read_line",
+        addr: xulo_runtime::runtime::xulo_io_read_line as *const u8,
+        params: &[],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_io_read",
+        addr: xulo_runtime::runtime::xulo_io_read as *const u8,
+        params: &[],
+        returns: &[I64],
+    },
 ];
 
 /// 已 intern 的字符串常量：JIT 与 AOT 的落地方式不同，但对 lowering 透明

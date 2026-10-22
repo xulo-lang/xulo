@@ -2574,7 +2574,8 @@ fn main() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// AOT 编译 `examples/std.xulo`（`std::math` / `std::time` / `std::fs`）并执行
+/// AOT 编译 `examples/std.xulo`（`std::io` / `std::math` / `std::time` /
+/// `std::fs`）并执行
 /// 产物；工作目录设为临时目录，避免示例写出的文件落进仓库。
 #[test]
 fn build_std_example_matches_interpreter_output() {
@@ -2636,5 +2637,295 @@ fn build_std_example_matches_interpreter_output() {
         String::from_utf8_lossy(&interp.stdout),
         "AOT output diverged from interpreter"
     );
+    let _ = std::fs::remove_dir_all(&work);
+}
+
+/// `std::io` writes the *real* streams: stdout carries the text as the
+/// program runs (before the buffered `print` output the CLI flushes at the
+/// end), stderr carries `eprintln`. Asserted with `contains` so the block
+/// order stays an implementation detail.
+#[test]
+fn run_io_writes_reach_the_process_streams() {
+    let file = temp_file(
+        "io_streams.xulo",
+        r#"
+fn main() {
+    match std::io::print("io-print") {
+        Result::Ok(_) => print("print ok")
+        Result::Err(e) => print(e.message)
+    }
+    match std::io::println("io-println") {
+        Result::Ok(_) => print("println ok")
+        Result::Err(e) => print(e.message)
+    }
+    match std::io::eprintln("io-stderr") {
+        Result::Ok(_) => print("eprintln ok")
+        Result::Err(e) => print(e.message)
+    }
+    match std::io::flush() {
+        Result::Ok(_) => print("flush ok")
+        Result::Err(e) => print(e.message)
+    }
+}
+"#,
+    );
+    let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "stderr: {stderr}\nstdout: {stdout}"
+    );
+    assert!(stdout.contains("io-print"), "missing write: {stdout}");
+    assert!(stdout.contains("io-println"), "missing line: {stdout}");
+    for marker in ["print ok", "println ok", "eprintln ok", "flush ok"] {
+        assert!(stdout.contains(marker), "missing `{marker}`: {stdout}");
+    }
+    assert!(
+        stderr.contains("io-stderr"),
+        "stderr write missing: {stderr}"
+    );
+    let _ = std::fs::remove_file(&file);
+}
+
+/// `readLine` yields each line without its terminator (an empty line is
+/// `Ok("")`, not the end), `Ok(null)` ends the stream, and `read` takes
+/// everything that is left — driven by a piped stdin the test controls.
+#[test]
+fn run_io_reads_a_piped_stdin() {
+    let file = temp_file(
+        "io_stdin.xulo",
+        r#"
+fn main() {
+    match std::io::readLine() {
+        Result::Ok(line) => print(`first:${line}`)
+        Result::Err(e) => print(e.message)
+    }
+    match std::io::readLine() {
+        Result::Ok(line) => print(`second:[${line}]`)
+        Result::Err(e) => print(e.message)
+    }
+    match std::io::read() {
+        Result::Ok(rest) => print(`rest:${rest}`)
+        Result::Err(e) => print(e.message)
+    }
+    match std::io::readLine() {
+        Result::Ok(line) => if line == null { print("eof") } else { print("trailing") }
+        Result::Err(e) => print(e.message)
+    }
+}
+"#,
+    );
+    let child = Command::new(BIN)
+        .arg("run")
+        .arg(&file)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.as_ref().unwrap();
+    stdin.write_all(b"one\n\ntwo tail\n").unwrap();
+    let out = child.wait_with_output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(stdout.contains("first:one"), "stdout: {stdout}");
+    // The empty line reads as `Ok("")` and never passes for end of input.
+    assert!(stdout.contains("second:[]"), "stdout: {stdout}");
+    // Everything after the two lines is what `read` returns, newline intact.
+    assert!(stdout.contains("rest:two tail"), "stdout: {stdout}");
+    assert!(stdout.contains("eof"), "stdout: {stdout}");
+    let _ = std::fs::remove_file(&file);
+}
+
+/// `use std::io as io` and a group import reach the namespace through the
+/// CLI's module loader: the import table must not shadow the interpreter's
+/// own `std` binding with a placeholder.
+#[test]
+fn run_io_alias_and_group_imports() {
+    let alias = temp_file(
+        "io_alias.xulo",
+        r#"
+use std::io as io;
+
+fn main() {
+    match io::print("aliased") {
+        Result::Ok(_) => print(" alias ok")
+        Result::Err(e) => print(e.message)
+    }
+}
+"#,
+    );
+    let out = Command::new(BIN)
+        .arg("run")
+        .arg(&alias)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(stdout.contains("aliased"), "stdout: {stdout}");
+    assert!(stdout.contains("alias ok"), "stdout: {stdout}");
+    let _ = std::fs::remove_file(&alias);
+
+    let group = temp_file(
+        "io_group.xulo",
+        r#"
+use std::io::{flush, eprint};
+
+fn main() {
+    match flush() {
+        Result::Ok(_) => print("group flush")
+        Result::Err(e) => print(e.message)
+    }
+    match eprint("") {
+        Result::Ok(_) => print("group eprint")
+        Result::Err(e) => print(e.message)
+    }
+}
+"#,
+    );
+    let out = Command::new(BIN)
+        .arg("run")
+        .arg(&group)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("group flush"), "stdout: {stdout}");
+    assert!(stdout.contains("group eprint"), "stdout: {stdout}");
+    let _ = std::fs::remove_file(&group);
+}
+
+/// `print`/`println` are prelude intrinsics: `check` refuses to let a `use`
+/// rebind them and points at the qualified / alias forms instead.
+#[test]
+fn check_rejects_importing_prelude_print() {
+    let file = temp_file(
+        "io_rebind.xulo",
+        "use std::io::print;\nfn main() { print(\"x\") }",
+    );
+    let out = Command::new(BIN).arg("check").arg(&file).output().unwrap();
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("prelude intrinsic name"),
+        "stderr: {stderr}"
+    );
+    let _ = std::fs::remove_file(&file);
+}
+
+/// The AOT binary wires the same seven runtime symbols: write to stdout, read
+/// a piped stdin, and finish on `Ok(null)` — output identical to what the
+/// interpreter printed for the same program.
+#[test]
+fn aot_io_roundtrip_matches_interpreter() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap()
+        .to_path_buf();
+    let staticlib = root.join("target/release/libxulo_runtime.a");
+    if !staticlib.exists() {
+        eprintln!("skipping: {} not built", staticlib.display());
+        return;
+    }
+    let file = temp_file(
+        "io_aot.xulo",
+        r#"
+fn main() {
+    match std::io::println("aot stdout") {
+        Result::Ok(_) => print("written")
+        Result::Err(e) => print(e.message)
+    }
+    match std::io::readLine() {
+        Result::Ok(line) => if line == null { print("eof") } else { print(`got:${line}`) }
+        Result::Err(e) => print(e.message)
+    }
+    match std::io::readLine() {
+        Result::Ok(line) => if line == null { print("eof") } else { print(`got:${line}`) }
+        Result::Err(e) => print(e.message)
+    }
+}
+"#,
+    );
+    let work = std::env::temp_dir().join(format!(
+        "xulo_io_aot_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&work).unwrap();
+
+    // Interpreter: piped stdin, buffered `print` flushed when the CLI exits.
+    let interp = Command::new(BIN)
+        .arg("run")
+        .arg(&file)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = interp.stdin.as_ref().unwrap();
+    stdin.write_all(b"hello\n").unwrap();
+    let interp = interp.wait_with_output().unwrap();
+    assert!(
+        interp.status.success(),
+        "interpreter failed: {}",
+        String::from_utf8_lossy(&interp.stderr)
+    );
+
+    // AOT: build, then run the binary against the same stdin.
+    let exe = work.join("io_aot");
+    let build = Command::new(BIN)
+        .arg("build")
+        .arg(&file)
+        .arg("-o")
+        .arg(&exe)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .unwrap();
+    // `xulo build` runs the program it produced; give it EOF rather than the
+    // test harness's stdin, so the run inside the build exits promptly.
+    assert!(
+        build.status.success(),
+        "build failed: {}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let aot = Command::new(&exe)
+        .current_dir(&work)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = aot.stdin.as_ref().unwrap();
+    stdin.write_all(b"hello\n").unwrap();
+    let aot = aot.wait_with_output().unwrap();
+    assert!(
+        aot.status.success(),
+        "aot binary failed: {}",
+        String::from_utf8_lossy(&aot.stderr)
+    );
+
+    assert_eq!(
+        String::from_utf8_lossy(&aot.stdout),
+        String::from_utf8_lossy(&interp.stdout),
+        "AOT output diverged from interpreter"
+    );
+    let stdout = String::from_utf8_lossy(&aot.stdout);
+    assert!(stdout.contains("aot stdout"), "stdout: {stdout}");
+    assert!(stdout.contains("got:hello"), "stdout: {stdout}");
+    assert!(stdout.contains("eof"), "stdout: {stdout}");
+
+    let _ = std::fs::remove_file(&file);
     let _ = std::fs::remove_dir_all(&work);
 }

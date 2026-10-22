@@ -674,6 +674,11 @@ impl IrGenerator {
                     if call.callee.starts_with("std::fs::") {
                         return (call.callee == "std::fs::exists").then_some(Type::Boolean);
                     }
+                    // `std::io` 的七个成员一律返回 Result 枚举，没有可标的
+                    // 原始类型（打印端按 lowering 表的 tag=7 当枚举处理）
+                    if call.callee.starts_with("std::io::") {
+                        return None;
+                    }
                     // Math::/Time:: 内建：按 lowering 表的 tag 映射返回类型
                     if let Some((_, _, tag)) = Self::intrinsic_lowering(&call.callee) {
                         return Some(if tag == 0 { Type::String } else { Type::Number });
@@ -1189,7 +1194,8 @@ impl IrGenerator {
     }
 
     fn intrinsic_lowering(callee: &str) -> Option<(&'static str, IrType, i64)> {
-        // `std::math::abs` / `std::time::now` 归一到表键 `Math::abs` 等
+        // `std::math::abs` / `std::fs::read` / `std::io::println` 归一到表键
+        // `Math::abs` / `Fs::read` / `Io::println` 等
         let normalized: std::borrow::Cow<str> =
             if let Some(rest) = callee.strip_prefix("std::math::") {
                 std::borrow::Cow::Owned(format!("Math::{rest}"))
@@ -1197,6 +1203,8 @@ impl IrGenerator {
                 std::borrow::Cow::Owned(format!("Time::{rest}"))
             } else if let Some(rest) = callee.strip_prefix("std::fs::") {
                 std::borrow::Cow::Owned(format!("Fs::{rest}"))
+            } else if let Some(rest) = callee.strip_prefix("std::io::") {
+                std::borrow::Cow::Owned(format!("Io::{rest}"))
             } else {
                 std::borrow::Cow::Borrowed(callee)
             };
@@ -1233,6 +1241,15 @@ impl IrGenerator {
             "Fs::exists" => ("xulo_fs_exists", IrType::Bool, 5),
             "Fs::remove" => ("xulo_fs_remove", IrType::Pointer, 7),
             "Fs::mkdir" => ("xulo_fs_mkdir", IrType::Pointer, 7),
+            // `std::io`：七个成员全部可失败，一律返回内置 Result 枚举
+            // （tag=7）；读入结果由运行时按载荷 tag 区分字符串与 null(EOF)
+            "Io::print" => ("xulo_io_print", IrType::Pointer, 7),
+            "Io::println" => ("xulo_io_println", IrType::Pointer, 7),
+            "Io::eprint" => ("xulo_io_eprint", IrType::Pointer, 7),
+            "Io::eprintln" => ("xulo_io_eprintln", IrType::Pointer, 7),
+            "Io::flush" => ("xulo_io_flush", IrType::Pointer, 7),
+            "Io::readLine" => ("xulo_io_read_line", IrType::Pointer, 7),
+            "Io::read" => ("xulo_io_read", IrType::Pointer, 7),
             _ => return None,
         };
         Some(lowering)

@@ -421,6 +421,31 @@ impl Interpreter {
             ("mkdir".to_string(), Value::Native(Rc::new(native_fs_mkdir))),
         ];
         let fs_obj = Value::Object(Rc::new(RefCell::new(fs_members)));
+        // The `std::io` namespace of the host's standard streams
+        // (implementation-first, like `std::fs`): reached as
+        // `std::io::println(…)` / `std::io::readLine(…)`. Each member writes
+        // the real stdout/stderr or reads stdin — the interpreter's captured
+        // `print` buffer is a different thing entirely — and every one of them
+        // is fallible, returning the built-in `Result`.
+        let io_members: Vec<(String, Value)> = vec![
+            ("print".to_string(), Value::Native(Rc::new(native_io_print))),
+            (
+                "println".to_string(),
+                Value::Native(Rc::new(native_io_println)),
+            ),
+            ("eprint".to_string(), Value::Native(Rc::new(native_io_eprint))),
+            (
+                "eprintln".to_string(),
+                Value::Native(Rc::new(native_io_eprintln)),
+            ),
+            ("flush".to_string(), Value::Native(Rc::new(native_io_flush))),
+            (
+                "readLine".to_string(),
+                Value::Native(Rc::new(native_io_read_line)),
+            ),
+            ("read".to_string(), Value::Native(Rc::new(native_io_read))),
+        ];
+        let io_obj = Value::Object(Rc::new(RefCell::new(io_members)));
         // The `std::regex` module behind the language's `RegExp` type (spec
         // `regular-expressions.mdx`): `RegExp::compile(…)` resolves through
         // the imported name, which `setup_module` materializes from this
@@ -441,6 +466,7 @@ impl Interpreter {
             ("math".to_string(), math_obj),
             ("time".to_string(), time_obj),
             ("fs".to_string(), fs_obj),
+            ("io".to_string(), io_obj),
             ("regex".to_string(), regex_obj),
         ];
         global.borrow_mut().define(

@@ -499,11 +499,12 @@ pub(super) fn native_time_sleep(interp: &Interpreter, args: &[Value]) -> Result<
     Ok(Value::Promise(promise))
 }
 
-/// Wrap a fallible `Fs` outcome in the built-in `Result`: success carries
-/// its payload, a failure message becomes `Result::Err(Error(message))`
-/// (spec `error-handling.md`), so a program matches it like any other
-/// `Result` (the same construction `Task::timeout` uses).
-pub(super) fn fs_result(result: Result<Value, String>) -> Value {
+/// Wrap a fallible `std` member's outcome in the built-in `Result`: success
+/// carries its payload, a failure message becomes `Result::Err(Error(message))`
+/// (spec `error-handling.md`), so a program matches it like any other `Result`
+/// (the same construction `Task::timeout` uses). `Fs` and `io` both go
+/// through here.
+pub(super) fn std_result(result: Result<Value, String>) -> Value {
     match result {
         Ok(value) => result_ok(value),
         Err(message) => result_err(error_value(message.into())),
@@ -514,7 +515,7 @@ pub(super) fn fs_result(result: Result<Value, String>) -> Value {
 /// for a missing directory, an unreadable file, or non-UTF-8 bytes.
 pub(super) fn native_fs_read(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     let path = builtin_str_arg(args, 0, "std::fs::read")?;
-    Ok(fs_result(
+    Ok(std_result(
         xulo_std::fs::read(&path).map(|s| Value::String(s.into())),
     ))
 }
@@ -524,7 +525,7 @@ pub(super) fn native_fs_read(_interp: &Interpreter, args: &[Value]) -> Result<Va
 pub(super) fn native_fs_write(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     let path = builtin_str_arg(args, 0, "std::fs::write")?;
     let content = builtin_str_arg(args, 1, "std::fs::write")?;
-    Ok(fs_result(
+    Ok(std_result(
         xulo_std::fs::write(&path, &content).map(|()| Value::Null),
     ))
 }
@@ -539,13 +540,72 @@ pub(super) fn native_fs_exists(_interp: &Interpreter, args: &[Value]) -> Result<
 /// `std::fs::remove(path)`: delete one file; a non-empty directory fails.
 pub(super) fn native_fs_remove(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     let path = builtin_str_arg(args, 0, "std::fs::remove")?;
-    Ok(fs_result(xulo_std::fs::remove(&path).map(|()| Value::Null)))
+    Ok(std_result(xulo_std::fs::remove(&path).map(|()| Value::Null)))
 }
 
 /// `std::fs::mkdir(path)`: create the directory with its missing parents.
 pub(super) fn native_fs_mkdir(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     let path = builtin_str_arg(args, 0, "std::fs::mkdir")?;
-    Ok(fs_result(xulo_std::fs::mkdir(&path).map(|()| Value::Null)))
+    Ok(std_result(xulo_std::fs::mkdir(&path).map(|()| Value::Null)))
+}
+
+/// `std::io::print(text)`: `text` on the process's stdout, no line
+/// terminator. Unlike the language's `print`, which the interpreter collects
+/// into `out` for the host to print when the program ends, this is the real
+/// stream — written and flushed as the program runs.
+pub(super) fn native_io_print(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    let text = builtin_str_arg(args, 0, "std::io::print")?;
+    Ok(std_result(xulo_std::io::print(&text).map(|()| Value::Null)))
+}
+
+/// `std::io::println(text)`: `text` and a newline on stdout.
+pub(super) fn native_io_println(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    let text = builtin_str_arg(args, 0, "std::io::println")?;
+    Ok(std_result(xulo_std::io::println(&text).map(|()| Value::Null)))
+}
+
+/// `std::io::eprint(text)`: `text` on the process's stderr.
+pub(super) fn native_io_eprint(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    let text = builtin_str_arg(args, 0, "std::io::eprint")?;
+    Ok(std_result(xulo_std::io::eprint(&text).map(|()| Value::Null)))
+}
+
+/// `std::io::eprintln(text)`: `text` and a newline on stderr.
+pub(super) fn native_io_eprintln(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    let text = builtin_str_arg(args, 0, "std::io::eprintln")?;
+    Ok(std_result(xulo_std::io::eprintln(&text).map(|()| Value::Null)))
+}
+
+/// `std::io::flush()`: push buffered stdout to the operating system (the
+/// writes above flush themselves).
+pub(super) fn native_io_flush(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    no_arg_guard(args, "std::io::flush")?;
+    Ok(std_result(xulo_std::io::flush().map(|()| Value::Null)))
+}
+
+/// `std::io::readLine()`: the next line of stdin without its terminator, or
+/// `Result::Ok(null)` at end of input — the sentinel a line loop breaks on.
+/// An empty line is `Result::Ok("")`, so it never passes for the end.
+pub(super) fn native_io_read_line(
+    _interp: &Interpreter,
+    args: &[Value],
+) -> Result<Value, RunError> {
+    no_arg_guard(args, "std::io::readLine")?;
+    Ok(std_result(
+        xulo_std::io::read_line().map(|line| match line {
+            Some(text) => Value::String(text.into()),
+            None => Value::Null,
+        }),
+    ))
+}
+
+/// `std::io::read()`: all of stdin as a string (`""` at end of input); bytes
+/// that are not valid UTF-8 are `Result::Err`.
+pub(super) fn native_io_read(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    no_arg_guard(args, "std::io::read")?;
+    Ok(std_result(
+        xulo_std::io::read().map(|text| Value::String(text.into())),
+    ))
 }
 
 /// `RegExp::compile(pattern, flags)` (spec `regular-expressions.mdx`):

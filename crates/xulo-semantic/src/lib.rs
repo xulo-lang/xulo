@@ -20,15 +20,23 @@ type SResult<T> = Result<T, XuloError>;
 /// control-byte prefix so it can never collide with a real module id (spec
 /// `regular-expressions.mdx`: the module's types are reached directly, with
 /// no loader graph behind the head).
-/// Id of the built-in `std` module root: the four std modules
-/// (`std::math` / `std::time` / `std::fs` / `std::regex`) are not package
-/// sources, so they resolve against this synthetic id instead of the world
-/// (spec `builtins/README.md`).
+/// Id of the built-in `std` module root: the five std modules
+/// (`std::math` / `std::time` / `std::fs` / `std::io` / `std::regex`) are not
+/// package sources, so they resolve against this synthetic id instead of the
+/// world (spec `builtins/README.md`).
 const BUILTIN_STD: &str = "\u{1}std";
 
 /// The synthetic id of one std module (`\u{1}std::math`).
 fn std_module_id(module: &str) -> String {
     format!("{BUILTIN_STD}::{module}")
+}
+
+/// Whether a module id is the synthetic id of a built-in `std` module (the
+/// control-byte prefix [`BUILTIN_STD`] carries). The runtime resolves
+/// `use std::…` itself, so an import table that saw these ids must not stand
+/// in with a placeholder binding of its own.
+pub fn is_std_module_id(id: &str) -> bool {
+    id.starts_with(BUILTIN_STD)
 }
 
 /// The module name of a synthetic std id, or `None` for any other id.
@@ -49,8 +57,19 @@ fn std_path_module<'a>(start: &'a str, segments: &'a [String]) -> Option<&'a str
 /// The std module behind a `Head::member` callee (`std::math` in
 /// `std::math::floor(…)`), keyed the same way [`builtin_member`] is.
 fn std_ns_key(enum_name: &str) -> Option<&str> {
-    matches!(enum_name, "std::math" | "std::time" | "std::fs").then_some(enum_name)
+    matches!(
+        enum_name,
+        "std::math" | "std::time" | "std::fs" | "std::io"
+    )
+    .then_some(enum_name)
 }
+
+/// The prelude's own value names (spec `builtins/prelude.md`): the interpreter
+/// keeps them in its global scope, where a `use` never rebinds them. A std
+/// import under one of these names — `std::io` exports `print` and `println` —
+/// would type-check as the std member while the runtime kept calling the
+/// intrinsic, so the import is refused (E0601) and the qualified path stands.
+const PRELUDE_INTRINSIC_VALUES: &[&str] = &["print", "println", "str", "assert"];
 
 /// One walk's derive targets pending field checks: attribute span -> declared
 /// target types as (type, label span).
@@ -448,8 +467,8 @@ fn match_null_test(cond: &Expression) -> Option<(String, bool)> {
 /// `builtins/intrinsic-functions.md`): the name its signature writes, for
 /// diagnostics, and the type it accepts. `float`/`int`/`u64` are written
 /// the way the spec writes them, while every numeric parameter accepts the
-/// implementation's one `number` type. `string` (`Fs`) is implementation-first
-/// and has no spec entry yet.
+/// implementation's one `number` type. `string` (`Fs`, `io`) is
+/// implementation-first and has no spec entry yet.
 #[derive(Clone, Copy)]
 enum BuiltinTy {
     Number,
@@ -493,6 +512,9 @@ enum BuiltinRet {
     /// `Result<unit, Error>` — a fallible operation with no success payload
     /// (`Fs::write`, `Fs::remove`, `Fs::mkdir`).
     ResultUnitErr,
+    /// `Result<string?, Error>` — a fallible read whose success payload is an
+    /// optional string: `null` is the end of the stream (`std::io::readLine`).
+    ResultOptStrErr,
 }
 
 impl BuiltinRet {
@@ -516,6 +538,13 @@ impl BuiltinRet {
                     Type::Named("Error".to_string(), Vec::new()),
                 ],
             ),
+            BuiltinRet::ResultOptStrErr => Type::Named(
+                "Result".to_string(),
+                vec![
+                    Type::Optional(Box::new(Type::String)),
+                    Type::Named("Error".to_string(), Vec::new()),
+                ],
+            ),
         }
     }
 }
@@ -533,7 +562,7 @@ enum BuiltinMember {
 }
 
 /// The intrinsic table of `Math` and `Time` (spec
-/// `builtins/intrinsic-functions.md`), plus `Fs`, which is
+/// `builtins/intrinsic-functions.md`), plus `Fs` and `io`, which are
 /// implementation-first (the language itself has no I/O — the host runtime
 /// supplies it, spec `memory-and-runtime.md`). `Task` calls route through
 /// [`Analyzer::check_task_utility`], which infers the task element types a
@@ -569,6 +598,16 @@ fn builtin_member(ns: &str, member: &str) -> Option<BuiltinMember> {
             "remove" | "mkdir" => f(&[T::String], R::ResultUnitErr),
             _ => None,
         },
+        // The host streams: writes take the text to emit, `flush` pushes what
+        // is buffered, and the two reads take no operand (`readLine` yields
+        // `string?`, so `null` ends a line loop).
+        "std::io" => match member {
+            "print" | "println" | "eprint" | "eprintln" => f(&[T::String], R::ResultUnitErr),
+            "flush" => f(&[], R::ResultUnitErr),
+            "readLine" => f(&[], R::ResultOptStrErr),
+            "read" => f(&[], R::ResultStrErr),
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -601,6 +640,10 @@ fn std_face_members(module: &str) -> Option<Vec<(String, FaceKind)>> {
         .concat(),
         "time" => fns(&["now", "now_nanos", "monotonic", "monotonic_nanos", "sleep"]),
         "fs" => fns(&["read", "write", "exists", "remove", "mkdir"]),
+        // `print`/`println` are exported by the module but absent from its
+        // glob face: their names belong to the prelude intrinsics, which a
+        // glob cannot rebind (`PRELUDE_INTRINSIC_VALUES`).
+        "io" => fns(&["eprint", "eprintln", "flush", "readLine", "read"]),
         "regex" => ["RegExp", "RegexError", "RegexMatch"]
             .iter()
             .map(|n| (n.to_string(), FaceKind::Type))
@@ -4149,7 +4192,7 @@ impl Analyzer {
                 }
                 // Heads that name a std module in its old top-level home:
                 // name the new path instead of a bare "cannot resolve".
-                if matches!(n.as_str(), "regex" | "math" | "time" | "fs") {
+                if matches!(n.as_str(), "regex" | "math" | "time" | "fs" | "io") {
                     return Err(self
                         .err_code(
                             "E0607",
@@ -4359,6 +4402,16 @@ impl Analyzer {
                     )
                     .at(u.span.clone()));
             }
+            if PRELUDE_INTRINSIC_VALUES.contains(&local) {
+                return Err(self
+                    .err_code(
+                        "E0601",
+                        format!(
+                            "`{local}` is a prelude intrinsic name and cannot be rebound by a `use`: alias `std::{module}` under another name"
+                        ),
+                    )
+                    .at(u.span.clone()));
+            }
             return self.bind_namespace(local, &std_module_id(&module), u);
         };
         if rest.len() > 1 {
@@ -4412,6 +4465,20 @@ impl Analyzer {
                 .err_code("E0601", format!("module `{ns}` does not export `{member}`"))
                 .at(u.span.clone()));
         };
+        // `std::io` exports `print`/`println` under the prelude intrinsic's
+        // own names; the interpreter keeps those in its global scope, so a
+        // binding here would type-check as the member and run as the
+        // intrinsic. The qualified path reaches the same function.
+        if PRELUDE_INTRINSIC_VALUES.contains(&local) {
+            return Err(self
+                .err_code(
+                    "E0601",
+                        format!(
+                            "`{local}` is a prelude intrinsic name and cannot be rebound by a `use`: reach `{ns}::{member}` as `{ns}::{member}(…)` or through a namespace alias"
+                        ),
+                )
+                .at(u.span.clone()));
+        }
         if u.type_only {
             // `use type std::math::floor` — the name exists for types only;
             // a later value-position use is `E0606`.
@@ -8053,7 +8120,7 @@ impl Analyzer {
                 .err_code("E0607", format!("cannot resolve `std::{rest}`"))
                 .at(call.span.clone()));
         }
-        if !matches!(module, "math" | "time" | "fs") {
+        if !matches!(module, "math" | "time" | "fs" | "io") {
             return Err(self
                 .err_code("E0607", format!("cannot resolve `std::{module}`"))
                 .at(call.span.clone()));
@@ -8213,7 +8280,7 @@ impl Analyzer {
                 if let Some(ns) = std_ns_key(enum_name) {
                     return self.check_builtin_fn_call(ns, variant, call);
                 }
-                if matches!(enum_name, "Math" | "Time" | "Fs") {
+                if matches!(enum_name, "Math" | "Time" | "Fs" | "Io") {
                     return Err(self
                         .err(format!(
                             "`{enum_name}` lives under `std`: use `std::{0}::{variant}` or import it with `use std::{0}::*`",
@@ -8439,10 +8506,12 @@ impl Analyzer {
             // type it from the builtin table so its diagnostics match the
             // qualified `std::math::floor(…)` form.
             if let Some((ns, member)) = self.std_fns.get(&call.callee).cloned() {
-                if let Some(span) = &call.callee_span {
-                    self.std_calls
-                        .push((span.clone(), format!("{ns}::{member}")));
-                }
+                // The call reads the `use` binding it came from (W0102), and
+                // the IR backend rewrites by the whole call span — see
+                // [`apply_std_calls`], which matches `Call.span`.
+                self.mark_name_used(&call.callee);
+                self.std_calls
+                    .push((call.span.clone(), format!("{ns}::{member}")));
                 return self.check_builtin_fn_call(&ns, &member, call);
             }
             self.record_call_callee(call, &sym);
@@ -9139,7 +9208,7 @@ impl Analyzer {
                     None => Err(self.err(format!("`{ns}` has no member `{variant}`"))),
                 };
             }
-            if matches!(enum_name.as_str(), "Math" | "Time" | "Fs") {
+            if matches!(enum_name.as_str(), "Math" | "Time" | "Fs" | "Io") {
                 return Err(self.err(format!(
                     "`{enum_name}` lives under `std`: use `std::{0}::{variant}` or import it with `use std::{0}::*`",
                     enum_name.to_lowercase()
@@ -9224,11 +9293,16 @@ impl Analyzer {
                     )
                     .at(call.span.clone()));
             }
-            return Ok(Some(self.check_builtin_fn_call(
-                &format!("std::{std_module}"),
-                member,
-                call,
-            )?));
+            let ns = format!("std::{std_module}");
+            let ty = self.check_builtin_fn_call(&ns, member, call)?;
+            // The IR backend only keys the intrinsic table on the qualified
+            // `std::…` form: record the rewrite like the bare-name path does
+            // so an alias head (`m::floor(…)` / `io::println(…)`) lowers once
+            // `apply_std_calls` has run. The interpreter resolves the alias
+            // binding itself and never applies the rewrite.
+            self.std_calls
+                .push((call.span.clone(), format!("{ns}::{member}")));
+            return Ok(Some(ty));
         }
         let Some(face) = self
             .world

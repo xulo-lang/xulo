@@ -5001,6 +5001,155 @@ fn fs_unknown_member_is_rejected() {
     );
 }
 
+#[test]
+fn io_namespace_signatures_typecheck() {
+    let src = r#"
+        fn main() {
+            let wrote: Result<unit, Error> = std::io::print("a")
+            let out: Result<unit, Error> = std::io::println("a")
+            let err: Result<unit, Error> = std::io::eprint("a")
+            let err_line: Result<unit, Error> = std::io::eprintln("a")
+            let flushed: Result<unit, Error> = std::io::flush()
+            let line: Result<string?, Error> = std::io::readLine()
+            let all: Result<string, Error> = std::io::read()
+            match wrote {
+                Result::Ok(_) => print("ok")
+                Result::Err(e) => print(e.message)
+            }
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn io_call_arity_is_e0207() {
+    let src = r#"
+        fn main() {
+            std::io::print()
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0207");
+    assert!(
+        err.message.contains("expected 1 argument, found 0"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn io_call_argument_type_is_e0202() {
+    let src = r#"
+        fn main() {
+            std::io::print(42)
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0202");
+    assert!(
+        err.message
+            .contains("argument to `std::io::print` must be `string`"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn io_unknown_member_is_rejected() {
+    let src = r#"
+        fn main() {
+            std::io::typo()
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(
+        err.message.contains("`std::io` has no member `typo`"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn io_prelude_print_cannot_be_reimported_is_e0601() {
+    // `print`/`println` are prelude intrinsics (`spec/builtins/
+    // intrinsic-functions.md`): a `use` cannot rebind them, so the io
+    // members of that name are reached qualified or through an alias.
+    for src in [
+        "use std::io::print;\nfn main() { print(\"x\") }",
+        "use std::io::{print, println};\nfn main() { print(\"x\") }",
+    ] {
+        let err = analyze_src(src).unwrap_err();
+        assert_eq!(err.code(), "E0601", "{src}: {}", err.message);
+        assert!(
+            err.message.contains("prelude intrinsic name"),
+            "{src}: {}",
+            err.message
+        );
+    }
+}
+
+#[test]
+fn io_namespace_alias_reaches_members() {
+    let src = r#"
+        use std::io as io;
+
+        fn main() {
+            let flushed: Result<unit, Error> = io::flush()
+            match io::eprint("") {
+                Result::Ok(_) => print("ok")
+                Result::Err(e) => print(e.message)
+            }
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn io_group_and_glob_imports_typecheck() {
+    let src = r#"
+        use std::io::{eprint, flush, readLine, read};
+
+        fn main() {
+            let line: Result<string?, Error> = readLine()
+            let all: Result<string, Error> = read()
+            match flush() {
+                Result::Ok(_) => print("ok")
+                Result::Err(e) => print(e.message)
+            }
+            eprint("")
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+
+    let glob = r#"
+        use std::io::*;
+
+        fn main() {
+            match eprintln("") {
+                Result::Ok(_) => print("ok")
+                Result::Err(e) => print(e.message)
+            }
+        }
+    "#;
+    assert!(analyze_src(glob).is_ok());
+}
+
+#[test]
+fn bare_io_head_is_rejected_with_a_migration_hint() {
+    let src = r#"
+        fn main() {
+            Io::println("x")
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(
+        err.message
+            .contains("`Io` lives under `std`: use `std::io::println` or import it with `use std::io::*`"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
 // ──────────────────────────────────────────────────────────────────────
 //  Declaration attributes: the closed registry (`#Test`, `#Derive`) and
 //  struct construction — spec `types/traits.md` "Attributes",
