@@ -293,7 +293,7 @@ impl Interpreter {
                 for (i, (v, ty)) in args.iter().zip(&bound.params).enumerate() {
                     ffi_args.push(value_to_arg(v, ty, &bound.local, i)?);
                 }
-                let ret = invoke(bound.addr, &bound.param_classes, bound.ret_class, &ffi_args)
+                let ret = invoke(&bound.param_classes, bound.ret_class, bound.addr, &ffi_args)
                     .ok_or_else(|| {
                         err(format!(
                             "unsupported extern signature for `{}`",
