@@ -16,6 +16,8 @@ pub struct IrGenerator {
     source_types: HashMap<String, Type>,
     /// 函数名 -> AST 返回类型注解（用于泛型函数的返回类型推断）
     func_return_types: HashMap<String, Option<Type>>,
+    /// 用户函数的形参表（名字 + 默认表达式）：命名参数重排与缺省参数补齐
+    func_params: HashMap<String, Vec<(String, Option<Expression>)>>,
     label_map: HashMap<String, Label>,
     loop_stack: Vec<LoopContext>,
     /// struct 定义（结构体构造需要字段顺序与默认值）
@@ -201,6 +203,7 @@ impl IrGenerator {
             local_types: HashMap::new(),
             source_types: HashMap::new(),
             func_return_types: HashMap::new(),
+            func_params: HashMap::new(),
             label_map: HashMap::new(),
             loop_stack: Vec::new(),
             structs: HashMap::new(),
@@ -717,6 +720,14 @@ impl IrGenerator {
         // 保存 AST 返回类型注解（用于泛型函数推断）
         self.func_return_types
             .insert(name.to_string(), f.return_type.clone());
+        // 形参表：命名参数重排 / 缺省参数在调用点补齐
+        self.func_params.insert(
+            name.to_string(),
+            f.params
+                .iter()
+                .map(|p| (p.name.clone(), p.default.clone()))
+                .collect(),
+        );
 
         let func = IrFunction::new(name.to_string(), params, return_type);
         Ok(self.module.add_function(func))
@@ -1089,6 +1100,16 @@ impl IrGenerator {
         match stmt {
             Statement::Let(binding) => {
                 push_unique(binds, &binding.name);
+                if let Some(names) = &binding.tuple_names {
+                    for n in names {
+                        push_unique(binds, n);
+                    }
+                }
+                if let Some(fields) = &binding.object_destructuring {
+                    for (field, alias) in fields {
+                        push_unique(binds, alias.as_deref().unwrap_or(field));
+                    }
+                }
                 if let Some(v) = &binding.value {
                     self.collect_scope_expr(v, binds, refs, children_free);
                 }
@@ -1517,6 +1538,11 @@ impl IrGenerator {
             Operand::Const(IrValue::Null)
         };
 
+        // 元组/对象解构：`let (a, b) = expr` / `let { f, g: h } = expr`
+        if binding.tuple_names.is_some() || binding.object_destructuring.is_some() {
+            return self.generate_destructured_lets(binding, init_val, func_idx);
+        }
+
         // 推断类型
         let ty = if let Some(ann) = &binding.type_annotation {
             // number 绑定若初始化是 f64（小字面量/浮点运算），槽位用 F64
@@ -1564,6 +1590,46 @@ impl IrGenerator {
                 src: init_val,
             });
 
+        Ok(())
+    }
+
+    /// 元组/对象解构绑定：右端求值一次，逐名字 GetIndex / GetField 摘出。
+    /// 元素槽用 Pointer 承载，打印端按 tag=-1 运行时检测。
+    fn generate_destructured_lets(
+        &mut self,
+        binding: &LetBinding,
+        init_val: Operand,
+        func_idx: usize,
+    ) -> Result<(), XuloError> {
+        if let Some(names) = &binding.tuple_names {
+            for (i, name) in names.iter().enumerate() {
+                let elem = self.module.functions[func_idx].add_local(IrType::Pointer);
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::GetIndex {
+                        dst: elem,
+                        array: init_val.clone(),
+                        index: Operand::Const(IrValue::I64(i as i64)),
+                    });
+                self.locals.insert(name.clone(), elem);
+            }
+            return Ok(());
+        }
+        if let Some(fields) = &binding.object_destructuring {
+            for (field, alias) in fields {
+                let name = alias.clone().unwrap_or_else(|| field.clone());
+                let elem = self.module.functions[func_idx].add_local(IrType::Pointer);
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::GetField {
+                        dst: elem,
+                        object: init_val.clone(),
+                        field: field.clone(),
+                    });
+                self.locals.insert(name, elem);
+            }
+            return Ok(());
+        }
         Ok(())
     }
 
@@ -2651,7 +2717,18 @@ impl IrGenerator {
                     IrType::I64
                 }
             }
-            BinaryOperator::Mod | BinaryOperator::Pow => IrType::I64,
+            BinaryOperator::Mod => IrType::I64,
+            // ** 与解释器 powf 语义一致：任一侧是小数则结果按 F64 槽承载
+            BinaryOperator::Pow => {
+                if dyn_math
+                    || self.has_float_operand(&binop.left)
+                    || self.has_float_operand(&binop.right)
+                {
+                    IrType::F64
+                } else {
+                    IrType::I64
+                }
+            }
             _ => IrType::Bool,
         };
 
@@ -2836,6 +2913,55 @@ impl IrGenerator {
         Ok(Operand::Local(local))
     }
 
+    /// 按形参表排列实参：全命名调用重排到声明序并为缺省的形参填默认
+    /// 表达式；位置调用在尾部缺省处补齐。默认表达式在调用点求值（字面量
+    /// 默认值的主用法），引用前置形参的默认值暂不支持。
+    fn arrange_call_args(
+        &mut self,
+        call: &Call,
+        params: &[(String, Option<Expression>)],
+    ) -> Result<Vec<Operand>, XuloError> {
+        let all_named =
+            !call.arguments.is_empty() && call.arguments.iter().all(|a| a.name.is_some());
+        let mut args = Vec::new();
+        if all_named {
+            for (pname, default) in params {
+                if let Some(arg) = call
+                    .arguments
+                    .iter()
+                    .find(|a| a.name.as_deref() == Some(pname.as_str()))
+                {
+                    args.push(self.generate_expression(&arg.value)?);
+                } else if let Some(d) = default {
+                    args.push(self.generate_expression(d)?);
+                } else {
+                    return Err(XuloError::new(
+                        ErrorKind::Semantic,
+                        format!("function `{}` is missing required argument `{pname}`", call.callee),
+                    ));
+                }
+            }
+        } else {
+            for arg in &call.arguments {
+                args.push(self.generate_expression(&arg.value)?);
+            }
+            for (pname, default) in &params[call.arguments.len().min(params.len())..] {
+                if let Some(d) = default {
+                    args.push(self.generate_expression(d)?);
+                } else {
+                    return Err(XuloError::new(
+                        ErrorKind::Semantic,
+                        format!(
+                            "function `{}` is missing required argument `{pname}`",
+                            call.callee
+                        ),
+                    ));
+                }
+            }
+        }
+        Ok(args)
+    }
+
     fn generate_call(&mut self, call: &Call) -> Result<Operand, XuloError> {
         let func_idx = self.current_func.unwrap();
 
@@ -2872,8 +2998,18 @@ impl IrGenerator {
             args.push(receiver);
         }
 
-        for arg in &call.arguments {
-            args.push(self.generate_expression(&arg.value)?);
+        // 用户函数调用：命名参数按形参序重排，缺省参数在调用点补齐
+        if call.object.is_none()
+            && let Some(params) = self
+                .func_params
+                .get(&self.resolve_callee_name(&call.callee))
+                .cloned()
+        {
+            args.extend(self.arrange_call_args(call, &params)?);
+        } else {
+            for arg in &call.arguments {
+                args.push(self.generate_expression(&arg.value)?);
+            }
         }
 
         // Trait 派发：语义层把 `Trait::method(recv)` 与 `str(v)` 标注成
@@ -3237,6 +3373,13 @@ impl IrGenerator {
             .insert(ir_name.clone(), f.return_type.clone());
         self.func_return_types
             .insert(name.clone(), f.return_type.clone());
+        self.func_params.insert(
+            name.clone(),
+            f.params
+                .iter()
+                .map(|p| (p.name.clone(), p.default.clone()))
+                .collect(),
+        );
         let mut func = IrFunction::new(ir_name, params, return_type);
         func.closure_entry = true;
         let func_id = self.module.add_function(func);
@@ -4189,8 +4332,10 @@ impl IrGenerator {
                     } else {
                         self.locals.insert(name.clone(), scrut_local);
                     }
+                    // 标签取 scrutinee 的伴随标签（字面量/标识符静态推断，或
+                    // 标识符绑定时的运行时槽），而非硬编码 enum 标签
                     self.dyn_tag_of
-                        .insert(name.clone(), Operand::Const(IrValue::I64(7)));
+                        .insert(name.clone(), scrut_tag_op.clone());
                     self.generate_match_arm_body(arm, result_local)?;
                     self.module.functions[func_idx]
                         .instructions

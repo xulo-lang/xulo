@@ -335,8 +335,29 @@ impl CodeGen {
                         builder.def_var(var, val);
                     }
                 }
-                Instruction::Pow { .. } => {
-                    // Pow not natively supported in Cranelift; handled by runtime interpreter
+                Instruction::Pow { dst, left, right } => {
+                    // Cranelift 无整数幂指令；与解释器一致经 powf 计算，
+                    // 整数槽截断返回，F64 槽按位模式承载
+                    let l = resolve_operand(&mut builder, left, &vars);
+                    let r = resolve_operand(&mut builder, right, &vars);
+                    let (lf, rf) = promote_pair(&mut builder, l, r);
+                    if let Some(&func_id) = self.runtime_func_ids.get("xulo_math_pow") {
+                        let fref = self.backend.declare_func_in_func(func_id, builder.func);
+                        let call = builder.ins().call(fref, &[lf, rf]);
+                        let result_f = builder.inst_results(call)[0];
+                        if let Some(&var) = vars.get(dst) {
+                            let dst_ty = var_types
+                                .get(var.as_u32() as usize)
+                                .copied()
+                                .unwrap_or(I64);
+                            let val = if dst_ty == F64 {
+                                result_f
+                            } else {
+                                builder.ins().fcvt_to_sint(I64, result_f)
+                            };
+                            builder.def_var(var, val);
+                        }
+                    }
                 }
                 Instruction::Neg { dst, operand } => {
                     let o = resolve_operand(&mut builder, operand, &vars);
@@ -510,7 +531,11 @@ impl CodeGen {
                 }
                 Instruction::Not { dst, operand } => {
                     let o = resolve_operand(&mut builder, operand, &vars);
-                    let val = builder.ins().bnot(o);
+                    // 逻辑取反：0 -> 1，非 0 -> 0（bnot 会把 true(1) 变成 -2）
+                    let is_zero = builder.ins().icmp_imm(IntCC::Equal, o, 0);
+                    let one = builder.ins().iconst(I64, 1);
+                    let zero = builder.ins().iconst(I64, 0);
+                    let val = builder.ins().select(is_zero, one, zero);
                     if let Some(&var) = vars.get(dst) {
                         builder.def_var(var, val);
                     }
