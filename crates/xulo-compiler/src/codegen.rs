@@ -346,10 +346,8 @@ impl CodeGen {
                         let call = builder.ins().call(fref, &[lf, rf]);
                         let result_f = builder.inst_results(call)[0];
                         if let Some(&var) = vars.get(dst) {
-                            let dst_ty = var_types
-                                .get(var.as_u32() as usize)
-                                .copied()
-                                .unwrap_or(I64);
+                            let dst_ty =
+                                var_types.get(var.as_u32() as usize).copied().unwrap_or(I64);
                             let val = if dst_ty == F64 {
                                 result_f
                             } else {
