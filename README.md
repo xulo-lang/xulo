@@ -77,6 +77,7 @@ xulo
 | `optional_chaining.xulo` | `T?` 可选类型、`?.`、`??`、三目、`and` / `or` / `!` |
 | `math_time.xulo` | `std::math::`（常量、取整、幂与开方、`toFixed`）与 `std::time::`（时钟）命名空间 |
 | `std.xulo` | `std` 标准库：`std::math::` / `std::time::` / `std::fs::`（`Result` 与 `match` 错误处理） |
+| `ffi.xulo` | `extern "C"` 导入 libc 符号与 `as` 别名、`Ptr` / `Ptr?` 与 `!= null` 收窄、具名参数与省略补 null、`pub extern fn` 导出 |
 | `async_tasks.xulo` | `async` / `await`、`Time::sleep`、`Task::resolve` / `all` / `race` / `timeout` |
 | `test_functions.xulo` | `#Test("标题") fn` 测试函数 + `assert` |
 | `layout.xulo` / `ui.xulo` | `main(): View` 返回值、渲染布局（`xulo run --render terminal`） |
