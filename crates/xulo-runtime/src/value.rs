@@ -7,6 +7,13 @@ use xulo_core::ast::{Block, Param, Type};
 use crate::env::Env;
 use crate::interpreter::{NativeFn, RunError};
 
+/// An opaque foreign address (spec ffi.md): an extern call result or a value
+/// passed through Xulo code that received one. Never null by itself — a zero
+/// address is represented as [`Value::Null`] (only `Ptr?` may be null) — and
+/// it never converts to or from an integer; only `==`/`!=` may inspect it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct PtrValue(pub usize);
+
 /// A run-time value. Lists and objects are shared `Rc<RefCell<>>` handles so
 /// assignment mutates in place and aliasing follows JavaScript reference
 /// semantics (`b = a; b[0] = 9` also changes `a`).
@@ -20,6 +27,8 @@ pub enum Value {
     String(Rc<str>),
     Boolean(bool),
     Null,
+    /// An opaque foreign handle from an FFI call (spec ffi.md).
+    Ptr(PtrValue),
     List(Rc<RefCell<Vec<Value>>>),
     Object(Rc<RefCell<Vec<(String, Value)>>>),
     /// A user function or closure, capturing its defining environment.
@@ -77,6 +86,7 @@ impl Value {
             Value::String(_) => "a `string`".into(),
             Value::Boolean(_) => "a `bool`".into(),
             Value::Null => "`null`".into(),
+            Value::Ptr(_) => "a `Ptr`".into(),
             Value::List(_) => "a `List`".into(),
             Value::Object(_) => "an `object`".into(),
             Value::Function(_) | Value::Native(_) => "a function".into(),
@@ -101,6 +111,7 @@ impl Value {
             Value::String(s) => s.to_string(),
             Value::Boolean(b) => b.to_string(),
             Value::Null => "null".to_string(),
+            Value::Ptr(p) => format!("<ptr {:#x}>", p.0),
             Value::List(list) => {
                 let id = Rc::as_ptr(list) as usize;
                 if !seen.insert(id) {
@@ -158,6 +169,9 @@ pub fn equal(a: &Value, b: &Value) -> bool {
         (Value::String(x), Value::String(y)) => x == y,
         (Value::Boolean(x), Value::Boolean(y)) => x == y,
         (Value::Null, Value::Null) => true,
+        // `Ptr` 只有地址恒等可比（spec ffi.md）；与 null 不等——可空性在
+        // `Ptr?` 上由 Null 变体承载
+        (Value::Ptr(x), Value::Ptr(y)) => x == y,
         (Value::List(x), Value::List(y)) => Rc::ptr_eq(x, y),
         (Value::Object(x), Value::Object(y)) => Rc::ptr_eq(x, y),
         (Value::Promise(x), Value::Promise(y)) => Rc::ptr_eq(x, y),

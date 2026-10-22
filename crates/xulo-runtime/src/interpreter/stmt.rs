@@ -186,6 +186,9 @@ impl Interpreter {
                 // avoid wiping out inherent impl methods added in that pass.
                 Ok(Flow::Continue)
             }
+            // Extern imports are registered with their native call bridge
+            // before any statement runs (spec ffi.md); nothing to exec here.
+            Statement::ExternBlock(_) => Ok(Flow::Continue),
         }
     }
 

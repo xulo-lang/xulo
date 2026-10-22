@@ -14,6 +14,7 @@ fn test_fn_def_basic() {
         span: 0..10,
         attributes: Vec::new(),
         title: None,
+        abi: None,
     };
     assert_eq!(fn_def.name, "main");
     assert!(fn_def.params.is_empty());
@@ -50,6 +51,7 @@ fn test_fn_def_with_params() {
         span: 0..15,
         attributes: Vec::new(),
         title: None,
+        abi: None,
     };
     assert_eq!(fn_def.params.len(), 2);
     assert!(fn_def.return_type.is_some());
@@ -69,6 +71,7 @@ fn test_fn_def_async() {
         span: 0..20,
         attributes: Vec::new(),
         title: None,
+        abi: None,
     };
     assert!(fn_def.is_async);
 }
@@ -96,6 +99,7 @@ fn test_fn_def_generic() {
         span: 0..20,
         attributes: Vec::new(),
         title: None,
+        abi: None,
     };
     assert_eq!(fn_def.type_params, vec!["T".to_string()]);
     assert_eq!(fn_def.bounds.len(), 1);

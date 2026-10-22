@@ -191,7 +191,7 @@
       "name": "invalid.illegal.reserved.xulo"
     },
     "primitive-types": {
-      "match": "\\b(?:bool|string|number|int|float|i8|i16|i32|i64|u8|u16|u32|u64|f32|f64|unit|unknown)\\b",
+      "match": "\\b(?:bool|string|number|int|float|i8|i16|i32|i64|u8|u16|u32|u64|usize|isize|f32|f64|unit|unknown)\\b",
       "name": "storage.type.primitive.xulo"
     },
     "constants": {
@@ -217,7 +217,7 @@
           "name": "keyword.control.async.xulo"
         },
         {
-          "match": "\\b(?:const|enum|fn|impl|let|mod|mut|self|struct|trait|type|where)\\b",
+          "match": "\\b(?:const|enum|extern|fn|impl|let|mod|mut|self|struct|trait|type|where)\\b",
           "name": "keyword.declaration.xulo"
         },
         {

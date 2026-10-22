@@ -120,6 +120,37 @@ pub enum RuntimeFn {
     Intrinsic(&'static str),
 }
 
+/// FFI 边界参数的 C ABI 类（spec ffi.md 的 ABI-safe 表逐项落到 SysV 参数类）。
+/// xulo 内部整数一律 I64 槽，窄类只存在于 extern 边界上：调用点按此类
+/// 截断/扩展，callee 按 C 签名读写。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IrAbiParam {
+    /// C `_Bool`（1 字节，0/1）
+    Bool,
+    S8,
+    S16,
+    S32,
+    S64,
+    U8,
+    U16,
+    U32,
+    U64,
+    F32,
+    F64,
+}
+
+/// 一条 extern 导入声明（`extern "C" { fn … }` 内的函数签名）
+#[derive(Debug, Clone)]
+pub struct IrExternFn {
+    /// 要在进程/链接器里查找的 C 符号名（`as` 别名的目标名）
+    pub symbol: String,
+    pub params: Vec<IrAbiParam>,
+    /// `None` = `unit` 返回
+    pub return_type: Option<IrAbiParam>,
+    /// ABI 标签（`"C"` / `"system"`；当前注册表两者都是 SysV）
+    pub abi: String,
+}
+
 /// IR 指令
 #[derive(Debug, Clone)]
 pub enum Instruction {
@@ -265,6 +296,14 @@ pub enum Instruction {
         args: Vec<Operand>,
     },
 
+    // FFI 导入调用：按 `extern_idx` 索引 `IrModule.externs` 的签名走 C ABI
+    // （JIT 经 dlsym 解析符号，AOT 留成 undefined 由系统链接器解析）
+    ExternCall {
+        dst: Option<LocalId>,
+        extern_idx: usize,
+        args: Vec<Operand>,
+    },
+
     // 闭包
     /// dst = MakeClosure(func, env)：打包函数地址与捕获环境
     MakeClosure {
@@ -352,6 +391,8 @@ pub struct IrModule {
     pub functions: Vec<IrFunction>,
     pub entry_point: FuncId,
     pub strings: Vec<String>,
+    /// FFI 导入声明（extern 块按出现顺序收集；`Instruction::ExternCall` 按下标引用）
+    pub externs: Vec<IrExternFn>,
 }
 
 impl Default for IrModule {
@@ -366,6 +407,7 @@ impl IrModule {
             functions: Vec::new(),
             entry_point: FuncId(0),
             strings: Vec::new(),
+            externs: Vec::new(),
         }
     }
 

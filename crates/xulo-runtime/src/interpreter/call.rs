@@ -124,7 +124,29 @@ impl Interpreter {
         }
         let callee = env.borrow().get(&call.callee);
         match callee {
-            Some(callee) => self.call_value(&callee, &call.arguments, env),
+            Some(callee) => {
+                // An extern import binds exactly like a declared `fn` at the
+                // call site (spec ffi.md Calling): named arguments reorder by
+                // the declaration, and an omitted parameter (only `Ptr?` may
+                // be omitted) binds `null`. Registered under the bare callee
+                // name — the only call position an import has (E0903) — and
+                // only honored when that name still binds the import itself:
+                // a shadowing local (permitted by the checker when the
+                // spelling is re-declared) takes the ordinary path.
+                let extern_names = self
+                    .extern_params
+                    .borrow()
+                    .get(&call.callee)
+                    .filter(|_| matches!(callee, Value::Native(_)))
+                    .cloned();
+                match extern_names {
+                    Some(names) => {
+                        let values = self.bind_extern_args(&names, &call.arguments, env)?;
+                        self.call_value_with_values(&callee, &values)
+                    }
+                    None => self.call_value(&callee, &call.arguments, env),
+                }
+            }
             None => Err(RunError::err(
                 format!("undefined function `{}`", call.callee),
                 call.span.clone(),
@@ -997,6 +1019,39 @@ impl Interpreter {
         let mut out = Vec::with_capacity(params.len());
         for i in 0..params.len() {
             out.push(values.get(i).cloned());
+        }
+        Ok(out)
+    }
+
+    /// Arguments for an extern import, mirroring [`Self::bind_args`] plus the
+    /// extern-specific default: an omitted parameter (only `Ptr?` may be
+    /// omitted, spec ffi.md Calling) binds `null` — extern declarations carry
+    /// no default expression. A bare import takes no receiver, so this runs
+    /// only on the direct-call path (E0903).
+    fn bind_extern_args(
+        &self,
+        declared: &[String],
+        args: &[CallArg],
+        env: &Rc<RefCell<Env>>,
+    ) -> Result<Vec<Value>, RunError> {
+        let all_named = !args.is_empty() && args.iter().all(|a| a.name.is_some());
+        if all_named {
+            let mut by_name: std::collections::HashMap<&str, Value> =
+                std::collections::HashMap::new();
+            for arg in args {
+                let name = arg.name.as_deref().expect("named argument");
+                by_name.insert(name, self.eval(&arg.value, env)?);
+            }
+            let mut out = Vec::with_capacity(declared.len());
+            for name in declared {
+                out.push(by_name.remove(name.as_str()).unwrap_or(Value::Null));
+            }
+            return Ok(out);
+        }
+        let values = self.eval_args(args, env)?;
+        let mut out = Vec::with_capacity(declared.len());
+        for i in 0..declared.len() {
+            out.push(values.get(i).cloned().unwrap_or(Value::Null));
         }
         Ok(out)
     }

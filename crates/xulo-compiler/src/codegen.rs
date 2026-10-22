@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use cranelift::codegen::ir::condcodes::FloatCC;
 use cranelift::codegen::ir::condcodes::*;
 use cranelift::codegen::ir::entities::Block;
-use cranelift::codegen::ir::types::{F64, I64, Type};
+use cranelift::codegen::ir::types::{F32, F64, I8, I16, I32, I64, Type};
 use cranelift::codegen::ir::{InstBuilder, Signature, Value};
 use cranelift::codegen::isa::CallConv;
 use cranelift::codegen::verify_function;
@@ -35,6 +35,9 @@ pub struct CodeGen {
     runtime_func_ids: HashMap<String, FuncId>,
     /// 运行时函数签名（参数/返回的 Cranelift 类型），RuntimeCall 处做实参对齐
     runtime_sigs: HashMap<String, (Vec<Type>, Vec<Type>)>,
+    /// FFI 导入：与 `IrModule.externs` 下标对齐的 (符号函数 id, 参数边界类,
+    /// 返回类)。声明时按边界类造 SystemV 签名，调用点据此截断/扩展。
+    extern_calls: Vec<(FuncId, Vec<IrAbiParam>, Option<IrAbiParam>)>,
     /// IR 字符串表（对应 ir_module.strings）；入口处注册给运行时做自动类型检测
     strings: Vec<String>,
 }
@@ -58,6 +61,7 @@ impl CodeGen {
             builder_ctx: FunctionBuilderContext::new(),
             runtime_func_ids: HashMap::new(),
             runtime_sigs: HashMap::new(),
+            extern_calls: Vec::new(),
             strings: Vec::new(),
         })
     }
@@ -109,7 +113,27 @@ impl CodeGen {
         // 2. 声明运行时函数
         self.declare_runtime_functions()?;
 
-        // 3. 编译所有函数体
+        // 3. 声明 FFI 导入（Linkage::Import：JIT finalize 经 dlsym 解析，
+        //    AOT 留成 undefined 交系统链接器）
+        self.extern_calls.clear();
+        for e in &ir_module.externs {
+            let mut sig = Signature::new(CallConv::SystemV);
+            for p in &e.params {
+                sig.params
+                    .push(cranelift::codegen::ir::AbiParam::new(abi_clift_type(*p)));
+            }
+            if let Some(r) = e.return_type {
+                sig.returns
+                    .push(cranelift::codegen::ir::AbiParam::new(abi_clift_type(r)));
+            }
+            let id = self
+                .backend
+                .declare_function(&e.symbol, Linkage::Import, &sig)?;
+            self.extern_calls
+                .push((id, e.params.clone(), e.return_type));
+        }
+
+        // 4. 编译所有函数体
         for (i, func) in ir_module.functions.iter().enumerate() {
             self.compile_function(func, func_ids[i], &func_ids)?;
         }
@@ -872,6 +896,45 @@ impl CodeGen {
                         builder.def_var(var, coerced);
                     }
                 }
+                // FFI 导入调用：实参按 C 边界类对齐（窄整类按位收窄、浮点走
+                // xmm 形参），返回值按符号性扩展回 I64 / 晋升回 F64 槽
+                Instruction::ExternCall {
+                    dst,
+                    extern_idx,
+                    args,
+                } => {
+                    let entry = self.extern_calls.get(*extern_idx).cloned();
+                    let Some((func_id, params, ret)) = entry else {
+                        return Err(XuloError::new(
+                            ErrorKind::Codegen,
+                            format!("extern function #{extern_idx} was not declared"),
+                        ));
+                    };
+                    let arg_vals: Vec<_> = args
+                        .iter()
+                        .enumerate()
+                        .map(|(i, a)| {
+                            let v = resolve_operand(&mut builder, a, &vars);
+                            match params.get(i) {
+                                Some(&p) => coerce_extern_arg(&mut builder, v, p),
+                                None => v,
+                            }
+                        })
+                        .collect();
+                    let fref = self.backend.declare_func_in_func(func_id, builder.func);
+                    let call = builder.ins().call(fref, &arg_vals);
+                    let result = builder.inst_results(call).first().copied();
+                    if let Some(d) = dst
+                        && let Some(&var) = vars.get(d)
+                        && let Some(result) = result
+                    {
+                        let coerced = match ret {
+                            Some(p) => coerce_extern_ret(&mut builder, result, p),
+                            None => result,
+                        };
+                        builder.def_var(var, coerced);
+                    }
+                }
                 Instruction::Nop => {}
             }
         }
@@ -989,6 +1052,96 @@ fn coerce_to(builder: &mut FunctionBuilder, val: Value, declared: Type) -> Value
             .bitcast(I64, cranelift::codegen::ir::MemFlags::new(), val)
     } else {
         val
+    }
+}
+
+/// 边界类 -> Cranelift 类型：C `_Bool` 1 字节，窄整类按宽度，浮点原样。
+/// xulo 内部整数/布尔一律 I64 槽，只有 FFI 边界上出现这些窄类型。
+fn abi_clift_type(p: IrAbiParam) -> Type {
+    match p {
+        IrAbiParam::Bool | IrAbiParam::S8 | IrAbiParam::U8 => I8,
+        IrAbiParam::S16 | IrAbiParam::U16 => I16,
+        IrAbiParam::S32 | IrAbiParam::U32 => I32,
+        IrAbiParam::S64 | IrAbiParam::U64 => I64,
+        IrAbiParam::F32 => F32,
+        IrAbiParam::F64 => F64,
+    }
+}
+
+/// FFI 实参对齐 C 边界类：整数/布尔从 I64 槽按位收窄（值域已由 E0209/
+/// E0201 在语义层保证），number 先按数值转成 I64/F64 再对齐——进 C 浮点
+/// 形参走数值（不是位模式），与 RuntimeCall 的打印槽语义区分开。
+fn coerce_extern_arg(builder: &mut FunctionBuilder, val: Value, p: IrAbiParam) -> Value {
+    let want = abi_clift_type(p);
+    let actual = builder.func.dfg.value_type(val);
+    if actual == want {
+        return val;
+    }
+    match p {
+        IrAbiParam::F32 | IrAbiParam::F64 => {
+            let f64v = if actual == I64 {
+                builder.ins().fcvt_from_sint(F64, val)
+            } else if actual == F32 {
+                builder.ins().fpromote(F64, val)
+            } else {
+                val
+            };
+            if want == F32 {
+                builder.ins().fdemote(F32, f64v)
+            } else {
+                f64v
+            }
+        }
+        _ => {
+            let wide = if actual == F32 || actual == F64 {
+                let f = if actual == F32 {
+                    builder.ins().fpromote(F64, val)
+                } else {
+                    val
+                };
+                builder.ins().fcvt_to_sint(I64, f)
+            } else if actual == I64 {
+                val
+            } else {
+                builder.ins().uextend(I64, val)
+            };
+            if want == I64 {
+                wide
+            } else {
+                builder.ins().ireduce(want, wide)
+            }
+        }
+    }
+}
+
+/// FFI 返回值扩展回 xulo 槽：窄整类按符号性扩到 I64（`_Bool`/无符号零扩展），
+/// f32 晋升回 f64（xulo number 表示），64 位整类/ f64 原样。
+fn coerce_extern_ret(builder: &mut FunctionBuilder, val: Value, r: IrAbiParam) -> Value {
+    let actual = builder.func.dfg.value_type(val);
+    match r {
+        IrAbiParam::S8 | IrAbiParam::S16 | IrAbiParam::S32 => {
+            if actual == I64 {
+                val
+            } else {
+                builder.ins().sextend(I64, val)
+            }
+        }
+        IrAbiParam::Bool | IrAbiParam::U8 | IrAbiParam::U16 | IrAbiParam::U32 => {
+            if actual == I64 {
+                val
+            } else {
+                builder.ins().uextend(I64, val)
+            }
+        }
+        IrAbiParam::S64 | IrAbiParam::U64 => val,
+        IrAbiParam::F32 => {
+            if actual == F64 {
+                val
+            } else {
+                builder.ins().fpromote(F64, val)
+            }
+        }
+        IrAbiParam::F64 => val,
     }
 }
 

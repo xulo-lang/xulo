@@ -22,6 +22,7 @@ mod call;
 mod closure;
 mod decl;
 mod expr;
+mod ffi;
 mod native;
 mod pattern;
 mod stmt;
@@ -132,6 +133,12 @@ pub struct Interpreter {
     /// environment defaults evaluate in — the metadata behind
     /// `User(name: …, age: …)` construction (spec `types/composite-types.md`).
     struct_fields: RefCell<std::collections::HashMap<String, StructCtorDecl>>,
+    /// Declared parameter names per registered extern import (spec ffi.md
+    /// Calling): named arguments reorder by these, and an omitted (only
+    /// `Ptr?` may be) parameter binds `null`, as for any declared `fn`.
+    /// Keyed by the local binding name — the callee's bare name, which is
+    /// the only call position an import has (E0903).
+    extern_params: RefCell<std::collections::HashMap<String, Vec<String>>>,
     /// Instances built by a struct constructor, keyed by their field map's
     /// identity: `u.to_string()` must find *that* struct's methods, not the
     /// first registered struct declaring a method of the same name. The weak
@@ -455,6 +462,7 @@ impl Interpreter {
             struct_names: RefCell::new(Vec::new()),
             enum_names: RefCell::new(Vec::new()),
             struct_fields: RefCell::new(std::collections::HashMap::new()),
+            extern_params: RefCell::new(std::collections::HashMap::new()),
             instance_types: RefCell::new(std::collections::HashMap::new()),
             view: RefCell::new(None),
             entry_env: RefCell::new(None),
@@ -491,6 +499,9 @@ impl Interpreter {
                     xulo_core::ast::ExportItem::Enum(e) => self.register_derived_enum(e),
                     _ => {}
                 },
+                // FFI 导入：声明期注册 Native 桥（dlsym + trampoline），先于
+                // 任何语句执行（spec ffi.md）
+                Statement::ExternBlock(b) => self.register_externs(b, &global)?,
                 _ => {}
             }
         }
@@ -607,6 +618,16 @@ impl Interpreter {
                         && !bindings.iter().any(|(n, _)| n == &m.name)
                     {
                         bindings.push((m.name.clone(), v));
+                    }
+                }
+                // `pub extern` 块导出每条 item 的本地绑定（与语义层的接口面一致）
+                Statement::ExternBlock(b) if b.is_pub => {
+                    for item in &b.items {
+                        if let Some(v) = global.borrow().get(&item.local_name)
+                            && !bindings.iter().any(|(n, _)| n == &item.local_name)
+                        {
+                            bindings.push((item.local_name.clone(), v));
+                        }
                     }
                 }
                 _ => {}
@@ -801,6 +822,9 @@ impl Interpreter {
                 Statement::Struct(s) => self.register_struct(s, &global),
                 Statement::Enum(e) => self.register_derived_enum(e),
                 Statement::Export(export) => self.register_export_fns(&export.item, &global),
+                Statement::ExternBlock(b) => {
+                    self.register_externs(b, &global).map_err(RunError::Err)?
+                }
                 _ => {}
             }
         }

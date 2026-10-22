@@ -94,6 +94,10 @@ fn builtin_type_arity(name: &str) -> Option<usize> {
         "unit" | "unknown" => Some(0),
         // The fixed-bit layer of the two-layer numeric system.
         "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" | "f32" | "f64" => Some(0),
+        // `usize`/`isize` (spec `types/primitive-types.md`) and the opaque
+        // foreign-handle type `Ptr` (spec ffi.md) are non-generic too; they
+        // arrive as `Named` heads because they are not parser keywords.
+        "usize" | "isize" | "Ptr" => Some(0),
         // `View` and `Range` are primitive but UpperCamelCase, and `Error` is
         // a prelude type (spec `types/primitive-types.md`).
         "View" | "Error" | "Range" => Some(0),
@@ -116,6 +120,148 @@ fn pattern_primitive_type(name: &str) -> Option<Type> {
         _ => None,
     }
 }
+
+/// One of the fixed-bit numeric types (spec `types/primitive-types.md`):
+/// an integer width, or one of the two IEEE float widths.
+enum FixedBit {
+    Int { bits: i32, signed: bool },
+    Float32,
+    Float64,
+}
+
+/// The fixed-bit type `name` spells, if any: `i8`…`u64`, `f32`, `f64`, and
+/// the pointer-width pair `usize`/`isize`. The implementation documents
+/// `W = 64` for the pointer width (spec `memory-and-runtime.md`, which
+/// requires the target's `W` to be documented).
+fn fixed_bit(name: &str) -> Option<FixedBit> {
+    match name {
+        "i8" => Some(FixedBit::Int {
+            bits: 8,
+            signed: true,
+        }),
+        "i16" => Some(FixedBit::Int {
+            bits: 16,
+            signed: true,
+        }),
+        "i32" => Some(FixedBit::Int {
+            bits: 32,
+            signed: true,
+        }),
+        "i64" | "isize" => Some(FixedBit::Int {
+            bits: 64,
+            signed: true,
+        }),
+        "u8" => Some(FixedBit::Int {
+            bits: 8,
+            signed: false,
+        }),
+        "u16" => Some(FixedBit::Int {
+            bits: 16,
+            signed: false,
+        }),
+        "u32" => Some(FixedBit::Int {
+            bits: 32,
+            signed: false,
+        }),
+        "u64" | "usize" => Some(FixedBit::Int {
+            bits: 64,
+            signed: false,
+        }),
+        "f32" => Some(FixedBit::Float32),
+        "f64" => Some(FixedBit::Float64),
+        _ => None,
+    }
+}
+
+/// The fixed-bit type `ty` *is* (after alias resolution): the plain name when
+/// `ty` is a fixed-bit `Named` with no arguments, `None` otherwise.
+fn fixed_bit_name(ty: &Type) -> Option<&str> {
+    match ty {
+        Type::Named(name, args) if args.is_empty() && fixed_bit(name).is_some() => Some(name),
+        _ => None,
+    }
+}
+
+/// Whether an integral literal value fits the fixed-bit integer type
+/// `bits`/`signed`. The AST carries every number as `f64`, so a non-integral
+/// value answers `false` (it is a float literal, which never coerces to an
+/// integer type — spec `type-system/coercion.md`) and the upper bound is
+/// checked exclusively so `2^63`/`2^64` (exactly representable) is rejected
+/// while every in-range integral value below it is accepted.
+fn int_fixed_fits(value: f64, bits: i32, signed: bool) -> bool {
+    if !value.is_finite() || value.fract() != 0.0 {
+        return false;
+    }
+    let upper = 2f64.powi(if signed { bits - 1 } else { bits });
+    let lower = if signed { -upper } else { 0.0 };
+    value >= lower && value < upper
+}
+
+/// How a numeric literal relates to a fixed-bit integer target: fits, does
+/// not fit (E0209), or is not an integer literal at all (the caller's E0201).
+enum LiteralFit {
+    Fits,
+    OutOfRange,
+    NotAnInteger,
+}
+
+fn int_literal_fit(value: f64, bits: i32, signed: bool) -> LiteralFit {
+    if !value.is_finite() || value.fract() != 0.0 {
+        LiteralFit::NotAnInteger
+    } else if int_fixed_fits(value, bits, signed) {
+        LiteralFit::Fits
+    } else {
+        LiteralFit::OutOfRange
+    }
+}
+
+/// A literal's text as written, for diagnostics: integers print without a
+/// fractional part (`300`, not `300.0`).
+fn num_literal_text(value: f64) -> String {
+    if value.fract() == 0.0 && value.abs() < 1e15 {
+        format!("{}", value as i64)
+    } else {
+        format!("{value}")
+    }
+}
+
+/// Whether `ty` names the opaque foreign-handle type `Ptr` (spec ffi.md),
+/// unwrapping an optional wrapper (`Ptr?`).
+fn is_ptr_type(ty: &Type) -> bool {
+    match ty {
+        Type::Named(name, _) => name == "Ptr",
+        Type::Optional(inner) => is_ptr_type(inner),
+        _ => false,
+    }
+}
+
+/// The numeric value of a literal as written: a direct `Literal::Number`,
+/// or the unary `-` applied to one (spec `expressions/literals.md` gives
+/// the sign its own precedence, but `abs(-1)` in spec ffi.md must still
+/// coerce — a negated literal is recognized as a signed literal for
+/// coercion). `None` for anything else.
+fn numeric_literal_of(expr: &Expression) -> Option<f64> {
+    match expr {
+        Expression::Literal {
+            value: Literal::Number(v),
+            ..
+        } => Some(*v),
+        Expression::Unary(un) if matches!(un.operator, xulo_core::ast::UnaryOperator::Neg) => {
+            match &un.operand {
+                Expression::Literal {
+                    value: Literal::Number(v),
+                    ..
+                } => Some(-*v),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// The closed ABI registry (spec ffi.md, "ABI tags"): every tag an `extern`
+/// declaration may name. Adding a tag later is a minor change.
+const REGISTERED_ABIS: [&str; 2] = ["C", "system"];
 
 /// The built-in `Result`/`Error` types (spec `error-handling.md`):
 /// `Result<T, E>` is the two-variant result data every fallible path carries,
@@ -704,6 +850,12 @@ pub struct Analyzer {
     exported: Vec<String>,
     /// Exported symbols captured for cross-module type checking.
     exported_symbols: Vec<(String, Symbol)>,
+    /// Local names bound by extern import items, mapped to the item's name
+    /// span: referencing one outside direct-call position is `E0903` (spec
+    /// ffi.md, "Calling"). Keyed by declaration span so a shadowing local
+    /// binding of the same spelling — whose own declaration span differs —
+    /// is unaffected.
+    extern_imports: HashMap<String, Range<usize>>,
     /// Non-fatal diagnostics raised during analysis (e.g. ignored return
     /// values); surfaced by the CLI after a successful compile.
     warnings: Vec<XuloError>,
@@ -1451,6 +1603,7 @@ fn run_analysis(
             .collect(),
         exported: Vec::new(),
         exported_symbols: Vec::new(),
+        extern_imports: HashMap::new(),
         warnings: Vec::new(),
         render_locals: Vec::new(),
         in_effect: false,
@@ -1649,6 +1802,15 @@ fn run_analysis(
             && m.is_pub
         {
             analyzer.own_interface.insert(m.name.clone());
+        }
+        // A `pub` import block exports every one of its items (spec ffi.md),
+        // so each local name is part of the interface from the first pass.
+        if let Statement::ExternBlock(eb) = statement
+            && eb.is_pub
+        {
+            for item in &eb.items {
+                analyzer.own_interface.insert(item.local_name.clone());
+            }
         }
     }
     // The attribute registry runs before the check loop: `#Derive(ToString)`
@@ -1921,6 +2083,8 @@ fn walk_stmt(stmt: &mut Statement, f: &mut dyn FnMut(&mut Expression)) {
             }
         }
         Statement::Environment(_) => {}
+        // An extern block carries types only: no expressions to walk.
+        Statement::ExternBlock(_) => {}
         Statement::Component(c) => {
             for arg in &mut c.args {
                 walk_expr(&mut arg.value, f);
@@ -3071,6 +3235,14 @@ impl Analyzer {
                         None => false,
                     };
                     if !literal_ok {
+                        // An out-of-range numeric literal is E0209, ahead of
+                        // the E0201 the mismatch would otherwise raise.
+                        if let Some(value) = &binding.value
+                            && let Some(e) =
+                                self.fixed_literal_error(value, annotation, value.span().clone())
+                        {
+                            return Err(e);
+                        }
                         ok = false;
                     }
                 }
@@ -3141,6 +3313,11 @@ impl Analyzer {
                     };
                     if !self.assignable(&value_type, target) && !self.literal_matches(value, target)
                     {
+                        if let Some(e) =
+                            self.fixed_literal_error(value, target, value.span().clone())
+                        {
+                            return Err(e);
+                        }
                         return Err(self.err(format!(
                             "return type mismatch: expected `{}`, found `{}`",
                             expected.name(),
@@ -3260,7 +3437,121 @@ impl Analyzer {
                 Ok(())
             }
             Statement::Defer(d) => self.check_defer(d),
+            Statement::ExternBlock(b) => self.check_extern_block(b),
         }
+    }
+
+    /// `[pub] extern "abi" { … }` — ABI registry (E0902), ABI-safe
+    /// signatures (E0901), and one callable binding per item (spec ffi.md).
+    /// Items register in source order like any other module-level
+    /// declaration: a call before the block is an unknown function, exactly
+    /// as for a `fn` declared later. `pub` exports every item.
+    fn check_extern_block(&mut self, b: &xulo_core::ast::ExternBlockDecl) -> SResult<()> {
+        self.check_abi_tag(&b.abi, b.span.clone())?;
+        for item in &b.items {
+            for p in &item.params {
+                if let Some(ty) = &p.type_annotation {
+                    self.check_boundary_type(ty, &b.abi, true, p.span.clone())?;
+                }
+            }
+            if let Some(ret) = &item.return_type {
+                self.check_boundary_type(ret, &b.abi, false, item.span.clone())?;
+            }
+            let ret = item.return_type.clone().unwrap_or(Type::Any);
+            let symbol = Symbol {
+                name: item.local_name.clone(),
+                type_: ret.clone(),
+                kind: SymbolKind::Function(Vec::new(), item.params.clone(), ret, Vec::new()),
+                is_shared: false,
+                is_param: false,
+                is_const: true,
+                is_mutable: false,
+            };
+            if !self
+                .table
+                .declare_with_def(symbol, Some(item.local_name_span.clone()))
+            {
+                return Err(self.err(format!("function `{}` is already defined", item.local_name)));
+            }
+            // Keyed by the local binding, valued by the span `declare_with_def`
+            // recorded — E0903 matches a use against it to tell this import
+            // from a shadowing re-declaration of the same spelling (the two
+            // spans differ when an `as` alias is written).
+            self.extern_imports
+                .insert(item.local_name.clone(), item.local_name_span.clone());
+            if b.is_pub {
+                self.exported.push(item.local_name.clone());
+                if let Some(sym) = self.table.lookup(&item.local_name).cloned() {
+                    self.exported_symbols.push((item.local_name.clone(), sym));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The closed ABI registry (spec ffi.md, "ABI tags"): a tag outside it is
+    /// `E0902`, whose note lists the registered set.
+    fn check_abi_tag(&self, abi: &str, span: Range<usize>) -> SResult<()> {
+        if REGISTERED_ABIS.contains(&abi) {
+            return Ok(());
+        }
+        let registered = REGISTERED_ABIS
+            .iter()
+            .map(|t| format!("`\"{t}\"`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        Err(self
+            .err_code("E0902", format!("ABI `{abi}` is not registered"))
+            .with_note(format!("registered ABIs: {registered}"))
+            .at(span))
+    }
+
+    /// E0901: only the closed ABI-safe table may cross an extern boundary
+    /// (spec ffi.md, "Types at the boundary") — `unit` is return-only and
+    /// `Ptr?` is the one optional spelling. The value is resolved first, so
+    /// an alias naming a table type is accepted while any other type is not.
+    fn check_boundary_type(
+        &self,
+        ty: &Type,
+        abi: &str,
+        is_param: bool,
+        span: Range<usize>,
+    ) -> SResult<()> {
+        let resolved = self.resolve_alias(ty, 0);
+        let ok = match &resolved {
+            Type::Boolean => true,
+            Type::Named(name, _) => {
+                if name == "unit" {
+                    !is_param
+                } else {
+                    fixed_bit(name).is_some() || name == "Ptr"
+                }
+            }
+            // Exactly `Ptr?` may be optional: `i32?`, `string?`, and `Ptr??`
+            // are E0901.
+            Type::Optional(inner) => matches!(
+                inner.as_ref(),
+                Type::Named(name, args) if name == "Ptr" && args.is_empty()
+            ),
+            _ => false,
+        };
+        if !ok {
+            return Err(self
+                .err_code(
+                    "E0901",
+                    format!(
+                        "`{}` is not allowed across an `extern \"{abi}\"` boundary",
+                        resolved.name()
+                    ),
+                )
+                .with_note(
+                    "ABI-safe types: `bool`, `i8`…`u64`, `f32`, `f64`, `usize`, `isize`, `unit`, `Ptr`, `Ptr?`",
+                )
+                .at(span));
+        }
+        // Well-formedness of an admitted head: `Ptr<u8>` / `i32<x>` are
+        // E0230, not E0901 (spec ffi.md).
+        self.check_type(&resolved)
     }
 
     fn check_defer(&mut self, d: &xulo_core::ast::DeferStmt) -> SResult<()> {
@@ -3299,6 +3590,23 @@ impl Analyzer {
             // Annotations and defaults are validated once the parameters are in
             // scope (`declare_params_with_defaults`), so a default can
             // reference an earlier parameter (`fn f(a, b = a)`).
+        }
+        // `pub extern "Abi" fn …` (spec ffi.md): the tag must be registered
+        // (E0902) and the signature obeys the boundary type rules (E0901) —
+        // the same rules an import item follows. The body is an ordinary
+        // Xulo function body, and the function is an ordinary module-level
+        // `fn` for every other purpose (no direct-call restriction: E0903
+        // applies only to imported symbols).
+        if let Some(abi) = &f.abi {
+            self.check_abi_tag(abi, f.name_span.clone())?;
+            for p in &f.params {
+                if let Some(ty) = &p.type_annotation {
+                    self.check_boundary_type(ty, abi, true, p.span.clone())?;
+                }
+            }
+            if let Some(rt) = &f.return_type {
+                self.check_boundary_type(rt, abi, false, f.name_span.clone())?;
+            }
         }
         let return_type = f.return_type.clone().unwrap_or(Type::Any);
         self.check_type(&return_type)?;
@@ -4797,7 +5105,17 @@ impl Analyzer {
     fn check_assign(&mut self, assign: &AssignStmt) -> SResult<()> {
         let target_type = self.assign_target_type(&assign.target)?;
         let value_type = self.check_expression(&assign.value)?;
-        if !self.assignable(&value_type, &target_type) {
+        // A numeric literal reassigns a fixed-bit binding when it fits
+        // (literal coercion, spec `type-system/coercion.md`); an out-of-
+        // range one is E0209 rather than the generic mismatch.
+        if !self.assignable(&value_type, &target_type)
+            && !self.literal_matches(&assign.value, &target_type)
+        {
+            if let Some(e) =
+                self.fixed_literal_error(&assign.value, &target_type, assign.value.span().clone())
+            {
+                return Err(e);
+            }
             return Err(self.err(format!(
                 "cannot assign a value of type `{}` to `{}: {}`",
                 value_type.name(),
@@ -6386,6 +6704,11 @@ impl Analyzer {
                 if !self.assignable(&value_type, target)
                     && !self.literal_matches(&last.expr, target)
                 {
+                    if let Some(e) =
+                        self.fixed_literal_error(&last.expr, target, last.expr.span().clone())
+                    {
+                        return Err(e);
+                    }
                     return Err(self.err(format!(
                         "return type mismatch: expected `{}`, found `{}`",
                         expected.name(),
@@ -6466,6 +6789,22 @@ impl Analyzer {
                     }
                 }
                 let sym = self.lookup_symbol(name)?;
+                // E0903 (spec ffi.md, "Calling"): an imported symbol is
+                // callable in direct call position only — `check_call`
+                // resolves a bare callee itself and never reaches this arm,
+                // so anything else (binding it, passing it, comparing it)
+                // is the error. Matched against the declaration span, so a
+                // shadowing local binding of the same spelling is unaffected.
+                if let Some(def) = self.extern_imports.get(name)
+                    && self.table.lookup_def(name).flatten() == Some(def)
+                {
+                    return Err(self
+                        .err_code(
+                            "E0903",
+                            format!("`{name}` is an extern import and can only be called directly"),
+                        )
+                        .at(expr.span().clone()));
+                }
                 self.record_use(expr.span().clone(), name, &sym);
                 // A function name used as a value has its function type,
                 // not its return type: `let f = double; f(21)`.
@@ -7369,6 +7708,67 @@ impl Analyzer {
         }
     }
 
+    /// The fixed-bit operand rule of spec `types/primitive-types.md`
+    /// ("Arithmetic result types", "Comparison operators"): `T op T` is `T`
+    /// and a literal that coerces to `T` joins it (`u32 + 8` is `u32`);
+    /// mixing a fixed-bit type with any other numeric type is `E0201`.
+    /// `Ok(None)` leaves the caller's ordinary rules in charge: neither
+    /// operand is fixed-bit, either is `any`, or the other operand is not
+    /// numeric (the plain "cannot apply" / "cannot compare" error).
+    fn fixed_bit_op(
+        &self,
+        bin: &xulo_core::ast::BinaryOp,
+        left: &Type,
+        right: &Type,
+        comparison: bool,
+    ) -> SResult<Option<Type>> {
+        let l = self.resolve_alias(left, 0);
+        let r = self.resolve_alias(right, 0);
+        if matches!(l, Type::Any) || matches!(r, Type::Any) {
+            return Ok(None);
+        }
+        let op = bin.operator.symbol();
+        let mixing_err = |this: &Self, a: &Type, b: &Type| {
+            let message = if comparison {
+                format!("cannot compare `{}` with `{}`", a.name(), b.name())
+            } else {
+                format!("cannot apply `{op}` to `{}` and `{}`", a.name(), b.name())
+            };
+            this.err_code("E0201", message).at(bin.span.clone())
+        };
+        match (fixed_bit_name(&l), fixed_bit_name(&r)) {
+            (Some(l_name), Some(r_name)) => {
+                if l_name == r_name {
+                    Ok(Some(if comparison { Type::Boolean } else { l.clone() }))
+                } else {
+                    Err(mixing_err(self, &l, &r))
+                }
+            }
+            (Some(_), None) => {
+                if self.literal_matches(&bin.right, &l) {
+                    Ok(Some(if comparison { Type::Boolean } else { l.clone() }))
+                } else if matches!(r, Type::Number) {
+                    // A `number` operand that is not a literal coercing to
+                    // the fixed type — a variable, or an out-of-range /
+                    // non-integral literal — mixes (E0201).
+                    Err(mixing_err(self, &l, &r))
+                } else {
+                    Ok(None)
+                }
+            }
+            (None, Some(_)) => {
+                if self.literal_matches(&bin.left, &r) {
+                    Ok(Some(if comparison { Type::Boolean } else { r.clone() }))
+                } else if matches!(l, Type::Number) {
+                    Err(mixing_err(self, &l, &r))
+                } else {
+                    Ok(None)
+                }
+            }
+            (None, None) => Ok(None),
+        }
+    }
+
     fn check_binary(&mut self, bin: &xulo_core::ast::BinaryOp) -> SResult<Type> {
         let left = self.check_expression(&bin.left)?;
         let right = self.check_expression(&bin.right)?;
@@ -7376,6 +7776,12 @@ impl Analyzer {
             BinaryOperator::Add => {
                 let l = self.resolve_alias(&left, 0);
                 let r = self.resolve_alias(&right, 0);
+                // Fixed-bit arithmetic outranks the loose `number` rule: a
+                // fixed type never widens to `number` (spec
+                // `types/primitive-types.md`).
+                if let Some(t) = self.fixed_bit_op(bin, &l, &r, false)? {
+                    return Ok(t);
+                }
                 if matches!(l, Type::Number) && matches!(r, Type::Number) {
                     Ok(Type::Number)
                 } else if self.is_stringish(&l) && self.is_stringish(&r) {
@@ -7403,6 +7809,9 @@ impl Analyzer {
             | BinaryOperator::Div
             | BinaryOperator::Mod
             | BinaryOperator::Pow => {
+                if let Some(t) = self.fixed_bit_op(bin, &left, &right, false)? {
+                    return Ok(t);
+                }
                 if self.assignable(&left, &Type::Number) && self.assignable(&right, &Type::Number) {
                     Ok(Type::Number)
                 } else {
@@ -7421,6 +7830,9 @@ impl Analyzer {
             | BinaryOperator::Xor
             | BinaryOperator::Shl
             | BinaryOperator::Shr => {
+                if let Some(t) = self.fixed_bit_op(bin, &left, &right, false)? {
+                    return Ok(t);
+                }
                 if self.assignable(&left, &Type::Number) && self.assignable(&right, &Type::Number) {
                     Ok(Type::Number)
                 } else {
@@ -7435,6 +7847,9 @@ impl Analyzer {
                 }
             }
             BinaryOperator::Eq | BinaryOperator::Neq => {
+                if let Some(t) = self.fixed_bit_op(bin, &left, &right, true)? {
+                    return Ok(t);
+                }
                 let comparable = self.assignable(&left, &right) || self.assignable(&right, &left);
                 if comparable {
                     Ok(Type::Boolean)
@@ -7449,6 +7864,22 @@ impl Analyzer {
                 }
             }
             BinaryOperator::Lt | BinaryOperator::Gt | BinaryOperator::Lte | BinaryOperator::Gte => {
+                if let Some(t) = self.fixed_bit_op(bin, &left, &right, true)? {
+                    return Ok(t);
+                }
+                // The only operators on `Ptr` are `==` and `!=` (spec
+                // ffi.md): ordering never applies to an opaque handle.
+                let l = self.resolve_alias(&left, 0);
+                let r = self.resolve_alias(&right, 0);
+                if is_ptr_type(&l) || is_ptr_type(&r) {
+                    return Err(self
+                        .err(format!(
+                            "cannot order `{}` with `{}`: the only operators on `Ptr` are `==` and `!=`",
+                            l.name(),
+                            r.name()
+                        ))
+                        .at(bin.span.clone()));
+                }
                 let comparable = self.assignable(&left, &right) && self.assignable(&right, &left);
                 if comparable {
                     Ok(Type::Boolean)
@@ -8263,6 +8694,16 @@ impl Analyzer {
                             if !self.assignable(&arg_type, &expected)
                                 && !self.literal_matches(&arg.value, &expected)
                             {
+                                // An out-of-range numeric argument literal is
+                                // E0209 (spec `type-system/coercion.md`),
+                                // ahead of the argument mismatch.
+                                if let Some(e) = self.fixed_literal_error(
+                                    &arg.value,
+                                    &expected,
+                                    arg.value.span().clone(),
+                                ) {
+                                    return Err(e);
+                                }
                                 return Err(if written.is_some() {
                                     self.err_code(
                                         "E0202",
@@ -8404,6 +8845,16 @@ impl Analyzer {
                             if !self.assignable(&arg_type, &expected)
                                 && !self.literal_matches(&arg.value, &expected)
                             {
+                                // An out-of-range numeric argument literal is
+                                // E0209 (spec `type-system/coercion.md`),
+                                // ahead of the argument mismatch.
+                                if let Some(e) = self.fixed_literal_error(
+                                    &arg.value,
+                                    &expected,
+                                    arg.value.span().clone(),
+                                ) {
+                                    return Err(e);
+                                }
                                 return Err(if written.is_some() {
                                     self.err_code(
                                         "E0202",
@@ -8530,7 +8981,14 @@ impl Analyzer {
         }
         for (arg, param) in arguments.iter().zip(params.iter()) {
             let arg_type = self.check_arg_value(&arg.value)?;
-            if !self.assignable(&arg_type, param) {
+            if !self.assignable(&arg_type, param) && !self.literal_matches(&arg.value, param) {
+                // Out-of-range numeric literals are E0209, ahead of the
+                // mismatch (spec `type-system/coercion.md`).
+                if let Some(e) =
+                    self.fixed_literal_error(&arg.value, param, arg.value.span().clone())
+                {
+                    return Err(e);
+                }
                 return Err(self.err(format!(
                     "argument to function value must be `{}`, found `{}`",
                     param.name(),
@@ -9660,6 +10118,24 @@ impl Analyzer {
                 _ => self.literal_matches(value, inner),
             },
             Type::Union(parts) => parts.iter().any(|p| self.literal_matches(value, p)),
+            // A numeric literal within a fixed-bit type's range coerces to it
+            // (spec `type-system/coercion.md`, literal coercion; the f32/f64
+            // rows take any in-range value, the integer rows only an
+            // integral one — a float literal never reaches an integer type).
+            // The AST carries every number as `Literal::Number`, so `3.0`
+            // writes the integer literal `3`, and the sign of `-1` lives in
+            // the unary operator ([`numeric_literal_of`]); an overflowing
+            // f64 literal parses to infinity and is out of range.
+            Type::Named(name, args) if args.is_empty() && fixed_bit(name).is_some() => {
+                match numeric_literal_of(value) {
+                    None => false,
+                    Some(v) => match fixed_bit(name).expect("guarded above") {
+                        FixedBit::Int { bits, signed } => int_fixed_fits(v, bits, signed),
+                        FixedBit::Float32 => v.is_finite() && v.abs() <= f32::MAX as f64,
+                        FixedBit::Float64 => v.is_finite(),
+                    },
+                }
+            }
             Type::Named(_, _) => {
                 let resolved = self.resolve_alias(annotation, 0);
                 if resolved != *annotation {
@@ -9676,6 +10152,59 @@ impl Analyzer {
                 _ => false,
             },
             _ => false,
+        }
+    }
+
+    /// `E0209`: a numeric literal written where a fixed-bit annotation is
+    /// required does not fit that type (spec `type-system/coercion.md`:
+    /// "a literal that does not fit a fixed-bit type it is coerced into").
+    /// Returns `None` when the value is not such a literal or it fits —
+    /// the caller raises its own mismatch error then — and for a
+    /// non-integral literal aimed at an integer type (float-literal-to-
+    /// integer is the caller's `E0201`, not a range failure).
+    fn fixed_literal_error(
+        &self,
+        value: &Expression,
+        annotation: &Type,
+        span: Range<usize>,
+    ) -> Option<XuloError> {
+        let v = numeric_literal_of(value)?;
+        let target = self.resolve_alias(annotation, 0);
+        let Type::Named(name, args) = &target else {
+            return None;
+        };
+        if !args.is_empty() {
+            return None;
+        }
+        let text = num_literal_text(v);
+        match fixed_bit(name)? {
+            FixedBit::Int { bits, signed } => match int_literal_fit(v, bits, signed) {
+                LiteralFit::OutOfRange => Some(
+                    self.err_code("E0209", format!("literal `{text}` does not fit `{name}`"))
+                        .at(span),
+                ),
+                LiteralFit::Fits | LiteralFit::NotAnInteger => None,
+            },
+            FixedBit::Float32 => {
+                if !v.is_finite() || v.abs() > f32::MAX as f64 {
+                    Some(
+                        self.err_code("E0209", format!("literal `{text}` does not fit `f32`"))
+                            .at(span),
+                    )
+                } else {
+                    None
+                }
+            }
+            FixedBit::Float64 => {
+                if !v.is_finite() {
+                    Some(
+                        self.err_code("E0209", format!("literal `{text}` does not fit `f64`"))
+                            .at(span),
+                    )
+                } else {
+                    None
+                }
+            }
         }
     }
 }

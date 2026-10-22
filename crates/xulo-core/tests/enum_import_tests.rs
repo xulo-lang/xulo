@@ -185,6 +185,7 @@ fn test_export_fn() {
             span: 0..20,
             attributes: Vec::new(),
             title: None,
+            abi: None,
         }),
     };
     assert!(matches!(export.item, ExportItem::Fn(_)));
@@ -283,6 +284,7 @@ fn test_impl_decl() {
             span: 0..20,
             attributes: Vec::new(),
             title: None,
+            abi: None,
         }],
         span: 0..25,
         is_inherent: false,

@@ -157,6 +157,15 @@ fn collect_decls(statements: &[Statement], tokens: &mut Vec<SemanticToken>) {
             },
             // No name span on the store pattern; nothing to declare.
             Statement::Store(_) => {}
+            Statement::ExternBlock(block) => {
+                for item in &block.items {
+                    decl(tokens, item.name_span.clone(), TokenType::Function);
+                    // A written `as local` alias is the local binding name.
+                    if item.local_name_span != item.name_span {
+                        decl(tokens, item.local_name_span.clone(), TokenType::Function);
+                    }
+                }
+            }
             Statement::For(for_stmt) => {
                 decl(tokens, for_stmt.iter_var_span.clone(), TokenType::Variable);
                 collect_decls(&for_stmt.body.statements, tokens);

@@ -166,6 +166,34 @@ fn outline_statement(
         Statement::Enum(e) => Some(enum_symbol(e, index, source)),
         Statement::Trait(t) => Some(trait_symbol(t, index, source)),
         Statement::Impl(imp) => Some(impl_symbol(imp, index, source)),
+        // An extern import block: the block itself carries no identifier, so
+        // it outlines as `extern "abi"` with one function child per item.
+        Statement::ExternBlock(b) => {
+            let children = b
+                .items
+                .iter()
+                .map(|item| {
+                    sym(
+                        item.local_name.clone(),
+                        OutlineKind::Function,
+                        &item.name_span,
+                        Some(&item.span),
+                        Vec::new(),
+                        index,
+                        source,
+                    )
+                })
+                .collect();
+            Some(sym(
+                format!("extern \"{}\"", b.abi),
+                OutlineKind::Function,
+                &b.span,
+                Some(&b.span),
+                children,
+                index,
+                source,
+            ))
+        }
         Statement::Return(_)
         | Statement::For(_)
         | Statement::While(_)

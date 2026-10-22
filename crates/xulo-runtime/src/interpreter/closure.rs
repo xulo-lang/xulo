@@ -32,6 +32,9 @@ pub(super) fn stmt_has_closure(stmt: &Statement) -> bool {
         | Statement::Struct(_)
         | Statement::Mod(_)
         | Statement::Use(_)
+        // Import items declare signatures; their bindings hold native
+        // extern closures, never source closures.
+        | Statement::ExternBlock(_)
         | Statement::Environment(_)
         | Statement::Trait(_)
         | Statement::Break

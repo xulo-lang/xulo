@@ -4,10 +4,10 @@ use pest::iterators::Pair;
 
 use xulo_core::ast::{
     AssignStmt, BindingPattern, Block, ComponentStmt, DeferBody, DeferStmt, EffectStmt, EnumDef,
-    EnumPayloadParam, EnumVariant, EnvStmt, ExportItem, ExportStmt, ExprStmt, Expression, FnBound,
-    FnDef, ForStmt, ImplDecl, LetBinding, ModDecl, Param, ParamMode, PathHead, ReturnStmt,
-    StateStmt, Statement, StoreStmt, StructDef, StructField, TraitDecl, TraitMethod, Type,
-    TypeAlias, UiElement, UseDecl, UseEntry, UseTarget, WhileStmt,
+    EnumPayloadParam, EnumVariant, EnvStmt, ExportItem, ExportStmt, ExprStmt, Expression,
+    ExternBlockDecl, ExternItem, FnBound, FnDef, ForStmt, ImplDecl, LetBinding, ModDecl, Param,
+    ParamMode, PathHead, ReturnStmt, StateStmt, Statement, StoreStmt, StructDef, StructField,
+    TraitDecl, TraitMethod, Type, TypeAlias, UiElement, UseDecl, UseEntry, UseTarget, WhileStmt,
 };
 use xulo_core::error::XuloError;
 
@@ -46,6 +46,15 @@ fn declaration(pair: Pair<'_, Rule>) -> R<Statement> {
             let f = test_decl(inner)?;
             Ok(Statement::Test(f))
         }
+        // `ExternFnDecl` MUST carry `pub` (grammar enforces it): it lowers
+        // to the ordinary export-fn path with `FnDef::abi` set (spec ffi.md).
+        Rule::extern_fn_decl => {
+            let f = extern_fn_decl(inner)?;
+            Ok(Statement::Export(ExportStmt {
+                item: ExportItem::Fn(f),
+            }))
+        }
+        Rule::extern_block => extern_block(inner).map(Statement::ExternBlock),
         Rule::struct_decl => {
             let is_pub = has_pub(&inner);
             let s = struct_decl(inner)?;
@@ -227,6 +236,7 @@ fn fn_decl(pair: Pair<'_, Rule>) -> R<FnDef> {
         span,
         attributes,
         title: None,
+        abi: None,
     })
 }
 
@@ -266,7 +276,145 @@ fn test_decl(pair: Pair<'_, Rule>) -> R<FnDef> {
         span,
         attributes: Vec::new(),
         title,
+        abi: None,
     })
+}
+
+/// `ExternFnDecl = "pub" "extern" AbiTag "fn" Identifier "("
+/// [ ExternParamList ] ")" [ ":" Type ] Block` — built as an ordinary
+/// `FnDef` carrying `abi`, ready for the export path (spec ffi.md).
+fn extern_fn_decl(pair: Pair<'_, Rule>) -> R<FnDef> {
+    let span = span_of(&pair);
+    let mut abi = None;
+    let mut name = String::new();
+    let mut name_span = 0..0;
+    let mut params = Vec::new();
+    let mut return_type = None;
+    let mut body = None;
+    for p in pair.into_inner() {
+        match p.as_rule() {
+            Rule::pub_marker | Rule::kw_extern | Rule::kw_fn => {}
+            Rule::abi_tag => abi = Some(abi_value(p)?),
+            Rule::identifier => {
+                name = p.as_str().to_string();
+                name_span = span_of(&p);
+            }
+            Rule::extern_param_list => params = extern_param_list(p)?,
+            Rule::type_expr => return_type = Some(type_expr(p)?),
+            Rule::block => body = Some(block(p)?),
+            _ => unreachable!("extern_fn_decl child {:?}", p.as_rule()),
+        }
+    }
+    Ok(FnDef {
+        name,
+        name_span,
+        params,
+        return_type,
+        type_params: Vec::new(),
+        bounds: Vec::new(),
+        is_async: false,
+        body: body.expect("extern_fn_decl has a body"),
+        span,
+        attributes: Vec::new(),
+        title: None,
+        abi: Some(abi.expect("extern_fn_decl has an AbiTag")),
+    })
+}
+
+/// `[pub] extern AbiTag "{" { ExternItem } "}"` — an FFI import block.
+fn extern_block(pair: Pair<'_, Rule>) -> R<ExternBlockDecl> {
+    let span = span_of(&pair);
+    let is_pub = has_pub(&pair);
+    let mut abi = None;
+    let mut items = Vec::new();
+    for p in pair.into_inner() {
+        match p.as_rule() {
+            Rule::pub_marker | Rule::kw_extern => {}
+            Rule::abi_tag => abi = Some(abi_value(p)?),
+            Rule::extern_item => items.push(extern_item(p)?),
+            _ => unreachable!("extern_block child {:?}", p.as_rule()),
+        }
+    }
+    Ok(ExternBlockDecl {
+        is_pub,
+        abi: abi.expect("extern_block has an AbiTag"),
+        items,
+        span,
+    })
+}
+
+/// The `AbiTag` string literal's decoded value.
+fn abi_value(pair: Pair<'_, Rule>) -> R<String> {
+    let lit = single(pair);
+    check_rule(&lit, Rule::string_literal)?;
+    Ok(decode_string(lit.as_str()))
+}
+
+/// One `fn name(…) [: T] [as local] ;` inside an extern block: a signature
+/// declaration (no body, no mode, no defaults) whose `local` binding
+/// defaults to the declared name.
+fn extern_item(pair: Pair<'_, Rule>) -> R<ExternItem> {
+    let span = span_of(&pair);
+    let mut name = String::new();
+    let mut name_span = 0..0;
+    let mut params = Vec::new();
+    let mut return_type = None;
+    let mut local_pair: Option<Pair<'_, Rule>> = None;
+    for p in pair.into_inner() {
+        match p.as_rule() {
+            Rule::kw_fn | Rule::kw_as => {}
+            Rule::identifier => {
+                if name.is_empty() {
+                    name = p.as_str().to_string();
+                    name_span = span_of(&p);
+                } else {
+                    local_pair = Some(p);
+                }
+            }
+            Rule::extern_param_list => params = extern_param_list(p)?,
+            Rule::type_expr => return_type = Some(type_expr(p)?),
+            _ => unreachable!("extern_item child {:?}", p.as_rule()),
+        }
+    }
+    let (local_name, local_name_span) = match local_pair {
+        Some(lp) => {
+            let s = span_of(&lp);
+            (lp.as_str().to_string(), s)
+        }
+        None => (name.clone(), name_span.clone()),
+    };
+    Ok(ExternItem {
+        local_name,
+        local_name_span,
+        name,
+        name_span,
+        params,
+        return_type,
+        span,
+    })
+}
+
+/// `ExternParamList = ExternParam { "," ExternParam } [ "," ]` — each
+/// `ExternParam = Identifier ":" Type` with no mode and no default.
+fn extern_param_list(pair: Pair<'_, Rule>) -> R<Vec<Param>> {
+    let mut params = Vec::new();
+    for p in pair.into_inner() {
+        check_rule(&p, Rule::extern_param)?;
+        let span = span_of(&p);
+        let mut inner = p.into_inner();
+        let name_pair = inner.next().expect("extern_param has a name");
+        let type_pair = inner.next().expect("extern_param has a type");
+        check_rule(&name_pair, Rule::identifier)?;
+        check_rule(&type_pair, Rule::type_expr)?;
+        params.push(Param {
+            name: name_pair.as_str().to_string(),
+            type_annotation: Some(type_expr(type_pair)?),
+            default: None,
+            mode: None,
+            span,
+        });
+    }
+    Ok(params)
 }
 
 fn parameter_list(pair: Pair<'_, Rule>) -> R<Vec<Param>> {
@@ -1407,6 +1555,7 @@ fn stmt_kind(stmt: &Statement) -> &'static str {
         Statement::Throw(_) => "throw",
         Statement::Mod(_) => "module declaration",
         Statement::Use(_) => "use declaration",
+        Statement::ExternBlock(_) => "extern block",
         Statement::Export(_) => "pub declaration",
         Statement::State(_) => "@State",
         Statement::Store(_) => "@Store",

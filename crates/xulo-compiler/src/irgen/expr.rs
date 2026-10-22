@@ -576,10 +576,25 @@ impl IrGenerator {
         &mut self,
         call: &Call,
         params: &[(String, Option<Expression>)],
+        extern_call: bool,
     ) -> Result<Vec<Operand>, XuloError> {
         let all_named =
             !call.arguments.is_empty() && call.arguments.iter().all(|a| a.name.is_some());
         let mut args = Vec::new();
+        // 省略的 extern 参数（只有 `Ptr?` 可省，语义层放行）绑定 null
+        // （spec ffi.md Calling）；普通 `fn` 缺无默认参数仍是防御性报错。
+        let missing = |pname: &str| -> Result<Operand, XuloError> {
+            if extern_call {
+                return Ok(Operand::Const(IrValue::Null));
+            }
+            Err(XuloError::new(
+                ErrorKind::Semantic,
+                format!(
+                    "function `{}` is missing required argument `{pname}`",
+                    call.callee
+                ),
+            ))
+        };
         if all_named {
             for (pname, default) in params {
                 if let Some(arg) = call
@@ -591,13 +606,7 @@ impl IrGenerator {
                 } else if let Some(d) = default {
                     args.push(self.generate_expression(d)?);
                 } else {
-                    return Err(XuloError::new(
-                        ErrorKind::Semantic,
-                        format!(
-                            "function `{}` is missing required argument `{pname}`",
-                            call.callee
-                        ),
-                    ));
+                    args.push(missing(pname)?);
                 }
             }
         } else {
@@ -608,13 +617,7 @@ impl IrGenerator {
                 if let Some(d) = default {
                     args.push(self.generate_expression(d)?);
                 } else {
-                    return Err(XuloError::new(
-                        ErrorKind::Semantic,
-                        format!(
-                            "function `{}` is missing required argument `{pname}`",
-                            call.callee
-                        ),
-                    ));
+                    args.push(missing(pname)?);
                 }
             }
         }
@@ -657,14 +660,18 @@ impl IrGenerator {
             args.push(receiver);
         }
 
-        // 用户函数调用：命名参数按形参序重排，缺省参数在调用点补齐
+        // 用户函数调用：命名参数按形参序重排，缺省参数在调用点补齐；
+        // extern 导入用同一套排列（省略补 null，spec ffi.md Calling）
         if call.object.is_none()
             && let Some(params) = self
                 .func_params
                 .get(&self.resolve_callee_name(&call.callee))
                 .cloned()
         {
-            args.extend(self.arrange_call_args(call, &params)?);
+            let extern_call = self
+                .extern_map
+                .contains_key(&self.resolve_callee_name(&call.callee));
+            args.extend(self.arrange_call_args(call, &params, extern_call)?);
         } else {
             for arg in &call.arguments {
                 args.push(self.generate_expression(&arg.value)?);
@@ -902,6 +909,46 @@ impl IrGenerator {
                     Operand::Local(local)
                 };
                 return self.generate_call_indirect(callee_op, args);
+            }
+            // FFI 导入（extern 块声明）：经 ExternCall 按 C ABI 走符号解析
+            // （JIT finalize 时 dlsym，AOT 留给系统链接器）。导入不是函数值
+            // （语义 E0903 拦绑定），局部绑定已在上面先遮蔽。
+            if call.object.is_none()
+                && let Some(&ex_idx) = self.extern_map.get(&self.resolve_callee_name(&call.callee))
+            {
+                let (arity, ret) = {
+                    let decl = &self.module.externs[ex_idx];
+                    (decl.params.len(), decl.return_type)
+                };
+                if arity != args.len() {
+                    return Err(XuloError::new(
+                        ErrorKind::Semantic,
+                        format!(
+                            "extern function expects {} arguments, got {}",
+                            arity,
+                            args.len()
+                        ),
+                    ));
+                }
+                let dst = ret.map(|p| {
+                    let ty = if matches!(p, IrAbiParam::F32 | IrAbiParam::F64) {
+                        IrType::F64
+                    } else {
+                        IrType::Pointer
+                    };
+                    self.module.functions[func_idx].add_local(ty)
+                });
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::ExternCall {
+                        dst,
+                        extern_idx: ex_idx,
+                        args,
+                    });
+                // unit 返回给调用点一个虚拟槽（与 RuntimeCall 的 no-return 一致）
+                let result = dst
+                    .unwrap_or_else(|| self.module.functions[func_idx].add_local(IrType::Pointer));
+                return Ok(Operand::Local(result));
             }
             // 用户定义函数 / impl 方法
             let callee_idx = self.resolve_callee(call).ok_or_else(|| {

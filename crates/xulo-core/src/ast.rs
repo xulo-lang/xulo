@@ -39,6 +39,12 @@ pub enum Statement {
     Mod(ModDecl),
     /// `use …;` / `pub use …;` — binds names of a path in this file's scope.
     Use(UseDecl),
+    /// `[pub] extern "abi" { fn name(…) [: T] [as local]; … }` — an FFI
+    /// import block (spec ffi.md). Items declare signatures and bind their
+    /// symbol (or `local` alias) as callables; the block's `pub` exports
+    /// every item. The companion `pub extern "abi" fn` export form lowers
+    /// to `ExportItem::Fn` with `FnDef::abi` set.
+    ExternBlock(ExternBlockDecl),
     /// `defer <block|expression>`: runs its operand when the enclosing block
     /// exits (spec: statements/return-and-block.md).
     Defer(DeferStmt),
@@ -102,6 +108,41 @@ pub struct FnDef {
     /// that is not a test (spec testing.md, "The title"). It is metadata for
     /// a tool's reporting: not a name, never referenceable.
     pub title: Option<String>,
+    /// The FFI ABI tag of a `pub extern "abi" fn` export (spec ffi.md) —
+    /// `Some("C")` only on that form; `None` for every ordinary function.
+    /// The exported symbol is the declared name and the compiler lays the
+    /// function out under the registered ABI's calling convention.
+    pub abi: Option<String>,
+}
+
+/// `[pub] extern "abi" { ExternItem* }` — an FFI import block (spec ffi.md).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExternBlockDecl {
+    /// The block's `pub`: exports every item of the block.
+    pub is_pub: bool,
+    /// The `AbiTag` as written (e.g. `"C"`); registration is a checking
+    /// rule, not a grammatical one (E0902).
+    pub abi: String,
+    pub items: Vec<ExternItem>,
+    pub span: Range<usize>,
+}
+
+/// One `fn name(…) [: T] [as local];` inside an extern block — a signature
+/// declaration with no body (spec ffi.md).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExternItem {
+    /// The declared symbol name (what gets looked up in the process).
+    pub name: String,
+    pub name_span: Range<usize>,
+    /// The local binding name: the `as` alias when written, otherwise the
+    /// declared name.
+    pub local_name: String,
+    /// Source span of the local binding (the alias when written, otherwise
+    /// the declared name's span).
+    pub local_name_span: Range<usize>,
+    pub params: Vec<Param>,
+    pub return_type: Option<Type>,
+    pub span: Range<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

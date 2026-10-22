@@ -26,6 +26,79 @@ impl IrGenerator {
         self.register_named_function(&name, f)
     }
 
+    /// extern 块收集：每条 item 落成 [`IrExternFn`]（C 符号 + SysV 边界类），
+    /// 本地名（`as` 别名或声明名）登记进 `extern_map`；形参表一并注册，
+    /// 命名实参可按形参序重排（extern 参数没有缺省值）。
+    pub(super) fn collect_externs(&mut self, b: &ExternBlockDecl) {
+        for item in &b.items {
+            let params = item
+                .params
+                .iter()
+                .map(|p| Self::abi_param_of(p.type_annotation.as_ref()))
+                .collect();
+            let idx = self.module.externs.len();
+            self.module.externs.push(IrExternFn {
+                symbol: item.name.clone(),
+                params,
+                return_type: Self::abi_return_of(item.return_type.as_ref()),
+                abi: b.abi.clone(),
+            });
+            let key = self.resolve_value(&item.local_name);
+            // 返回类型注解同样登记：print 的 tag 推断与泛型推断按声明类型走
+            self.func_return_types
+                .insert(key.clone(), item.return_type.clone());
+            self.func_params.insert(
+                key.clone(),
+                item.params
+                    .iter()
+                    .map(|p| (p.name.clone(), p.default.clone()))
+                    .collect(),
+            );
+            self.extern_map.insert(key, idx);
+        }
+    }
+
+    /// 边界类型 -> C ABI 类（spec ffi.md 的 ABI-safe 表）。语义层 E0901 只放行
+    /// 这些拼写：整宽按符号性逐级映射（xulo 内部整数槽是 I64，窄类只在边界
+    /// 上按位截断/扩展）；`usize`/`isize` 是字长整类；`Ptr`/`Ptr?` 与 `_Bool`
+    /// 之外的 `bool` 都是 64 位/1 字节整类；未知或缺省注解按 U64 兜底。
+    fn abi_param_of(ty: Option<&Type>) -> IrAbiParam {
+        let Some(t) = ty else {
+            return IrAbiParam::U64;
+        };
+        match t {
+            Type::Boolean => IrAbiParam::Bool,
+            // E0901 只放行 `Ptr?`；可空整数/布尔不进边界
+            Type::Optional(inner) => Self::abi_param_of(Some(inner)),
+            Type::Named(n, _) => match n.as_str() {
+                "i8" => IrAbiParam::S8,
+                "i16" => IrAbiParam::S16,
+                "i32" => IrAbiParam::S32,
+                "i64" => IrAbiParam::S64,
+                "u8" => IrAbiParam::U8,
+                "u16" => IrAbiParam::U16,
+                "u32" => IrAbiParam::U32,
+                "u64" => IrAbiParam::U64,
+                "usize" => IrAbiParam::U64,
+                "isize" => IrAbiParam::S64,
+                "f32" => IrAbiParam::F32,
+                "f64" => IrAbiParam::F64,
+                "Ptr" => IrAbiParam::U64,
+                _ => IrAbiParam::U64,
+            },
+            _ => IrAbiParam::U64,
+        }
+    }
+
+    /// 返回注解 -> C 返回类：无注解或 `unit` 是 void，其余按边界类映射。
+    fn abi_return_of(ty: Option<&Type>) -> Option<IrAbiParam> {
+        match ty {
+            None => None,
+            Some(Type::Named(n, _)) if n == "unit" => None,
+            Some(t) => Some(Self::abi_param_of(Some(t))),
+        }
+    }
+
     /// 以指定的 IR 名注册函数（impl 方法用 `Type::method` 作名）
     pub(super) fn register_named_function(
         &mut self,

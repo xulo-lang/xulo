@@ -73,6 +73,9 @@ pub struct IrGenerator {
     consts: HashMap<String, ConstDef>,
     /// const 内联的递归栈（自引用检测）
     const_stack: Vec<String>,
+    /// FFI 导入：解析后的本地名 -> `IrModule.externs` 下标（extern 块按
+    /// 模块解析前缀后登记；调用点在局部绑定之后、用户函数之前查这张表）
+    extern_map: HashMap<String, usize>,
 }
 
 struct LoopContext {
@@ -235,6 +238,7 @@ impl IrGenerator {
             current_module: String::new(),
             consts: HashMap::new(),
             const_stack: Vec::new(),
+            extern_map: HashMap::new(),
         }
     }
 
@@ -291,6 +295,8 @@ impl IrGenerator {
                             self.register_function(f)?;
                         }
                     }
+                    // FFI 导入先于函数体登记：正文里的直接调用要能解析
+                    Statement::ExternBlock(b) => self.collect_externs(b),
                     _ => {}
                 }
             }
@@ -929,6 +935,18 @@ impl IrGenerator {
                     return tag;
                 }
                 if self.float_bit_returns.contains(&key) {
+                    return 2;
+                }
+                // FFI 导入返回 f32/f64：调用点拿到的是真浮点槽，直接按 tag=2
+                // 打印——否则 bitcast 成 i64 后不在 FLOATS 注册表里，运行时
+                // 检测会把它当整数
+                if call.object.is_none()
+                    && let Some(&ex_idx) = self.extern_map.get(&key)
+                    && matches!(
+                        self.module.externs[ex_idx].return_type,
+                        Some(IrAbiParam::F32 | IrAbiParam::F64)
+                    )
+                {
                     return 2;
                 }
                 // RegExp / 字符串正则方法
