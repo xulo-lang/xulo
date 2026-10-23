@@ -540,7 +540,9 @@ pub(super) fn native_fs_exists(_interp: &Interpreter, args: &[Value]) -> Result<
 /// `std::fs::remove(path)`: delete one file; a non-empty directory fails.
 pub(super) fn native_fs_remove(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     let path = builtin_str_arg(args, 0, "std::fs::remove")?;
-    Ok(std_result(xulo_std::fs::remove(&path).map(|()| Value::Null)))
+    Ok(std_result(
+        xulo_std::fs::remove(&path).map(|()| Value::Null),
+    ))
 }
 
 /// `std::fs::mkdir(path)`: create the directory with its missing parents.
@@ -561,19 +563,25 @@ pub(super) fn native_io_print(_interp: &Interpreter, args: &[Value]) -> Result<V
 /// `std::io::println(text)`: `text` and a newline on stdout.
 pub(super) fn native_io_println(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     let text = builtin_str_arg(args, 0, "std::io::println")?;
-    Ok(std_result(xulo_std::io::println(&text).map(|()| Value::Null)))
+    Ok(std_result(
+        xulo_std::io::println(&text).map(|()| Value::Null),
+    ))
 }
 
 /// `std::io::eprint(text)`: `text` on the process's stderr.
 pub(super) fn native_io_eprint(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     let text = builtin_str_arg(args, 0, "std::io::eprint")?;
-    Ok(std_result(xulo_std::io::eprint(&text).map(|()| Value::Null)))
+    Ok(std_result(
+        xulo_std::io::eprint(&text).map(|()| Value::Null),
+    ))
 }
 
 /// `std::io::eprintln(text)`: `text` and a newline on stderr.
 pub(super) fn native_io_eprintln(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     let text = builtin_str_arg(args, 0, "std::io::eprintln")?;
-    Ok(std_result(xulo_std::io::eprintln(&text).map(|()| Value::Null)))
+    Ok(std_result(
+        xulo_std::io::eprintln(&text).map(|()| Value::Null),
+    ))
 }
 
 /// `std::io::flush()`: push buffered stdout to the operating system (the
@@ -591,12 +599,12 @@ pub(super) fn native_io_read_line(
     args: &[Value],
 ) -> Result<Value, RunError> {
     no_arg_guard(args, "std::io::readLine")?;
-    Ok(std_result(
-        xulo_std::io::read_line().map(|line| match line {
+    Ok(std_result(xulo_std::io::read_line().map(
+        |line| match line {
             Some(text) => Value::String(text.into()),
             None => Value::Null,
-        }),
-    ))
+        },
+    )))
 }
 
 /// `std::io::read()`: all of stdin as a string (`""` at end of input); bytes
@@ -606,6 +614,62 @@ pub(super) fn native_io_read(_interp: &Interpreter, args: &[Value]) -> Result<Va
     Ok(std_result(
         xulo_std::io::read().map(|text| Value::String(text.into())),
     ))
+}
+
+/// `std::os::getenv(name)`: the variable's value, or `Result::Ok(null)` when
+/// unset — the optional-string shape a program matches like `readLine`.
+pub(super) fn native_os_getenv(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    let name = builtin_str_arg(args, 0, "std::os::getenv")?;
+    Ok(std_result(xulo_std::os::getenv(&name).map(
+        |opt| match opt {
+            Some(value) => Value::String(value.into()),
+            None => Value::Null,
+        },
+    )))
+}
+
+/// `std::os::setenv(name, value)`: set the variable for this process, or
+/// `Err(...)` for a name the OS would reject (empty, contains `=`).
+pub(super) fn native_os_setenv(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    let name = builtin_str_arg(args, 0, "std::os::setenv")?;
+    let value = builtin_str_arg(args, 1, "std::os::setenv")?;
+    Ok(std_result(
+        xulo_std::os::setenv(&name, &value).map(|()| Value::Null),
+    ))
+}
+
+/// `std::os::cwd()`: the current working directory as a string.
+pub(super) fn native_os_cwd(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    no_arg_guard(args, "std::os::cwd")?;
+    Ok(std_result(
+        xulo_std::os::cwd().map(|path| Value::String(path.into())),
+    ))
+}
+
+/// `std::os::chdir(path)`: change the working directory, or `Err(...)` for a
+/// missing / unreadable path.
+pub(super) fn native_os_chdir(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    let path = builtin_str_arg(args, 0, "std::os::chdir")?;
+    Ok(std_result(xulo_std::os::chdir(&path).map(|()| Value::Null)))
+}
+
+/// `std::os::pid()`: the process id — total, so no `Result` wraps it.
+pub(super) fn native_os_pid(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    no_arg_guard(args, "std::os::pid")?;
+    Ok(Value::Number(xulo_std::os::pid() as f64))
+}
+
+/// `std::os::platform()`: the OS family (`"linux"`, `"macos"`, …) — total.
+pub(super) fn native_os_platform(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    no_arg_guard(args, "std::os::platform")?;
+    Ok(Value::String(xulo_std::os::platform().into()))
+}
+
+/// `std::os::arch()`: the CPU architecture (`"x86_64"`, `"aarch64"`, …) —
+/// total.
+pub(super) fn native_os_arch(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    no_arg_guard(args, "std::os::arch")?;
+    Ok(Value::String(xulo_std::os::arch().into()))
 }
 
 /// `RegExp::compile(pattern, flags)` (spec `regular-expressions.mdx`):

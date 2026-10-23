@@ -396,3 +396,80 @@ fn main() {
     assert!(references_symbol(&bytes, "xulo_io_flush"));
     assert!(references_symbol(&bytes, "xulo_io_read"));
 }
+
+/// `std::os` 的 lowering：可失败成员的 Result 与解释器同构，getenv 的
+/// `string?` 载荷区分 null（未设置）与字符串，pid/platform/arch 是原始返回。
+#[test]
+fn test_std_os_getenv_setenv_and_totals() {
+    let key = format!("XULO_CG_OS_TEST_{}", std::process::id());
+    // SAFETY: single test process, unique plain key, restored below.
+    unsafe { std::env::remove_var(&key) };
+    let out = compile_and_run(&format!(
+        r#"
+fn main() {{
+    match std::os::getenv("{key}") {{
+        Result::Ok(v) => print(v ?? "unset")
+        Result::Err(e) => print(e.message)
+    }}
+    match std::os::setenv("{key}", "from-compiled") {{
+        Result::Ok(_) => print("set")
+        Result::Err(e) => print(e.message)
+    }}
+    match std::os::getenv("{key}") {{
+        Result::Ok(v) => print(v ?? "unset")
+        Result::Err(e) => print(e.message)
+    }}
+    print(std::os::pid() > 0)
+    print(std::os::platform() != "")
+    print(std::os::arch() != "")
+    match std::os::setenv("A=B", "v") {{
+        Result::Ok(_) => print("unexpected")
+        Result::Err(e) => print("rejected")
+    }}
+}}
+"#
+    ));
+    // SAFETY: cleanup of this test's own variable, same thread.
+    unsafe { std::env::remove_var(&key) };
+    assert_eq!(
+        out,
+        vec![
+            "unset".to_string(),
+            "set".to_string(),
+            "from-compiled".to_string(),
+            "true".to_string(),
+            "true".to_string(),
+            "true".to_string(),
+            "rejected".to_string(),
+        ]
+    );
+}
+
+/// AOT 对象文件引用 `std::os` 的全部七个运行时符号（链接期接线回归）。
+#[test]
+fn test_aot_object_references_os_symbols() {
+    let bytes = object_bytes(
+        r#"
+fn main() {
+    std::os::getenv("X")
+    std::os::setenv("X", "y")
+    std::os::cwd()
+    std::os::chdir("/nonexistent-xulo-os")
+    std::os::pid()
+    std::os::platform()
+    std::os::arch()
+}
+"#,
+    );
+    for symbol in [
+        "xulo_os_getenv",
+        "xulo_os_setenv",
+        "xulo_os_cwd",
+        "xulo_os_chdir",
+        "xulo_os_pid",
+        "xulo_os_platform",
+        "xulo_os_arch",
+    ] {
+        assert!(references_symbol(&bytes, symbol), "object missing {symbol}");
+    }
+}

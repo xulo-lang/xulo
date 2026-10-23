@@ -20,8 +20,9 @@ type SResult<T> = Result<T, XuloError>;
 /// control-byte prefix so it can never collide with a real module id (spec
 /// `regular-expressions.mdx`: the module's types are reached directly, with
 /// no loader graph behind the head).
-/// Id of the built-in `std` module root: the five std modules
-/// (`std::math` / `std::time` / `std::fs` / `std::io` / `std::regex`) are not
+/// Id of the built-in `std` module root: the six std modules
+/// (`std::math` / `std::time` / `std::fs` / `std::io` / `std::os` /
+/// `std::regex`) are not
 /// package sources, so they resolve against this synthetic id instead of the
 /// world (spec `builtins/README.md`).
 const BUILTIN_STD: &str = "\u{1}std";
@@ -59,7 +60,7 @@ fn std_path_module<'a>(start: &'a str, segments: &'a [String]) -> Option<&'a str
 fn std_ns_key(enum_name: &str) -> Option<&str> {
     matches!(
         enum_name,
-        "std::math" | "std::time" | "std::fs" | "std::io"
+        "std::math" | "std::time" | "std::fs" | "std::io" | "std::os"
     )
     .then_some(enum_name)
 }
@@ -608,6 +609,18 @@ fn builtin_member(ns: &str, member: &str) -> Option<BuiltinMember> {
             "read" => f(&[], R::ResultStrErr),
             _ => None,
         },
+        // OS surface: the working directory, the environment, and process /
+        // host identity. `getenv` yields `string?` (null when unset), and
+        // `pid`/`platform`/`arch` are total.
+        "std::os" => match member {
+            "getenv" => f(&[T::String], R::ResultOptStrErr),
+            "setenv" => f(&[T::String, T::String], R::ResultUnitErr),
+            "cwd" => f(&[], R::ResultStrErr),
+            "chdir" => f(&[T::String], R::ResultUnitErr),
+            "pid" => f(&[], R::Number),
+            "platform" | "arch" => f(&[], R::String),
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -644,6 +657,9 @@ fn std_face_members(module: &str) -> Option<Vec<(String, FaceKind)>> {
         // glob face: their names belong to the prelude intrinsics, which a
         // glob cannot rebind (`PRELUDE_INTRINSIC_VALUES`).
         "io" => fns(&["eprint", "eprintln", "flush", "readLine", "read"]),
+        "os" => fns(&[
+            "getenv", "setenv", "cwd", "chdir", "pid", "platform", "arch",
+        ]),
         "regex" => ["RegExp", "RegexError", "RegexMatch"]
             .iter()
             .map(|n| (n.to_string(), FaceKind::Type))
@@ -4192,7 +4208,7 @@ impl Analyzer {
                 }
                 // Heads that name a std module in its old top-level home:
                 // name the new path instead of a bare "cannot resolve".
-                if matches!(n.as_str(), "regex" | "math" | "time" | "fs" | "io") {
+                if matches!(n.as_str(), "regex" | "math" | "time" | "fs" | "io" | "os") {
                     return Err(self
                         .err_code(
                             "E0607",
@@ -8120,7 +8136,7 @@ impl Analyzer {
                 .err_code("E0607", format!("cannot resolve `std::{rest}`"))
                 .at(call.span.clone()));
         }
-        if !matches!(module, "math" | "time" | "fs" | "io") {
+        if !matches!(module, "math" | "time" | "fs" | "io" | "os") {
             return Err(self
                 .err_code("E0607", format!("cannot resolve `std::{module}`"))
                 .at(call.span.clone()));
@@ -8280,7 +8296,7 @@ impl Analyzer {
                 if let Some(ns) = std_ns_key(enum_name) {
                     return self.check_builtin_fn_call(ns, variant, call);
                 }
-                if matches!(enum_name, "Math" | "Time" | "Fs" | "Io") {
+                if matches!(enum_name, "Math" | "Time" | "Fs" | "Io" | "Os") {
                     return Err(self
                         .err(format!(
                             "`{enum_name}` lives under `std`: use `std::{0}::{variant}` or import it with `use std::{0}::*`",
@@ -9208,7 +9224,7 @@ impl Analyzer {
                     None => Err(self.err(format!("`{ns}` has no member `{variant}`"))),
                 };
             }
-            if matches!(enum_name.as_str(), "Math" | "Time" | "Fs" | "Io") {
+            if matches!(enum_name.as_str(), "Math" | "Time" | "Fs" | "Io" | "Os") {
                 return Err(self.err(format!(
                     "`{enum_name}` lives under `std`: use `std::{0}::{variant}` or import it with `use std::{0}::*`",
                     enum_name.to_lowercase()

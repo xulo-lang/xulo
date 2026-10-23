@@ -433,7 +433,10 @@ impl Interpreter {
                 "println".to_string(),
                 Value::Native(Rc::new(native_io_println)),
             ),
-            ("eprint".to_string(), Value::Native(Rc::new(native_io_eprint))),
+            (
+                "eprint".to_string(),
+                Value::Native(Rc::new(native_io_eprint)),
+            ),
             (
                 "eprintln".to_string(),
                 Value::Native(Rc::new(native_io_eprintln)),
@@ -446,6 +449,30 @@ impl Interpreter {
             ("read".to_string(), Value::Native(Rc::new(native_io_read))),
         ];
         let io_obj = Value::Object(Rc::new(RefCell::new(io_members)));
+        // The `std::os` namespace of process / host identity, the working
+        // directory, and the environment (implementation-first, like
+        // `std::fs`): reached as `std::os::cwd(…)` / `std::os::getenv(…)`.
+        // Fallible members return the built-in `Result`; `pid`, `platform`,
+        // and `arch` are total.
+        let os_members: Vec<(String, Value)> = vec![
+            (
+                "getenv".to_string(),
+                Value::Native(Rc::new(native_os_getenv)),
+            ),
+            (
+                "setenv".to_string(),
+                Value::Native(Rc::new(native_os_setenv)),
+            ),
+            ("cwd".to_string(), Value::Native(Rc::new(native_os_cwd))),
+            ("chdir".to_string(), Value::Native(Rc::new(native_os_chdir))),
+            ("pid".to_string(), Value::Native(Rc::new(native_os_pid))),
+            (
+                "platform".to_string(),
+                Value::Native(Rc::new(native_os_platform)),
+            ),
+            ("arch".to_string(), Value::Native(Rc::new(native_os_arch))),
+        ];
+        let os_obj = Value::Object(Rc::new(RefCell::new(os_members)));
         // The `std::regex` module behind the language's `RegExp` type (spec
         // `regular-expressions.mdx`): `RegExp::compile(…)` resolves through
         // the imported name, which `setup_module` materializes from this
@@ -467,6 +494,7 @@ impl Interpreter {
             ("time".to_string(), time_obj),
             ("fs".to_string(), fs_obj),
             ("io".to_string(), io_obj),
+            ("os".to_string(), os_obj),
             ("regex".to_string(), regex_obj),
         ];
         global.borrow_mut().define(

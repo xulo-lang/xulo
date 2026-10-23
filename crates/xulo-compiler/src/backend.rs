@@ -556,6 +556,50 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
         params: &[],
         returns: &[I64],
     },
+    // `std::os`：可失败成员返回 Result 枚举指针（getenv 载荷区分 null），
+    // pid 返回数字，platform/arch 返回驻留字符串
+    RuntimeFnDesc {
+        name: "xulo_os_getenv",
+        addr: xulo_runtime::runtime::xulo_os_getenv as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_os_setenv",
+        addr: xulo_runtime::runtime::xulo_os_setenv as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_os_cwd",
+        addr: xulo_runtime::runtime::xulo_os_cwd as *const u8,
+        params: &[],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_os_chdir",
+        addr: xulo_runtime::runtime::xulo_os_chdir as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_os_pid",
+        addr: xulo_runtime::runtime::xulo_os_pid as *const u8,
+        params: &[],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_os_platform",
+        addr: xulo_runtime::runtime::xulo_os_platform as *const u8,
+        params: &[],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_os_arch",
+        addr: xulo_runtime::runtime::xulo_os_arch as *const u8,
+        params: &[],
+        returns: &[I64],
+    },
 ];
 
 /// 已 intern 的字符串常量：JIT 与 AOT 的落地方式不同，但对 lowering 透明

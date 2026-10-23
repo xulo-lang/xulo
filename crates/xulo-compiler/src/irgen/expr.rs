@@ -724,14 +724,15 @@ impl IrGenerator {
             return Ok(args.swap_remove(0));
         }
 
-        // `std::math::` / `std::time::` / `std::fs::` / `std::io::` 命名空间
-        // 内建（语义层已按 builtin_member 校验成员存在；裸名调用已被
-        // apply_std_calls 改写为限定形式）
+        // `std::math::` / `std::time::` / `std::fs::` / `std::io::` /
+        // `std::os::` 命名空间内建（语义层已按 builtin_member 校验成员存在；
+        // 裸名调用已被 apply_std_calls 改写为限定形式）
         if call.object.is_none()
             && (call.callee.starts_with("std::math::")
                 || call.callee.starts_with("std::time::")
                 || call.callee.starts_with("std::fs::")
-                || call.callee.starts_with("std::io::"))
+                || call.callee.starts_with("std::io::")
+                || call.callee.starts_with("std::os::"))
         {
             return self.generate_intrinsic_call(&call.callee, &args);
         }

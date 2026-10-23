@@ -679,6 +679,16 @@ impl IrGenerator {
                     if call.callee.starts_with("std::io::") {
                         return None;
                     }
+                    // `std::os`：可失败成员返回 Result 枚举（同 io，无原始
+                    // 类型）；pid/platform/arch 有原始返回类型，按 lowering
+                    // 表的 tag 映射
+                    if call.callee.starts_with("std::os::") {
+                        return match call.callee.as_str() {
+                            "std::os::pid" => Some(Type::Number),
+                            "std::os::platform" | "std::os::arch" => Some(Type::String),
+                            _ => None,
+                        };
+                    }
                     // Math::/Time:: 内建：按 lowering 表的 tag 映射返回类型
                     if let Some((_, _, tag)) = Self::intrinsic_lowering(&call.callee) {
                         return Some(if tag == 0 { Type::String } else { Type::Number });
@@ -1205,6 +1215,8 @@ impl IrGenerator {
                 std::borrow::Cow::Owned(format!("Fs::{rest}"))
             } else if let Some(rest) = callee.strip_prefix("std::io::") {
                 std::borrow::Cow::Owned(format!("Io::{rest}"))
+            } else if let Some(rest) = callee.strip_prefix("std::os::") {
+                std::borrow::Cow::Owned(format!("Os::{rest}"))
             } else {
                 std::borrow::Cow::Borrowed(callee)
             };
@@ -1250,6 +1262,15 @@ impl IrGenerator {
             "Io::flush" => ("xulo_io_flush", IrType::Pointer, 7),
             "Io::readLine" => ("xulo_io_read_line", IrType::Pointer, 7),
             "Io::read" => ("xulo_io_read", IrType::Pointer, 7),
+            // `std::os`：可失败成员返回内置 Result 枚举（tag=7，getenv 载荷
+            // 区分字符串/null）；pid 是数字，platform/arch 是字符串
+            "Os::getenv" => ("xulo_os_getenv", IrType::Pointer, 7),
+            "Os::setenv" => ("xulo_os_setenv", IrType::Pointer, 7),
+            "Os::cwd" => ("xulo_os_cwd", IrType::Pointer, 7),
+            "Os::chdir" => ("xulo_os_chdir", IrType::Pointer, 7),
+            "Os::pid" => ("xulo_os_pid", IrType::I64, 1),
+            "Os::platform" => ("xulo_os_platform", IrType::Pointer, 0),
+            "Os::arch" => ("xulo_os_arch", IrType::Pointer, 0),
             _ => return None,
         };
         Some(lowering)
