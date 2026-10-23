@@ -20,9 +20,9 @@ type SResult<T> = Result<T, XuloError>;
 /// control-byte prefix so it can never collide with a real module id (spec
 /// `regular-expressions.mdx`: the module's types are reached directly, with
 /// no loader graph behind the head).
-/// Id of the built-in `std` module root: the eight std modules
+/// Id of the built-in `std` module root: the nine std modules
 /// (`std::math` / `std::time` / `std::fs` / `std::io` / `std::os` /
-/// `std::path` / `std::net` / `std::regex`) are not
+/// `std::path` / `std::net` / `std::process` / `std::regex`) are not
 /// package sources, so they resolve against this synthetic id instead of the
 /// world (spec `builtins/README.md`).
 const BUILTIN_STD: &str = "\u{1}std";
@@ -60,7 +60,14 @@ fn std_path_module<'a>(start: &'a str, segments: &'a [String]) -> Option<&'a str
 fn std_ns_key(enum_name: &str) -> Option<&str> {
     matches!(
         enum_name,
-        "std::math" | "std::time" | "std::fs" | "std::io" | "std::os" | "std::path" | "std::net"
+        "std::math"
+            | "std::time"
+            | "std::fs"
+            | "std::io"
+            | "std::os"
+            | "std::path"
+            | "std::net"
+            | "std::process"
     )
     .then_some(enum_name)
 }
@@ -520,6 +527,14 @@ enum BuiltinRet {
     /// a number: the socket handle `std::net`'s openers yield, or the byte
     /// count `sock_write` reports.
     ResultNumErr,
+    /// The never-returning result of `std::process::exit`: typed `null` so it
+    /// composes in statement position; nothing can ever observe a value.
+    Never,
+    /// `List<string>` — `std::process::args()`, the process's argv.
+    ListStr,
+    /// `Result<{stdout: string, stderr: string, code: number}, Error>` — the
+    /// capture record `std::process::run` yields.
+    ResultRunOutErr,
 }
 
 impl BuiltinRet {
@@ -553,6 +568,19 @@ impl BuiltinRet {
             BuiltinRet::ResultNumErr => Type::Named(
                 "Result".to_string(),
                 vec![Type::Number, Type::Named("Error".to_string(), Vec::new())],
+            ),
+            BuiltinRet::Never => Type::Null,
+            BuiltinRet::ListStr => Type::List(Box::new(Type::String)),
+            BuiltinRet::ResultRunOutErr => Type::Named(
+                "Result".to_string(),
+                vec![
+                    Type::ObjectType(vec![
+                        ("stdout".to_string(), Type::String),
+                        ("stderr".to_string(), Type::String),
+                        ("code".to_string(), Type::Number),
+                    ]),
+                    Type::Named("Error".to_string(), Vec::new()),
+                ],
             ),
         }
     }
@@ -649,6 +677,16 @@ fn builtin_member(ns: &str, member: &str) -> Option<BuiltinMember> {
             "sock_local_addr" | "sock_peer_addr" => f(&[T::Number], R::ResultStrErr),
             _ => None,
         },
+        // Process control and child capture: `exit` never returns, `args`
+        // reads argv, `run` declares the optional input as its second
+        // parameter (`check_builtin_fn_call` accepts 1-or-2 arguments for
+        // it; the compiler pads a missing input with null).
+        "std::process" => match member {
+            "exit" => f(&[T::Number], R::Never),
+            "args" => f(&[], R::ListStr),
+            "run" => f(&[T::String, T::String], R::ResultRunOutErr),
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -700,6 +738,7 @@ fn std_face_members(module: &str) -> Option<Vec<(String, FaceKind)>> {
             "sock_local_addr",
             "sock_peer_addr",
         ]),
+        "process" => fns(&["exit", "args", "run"]),
         "regex" => ["RegExp", "RegexError", "RegexMatch"]
             .iter()
             .map(|n| (n.to_string(), FaceKind::Type))
@@ -4250,7 +4289,7 @@ impl Analyzer {
                 // name the new path instead of a bare "cannot resolve".
                 if matches!(
                     n.as_str(),
-                    "regex" | "math" | "time" | "fs" | "io" | "os" | "path" | "net"
+                    "regex" | "math" | "time" | "fs" | "io" | "os" | "path" | "net" | "process"
                 ) {
                     return Err(self
                         .err_code(
@@ -8121,15 +8160,28 @@ impl Analyzer {
                     .at(call.span.clone()));
             }
         };
-        if call.arguments.len() != sig.params.len() {
-            let expected = sig.params.len();
+        // `std::process::run(cmd[, input])` takes an optional second
+        // argument (the piped stdin); every other intrinsic keeps fixed
+        // arity. The compiler pads a missing input with null.
+        let run_optional_input = ns == "std::process" && member == "run";
+        let arity_ok = if run_optional_input {
+            matches!(call.arguments.len(), 1 | 2)
+        } else {
+            call.arguments.len() == sig.params.len()
+        };
+        if !arity_ok {
+            let expected = if run_optional_input {
+                "1 or 2".to_string()
+            } else {
+                sig.params.len().to_string()
+            };
             return Err(self
                 .err_code(
                     "E0207",
                     format!(
                         "expected {} argument{}, found {}",
                         expected,
-                        if expected == 1 { "" } else { "s" },
+                        if expected == "1" { "" } else { "s" },
                         call.arguments.len()
                     ),
                 )
@@ -8181,7 +8233,7 @@ impl Analyzer {
         }
         if !matches!(
             module,
-            "math" | "time" | "fs" | "io" | "os" | "path" | "net"
+            "math" | "time" | "fs" | "io" | "os" | "path" | "net" | "process"
         ) {
             return Err(self
                 .err_code("E0607", format!("cannot resolve `std::{module}`"))
@@ -8344,7 +8396,7 @@ impl Analyzer {
                 }
                 if matches!(
                     enum_name,
-                    "Math" | "Time" | "Fs" | "Io" | "Os" | "Path" | "Net"
+                    "Math" | "Time" | "Fs" | "Io" | "Os" | "Path" | "Net" | "Process"
                 ) {
                     return Err(self
                         .err(format!(
@@ -9280,7 +9332,7 @@ impl Analyzer {
             }
             if matches!(
                 enum_name.as_str(),
-                "Math" | "Time" | "Fs" | "Io" | "Os" | "Path" | "Net"
+                "Math" | "Time" | "Fs" | "Io" | "Os" | "Path" | "Net" | "Process"
             ) {
                 return Err(self.err(format!(
                     "`{enum_name}` lives under `std`: use `std::{0}::{variant}` or import it with `use std::{0}::*`",

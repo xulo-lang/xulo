@@ -757,6 +757,27 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
         params: &[F64],
         returns: &[I64],
     },
+    // `std::process`：exit 假返回 i64（函数永不返回，签名只为闭合）；
+    // args 返回驻留字符串数组指针；run 的 cmd/input 是驻留字符串指针
+    // （可选 input 由 IR 侧补 NULL），返回 Result 枚举指针
+    RuntimeFnDesc {
+        name: "xulo_process_exit",
+        addr: xulo_runtime::runtime::xulo_process_exit as *const u8,
+        params: &[F64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_process_args",
+        addr: xulo_runtime::runtime::xulo_process_args as *const u8,
+        params: &[],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_process_run",
+        addr: xulo_runtime::runtime::xulo_process_run as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
 ];
 
 /// 已 intern 的字符串常量：JIT 与 AOT 的落地方式不同，但对 lowering 透明

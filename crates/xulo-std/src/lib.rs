@@ -1,7 +1,7 @@
 //! The native standard library of the Xulo language.
 //!
 //! This crate owns the run-time semantics of the built-in namespaces — `Math`,
-//! `Time`, `Fs`, `Io`, `Os`, `Path`, and `Net` (spec [`builtins/intrinsic-functions.md`](../../../spec/builtins/intrinsic-functions.md))
+//! `Time`, `Fs`, `Io`, `Os`, `Path`, `Net`, and `Process` (spec [`builtins/intrinsic-functions.md`](../../../spec/builtins/intrinsic-functions.md))
 //! — plus the [`regex`] module behind the language's `RegExp` type, as pure
 //! Rust functions, and the `extern "C"` entry points ([`ffi`]) that compiled
 //! (JIT/AOT) code calls. The interpreter (`xulo-runtime`) and the compiler
@@ -21,6 +21,7 @@ pub mod math;
 pub mod net;
 pub mod os;
 pub mod path;
+pub mod process;
 pub mod regex;
 pub mod time;
 

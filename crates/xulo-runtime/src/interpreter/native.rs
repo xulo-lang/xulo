@@ -841,6 +841,67 @@ pub(super) fn native_net_sock_peer_addr(
     ))
 }
 
+// ──────────────────────────────────────────────────────────────────
+//  std::process — process control and child capture
+// ──────────────────────────────────────────────────────────────────
+
+/// `std::process::exit(code)`: terminate the process with `code`. The
+/// interpreter drains its buffered prelude `print` lines to stdout first —
+/// exactly the lines the CLI would have printed at a normal end — then the
+/// platform exit flushes stdout/stderr and never returns.
+pub(super) fn native_process_exit(interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    let code = builtin_num_arg(args, 0, "std::process::exit")?;
+    let out = std::mem::take(&mut *interp.out.borrow_mut());
+    if !out.is_empty() {
+        println!("{}", out.join("\n"));
+    }
+    xulo_std::process::exit(code as i32);
+}
+
+/// `std::process::args()`: the process's argv as `List<string>` (element 0
+/// is the program path — the CLI binary or test harness that started us).
+pub(super) fn native_process_args(
+    _interp: &Interpreter,
+    args: &[Value],
+) -> Result<Value, RunError> {
+    no_arg_guard(args, "std::process::args")?;
+    let items = xulo_std::process::args()
+        .into_iter()
+        .map(|a| Value::String(a.into()))
+        .collect();
+    Ok(Value::List(Rc::new(RefCell::new(items))))
+}
+
+/// `std::process::run(cmd[, input])`: capture a child's stdout/stderr and
+/// exit code as `Result::Ok({stdout, stderr, code})` — a non-zero child
+/// exit is data; only a spawn failure or oversized capture is `Result::Err`.
+/// The optional second argument is the piped stdin (absent = inherit).
+pub(super) fn native_process_run(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    let cmd = builtin_str_arg(args, 0, "std::process::run")?;
+    let input = match args.get(1) {
+        None | Some(Value::Null) => None,
+        Some(Value::String(s)) => Some(s.to_string()),
+        Some(other) => {
+            return Err(RunError::err(
+                format!(
+                    "`std::process::run` input expects a string, found {}",
+                    other.kind_name()
+                ),
+                0..0,
+            ));
+        }
+    };
+    Ok(std_result(
+        xulo_std::process::run(&cmd, input.as_deref()).map(|r| {
+            Value::Object(Rc::new(RefCell::new(vec![
+                ("stdout".to_string(), Value::String(r.stdout.into())),
+                ("stderr".to_string(), Value::String(r.stderr.into())),
+                ("code".to_string(), Value::Number(r.code as f64)),
+            ])))
+        }),
+    ))
+}
+
 /// `RegExp::compile(pattern, flags)` (spec `regular-expressions.mdx`):
 /// `Result::Ok` of a pattern object carrying its operations, or
 /// `Result::Err` of the `RegexError` message the engine reported — an

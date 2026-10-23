@@ -711,3 +711,109 @@ fn main() {
         out[0]
     );
 }
+
+/// `std::process::run` 编译路径：子进程捕获的 Result 对象载荷（stdout/
+/// stderr/code 字段）经 match 绑定与字段访问打印，与解释器同构。
+#[test]
+fn test_std_process_run_captures_object_payload() {
+    let out = compile_and_run(
+        r#"
+fn main() {
+    match std::process::run("echo hi; echo bad 1>&2; exit 3") {
+        Result::Ok(r) => {
+            print(r.stdout)
+            print(r.stderr)
+            print(r.code)
+        }
+        Result::Err(e) => print(e.message)
+    }
+    match std::process::run("printf '%s' one-arg") {
+        Result::Ok(r) => print(r.stdout)
+        Result::Err(e) => print(e.message)
+    }
+}
+"#,
+    );
+    assert_eq!(
+        out,
+        vec!["hi\n", "bad\n", "3", "one-arg"],
+        "unexpected: {out:?}"
+    );
+}
+
+/// `std::process::args()` 的 List<string> 返回在编译路径可索引、可迭代
+/// （元素 tag=0 驻留字符串）。
+#[test]
+fn test_std_process_args_indexes_and_iterates() {
+    let out = compile_and_run(
+        r#"
+fn main() {
+    let argv = std::process::args()
+    print(argv[0] != "")
+    let mut n = 0
+    for a in argv {
+        n = n + 1
+    }
+    print(n > 0)
+}
+"#,
+    );
+    assert_eq!(out, vec!["true", "true"], "unexpected: {out:?}");
+}
+
+/// AOT 对象文件引用 `std::process` 的全部三个运行时符号（链接期接线回归）。
+#[test]
+fn test_aot_object_references_process_symbols() {
+    let bytes = object_bytes(
+        r#"
+fn main() {
+    std::process::args()
+    std::process::run("true")
+    std::process::run("true", "")
+}
+"#,
+    );
+    for symbol in ["xulo_process_args", "xulo_process_run", "xulo_process_exit"] {
+        assert!(references_symbol(&bytes, symbol), "object missing {symbol}");
+    }
+}
+
+/// JIT 路径的 `std::process::exit`：进程在 `print` 输出落地后带着指定
+/// 退出码死亡——所以本测试重新执行自身（子进程带环境标记进入该分支），
+/// 父进程断言子进程的状态码与 stdout。就地调用会带走测试宿主。
+#[test]
+fn test_jit_exit_terminates_with_the_requested_code() {
+    if std::env::var_os("XULO_CG_EXIT_CHILD").is_some() {
+        compile_and_run(
+            r#"
+fn main() {
+    print("bye from jit")
+    std::process::exit(7)
+}
+"#,
+        );
+        // Unreachable: exit(7) ends the child test process first.
+        panic!("exit returned");
+    }
+    let exe = std::env::current_exe().expect("test binary path");
+    let out = std::process::Command::new(exe)
+        .arg("test_jit_exit_terminates_with_the_requested_code")
+        // The harness otherwise captures `println!` per test and would
+        // only print it when the test finishes — exit kills the child
+        // first, so the line must go straight to fd 1.
+        .arg("--nocapture")
+        .env("XULO_CG_EXIT_CHILD", "1")
+        .output()
+        .expect("spawn child test");
+    assert_eq!(
+        out.status.code(),
+        Some(7),
+        "child stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("bye from jit"),
+        "child stdout missed the print: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+}

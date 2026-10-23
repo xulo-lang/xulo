@@ -542,6 +542,24 @@ impl Interpreter {
             ),
         ];
         let net_obj = Value::Object(Rc::new(RefCell::new(net_members)));
+        // The `std::process` surface: `exit` terminates the process (after
+        // draining the buffered `print` lines), `args` reads argv, and
+        // `run` captures a shell child synchronously.
+        let process_members: Vec<(String, Value)> = vec![
+            (
+                "exit".to_string(),
+                Value::Native(Rc::new(native_process_exit)),
+            ),
+            (
+                "args".to_string(),
+                Value::Native(Rc::new(native_process_args)),
+            ),
+            (
+                "run".to_string(),
+                Value::Native(Rc::new(native_process_run)),
+            ),
+        ];
+        let process_obj = Value::Object(Rc::new(RefCell::new(process_members)));
         // The `std::regex` module behind the language's `RegExp` type (spec
         // `regular-expressions.mdx`): `RegExp::compile(…)` resolves through
         // the imported name, which `setup_module` materializes from this
@@ -566,6 +584,7 @@ impl Interpreter {
             ("os".to_string(), os_obj),
             ("path".to_string(), path_obj),
             ("net".to_string(), net_obj),
+            ("process".to_string(), process_obj),
             ("regex".to_string(), regex_obj),
         ];
         global.borrow_mut().define(

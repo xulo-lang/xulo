@@ -725,9 +725,9 @@ impl IrGenerator {
         }
 
         // `std::math::` / `std::time::` / `std::fs::` / `std::io::` /
-        // `std::os::` / `std::path::` / `std::net::` 命名空间内建（语义层已按
-        // builtin_member 校验成员存在；裸名调用已被 apply_std_calls 改写为
-        // 限定形式）
+        // `std::os::` / `std::path::` / `std::net::` / `std::process::`
+        // 命名空间内建（语义层已按 builtin_member 校验成员存在；裸名调用
+        // 已被 apply_std_calls 改写为限定形式）
         if call.object.is_none()
             && (call.callee.starts_with("std::math::")
                 || call.callee.starts_with("std::time::")
@@ -735,8 +735,15 @@ impl IrGenerator {
                 || call.callee.starts_with("std::io::")
                 || call.callee.starts_with("std::os::")
                 || call.callee.starts_with("std::path::")
-                || call.callee.starts_with("std::net::"))
+                || call.callee.starts_with("std::net::")
+                || call.callee.starts_with("std::process::"))
         {
+            // `std::process::run(cmd[, input])` 的可选第二参缺席时补 NULL
+            // 指针（FFI 判空 → 不接管 stdin）——与 RegExp::compile 补齐
+            // flags 的同一种 IR 侧补齐
+            if call.callee == "std::process::run" && args.len() == 1 {
+                args.push(Operand::Const(IrValue::Null));
+            }
             return self.generate_intrinsic_call(&call.callee, &args);
         }
 

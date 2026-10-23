@@ -696,6 +696,15 @@ impl IrGenerator {
                     if call.callee.starts_with("std::net::") {
                         return None;
                     }
+                    // `std::process`：args 是 List<string>（索引/迭代需要
+                    // 元素类型）；run 是 Result 枚举（tag=7 由载荷区分），
+                    // exit 没有可标的原始类型
+                    if call.callee.starts_with("std::process::") {
+                        return match call.callee.as_str() {
+                            "std::process::args" => Some(Type::List(Box::new(Type::String))),
+                            _ => None,
+                        };
+                    }
                     // Math::/Time:: 内建：按 lowering 表的 tag 映射返回类型
                     if let Some((_, _, tag)) = Self::intrinsic_lowering(&call.callee) {
                         return Some(if tag == 0 { Type::String } else { Type::Number });
@@ -1256,6 +1265,8 @@ impl IrGenerator {
                 std::borrow::Cow::Owned(format!("Path::{rest}"))
             } else if let Some(rest) = callee.strip_prefix("std::net::") {
                 std::borrow::Cow::Owned(format!("Net::{rest}"))
+            } else if let Some(rest) = callee.strip_prefix("std::process::") {
+                std::borrow::Cow::Owned(format!("Process::{rest}"))
             } else {
                 std::borrow::Cow::Borrowed(callee)
             };
@@ -1328,6 +1339,11 @@ impl IrGenerator {
             "Net::sock_close" => ("xulo_net_sock_close", IrType::Pointer, 7),
             "Net::sock_local_addr" => ("xulo_net_sock_local_addr", IrType::Pointer, 7),
             "Net::sock_peer_addr" => ("xulo_net_sock_peer_addr", IrType::Pointer, 7),
+            // `std::process`：run 返回 Result 枚举（tag=7），args 返回数组
+            // （tag=3），exit 永不返回（假 i64 返回，tag=6）
+            "Process::exit" => ("xulo_process_exit", IrType::I64, 6),
+            "Process::args" => ("xulo_process_args", IrType::Pointer, 3),
+            "Process::run" => ("xulo_process_run", IrType::Pointer, 7),
             _ => return None,
         };
         Some(lowering)
