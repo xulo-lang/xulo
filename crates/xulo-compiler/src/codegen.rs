@@ -354,14 +354,28 @@ impl CodeGen {
                 Instruction::Mod { dst, left, right } => {
                     let l = resolve_operand(&mut builder, left, &vars);
                     let r = resolve_operand(&mut builder, right, &vars);
-                    let val = builder.ins().srem(l, r);
+                    // Cranelift 无 frem：按解释器 f64 `%`（fmod）语义
+                    // `a - trunc(a/b)*b` 计算
+                    let val = if builder.func.dfg.value_type(l) == F64
+                        || builder.func.dfg.value_type(r) == F64
+                    {
+                        let (lf, rf) = promote_pair(&mut builder, l, r);
+                        let q = builder.ins().fdiv(lf, rf);
+                        let t = builder.ins().trunc(q);
+                        let p = builder.ins().fmul(t, rf);
+                        builder.ins().fsub(lf, p)
+                    } else {
+                        builder.ins().srem(l, r)
+                    };
                     if let Some(&var) = vars.get(dst) {
+                        let dst_ty = var_types.get(var.as_u32() as usize).copied().unwrap_or(I64);
+                        let val = fit_numeric_slot(&mut builder, val, dst_ty);
                         builder.def_var(var, val);
                     }
                 }
                 Instruction::Pow { dst, left, right } => {
                     // Cranelift 无整数幂指令；与解释器一致经 powf 计算，
-                    // 整数槽截断返回，F64 槽按位模式承载
+                    // 整数槽截断返回，F64 槽直接承载 f64 结果
                     let l = resolve_operand(&mut builder, left, &vars);
                     let r = resolve_operand(&mut builder, right, &vars);
                     let (lf, rf) = promote_pair(&mut builder, l, r);
@@ -395,47 +409,76 @@ impl CodeGen {
                 Instruction::BitAnd { dst, left, right } => {
                     let l = resolve_operand(&mut builder, left, &vars);
                     let r = resolve_operand(&mut builder, right, &vars);
+                    // 解释器把操作数 `as i64` 截断后再运算、结果 `as f64`
+                    let l = trunc_to_i64(&mut builder, l);
+                    let r = trunc_to_i64(&mut builder, r);
                     let val = builder.ins().band(l, r);
                     if let Some(&var) = vars.get(dst) {
+                        let dst_ty = var_types.get(var.as_u32() as usize).copied().unwrap_or(I64);
+                        let val = fit_numeric_slot(&mut builder, val, dst_ty);
                         builder.def_var(var, val);
                     }
                 }
                 Instruction::BitOr { dst, left, right } => {
                     let l = resolve_operand(&mut builder, left, &vars);
                     let r = resolve_operand(&mut builder, right, &vars);
+                    // 解释器把操作数 `as i64` 截断后再运算、结果 `as f64`
+                    let l = trunc_to_i64(&mut builder, l);
+                    let r = trunc_to_i64(&mut builder, r);
                     let val = builder.ins().bor(l, r);
                     if let Some(&var) = vars.get(dst) {
+                        let dst_ty = var_types.get(var.as_u32() as usize).copied().unwrap_or(I64);
+                        let val = fit_numeric_slot(&mut builder, val, dst_ty);
                         builder.def_var(var, val);
                     }
                 }
                 Instruction::Xor { dst, left, right } => {
                     let l = resolve_operand(&mut builder, left, &vars);
                     let r = resolve_operand(&mut builder, right, &vars);
+                    // 解释器把操作数 `as i64` 截断后再运算、结果 `as f64`
+                    let l = trunc_to_i64(&mut builder, l);
+                    let r = trunc_to_i64(&mut builder, r);
                     let val = builder.ins().bxor(l, r);
                     if let Some(&var) = vars.get(dst) {
+                        let dst_ty = var_types.get(var.as_u32() as usize).copied().unwrap_or(I64);
+                        let val = fit_numeric_slot(&mut builder, val, dst_ty);
                         builder.def_var(var, val);
                     }
                 }
                 Instruction::Shl { dst, left, right } => {
                     let l = resolve_operand(&mut builder, left, &vars);
                     let r = resolve_operand(&mut builder, right, &vars);
+                    // 解释器把操作数 `as i64` 截断后再运算、结果 `as f64`
+                    let l = trunc_to_i64(&mut builder, l);
+                    let r = trunc_to_i64(&mut builder, r);
                     let val = builder.ins().ishl(l, r);
                     if let Some(&var) = vars.get(dst) {
+                        let dst_ty = var_types.get(var.as_u32() as usize).copied().unwrap_or(I64);
+                        let val = fit_numeric_slot(&mut builder, val, dst_ty);
                         builder.def_var(var, val);
                     }
                 }
                 Instruction::Shr { dst, left, right } => {
                     let l = resolve_operand(&mut builder, left, &vars);
                     let r = resolve_operand(&mut builder, right, &vars);
+                    // 解释器把操作数 `as i64` 截断后再运算、结果 `as f64`
+                    let l = trunc_to_i64(&mut builder, l);
+                    let r = trunc_to_i64(&mut builder, r);
                     let val = builder.ins().sshr(l, r);
                     if let Some(&var) = vars.get(dst) {
+                        let dst_ty = var_types.get(var.as_u32() as usize).copied().unwrap_or(I64);
+                        let val = fit_numeric_slot(&mut builder, val, dst_ty);
                         builder.def_var(var, val);
                     }
                 }
                 Instruction::BitNot { dst, operand } => {
                     let o = resolve_operand(&mut builder, operand, &vars);
+                    // 解释器语义 `(!(n as i64)) as f64`
+                    let o = trunc_to_i64(&mut builder, o);
                     let val = builder.ins().bnot(o);
                     if let Some(&var) = vars.get(dst) {
+                        let dst_ty = var_types.get(var.as_u32() as usize).copied().unwrap_or(I64);
+                        let val = fit_numeric_slot(&mut builder, val, dst_ty);
                         builder.def_var(var, val);
                     }
                 }
@@ -815,6 +858,7 @@ impl CodeGen {
                 Instruction::GetIndex { dst, array, index } => {
                     let arr_val = resolve_operand(&mut builder, array, &vars);
                     let idx_val = resolve_operand(&mut builder, index, &vars);
+                    let idx_val = trunc_to_i64(&mut builder, idx_val);
                     if let Some(&func_id) = self.runtime_func_ids.get("xulo_array_get") {
                         let fref = self.backend.declare_func_in_func(func_id, builder.func);
                         let call = builder.ins().call(fref, &[arr_val, idx_val]);
@@ -833,6 +877,7 @@ impl CodeGen {
                 } => {
                     let arr_val = resolve_operand(&mut builder, array, &vars);
                     let idx_val = resolve_operand(&mut builder, index, &vars);
+                    let idx_val = trunc_to_i64(&mut builder, idx_val);
                     let raw_val = resolve_operand(&mut builder, value, &vars);
                     let val = coerce_to(&mut builder, raw_val, I64);
                     let tag_val = builder.ins().iconst(I64, *tag);
@@ -1060,6 +1105,28 @@ fn coerce_to(builder: &mut FunctionBuilder, val: Value, declared: Type) -> Value
         builder
             .ins()
             .bitcast(I64, cranelift::codegen::ir::MemFlags::new(), val)
+    } else {
+        val
+    }
+}
+
+/// 位运算/取模的整数域操作数：f64 按解释器 `as i64` 语义饱和截断。
+fn trunc_to_i64(builder: &mut FunctionBuilder, val: Value) -> Value {
+    if builder.func.dfg.value_type(val) == F64 {
+        builder.ins().fcvt_to_sint_sat(I64, val)
+    } else {
+        val
+    }
+}
+
+/// 整数域结果放回结果槽（数值转换，区别于 `coerce_to` 的位模式）：
+/// F64 槽按解释器 `as f64` 转回，I64 槽按 `as i64` 饱和截断。
+fn fit_numeric_slot(builder: &mut FunctionBuilder, val: Value, dst_ty: Type) -> Value {
+    let actual = builder.func.dfg.value_type(val);
+    if dst_ty == F64 && actual != F64 {
+        builder.ins().fcvt_from_sint(F64, val)
+    } else if dst_ty == I64 && actual == F64 {
+        builder.ins().fcvt_to_sint_sat(I64, val)
     } else {
         val
     }

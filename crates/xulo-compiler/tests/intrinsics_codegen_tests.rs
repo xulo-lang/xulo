@@ -87,7 +87,7 @@ fn test_math_time_example_matches_interpreter() {
 
 #[test]
 fn test_math_float_group_rounding_and_abs() {
-    // floor/ceil/round/trunc/abs/min/max：结果按 F64 位模式进 I64 槽、tag=2 打印，
+    // floor/ceil/round/trunc/abs/min/max：结果槽是 F64、tag=2 打印，
     // 整数值的 float 经 format_number 呈现为 "3" 这样的整数形态
     let out = compile_and_run(
         r#"fn main() {
@@ -519,7 +519,7 @@ fn main() {
     assert_eq!(out, vec!["a/b".to_string(), "a".to_string()]);
 }
 
-/// `Math::random`：零参 F64 返回经 I64 位模式槽落地；打印按 tag=2 还原成
+/// `Math::random`：零参 F64 返回落 F64 槽；打印按 tag=2 还原成
 /// [0, 1) 区间的小数（连续两次抽样不同）。
 #[test]
 fn test_math_random_prints_unit_interval_float() {
@@ -847,8 +847,8 @@ fn main() {
         }
         Result::Err(e) => print(e.message)
     }
-    // 浮点内建不入绑定槽（既有 float-slot 注意事项）：直接链式传参，
-    // determine_element_tag 按调用返回 tag=2 给出位模式载荷
+    // 浮点内建链式传参：determine_element_tag 按调用返回 tag=2，
+    // 值在传参边界按位模式进入 json 的 I64 载荷槽
     match std::json::stringify(std::math::sqrt(-1.0)) {
         Result::Ok(s) => print(s)
         Result::Err(e) => print(e.message)
@@ -883,4 +883,100 @@ fn main() {
     for symbol in ["xulo_json_parse", "xulo_json_stringify"] {
         assert!(references_symbol(&bytes, symbol), "object missing {symbol}");
     }
+}
+
+/// f64 内建结果落在 F64 槽：绑定、注解绑定、算术、比较都走浮点域
+#[test]
+fn test_math_float_result_slot_feeds_arithmetic() {
+    let out = compile_and_run(
+        r#"fn main() {
+    let a = std::math::sqrt(9.0)
+    print(a)
+    let qa: number = std::math::pow(2.0, 0.0)
+    print(qa)
+    print(std::math::sqrt(4.0) + 1)
+    print(std::math::sqrt(4.0) == 2)
+    print(std::math::sqrt(4.0) * 2)
+    print(std::math::floor(3.7) + std::math::ceil(3.2))
+    print(-std::math::sqrt(4.0))
+}
+"#,
+    );
+    assert_eq!(out, vec!["3", "1", "3", "true", "4", "7", "-2"]);
+}
+
+/// std::math float 常量参与算术/比较（EnumRef 与裸名都要识别成 F64 操作数）
+#[test]
+fn test_math_const_arithmetic_and_comparison() {
+    let out = compile_and_run(
+        r#"fn main() {
+    print(std::math::PI + 1)
+    print(std::math::PI > 3, std::math::PI == 3.14)
+    print(std::math::E * 2)
+}
+"#,
+    );
+    assert_eq!(
+        out,
+        vec!["4.141592653589793", "true false", "5.43656365691809"]
+    );
+}
+
+/// 浮点操作数的 `%` / 位运算 / `~`：对齐解释器 `as i64` 截断与 f64 rem 语义
+#[test]
+fn test_float_mod_bitwise_and_bitnot() {
+    let out = compile_and_run(
+        r#"fn main() {
+    print(3.7 % 2)
+    print(2.5 & 3)
+    print(~2.5)
+    print(std::math::sqrt(4.0) % 2)
+    print(std::math::sqrt(4.0) & 1)
+    let m = std::math::sqrt(9.0)
+    print(m % 2, m & 1)
+    print(-3.7 % 2, 7.5 % -2)
+}
+"#,
+    );
+    assert_eq!(
+        out,
+        vec![
+            "1.7000000000000002",
+            "2",
+            "-3",
+            "0",
+            "0",
+            "1 1",
+            "-1.7000000000000002 1.5",
+        ]
+    );
+}
+
+/// 浮点索引按整数语义截断（`a[sqrt(4.0)]` == `a[2]`），不再触发调用实参类型错误
+#[test]
+fn test_float_index_truncates_to_integer() {
+    let out = compile_and_run(
+        r#"fn main() {
+    let a = [10, 20, 30]
+    print(a[std::math::sqrt(4.0)])
+    let mut b = [1, 2, 3]
+    b[std::math::sqrt(4.0)] = 99
+    print(b[2])
+}
+"#,
+    );
+    assert_eq!(out, vec!["30", "99"]);
+}
+
+/// 浮点上界的区间：F64 槽直接进 xulo_range_list（此前 I64 位模式会被当数值）
+#[test]
+fn test_float_range_bound() {
+    let out = compile_and_run(
+        r#"fn main() {
+    let e = std::math::sqrt(4.0)
+    print(0..<e)
+}
+"#,
+    );
+    assert_eq!(out, vec!["[0, 1]"]);
 }

@@ -1184,11 +1184,33 @@ impl IrGenerator {
                         .iter()
                         .any(|(id, ty)| id == local_id && matches!(ty, IrType::F64));
                 }
-                false
+                // `use std::math::*` 导入的裸名常量求值成 F64 槽
+                Self::bare_math_const(name).is_some() && !self.locals.contains_key(name)
+            }
+            // `std::math::PI` 等 float 常量求值成 F64 槽
+            Expression::EnumRef(e) => {
+                e.enum_name == "std::math"
+                    && matches!(e.variant.as_str(), "PI" | "E" | "TAU" | "INFINITY" | "NAN")
             }
             Expression::Unary(unop) => self.has_float_operand(&unop.operand),
             Expression::BinaryOp(binop) => {
                 self.has_float_operand(&binop.left) || self.has_float_operand(&binop.right)
+            }
+            // 只有结果槽真是 F64 的调用才算：内建 float 组（表里 ty=F64）与
+            // extern 返回 f32/f64。float_bit_returns（f64 位模式）与返回
+            // number 的用户函数仍在 I64 槽，算术必须留在整数域。
+            Expression::Call(call) if call.object.is_none() => {
+                let key = self.resolve_callee_name(&call.callee);
+                if let Some((_, ty, _)) = Self::intrinsic_lowering(&key) {
+                    return matches!(ty, IrType::F64);
+                }
+                if let Some(&ex_idx) = self.extern_map.get(&key) {
+                    return matches!(
+                        self.module.externs[ex_idx].return_type,
+                        Some(IrAbiParam::F32 | IrAbiParam::F64)
+                    );
+                }
+                false
             }
             _ => false,
         }
@@ -1237,10 +1259,6 @@ impl IrGenerator {
         }
     }
 
-    /// Math/Time 命名空间内建的 lowering 表（对齐语义 `builtin_member`，spec
-    /// `builtins/intrinsic-functions.md`）：返回 (运行时符号, 结果槽类型, 打印 tag)。
-    /// float 组返回 f64，但 xulo 的 number 在 IR 层是整数域——按 F64 位模式放进
-    /// I64 槽（打印端 tag=2 还原小数）；toFixed 返回字符串；Time 读数返回整数。
     /// `use std::math::*` 导入的裸名常量在 locals 缺席时的 F64 值。
     fn bare_math_const(name: &str) -> Option<f64> {
         match name {
@@ -1253,6 +1271,10 @@ impl IrGenerator {
         }
     }
 
+    /// Math/Time 命名空间内建的 lowering 表（对齐语义 `builtin_member`，spec
+    /// `builtins/intrinsic-functions.md`）：返回 (运行时符号, 结果槽类型, 打印 tag)。
+    /// float 组的结果槽就是 F64——运行时符号按 f64 返回，槽类型与之对齐，绑定/
+    /// 算术/比较才会走浮点域（打印端 tag=2）；toFixed 返回字符串；Time 读数返回整数。
     fn intrinsic_lowering(callee: &str) -> Option<(&'static str, IrType, i64)> {
         // `std::math::abs` / `std::fs::read` / `std::io::println` 归一到表键
         // `Math::abs` / `Fs::read` / `Io::println` 等
@@ -1279,28 +1301,28 @@ impl IrGenerator {
                 std::borrow::Cow::Borrowed(callee)
             };
         let lowering = match normalized.as_ref() {
-            "Math::abs" => ("xulo_math_abs", IrType::I64, 2),
-            "Math::min" => ("xulo_math_min", IrType::I64, 2),
-            "Math::max" => ("xulo_math_max", IrType::I64, 2),
-            "Math::floor" => ("xulo_math_floor", IrType::I64, 2),
-            "Math::ceil" => ("xulo_math_ceil", IrType::I64, 2),
-            "Math::round" => ("xulo_math_round", IrType::I64, 2),
-            "Math::trunc" => ("xulo_math_trunc", IrType::I64, 2),
-            "Math::sqrt" => ("xulo_math_sqrt", IrType::I64, 2),
-            "Math::cbrt" => ("xulo_math_cbrt", IrType::I64, 2),
-            "Math::pow" => ("xulo_math_pow", IrType::I64, 2),
-            "Math::sin" => ("xulo_math_sin", IrType::I64, 2),
-            "Math::cos" => ("xulo_math_cos", IrType::I64, 2),
-            "Math::tan" => ("xulo_math_tan", IrType::I64, 2),
-            "Math::asin" => ("xulo_math_asin", IrType::I64, 2),
-            "Math::acos" => ("xulo_math_acos", IrType::I64, 2),
-            "Math::atan" => ("xulo_math_atan", IrType::I64, 2),
-            "Math::atan2" => ("xulo_math_atan2", IrType::I64, 2),
-            "Math::log" => ("xulo_math_log", IrType::I64, 2),
-            "Math::log2" => ("xulo_math_log2", IrType::I64, 2),
-            "Math::log10" => ("xulo_math_log10", IrType::I64, 2),
-            "Math::exp" => ("xulo_math_exp", IrType::I64, 2),
-            "Math::random" => ("xulo_math_random", IrType::I64, 2),
+            "Math::abs" => ("xulo_math_abs", IrType::F64, 2),
+            "Math::min" => ("xulo_math_min", IrType::F64, 2),
+            "Math::max" => ("xulo_math_max", IrType::F64, 2),
+            "Math::floor" => ("xulo_math_floor", IrType::F64, 2),
+            "Math::ceil" => ("xulo_math_ceil", IrType::F64, 2),
+            "Math::round" => ("xulo_math_round", IrType::F64, 2),
+            "Math::trunc" => ("xulo_math_trunc", IrType::F64, 2),
+            "Math::sqrt" => ("xulo_math_sqrt", IrType::F64, 2),
+            "Math::cbrt" => ("xulo_math_cbrt", IrType::F64, 2),
+            "Math::pow" => ("xulo_math_pow", IrType::F64, 2),
+            "Math::sin" => ("xulo_math_sin", IrType::F64, 2),
+            "Math::cos" => ("xulo_math_cos", IrType::F64, 2),
+            "Math::tan" => ("xulo_math_tan", IrType::F64, 2),
+            "Math::asin" => ("xulo_math_asin", IrType::F64, 2),
+            "Math::acos" => ("xulo_math_acos", IrType::F64, 2),
+            "Math::atan" => ("xulo_math_atan", IrType::F64, 2),
+            "Math::atan2" => ("xulo_math_atan2", IrType::F64, 2),
+            "Math::log" => ("xulo_math_log", IrType::F64, 2),
+            "Math::log2" => ("xulo_math_log2", IrType::F64, 2),
+            "Math::log10" => ("xulo_math_log10", IrType::F64, 2),
+            "Math::exp" => ("xulo_math_exp", IrType::F64, 2),
+            "Math::random" => ("xulo_math_random", IrType::F64, 2),
             "Math::toFixed" => ("xulo_math_to_fixed", IrType::Pointer, 0),
             "Time::now" => ("xulo_time_now", IrType::I64, 1),
             "Time::now_nanos" => ("xulo_time_now_nanos", IrType::I64, 1),

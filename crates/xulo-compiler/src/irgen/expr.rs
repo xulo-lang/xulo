@@ -393,7 +393,14 @@ impl IrGenerator {
                     IrType::I64
                 }
             }
-            BinaryOperator::Mod => IrType::I64,
+            // `%` 与解释器 f64 rem 语义一致：任一侧是小数则结果按 F64 槽承载
+            BinaryOperator::Mod => {
+                if self.has_float_operand(&binop.left) || self.has_float_operand(&binop.right) {
+                    IrType::F64
+                } else {
+                    IrType::I64
+                }
+            }
             // ** 与解释器 powf 语义一致：任一侧是小数则结果按 F64 槽承载
             BinaryOperator::Pow => {
                 if dyn_math
@@ -403,6 +410,19 @@ impl IrGenerator {
                     IrType::F64
                 } else {
                     IrType::I64
+                }
+            }
+            // 位运算在解释器里把操作数截断成 i64 再把结果 `as f64`：浮点侧
+            // 参与时结果槽也是 F64，打印仍走 tag=2
+            BinaryOperator::BitAnd
+            | BinaryOperator::BitOr
+            | BinaryOperator::Xor
+            | BinaryOperator::Shl
+            | BinaryOperator::Shr => {
+                if self.has_float_operand(&binop.left) || self.has_float_operand(&binop.right) {
+                    IrType::F64
+                } else {
+                    IrType::Bool
                 }
             }
             _ => IrType::Bool,
@@ -523,7 +543,14 @@ impl IrGenerator {
                 IrType::F64 => IrType::F64,
                 _ => IrType::I64,
             },
-            UnaryOperator::BitNot => IrType::I64,
+            // `~` 对齐解释器 `(!(n as i64)) as f64`：浮点操作数结果落 F64 槽
+            UnaryOperator::BitNot => {
+                if self.has_float_operand(&unary.operand) {
+                    IrType::F64
+                } else {
+                    IrType::I64
+                }
+            }
             UnaryOperator::Move | UnaryOperator::Copy => IrType::Pointer,
         };
 

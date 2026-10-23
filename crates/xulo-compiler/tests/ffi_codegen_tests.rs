@@ -155,6 +155,21 @@ fn jit_reads_f64_return() {
 }
 
 #[test]
+fn jit_f64_return_feeds_arithmetic_and_comparison() {
+    // extern f64 返回槽就是 F64：参与算术/比较时留在浮点域（否则按 I64 算位模式）
+    let out = output_of(
+        r#"
+        extern "C" { fn sqrt(x: f64): f64 }
+        fn main() {
+            print(sqrt(2.0) * 2)
+            print(sqrt(4.0) == 2)
+        }
+        "#,
+    );
+    assert_eq!(out, "2.8284271247461903\ntrue");
+}
+
+#[test]
 fn jit_void_return_continues_program() {
     let out = output_of(
         r#"
