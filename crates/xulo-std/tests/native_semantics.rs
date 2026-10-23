@@ -101,3 +101,23 @@ fn clocks_are_non_negative_and_monotonic_moves_forward() {
     assert!(second >= first);
     assert!(time::monotonic_nanos() >= first_nanos);
 }
+
+#[test]
+fn random_stays_in_half_open_unit_interval() {
+    for _ in 0..1000 {
+        let x = math::random();
+        assert!((0.0..1.0).contains(&x), "out of [0,1): {x}");
+        assert!(!x.is_nan());
+    }
+}
+
+#[test]
+fn random_draws_are_not_constant() {
+    // A stuck generator fails this immediately; a healthy one fails to pass
+    // with probability 2^-53 per repeated draw.
+    let first = math::random();
+    assert!(
+        (0..32).any(|_| math::random() != first),
+        "generator produced only {first}"
+    );
+}

@@ -1,14 +1,14 @@
-//! The `extern "C"` entry points compiled (JIT/AOT) code calls for the `Math`
-//! and `Time` namespaces. Symbol names are part of the codegen contract
+//! The `extern "C"` entry points compiled (JIT/AOT) code calls for the `Math`,
+//! `Time`, and `Path` namespaces. Symbol names are part of the codegen contract
 //! (`xulo-compiler`'s `RUNTIME_FNS` registers these exact names); the bodies
-//! delegate to [`crate::math`] / [`crate::time`] so the compiled and
-//! interpreted paths share one implementation.
+//! delegate to [`crate::math`] / [`crate::time`] / [`crate::path`] so the
+//! compiled and interpreted paths share one implementation.
 
 use std::cell::RefCell;
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 
-use crate::{math, time};
+use crate::{math, path, time};
 
 thread_local! {
     /// C strings handed to compiled code, kept alive until released (the
@@ -22,6 +22,16 @@ fn keep(s: String) -> *const c_char {
     let ptr = c_str.as_ptr();
     KEPT_STRINGS.with(|kept| kept.borrow_mut().push(c_str));
     ptr
+}
+
+/// A C string argument of a `Path` entry point: a null pointer reads as the
+/// empty string, so a bad caller fails in `crate::path` rather than here.
+fn cstr_arg(text: *const c_char) -> String {
+    if text.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(text).to_str().unwrap_or("").to_string() }
+    }
 }
 
 /// Release every string this crate handed out. Called from
@@ -167,4 +177,43 @@ pub extern "C" fn xulo_time_monotonic() -> i64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn xulo_time_monotonic_nanos() -> i64 {
     time::monotonic_nanos()
+}
+
+/// `Math::random` compiled entry point: a pseudo-random float in `[0.0, 1.0)`.
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_math_random() -> f64 {
+    math::random()
+}
+
+/// `Path::join(a, b)` compiled entry point: the joined path as a kept C
+/// string (the caller reads it, never frees it — `release_strings` owns the
+/// lifetime).
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_path_join(a: *const c_char, b: *const c_char) -> *const c_char {
+    keep(path::join(&cstr_arg(a), &cstr_arg(b)))
+}
+
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_path_dirname(p: *const c_char) -> *const c_char {
+    keep(path::dirname(&cstr_arg(p)))
+}
+
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_path_basename(p: *const c_char) -> *const c_char {
+    keep(path::basename(&cstr_arg(p)))
+}
+
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_path_ext(p: *const c_char) -> *const c_char {
+    keep(path::ext(&cstr_arg(p)))
+}
+
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_path_normalize(p: *const c_char) -> *const c_char {
+    keep(path::normalize(&cstr_arg(p)))
 }

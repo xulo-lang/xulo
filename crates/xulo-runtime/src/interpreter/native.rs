@@ -294,6 +294,14 @@ pub(super) fn native_math_sqrt(_interp: &Interpreter, args: &[Value]) -> Result<
     )?)))
 }
 
+/// `std::math::random()`: a pseudo-random float in `[0.0, 1.0)` (spec
+/// `builtins/intrinsic-functions.md`) — the `Math` table's only stateful
+/// member.
+pub(super) fn native_math_random(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    no_arg_guard(args, "std::math::random")?;
+    Ok(Value::Number(xulo_std::math::random()))
+}
+
 /// `std::math::cbrt(x)`: the cube root, defined for every `float`.
 pub(super) fn native_math_cbrt(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     Ok(Value::Number(xulo_std::math::cbrt(builtin_num_arg(
@@ -670,6 +678,46 @@ pub(super) fn native_os_platform(_interp: &Interpreter, args: &[Value]) -> Resul
 pub(super) fn native_os_arch(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     no_arg_guard(args, "std::os::arch")?;
     Ok(Value::String(xulo_std::os::arch().into()))
+}
+
+/// `std::path::join(a, b)`: append `b` to `a` (an absolute `b` replaces
+/// `a`); total, so no `Result`.
+pub(super) fn native_path_join(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    let a = builtin_str_arg(args, 0, "std::path::join")?;
+    let b = builtin_str_arg(args, 1, "std::path::join")?;
+    Ok(Value::String(xulo_std::path::join(&a, &b).into()))
+}
+
+/// `std::path::dirname(path)`: the parent directory (`""` when there is
+/// none); total.
+pub(super) fn native_path_dirname(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    let path = builtin_str_arg(args, 0, "std::path::dirname")?;
+    Ok(Value::String(xulo_std::path::dirname(&path).into()))
+}
+
+/// `std::path::basename(path)`: the final component; total.
+pub(super) fn native_path_basename(
+    _interp: &Interpreter,
+    args: &[Value],
+) -> Result<Value, RunError> {
+    let path = builtin_str_arg(args, 0, "std::path::basename")?;
+    Ok(Value::String(xulo_std::path::basename(&path).into()))
+}
+
+/// `std::path::ext(path)`: the final component's extension including the dot
+/// (`""` when there is none); total.
+pub(super) fn native_path_ext(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    let path = builtin_str_arg(args, 0, "std::path::ext")?;
+    Ok(Value::String(xulo_std::path::ext(&path).into()))
+}
+
+/// `std::path::normalize(path)`: collapse `//`, `.`, and `..`; total.
+pub(super) fn native_path_normalize(
+    _interp: &Interpreter,
+    args: &[Value],
+) -> Result<Value, RunError> {
+    let path = builtin_str_arg(args, 0, "std::path::normalize")?;
+    Ok(Value::String(xulo_std::path::normalize(&path).into()))
 }
 
 /// `RegExp::compile(pattern, flags)` (spec `regular-expressions.mdx`):

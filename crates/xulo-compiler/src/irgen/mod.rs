@@ -1217,6 +1217,8 @@ impl IrGenerator {
                 std::borrow::Cow::Owned(format!("Io::{rest}"))
             } else if let Some(rest) = callee.strip_prefix("std::os::") {
                 std::borrow::Cow::Owned(format!("Os::{rest}"))
+            } else if let Some(rest) = callee.strip_prefix("std::path::") {
+                std::borrow::Cow::Owned(format!("Path::{rest}"))
             } else {
                 std::borrow::Cow::Borrowed(callee)
             };
@@ -1242,6 +1244,7 @@ impl IrGenerator {
             "Math::log2" => ("xulo_math_log2", IrType::I64, 2),
             "Math::log10" => ("xulo_math_log10", IrType::I64, 2),
             "Math::exp" => ("xulo_math_exp", IrType::I64, 2),
+            "Math::random" => ("xulo_math_random", IrType::I64, 2),
             "Math::toFixed" => ("xulo_math_to_fixed", IrType::Pointer, 0),
             "Time::now" => ("xulo_time_now", IrType::I64, 1),
             "Time::now_nanos" => ("xulo_time_now_nanos", IrType::I64, 1),
@@ -1271,6 +1274,12 @@ impl IrGenerator {
             "Os::pid" => ("xulo_os_pid", IrType::I64, 1),
             "Os::platform" => ("xulo_os_platform", IrType::Pointer, 0),
             "Os::arch" => ("xulo_os_arch", IrType::Pointer, 0),
+            // `std::path`：全成员返回驻留字符串（tag=0，总谓词不失败）
+            "Path::join" => ("xulo_path_join", IrType::Pointer, 0),
+            "Path::dirname" => ("xulo_path_dirname", IrType::Pointer, 0),
+            "Path::basename" => ("xulo_path_basename", IrType::Pointer, 0),
+            "Path::ext" => ("xulo_path_ext", IrType::Pointer, 0),
+            "Path::normalize" => ("xulo_path_normalize", IrType::Pointer, 0),
             _ => return None,
         };
         Some(lowering)

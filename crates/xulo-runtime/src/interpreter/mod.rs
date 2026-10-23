@@ -309,6 +309,10 @@ impl Interpreter {
             ("cbrt".to_string(), Value::Native(Rc::new(native_math_cbrt))),
             ("pow".to_string(), Value::Native(Rc::new(native_math_pow))),
             (
+                "random".to_string(),
+                Value::Native(Rc::new(native_math_random)),
+            ),
+            (
                 "floor".to_string(),
                 Value::Native(Rc::new(native_math_floor)),
             ),
@@ -473,6 +477,30 @@ impl Interpreter {
             ("arch".to_string(), Value::Native(Rc::new(native_os_arch))),
         ];
         let os_obj = Value::Object(Rc::new(RefCell::new(os_members)));
+        // The `std::path` namespace of POSIX path string operations
+        // (companion to `std::fs`, which takes raw path strings): reached as
+        // `std::path::join(…)`. Every member is total, so none wraps its
+        // result in the built-in `Result`.
+        let path_members: Vec<(String, Value)> = vec![
+            (
+                "join".to_string(),
+                Value::Native(Rc::new(native_path_join)),
+            ),
+            (
+                "dirname".to_string(),
+                Value::Native(Rc::new(native_path_dirname)),
+            ),
+            (
+                "basename".to_string(),
+                Value::Native(Rc::new(native_path_basename)),
+            ),
+            ("ext".to_string(), Value::Native(Rc::new(native_path_ext))),
+            (
+                "normalize".to_string(),
+                Value::Native(Rc::new(native_path_normalize)),
+            ),
+        ];
+        let path_obj = Value::Object(Rc::new(RefCell::new(path_members)));
         // The `std::regex` module behind the language's `RegExp` type (spec
         // `regular-expressions.mdx`): `RegExp::compile(…)` resolves through
         // the imported name, which `setup_module` materializes from this
@@ -495,6 +523,7 @@ impl Interpreter {
             ("fs".to_string(), fs_obj),
             ("io".to_string(), io_obj),
             ("os".to_string(), os_obj),
+            ("path".to_string(), path_obj),
             ("regex".to_string(), regex_obj),
         ];
         global.borrow_mut().define(

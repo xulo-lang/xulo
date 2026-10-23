@@ -20,9 +20,9 @@ type SResult<T> = Result<T, XuloError>;
 /// control-byte prefix so it can never collide with a real module id (spec
 /// `regular-expressions.mdx`: the module's types are reached directly, with
 /// no loader graph behind the head).
-/// Id of the built-in `std` module root: the six std modules
+/// Id of the built-in `std` module root: the seven std modules
 /// (`std::math` / `std::time` / `std::fs` / `std::io` / `std::os` /
-/// `std::regex`) are not
+/// `std::path` / `std::regex`) are not
 /// package sources, so they resolve against this synthetic id instead of the
 /// world (spec `builtins/README.md`).
 const BUILTIN_STD: &str = "\u{1}std";
@@ -60,7 +60,7 @@ fn std_path_module<'a>(start: &'a str, segments: &'a [String]) -> Option<&'a str
 fn std_ns_key(enum_name: &str) -> Option<&str> {
     matches!(
         enum_name,
-        "std::math" | "std::time" | "std::fs" | "std::io" | "std::os"
+        "std::math" | "std::time" | "std::fs" | "std::io" | "std::os" | "std::path"
     )
     .then_some(enum_name)
 }
@@ -585,6 +585,7 @@ fn builtin_member(ns: &str, member: &str) -> Option<BuiltinMember> {
             "sin" | "cos" | "tan" | "asin" | "acos" | "atan" => f(&[T::Float], R::Float),
             "atan2" => f(&[T::Float, T::Float], R::Float),
             "log" | "log2" | "log10" | "exp" => f(&[T::Float], R::Float),
+            "random" => f(&[], R::Float),
             _ => None,
         },
         "std::time" => match member {
@@ -621,6 +622,13 @@ fn builtin_member(ns: &str, member: &str) -> Option<BuiltinMember> {
             "platform" | "arch" => f(&[], R::String),
             _ => None,
         },
+        // Path string operations (POSIX semantics, companion to `Fs`):
+        // every member is total, so none returns a `Result`.
+        "std::path" => match member {
+            "join" => f(&[T::String, T::String], R::String),
+            "dirname" | "basename" | "ext" | "normalize" => f(&[T::String], R::String),
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -647,7 +655,7 @@ fn std_face_members(module: &str) -> Option<Vec<(String, FaceKind)>> {
             fns(&[
                 "abs", "min", "max", "sqrt", "cbrt", "pow", "floor", "ceil", "round", "trunc",
                 "toFixed", "sin", "cos", "tan", "asin", "acos", "atan", "atan2", "log", "log2",
-                "log10", "exp",
+                "log10", "exp", "random",
             ]),
         ]
         .concat(),
@@ -660,6 +668,7 @@ fn std_face_members(module: &str) -> Option<Vec<(String, FaceKind)>> {
         "os" => fns(&[
             "getenv", "setenv", "cwd", "chdir", "pid", "platform", "arch",
         ]),
+        "path" => fns(&["join", "dirname", "basename", "ext", "normalize"]),
         "regex" => ["RegExp", "RegexError", "RegexMatch"]
             .iter()
             .map(|n| (n.to_string(), FaceKind::Type))
@@ -4208,7 +4217,10 @@ impl Analyzer {
                 }
                 // Heads that name a std module in its old top-level home:
                 // name the new path instead of a bare "cannot resolve".
-                if matches!(n.as_str(), "regex" | "math" | "time" | "fs" | "io" | "os") {
+                if matches!(
+                    n.as_str(),
+                    "regex" | "math" | "time" | "fs" | "io" | "os" | "path"
+                ) {
                     return Err(self
                         .err_code(
                             "E0607",
@@ -8136,7 +8148,7 @@ impl Analyzer {
                 .err_code("E0607", format!("cannot resolve `std::{rest}`"))
                 .at(call.span.clone()));
         }
-        if !matches!(module, "math" | "time" | "fs" | "io" | "os") {
+        if !matches!(module, "math" | "time" | "fs" | "io" | "os" | "path") {
             return Err(self
                 .err_code("E0607", format!("cannot resolve `std::{module}`"))
                 .at(call.span.clone()));
@@ -8296,7 +8308,7 @@ impl Analyzer {
                 if let Some(ns) = std_ns_key(enum_name) {
                     return self.check_builtin_fn_call(ns, variant, call);
                 }
-                if matches!(enum_name, "Math" | "Time" | "Fs" | "Io" | "Os") {
+                if matches!(enum_name, "Math" | "Time" | "Fs" | "Io" | "Os" | "Path") {
                     return Err(self
                         .err(format!(
                             "`{enum_name}` lives under `std`: use `std::{0}::{variant}` or import it with `use std::{0}::*`",
@@ -9224,7 +9236,10 @@ impl Analyzer {
                     None => Err(self.err(format!("`{ns}` has no member `{variant}`"))),
                 };
             }
-            if matches!(enum_name.as_str(), "Math" | "Time" | "Fs" | "Io" | "Os") {
+            if matches!(
+                enum_name.as_str(),
+                "Math" | "Time" | "Fs" | "Io" | "Os" | "Path"
+            ) {
                 return Err(self.err(format!(
                     "`{enum_name}` lives under `std`: use `std::{0}::{variant}` or import it with `use std::{0}::*`",
                     enum_name.to_lowercase()

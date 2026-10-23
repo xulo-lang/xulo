@@ -473,3 +473,95 @@ fn main() {
         assert!(references_symbol(&bytes, symbol), "object missing {symbol}");
     }
 }
+
+/// `std::path` 的 lowering：纯字符串成员经 FFI 返回驻留字符串（tag=0），
+/// 编译路径与解释器逐行一致。
+#[test]
+fn test_std_path_members_run() {
+    let out = compile_and_run(
+        r#"
+fn main() {
+    print(std::path::join("/var", "log/app.log"))
+    print(std::path::join("opt", "/abs"))
+    print(std::path::dirname("/var/log/app.log"))
+    print(std::path::basename("/var/log/app.log"))
+    print(std::path::ext("app.log"))
+    print(std::path::normalize("/a/./b//../c"))
+}
+"#,
+    );
+    assert_eq!(
+        out,
+        vec![
+            "/var/log/app.log".to_string(),
+            "/abs".to_string(),
+            "/var/log".to_string(),
+            "app.log".to_string(),
+            ".log".to_string(),
+            "/a/c".to_string(),
+        ]
+    );
+}
+
+/// `std::path` 裸名经 `use` 导入后与限定形式等价（语义层改写 + 同一 lowering）。
+#[test]
+fn test_std_path_bare_import_lowers_to_the_same_symbols() {
+    let out = compile_and_run(
+        r#"
+use std::path::{join, dirname};
+
+fn main() {
+    print(join("a", "b"))
+    print(dirname("a/b"))
+}
+"#,
+    );
+    assert_eq!(out, vec!["a/b".to_string(), "a".to_string()]);
+}
+
+/// `Math::random`：零参 F64 返回经 I64 位模式槽落地；打印按 tag=2 还原成
+/// [0, 1) 区间的小数（连续两次抽样不同）。
+#[test]
+fn test_math_random_prints_unit_interval_float() {
+    let out = compile_and_run(
+        r#"
+fn main() {
+    print(std::math::random())
+    print(std::math::random())
+}
+"#,
+    );
+    assert_eq!(out.len(), 2, "unexpected: {out:?}");
+    let a: f64 = out[0].parse().expect("first draw is a float");
+    let b: f64 = out[1].parse().expect("second draw is a float");
+    assert!((0.0..1.0).contains(&a), "first draw out of range: {a}");
+    assert!((0.0..1.0).contains(&b), "second draw out of range: {b}");
+    assert!(a != b, "two consecutive draws collided: {a}");
+}
+
+/// AOT 对象文件引用 `std::path` 全部五个符号与 `Math::random`（链接期接线回归）。
+#[test]
+fn test_aot_object_references_path_and_random_symbols() {
+    let bytes = object_bytes(
+        r#"
+fn main() {
+    std::path::join("a", "b")
+    std::path::dirname("a")
+    std::path::basename("a")
+    std::path::ext("a")
+    std::path::normalize("a")
+    std::math::random()
+}
+"#,
+    );
+    for symbol in [
+        "xulo_path_join",
+        "xulo_path_dirname",
+        "xulo_path_basename",
+        "xulo_path_ext",
+        "xulo_path_normalize",
+        "xulo_math_random",
+    ] {
+        assert!(references_symbol(&bytes, symbol), "object missing {symbol}");
+    }
+}

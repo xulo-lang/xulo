@@ -1,6 +1,9 @@
 //! The `Math` namespace (spec `builtins/intrinsic-functions.md`): constants
 //! and pure `f64` operations, shared by the interpreter's `native_math_*`
-//! adapters and the compiled path's [`crate::ffi`] entry points.
+//! adapters and the compiled path's [`crate::ffi`] entry points — except
+//! [`random`], the one member with state (a seeded PRNG stream).
+
+use std::cell::RefCell;
 
 use crate::format::format_number;
 
@@ -154,4 +157,69 @@ pub fn to_fixed(x: f64, digits: usize) -> String {
     } else {
         format!("{:.*}", digits, scaled.round() / factor)
     }
+}
+
+// The per-process PRNG stream (xoshiro256**), seeded once from system
+// entropy. State is per-thread: Xulo's single interpreter thread shares one
+// stream, tests running in parallel threads each get their own.
+thread_local! {
+    static RNG: RefCell<[u64; 4]> = RefCell::new(seed_rng());
+}
+
+/// System entropy for seeding: `/dev/urandom` where it exists, otherwise a
+/// mix of the wall clock, the process id, and the address this fn runs at
+/// (unpredictable enough to be non-repeating; this path is a last resort).
+fn entropy() -> u64 {
+    use std::io::Read;
+    let mut buf = [0u8; 8];
+    if let Ok(mut file) = std::fs::File::open("/dev/urandom")
+        && file.read_exact(&mut buf).is_ok()
+    {
+        return u64::from_le_bytes(buf);
+    }
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0x9E37_79B9_7F4A_7C15);
+    let local = &nanos as *const u64 as u64;
+    nanos ^ (u64::from(std::process::id()) << 32) ^ local.rotate_left(17)
+}
+
+/// splitmix64 expansion of one entropy word into the four xoshiro lanes
+/// (the standard companion seeder; every lane starts nonzero).
+fn seed_rng() -> [u64; 4] {
+    let mut state = entropy() | 1;
+    let mut mix = || {
+        state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = state;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    };
+    [mix(), mix(), mix(), mix()]
+}
+
+/// One xoshiro256\*\* step: the standard 64-bit generator's period
+/// `2^256 - 1`, with all-zero state excluded by [`seed_rng`].
+fn xoshiro_next(state: &mut [u64; 4]) -> u64 {
+    let result = state[1].wrapping_mul(5).rotate_left(7).wrapping_mul(9);
+    let shift = state[1] << 17;
+    state[2] ^= state[0];
+    state[3] ^= state[1];
+    state[1] ^= state[2];
+    state[0] ^= state[3];
+    state[2] ^= shift;
+    state[3] = state[3].rotate_left(45);
+    result
+}
+
+/// `Math::random()`: a pseudo-random `float` in `[0.0, 1.0)` — 53 random
+/// bits scaled by `2^-53`, the same construction as `f64`'s own uniform
+/// draws (spec `builtins/intrinsic-functions.md`). Not suitable for
+/// cryptography: the stream is deterministic once seeded.
+pub fn random() -> f64 {
+    RNG.with(|rng| {
+        let bits = xoshiro_next(&mut rng.borrow_mut()) >> 11;
+        bits as f64 * (1.0 / ((1u64 << 53) as f64))
+    })
 }

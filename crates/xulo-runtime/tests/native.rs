@@ -2609,6 +2609,23 @@ fn math_domain_edges_follow_ieee754() {
 }
 
 #[test]
+fn math_random_draws_stay_in_unit_interval_and_vary() {
+    // 两个连续抽样：都须落在 [0, 1)，且不应相同（相同概率 2^-53，远低于
+    // 测试可容忍的抖动）。
+    let out = run_ok(
+        r#"
+            fn main() {
+                let x = std::math::random()
+                let y = std::math::random()
+                print(str(x >= 0.0 and x < 1.0 and y >= 0.0 and y < 1.0))
+                print(str(x != y))
+            }
+        "#,
+    );
+    assert_eq!(out, vec!["true", "true"]);
+}
+
+#[test]
 fn math_to_fixed_spec_examples_run() {
     let out = run_ok(
         r#"

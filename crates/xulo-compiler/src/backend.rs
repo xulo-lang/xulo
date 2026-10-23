@@ -451,6 +451,12 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
         returns: &[F64],
     },
     RuntimeFnDesc {
+        name: "xulo_math_random",
+        addr: xulo_std::ffi::xulo_math_random as *const u8,
+        params: &[],
+        returns: &[F64],
+    },
+    RuntimeFnDesc {
         name: "xulo_math_to_fixed",
         addr: xulo_std::ffi::xulo_math_to_fixed as *const u8,
         params: &[F64, I64],
@@ -598,6 +604,37 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
         name: "xulo_os_arch",
         addr: xulo_runtime::runtime::xulo_os_arch as *const u8,
         params: &[],
+        returns: &[I64],
+    },
+    // `std::path`：全成员为纯字符串运算，返回驻留字符串指针（tag=0）
+    RuntimeFnDesc {
+        name: "xulo_path_join",
+        addr: xulo_std::ffi::xulo_path_join as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_path_dirname",
+        addr: xulo_std::ffi::xulo_path_dirname as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_path_basename",
+        addr: xulo_std::ffi::xulo_path_basename as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_path_ext",
+        addr: xulo_std::ffi::xulo_path_ext as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_path_normalize",
+        addr: xulo_std::ffi::xulo_path_normalize as *const u8,
+        params: &[I64],
         returns: &[I64],
     },
 ];
