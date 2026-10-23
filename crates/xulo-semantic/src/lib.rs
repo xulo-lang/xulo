@@ -8514,14 +8514,19 @@ impl Analyzer {
                     _ => Type::Any,
                 });
             }
-            // Infer the return type of the known string methods (spec
-            // `regular-expressions.mdx`): the two that consume a pattern or
-            // reshape the text both yield a new string.
+            // Infer the return type of the known string methods: the pattern
+            // consumer and the reshaping members yield a new string, the
+            // predicates yield booleans, `length` counts characters, and
+            // `split` yields the list of pieces.
             if matches!(receiver, Type::String)
                 && let Some(method) = &call.method
             {
                 return Ok(match method.as_str() {
-                    "replace" | "to_uppercase" => Type::String,
+                    "replace" | "to_uppercase" | "to_lowercase" | "trim" | "pad_start"
+                    | "pad_end" | "repeat" => Type::String,
+                    "contains" | "starts_with" | "ends_with" => Type::Boolean,
+                    "length" => Type::Number,
+                    "split" => Type::List(Box::new(Type::String)),
                     _ => Type::Any,
                 });
             }

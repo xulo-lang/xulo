@@ -112,6 +112,22 @@ pub enum RuntimeFn {
     RegexReplace,
     RegexReplaceWith,
     StringToUppercase,
+    StringToLowercase,
+    /// 字符串两端去空白（Unicode 空白，同 Rust `trim`）
+    StringTrim,
+    /// 字符个数（Unicode 标量值）
+    StringLength,
+    /// 子串判定三兄弟（返回 1/0）
+    StringContains,
+    StringStartsWith,
+    StringEndsWith,
+    /// 按分隔符切分为字符串列表（空分隔符按字符切分）
+    StringSplit,
+    /// 左/右按空格补齐到给定宽度（宽度按字符计）
+    StringPadStart,
+    StringPadEnd,
+    /// 重复 n 次（n <= 0 得空串）
+    StringRepeat,
     /// match 字面量 pattern 判定（返回 1/0）
     LiteralMatch,
     /// 区间表达式 `0..<3` / `1...4` 求值为列表

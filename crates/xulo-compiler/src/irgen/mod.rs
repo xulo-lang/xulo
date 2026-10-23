@@ -699,6 +699,18 @@ impl IrGenerator {
                         return Some(Type::Named(ctor, Vec::new()));
                     }
                 }
+                // 内建字符串方法 `split` 产出 List<string>（用户结构体的
+                // 同名方法不在此列）：let 绑定与链式接收者都拿到列表类型，
+                // `contains`/`length` 的分流才不会误入字符串 lowering
+                if call.object.is_some()
+                    && call.method.as_deref() == Some("split")
+                    && call
+                        .object
+                        .as_ref()
+                        .is_some_and(|o| self.struct_name_of_expr(o).is_none())
+                {
+                    return Some(Type::List(Box::new(Type::String)));
+                }
                 // 方法调用用 `Type::method` 作键；否则用（规范化后的）函数名
                 let key = if let Some(recv) = &call.object
                     && let Some(recv_ty) = self.struct_name_of_expr(recv)
@@ -964,7 +976,8 @@ impl IrGenerator {
                 {
                     return 2;
                 }
-                // RegExp / 字符串正则方法
+                // RegExp / 字符串正则方法（列表的 contains/length 与字符串
+                // 同标签：谓词都是布尔，length 都是数字）
                 if call.object.is_some()
                     && call
                         .object
@@ -972,10 +985,12 @@ impl IrGenerator {
                         .is_none_or(|o| self.struct_name_of_expr(o).is_none())
                 {
                     match key.as_str() {
-                        "test" => return 5,
-                        "group" | "replace" | "to_uppercase" => return 0,
+                        "test" | "contains" | "starts_with" | "ends_with" => return 5,
+                        "group" | "replace" | "to_uppercase" | "to_lowercase" | "trim"
+                        | "pad_start" | "pad_end" | "repeat" => return 0,
+                        "length" => return 1,
+                        "split" | "find_all" => return 3,
                         "find" => return -1, // match 对象或 null
-                        "find_all" => return 3,
                         _ => {}
                     }
                 }
@@ -1155,6 +1170,19 @@ impl IrGenerator {
             }
             _ => false,
         }
+    }
+
+    /// 方法调用的接收者是否是列表（`contains`/`length` 在列表与字符串上
+    /// 重名：列表接收者不进字符串方法的 lowering，保持按用户函数解析）
+    pub(super) fn expr_is_list_receiver(&self, object: &Option<Box<Expression>>) -> bool {
+        object.as_ref().is_some_and(|o| {
+            matches!(self.infer_source_type_from_expr(o), Some(Type::List(_)))
+                || self.is_array_like_expr(o)
+                // `split(...)` 的返回是字符串列表，链式接收者静态类型未知，
+                // 按方法名识别，避免 `split(...).length()` 误入字符串 lowering
+                || matches!(&**o, Expression::Call(call)
+                    if call.object.is_some() && call.method.as_deref() == Some("split"))
+        })
     }
 
     /// 表达式是否是字符串（用于 `+` 拼接与 str() 直通的 tag 判断）

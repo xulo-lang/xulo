@@ -808,6 +808,22 @@ impl IrGenerator {
                     }
                 }
                 "to_uppercase" => Some(RuntimeFn::StringToUppercase),
+                "to_lowercase" => Some(RuntimeFn::StringToLowercase),
+                "trim" => Some(RuntimeFn::StringTrim),
+                "starts_with" => Some(RuntimeFn::StringStartsWith),
+                "ends_with" => Some(RuntimeFn::StringEndsWith),
+                "split" => Some(RuntimeFn::StringSplit),
+                "pad_start" => Some(RuntimeFn::StringPadStart),
+                "pad_end" => Some(RuntimeFn::StringPadEnd),
+                "repeat" => Some(RuntimeFn::StringRepeat),
+                // `contains`/`length` 在列表与字符串上重名：列表接收者保持
+                // 原路径（这些成员尚未 lowering，按用户函数解析报错）
+                "contains" if !self.expr_is_list_receiver(&call.object) => {
+                    Some(RuntimeFn::StringContains)
+                }
+                "length" if !self.expr_is_list_receiver(&call.object) => {
+                    Some(RuntimeFn::StringLength)
+                }
                 _ => None,
             }
         } else {

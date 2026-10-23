@@ -22,6 +22,10 @@ pub use regex::*;
 pub use scalar::*;
 pub use string::*;
 
+/// 字符串方法（`repeat` / `pad_start` / `pad_end`）的重复/宽度上限：编译路径
+/// 超过即报错退出（对齐 `toFixed` 的越界约定），解释路径转成 RunError。
+pub(crate) const MAX_STRING_GROWTH: i64 = 1 << 20;
+
 /// xulo 对象
 #[repr(C)]
 pub struct XuloObject {

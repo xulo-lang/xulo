@@ -373,10 +373,12 @@ impl Interpreter {
     //  Built-in list methods
     // ──────────────────────────────────────────────────────────────────
 
-    /// The methods a `string` receiver carries (spec
-    /// `regular-expressions.mdx`): `replace` consumes a compiled `RegExp`
-    /// and a template or replacement function; `to_uppercase` reshapes the
-    /// text. Both yield a new string — the receiver is never mutated.
+    /// The methods a `string` receiver carries. `replace` consumes a compiled
+    /// `RegExp` and a template or replacement function; the rest reshape or
+    /// query the text (`to_uppercase`/`to_lowercase`/`trim`/`pad_start`/
+    /// `pad_end`/`repeat`/`split`/`length`) or test it (`contains`/
+    /// `starts_with`/`ends_with`). Every member is pure: the receiver is
+    /// never mutated, and the reshaping ones yield a new string.
     pub(super) fn string_method(
         &self,
         method: &str,
@@ -394,6 +396,139 @@ impl Interpreter {
                     ));
                 }
                 Ok(Value::String(receiver.to_uppercase().into()))
+            }
+            "to_lowercase" => {
+                if !args.is_empty() {
+                    return Err(RunError::err(
+                        format!("`to_lowercase()` takes no arguments, found {}", args.len()),
+                        span.clone(),
+                    ));
+                }
+                Ok(Value::String(receiver.to_lowercase().into()))
+            }
+            "trim" => {
+                if !args.is_empty() {
+                    return Err(RunError::err(
+                        format!("`trim()` takes no arguments, found {}", args.len()),
+                        span.clone(),
+                    ));
+                }
+                Ok(Value::String(receiver.trim().into()))
+            }
+            "length" => {
+                if !args.is_empty() {
+                    return Err(RunError::err(
+                        format!("`length()` takes no arguments, found {}", args.len()),
+                        span.clone(),
+                    ));
+                }
+                Ok(Value::Number(receiver.chars().count() as f64))
+            }
+            "contains" | "starts_with" | "ends_with" => {
+                if args.len() != 1 {
+                    return Err(RunError::err(
+                        format!(
+                            "`{method}()` requires exactly 1 argument, found {}",
+                            args.len()
+                        ),
+                        span.clone(),
+                    ));
+                }
+                let Value::String(needle) = self.eval(&args[0].value, env)? else {
+                    return Err(RunError::err(
+                        format!("`{method}()` expects a string argument"),
+                        args[0].value.span().clone(),
+                    ));
+                };
+                Ok(Value::Boolean(match method {
+                    "contains" => receiver.contains(&*needle),
+                    "starts_with" => receiver.starts_with(&*needle),
+                    _ => receiver.ends_with(&*needle),
+                }))
+            }
+            "split" => {
+                if args.len() != 1 {
+                    return Err(RunError::err(
+                        format!(
+                            "`split()` requires exactly 1 argument, found {}",
+                            args.len()
+                        ),
+                        span.clone(),
+                    ));
+                }
+                let Value::String(sep) = self.eval(&args[0].value, env)? else {
+                    return Err(RunError::err(
+                        "`split()` expects a string argument",
+                        args[0].value.span().clone(),
+                    ));
+                };
+                let parts: Vec<Value> = if sep.is_empty() {
+                    receiver
+                        .chars()
+                        .map(|ch| Value::String(ch.to_string().into()))
+                        .collect()
+                } else {
+                    receiver
+                        .split(&*sep)
+                        .map(|part| Value::String(part.into()))
+                        .collect()
+                };
+                Ok(Value::List(Rc::new(RefCell::new(parts))))
+            }
+            "pad_start" | "pad_end" => {
+                if args.len() != 1 {
+                    return Err(RunError::err(
+                        format!(
+                            "`{method}()` requires exactly 1 argument, found {}",
+                            args.len()
+                        ),
+                        span.clone(),
+                    ));
+                }
+                let width = self.eval_number_arg(&args[0], env)?;
+                if width > crate::runtime::MAX_STRING_GROWTH as f64 {
+                    return Err(RunError::err(
+                        format!(
+                            "`{method}()` width must be at most {}, found {width}",
+                            crate::runtime::MAX_STRING_GROWTH
+                        ),
+                        args[0].value.span().clone(),
+                    ));
+                }
+                let width = width as usize;
+                let len = receiver.chars().count();
+                if len >= width {
+                    return Ok(Value::String(receiver));
+                }
+                let fill = " ".repeat(width - len);
+                Ok(Value::String(if method == "pad_start" {
+                    format!("{fill}{receiver}").into()
+                } else {
+                    format!("{receiver}{fill}").into()
+                }))
+            }
+            "repeat" => {
+                if args.len() != 1 {
+                    return Err(RunError::err(
+                        format!(
+                            "`repeat()` requires exactly 1 argument, found {}",
+                            args.len()
+                        ),
+                        span.clone(),
+                    ));
+                }
+                let n = self.eval_number_arg(&args[0], env)?;
+                if n > crate::runtime::MAX_STRING_GROWTH as f64 {
+                    return Err(RunError::err(
+                        format!(
+                            "`repeat()` count must be at most {}, found {n}",
+                            crate::runtime::MAX_STRING_GROWTH
+                        ),
+                        args[0].value.span().clone(),
+                    ));
+                }
+                let n = n as usize;
+                Ok(Value::String(receiver.repeat(n).into()))
             }
             "replace" => {
                 if args.len() != 2 {

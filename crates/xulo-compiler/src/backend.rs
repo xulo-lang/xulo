@@ -310,6 +310,69 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
         params: &[I64],
         returns: &[I64],
     },
+    // 字符串方法：`to_lowercase`/`trim` 重塑文本，`length` 数字符，
+    // `contains`/`starts_with`/`ends_with` 是谓词，`split` 产出字符串列表，
+    // `pad_start`/`pad_end`/`repeat` 按整数宽度/次数扩容（宽度按字符计）
+    RuntimeFnDesc {
+        name: "xulo_string_to_lowercase",
+        addr: xulo_runtime::runtime::xulo_string_to_lowercase as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_string_trim",
+        addr: xulo_runtime::runtime::xulo_string_trim as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_string_length",
+        addr: xulo_runtime::runtime::xulo_string_length as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_string_contains",
+        addr: xulo_runtime::runtime::xulo_string_contains as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_string_starts_with",
+        addr: xulo_runtime::runtime::xulo_string_starts_with as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_string_ends_with",
+        addr: xulo_runtime::runtime::xulo_string_ends_with as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_string_split",
+        addr: xulo_runtime::runtime::xulo_string_split as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_string_pad_start",
+        addr: xulo_runtime::runtime::xulo_string_pad_start as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_string_pad_end",
+        addr: xulo_runtime::runtime::xulo_string_pad_end as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_string_repeat",
+        addr: xulo_runtime::runtime::xulo_string_repeat as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
     // match 字面量 pattern / 区间表达式求值
     RuntimeFnDesc {
         name: "xulo_literal_match",
