@@ -20,11 +20,11 @@ type SResult<T> = Result<T, XuloError>;
 /// control-byte prefix so it can never collide with a real module id (spec
 /// `regular-expressions.mdx`: the module's types are reached directly, with
 /// no loader graph behind the head).
-/// Id of the built-in `std` module root: the nine std modules
+/// Id of the built-in `std` module root: the ten std modules
 /// (`std::math` / `std::time` / `std::fs` / `std::io` / `std::os` /
-/// `std::path` / `std::net` / `std::process` / `std::regex`) are not
-/// package sources, so they resolve against this synthetic id instead of the
-/// world (spec `builtins/README.md`).
+/// `std::path` / `std::net` / `std::process` / `std::json` / `std::regex`)
+/// are not package sources, so they resolve against this synthetic id
+/// instead of the world (spec `builtins/README.md`).
 const BUILTIN_STD: &str = "\u{1}std";
 
 /// The synthetic id of one std module (`\u{1}std::math`).
@@ -68,6 +68,7 @@ fn std_ns_key(enum_name: &str) -> Option<&str> {
             | "std::path"
             | "std::net"
             | "std::process"
+            | "std::json"
     )
     .then_some(enum_name)
 }
@@ -484,6 +485,9 @@ enum BuiltinTy {
     Int,
     U64,
     String,
+    /// Any value — `std::json::stringify` serializes arbitrary JSON input;
+    /// `assignable` accepts everything as `any`, so the check never rejects.
+    Any,
 }
 
 impl BuiltinTy {
@@ -494,12 +498,14 @@ impl BuiltinTy {
             BuiltinTy::Int => "int",
             BuiltinTy::U64 => "u64",
             BuiltinTy::String => "string",
+            BuiltinTy::Any => "any",
         }
     }
 
     fn ty(self) -> Type {
         match self {
             BuiltinTy::String => Type::String,
+            BuiltinTy::Any => Type::Any,
             _ => Type::Number,
         }
     }
@@ -535,6 +541,10 @@ enum BuiltinRet {
     /// `Result<{stdout: string, stderr: string, code: number}, Error>` — the
     /// capture record `std::process::run` yields.
     ResultRunOutErr,
+    /// `Result<any, Error>` — a fallible operation whose success payload is
+    /// an arbitrary value (`std::json::parse`, which yields whatever JSON
+    /// the text described).
+    ResultAnyErr,
 }
 
 impl BuiltinRet {
@@ -581,6 +591,10 @@ impl BuiltinRet {
                     ]),
                     Type::Named("Error".to_string(), Vec::new()),
                 ],
+            ),
+            BuiltinRet::ResultAnyErr => Type::Named(
+                "Result".to_string(),
+                vec![Type::Any, Type::Named("Error".to_string(), Vec::new())],
             ),
         }
     }
@@ -687,6 +701,14 @@ fn builtin_member(ns: &str, member: &str) -> Option<BuiltinMember> {
             "run" => f(&[T::String, T::String], R::ResultRunOutErr),
             _ => None,
         },
+        // JSON 编解码（implementation-first）：`parse` 把文本解成它描述
+        // 的任意 JSON 值树，`stringify` 接收任意值——两成员都可失败
+        // （语法错误 / 不可序列化值）。
+        "std::json" => match member {
+            "parse" => f(&[T::String], R::ResultAnyErr),
+            "stringify" => f(&[T::Any], R::ResultStrErr),
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -739,6 +761,7 @@ fn std_face_members(module: &str) -> Option<Vec<(String, FaceKind)>> {
             "sock_peer_addr",
         ]),
         "process" => fns(&["exit", "args", "run"]),
+        "json" => fns(&["parse", "stringify"]),
         "regex" => ["RegExp", "RegexError", "RegexMatch"]
             .iter()
             .map(|n| (n.to_string(), FaceKind::Type))
@@ -4289,7 +4312,16 @@ impl Analyzer {
                 // name the new path instead of a bare "cannot resolve".
                 if matches!(
                     n.as_str(),
-                    "regex" | "math" | "time" | "fs" | "io" | "os" | "path" | "net" | "process"
+                    "regex"
+                        | "math"
+                        | "time"
+                        | "fs"
+                        | "io"
+                        | "os"
+                        | "path"
+                        | "net"
+                        | "process"
+                        | "json"
                 ) {
                     return Err(self
                         .err_code(
@@ -8233,7 +8265,7 @@ impl Analyzer {
         }
         if !matches!(
             module,
-            "math" | "time" | "fs" | "io" | "os" | "path" | "net" | "process"
+            "math" | "time" | "fs" | "io" | "os" | "path" | "net" | "process" | "json"
         ) {
             return Err(self
                 .err_code("E0607", format!("cannot resolve `std::{module}`"))
@@ -8396,7 +8428,7 @@ impl Analyzer {
                 }
                 if matches!(
                     enum_name,
-                    "Math" | "Time" | "Fs" | "Io" | "Os" | "Path" | "Net" | "Process"
+                    "Math" | "Time" | "Fs" | "Io" | "Os" | "Path" | "Net" | "Process" | "Json"
                 ) {
                     return Err(self
                         .err(format!(
@@ -9332,7 +9364,7 @@ impl Analyzer {
             }
             if matches!(
                 enum_name.as_str(),
-                "Math" | "Time" | "Fs" | "Io" | "Os" | "Path" | "Net" | "Process"
+                "Math" | "Time" | "Fs" | "Io" | "Os" | "Path" | "Net" | "Process" | "Json"
             ) {
                 return Err(self.err(format!(
                     "`{enum_name}` lives under `std`: use `std::{0}::{variant}` or import it with `use std::{0}::*`",

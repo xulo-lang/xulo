@@ -705,6 +705,12 @@ impl IrGenerator {
                             _ => None,
                         };
                     }
+                    // `std::json`：两成员一律返回 Result 枚举（同 io/net，
+                    // 没有可标的原始类型）——必须在下面按 tag 的兜底之前
+                    // 拦住，否则 tag=7 会被误推成 Number
+                    if call.callee.starts_with("std::json::") {
+                        return None;
+                    }
                     // Math::/Time:: 内建：按 lowering 表的 tag 映射返回类型
                     if let Some((_, _, tag)) = Self::intrinsic_lowering(&call.callee) {
                         return Some(if tag == 0 { Type::String } else { Type::Number });
@@ -1267,6 +1273,8 @@ impl IrGenerator {
                 std::borrow::Cow::Owned(format!("Net::{rest}"))
             } else if let Some(rest) = callee.strip_prefix("std::process::") {
                 std::borrow::Cow::Owned(format!("Process::{rest}"))
+            } else if let Some(rest) = callee.strip_prefix("std::json::") {
+                std::borrow::Cow::Owned(format!("Json::{rest}"))
             } else {
                 std::borrow::Cow::Borrowed(callee)
             };
@@ -1344,6 +1352,10 @@ impl IrGenerator {
             "Process::exit" => ("xulo_process_exit", IrType::I64, 6),
             "Process::args" => ("xulo_process_args", IrType::Pointer, 3),
             "Process::run" => ("xulo_process_run", IrType::Pointer, 7),
+            // `std::json`：两成员都返回内置 Result 枚举（tag=7）——parse
+            // 的载荷种类由 FFI 写进枚举，stringify 的载荷是驻留字符串
+            "Json::parse" => ("xulo_json_parse", IrType::Pointer, 7),
+            "Json::stringify" => ("xulo_json_stringify", IrType::Pointer, 7),
             _ => return None,
         };
         Some(lowering)

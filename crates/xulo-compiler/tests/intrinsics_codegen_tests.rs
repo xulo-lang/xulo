@@ -817,3 +817,70 @@ fn main() {
         String::from_utf8_lossy(&out.stdout)
     );
 }
+
+/// `std::json` 的 JIT 落地：parse 载荷按 tag 走成员访问，stringify 带
+/// 调用点推断的值标签（对象 4 / 列表 3 / 浮点位模式 2），失败路径
+/// （语法错误、NaN）是 Result::Err 数据。
+#[test]
+fn test_std_json_parse_and_stringify_roundtrip() {
+    let out = compile_and_run(
+        r#"
+fn main() {
+    match std::json::parse("{\"a\": [1, \"two\"], \"b\": 2.5}") {
+        Result::Ok(v) => {
+            print(v.b)
+            match std::json::stringify(v) {
+                Result::Ok(s) => print(s)
+                Result::Err(e) => print(e.message)
+            }
+        }
+        Result::Err(e) => print(e.message)
+    }
+    match std::json::stringify([1, true, null]) {
+        Result::Ok(s) => print(s)
+        Result::Err(e) => print(e.message)
+    }
+    match std::json::parse("{oops") {
+        Result::Ok(v) => match std::json::stringify(v) {
+            Result::Ok(s) => print(s)
+            Result::Err(e) => print(e.message)
+        }
+        Result::Err(e) => print(e.message)
+    }
+    // 浮点内建不入绑定槽（既有 float-slot 注意事项）：直接链式传参，
+    // determine_element_tag 按调用返回 tag=2 给出位模式载荷
+    match std::json::stringify(std::math::sqrt(-1.0)) {
+        Result::Ok(s) => print(s)
+        Result::Err(e) => print(e.message)
+    }
+}
+"#,
+    );
+    assert_eq!(out.len(), 5, "unexpected: {out:?}");
+    assert_eq!(out[0], "2.5");
+    assert_eq!(out[1], r#"{"a":[1,"two"],"b":2.5}"#);
+    assert_eq!(out[2], "[1,true,null]");
+    // serde 的语法诊断带列号，按前缀断言免得钉死版本措辞
+    assert!(
+        out[3].starts_with("invalid JSON: "),
+        "unexpected: {}",
+        out[3]
+    );
+    assert_eq!(out[4], "cannot serialize NaN as JSON");
+}
+
+/// AOT 对象文件引用 `std::json` 的两个运行时符号（链接期接线回归）。
+#[test]
+fn test_aot_object_references_json_symbols() {
+    let bytes = object_bytes(
+        r#"
+fn main() {
+    std::json::parse("[1, 2]")
+    std::json::stringify("x")
+}
+"#,
+    );
+    for symbol in ["xulo_json_parse", "xulo_json_stringify"] {
+        assert!(references_symbol(&bytes, symbol), "object missing {symbol}");
+    }
+}

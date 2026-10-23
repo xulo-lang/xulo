@@ -778,6 +778,21 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
         params: &[I64, I64],
         returns: &[I64],
     },
+    // `std::json`：parse 返回 Result 枚举指针（载荷 tag 由 FFI 按 JSON
+    // 值种类写入）；stringify 的第二参是值的运行时标签（调用点按 print
+    // 同源规则推断后追加），返回 Result 枚举指针
+    RuntimeFnDesc {
+        name: "xulo_json_parse",
+        addr: xulo_runtime::runtime::xulo_json_parse as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_json_stringify",
+        addr: xulo_runtime::runtime::xulo_json_stringify as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
 ];
 
 /// 已 intern 的字符串常量：JIT 与 AOT 的落地方式不同，但对 lowering 透明

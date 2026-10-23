@@ -560,6 +560,20 @@ impl Interpreter {
             ),
         ];
         let process_obj = Value::Object(Rc::new(RefCell::new(process_members)));
+        // The `std::json` surface: `parse` turns JSON text into the tree of
+        // Xulo values it describes, `stringify` the reverse — both fallible
+        // (syntax errors, non-serializable values).
+        let json_members: Vec<(String, Value)> = vec![
+            (
+                "parse".to_string(),
+                Value::Native(Rc::new(native_json_parse)),
+            ),
+            (
+                "stringify".to_string(),
+                Value::Native(Rc::new(native_json_stringify)),
+            ),
+        ];
+        let json_obj = Value::Object(Rc::new(RefCell::new(json_members)));
         // The `std::regex` module behind the language's `RegExp` type (spec
         // `regular-expressions.mdx`): `RegExp::compile(…)` resolves through
         // the imported name, which `setup_module` materializes from this
@@ -585,6 +599,7 @@ impl Interpreter {
             ("path".to_string(), path_obj),
             ("net".to_string(), net_obj),
             ("process".to_string(), process_obj),
+            ("json".to_string(), json_obj),
             ("regex".to_string(), regex_obj),
         ];
         global.borrow_mut().define(

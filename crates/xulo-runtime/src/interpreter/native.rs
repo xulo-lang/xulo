@@ -902,6 +902,34 @@ pub(super) fn native_process_run(_interp: &Interpreter, args: &[Value]) -> Resul
     ))
 }
 
+/// `std::json::parse(text)`: JSON 文本 → 它描述的任意值（对象/列表/
+/// 字符串/数字/布尔/null），语法错误是 `Result::Err`。
+pub(super) fn native_json_parse(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    let text = builtin_str_arg(args, 0, "std::json::parse")?;
+    Ok(std_result(
+        xulo_std::json::parse(&text).map(|json| crate::runtime::json_to_value(&json)),
+    ))
+}
+
+/// `std::json::stringify(value)`: 任意值 → 紧凑 JSON 文本；不可序列化的
+/// 值（函数、枚举、信号、NaN/Infinity）与环结构是 `Result::Err`。
+pub(super) fn native_json_stringify(
+    _interp: &Interpreter,
+    args: &[Value],
+) -> Result<Value, RunError> {
+    let Some(value) = args.first() else {
+        return Err(RunError::err(
+            "`std::json::stringify` expects 1 argument",
+            0..0,
+        ));
+    };
+    Ok(std_result(
+        crate::runtime::value_to_json(value, 0)
+            .and_then(|json| xulo_std::json::stringify(&json))
+            .map(|text| Value::String(text.into())),
+    ))
+}
+
 /// `RegExp::compile(pattern, flags)` (spec `regular-expressions.mdx`):
 /// `Result::Ok` of a pattern object carrying its operations, or
 /// `Result::Err` of the `RegexError` message the engine reported — an

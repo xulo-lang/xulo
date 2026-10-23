@@ -10,6 +10,7 @@ crate-type = ["staticlib", "lib"]
 xulo-core = { workspace = true }
 xulo-std = { workspace = true }
 corosensei = "0.2"
+serde_json.workspace = true
 
 [dev-dependencies]
 xulo-parser = { workspace = true }

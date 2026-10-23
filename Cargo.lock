@@ -4182,6 +4182,7 @@ name = "xulo-runtime"
 version = "0.1.0"
 dependencies = [
  "corosensei",
+ "serde_json",
  "xulo-core",
  "xulo-parser",
  "xulo-semantic",
@@ -4201,6 +4202,7 @@ name = "xulo-std"
 version = "0.1.0"
 dependencies = [
  "regex",
+ "serde_json",
 ]
 
 [[package]]
