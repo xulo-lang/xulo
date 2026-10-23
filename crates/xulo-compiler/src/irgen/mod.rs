@@ -689,6 +689,13 @@ impl IrGenerator {
                             _ => None,
                         };
                     }
+                    // `std::net` 的九成员一律返回 Result 枚举（同 io，没有
+                    // 可标的原始类型；打印/载荷读取按 lowering 表 tag=7 与
+                    // 载荷 tag 处理）——必须在下面按 tag 的兜底之前拦住，
+                    // 否则 tag=7 会被误推成 Number
+                    if call.callee.starts_with("std::net::") {
+                        return None;
+                    }
                     // Math::/Time:: 内建：按 lowering 表的 tag 映射返回类型
                     if let Some((_, _, tag)) = Self::intrinsic_lowering(&call.callee) {
                         return Some(if tag == 0 { Type::String } else { Type::Number });
@@ -1247,6 +1254,8 @@ impl IrGenerator {
                 std::borrow::Cow::Owned(format!("Os::{rest}"))
             } else if let Some(rest) = callee.strip_prefix("std::path::") {
                 std::borrow::Cow::Owned(format!("Path::{rest}"))
+            } else if let Some(rest) = callee.strip_prefix("std::net::") {
+                std::borrow::Cow::Owned(format!("Net::{rest}"))
             } else {
                 std::borrow::Cow::Borrowed(callee)
             };
@@ -1308,6 +1317,17 @@ impl IrGenerator {
             "Path::basename" => ("xulo_path_basename", IrType::Pointer, 0),
             "Path::ext" => ("xulo_path_ext", IrType::Pointer, 0),
             "Path::normalize" => ("xulo_path_normalize", IrType::Pointer, 0),
+            // `std::net`：九成员一律返回内置 Result 枚举（tag=7）——开句
+            // 载荷是句柄数字（tag=1），读入载荷区分字符串/null(EOF，tag=6)
+            "Net::tcp_listen" => ("xulo_net_tcp_listen", IrType::Pointer, 7),
+            "Net::tcp_accept" => ("xulo_net_tcp_accept", IrType::Pointer, 7),
+            "Net::tcp_connect" => ("xulo_net_tcp_connect", IrType::Pointer, 7),
+            "Net::sock_read" => ("xulo_net_sock_read", IrType::Pointer, 7),
+            "Net::sock_write" => ("xulo_net_sock_write", IrType::Pointer, 7),
+            "Net::sock_shutdown" => ("xulo_net_sock_shutdown", IrType::Pointer, 7),
+            "Net::sock_close" => ("xulo_net_sock_close", IrType::Pointer, 7),
+            "Net::sock_local_addr" => ("xulo_net_sock_local_addr", IrType::Pointer, 7),
+            "Net::sock_peer_addr" => ("xulo_net_sock_peer_addr", IrType::Pointer, 7),
             _ => return None,
         };
         Some(lowering)

@@ -690,7 +690,10 @@ pub(super) fn native_path_join(_interp: &Interpreter, args: &[Value]) -> Result<
 
 /// `std::path::dirname(path)`: the parent directory (`""` when there is
 /// none); total.
-pub(super) fn native_path_dirname(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+pub(super) fn native_path_dirname(
+    _interp: &Interpreter,
+    args: &[Value],
+) -> Result<Value, RunError> {
     let path = builtin_str_arg(args, 0, "std::path::dirname")?;
     Ok(Value::String(xulo_std::path::dirname(&path).into()))
 }
@@ -718,6 +721,124 @@ pub(super) fn native_path_normalize(
 ) -> Result<Value, RunError> {
     let path = builtin_str_arg(args, 0, "std::path::normalize")?;
     Ok(Value::String(xulo_std::path::normalize(&path).into()))
+}
+
+// ──────────────────────────────────────────────────────────────────
+//  std::net — TCP (opaque numeric handles, sync-blocking in v1)
+// ──────────────────────────────────────────────────────────────────
+
+/// `std::net::tcp_listen(addr)`: `Result::Ok` of the listener handle, or
+/// `Err(Error(...))` for an unresolvable name or a refused bind.
+pub(super) fn native_net_tcp_listen(
+    _interp: &Interpreter,
+    args: &[Value],
+) -> Result<Value, RunError> {
+    let addr = builtin_str_arg(args, 0, "std::net::tcp_listen")?;
+    Ok(std_result(
+        xulo_std::net::tcp_listen(&addr).map(|h| Value::Number(h as f64)),
+    ))
+}
+
+/// `std::net::tcp_accept(listener)`: block for the next connection —
+/// `Result::Ok` of the new stream handle.
+pub(super) fn native_net_tcp_accept(
+    _interp: &Interpreter,
+    args: &[Value],
+) -> Result<Value, RunError> {
+    let handle = builtin_num_arg(args, 0, "std::net::tcp_accept")? as i64;
+    Ok(std_result(
+        xulo_std::net::tcp_accept(handle).map(|h| Value::Number(h as f64)),
+    ))
+}
+
+/// `std::net::tcp_connect(addr)`: block until the handshake completes —
+/// `Result::Ok` of the stream handle.
+pub(super) fn native_net_tcp_connect(
+    _interp: &Interpreter,
+    args: &[Value],
+) -> Result<Value, RunError> {
+    let addr = builtin_str_arg(args, 0, "std::net::tcp_connect")?;
+    Ok(std_result(
+        xulo_std::net::tcp_connect(&addr).map(|h| Value::Number(h as f64)),
+    ))
+}
+
+/// `std::net::sock_read(handle, max)`: block for up to `max` bytes —
+/// `Result::Ok` of text, or `null` at end-of-stream. The size domain is
+/// enforced inside `xulo_std::net` (as `Result::Err`, matching the FFI
+/// path): negative/NaN saturate to 0 under the `as usize` cast and land on
+/// the same "read size" error.
+pub(super) fn native_net_sock_read(
+    _interp: &Interpreter,
+    args: &[Value],
+) -> Result<Value, RunError> {
+    let handle = builtin_num_arg(args, 0, "std::net::sock_read")? as i64;
+    let max = builtin_num_arg(args, 1, "std::net::sock_read")?;
+    Ok(std_result(
+        xulo_std::net::sock_read(handle, max as usize).map(|text| match text {
+            Some(s) => Value::String(s.into()),
+            None => Value::Null,
+        }),
+    ))
+}
+
+/// `std::net::sock_write(handle, text)`: block until the text is written —
+/// `Result::Ok` of the byte count.
+pub(super) fn native_net_sock_write(
+    _interp: &Interpreter,
+    args: &[Value],
+) -> Result<Value, RunError> {
+    let handle = builtin_num_arg(args, 0, "std::net::sock_write")? as i64;
+    let text = builtin_str_arg(args, 1, "std::net::sock_write")?;
+    Ok(std_result(
+        xulo_std::net::sock_write(handle, &text).map(|n| Value::Number(n as f64)),
+    ))
+}
+
+/// `std::net::sock_shutdown(handle)`: half-close both directions.
+pub(super) fn native_net_sock_shutdown(
+    _interp: &Interpreter,
+    args: &[Value],
+) -> Result<Value, RunError> {
+    let handle = builtin_num_arg(args, 0, "std::net::sock_shutdown")? as i64;
+    Ok(std_result(
+        xulo_std::net::sock_shutdown(handle).map(|()| Value::Null),
+    ))
+}
+
+/// `std::net::sock_close(handle)`: drop the socket from the registry; a
+/// second close on the same handle is an `Err`.
+pub(super) fn native_net_sock_close(
+    _interp: &Interpreter,
+    args: &[Value],
+) -> Result<Value, RunError> {
+    let handle = builtin_num_arg(args, 0, "std::net::sock_close")? as i64;
+    Ok(std_result(
+        xulo_std::net::sock_close(handle).map(|()| Value::Null),
+    ))
+}
+
+/// `std::net::sock_local_addr(handle)`: the bound `"ip:port"`.
+pub(super) fn native_net_sock_local_addr(
+    _interp: &Interpreter,
+    args: &[Value],
+) -> Result<Value, RunError> {
+    let handle = builtin_num_arg(args, 0, "std::net::sock_local_addr")? as i64;
+    Ok(std_result(
+        xulo_std::net::sock_local_addr(handle).map(|a| Value::String(a.into())),
+    ))
+}
+
+/// `std::net::sock_peer_addr(handle)`: the remote `"ip:port"` of a
+/// connected stream.
+pub(super) fn native_net_sock_peer_addr(
+    _interp: &Interpreter,
+    args: &[Value],
+) -> Result<Value, RunError> {
+    let handle = builtin_num_arg(args, 0, "std::net::sock_peer_addr")? as i64;
+    Ok(std_result(
+        xulo_std::net::sock_peer_addr(handle).map(|a| Value::String(a.into())),
+    ))
 }
 
 /// `RegExp::compile(pattern, flags)` (spec `regular-expressions.mdx`):

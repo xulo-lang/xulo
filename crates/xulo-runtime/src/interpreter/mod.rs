@@ -482,10 +482,7 @@ impl Interpreter {
         // `std::path::join(…)`. Every member is total, so none wraps its
         // result in the built-in `Result`.
         let path_members: Vec<(String, Value)> = vec![
-            (
-                "join".to_string(),
-                Value::Native(Rc::new(native_path_join)),
-            ),
+            ("join".to_string(), Value::Native(Rc::new(native_path_join))),
             (
                 "dirname".to_string(),
                 Value::Native(Rc::new(native_path_dirname)),
@@ -501,6 +498,50 @@ impl Interpreter {
             ),
         ];
         let path_obj = Value::Object(Rc::new(RefCell::new(path_members)));
+        // The `std::net` TCP surface: openers yield an opaque numeric socket
+        // handle that every member validates first — a foreign, closed, or
+        // never-opened number is a clean `Result::Err`, never a crash.
+        // v1 is synchronous: `tcp_accept` / `sock_read` block the calling
+        // task (cooperative scheduling freezes until they return).
+        let net_members: Vec<(String, Value)> = vec![
+            (
+                "tcp_listen".to_string(),
+                Value::Native(Rc::new(native_net_tcp_listen)),
+            ),
+            (
+                "tcp_accept".to_string(),
+                Value::Native(Rc::new(native_net_tcp_accept)),
+            ),
+            (
+                "tcp_connect".to_string(),
+                Value::Native(Rc::new(native_net_tcp_connect)),
+            ),
+            (
+                "sock_read".to_string(),
+                Value::Native(Rc::new(native_net_sock_read)),
+            ),
+            (
+                "sock_write".to_string(),
+                Value::Native(Rc::new(native_net_sock_write)),
+            ),
+            (
+                "sock_shutdown".to_string(),
+                Value::Native(Rc::new(native_net_sock_shutdown)),
+            ),
+            (
+                "sock_close".to_string(),
+                Value::Native(Rc::new(native_net_sock_close)),
+            ),
+            (
+                "sock_local_addr".to_string(),
+                Value::Native(Rc::new(native_net_sock_local_addr)),
+            ),
+            (
+                "sock_peer_addr".to_string(),
+                Value::Native(Rc::new(native_net_sock_peer_addr)),
+            ),
+        ];
+        let net_obj = Value::Object(Rc::new(RefCell::new(net_members)));
         // The `std::regex` module behind the language's `RegExp` type (spec
         // `regular-expressions.mdx`): `RegExp::compile(…)` resolves through
         // the imported name, which `setup_module` materializes from this
@@ -524,6 +565,7 @@ impl Interpreter {
             ("io".to_string(), io_obj),
             ("os".to_string(), os_obj),
             ("path".to_string(), path_obj),
+            ("net".to_string(), net_obj),
             ("regex".to_string(), regex_obj),
         ];
         global.borrow_mut().define(

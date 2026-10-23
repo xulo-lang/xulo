@@ -565,3 +565,149 @@ fn main() {
         assert!(references_symbol(&bytes, symbol), "object missing {symbol}");
     }
 }
+
+/// `std::net` 编译路径全链路：loopback 回显（127.0.0.1:0 → 读回端口 →
+/// connect 经 backlog 完成 → accept → 双向收发）。数字载荷（句柄、字节数）
+/// 经 match 绑定的动态 tag 按整数打印；断言与解释器同构。
+#[test]
+fn test_std_net_loopback_echo_round_trip() {
+    let out = compile_and_run(
+        r#"
+fn main() {
+    match std::net::tcp_listen("127.0.0.1:0") {
+        Result::Ok(server) => {
+            match std::net::sock_local_addr(server) {
+                Result::Ok(addr) => {
+                    match std::net::tcp_connect(addr) {
+                        Result::Ok(client) => {
+                            match std::net::tcp_accept(server) {
+                                Result::Ok(accepted) => {
+                                    match std::net::sock_write(client, "ping") {
+                                        Result::Ok(n) => print(n)
+                                        Result::Err(e) => print(e.message)
+                                    }
+                                    match std::net::sock_read(accepted, 64) {
+                                        Result::Ok(text) => print(text ?? "eof")
+                                        Result::Err(e) => print(e.message)
+                                    }
+                                    match std::net::sock_write(accepted, "pong") {
+                                        Result::Ok(n) => print(n)
+                                        Result::Err(e) => print(e.message)
+                                    }
+                                    match std::net::sock_read(client, 64) {
+                                        Result::Ok(text) => print(text ?? "eof")
+                                        Result::Err(e) => print(e.message)
+                                    }
+                                    std::net::sock_close(client)
+                                    std::net::sock_close(accepted)
+                                    std::net::sock_close(server)
+                                }
+                                Result::Err(e) => print(e.message)
+                            }
+                        }
+                        Result::Err(e) => print(e.message)
+                    }
+                }
+                Result::Err(e) => print(e.message)
+            }
+        }
+        Result::Err(e) => print(e.message)
+    }
+}
+"#,
+    );
+    assert_eq!(out, vec!["4", "ping", "4", "pong"], "unexpected: {out:?}");
+}
+
+/// `std::net` 错误载荷：句柄种类错配 / 死句柄在编译路径同样是干净的
+/// `Result::Err(e.message)`，与解释器一致（不崩、不读废内存）。
+#[test]
+fn test_std_net_error_payloads_surface_messages() {
+    let out = compile_and_run(
+        r#"
+fn main() {
+    match std::net::tcp_listen("127.0.0.1:0") {
+        Result::Ok(server) => {
+            match std::net::sock_write(server, "x") {
+                Result::Ok(_) => print("wrote")
+                Result::Err(e) => print(e.message)
+            }
+            match std::net::sock_read(999999, 8) {
+                Result::Ok(_) => print("read")
+                Result::Err(e) => print(e.message)
+            }
+            std::net::sock_close(server)
+        }
+        Result::Err(e) => print(e.message)
+    }
+}
+"#,
+    );
+    assert_eq!(out.len(), 2, "unexpected: {out:?}");
+    assert!(out[0].contains("listener, not a stream"), "{:?}", out[0]);
+    assert!(out[1].contains("not open"), "{:?}", out[1]);
+}
+
+/// AOT 对象文件引用 `std::net` 全部九个运行时符号（链接期接线回归）。
+/// 只编译不运行：accept/read 会阻塞等待对端。
+#[test]
+fn test_aot_object_references_net_symbols() {
+    let bytes = object_bytes(
+        r#"
+fn main() {
+    std::net::tcp_listen("127.0.0.1:0")
+    std::net::tcp_connect("127.0.0.1:1")
+    std::net::tcp_accept(1)
+    std::net::sock_read(1, 8)
+    std::net::sock_write(1, "x")
+    std::net::sock_shutdown(1)
+    std::net::sock_close(1)
+    std::net::sock_local_addr(1)
+    std::net::sock_peer_addr(1)
+}
+"#,
+    );
+    for symbol in [
+        "xulo_net_tcp_listen",
+        "xulo_net_tcp_accept",
+        "xulo_net_tcp_connect",
+        "xulo_net_sock_read",
+        "xulo_net_sock_write",
+        "xulo_net_sock_shutdown",
+        "xulo_net_sock_close",
+        "xulo_net_sock_local_addr",
+        "xulo_net_sock_peer_addr",
+    ] {
+        assert!(references_symbol(&bytes, symbol), "object missing {symbol}");
+    }
+}
+
+/// `std::net` 裸名经 group import 与限定形式走同一条 lowering
+/// （`apply_std_calls` 改写 → `std::net::` 前缀 → `Net::*` 表键）。
+#[test]
+fn test_std_net_bare_import_lowers_like_the_qualified_form() {
+    let out = compile_and_run(
+        r#"
+use std::net::*;
+
+fn main() {
+    match tcp_listen("127.0.0.1:0") {
+        Result::Ok(server) => {
+            match sock_local_addr(server) {
+                Result::Ok(addr) => print(addr)
+                Result::Err(e) => print(e.message)
+            }
+            sock_close(server)
+        }
+        Result::Err(e) => print(e.message)
+    }
+}
+"#,
+    );
+    assert_eq!(out.len(), 1, "unexpected: {out:?}");
+    assert!(
+        out[0].starts_with("127.0.0.1:") && !out[0].ends_with(":0"),
+        "ephemeral port read back: {:?}",
+        out[0]
+    );
+}

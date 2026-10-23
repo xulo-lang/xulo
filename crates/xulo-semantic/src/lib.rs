@@ -20,9 +20,9 @@ type SResult<T> = Result<T, XuloError>;
 /// control-byte prefix so it can never collide with a real module id (spec
 /// `regular-expressions.mdx`: the module's types are reached directly, with
 /// no loader graph behind the head).
-/// Id of the built-in `std` module root: the seven std modules
+/// Id of the built-in `std` module root: the eight std modules
 /// (`std::math` / `std::time` / `std::fs` / `std::io` / `std::os` /
-/// `std::path` / `std::regex`) are not
+/// `std::path` / `std::net` / `std::regex`) are not
 /// package sources, so they resolve against this synthetic id instead of the
 /// world (spec `builtins/README.md`).
 const BUILTIN_STD: &str = "\u{1}std";
@@ -60,7 +60,7 @@ fn std_path_module<'a>(start: &'a str, segments: &'a [String]) -> Option<&'a str
 fn std_ns_key(enum_name: &str) -> Option<&str> {
     matches!(
         enum_name,
-        "std::math" | "std::time" | "std::fs" | "std::io" | "std::os" | "std::path"
+        "std::math" | "std::time" | "std::fs" | "std::io" | "std::os" | "std::path" | "std::net"
     )
     .then_some(enum_name)
 }
@@ -516,6 +516,10 @@ enum BuiltinRet {
     /// `Result<string?, Error>` — a fallible read whose success payload is an
     /// optional string: `null` is the end of the stream (`std::io::readLine`).
     ResultOptStrErr,
+    /// `Result<number, Error>` — a fallible operation whose success payload is
+    /// a number: the socket handle `std::net`'s openers yield, or the byte
+    /// count `sock_write` reports.
+    ResultNumErr,
 }
 
 impl BuiltinRet {
@@ -545,6 +549,10 @@ impl BuiltinRet {
                     Type::Optional(Box::new(Type::String)),
                     Type::Named("Error".to_string(), Vec::new()),
                 ],
+            ),
+            BuiltinRet::ResultNumErr => Type::Named(
+                "Result".to_string(),
+                vec![Type::Number, Type::Named("Error".to_string(), Vec::new())],
             ),
         }
     }
@@ -629,6 +637,18 @@ fn builtin_member(ns: &str, member: &str) -> Option<BuiltinMember> {
             "dirname" | "basename" | "ext" | "normalize" => f(&[T::String], R::String),
             _ => None,
         },
+        // TCP surface (implementation-first, spec `memory-and-runtime.md`):
+        // openers yield the opaque numeric socket handle, reads distinguish
+        // `null` (EOF) from text, and every member validates its handle.
+        "std::net" => match member {
+            "tcp_listen" | "tcp_connect" => f(&[T::String], R::ResultNumErr),
+            "tcp_accept" => f(&[T::Number], R::ResultNumErr),
+            "sock_read" => f(&[T::Number, T::Number], R::ResultOptStrErr),
+            "sock_write" => f(&[T::Number, T::String], R::ResultNumErr),
+            "sock_close" | "sock_shutdown" => f(&[T::Number], R::ResultUnitErr),
+            "sock_local_addr" | "sock_peer_addr" => f(&[T::Number], R::ResultStrErr),
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -669,6 +689,17 @@ fn std_face_members(module: &str) -> Option<Vec<(String, FaceKind)>> {
             "getenv", "setenv", "cwd", "chdir", "pid", "platform", "arch",
         ]),
         "path" => fns(&["join", "dirname", "basename", "ext", "normalize"]),
+        "net" => fns(&[
+            "tcp_listen",
+            "tcp_accept",
+            "tcp_connect",
+            "sock_read",
+            "sock_write",
+            "sock_shutdown",
+            "sock_close",
+            "sock_local_addr",
+            "sock_peer_addr",
+        ]),
         "regex" => ["RegExp", "RegexError", "RegexMatch"]
             .iter()
             .map(|n| (n.to_string(), FaceKind::Type))
@@ -4219,7 +4250,7 @@ impl Analyzer {
                 // name the new path instead of a bare "cannot resolve".
                 if matches!(
                     n.as_str(),
-                    "regex" | "math" | "time" | "fs" | "io" | "os" | "path"
+                    "regex" | "math" | "time" | "fs" | "io" | "os" | "path" | "net"
                 ) {
                     return Err(self
                         .err_code(
@@ -8148,7 +8179,10 @@ impl Analyzer {
                 .err_code("E0607", format!("cannot resolve `std::{rest}`"))
                 .at(call.span.clone()));
         }
-        if !matches!(module, "math" | "time" | "fs" | "io" | "os" | "path") {
+        if !matches!(
+            module,
+            "math" | "time" | "fs" | "io" | "os" | "path" | "net"
+        ) {
             return Err(self
                 .err_code("E0607", format!("cannot resolve `std::{module}`"))
                 .at(call.span.clone()));
@@ -8308,7 +8342,10 @@ impl Analyzer {
                 if let Some(ns) = std_ns_key(enum_name) {
                     return self.check_builtin_fn_call(ns, variant, call);
                 }
-                if matches!(enum_name, "Math" | "Time" | "Fs" | "Io" | "Os" | "Path") {
+                if matches!(
+                    enum_name,
+                    "Math" | "Time" | "Fs" | "Io" | "Os" | "Path" | "Net"
+                ) {
                     return Err(self
                         .err(format!(
                             "`{enum_name}` lives under `std`: use `std::{0}::{variant}` or import it with `use std::{0}::*`",
@@ -9243,7 +9280,7 @@ impl Analyzer {
             }
             if matches!(
                 enum_name.as_str(),
-                "Math" | "Time" | "Fs" | "Io" | "Os" | "Path"
+                "Math" | "Time" | "Fs" | "Io" | "Os" | "Path" | "Net"
             ) {
                 return Err(self.err(format!(
                     "`{enum_name}` lives under `std`: use `std::{0}::{variant}` or import it with `use std::{0}::*`",

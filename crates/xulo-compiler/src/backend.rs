@@ -700,6 +700,63 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
         params: &[I64],
         returns: &[I64],
     },
+    // `std::net`：九成员一律返回 Result 枚举指针；句柄/长度形参声明为
+    // F64——调用点 `coerce_to` 对 F64 形参走数值转换（I64 载荷/字面量与
+    // F64 字面量都正确落地），FFI 入口再收窄，越界被校验拦成干净 Err
+    RuntimeFnDesc {
+        name: "xulo_net_tcp_listen",
+        addr: xulo_runtime::runtime::xulo_net_tcp_listen as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_net_tcp_accept",
+        addr: xulo_runtime::runtime::xulo_net_tcp_accept as *const u8,
+        params: &[F64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_net_tcp_connect",
+        addr: xulo_runtime::runtime::xulo_net_tcp_connect as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_net_sock_read",
+        addr: xulo_runtime::runtime::xulo_net_sock_read as *const u8,
+        params: &[F64, F64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_net_sock_write",
+        addr: xulo_runtime::runtime::xulo_net_sock_write as *const u8,
+        params: &[F64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_net_sock_shutdown",
+        addr: xulo_runtime::runtime::xulo_net_sock_shutdown as *const u8,
+        params: &[F64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_net_sock_close",
+        addr: xulo_runtime::runtime::xulo_net_sock_close as *const u8,
+        params: &[F64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_net_sock_local_addr",
+        addr: xulo_runtime::runtime::xulo_net_sock_local_addr as *const u8,
+        params: &[F64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_net_sock_peer_addr",
+        addr: xulo_runtime::runtime::xulo_net_sock_peer_addr as *const u8,
+        params: &[F64],
+        returns: &[I64],
+    },
 ];
 
 /// 已 intern 的字符串常量：JIT 与 AOT 的落地方式不同，但对 lowering 透明
