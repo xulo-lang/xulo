@@ -2697,9 +2697,9 @@ fn time_clocks_read_sane_values() {
             fn main() {
                 let wall = std::time::now()
                 let mono = std::time::monotonic()
-                let nanos = std::time::monotonic_nanos()
+                let nanos = std::time::monotonicNanos()
                 print(str(wall > 0 and mono >= 0 and nanos >= 0))
-                print(str(std::time::now_nanos() >= 0))
+                print(str(std::time::nowNanos() >= 0))
             }
         "#,
     );

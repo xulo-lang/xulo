@@ -128,6 +128,11 @@ pub enum RuntimeFn {
     StringPadEnd,
     /// 重复 n 次（n <= 0 得空串）
     StringRepeat,
+    /// 预置字符串检查：标量个数 / 下标处的标量值 / 标量区间切片 / UTF-8 字节列表
+    StringSize,
+    StringCodeAt,
+    StringSlice,
+    StringBytes,
     /// match 字面量 pattern 判定（返回 1/0）
     LiteralMatch,
     /// 区间表达式 `0..<3` / `1...4` 求值为列表

@@ -26,8 +26,8 @@ fn main() {
 
     // std::time：毫秒 / 纳秒时钟（只做布尔与相对检查，输出保持稳定）
     print(std::time::now() > 0)
-    let start = std::time::monotonic_nanos()
-    let end = std::time::monotonic_nanos()
+    let start = std::time::monotonicNanos()
+    let end = std::time::monotonicNanos()
     print(end >= start)
 
     // std::fs：可失败操作返回 Result，可 match 或配合 `?` 传播

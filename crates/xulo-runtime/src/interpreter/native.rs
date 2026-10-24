@@ -454,12 +454,12 @@ pub(super) fn native_time_now(_interp: &Interpreter, args: &[Value]) -> Result<V
     Ok(Value::Number(xulo_std::time::now_millis() as f64))
 }
 
-/// `std::time::now_nanos`: nanoseconds since the Unix epoch (wall clock).
+/// `std::time::nowNanos`: nanoseconds since the Unix epoch (wall clock).
 pub(super) fn native_time_now_nanos(
     _interp: &Interpreter,
     args: &[Value],
 ) -> Result<Value, RunError> {
-    no_arg_guard(args, "std::time::now_nanos")?;
+    no_arg_guard(args, "std::time::nowNanos")?;
     Ok(Value::Number(xulo_std::time::now_nanos() as f64))
 }
 
@@ -473,12 +473,12 @@ pub(super) fn native_time_monotonic(
     Ok(Value::Number(xulo_std::time::monotonic_millis() as f64))
 }
 
-/// `std::time::monotonic_nanos`: nanoseconds on the monotonic clock.
+/// `std::time::monotonicNanos`: nanoseconds on the monotonic clock.
 pub(super) fn native_time_monotonic_nanos(
     _interp: &Interpreter,
     args: &[Value],
 ) -> Result<Value, RunError> {
-    no_arg_guard(args, "std::time::monotonic_nanos")?;
+    no_arg_guard(args, "std::time::monotonicNanos")?;
     Ok(Value::Number(xulo_std::time::monotonic_nanos() as f64))
 }
 
@@ -1175,4 +1175,162 @@ pub(super) fn native_array_from(_interp: &Interpreter, args: &[Value]) -> Result
         )),
         None => Err(RunError::err("Array.clone() requires 1 argument", 0..0)),
     }
+}
+
+/// An integer argument of a built-in call (`int` / `u64` signatures). The
+/// semantic pass checks the registered signature; this guard rejects a
+/// non-integral value instead of silently truncating it.
+pub(super) fn builtin_int_arg(args: &[Value], i: usize, name: &str) -> Result<i64, RunError> {
+    let n = builtin_num_arg(args, i, name)?;
+    if !n.is_finite() || n.fract() != 0.0 {
+        return Err(RunError::err(
+            format!("`{name}` expects an integer, found {n}"),
+            0..0,
+        ));
+    }
+    Ok(n as i64)
+}
+
+/// `std::math::wrappingAdd(a, b)` (spec `builtins/intrinsic-functions.md`).
+pub(super) fn native_math_wrapping_add(
+    _interp: &Interpreter,
+    args: &[Value],
+) -> Result<Value, RunError> {
+    let a = builtin_int_arg(args, 0, "std::math::wrappingAdd")?;
+    let b = builtin_int_arg(args, 1, "std::math::wrappingAdd")?;
+    Ok(Value::Number(xulo_std::math::wrapping_add(a, b) as f64))
+}
+
+/// `std::math::wrappingSub(a, b)`.
+pub(super) fn native_math_wrapping_sub(
+    _interp: &Interpreter,
+    args: &[Value],
+) -> Result<Value, RunError> {
+    let a = builtin_int_arg(args, 0, "std::math::wrappingSub")?;
+    let b = builtin_int_arg(args, 1, "std::math::wrappingSub")?;
+    Ok(Value::Number(xulo_std::math::wrapping_sub(a, b) as f64))
+}
+
+/// `std::math::wrappingMul(a, b)`.
+pub(super) fn native_math_wrapping_mul(
+    _interp: &Interpreter,
+    args: &[Value],
+) -> Result<Value, RunError> {
+    let a = builtin_int_arg(args, 0, "std::math::wrappingMul")?;
+    let b = builtin_int_arg(args, 1, "std::math::wrappingMul")?;
+    Ok(Value::Number(xulo_std::math::wrapping_mul(a, b) as f64))
+}
+
+/// `std::math::popCount(x)`.
+pub(super) fn native_math_pop_count(
+    _interp: &Interpreter,
+    args: &[Value],
+) -> Result<Value, RunError> {
+    let x = builtin_int_arg(args, 0, "std::math::popCount")?;
+    Ok(Value::Number(xulo_std::math::pop_count(x) as f64))
+}
+
+/// `std::math::countLeadingZeros(x)`.
+pub(super) fn native_math_count_leading_zeros(
+    _interp: &Interpreter,
+    args: &[Value],
+) -> Result<Value, RunError> {
+    let x = builtin_int_arg(args, 0, "std::math::countLeadingZeros")?;
+    Ok(Value::Number(xulo_std::math::count_leading_zeros(x) as f64))
+}
+
+/// `std::math::countTrailingZeros(x)`.
+pub(super) fn native_math_count_trailing_zeros(
+    _interp: &Interpreter,
+    args: &[Value],
+) -> Result<Value, RunError> {
+    let x = builtin_int_arg(args, 0, "std::math::countTrailingZeros")?;
+    Ok(Value::Number(xulo_std::math::count_trailing_zeros(x) as f64))
+}
+
+/// `std::math::rotateLeft(x, amount)`: `amount` is `u64` and taken modulo 64.
+pub(super) fn native_math_rotate_left(
+    _interp: &Interpreter,
+    args: &[Value],
+) -> Result<Value, RunError> {
+    let x = builtin_int_arg(args, 0, "std::math::rotateLeft")?;
+    let amount = builtin_int_arg(args, 1, "std::math::rotateLeft")? as u64;
+    Ok(Value::Number(xulo_std::math::rotate_left(x, amount) as f64))
+}
+
+/// `std::math::rotateRight(x, amount)`: `amount` is `u64` and modulo 64.
+pub(super) fn native_math_rotate_right(
+    _interp: &Interpreter,
+    args: &[Value],
+) -> Result<Value, RunError> {
+    let x = builtin_int_arg(args, 0, "std::math::rotateRight")?;
+    let amount = builtin_int_arg(args, 1, "std::math::rotateRight")? as u64;
+    Ok(Value::Number(xulo_std::math::rotate_right(x, amount) as f64))
+}
+
+/// `stringSize(s)`: the number of Unicode scalar values in `s`.
+pub(super) fn native_string_size(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    let s = builtin_str_arg(args, 0, "stringSize")?;
+    Ok(Value::Number(s.chars().count() as f64))
+}
+
+/// `stringCodeAt(s, i)`: the Unicode scalar value at index `i`. An index
+/// outside `0 … stringSize(s) − 1` is a runtime failure.
+pub(super) fn native_string_code_at(
+    _interp: &Interpreter,
+    args: &[Value],
+) -> Result<Value, RunError> {
+    let s = builtin_str_arg(args, 0, "stringCodeAt")?;
+    let i = builtin_int_arg(args, 1, "stringCodeAt")?;
+    if i < 0 {
+        return Err(RunError::err(
+            format!("string index out of range: {i}"),
+            0..0,
+        ));
+    }
+    match s.chars().nth(i as usize) {
+        Some(ch) => Ok(Value::Number(ch as u32 as f64)),
+        None => Err(RunError::err(
+            format!("string index out of range: {i}"),
+            0..0,
+        )),
+    }
+}
+
+/// `stringSlice(s, start, end)`: the scalars at indices `start … end − 1`.
+/// Bounds outside `0 … stringSize(s)` or `start > end` are a runtime failure.
+pub(super) fn native_string_slice(
+    _interp: &Interpreter,
+    args: &[Value],
+) -> Result<Value, RunError> {
+    let s = builtin_str_arg(args, 0, "stringSlice")?;
+    let start = builtin_int_arg(args, 1, "stringSlice")?;
+    let end = builtin_int_arg(args, 2, "stringSlice")?;
+    let len = s.chars().count() as i64;
+    if start < 0 || end < start || end > len {
+        return Err(RunError::err(
+            format!("string slice out of range: {start}..{end}"),
+            0..0,
+        ));
+    }
+    let out: String = s
+        .chars()
+        .skip(start as usize)
+        .take((end - start) as usize)
+        .collect();
+    Ok(Value::String(out.into()))
+}
+
+/// `stringBytes(s)`: the UTF-8 bytes of `s` as a `List<u8>`.
+pub(super) fn native_string_bytes(
+    _interp: &Interpreter,
+    args: &[Value],
+) -> Result<Value, RunError> {
+    let s = builtin_str_arg(args, 0, "stringBytes")?;
+    let bytes = s
+        .as_bytes()
+        .iter()
+        .map(|b| Value::Number(*b as f64))
+        .collect();
+    Ok(Value::List(Rc::new(RefCell::new(bytes))))
 }

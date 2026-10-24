@@ -669,6 +669,18 @@ impl IrGenerator {
                     if call.callee == "str" {
                         return Some(Type::String);
                     }
+                    // String inspection prelude functions.
+                    match call.callee.as_str() {
+                        "stringSize" | "stringCodeAt" => return Some(Type::Number),
+                        "stringSlice" => return Some(Type::String),
+                        "stringBytes" => {
+                            return Some(Type::List(Box::new(Type::Named(
+                                "u8".to_string(),
+                                Vec::new(),
+                            ))));
+                        }
+                        _ => {}
+                    }
                     // `std::fs::exists` 是布尔谓词（可失败成员返回 Result，
                     // 由 print/tag 路径按枚举处理，类型推断只需 bool）
                     if call.callee.starts_with("std::fs::") {
@@ -979,6 +991,15 @@ impl IrGenerator {
                 // str() 产出字符串；Math::Time:: 内建与 float 位模式返回按表打 tag
                 if key == "str" {
                     return 0;
+                }
+                // String inspection prelude functions.
+                if call.object.is_none() {
+                    match key.as_str() {
+                        "stringSize" | "stringCodeAt" => return 1,
+                        "stringSlice" => return 0,
+                        "stringBytes" => return 3,
+                        _ => {}
+                    }
                 }
                 if let Some((_, _, tag)) = Self::intrinsic_lowering(&key) {
                     return tag;
@@ -1323,11 +1344,19 @@ impl IrGenerator {
             "Math::log10" => ("xulo_math_log10", IrType::F64, 2),
             "Math::exp" => ("xulo_math_exp", IrType::F64, 2),
             "Math::random" => ("xulo_math_random", IrType::F64, 2),
+            "Math::wrappingAdd" => ("xulo_math_wrapping_add", IrType::I64, 1),
+            "Math::wrappingSub" => ("xulo_math_wrapping_sub", IrType::I64, 1),
+            "Math::wrappingMul" => ("xulo_math_wrapping_mul", IrType::I64, 1),
+            "Math::popCount" => ("xulo_math_pop_count", IrType::I64, 1),
+            "Math::countLeadingZeros" => ("xulo_math_count_leading_zeros", IrType::I64, 1),
+            "Math::countTrailingZeros" => ("xulo_math_count_trailing_zeros", IrType::I64, 1),
+            "Math::rotateLeft" => ("xulo_math_rotate_left", IrType::I64, 1),
+            "Math::rotateRight" => ("xulo_math_rotate_right", IrType::I64, 1),
             "Math::toFixed" => ("xulo_math_to_fixed", IrType::Pointer, 0),
             "Time::now" => ("xulo_time_now", IrType::I64, 1),
-            "Time::now_nanos" => ("xulo_time_now_nanos", IrType::I64, 1),
+            "Time::nowNanos" => ("xulo_time_now_nanos", IrType::I64, 1),
             "Time::monotonic" => ("xulo_time_monotonic", IrType::I64, 1),
-            "Time::monotonic_nanos" => ("xulo_time_monotonic_nanos", IrType::I64, 1),
+            "Time::monotonicNanos" => ("xulo_time_monotonic_nanos", IrType::I64, 1),
             // `std::fs`：可失败操作返回内置 Result 枚举（tag=7），exists 是 bool
             "Fs::read" => ("xulo_fs_read", IrType::Pointer, 7),
             "Fs::write" => ("xulo_fs_write", IrType::Pointer, 7),

@@ -20,7 +20,7 @@ fn main() {
 
     // 时钟
     print(std::time::now() >= 0)
-    let start = std::time::monotonic_nanos()
+    let start = std::time::monotonicNanos()
     print(std::time::monotonic() >= 0)
     print(start >= 0)
 }

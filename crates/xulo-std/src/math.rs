@@ -223,3 +223,46 @@ pub fn random() -> f64 {
         bits as f64 * (1.0 / ((1u64 << 53) as f64))
     })
 }
+
+/// `Math::wrappingAdd(a, b)`: the two's-complement `int` result of `a + b`
+/// modulo 2⁶⁴. Never traps (spec `builtins/intrinsic-functions.md`).
+pub fn wrapping_add(a: i64, b: i64) -> i64 {
+    a.wrapping_add(b)
+}
+
+/// `Math::wrappingSub(a, b)`: `a − b` modulo 2⁶⁴, as two's complement.
+pub fn wrapping_sub(a: i64, b: i64) -> i64 {
+    a.wrapping_sub(b)
+}
+
+/// `Math::wrappingMul(a, b)`: `a × b` modulo 2⁶⁴, as two's complement.
+pub fn wrapping_mul(a: i64, b: i64) -> i64 {
+    a.wrapping_mul(b)
+}
+
+/// `Math::popCount(x)`: the number of 1 bits in the 64-bit representation.
+pub fn pop_count(x: i64) -> i64 {
+    (x as u64).count_ones() as i64
+}
+
+/// `Math::countLeadingZeros(x)`: leading zero bits; 64 when `x` is 0.
+pub fn count_leading_zeros(x: i64) -> i64 {
+    (x as u64).leading_zeros() as i64
+}
+
+/// `Math::countTrailingZeros(x)`: trailing zero bits; 64 when `x` is 0.
+pub fn count_trailing_zeros(x: i64) -> i64 {
+    (x as u64).trailing_zeros() as i64
+}
+
+/// `Math::rotateLeft(x, amount)`: rotate the 64-bit representation left by
+/// `amount` modulo 64.
+pub fn rotate_left(x: i64, amount: u64) -> i64 {
+    (x as u64).rotate_left(amount as u32) as i64
+}
+
+/// `Math::rotateRight(x, amount)`: rotate the 64-bit representation right by
+/// `amount` modulo 64.
+pub fn rotate_right(x: i64, amount: u64) -> i64 {
+    (x as u64).rotate_right(amount as u32) as i64
+}

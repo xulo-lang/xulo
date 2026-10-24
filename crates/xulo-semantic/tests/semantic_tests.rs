@@ -5143,8 +5143,9 @@ fn bare_io_head_is_rejected_with_a_migration_hint() {
     "#;
     let err = analyze_src(src).unwrap_err();
     assert!(
-        err.message
-            .contains("`Io` lives under `std`: use `std::io::println` or import it with `use std::io::*`"),
+        err.message.contains(
+            "`Io` lives under `std`: use `std::io::println` or import it with `use std::io::*`"
+        ),
         "unexpected message: {}",
         err.message
     );
@@ -6365,4 +6366,99 @@ fn bare_std_member_without_import_is_undefined() {
     "#;
     let err = analyze_src(src).unwrap_err();
     assert_eq!(err.code(), "E0003");
+}
+
+#[test]
+fn recursive_struct_fields_are_rejected_e0113() {
+    // Direct self-reference.
+    let err = analyze_src(
+        r#"
+        struct Node { next: Node }
+        fn main() {}
+        "#,
+    )
+    .expect_err("direct recursion");
+    assert_eq!(err.code(), "E0113", "got: {}", err.message);
+
+    // Mutually recursive through two structs.
+    let err = analyze_src(
+        r#"
+        struct A { b: B }
+        struct B { a: A }
+        fn main() {}
+        "#,
+    )
+    .expect_err("mutual recursion");
+    assert_eq!(err.code(), "E0113", "got: {}", err.message);
+
+    // Through a tuple element.
+    let err = analyze_src(
+        r#"
+        struct S { pair: (S, number) }
+        fn main() {}
+        "#,
+    )
+    .expect_err("tuple recursion");
+    assert_eq!(err.code(), "E0113", "got: {}", err.message);
+
+    // Through an alias, before or after the struct.
+    for src in [
+        r#"
+        type SL = S
+        struct S { xs: SL }
+        fn main() {}
+        "#,
+        r#"
+        struct S { xs: SL }
+        type SL = S
+        fn main() {}
+        "#,
+    ] {
+        let err = analyze_src(src).expect_err("alias recursion");
+        assert_eq!(err.code(), "E0113", "got: {}", err.message);
+    }
+}
+
+#[test]
+fn indirection_breaks_the_recursive_struct_rule() {
+    let cases = [
+        "struct Node { next: Node? }",
+        "struct Node { children: List<Node> }",
+        "struct Node { by_name: Map<string, Node> }",
+        "struct Node { callback: fn(Node): unit }",
+    ];
+    for decl in cases {
+        analyze_src(&format!("{decl}\nfn main() {{}}"))
+            .unwrap_or_else(|e| panic!("{decl}: {}", e.message));
+    }
+    analyze_src(
+        r#"
+        enum E { V(S) }
+        struct S { e: E }
+        fn main() {}
+        "#,
+    )
+    .expect("an enum payload breaks the walk");
+    analyze_src(
+        r#"
+        struct Pair<A, B> { first: A, second: B }
+        fn main() {}
+        "#,
+    )
+    .expect("type parameters are opaque");
+}
+
+#[test]
+fn out_of_range_constant_shift_is_e0210() {
+    let err = analyze_src(r#"fn main() { let x = 1 << 64 }"#).expect_err("64 is out of range");
+    assert_eq!(err.code(), "E0210", "got: {}", err.message);
+
+    let err = analyze_src(r#"fn main() { let x = 1 >> -1 }"#).expect_err("-1 is out of range");
+    assert_eq!(err.code(), "E0210", "got: {}", err.message);
+
+    let err = analyze_src(r#"fn main() { let x = 1 << 0.5 }"#).expect_err("0.5 is not integral");
+    assert_eq!(err.code(), "E0210", "got: {}", err.message);
+
+    analyze_src(r#"fn main() { let a = 1 << 0; let b = 1 >> 63 }"#)
+        .expect("boundary amounts are in range");
 }

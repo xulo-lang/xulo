@@ -55,7 +55,7 @@ fn main() {
 
     // 时钟
     print(std::time::now() >= 0)
-    let start = std::time::monotonic_nanos()
+    let start = std::time::monotonicNanos()
     print(std::time::monotonic() >= 0)
     print(start >= 0)
 }
@@ -151,9 +151,9 @@ fn test_time_clock_comparisons() {
     let out = compile_and_run(
         r#"fn main() {
     print(std::time::now() >= 0)
-    print(std::time::now_nanos() > 0)
+    print(std::time::nowNanos() > 0)
     print(std::time::monotonic() >= 0)
-    print(std::time::monotonic_nanos() >= 0)
+    print(std::time::monotonicNanos() >= 0)
 }"#,
     );
     let expected: Vec<String> = ["true", "true", "true", "true"]

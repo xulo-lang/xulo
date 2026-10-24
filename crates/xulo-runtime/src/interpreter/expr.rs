@@ -542,12 +542,8 @@ impl Interpreter {
                     BinaryOperator::Xor => {
                         self.arith(left, right, bin, "`^`", |a, b| (a as i64 ^ b as i64) as f64)
                     }
-                    BinaryOperator::Shl => self.arith(left, right, bin, "`<<`", |a, b| {
-                        ((a as i64) << (b as i64)) as f64
-                    }),
-                    BinaryOperator::Shr => self.arith(left, right, bin, "`>>`", |a, b| {
-                        ((a as i64) >> (b as i64)) as f64
-                    }),
+                    BinaryOperator::Shl => self.shift(left, right, bin, false),
+                    BinaryOperator::Shr => self.shift(left, right, bin, true),
                     BinaryOperator::Eq => Ok(Value::Boolean(equal(&left, &right))),
                     BinaryOperator::Neq => Ok(Value::Boolean(!equal(&left, &right))),
                     BinaryOperator::Lt => self.compare(left, right, bin, "<"),
@@ -599,6 +595,45 @@ impl Interpreter {
             (a, b) => Err(RunError::err(
                 format!(
                     "cannot apply {op} to {} and {}",
+                    a.kind_name(),
+                    b.kind_name()
+                ),
+                bin.span.clone(),
+            )),
+        }
+    }
+
+    /// `<<` / `>>` (spec `expressions/operators.md`): the amount must be a
+    /// non-negative integer below the operands' bit width — 64 for the
+    /// implementation's `int`/`usize`/`isize`. An amount outside that range
+    /// is a runtime trap, like division by zero.
+    pub(super) fn shift(
+        &self,
+        left: Value,
+        right: Value,
+        bin: &BinaryOp,
+        right_shift: bool,
+    ) -> Result<Value, RunError> {
+        let op = if right_shift { ">>" } else { "<<" };
+        match (left, right) {
+            (Value::Number(a), Value::Number(b)) => {
+                if !b.is_finite() || b.fract() != 0.0 || !(0.0..64.0).contains(&b) {
+                    return Err(RunError::err(
+                        format!("shift amount out of range: {b}"),
+                        bin.span.clone(),
+                    ));
+                }
+                let a = a as i64;
+                let amount = b as u32;
+                Ok(Value::Number(if right_shift {
+                    (a >> amount) as f64
+                } else {
+                    ((a as u64).wrapping_shl(amount) as i64) as f64
+                }))
+            }
+            (a, b) => Err(RunError::err(
+                format!(
+                    "cannot apply `{op}` to {} and {}",
                     a.kind_name(),
                     b.kind_name()
                 ),

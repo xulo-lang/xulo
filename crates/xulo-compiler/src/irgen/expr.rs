@@ -921,6 +921,12 @@ impl IrGenerator {
                     args.push(tag_op);
                     Some(RuntimeFn::Stringify)
                 }
+                // String inspection prelude functions (spec
+                // `builtins/prelude.md`): fixed signatures, no receiver.
+                "stringSize" => Some(RuntimeFn::StringSize),
+                "stringCodeAt" => Some(RuntimeFn::StringCodeAt),
+                "stringSlice" => Some(RuntimeFn::StringSlice),
+                "stringBytes" => Some(RuntimeFn::StringBytes),
                 _ => None,
             }
         };

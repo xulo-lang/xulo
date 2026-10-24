@@ -373,6 +373,32 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
         params: &[I64, I64],
         returns: &[I64],
     },
+    // String inspection prelude functions (spec `builtins/prelude.md`):
+    // scalar count/index/slice and the UTF-8 byte list.
+    RuntimeFnDesc {
+        name: "xulo_string_size",
+        addr: xulo_runtime::runtime::xulo_string_size as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_string_code_at",
+        addr: xulo_runtime::runtime::xulo_string_code_at as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_string_slice",
+        addr: xulo_runtime::runtime::xulo_string_slice as *const u8,
+        params: &[I64, I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_string_bytes",
+        addr: xulo_runtime::runtime::xulo_string_bytes as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
     // match 字面量 pattern / 区间表达式求值
     RuntimeFnDesc {
         name: "xulo_literal_match",
@@ -384,6 +410,14 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
         name: "xulo_range_list",
         addr: xulo_runtime::runtime::xulo_range_list as *const u8,
         params: &[F64, F64, I64],
+        returns: &[I64],
+    },
+    // `<<` / `>>` with the shift-amount domain check (spec
+    // `expressions/operators.md`); `right != 0` selects `>>`.
+    RuntimeFnDesc {
+        name: "xulo_shift",
+        addr: xulo_runtime::runtime::xulo_shift as *const u8,
+        params: &[I64, I64, I64],
         returns: &[I64],
     },
     // Math 命名空间：float 组返回 f64（对齐语义 builtin_member 的 BuiltinRet）
@@ -523,6 +557,56 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
         name: "xulo_math_to_fixed",
         addr: xulo_std::ffi::xulo_math_to_fixed as *const u8,
         params: &[F64, I64],
+        returns: &[I64],
+    },
+    // Math integer functions (spec `builtins/intrinsic-functions.md`):
+    // wrapping arithmetic and the 64-bit bit operations.
+    RuntimeFnDesc {
+        name: "xulo_math_wrapping_add",
+        addr: xulo_std::ffi::xulo_math_wrapping_add as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_math_wrapping_sub",
+        addr: xulo_std::ffi::xulo_math_wrapping_sub as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_math_wrapping_mul",
+        addr: xulo_std::ffi::xulo_math_wrapping_mul as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_math_pop_count",
+        addr: xulo_std::ffi::xulo_math_pop_count as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_math_count_leading_zeros",
+        addr: xulo_std::ffi::xulo_math_count_leading_zeros as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_math_count_trailing_zeros",
+        addr: xulo_std::ffi::xulo_math_count_trailing_zeros as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_math_rotate_left",
+        addr: xulo_std::ffi::xulo_math_rotate_left as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_math_rotate_right",
+        addr: xulo_std::ffi::xulo_math_rotate_right as *const u8,
+        params: &[I64, I64],
         returns: &[I64],
     },
     // Time 命名空间：返回自 epoch/进程原点的整数读数

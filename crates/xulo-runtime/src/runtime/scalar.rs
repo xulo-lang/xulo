@@ -393,3 +393,21 @@ pub extern "C" fn xulo_literal_match(scrut: i64, scrut_tag: i64, lit: i64, lit_t
     };
     i64::from(matched)
 }
+
+/// `<<` / `>>` compiled entry point (spec `expressions/operators.md`): the
+/// amount must be in `0 … 63`; an out-of-range amount is a runtime failure,
+/// matching the interpreter's `RunError`. `right != 0` selects the
+/// sign-filling shift.
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_shift(value: i64, amount: i64, right: i64) -> i64 {
+    if !(0..64).contains(&amount) {
+        eprintln!("shift amount out of range: {amount}");
+        std::process::exit(1);
+    }
+    let amount = amount as u32;
+    if right != 0 {
+        value >> amount
+    } else {
+        ((value as u64).wrapping_shl(amount)) as i64
+    }
+}

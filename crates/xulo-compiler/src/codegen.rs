@@ -448,10 +448,19 @@ impl CodeGen {
                 Instruction::Shl { dst, left, right } => {
                     let l = resolve_operand(&mut builder, left, &vars);
                     let r = resolve_operand(&mut builder, right, &vars);
-                    // 解释器把操作数 `as i64` 截断后再运算、结果 `as f64`
+                    // 解释器把操作数 `as i64` 截断后再运算、结果 `as f64`；
+                    // 移位量越界是运行时失败（spec `expressions/operators.md`），
+                    // 由 `xulo_shift` 统一检查后执行。
                     let l = trunc_to_i64(&mut builder, l);
                     let r = trunc_to_i64(&mut builder, r);
-                    let val = builder.ins().ishl(l, r);
+                    let val = if let Some(&func_id) = self.runtime_func_ids.get("xulo_shift") {
+                        let fref = self.backend.declare_func_in_func(func_id, builder.func);
+                        let zero = builder.ins().iconst(I64, 0);
+                        let call = builder.ins().call(fref, &[l, r, zero]);
+                        builder.inst_results(call)[0]
+                    } else {
+                        builder.ins().ishl(l, r)
+                    };
                     if let Some(&var) = vars.get(dst) {
                         let dst_ty = var_types.get(var.as_u32() as usize).copied().unwrap_or(I64);
                         let val = fit_numeric_slot(&mut builder, val, dst_ty);
@@ -461,10 +470,16 @@ impl CodeGen {
                 Instruction::Shr { dst, left, right } => {
                     let l = resolve_operand(&mut builder, left, &vars);
                     let r = resolve_operand(&mut builder, right, &vars);
-                    // 解释器把操作数 `as i64` 截断后再运算、结果 `as f64`
                     let l = trunc_to_i64(&mut builder, l);
                     let r = trunc_to_i64(&mut builder, r);
-                    let val = builder.ins().sshr(l, r);
+                    let val = if let Some(&func_id) = self.runtime_func_ids.get("xulo_shift") {
+                        let fref = self.backend.declare_func_in_func(func_id, builder.func);
+                        let one = builder.ins().iconst(I64, 1);
+                        let call = builder.ins().call(fref, &[l, r, one]);
+                        builder.inst_results(call)[0]
+                    } else {
+                        builder.ins().sshr(l, r)
+                    };
                     if let Some(&var) = vars.get(dst) {
                         let dst_ty = var_types.get(var.as_u32() as usize).copied().unwrap_or(I64);
                         let val = fit_numeric_slot(&mut builder, val, dst_ty);
@@ -715,6 +730,10 @@ impl CodeGen {
                         RuntimeFn::StringPadStart => "xulo_string_pad_start",
                         RuntimeFn::StringPadEnd => "xulo_string_pad_end",
                         RuntimeFn::StringRepeat => "xulo_string_repeat",
+                        RuntimeFn::StringSize => "xulo_string_size",
+                        RuntimeFn::StringCodeAt => "xulo_string_code_at",
+                        RuntimeFn::StringSlice => "xulo_string_slice",
+                        RuntimeFn::StringBytes => "xulo_string_bytes",
                         RuntimeFn::LiteralMatch => "xulo_literal_match",
                         RuntimeFn::RangeList => "xulo_range_list",
                         RuntimeFn::Intrinsic(name) => name,

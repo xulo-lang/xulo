@@ -636,10 +636,13 @@ fn builtin_member(ns: &str, member: &str) -> Option<BuiltinMember> {
             "atan2" => f(&[T::Float, T::Float], R::Float),
             "log" | "log2" | "log10" | "exp" => f(&[T::Float], R::Float),
             "random" => f(&[], R::Float),
+            "wrappingAdd" | "wrappingSub" | "wrappingMul" => f(&[T::Int, T::Int], R::Int),
+            "popCount" | "countLeadingZeros" | "countTrailingZeros" => f(&[T::Int], R::Int),
+            "rotateLeft" | "rotateRight" => f(&[T::Int, T::U64], R::Int),
             _ => None,
         },
         "std::time" => match member {
-            "now" | "now_nanos" | "monotonic" | "monotonic_nanos" => f(&[], R::Number),
+            "now" | "nowNanos" | "monotonic" | "monotonicNanos" => f(&[], R::Number),
             "sleep" => f(&[T::U64], R::TaskUnit),
             _ => None,
         },
@@ -733,13 +736,41 @@ fn std_face_members(module: &str) -> Option<Vec<(String, FaceKind)>> {
         "math" => [
             values(&["PI", "E", "TAU", "INFINITY", "NAN"]),
             fns(&[
-                "abs", "min", "max", "sqrt", "cbrt", "pow", "floor", "ceil", "round", "trunc",
-                "toFixed", "sin", "cos", "tan", "asin", "acos", "atan", "atan2", "log", "log2",
-                "log10", "exp", "random",
+                "abs",
+                "min",
+                "max",
+                "sqrt",
+                "cbrt",
+                "pow",
+                "floor",
+                "ceil",
+                "round",
+                "trunc",
+                "toFixed",
+                "sin",
+                "cos",
+                "tan",
+                "asin",
+                "acos",
+                "atan",
+                "atan2",
+                "log",
+                "log2",
+                "log10",
+                "exp",
+                "random",
+                "wrappingAdd",
+                "wrappingSub",
+                "wrappingMul",
+                "popCount",
+                "countLeadingZeros",
+                "countTrailingZeros",
+                "rotateLeft",
+                "rotateRight",
             ]),
         ]
         .concat(),
-        "time" => fns(&["now", "now_nanos", "monotonic", "monotonic_nanos", "sleep"]),
+        "time" => fns(&["now", "nowNanos", "monotonic", "monotonicNanos", "sleep"]),
         "fs" => fns(&["read", "write", "exists", "remove", "mkdir"]),
         // `print`/`println` are exported by the module but absent from its
         // glob face: their names belong to the prelude intrinsics, which a
@@ -866,6 +897,12 @@ pub struct Analyzer {
     /// then does a trailing expression count as its implicit return).
     declared_return: bool,
     type_table: HashMap<String, TypeEntry>,
+    /// Type names pre-registered before the declaration pass so a declaration
+    /// may name itself or one declared later (spec `modules/source-files.md`,
+    /// forward references). The entries carry no members; the real entry
+    /// replaces them when the declaration is checked, and E0113 is decided
+    /// after the whole module is registered.
+    provisional_types: HashMap<String, TypeEntry>,
     /// The built-in `Result`/`Error` entries, consulted only when
     /// `type_table` (and the imports) do not declare the name, so a program's
     /// own declaration of either name shadows the builtin (see
@@ -1721,6 +1758,7 @@ fn run_analysis(
         regex_names: std::collections::HashSet::new(),
         std_fns: HashMap::new(),
         type_table: HashMap::new(),
+        provisional_types: HashMap::new(),
         builtins: builtin_type_entries(),
         generics: Vec::new(),
         bound_shapes: Vec::new(),
@@ -1785,6 +1823,45 @@ fn run_analysis(
         own_interface: std::collections::HashSet::new(),
         exported_types_for_iface: Vec::new(),
     };
+    // Pre-register type names so a declaration may name itself or one
+    // declared later (spec `modules/source-files.md`, forward references).
+    // Entries carry no members; the real entry lands when the declaration is
+    // checked, and E0113 is decided once every declaration is known.
+    for statement in &program.statements {
+        let decl = match statement {
+            Statement::Struct(s) => {
+                Some((s.name.clone(), s.type_params.clone(), s.type_bounds.clone()))
+            }
+            Statement::TypeAlias(a) => {
+                Some((a.name.clone(), a.type_params.clone(), a.type_bounds.clone()))
+            }
+            Statement::Enum(e) => {
+                Some((e.name.clone(), e.type_params.clone(), e.type_bounds.clone()))
+            }
+            Statement::Trait(t) => Some((t.name.clone(), Vec::new(), Vec::new())),
+            Statement::Export(xulo_core::ast::ExportStmt { item, .. }) => match item {
+                ExportItem::Struct(s) => {
+                    Some((s.name.clone(), s.type_params.clone(), s.type_bounds.clone()))
+                }
+                ExportItem::Type(a) => {
+                    Some((a.name.clone(), a.type_params.clone(), a.type_bounds.clone()))
+                }
+                ExportItem::Enum(e) => {
+                    Some((e.name.clone(), e.type_params.clone(), e.type_bounds.clone()))
+                }
+                ExportItem::Trait(t) => Some((t.name.clone(), Vec::new(), Vec::new())),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some((name, type_params, type_bounds)) = decl {
+            analyzer.provisional_types.entry(name).or_insert(TypeEntry {
+                type_params,
+                type_bounds,
+                kind: TypeEntryKind::Enum(Vec::new()),
+            });
+        }
+    }
     // Pre-scan `#Test` names so any reference to one — before or after its
     // declaration — fails with E0107 instead of "undefined variable".
     for statement in &program.statements {
@@ -1994,6 +2071,15 @@ fn run_analysis(
                 }
             }
         }
+    }
+    // Struct composition is a whole-module property: a mutual pair declares
+    // one side before the other, so the cycle walk runs once the type table
+    // holds every declaration (spec `types/composite-types.md`, E0113).
+    if (analyzer.first_error.is_none() || lenient)
+        && let Err(err) = analyzer.check_struct_composition(program)
+        && analyzer.first_error.is_none()
+    {
+        analyzer.first_error = Some(err);
     }
     // Local-form `pub use { … }` sits in the header, before every
     // declaration, so its names are validated only now that the
@@ -6113,6 +6199,133 @@ impl Analyzer {
         Ok(())
     }
 
+    /// The struct composition rule (spec `types/composite-types.md`,
+    /// `E0113`): a struct's field types must not reach the declaring struct
+    /// through field positions, tuple elements, and alias expansion without
+    /// an intervening indirection. Runs after every declaration is
+    /// registered, so a mutual pair declared in either order is caught.
+    fn check_struct_composition(&mut self, program: &Program) -> SResult<()> {
+        let mut defs: Vec<(String, Range<usize>)> = Vec::new();
+        for statement in &program.statements {
+            match statement {
+                Statement::Struct(s) => defs.push((s.name.clone(), s.name_span.clone())),
+                Statement::Export(xulo_core::ast::ExportStmt {
+                    item: xulo_core::ast::ExportItem::Struct(s),
+                    ..
+                }) => defs.push((s.name.clone(), s.name_span.clone())),
+                _ => {}
+            }
+        }
+        for (name, span) in defs {
+            let Some(entry) = self.type_table.get(&name) else {
+                continue;
+            };
+            let TypeEntryKind::Struct(fields) = &entry.kind else {
+                continue;
+            };
+            let fields = fields.clone();
+            let params = entry.type_params.clone();
+            let mut visiting = std::collections::HashSet::new();
+            visiting.insert(name.clone());
+            if self.struct_fields_reach(&name, &fields, &params, &mut visiting, 0) {
+                return Err(self
+                    .err_code(
+                        "E0113",
+                        format!("type `{name}` has a cyclic field definition"),
+                    )
+                    .at(span));
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether any field in `fields` composes the `target` struct without an
+    /// indirection. `params` are the field owner's type parameters (opaque to
+    /// the walk); `visiting` holds the structs on the current expansion path.
+    fn struct_fields_reach(
+        &self,
+        target: &str,
+        fields: &[(String, Type, Option<xulo_core::ast::Expression>)],
+        params: &[String],
+        visiting: &mut std::collections::HashSet<String>,
+        depth: usize,
+    ) -> bool {
+        fields
+            .iter()
+            .any(|(_, ty, _)| self.composes_to(target, ty, params, visiting, depth))
+    }
+
+    /// One step of the mandatory-composition walk. `List`, `Map`, `Set`,
+    /// `T?`, a function type, and an enum are indirections and stop it; a
+    /// struct, a tuple element, or an alias expands it.
+    fn composes_to(
+        &self,
+        target: &str,
+        ty: &Type,
+        params: &[String],
+        visiting: &mut std::collections::HashSet<String>,
+        depth: usize,
+    ) -> bool {
+        if depth > 64 {
+            return false;
+        }
+        match ty {
+            Type::Named(name, _) => {
+                if params.iter().any(|p| p == name) {
+                    return false;
+                }
+                // Prelude constructors are the spec's listed indirections
+                // (`List<T>`, `Map<K, V>`, `Set<T>`), as are the enum shapes
+                // (`Result`, `Task`).
+                if matches!(name.as_str(), "List" | "Map" | "Set" | "Result" | "Task") {
+                    return false;
+                }
+                if name == target {
+                    return true;
+                }
+                let Some(entry) = self.type_entry(name) else {
+                    return false;
+                };
+                match &entry.kind {
+                    TypeEntryKind::Alias(inner) => {
+                        let inner = inner.clone();
+                        let alias_params = entry.type_params.clone();
+                        self.composes_to(target, &inner, &alias_params, visiting, depth + 1)
+                    }
+                    TypeEntryKind::Struct(fields) => {
+                        if !visiting.insert(name.clone()) {
+                            return false;
+                        }
+                        let fields = fields.clone();
+                        let struct_params = entry.type_params.clone();
+                        let reached = self.struct_fields_reach(
+                            target,
+                            &fields,
+                            &struct_params,
+                            visiting,
+                            depth + 1,
+                        );
+                        visiting.remove(name);
+                        reached
+                    }
+                    TypeEntryKind::Enum(_) | TypeEntryKind::Trait(_) => false,
+                }
+            }
+            Type::Tuple(elements) => elements
+                .iter()
+                .any(|e| self.composes_to(target, e, params, visiting, depth + 1)),
+            Type::ObjectType(fields) => fields
+                .iter()
+                .any(|(_, e)| self.composes_to(target, e, params, visiting, depth + 1)),
+            Type::Union(members) | Type::Intersection(members) => members
+                .iter()
+                .any(|m| self.composes_to(target, m, params, visiting, depth + 1)),
+            // `Type::List`, `Type::Optional`, `Type::FnSig`, `Type::Async`,
+            // and the scalar kinds are all indirections or leaves.
+            _ => false,
+        }
+    }
+
     fn check_trait(&mut self, t: &TraitDecl) -> SResult<()> {
         // A trait is a fixed contract; the grammar accepts a parameter list
         // only so the attempt can be diagnosed (spec `types/traits.md`).
@@ -8027,6 +8240,25 @@ impl Analyzer {
             | BinaryOperator::Xor
             | BinaryOperator::Shl
             | BinaryOperator::Shr => {
+                // Constant shift-amount domain (spec
+                // `expressions/operators.md`): with both operands constant,
+                // an amount outside `0 … 63` is `E0210`; the same condition
+                // with a non-constant operand is a runtime trap. A plain
+                // literal is an `int` (64-bit) operand.
+                if matches!(bin.operator, BinaryOperator::Shl | BinaryOperator::Shr)
+                    && let (Some(_), Some(amount)) = (
+                        numeric_literal_of(&bin.left),
+                        numeric_literal_of(&bin.right),
+                    )
+                    && (!(0.0..64.0).contains(&amount) || amount.fract() != 0.0)
+                {
+                    return Err(self
+                        .err_code(
+                            "E0210",
+                            format!("shift amount out of range in constant expression: {amount}"),
+                        )
+                        .at(bin.span.clone()));
+                }
                 if let Some(t) = self.fixed_bit_op(bin, &left, &right, false)? {
                     return Ok(t);
                 }
@@ -8791,6 +9023,55 @@ impl Analyzer {
                     .at(call.arguments[1].value.span().clone()));
             }
             return Ok(Type::Any);
+        }
+        // String inspection prelude functions (spec `builtins/prelude.md`):
+        // scalar counts, the scalar at an index, a scalar-range slice, and
+        // the UTF-8 bytes. Their argument types are fixed, so no table is
+        // needed; the user-symbol lookup above already handled shadowing.
+        if matches!(
+            call.callee.as_str(),
+            "stringSize" | "stringCodeAt" | "stringSlice" | "stringBytes"
+        ) {
+            self.no_type_args(call)?;
+            let (expected, ret) = match call.callee.as_str() {
+                "stringSize" | "stringBytes" => (1, Type::Number),
+                "stringCodeAt" => (2, Type::Number),
+                _ => (3, Type::String),
+            };
+            if call.arguments.len() != expected {
+                return Err(self
+                    .err_code(
+                        "E0207",
+                        format!(
+                            "expected {expected} argument{}, found {}",
+                            if expected == 1 { "" } else { "s" },
+                            call.arguments.len()
+                        ),
+                    )
+                    .at(call.span.clone()));
+            }
+            for (i, arg) in call.arguments.iter().enumerate() {
+                let found = self.check_arg_value(&arg.value)?;
+                let want = if i == 0 { Type::String } else { Type::Number };
+                if !self.assignable(&found, &want) && !self.literal_matches(&arg.value, &want) {
+                    return Err(self
+                        .err_code(
+                            "E0202",
+                            format!(
+                                "argument to `{}` must be `{}`, found `{}`",
+                                call.callee,
+                                want.name(),
+                                found.name()
+                            ),
+                        )
+                        .at(arg.value.span().clone()));
+                }
+            }
+            return Ok(if call.callee == "stringBytes" {
+                Type::List(Box::new(Type::Named("u8".to_string(), Vec::new())))
+            } else {
+                ret
+            });
         }
         if self.test_names.contains(&call.callee) {
             return Err(self
@@ -10201,6 +10482,7 @@ impl Analyzer {
         // or when it is a fixed-arity prelude/primitive name (spec
         // `types/primitive-types.md`, `builtins/prelude.md`).
         if self.type_table.contains_key(name)
+            || self.provisional_types.contains_key(name)
             || self.imported_types.contains_key(name)
             || self.builtins.contains_key(name)
             || builtin_type_arity(name).is_some()

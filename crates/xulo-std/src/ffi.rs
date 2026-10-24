@@ -217,3 +217,49 @@ pub extern "C" fn xulo_path_ext(p: *const c_char) -> *const c_char {
 pub extern "C" fn xulo_path_normalize(p: *const c_char) -> *const c_char {
     keep(path::normalize(&cstr_arg(p)))
 }
+
+/// `Math::wrappingAdd` / `Math::wrappingSub` / `Math::wrappingMul` compiled
+/// entry points: two's-complement results modulo 2⁶⁴, never trapping.
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_math_wrapping_add(a: i64, b: i64) -> i64 {
+    math::wrapping_add(a, b)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_math_wrapping_sub(a: i64, b: i64) -> i64 {
+    math::wrapping_sub(a, b)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_math_wrapping_mul(a: i64, b: i64) -> i64 {
+    math::wrapping_mul(a, b)
+}
+
+/// `Math::popCount` / `Math::countLeadingZeros` / `Math::countTrailingZeros`
+/// compiled entry points.
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_math_pop_count(x: i64) -> i64 {
+    math::pop_count(x)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_math_count_leading_zeros(x: i64) -> i64 {
+    math::count_leading_zeros(x)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_math_count_trailing_zeros(x: i64) -> i64 {
+    math::count_trailing_zeros(x)
+}
+
+/// `Math::rotateLeft` / `Math::rotateRight` compiled entry points: the
+/// amount is taken modulo 64, so every value is in domain.
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_math_rotate_left(x: i64, amount: u64) -> i64 {
+    math::rotate_left(x, amount)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_math_rotate_right(x: i64, amount: u64) -> i64 {
+    math::rotate_right(x, amount)
+}

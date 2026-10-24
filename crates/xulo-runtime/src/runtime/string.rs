@@ -201,3 +201,63 @@ pub extern "C" fn xulo_string_repeat(s: *const c_char, n: i64) -> *const c_char 
     }
     intern_string(s.repeat(n as usize))
 }
+
+/// `stringSize(s)`: the number of Unicode scalar values in `s`.
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_string_size(s: *const c_char) -> i64 {
+    let s = unsafe { str_arg(s) };
+    s.chars().count() as i64
+}
+
+/// `stringCodeAt(s, i)`: the Unicode scalar value at index `i`; an index
+/// outside `0 … stringSize(s) − 1` is a runtime failure (spec
+/// `memory-and-runtime.md`, *String index out of range*).
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_string_code_at(s: *const c_char, i: i64) -> i64 {
+    let s = unsafe { str_arg(s) };
+    if i < 0 {
+        eprintln!("string index out of range: {i}");
+        std::process::exit(1);
+    }
+    match s.chars().nth(i as usize) {
+        Some(ch) => ch as u32 as i64,
+        None => {
+            eprintln!("string index out of range: {i}");
+            std::process::exit(1);
+        }
+    }
+}
+
+/// `stringSlice(s, start, end)`: the scalars at indices `start … end − 1`.
+/// Bounds outside `0 … stringSize(s)` or `start > end` is a runtime failure.
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_string_slice(s: *const c_char, start: i64, end: i64) -> *const c_char {
+    let s = unsafe { str_arg(s) };
+    let len = s.chars().count() as i64;
+    if start < 0 || end < start || end > len {
+        eprintln!("string slice out of range: {start}..{end}");
+        std::process::exit(1);
+    }
+    let out: String = s
+        .chars()
+        .skip(start as usize)
+        .take((end - start) as usize)
+        .collect();
+    intern_string(out)
+}
+
+/// `stringBytes(s)`: the UTF-8 bytes of `s` as a `List<u8>` (each byte is an
+/// `int`-tagged element).
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_string_bytes(s: *const c_char) -> *mut XuloArray {
+    let s = unsafe { str_arg(s) };
+    let arr = xulo_alloc_array(s.len());
+    for byte in s.as_bytes() {
+        xulo_array_push(arr, *byte as i64, 1);
+    }
+    arr
+}

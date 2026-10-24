@@ -11,7 +11,7 @@ pub fn now_millis() -> i64 {
         .unwrap_or(0)
 }
 
-/// `Time::now_nanos`: nanoseconds since the Unix epoch (wall clock).
+/// `Time::nowNanos`: nanoseconds since the Unix epoch (wall clock).
 pub fn now_nanos() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -31,7 +31,7 @@ pub fn monotonic_millis() -> i64 {
     monotonic_start().elapsed().as_millis() as i64
 }
 
-/// `Time::monotonic_nanos`: nanoseconds on the monotonic clock.
+/// `Time::monotonicNanos`: nanoseconds on the monotonic clock.
 pub fn monotonic_nanos() -> i64 {
     monotonic_start().elapsed().as_nanos() as i64
 }

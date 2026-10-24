@@ -252,6 +252,29 @@ impl Interpreter {
         global
             .borrow_mut()
             .define("Error", Value::Native(Rc::new(native_error)), false);
+        // String inspection prelude operations (spec `builtins/prelude.md`):
+        // scalar counts and indices, a scalar-range slice, and the UTF-8
+        // bytes as a `List<u8>`.
+        global.borrow_mut().define(
+            "stringSize",
+            Value::Native(Rc::new(native_string_size)),
+            false,
+        );
+        global.borrow_mut().define(
+            "stringCodeAt",
+            Value::Native(Rc::new(native_string_code_at)),
+            false,
+        );
+        global.borrow_mut().define(
+            "stringSlice",
+            Value::Native(Rc::new(native_string_slice)),
+            false,
+        );
+        global.borrow_mut().define(
+            "stringBytes",
+            Value::Native(Rc::new(native_string_bytes)),
+            false,
+        );
         // Array global: Array.new(size, fill?), Array.fill(n, v), Array.clone(iter)
         let array_methods = vec![
             (
@@ -382,6 +405,38 @@ impl Interpreter {
                 Value::Native(Rc::new(native_math_log10)),
             ),
             ("exp".to_string(), Value::Native(Rc::new(native_math_exp))),
+            (
+                "wrappingAdd".to_string(),
+                Value::Native(Rc::new(native_math_wrapping_add)),
+            ),
+            (
+                "wrappingSub".to_string(),
+                Value::Native(Rc::new(native_math_wrapping_sub)),
+            ),
+            (
+                "wrappingMul".to_string(),
+                Value::Native(Rc::new(native_math_wrapping_mul)),
+            ),
+            (
+                "popCount".to_string(),
+                Value::Native(Rc::new(native_math_pop_count)),
+            ),
+            (
+                "countLeadingZeros".to_string(),
+                Value::Native(Rc::new(native_math_count_leading_zeros)),
+            ),
+            (
+                "countTrailingZeros".to_string(),
+                Value::Native(Rc::new(native_math_count_trailing_zeros)),
+            ),
+            (
+                "rotateLeft".to_string(),
+                Value::Native(Rc::new(native_math_rotate_left)),
+            ),
+            (
+                "rotateRight".to_string(),
+                Value::Native(Rc::new(native_math_rotate_right)),
+            ),
         ];
         let math_obj = Value::Object(Rc::new(RefCell::new(math_members)));
         // The `std::time` namespace of clocks and async sleep (spec
@@ -390,7 +445,7 @@ impl Interpreter {
         let time_members: Vec<(String, Value)> = vec![
             ("now".to_string(), Value::Native(Rc::new(native_time_now))),
             (
-                "now_nanos".to_string(),
+                "nowNanos".to_string(),
                 Value::Native(Rc::new(native_time_now_nanos)),
             ),
             (
@@ -398,7 +453,7 @@ impl Interpreter {
                 Value::Native(Rc::new(native_time_monotonic)),
             ),
             (
-                "monotonic_nanos".to_string(),
+                "monotonicNanos".to_string(),
                 Value::Native(Rc::new(native_time_monotonic_nanos)),
             ),
             (
