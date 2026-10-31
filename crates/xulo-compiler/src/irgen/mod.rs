@@ -1358,6 +1358,8 @@ impl IrGenerator {
                 std::borrow::Cow::Owned(format!("Process::{rest}"))
             } else if let Some(rest) = callee.strip_prefix("std::json::") {
                 std::borrow::Cow::Owned(format!("Json::{rest}"))
+            } else if let Some(rest) = callee.strip_prefix("std::fmt::") {
+                std::borrow::Cow::Owned(format!("Fmt::{rest}"))
             } else if let Some(rest) = callee.strip_prefix("std::http::") {
                 std::borrow::Cow::Owned(format!("Http::{rest}"))
             } else {
@@ -1495,6 +1497,9 @@ impl IrGenerator {
             "Json::parse" => ("xulo_json_parse", IrType::Pointer, 7),
             "Json::stringify" => ("xulo_json_stringify", IrType::Pointer, 7),
             "Json::valid" => ("xulo_json_valid", IrType::Bool, 5),
+            // `std::fmt`：format 返回驻留字符串（tag=0）；模板或操作数不
+            // 合是 FFI 侧的运行时失败（eprintln + exit(1)）
+            "Fmt::format" => ("xulo_fmt_format", IrType::Pointer, 0),
             // `std::http`：fetch/request 返回 Result 枚举（tag=7，载荷是
             // `{status, headers, body}` 对象）。listen/Server/Response.text/
             // 构造器没有 AOT 落地（走解释器）

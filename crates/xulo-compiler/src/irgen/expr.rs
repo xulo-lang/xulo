@@ -834,6 +834,7 @@ impl IrGenerator {
                 || call.callee.starts_with("std::net::")
                 || call.callee.starts_with("std::process::")
                 || call.callee.starts_with("std::json::")
+                || call.callee.starts_with("std::fmt::")
                 || call.callee.starts_with("std::http::"))
         {
             // `std::process::run`/`exec` 的可选 `input`/`timeout` 缺席时补
@@ -908,6 +909,11 @@ impl IrGenerator {
                 if args.len() == 4 {
                     args.push(Operand::Const(IrValue::F64(-1.0)));
                 }
+            }
+            // `std::fmt::format(template[, args])` 的可选参数表缺席时补
+            // NULL 指针（FFI 判空 → 空表）
+            if call.callee == "std::fmt::format" && args.len() == 1 {
+                args.push(Operand::Const(IrValue::Null));
             }
             // `std::json::stringify(value)` 需要值的运行时标签一并传给
             // FFI（与 print/str 同一套 dyn 判定：match 绑定走伴随标签槽，

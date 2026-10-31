@@ -5,6 +5,7 @@ use std::os::raw::c_char;
 use crate::value::format_number;
 
 mod fs;
+mod fmt;
 mod heap;
 mod http;
 mod io;
@@ -20,6 +21,7 @@ mod time;
 // 再导出各子模块的 `xulo_*`：xulo-compiler/backend.rs 按 `xulo_runtime::runtime::xulo_*`
 // 路径取函数地址，这里保持该路径不变（`no_mangle` 符号本身与模块布局无关）。
 pub use fs::*;
+pub use fmt::*;
 pub use heap::*;
 pub use http::*;
 pub use io::*;

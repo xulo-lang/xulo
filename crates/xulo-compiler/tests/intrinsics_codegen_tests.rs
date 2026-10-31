@@ -939,6 +939,123 @@ fn main() {
     }
 }
 
+/// `std::fmt` 的 JIT 落地：模板加 tag 化载荷的参数数组（字符串 0 / 整数
+/// 1 / 浮点 2 / 列表 3 / 布尔 5 / null 6），输出与解释器逐行一致。
+#[test]
+fn test_std_fmt_format_matches_interpreter() {
+    let out = compile_and_run(
+        r#"
+fn main() {
+    print(std::fmt::format("%6.2f", [3.14159]))
+    print(std::fmt::format("100%%"))
+    print(std::fmt::format("%-8s|%d", ["hi", 42]))
+    print(std::fmt::format("%#08x", [255]))
+    print(std::fmt::format("%.3g, %q", [0.1, "hi"]))
+    print(std::fmt::format("%d", [-42]))
+    print(std::fmt::format("%x / %#X", [255, 255]))
+    print(std::fmt::format("%b", [5]))
+    print(std::fmt::format("%f", [2.5]))
+    print(std::fmt::format("%e", [1234.5]))
+    print(std::fmt::format("%.3g", [0.1]))
+    print(std::fmt::format("%g", [0.0000001]))
+    print(std::fmt::format("%q", ["a\n"]))
+    print(std::fmt::format("%c", [8364]))
+    print(std::fmt::format("%t / %v", [true, null]))
+    print(std::fmt::format("%-6s|", ["hi"]))
+    print(std::fmt::format("%+8.2f", [3.1]))
+    print(std::fmt::format("%.3s", ["hello"]))
+    print(std::fmt::format("%s", [[1, 2]]))
+    print(std::fmt::format("%v", [2.5]))
+    print(std::fmt::format("%d", [2.0]))
+    // 负零经浮点槽进入（整数字面量取负走 I64 槽，是既有降级约定）
+    print(std::fmt::format("%f", [-std::math::sqrt(0.0)]))
+}
+"#,
+    );
+    assert_eq!(
+        out,
+        vec![
+            "  3.14",
+            "100%",
+            "hi      |42",
+            "0x0000ff",
+            "0.1, \"hi\"",
+            "-42",
+            "ff / 0XFF",
+            "101",
+            "2.500000",
+            "1.234500e+03",
+            "0.1",
+            "1e-07",
+            "\"a\\n\"",
+            "€",
+            "true / null",
+            "hi    |",
+            "   +3.10",
+            "hel",
+            "[1, 2]",
+            "2.5",
+            "2",
+            "-0.000000",
+        ]
+    );
+}
+
+/// examples/fmt.xulo 全文：AOT/JIT 编译路径的输出必须与解释器逐行一致
+const FMT_EXAMPLE: &str = include_str!("../../../examples/fmt.xulo");
+
+#[test]
+fn test_fmt_example_matches_interpreter() {
+    let out = compile_and_run(FMT_EXAMPLE);
+    let expected: Vec<String> = [
+        "hello, world",
+        "42 / 2.5",
+        "\"a\\tb\"",
+        "€ / true",
+        "255 ff FF 100 101",
+        "0xff 0XFF 0o100 0b101",
+        "-42",
+        "2.500000",
+        "3.14",
+        "1.234500e+03",
+        "0.1",
+        "1e-07",
+        "NaN",
+        "  Infinity",
+        "hi      |",
+        "-0003.10",
+        "   +3.10",
+        "0x0000ff",
+        "hel",
+        "[1, 2]",
+        "100%",
+        "42",
+        "ff",
+        "no directives",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    assert_eq!(out, expected, "unexpected output for examples/fmt.xulo");
+}
+
+/// AOT 对象文件引用 `std::fmt` 的运行时符号（链接期接线回归）。
+#[test]
+fn test_aot_object_references_fmt_symbol() {
+    let bytes = object_bytes(
+        r#"
+fn main() {
+    std::fmt::format("%d", [1])
+    std::fmt::format("100%%")
+}
+"#,
+    );
+    assert!(
+        references_symbol(&bytes, "xulo_fmt_format"),
+        "object missing xulo_fmt_format"
+    );
+}
+
 /// f64 内建结果落在 F64 槽：绑定、注解绑定、算术、比较都走浮点域
 #[test]
 fn test_math_float_result_slot_feeds_arithmetic() {

@@ -7299,3 +7299,136 @@ fn time_calendar_argument_types_are_enforced() {
         two.message
     );
 }
+
+// ---------------------------------------------------------------------------
+//  std::fmt: format(template, args) — one member, List<any> argument vector,
+//  no Result (spec std-spec/modules/fmt.md)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fmt_checked_call_examples_type_check() {
+    let src = r#"
+        fn main() {
+            std::fmt::format("%6.2f", [3.14159])
+            std::fmt::format("100%%")
+            std::fmt::format("%-8s|%d", ["hi", 42])
+            std::fmt::format("%#08x", [255])
+            std::fmt::format("%.3g, %q", [0.1, "hi"])
+            std::fmt::format("%s", [[1, 2], { a: 1 }, null, true])
+            std::fmt::format("%d")
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn fmt_arity_is_one_to_two() {
+    let zero = analyze_src(r#"fn main() { std::fmt::format() }"#).unwrap_err();
+    assert_eq!(zero.code(), "E0207", "{}", zero.message);
+    assert!(
+        zero.message.contains("expected 1 to 2 arguments, found 0"),
+        "{}",
+        zero.message
+    );
+    let three =
+        analyze_src(r#"fn main() { std::fmt::format("%d", [1], [2]) }"#).unwrap_err();
+    assert_eq!(three.code(), "E0207", "{}", three.message);
+    assert!(
+        three.message.contains("expected 1 to 2 arguments, found 3"),
+        "{}",
+        three.message
+    );
+}
+
+#[test]
+fn fmt_argument_types_are_enforced() {
+    let template = analyze_src(r#"fn main() { std::fmt::format(42, [1]) }"#).unwrap_err();
+    assert_eq!(template.code(), "E0202", "{}", template.message);
+    assert!(
+        template
+            .message
+            .contains("argument to `std::fmt::format` must be `string`"),
+        "{}",
+        template.message
+    );
+    let args = analyze_src(r#"fn main() { std::fmt::format("%d", 42) }"#).unwrap_err();
+    assert_eq!(args.code(), "E0202", "{}", args.message);
+    assert!(
+        args.message
+            .contains("argument to `std::fmt::format` must be `List<any>`"),
+        "{}",
+        args.message
+    );
+}
+
+#[test]
+fn fmt_rejects_type_arguments() {
+    let err = analyze_src(r#"fn main() { std::fmt::format<int>("%d", [1]) }"#).unwrap_err();
+    assert_eq!(err.code(), "E0807", "{}", err.message);
+    assert!(
+        err.message.contains("`std::fmt::format` accepts no type arguments"),
+        "{}",
+        err.message
+    );
+}
+
+#[test]
+fn fmt_unknown_member_is_e0601() {
+    let err = analyze_src(r#"fn main() { std::fmt::spray("%d", [1]) }"#).unwrap_err();
+    assert_eq!(err.code(), "E0601", "{}", err.message);
+    assert!(err.message.contains("has no member `spray`"), "{}", err.message);
+}
+
+#[test]
+fn bare_fmt_head_is_e0607_with_a_migration_hint() {
+    let err = analyze_src(r#"fn main() { Fmt::format("%d", [1]) }"#).unwrap_err();
+    assert_eq!(err.code(), "E0607", "{}", err.message);
+    assert!(err.message.contains("`Fmt` lives under `std`"), "{}", err.message);
+}
+
+#[test]
+fn fmt_import_forms_reach_the_surface() {
+    let src = r#"
+        use std::fmt::*;
+        use std::fmt as f;
+        fn main() {
+            format("%d", [42])
+            f::format("%x", [255])
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+    let member = r#"
+        use std::fmt::format;
+        fn main() {
+            format("%d", [42])
+        }
+    "#;
+    assert!(analyze_src(member).is_ok());
+}
+
+#[test]
+fn fmt_glob_face_exports_only_format() {
+    let src = r#"
+        use std::fmt::*;
+        fn main() {
+            print(format("%d", [1]))
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+    let err = analyze_src(
+        r#"
+        use std::fmt::*;
+        fn main() {
+            spray("%d", [1])
+        }
+        "#,
+    )
+    .unwrap_err();
+    assert!(
+        err.message.contains("cannot resolve `spray`")
+            || err.message.contains("has no member `spray`")
+            || err.message.contains("unknown function `spray`"),
+        "{}",
+        err.message
+    );
+}

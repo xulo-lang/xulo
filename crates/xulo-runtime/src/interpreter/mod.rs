@@ -782,6 +782,13 @@ impl Interpreter {
             ("valid".to_string(), Value::Native(Rc::new(native_json_valid))),
         ];
         let json_obj = Value::Object(Rc::new(RefCell::new(json_members)));
+        // The `std::fmt` surface (spec `std-spec/modules/fmt.md`): one
+        // member, `format`, whose failures are runtime failures.
+        let fmt_members: Vec<(String, Value)> = vec![(
+            "format".to_string(),
+            Value::Native(Rc::new(native_fmt_format)),
+        )];
+        let fmt_obj = Value::Object(Rc::new(RefCell::new(fmt_members)));
         // The `std::regex` module behind the language's `RegExp` type (spec
         // `regular-expressions.mdx`): `RegExp::compile(…)` resolves through
         // the imported name, which `setup_module` materializes from this
@@ -835,6 +842,7 @@ impl Interpreter {
             ("net".to_string(), net_obj),
             ("process".to_string(), process_obj),
             ("json".to_string(), json_obj),
+            ("fmt".to_string(), fmt_obj),
             ("regex".to_string(), regex_obj),
             ("http".to_string(), http_obj),
         ];

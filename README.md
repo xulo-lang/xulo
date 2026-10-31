@@ -86,6 +86,7 @@ xulo
 | `regex.xulo` | `std::regex::`：`RegExp::compile`、`test` / `find` / `find_all`、字符串 `replace`（`use` 导入与 `?` 传播） |
 | `process.xulo` | `std::process::`：`args` / `run` / `exec`、`launch` 与 `Child` 句柄、`Command` 规格、超时与 kill |
 | `http.xulo` | `std::http::`：`Request` / `Response` 数据与 handler、`fetch` / `request`、`listen` / `serve`（自拉起子进程跑完整往返） |
+| `fmt.xulo` | `std::fmt::`：`format` 模板指令（`%v %s %q %t %c %d %x %X %o %b %f %e %E %g %G`、旗标/宽度/精度） |
 | `ffi.xulo` | `extern "C"` 导入 libc 符号与 `as` 别名、`Ptr` / `Ptr?` 与 `!= null` 收窄、具名参数与省略补 null、`pub extern fn` 导出 |
 | `async_tasks.xulo` | `async` / `await`、`Time::sleep`、`Task::resolve` / `all` / `race` / `timeout` |
 | `test_functions.xulo` | `#Test("标题") fn` 测试函数 + `assert` |

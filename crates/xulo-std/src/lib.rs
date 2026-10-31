@@ -14,6 +14,7 @@
 //! (the semantic pass enforces the registered signature).
 
 pub mod ffi;
+pub mod fmt;
 pub mod format;
 pub mod fs;
 pub mod http;

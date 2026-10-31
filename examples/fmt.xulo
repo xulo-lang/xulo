@@ -1,0 +1,49 @@
+// std::fmt：模板化文本组装（spec std-spec/modules/fmt.md）——模板里的字面
+// 文本原样保留，`%` 指令按位消费参数列表；模板或操作数不合是运行时失败。
+use std::fmt::*;
+use std::fmt as f;
+
+fn main() {
+    // 文本指令：%s/%v 是 str 渲染，%q 加引号转义，%t 布尔，%c 单个码点
+    print(std::fmt::format("hello, %s", ["world"])) // hello, world
+    print(std::fmt::format("%v / %s", [42, 2.5])) // 42 / 2.5
+    print(std::fmt::format("%q", ["a\tb"])) // "a\tb"
+    print(std::fmt::format("%c / %t", [8364, true])) // € / true
+
+    // 整数指令：%d 十进制、%x/%X 十六进制、%o 八进制、%b 二进制；符号保
+    // 留、数字是绝对值的；# 交替形式在符号后放 0x/0X/0o/0b
+    print(std::fmt::format("%d %x %X %o %b", [255, 255, 255, 64, 5])) // 255 ff FF 100 101
+    print(std::fmt::format("%#x %#X %#o %#b", [255, 255, 64, 5])) // 0xff 0XFF 0o100 0b101
+    print(std::fmt::format("%d", [-42])) // -42
+
+    // 浮点指令：%f 定点（缺省 6 位）、%e 科学（缺省 6 位）、%g 取较短形
+    // 式；舍入是 toFixed 规则（中值远离零）
+    print(std::fmt::format("%f", [2.5])) // 2.500000
+    print(std::fmt::format("%.2f", [3.14159])) // 3.14
+    print(std::fmt::format("%e", [1234.5])) // 1.234500e+03
+    print(std::fmt::format("%.3g", [0.1])) // 0.1
+    print(std::fmt::format("%g", [0.0000001])) // 1e-07
+
+    // 特殊值：NaN / Infinity / -Infinity 忽略精度与数值旗标，仍受宽度约束
+    print(std::fmt::format("%f", [std::math::NAN])) // NaN
+    print(std::fmt::format("%10.2f", [std::math::INFINITY])) //   Infinity
+
+    // 旗标、宽度与精度：`-` 右对齐、`0` 零填充（符号感知）、`+` 强制正号、
+    // 空格旗标占正号位；宽度以 Unicode 码点计，是最小值不是截断
+    print(std::fmt::format("%-8s|", ["hi"])) // hi      |
+    print(std::fmt::format("%08.2f", [-3.1])) // -0003.10
+    print(std::fmt::format("%+8.2f", [3.1])) //    +3.10
+    print(std::fmt::format("%#08x", [255])) // 0x0000ff
+    print(std::fmt::format("%.3s", ["hello"])) // hel
+
+    // 容器经 %v/%s 打印元素；`%%` 转义出字面 %
+    print(std::fmt::format("%s", [[1, 2]])) // [1, 2]
+    print(std::fmt::format("100%%")) // 100%
+
+    // 导入形式：裸名、别名与限定路径同一成员
+    print(format("%d", [42])) // 42
+    print(f::format("%x", [255])) // ff
+
+    // 参数表可缺席——模板不含指令时
+    print(std::fmt::format("no directives")) // no directives
+}

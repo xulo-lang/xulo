@@ -1753,6 +1753,59 @@ pub(super) fn native_json_valid(_interp: &Interpreter, args: &[Value]) -> Result
     Ok(Value::Boolean(xulo_std::json::valid(&text)))
 }
 
+/// `std::fmt::format(template, args)`: the template's literal text with each
+/// `%` directive replaced by its formatted argument (spec
+/// `std-spec/modules/fmt.md`). A malformed template, a directive-count
+/// mismatch, or an operand that does not suit its verb is an uncaught
+/// runtime failure — the argument domain § 5.3 leaves to stop the program
+/// (the shape `std::math::toFixed`'s `digits` already takes).
+pub(super) fn native_fmt_format(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    let template = builtin_str_arg(args, 0, "std::fmt::format")?;
+    use xulo_std::fmt::FmtArg;
+    let arg_values: Vec<Value> = match args.get(1) {
+        None => Vec::new(),
+        Some(Value::List(items)) => items.borrow().clone(),
+        Some(other) => {
+            return Err(RunError::err(
+                format!(
+                    "`std::fmt::format` expects a list for `args`, found {}",
+                    other.kind_name()
+                ),
+                0..0,
+            ));
+        }
+    };
+    // A number is one value model: a whole float is its integer (`2` and
+    // `2.0` suit `%d` alike), and every other value reaches the verbs through
+    // its `str` rendering.
+    let fmt_args: Vec<FmtArg> = arg_values
+        .iter()
+        .map(|value| match value {
+            Value::String(s) => FmtArg::Str(s.to_string()),
+            Value::Number(n) => {
+                // A whole float is its integer (`2` and `2.0` suit `%d`
+                // alike), but a negative zero keeps the float slot so `%f`
+                // and `%g` can render its sign.
+                if n.fract() == 0.0
+                    && *n != 0.0
+                    && n.is_finite()
+                    && (i64::MIN as f64..=i64::MAX as f64).contains(n)
+                {
+                    FmtArg::Int(*n as i64)
+                } else {
+                    FmtArg::Float(*n)
+                }
+            }
+            Value::Boolean(b) => FmtArg::Bool(*b),
+            Value::Null => FmtArg::Null,
+            other => FmtArg::Rendered(other.format()),
+        })
+        .collect();
+    xulo_std::fmt::format(&template, &fmt_args)
+        .map(|text| Value::String(text.into()))
+        .map_err(|message| RunError::err(message, 0..0))
+}
+
 /// `RegExp::compile(pattern, flags)` (spec `regular-expressions.mdx`):
 /// `Result::Ok` of a pattern object carrying its operations, or
 /// `Result::Err` of the `RegexError` message the engine reported — an

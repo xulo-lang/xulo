@@ -70,6 +70,7 @@ fn std_ns_key(enum_name: &str) -> Option<&str> {
             | "std::net"
             | "std::process"
             | "std::json"
+            | "std::fmt"
             | "std::http"
     )
     .then_some(enum_name)
@@ -794,6 +795,10 @@ enum BuiltinTy {
     /// `List<{ name, value }>` — `std::http::request`'s header list, whose
     /// record shape is checked structurally.
     ListHeaders,
+    /// `List<any>` — an unchecked element list (`std::fmt::format`'s `args`,
+    /// whose element types are decided per verb at run time; spec
+    /// `std-spec/modules/fmt.md`).
+    ListAny,
 }
 
 impl BuiltinTy {
@@ -808,6 +813,7 @@ impl BuiltinTy {
             BuiltinTy::ListU8 => "List<u8>",
             BuiltinTy::ListStr => "List<string>",
             BuiltinTy::ListHeaders => "List<{ name: string, value: string }>",
+            BuiltinTy::ListAny => "List<any>",
         }
     }
 
@@ -818,6 +824,7 @@ impl BuiltinTy {
             BuiltinTy::ListU8 => Type::List(Box::new(Type::Named("u8".to_string(), Vec::new()))),
             BuiltinTy::ListStr => Type::List(Box::new(Type::String)),
             BuiltinTy::ListHeaders => header_list_ty(),
+            BuiltinTy::ListAny => Type::List(Box::new(Type::Any)),
             _ => Type::Number,
         }
     }
@@ -1374,6 +1381,14 @@ fn builtin_member(ns: &str, member: &str) -> Option<BuiltinMember> {
             "listen" => f(&[T::String], R::ResultServerErr),
             _ => None,
         },
+        // 格式化文本（spec `std-spec/modules/fmt.md`）：唯一的成员，模板加
+        // 按位参数列表（1..=2 元，缺席的 args 补空表）；参数表按
+        // `List<any>` 检查（元素逐个在运行时按动词判定），无 Result——
+        // 模板或操作数不合是运行时失败。
+        "std::fmt" => match member {
+            "format" => f1(&[T::String, T::ListAny], R::String),
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -1538,6 +1553,7 @@ fn std_face_members(module: &str) -> Option<Vec<(String, FaceKind)>> {
         ]
         .concat(),
         "json" => fns(&["parse", "stringify", "valid"]),
+        "fmt" => fns(&["format"]),
         "http" => [
             fns(&["fetch", "request", "listen"]),
             ["Request", "Response", "Server"]
@@ -5229,6 +5245,7 @@ impl Analyzer {
                         | "net"
                         | "process"
                         | "json"
+                        | "fmt"
                         | "http"
                 ) {
                     return Err(self
@@ -10142,7 +10159,8 @@ impl Analyzer {
         }
         if !matches!(
             module,
-            "math" | "time" | "fs" | "io" | "os" | "path" | "net" | "process" | "json" | "http"
+            "math" | "time" | "fs" | "io" | "os" | "path" | "net" | "process" | "json" | "fmt"
+            | "http"
         ) {
             return Err(self
                 .err_code("E0607", format!("cannot resolve `std::{module}`"))
@@ -10446,7 +10464,7 @@ impl Analyzer {
                 }
                 if matches!(
                     enum_name,
-                    "Math" | "Time" | "Fs" | "Io" | "Os" | "Path" | "Net" | "Process" | "Json" | "Http"
+                    "Math" | "Time" | "Fs" | "Io" | "Os" | "Path" | "Net" | "Process" | "Json" | "Fmt" | "Http"
                 ) {
                     return Err(self
                         .err_code(
@@ -11462,7 +11480,7 @@ impl Analyzer {
             }
             if matches!(
                 enum_name.as_str(),
-                "Math" | "Time" | "Fs" | "Io" | "Os" | "Path" | "Net" | "Process" | "Json" | "Http"
+                "Math" | "Time" | "Fs" | "Io" | "Os" | "Path" | "Net" | "Process" | "Json" | "Fmt" | "Http"
             ) {
                 return Err(self.err_code(
                     "E0607",
