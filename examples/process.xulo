@@ -1,0 +1,87 @@
+// 命名空间 std::process::：argv、run/exec 的子进程捕获、launch 的 Child
+// 句柄与 Command 规格（spec modules/process.md）。非零退出是数据；只有
+// 启动失败、捕获超限、超时与句柄复用才是 Err。`exit` 会带走整个进程，
+// 只在注释里出现：std::process::exit(0)
+fn main() {
+    // args()：argv[0] 是启动本进程的程序路径（宿主相关，只检查形状）
+    let argv = std::process::args()
+    print(argv[0] != "")
+    let mut n = 0
+    for a in argv {
+        n = n + 1
+    }
+    print(n > 0)
+
+    // run：经 sh -c 捕获 stdout/stderr/code——子进程非零退出是数据
+    match std::process::run("printf hi; printf bad 1>&2; exit 3") {
+        Result::Ok(r) => {
+            print(r.stdout) // hi
+            print(r.stderr) // bad
+            print(r.code) // 3
+        }
+        Result::Err(e) => print(e.message)
+    }
+
+    // 可选 input：字符串管道给 stdin，cat 停在输入结束
+    match std::process::run("cat", "ping") {
+        Result::Ok(r) => print(r.stdout) // ping
+        Result::Err(e) => print(e.message)
+    }
+
+    // exec：不经 shell——参数原样成为 argv，元字符只是一个参数
+    match std::process::exec("printf", ["%s", "$((2 + 3))"]) {
+        Result::Ok(r) => print(r.stdout) // $((2 + 3))
+        Result::Err(e) => print(e.message)
+    }
+
+    // launch：wait 是延迟的 run；pid 是事实，句柄消耗后仍可读
+    match std::process::launch("printf captured") {
+        Result::Ok(child) => {
+            print(child.pid() > 0) // true
+            match child.wait() {
+                Result::Ok(r) => print(r.stdout) // captured
+                Result::Err(e) => print(e.message)
+            }
+            match child.wait() {
+                Result::Ok(r) => print(r.stdout)
+                Result::Err(e) => print(e.message) // `printf captured` child handle is spent
+            }
+        }
+        Result::Err(e) => print(e.message)
+    }
+
+    // Command 规格：setter 是纯函数——env 只影响派生出的新规格
+    let base = std::process::Command::shell("printf '%s' \"${XULO_DEMO_PROBE:-}\"")
+    match base.run() {
+        Result::Ok(r) => print(r.stdout == "") // true
+        Result::Err(e) => print(e.message)
+    }
+    match base.env("XULO_DEMO_PROBE", "yes").run() {
+        Result::Ok(r) => print(r.stdout) // yes
+        Result::Err(e) => print(e.message)
+    }
+
+    // 超时预算：到期杀掉子进程，wait 给出 timeout 类 Err
+    match std::process::Command::direct("sleep", ["10"]).timeout(300).launch() {
+        Result::Ok(child) => match child.wait() {
+            Result::Ok(r) => print(r.code)
+            Result::Err(e) => print(e.message) // `sleep` timed out after 300 ms
+        }
+        Result::Err(e) => print(e.message)
+    }
+
+    // kill：强杀后 wait 报告信号结束（code 为 -1）
+    match std::process::launch("sleep 10") {
+        Result::Ok(child) => {
+            match child.kill() {
+                Result::Ok(_) => print("killed")
+                Result::Err(e) => print(e.message)
+            }
+            match child.wait() {
+                Result::Ok(r) => print(r.code) // -1
+                Result::Err(e) => print(e.message)
+            }
+        }
+        Result::Err(e) => print(e.message)
+    }
+}

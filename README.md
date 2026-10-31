@@ -75,8 +75,17 @@ xulo
 | `templates.xulo` | 反引号模板字面量 `${...}`、转义、多行、嵌套、Unicode |
 | `collections.xulo` | 列表 / 对象：下标、`+` 拼接、`...` 展开、成员访问 |
 | `optional_chaining.xulo` | `T?` 可选类型、`?.`、`??`、三目、`and` / `or` / `!` |
-| `math_time.xulo` | `std::math::`（常量、取整、幂与开方、`toFixed`）与 `std::time::`（时钟）命名空间 |
+| `math_time.xulo` | `std::math::`（常量、取整、幂与开方、`toFixed`）与 `std::time::`（时钟与 UTC 日历）命名空间 |
+| `time.xulo` | `std::time::`：墙上/单调时钟、`sleep` 任务、UTC 日历（`fromParts` / `format` / `parse` / `parts` / `weekday`） |
 | `std.xulo` | `std` 标准库：`std::math::` / `std::time::` / `std::fs::` / `std::io::`（`Result` 与 `match` 错误处理） |
+| `json.xulo` | `std::json::`：`parse` / `stringify`（含缩进）/ `valid`，语法错误是 `Result::Err` |
+| `path.xulo` | `std::path::`：拼接、拆解、换扩展名、规范化、相对化（纯字符串运算） |
+| `os.xulo` | `std::os::`：工作目录、环境变量、临时/家目录、进程与宿主身份 |
+| `fs.xulo` | `std::fs::`：读写、`stat` 元数据、`readDir` / `walk`、字节读写、`tempFile`、复制改名 |
+| `net.xulo` | `std::net::`：TCP 监听/连接/接受、双向读写、半关闭、读超时（单进程回环） |
+| `regex.xulo` | `std::regex::`：`RegExp::compile`、`test` / `find` / `find_all`、字符串 `replace`（`use` 导入与 `?` 传播） |
+| `process.xulo` | `std::process::`：`args` / `run` / `exec`、`launch` 与 `Child` 句柄、`Command` 规格、超时与 kill |
+| `http.xulo` | `std::http::`：`Request` / `Response` 数据与 handler、`fetch` / `request`、`listen` / `serve`（自拉起子进程跑完整往返） |
 | `ffi.xulo` | `extern "C"` 导入 libc 符号与 `as` 别名、`Ptr` / `Ptr?` 与 `!= null` 收窄、具名参数与省略补 null、`pub extern fn` 导出 |
 | `async_tasks.xulo` | `async` / `await`、`Time::sleep`、`Task::resolve` / `all` / `race` / `timeout` |
 | `test_functions.xulo` | `#Test("标题") fn` 测试函数 + `assert` |

@@ -1,0 +1,61 @@
+// std::os：进程与宿主身份——工作目录、环境变量、临时/家目录、平台与
+// 硬件（spec modules/os.md）。读数宿主相关（路径长什么样、叫什么名字），
+// 所以示例输出只打布尔与相对检查，保持稳定。
+fn main() {
+    // 工作目录：读出来再切走再切回（chdir 是进程状态，示例自己恢复原状）
+    match std::os::cwd() {
+        Result::Ok(here) => {
+            print(here != "") // true
+            match std::os::chdir(std::os::tmpDir()) {
+                Result::Ok(_) => print("moved") // moved
+                Result::Err(e) => print(e.message)
+            }
+            match std::os::chdir(here) {
+                Result::Ok(_) => print("back") // back
+                Result::Err(e) => print(e.message)
+            }
+        }
+        Result::Err(e) => print(e.message)
+    }
+
+    // 环境变量：set / get / unset 往返
+    match std::os::setenv("XULO_DEMO_VAR", "hello") {
+        Result::Ok(_) => print("set") // set
+        Result::Err(e) => print(e.message)
+    }
+    match std::os::getenv("XULO_DEMO_VAR") {
+        Result::Ok(v) => print(v ?? "null") // hello
+        Result::Err(e) => print(e.message)
+    }
+    match std::os::unsetenv("XULO_DEMO_VAR") {
+        Result::Ok(_) => print("unset") // unset
+        Result::Err(e) => print(e.message)
+    }
+    match std::os::getenv("XULO_DEMO_VAR") {
+        Result::Ok(v) => print(v ?? "null") // null
+        Result::Err(e) => print(e.message)
+    }
+
+    // 目录与身份：宿主相关的读数只打布尔
+    print(std::os::tmpDir() != "") // true
+    match std::os::homeDir() {
+        Result::Ok(dir) => print(dir != "") // true
+        Result::Err(e) => print(e.message)
+    }
+    match std::os::execPath() {
+        Result::Ok(path) => print(path != "") // true — 本程序在哪
+        Result::Err(e) => print(e.message)
+    }
+    match std::os::hostName() {
+        Result::Ok(name) => print(name != "") // true
+        Result::Err(e) => print(e.message)
+    }
+    match std::os::userName() {
+        Result::Ok(name) => print(name != "") // true
+        Result::Err(e) => print(e.message)
+    }
+    print(std::os::pid() > 0) // true
+    print(std::os::platform() != "") // true — linux / macos / …
+    print(std::os::arch() != "") // true — x86_64 / aarch64 / …
+    print(std::os::cpuCount() > 0) // true
+}

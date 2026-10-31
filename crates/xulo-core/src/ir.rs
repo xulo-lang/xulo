@@ -130,6 +130,7 @@ pub enum RuntimeFn {
     StringRepeat,
     /// 预置字符串检查：标量个数 / 下标处的标量值 / 标量区间切片 / UTF-8 字节列表
     StringSize,
+    StringByteLen,
     StringCodeAt,
     StringSlice,
     StringBytes,

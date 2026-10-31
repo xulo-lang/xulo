@@ -85,6 +85,26 @@ pub struct Attribute {
     pub has_parens: bool,
 }
 
+/// The kind of one entry in a generic parameter list: a type parameter `T`, or
+/// a const parameter `const N: int` (spec `types/generics.md`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GenericParamKind {
+    Type,
+    Const,
+}
+
+/// One entry of a generic parameter list, in written order. `type_params`
+/// keeps the type-only names for the inference machinery; this preserves the
+/// kind and the interleaving the call site's argument list is matched against.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GenericParam {
+    pub name: String,
+    pub kind: GenericParamKind,
+    /// The declared type of a const parameter (`int`); `None` for a type
+    /// parameter.
+    pub const_type: Option<Type>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct FnDef {
     pub name: String,
@@ -94,6 +114,9 @@ pub struct FnDef {
     pub params: Vec<Param>,
     pub return_type: Option<Type>,
     pub type_params: Vec<String>,
+    /// The full generic parameter list, in written order, with parameter
+    /// kinds (spec `types/generics.md`).
+    pub generic_params: Vec<GenericParam>,
     /// Generic bounds on `type_params`: `T: Area` constrains the parameter.
     pub bounds: Vec<FnBound>,
     pub is_async: bool,
@@ -301,6 +324,8 @@ pub struct TypeAlias {
     /// Source span of the alias name (for name-related diagnostics).
     pub name_span: Range<usize>,
     pub type_params: Vec<String>,
+    /// The full generic parameter list, in written order.
+    pub generic_params: Vec<GenericParam>,
     /// Inline bounds on `type_params`, parallel to it and no longer
     /// (`type Params` has no `where` clause; spec `types/generics.md`).
     pub type_bounds: Vec<FnBound>,
@@ -325,6 +350,9 @@ pub struct TraitDecl {
     /// Source span of the trait name (for name-related diagnostics).
     pub name_span: Range<usize>,
     pub type_params: Vec<String>,
+    /// The full generic parameter list, in written order (a trait may declare
+    /// none; the attempt is `E0810`).
+    pub generic_params: Vec<GenericParam>,
     pub methods: Vec<TraitMethod>,
     pub span: Range<usize>,
     /// Declaration attributes written directly before the `trait` keyword.
@@ -354,6 +382,8 @@ pub struct ImplDecl {
     pub type_name: String,
     /// Type parameters of a generic `impl` (`impl<T> …`), in order.
     pub type_params: Vec<String>,
+    /// The full generic parameter list, in written order.
+    pub generic_params: Vec<GenericParam>,
     /// Inline bounds on `type_params`, parallel to it (spec `types/generics.md`).
     pub type_bounds: Vec<FnBound>,
     /// The receiver's written type arguments (`Pair<T, T>` in
@@ -383,6 +413,8 @@ pub struct EnumDef {
     /// Source span of the enum name (for name-related diagnostics).
     pub name_span: Range<usize>,
     pub type_params: Vec<String>,
+    /// The full generic parameter list, in written order.
+    pub generic_params: Vec<GenericParam>,
     /// Inline bounds on `type_params`, parallel to it (spec `types/generics.md`).
     pub type_bounds: Vec<FnBound>,
     pub variants: Vec<EnumVariant>,
@@ -416,6 +448,8 @@ pub struct StructDef {
     /// Source span of the struct name (for name-related diagnostics).
     pub name_span: Range<usize>,
     pub type_params: Vec<String>,
+    /// The full generic parameter list, in written order.
+    pub generic_params: Vec<GenericParam>,
     /// Inline bounds on `type_params`, parallel to it (spec `types/generics.md`).
     pub type_bounds: Vec<FnBound>,
     pub fields: Vec<StructField>,

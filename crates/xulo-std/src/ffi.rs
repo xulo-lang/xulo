@@ -146,6 +146,42 @@ pub extern "C" fn xulo_math_exp(x: f64) -> f64 {
     math::exp(x)
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_math_sign(x: f64) -> f64 {
+    math::sign(x)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_math_hypot(a: f64, b: f64) -> f64 {
+    math::hypot(a, b)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_math_clamp(x: f64, lo: f64, hi: f64) -> f64 {
+    math::clamp(x, lo, hi)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_math_log1p(x: f64) -> f64 {
+    math::log1p(x)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_math_expm1(x: f64) -> f64 {
+    math::expm1(x)
+}
+
+/// `Math::randomInt(lo, hi)` compiled entry point: `lo > hi` is a runtime
+/// failure (spec `memory-and-runtime.md`).
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_math_random_int(lo: i64, hi: i64) -> i64 {
+    if lo > hi {
+        eprintln!("`Math::randomInt` range is empty: lo {lo} is greater than hi {hi}");
+        std::process::exit(1);
+    }
+    math::random_int(lo, hi)
+}
+
 /// `Math::toFixed` compiled entry point: `digits` outside `0..=15` is a
 /// runtime failure (spec `memory-and-runtime.md`), matching the interpreter's
 /// `RunError`.
@@ -218,6 +254,27 @@ pub extern "C" fn xulo_path_normalize(p: *const c_char) -> *const c_char {
     keep(path::normalize(&cstr_arg(p)))
 }
 
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_path_is_absolute(p: *const c_char) -> i64 {
+    i64::from(path::is_absolute(&cstr_arg(p)))
+}
+
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_path_stem(p: *const c_char) -> *const c_char {
+    keep(path::stem(&cstr_arg(p)))
+}
+
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_path_with_ext(
+    p: *const c_char,
+    ext: *const c_char,
+) -> *const c_char {
+    keep(path::with_ext(&cstr_arg(p), &cstr_arg(ext)))
+}
+
 /// `Math::wrappingAdd` / `Math::wrappingSub` / `Math::wrappingMul` compiled
 /// entry points: two's-complement results modulo 2⁶⁴, never trapping.
 #[unsafe(no_mangle)]
@@ -262,4 +319,70 @@ pub extern "C" fn xulo_math_rotate_left(x: i64, amount: u64) -> i64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn xulo_math_rotate_right(x: i64, amount: u64) -> i64 {
     math::rotate_right(x, amount)
+}
+
+/// `Time::format` compiled entry point: the ISO 8601 UTC text of a
+/// timestamp; a `ms` past the calendar domain is a runtime failure (spec
+/// `memory-and-runtime.md`), matching the interpreter's `RunError`.
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_time_format(ms: f64) -> *const c_char {
+    if !(ms.is_finite() && ms.fract() == 0.0 && ms >= 0.0) {
+        eprintln!("`std::time::format` expects a non-negative integer millisecond count, found {ms}");
+        std::process::exit(1);
+    }
+    match time::format(ms as u64) {
+        Ok(text) => keep(text),
+        Err(message) => {
+            eprintln!("{message}");
+            std::process::exit(1);
+        }
+    }
+}
+
+/// `Time::fromParts` compiled entry point: the timestamp those UTC fields
+/// denote; the time fields default to 0 (the IR pads the absent arguments).
+/// A field set outside the calendar is a runtime failure.
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_time_from_parts(
+    year: f64,
+    month: f64,
+    day: f64,
+    hour: f64,
+    minute: f64,
+    second: f64,
+    millisecond: f64,
+) -> i64 {
+    let field = |x: f64, name: &str| -> i64 {
+        if x.is_finite() && x.fract() == 0.0 {
+            x as i64
+        } else {
+            eprintln!("`std::time::fromParts` `{name}` expects an integer, found {x}");
+            std::process::exit(1);
+        }
+    };
+    match time::from_parts(
+        field(year, "year"),
+        field(month, "month"),
+        field(day, "day"),
+        field(hour, "hour"),
+        field(minute, "minute"),
+        field(second, "second"),
+        field(millisecond, "millisecond"),
+    ) {
+        Ok(ms) => ms as i64,
+        Err(message) => {
+            eprintln!("{message}");
+            std::process::exit(1);
+        }
+    }
+}
+
+/// `Time::weekday` compiled entry point: `0` Sunday … `6` Saturday.
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_time_weekday(ms: f64) -> i64 {
+    if !(ms.is_finite() && ms.fract() == 0.0 && ms >= 0.0) {
+        eprintln!("`std::time::weekday` expects a non-negative integer millisecond count, found {ms}");
+        std::process::exit(1);
+    }
+    time::weekday(ms as u64)
 }

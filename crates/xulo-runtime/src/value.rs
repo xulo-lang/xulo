@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
-use xulo_core::ast::{Block, Param, Type};
+use xulo_core::ast::{Block, GenericParam, Param, Type};
 
 use crate::env::Env;
 use crate::interpreter::{NativeFn, RunError};
@@ -30,6 +30,9 @@ pub enum Value {
     /// An opaque foreign handle from an FFI call (spec ffi.md).
     Ptr(PtrValue),
     List(Rc<RefCell<Vec<Value>>>),
+    /// A `Set<T>`: an unordered collection of unique values, constructed by
+    /// `Set::fromList` (spec `types/composite-types.md`).
+    Set(Rc<RefCell<Vec<Value>>>),
     Object(Rc<RefCell<Vec<(String, Value)>>>),
     /// A user function or closure, capturing its defining environment.
     Function(Rc<FunctionValue>),
@@ -70,6 +73,10 @@ pub enum PromiseState {
 /// function was defined in (closures capture their enclosing scope).
 pub struct FunctionValue {
     pub params: Vec<Param>,
+    /// The full generic parameter list (type and const, in written order) so a
+    /// call site can bind const parameters before the body runs (spec
+    /// `types/generics.md`).
+    pub generic_params: Vec<GenericParam>,
     pub body: Block,
     /// `Some` when the function declared a return type: a trailing expression
     /// statement without a `;` is then the function's implicit return.
@@ -88,6 +95,7 @@ impl Value {
             Value::Null => "`null`".into(),
             Value::Ptr(_) => "a `Ptr`".into(),
             Value::List(_) => "a `List`".into(),
+            Value::Set(_) => "a `Set`".into(),
             Value::Object(_) => "an `object`".into(),
             Value::Function(_) | Value::Native(_) => "a function".into(),
             Value::Signal(_) => "a signal".into(),
@@ -124,6 +132,19 @@ impl Value {
                     .collect::<Vec<_>>();
                 seen.remove(&id);
                 format!("[{}]", parts.join(", "))
+            }
+            Value::Set(set) => {
+                let id = Rc::as_ptr(set) as usize;
+                if !seen.insert(id) {
+                    return "[<cycle>]".into();
+                }
+                let parts = set
+                    .borrow()
+                    .iter()
+                    .map(|v| v.format_seen(seen))
+                    .collect::<Vec<_>>();
+                seen.remove(&id);
+                format!("Set([{}])", parts.join(", "))
             }
             Value::Signal(cell) => cell.borrow().format_seen(seen),
             Value::Object(fields) => {
@@ -173,6 +194,7 @@ pub fn equal(a: &Value, b: &Value) -> bool {
         // `Ptr?` 上由 Null 变体承载
         (Value::Ptr(x), Value::Ptr(y)) => x == y,
         (Value::List(x), Value::List(y)) => Rc::ptr_eq(x, y),
+        (Value::Set(x), Value::Set(y)) => Rc::ptr_eq(x, y),
         (Value::Object(x), Value::Object(y)) => Rc::ptr_eq(x, y),
         (Value::Promise(x), Value::Promise(y)) => Rc::ptr_eq(x, y),
         (Value::Signal(x), Value::Signal(y)) => Rc::ptr_eq(x, y),

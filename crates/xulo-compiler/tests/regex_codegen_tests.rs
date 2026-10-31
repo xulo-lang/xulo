@@ -173,14 +173,6 @@ fn main() {
 // -- 字符串辅助方法 --
 
 #[test]
-fn string_to_uppercase() {
-    let out = compile_and_run(r#"fn main() { print("abc".to_uppercase()) }"#);
-    assert_eq!(out, vec!["ABC"]);
-}
-
-// -- `?` 传播 --
-
-#[test]
 fn propagate_ok_unwraps_payload() {
     let out = compile_and_run(
         r#"

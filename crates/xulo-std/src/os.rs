@@ -76,3 +76,93 @@ pub fn platform() -> &'static str {
 pub fn arch() -> &'static str {
     env::consts::ARCH
 }
+
+/// `Os::unsetenv(name)`: remove a variable from this process's environment.
+/// An empty name or one containing `=` is a failure, as for [`setenv`].
+pub fn unsetenv(name: &str) -> Result<(), String> {
+    if name.is_empty() {
+        return Err("cannot unset environment variable: name is empty".to_string());
+    }
+    if name.contains('=') {
+        return Err(format!(
+            "cannot unset environment variable '{name}': name contains '='"
+        ));
+    }
+    if name.contains('\0') {
+        return Err(format!(
+            "cannot unset environment variable '{name}': name contains a NUL byte"
+        ));
+    }
+    // SAFETY: the name is validated above; tasks are cooperative green
+    // threads on one OS thread (spec `concurrency.md`).
+    unsafe { env::remove_var(name) };
+    Ok(())
+}
+
+/// `Os::tmpDir()`: the host's temporary directory (`TMPDIR` when set and
+/// non-empty, else the platform default). Total; it does not probe existence.
+pub fn tmp_dir() -> String {
+    match env::var_os("TMPDIR") {
+        Some(value) if !value.is_empty() => value.to_string_lossy().into_owned(),
+        _ => env::temp_dir().to_string_lossy().into_owned(),
+    }
+}
+
+/// `Os::homeDir()`: the current user's home directory; an unset or empty
+/// variable is `Err` (absence is a failure here, spec `modules/os.md`).
+pub fn home_dir() -> Result<String, String> {
+    let var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+    match env::var_os(var) {
+        Some(value) if !value.is_empty() => Ok(value.to_string_lossy().into_owned()),
+        _ => Err(format!("cannot determine the home directory: `{var}` is not set")),
+    }
+}
+
+/// `Os::hostName()`: the machine's name, or `Err` when the host will not say.
+pub fn host_name() -> Result<String, String> {
+    if cfg!(windows) {
+        match env::var_os("COMPUTERNAME") {
+            Some(value) if !value.is_empty() => Ok(value.to_string_lossy().into_owned()),
+            _ => Err("cannot determine the host name".to_string()),
+        }
+    } else {
+        std::fs::read_to_string("/etc/hostname")
+            .map(|name| name.trim().to_string())
+            .map_err(|e| format!("cannot determine the host name: {e}"))
+            .and_then(|name| {
+                if name.is_empty() {
+                    Err("cannot determine the host name: it is empty".to_string())
+                } else {
+                    Ok(name)
+                }
+            })
+    }
+}
+
+/// `Os::userName()`: the account the process runs as, or `Err`.
+pub fn user_name() -> Result<String, String> {
+    let var = if cfg!(windows) { "USERNAME" } else { "USER" };
+    match env::var_os(var) {
+        Some(value) if !value.is_empty() => Ok(value.to_string_lossy().into_owned()),
+        _ => Err(format!("cannot determine the user name: `{var}` is not set")),
+    }
+}
+
+/// `Os::execPath()`: the executable the host started, with symbolic links
+/// resolved (spec `modules/os.md`).
+pub fn exec_path() -> Result<String, String> {
+    let exe = env::current_exe().map_err(|e| format!("cannot determine the executable path: {e}"))?;
+    Ok(std::fs::canonicalize(&exe)
+        .unwrap_or(exe)
+        .to_string_lossy()
+        .into_owned())
+}
+
+/// `Os::cpuCount()`: the logical processors available to the process; at
+/// least 1 (spec `modules/os.md`).
+pub fn cpu_count() -> i64 {
+    std::thread::available_parallelism()
+        .map(|n| n.get() as i64)
+        .unwrap_or(1)
+        .max(1)
+}

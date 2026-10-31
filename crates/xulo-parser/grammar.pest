@@ -311,10 +311,10 @@ gt_close = @{ ">" ~ !">" }
 
 function_type = { kw_async? ~ kw_fn ~ "(" ~ fn_type_params? ~ ")" ~ (":" ~ type_expr)? }
 fn_type_params = { fn_type_param ~ ("," ~ fn_type_param)* }
-fn_type_param = { (ident_raw ~ ":")? ~ param_mode? ~ type_expr }
+fn_type_param = { (ident_raw ~ ":" ~ !":")? ~ param_mode? ~ type_expr }
 
 generic_params = { "<" ~ generic_param ~ ("," ~ generic_param)* ~ ","? ~ ">" }
-generic_param = { identifier ~ (":" ~ trait_bound)? }
+generic_param = { (kw_const ~ identifier ~ ":" ~ type_expr) | (identifier ~ (":" ~ trait_bound)?) }
 trait_bound = { type_expr ~ ("+" ~ type_expr)* }
 where_clause = { kw_where ~ where_item ~ ("," ~ where_item)* }
 where_item = { identifier ~ ":" ~ trait_bound }
@@ -445,12 +445,17 @@ primary_expression = {
 }
 
 literal_expression = { number_literal | string_literal | boolean_literal | null_literal }
+// A `::`-separated member segment in expression position: an identifier, or
+// the `copy` keyword so `std::fs::copy(a, b)` (spec `modules/fs.md`) parses.
+// A bare `copy` never starts a path, so `copy expr` stays the unary operator.
+path_member = { identifier | kw_copy }
+
 // A qualified path in expression position: `Theme::Dark`, `form::validate`,
 // `lsp-server::router::run()`, `self::cache`, `super::fields::Field`. The
 // argument list keeps its own rule so an *empty* parenthesized list
 // (`Time::now()`) still reaches the builder — dropping it would silently
 // turn a zero-argument call into a bare reference.
-variant_path = { path_head ~ ("::" ~ identifier)+ ~ variant_call_args? }
+variant_path = { path_head ~ ("::" ~ path_member)+ ~ variant_call_args? }
 variant_call_args = { "(" ~ argument_list? ~ ")" }
 argument_list = { argument ~ ("," ~ argument)* ~ ","? }
 

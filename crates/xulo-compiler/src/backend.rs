@@ -382,6 +382,12 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
         returns: &[I64],
     },
     RuntimeFnDesc {
+        name: "xulo_string_byte_len",
+        addr: xulo_runtime::runtime::xulo_string_byte_len as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
         name: "xulo_string_code_at",
         addr: xulo_runtime::runtime::xulo_string_code_at as *const u8,
         params: &[I64, I64],
@@ -438,6 +444,42 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
         addr: xulo_std::ffi::xulo_math_max as *const u8,
         params: &[F64, F64],
         returns: &[F64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_math_sign",
+        addr: xulo_std::ffi::xulo_math_sign as *const u8,
+        params: &[F64],
+        returns: &[F64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_math_hypot",
+        addr: xulo_std::ffi::xulo_math_hypot as *const u8,
+        params: &[F64, F64],
+        returns: &[F64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_math_clamp",
+        addr: xulo_std::ffi::xulo_math_clamp as *const u8,
+        params: &[F64, F64, F64],
+        returns: &[F64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_math_log1p",
+        addr: xulo_std::ffi::xulo_math_log1p as *const u8,
+        params: &[F64],
+        returns: &[F64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_math_expm1",
+        addr: xulo_std::ffi::xulo_math_expm1 as *const u8,
+        params: &[F64],
+        returns: &[F64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_math_random_int",
+        addr: xulo_std::ffi::xulo_math_random_int as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
     },
     RuntimeFnDesc {
         name: "xulo_math_floor",
@@ -634,6 +676,39 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
         params: &[],
         returns: &[I64],
     },
+    // Time 日历（spec `modules/time.md`）：format/weekday/fromParts 是标量
+    // （域失败在 `xulo-std` 的 ffi 里终止进程），parse 返回 Result 枚举，
+    // parts 返回字段对象
+    RuntimeFnDesc {
+        name: "xulo_time_format",
+        addr: xulo_std::ffi::xulo_time_format as *const u8,
+        params: &[F64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_time_parse",
+        addr: xulo_runtime::runtime::xulo_time_parse as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_time_parts",
+        addr: xulo_runtime::runtime::xulo_time_parts as *const u8,
+        params: &[F64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_time_from_parts",
+        addr: xulo_std::ffi::xulo_time_from_parts as *const u8,
+        params: &[F64, F64, F64, F64, F64, F64, F64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_time_weekday",
+        addr: xulo_std::ffi::xulo_time_weekday as *const u8,
+        params: &[F64],
+        returns: &[I64],
+    },
     // `std::fs`：可失败操作返回 Result 枚举指针，exists 返回 0/1
     RuntimeFnDesc {
         name: "xulo_fs_read",
@@ -663,6 +738,102 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
         name: "xulo_fs_mkdir",
         addr: xulo_runtime::runtime::xulo_fs_mkdir as *const u8,
         params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_fs_append",
+        addr: xulo_runtime::runtime::xulo_fs_append as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_fs_create_new",
+        addr: xulo_runtime::runtime::xulo_fs_create_new as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_fs_touch",
+        addr: xulo_runtime::runtime::xulo_fs_touch as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_fs_set_times",
+        addr: xulo_runtime::runtime::xulo_fs_set_times as *const u8,
+        params: &[I64, F64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_fs_set_mode",
+        addr: xulo_runtime::runtime::xulo_fs_set_mode as *const u8,
+        params: &[I64, F64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_fs_realpath",
+        addr: xulo_runtime::runtime::xulo_fs_realpath as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_fs_stat",
+        addr: xulo_runtime::runtime::xulo_fs_stat as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_fs_copy",
+        addr: xulo_runtime::runtime::xulo_fs_copy as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_fs_rename",
+        addr: xulo_runtime::runtime::xulo_fs_rename as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_fs_remove_dir",
+        addr: xulo_runtime::runtime::xulo_fs_remove_dir as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_fs_read_dir",
+        addr: xulo_runtime::runtime::xulo_fs_read_dir as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_fs_walk",
+        addr: xulo_runtime::runtime::xulo_fs_walk as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_fs_temp_file",
+        addr: xulo_runtime::runtime::xulo_fs_temp_file as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_fs_temp_dir",
+        addr: xulo_runtime::runtime::xulo_fs_temp_dir as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_fs_temp_file_in",
+        addr: xulo_runtime::runtime::xulo_fs_temp_file_in as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_fs_temp_dir_in",
+        addr: xulo_runtime::runtime::xulo_fs_temp_dir_in as *const u8,
+        params: &[I64, I64],
         returns: &[I64],
     },
     // `std::io`：写真实 stdout/stderr、读真实 stdin，七个成员一律返回
@@ -704,6 +875,24 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
         returns: &[I64],
     },
     RuntimeFnDesc {
+        name: "xulo_io_read_n",
+        addr: xulo_runtime::runtime::xulo_io_read_n as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_io_stdin_is_tty",
+        addr: xulo_runtime::runtime::xulo_io_stdin_is_tty as *const u8,
+        params: &[],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_io_stdout_is_tty",
+        addr: xulo_runtime::runtime::xulo_io_stdout_is_tty as *const u8,
+        params: &[],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
         name: "xulo_io_read",
         addr: xulo_runtime::runtime::xulo_io_read as *const u8,
         params: &[],
@@ -721,6 +910,48 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
         name: "xulo_os_setenv",
         addr: xulo_runtime::runtime::xulo_os_setenv as *const u8,
         params: &[I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_os_unsetenv",
+        addr: xulo_runtime::runtime::xulo_os_unsetenv as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_os_tmp_dir",
+        addr: xulo_runtime::runtime::xulo_os_tmp_dir as *const u8,
+        params: &[],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_os_home_dir",
+        addr: xulo_runtime::runtime::xulo_os_home_dir as *const u8,
+        params: &[],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_os_host_name",
+        addr: xulo_runtime::runtime::xulo_os_host_name as *const u8,
+        params: &[],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_os_user_name",
+        addr: xulo_runtime::runtime::xulo_os_user_name as *const u8,
+        params: &[],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_os_exec_path",
+        addr: xulo_runtime::runtime::xulo_os_exec_path as *const u8,
+        params: &[],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_os_cpu_count",
+        addr: xulo_runtime::runtime::xulo_os_cpu_count as *const u8,
+        params: &[],
         returns: &[I64],
     },
     RuntimeFnDesc {
@@ -754,6 +985,24 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
         returns: &[I64],
     },
     // `std::path`：全成员为纯字符串运算，返回驻留字符串指针（tag=0）
+    RuntimeFnDesc {
+        name: "xulo_path_is_absolute",
+        addr: xulo_std::ffi::xulo_path_is_absolute as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_path_stem",
+        addr: xulo_std::ffi::xulo_path_stem as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_path_with_ext",
+        addr: xulo_std::ffi::xulo_path_with_ext as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
     RuntimeFnDesc {
         name: "xulo_path_join",
         addr: xulo_std::ffi::xulo_path_join as *const u8,
@@ -796,25 +1045,31 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
     RuntimeFnDesc {
         name: "xulo_net_tcp_accept",
         addr: xulo_runtime::runtime::xulo_net_tcp_accept as *const u8,
-        params: &[F64],
+        params: &[F64, F64],
         returns: &[I64],
     },
     RuntimeFnDesc {
         name: "xulo_net_tcp_connect",
         addr: xulo_runtime::runtime::xulo_net_tcp_connect as *const u8,
-        params: &[I64],
+        params: &[I64, F64],
         returns: &[I64],
     },
     RuntimeFnDesc {
         name: "xulo_net_sock_read",
         addr: xulo_runtime::runtime::xulo_net_sock_read as *const u8,
-        params: &[F64, F64],
+        params: &[F64, F64, F64],
         returns: &[I64],
     },
     RuntimeFnDesc {
         name: "xulo_net_sock_write",
         addr: xulo_runtime::runtime::xulo_net_sock_write as *const u8,
-        params: &[F64, I64],
+        params: &[F64, I64, F64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_net_sock_shutdown_write",
+        addr: xulo_runtime::runtime::xulo_net_sock_shutdown_write as *const u8,
+        params: &[F64],
         returns: &[I64],
     },
     RuntimeFnDesc {
@@ -842,8 +1097,10 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
         returns: &[I64],
     },
     // `std::process`：exit 假返回 i64（函数永不返回，签名只为闭合）；
-    // args 返回驻留字符串数组指针；run 的 cmd/input 是驻留字符串指针
-    // （可选 input 由 IR 侧补 NULL），返回 Result 枚举指针
+    // args 返回驻留字符串数组指针；run/exec 的 cmd/program/input 是驻留
+    // 字符串指针（可选 input 由 IR 侧补 NULL）、args 是数组指针、timeout
+    // 是 f64 毫秒预算（缺席补 -1 → 不限时），返回 Result 枚举指针。
+    // launch/Command/Child 无 AOT 落地（子进程句柄走解释器）。
     RuntimeFnDesc {
         name: "xulo_process_exit",
         addr: xulo_runtime::runtime::xulo_process_exit as *const u8,
@@ -859,7 +1116,29 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
     RuntimeFnDesc {
         name: "xulo_process_run",
         addr: xulo_runtime::runtime::xulo_process_run as *const u8,
-        params: &[I64, I64],
+        params: &[I64, I64, F64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_process_exec",
+        addr: xulo_runtime::runtime::xulo_process_exec as *const u8,
+        params: &[I64, I64, I64, F64],
+        returns: &[I64],
+    },
+    // `std::http`：fetch/request 的 url/method/body 是驻留字符串指针、
+    // headers 是数组指针（可选参由 IR 侧补 NULL）、timeout 是 f64 毫秒预算
+    // （缺席补 -1 → 不限时），返回 Result 枚举指针。listen/Server/对象方法
+    // 无 AOT 落地。
+    RuntimeFnDesc {
+        name: "xulo_http_fetch",
+        addr: xulo_runtime::runtime::xulo_http_fetch as *const u8,
+        params: &[I64, F64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_http_request",
+        addr: xulo_runtime::runtime::xulo_http_request as *const u8,
+        params: &[I64, I64, I64, I64, F64],
         returns: &[I64],
     },
     // `std::json`：parse 返回 Result 枚举指针（载荷 tag 由 FFI 按 JSON
@@ -874,7 +1153,13 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
     RuntimeFnDesc {
         name: "xulo_json_stringify",
         addr: xulo_runtime::runtime::xulo_json_stringify as *const u8,
-        params: &[I64, I64],
+        params: &[I64, I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_json_valid",
+        addr: xulo_runtime::runtime::xulo_json_valid as *const u8,
+        params: &[I64],
         returns: &[I64],
     },
 ];

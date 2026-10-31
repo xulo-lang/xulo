@@ -210,6 +210,15 @@ pub extern "C" fn xulo_string_size(s: *const c_char) -> i64 {
     s.chars().count() as i64
 }
 
+/// `s.byteLen`: the number of UTF-8 bytes in `s` (spec
+/// `types/primitive-types.md`).
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_string_byte_len(s: *const c_char) -> i64 {
+    let s = unsafe { str_arg(s) };
+    s.len() as i64
+}
+
 /// `stringCodeAt(s, i)`: the Unicode scalar value at index `i`; an index
 /// outside `0 … stringSize(s) − 1` is a runtime failure (spec
 /// `memory-and-runtime.md`, *String index out of range*).

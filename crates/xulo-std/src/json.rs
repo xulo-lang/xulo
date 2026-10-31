@@ -24,6 +24,81 @@ pub fn stringify(value: &serde_json::Value) -> Result<String, String> {
     Ok(value.to_string())
 }
 
+/// `std::json::valid(text)`: whether `text` is a well-formed JSON document —
+/// exactly when [`parse`] yields `Ok` (spec `modules/json.md`). Total.
+pub fn valid(text: &str) -> bool {
+    parse(text).is_ok()
+}
+
+/// `std::json::stringify(value, indent)`: the compact line when `indent` is
+/// `0`, otherwise a pretty tree with `indent` spaces per level (spec
+/// `modules/json.md`). A value outside `0 …= 8` is `Err`.
+pub fn stringify_indent(value: &serde_json::Value, indent: i64) -> Result<String, String> {
+    if !(0..=8).contains(&indent) {
+        return Err(format!(
+            "std::json::stringify: indent must be in 0..=8, found {indent}"
+        ));
+    }
+    let value = normalize(value, 0)?;
+    if indent == 0 {
+        return Ok(value.to_string());
+    }
+    let mut out = String::new();
+    write_pretty(&value, indent as usize, 0, &mut out);
+    Ok(out)
+}
+
+fn write_pretty(value: &serde_json::Value, indent: usize, depth: usize, out: &mut String) {
+    match value {
+        serde_json::Value::Null => out.push_str("null"),
+        serde_json::Value::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
+        serde_json::Value::Number(n) => out.push_str(&n.to_string()),
+        serde_json::Value::String(s) => {
+            out.push_str(&serde_json::to_string(s).unwrap_or_else(|_| "\"\"".to_string()))
+        }
+        serde_json::Value::Array(items) => {
+            if items.is_empty() {
+                out.push_str("[]");
+                return;
+            }
+            out.push('[');
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                out.push('\n');
+                out.push_str(&" ".repeat(indent * (depth + 1)));
+                write_pretty(item, indent, depth + 1, out);
+            }
+            out.push('\n');
+            out.push_str(&" ".repeat(indent * depth));
+            out.push(']');
+        }
+        serde_json::Value::Object(map) => {
+            if map.is_empty() {
+                out.push_str("{}");
+                return;
+            }
+            let mut entries: Vec<_> = map.iter().collect();
+            entries.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
+            out.push('{');
+            for (i, (key, item)) in entries.into_iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                out.push('\n');
+                out.push_str(&" ".repeat(indent * (depth + 1)));
+                out.push_str(&serde_json::to_string(key).unwrap_or_else(|_| "\"\"".to_string()));
+                out.push_str(": ");
+                write_pretty(item, indent, depth + 1, out);
+            }
+            out.push('\n');
+            out.push_str(&" ".repeat(indent * depth));
+            out.push('}');
+        }
+    }
+}
+
 /// 深度检查 + 整数值浮点归一的单趟重写。
 fn normalize(value: &serde_json::Value, depth: usize) -> Result<serde_json::Value, String> {
     if depth > MAX_DEPTH {

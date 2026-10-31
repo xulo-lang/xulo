@@ -184,18 +184,6 @@ fn replace_accepts_a_function_replacer() {
 }
 
 #[test]
-fn string_to_uppercase_runs_on_a_receiver() {
-    let out = run_ok(
-        r#"
-        fn main() {
-            print("abc".to_uppercase())
-        }
-        "#,
-    );
-    assert_eq!(out, vec!["ABC".to_string()]);
-}
-
-#[test]
 fn question_mark_returns_the_compile_error_to_the_caller() {
     let out = run_ok(
         r#"

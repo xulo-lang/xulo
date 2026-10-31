@@ -605,7 +605,7 @@ fn variant_path(pair: Pair<'_, Rule>) -> R<Expression> {
     let mut args = None;
     for p in inner {
         match p.as_rule() {
-            Rule::identifier => segments.push(p.as_str().to_string()),
+            Rule::identifier | Rule::path_member => segments.push(p.as_str().to_string()),
             Rule::variant_call_args => args = Some(p),
             other => unreachable!("variant_path child {other:?}"),
         }

@@ -40,15 +40,16 @@ fn string_inspection_runs_on_the_compiled_path() {
     let out = compile_and_run(
         r#"
 fn main() {
-    print(stringSize("hello"))
-    print(stringSize("héllo"))
-    print(stringCodeAt("héllo", 1))
-    print(stringSlice("héllo", 1, 4))
-    print(stringSlice("abc", 1, 1))
-    let n = stringSize("abc")
+    print("hello".len)
+    print("héllo".len)
+    print("héllo".byteLen)
+    print("héllo".codeAt(1))
+    print("héllo".slice(1, 4))
+    print("abc".slice(1, 1))
+    let n = "abc".len
     print(n + 1)
-    print(stringCodeAt("abc", 0) + 1)
-    let bytes = stringBytes("hé")
+    print("abc".codeAt(0) + 1)
+    let bytes = "hé".bytes()
     print(bytes[0])
     print(bytes[1])
     print(bytes[2])
@@ -60,6 +61,7 @@ fn main() {
         vec![
             "5".to_string(),
             "5".to_string(),
+            "6".to_string(),
             "233".to_string(),
             "éll".to_string(),
             "".to_string(),
@@ -159,10 +161,11 @@ fn aot_object_references_the_new_runtime_symbols() {
     let bytes = object_bytes(
         r#"
 fn main() {
-    stringSize("x")
-    stringCodeAt("x", 0)
-    stringSlice("x", 0, 1)
-    stringBytes("x")
+    "x".len
+    "x".byteLen
+    "x".codeAt(0)
+    "x".slice(0, 1)
+    "x".bytes()
     std::math::wrappingAdd(1, 2)
     std::math::wrappingSub(1, 2)
     std::math::wrappingMul(1, 2)
@@ -178,6 +181,7 @@ fn main() {
     );
     for symbol in [
         "xulo_string_size",
+        "xulo_string_byte_len",
         "xulo_string_code_at",
         "xulo_string_slice",
         "xulo_string_bytes",

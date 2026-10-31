@@ -132,3 +132,28 @@ fn bare_path_head_is_redirected_under_std() {
         err.message
     );
 }
+
+/// `examples/path.xulo` 全文经解释器运行的输出逐行固定（示例即测试）。
+#[test]
+fn path_example() {
+    let out = run_ok(include_str!("../../../examples/path.xulo"));
+    assert_eq!(
+        out,
+        vec![
+            "var/log/app.log".to_string(),
+            "/etc/hosts".to_string(),
+            "true".to_string(),
+            "false".to_string(),
+            "/etc".to_string(),
+            "hosts".to_string(),
+            ".tar".to_string(),
+            "archive.tar".to_string(),
+            "notes.md".to_string(),
+            "p/q/r".to_string(),
+            "/home/x main.go .go".to_string(),
+            "../logs".to_string(),
+            "/".to_string(),
+            "null".to_string(),
+        ]
+    );
+}

@@ -18,6 +18,14 @@ fn run_ok(src: &str) -> Vec<String> {
     run(src).unwrap_or_else(|e| panic!("{}", e.message))
 }
 
+/// Lex + parse only (no semantic check), so interpreter-level cycle handling
+/// can be exercised without the type checker rejecting the self-reference.
+fn run_raw(src: &str) -> Result<Vec<String>, XuloError> {
+    let program = parse_program(src).unwrap();
+    let interp = xulo_runtime::interpreter::Interpreter::new();
+    interp.run(&program)
+}
+
 #[test]
 fn parse_walks_the_tree_through_member_access() {
     let out = run_ok(
@@ -159,18 +167,19 @@ fn stringify_rejects_values_json_cannot_express() {
 
 #[test]
 fn stringify_refuses_cyclic_lists_through_the_depth_ceiling() {
-    let out = run_ok(
+    let out = run_raw(
         r#"
         fn main() {
             let ring = [1]
-            ring.push(ring)
+            ring[0] = ring
             match std::json::stringify(ring) {
                 Result::Ok(s) => print(s)
                 Result::Err(e) => print(e.message)
             }
         }
         "#,
-    );
+    )
+    .unwrap();
     assert_eq!(
         out,
         vec!["JSON value nests deeper than 128 levels".to_string()]
@@ -222,7 +231,7 @@ fn json_member_and_arity_errors_are_semantic() {
         "#)
     .expect_err("stringify() has no value");
     assert!(
-        zero.message.contains("expected 1 argument"),
+        zero.message.contains("expected 1 to 2 argument"),
         "{}",
         zero.message
     );
@@ -238,5 +247,26 @@ fn json_member_and_arity_errors_are_semantic() {
         bare.message.contains("lives under `std`"),
         "{}",
         bare.message
+    );
+}
+
+/// `examples/json.xulo` 全文经解释器运行的输出逐行固定（示例即测试）。
+#[test]
+fn json_example() {
+    let out = run_ok(include_str!("../../../examples/json.xulo"));
+    assert_eq!(
+        out,
+        vec![
+            "1 true x null".to_string(),
+            "x".to_string(),
+            "b".to_string(),
+            r#"[1,"two",false,null,2.5]"#.to_string(),
+            r#"{"n":3,"name":"x"}"#.to_string(),
+            "{\n  \"a\": 1\n}".to_string(),
+            "true".to_string(),
+            "false".to_string(),
+            "parse failed".to_string(),
+            "indent outside 0..=8".to_string(),
+        ]
     );
 }

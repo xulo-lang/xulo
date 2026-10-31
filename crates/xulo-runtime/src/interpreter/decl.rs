@@ -230,6 +230,7 @@ impl Interpreter {
     pub(super) fn register_fn(&self, f: &FnDef, env: &Rc<RefCell<Env>>) {
         let func = Value::Function(Rc::new(FunctionValue {
             params: f.params.clone(),
+            generic_params: f.generic_params.clone(),
             body: f.body.clone(),
             return_type: f.return_type.clone(),
             is_async: f.is_async,
@@ -250,6 +251,7 @@ impl Interpreter {
         for method in &imp.methods {
             let func = Value::Function(Rc::new(FunctionValue {
                 params: method.params.clone(),
+                generic_params: method.generic_params.clone(),
                 body: method.body.clone(),
                 return_type: method.return_type.clone(),
                 is_async: method.is_async,

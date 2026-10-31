@@ -731,6 +731,7 @@ impl CodeGen {
                         RuntimeFn::StringPadEnd => "xulo_string_pad_end",
                         RuntimeFn::StringRepeat => "xulo_string_repeat",
                         RuntimeFn::StringSize => "xulo_string_size",
+                        RuntimeFn::StringByteLen => "xulo_string_byte_len",
                         RuntimeFn::StringCodeAt => "xulo_string_code_at",
                         RuntimeFn::StringSlice => "xulo_string_slice",
                         RuntimeFn::StringBytes => "xulo_string_bytes",

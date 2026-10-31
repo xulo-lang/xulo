@@ -95,3 +95,82 @@ pub fn normalize(path: &str) -> String {
         joined
     }
 }
+
+/// `Path::isAbsolute(path)`: whether the path starts with `/` — the one
+/// separator this module recognizes. Nothing else (a drive letter, `..`, an
+/// empty string) is absolute (spec `modules/path.md`).
+pub fn is_absolute(path: &str) -> bool {
+    path.starts_with('/')
+}
+
+/// `Path::split(path)`: `(dirname, basename, ext)` for the same input.
+pub fn split(path: &str) -> (String, String, String) {
+    (dirname(path), basename(path), ext(path))
+}
+
+/// `Path::stem(path)`: the basename with exactly what [`ext`] reports removed;
+/// a leading dot is a hidden-file marker, not an extension.
+pub fn stem(path: &str) -> String {
+    let name = basename(path);
+    let ext = ext(path);
+    if ext.is_empty() {
+        name
+    } else {
+        name[..name.len() - ext.len()].to_string()
+    }
+}
+
+/// `Path::withExt(path, ext)`: replace the final component's extension. The
+/// argument may carry one leading dot; an empty argument removes the
+/// extension (spec `modules/path.md`).
+pub fn with_ext(path: &str, ext: &str) -> String {
+    let new_ext = ext.strip_prefix('.').unwrap_or(ext);
+    let name = stem(path);
+    let base = if new_ext.is_empty() {
+        name
+    } else {
+        format!("{name}.{new_ext}")
+    };
+    let parent = dirname(path);
+    if parent.is_empty() {
+        base
+    } else {
+        join(&parent, &base)
+    }
+}
+
+/// `Path::relative(from, to)`: the path that walks from one normalized path to
+/// the other, or `None` when one side is absolute and the other relative, or
+/// when cancelling would leave `from` climbing above its anchor.
+pub fn relative(from: &str, to: &str) -> Option<String> {
+    let from = normalize(from);
+    let to = normalize(to);
+    let from_abs = from.starts_with('/');
+    let to_abs = to.starts_with('/');
+    if from_abs != to_abs {
+        return None;
+    }
+    let comps = |p: &str| -> Vec<String> {
+        p.split('/')
+            .filter(|c| !c.is_empty() && *c != ".")
+            .map(|c| c.to_string())
+            .collect()
+    };
+    let a = comps(&from);
+    let b = comps(&to);
+    let mut common = 0;
+    while common < a.len() && common < b.len() && a[common] == b[common] {
+        common += 1;
+    }
+    let from_rest = &a[common..];
+    if !from_abs && from_rest.iter().any(|c| c == "..") {
+        return None;
+    }
+    let mut out: Vec<String> = vec!["..".to_string(); from_rest.len()];
+    out.extend(b[common..].iter().cloned());
+    if out.is_empty() {
+        Some(if from_abs { "/".to_string() } else { ".".to_string() })
+    } else {
+        Some(out.join("/"))
+    }
+}

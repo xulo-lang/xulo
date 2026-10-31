@@ -342,6 +342,19 @@ impl IrGenerator {
                     });
             }
         }
+        // Hidden const parameters (appended after the ordinary ones) are
+        // ordinary immutable `int` locals in the body.
+        let base = f.params.len();
+        let mut const_index = 0usize;
+        for p in &f.generic_params {
+            if p.kind != xulo_core::ast::GenericParamKind::Const {
+                continue;
+            }
+            let local_id = self.module.functions[func_idx].params[base + const_index].0;
+            const_index += 1;
+            self.locals.insert(p.name.clone(), local_id);
+            self.source_types.insert(p.name.clone(), Type::Number);
+        }
 
         // 生成函数体语句（含内嵌 fn：在声明点生成闭包值）
         let last_stmt_is_return = matches!(f.body.statements.last(), Some(Statement::Return(_)));

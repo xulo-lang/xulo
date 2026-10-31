@@ -96,13 +96,12 @@ fn trait_dispatch_runs_mangled_impl() {
     let out = run_annotated(
         r#"
         trait Area { fn area(self): number }
-        type Rectangle = Map<string, number>
+        struct Rectangle { w: number, h: number }
         impl Area for Rectangle {
             fn area(self): number { return self.w * self.h }
         }
         fn rect(w: number, h: number): Rectangle {
-            let r = { w: w, h: h }
-            r
+            return Rectangle(w: w, h: h)
         }
         fn main() { print(Area::area(rect(3, 4))) }
         "#,
@@ -577,14 +576,11 @@ fn string_index_reads_characters() {
 }
 
 #[test]
-fn string_length_counts_utf16_units() {
-    // JS `.length` counts UTF-16 code units: "😀" is a surrogate pair.
-    // (`run_raw`: the semantic phase currently types `string.length` away, so
-    // the interpreter-level behavior is exercised directly.)
-    let out = run_raw(r#"fn main() { let s = "😀" print(str(s.length)) }"#).unwrap();
-    assert_eq!(out, vec!["2"]);
-    let out = run_raw(r#"fn main() { let s = "abc" print(str(s.length)) }"#).unwrap();
-    assert_eq!(out, vec!["3"]);
+fn string_len_counts_unicode_scalars() {
+    // `.len` counts Unicode scalar values; `.byteLen` counts UTF-8 bytes
+    // (spec `types/primitive-types.md`).
+    let out = run_ok(r#"fn main() { let s = "😀"; print(s.len); print(s.byteLen) }"#);
+    assert_eq!(out, vec!["1", "4"]);
 }
 
 #[test]
@@ -636,15 +632,16 @@ fn top_level_async_without_main_is_driven_to_completion() {
 fn cyclic_values_print_without_overflowing() {
     // A self-referencing object must render a cycle marker instead of
     // recursing forever (this used to overflow the stack and abort).
-    let out = run_ok(
+    let out = run_raw(
         r#"
         fn main() {
-            let mut o: Map<string, unknown> = {}
+            let o = {}
             o.x = o
             print(o)
         }
         "#,
-    );
+    )
+    .unwrap();
     assert_eq!(out, vec!["{ x: { <cycle> } }"]);
 
     // A self-referencing list (`run_raw`: the type checker rejects storing a
@@ -1465,15 +1462,10 @@ fn builtin_call_with_named_arguments_ignores_labels() {
 }
 
 #[test]
-fn missing_object_member_reads_null() {
-    // Reading a field that is not present on an untyped `object` yields `null`
-    // (the language's only null-like value). The JS path yields `undefined`
-    // through node's `console.log`; the divergence in the rendered text of a
-    // missing member is pinned here as the intended native behavior.
-    let out = run_ok(r#"fn main() { let o: Map<string, unknown> = {} print(o.missing) }"#);
-    assert_eq!(out, vec!["null"]);
-
-    let out = run_ok(r#"fn main() { let o: Map<string, unknown> = {} print(o["missing"]) }"#);
+fn missing_map_key_reads_null() {
+    // Absence is `null`: `get` reads a missing key without trapping (spec
+    // `types/composite-types.md`).
+    let out = run_ok(r#"fn main() { let o: Map<string, unknown> = {} print(o.get("missing")) }"#);
     assert_eq!(out, vec!["null"]);
 } // ── break / continue ──────────────────────────────────────────────────────
 
@@ -1692,103 +1684,25 @@ fn shift_higher_than_add() {
 }
 
 // ──────────────────────────────────────────────────────────────────────
-//  Array methods – basic properties
+//  Built-in collection members (spec `types/composite-types.md`)
 // ──────────────────────────────────────────────────────────────────────
 
 #[test]
-fn list_length_property() {
+fn list_len_property() {
     assert_eq!(
-        run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.length) }"#),
+        run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.len) }"#),
         vec!["3"]
     );
 }
 
 #[test]
-fn list_capacity_property() {
-    assert_eq!(
-        run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.capacity >= 3) }"#),
-        vec!["true"]
-    );
+fn list_len_is_read_only() {
+    let err = run(r#"fn main() { let mut a = [1]; a.len = 2 }"#).unwrap_err();
+    assert!(err.message.contains("not a place"), "{}", err.message);
 }
 
 #[test]
-fn list_is_empty_true() {
-    assert_eq!(
-        run_ok(r#"fn main() { let a = []; print(a.isEmpty()) }"#),
-        vec!["true"]
-    );
-}
-
-#[test]
-fn list_is_empty_false() {
-    assert_eq!(
-        run_ok(r#"fn main() { let a = [1]; print(a.isEmpty()) }"#),
-        vec!["false"]
-    );
-}
-
-#[test]
-fn list_first() {
-    assert_eq!(
-        run_ok(r#"fn main() { let a = [10, 20, 30]; print(a.first()) }"#),
-        vec!["10"]
-    );
-}
-
-#[test]
-fn list_first_empty() {
-    assert_eq!(
-        run_ok(r#"fn main() { let a: List<number> = []; print(a.first()) }"#),
-        vec!["null"]
-    );
-}
-
-#[test]
-fn list_last() {
-    assert_eq!(
-        run_ok(r#"fn main() { let a = [10, 20, 30]; print(a.last()) }"#),
-        vec!["30"]
-    );
-}
-
-#[test]
-fn list_last_empty() {
-    assert_eq!(
-        run_ok(r#"fn main() { let a: List<number> = []; print(a.last()) }"#),
-        vec!["null"]
-    );
-}
-
-// ──────────────────────────────────────────────────────────────────────
-//  Array methods – safe access & mutation
-// ──────────────────────────────────────────────────────────────────────
-
-#[test]
-fn list_get_safe() {
-    assert_eq!(
-        run_ok(r#"fn main() { let a = [10, 20]; print(a.get(1)) }"#),
-        vec!["20"]
-    );
-}
-
-#[test]
-fn list_get_out_of_bounds_returns_null() {
-    assert_eq!(
-        run_ok(r#"fn main() { let a = [10, 20]; print(a.get(5)) }"#),
-        vec!["null"]
-    );
-}
-
-#[test]
-fn list_set_returns_self() {
-    assert_eq!(
-        run_ok(r#"fn main() { let a = [1, 2, 3]; a.set(1, 99); print(a) }"#),
-        vec!["[1, 99, 3]"]
-    );
-}
-
-#[test]
-fn list_push_returns_self() {
+fn list_push_returns_unit_and_appends() {
     assert_eq!(
         run_ok(r#"fn main() { let a = [1, 2]; a.push(3); print(a) }"#),
         vec!["[1, 2, 3]"]
@@ -1796,128 +1710,100 @@ fn list_push_returns_self() {
 }
 
 #[test]
-fn list_push_chain() {
+fn list_pop_and_shift() {
     assert_eq!(
-        run_ok(r#"fn main() { let a = []; a.push(1).push(2).push(3); print(a) }"#),
+        run_ok(
+            r#"fn main() { let a = [1, 2, 3]; print(a.pop()); print(a.shift()); print(a) }"#
+        ),
+        vec!["3", "1", "[2]"]
+    );
+}
+
+#[test]
+fn list_pop_and_shift_empty_return_null() {
+    assert_eq!(
+        run_ok(
+            r#"fn main() { let a: List<int> = []; print(a.pop()); print(a.shift()) }"#
+        ),
+        vec!["null", "null"]
+    );
+}
+
+#[test]
+fn list_unshift() {
+    assert_eq!(
+        run_ok(r#"fn main() { let a = [2, 3]; a.unshift(1); print(a) }"#),
         vec!["[1, 2, 3]"]
     );
 }
 
 #[test]
-fn list_pop() {
+fn list_splice_remove_and_insert() {
     assert_eq!(
-        run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.pop()) }"#),
-        vec!["3"]
+        run_ok(
+            r#"fn main() { let a = [1, 2, 3, 4]; let removed = a.splice(1, 2, [9]); print(removed); print(a) }"#
+        ),
+        vec!["[2, 3]", "[1, 9, 4]"]
     );
 }
 
 #[test]
-fn list_pop_empty_errors() {
-    let err = run(r#"fn main() { let a: List<number> = []; a.pop() }"#).unwrap_err();
-    assert!(
-        err.message.contains("empty list"),
-        "unexpected: {}",
-        err.message
+fn list_splice_default_items() {
+    assert_eq!(
+        run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.splice(1, 1)); print(a) }"#),
+        vec!["[2]", "[1, 3]"]
     );
 }
 
 #[test]
-fn list_insert() {
+fn list_resize_and_truncate() {
     assert_eq!(
-        run_ok(r#"fn main() { let a = [1, 3]; a.insert(1, 2); print(a) }"#),
-        vec!["[1, 2, 3]"]
+        run_ok(
+            r#"fn main() { let a = [1, 2, 3]; a.resize(5, 0); print(a); a.truncate(2); print(a) }"#
+        ),
+        vec!["[1, 2, 3, 0, 0]", "[1, 2]"]
     );
 }
 
 #[test]
-fn list_remove() {
+fn list_clear() {
     assert_eq!(
-        run_ok(r#"fn main() { let a = [10, 20, 30]; print(a.remove(1)) }"#),
-        vec!["20"]
+        run_ok(r#"fn main() { let a = [1, 2, 3]; a.clear(); print(a); print(a.len) }"#),
+        vec!["[]", "0"]
     );
 }
-
-#[test]
-fn list_remove_value_found() {
-    assert_eq!(
-        run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.removeValue(2)) }"#),
-        vec!["true"]
-    );
-}
-
-#[test]
-fn list_remove_value_not_found() {
-    assert_eq!(
-        run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.removeValue(9)) }"#),
-        vec!["false"]
-    );
-}
-
-// ──────────────────────────────────────────────────────────────────────
-//  Array methods – slicing & views
-// ──────────────────────────────────────────────────────────────────────
 
 #[test]
 fn list_slice() {
     assert_eq!(
-        run_ok(r#"fn main() { let a = [1, 2, 3, 4, 5]; print(a.slice(1, 4)) }"#),
-        vec!["[2, 3, 4]"]
+        run_ok(
+            r#"fn main() { let a = [1, 2, 3, 4, 5]; print(a.slice(1, 4)); print(a.slice(1)) }"#
+        ),
+        vec!["[2, 3, 4]", "[2, 3, 4, 5]"]
     );
 }
 
 #[test]
-fn list_slice_no_args() {
+fn list_slice_out_of_bounds_fails() {
+    let err = run(r#"fn main() { let a = [1, 2]; a.slice(0, 3) }"#).unwrap_err();
+    assert!(err.message.contains("out of range"), "{}", err.message);
+}
+
+#[test]
+fn list_index_of_last_index_of_includes() {
     assert_eq!(
-        run_ok(r#"fn main() { let a = [1, 2]; print(a.slice()) }"#),
-        vec!["[1, 2]"]
+        run_ok(
+            r#"fn main() { let a = [10, 20, 10]; print(a.indexOf(10)); print(a.lastIndexOf(10)); print(a.includes(20)); print(a.includes(99)) }"#
+        ),
+        vec!["0", "2", "true", "false"]
     );
 }
 
 #[test]
-fn list_index_of() {
+fn list_join_default_separator() {
     assert_eq!(
-        run_ok(r#"fn main() { let a = [10, 20, 30]; print(a.indexOf(20)) }"#),
-        vec!["1"]
-    );
-}
-
-#[test]
-fn list_index_of_not_found() {
-    assert_eq!(
-        run_ok(r#"fn main() { let a = [10, 20]; print(a.indexOf(99)) }"#),
-        vec!["-1"]
-    );
-}
-
-#[test]
-fn list_contains() {
-    assert_eq!(
-        run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.contains(2)) }"#),
-        vec!["true"]
-    );
-}
-
-#[test]
-fn list_contains_not() {
-    assert_eq!(
-        run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.contains(9)) }"#),
-        vec!["false"]
-    );
-}
-
-#[test]
-fn list_join() {
-    assert_eq!(
-        run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.join(", ")) }"#),
-        vec!["1, 2, 3"]
-    );
-}
-
-#[test]
-fn list_join_no_sep() {
-    assert_eq!(
-        run_ok(r#"fn main() { let a = ["a", "b"]; print(a.join()) }"#),
-        vec!["ab"]
+        run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.join()); print(a.join("-")) }"#),
+        vec!["1,2,3", "1-2-3"]
     );
 }
 
@@ -1930,45 +1816,19 @@ fn list_reverse() {
 }
 
 #[test]
-fn list_sort_numbers() {
+fn list_entries() {
     assert_eq!(
-        run_ok(r#"fn main() { let a = [3, 1, 2]; a.sort(); print(a) }"#),
-        vec!["[1, 2, 3]"]
+        run_ok(r#"fn main() { print(["a", "b"].entries()) }"#),
+        vec!["[[0, a], [1, b]]"]
     );
 }
 
 #[test]
-fn list_sort_strings() {
+fn list_map_receives_element_only() {
     assert_eq!(
-        run_ok(r#"fn main() { let a = ["c", "a", "b"]; a.sort(); print(a) }"#),
-        vec!["[a, b, c]"]
-    );
-}
-
-#[test]
-fn list_concat() {
-    assert_eq!(
-        run_ok(r#"fn main() { let a = [1, 2]; let b = [3, 4]; print(a.concat(b)) }"#),
-        vec!["[1, 2, 3, 4]"]
-    );
-}
-
-#[test]
-fn list_concat_does_not_mutate() {
-    assert_eq!(
-        run_ok(r#"fn main() { let a = [1, 2]; let _ = a.concat([3]); print(a) }"#),
-        vec!["[1, 2]"]
-    );
-}
-
-// ──────────────────────────────────────────────────────────────────────
-//  Array methods – higher-order functions
-// ──────────────────────────────────────────────────────────────────────
-
-#[test]
-fn list_map() {
-    assert_eq!(
-        run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.map(fn(x) { x * 2 })) }"#),
+        run_ok(
+            r#"fn main() { let a = [1, 2, 3]; print(a.map(fn(v) { v * 2 })) }"#
+        ),
         vec!["[2, 4, 6]"]
     );
 }
@@ -1976,227 +1836,159 @@ fn list_map() {
 #[test]
 fn list_filter() {
     assert_eq!(
-        run_ok(r#"fn main() { let a = [1, 2, 3, 4]; print(a.filter(fn(x) { x > 2 })) }"#),
-        vec!["[3, 4]"]
+        run_ok(
+            r#"fn main() { let a = [1, 2, 3, 4]; print(a.filter(fn(v) { v % 2 == 0 })) }"#
+        ),
+        vec!["[2, 4]"]
     );
 }
 
 #[test]
-fn list_reduce_with_init() {
-    assert_eq!(
-        run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.reduce(fn(acc, x) { acc + x }, 0)) }"#),
-        vec!["6"]
-    );
-}
-
-#[test]
-fn list_reduce_without_init() {
-    assert_eq!(
-        run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.reduce(fn(acc, x) { acc + x })) }"#),
-        vec!["6"]
-    );
-}
-
-#[test]
-fn list_reduce_empty_without_init_errors() {
-    let err = run(r#"fn main() { let a: List<number> = []; a.reduce(fn(acc, x) { acc + x }) }"#)
-        .unwrap_err();
-    assert!(
-        err.message.contains("empty list"),
-        "unexpected: {}",
-        err.message
-    );
-}
-
-#[test]
-fn list_find() {
-    assert_eq!(
-        run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.find(fn(x) { x > 1 })) }"#),
-        vec!["2"]
-    );
-}
-
-#[test]
-fn list_find_not_found() {
-    assert_eq!(
-        run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.find(fn(x) { x > 10 })) }"#),
-        vec!["null"]
-    );
-}
-
-#[test]
-fn list_some() {
-    assert_eq!(
-        run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.some(fn(x) { x > 2 })) }"#),
-        vec!["true"]
-    );
-}
-
-#[test]
-fn list_some_false() {
-    assert_eq!(
-        run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.some(fn(x) { x > 10 })) }"#),
-        vec!["false"]
-    );
-}
-
-#[test]
-fn list_every() {
-    assert_eq!(
-        run_ok(r#"fn main() { let a = [2, 4, 6]; print(a.every(fn(x) { x % 2 == 0 })) }"#),
-        vec!["true"]
-    );
-}
-
-#[test]
-fn list_every_false() {
-    assert_eq!(
-        run_ok(r#"fn main() { let a = [2, 3, 6]; print(a.every(fn(x) { x % 2 == 0 })) }"#),
-        vec!["false"]
-    );
-}
-
-#[test]
-fn list_for_each() {
+fn list_find_and_find_index() {
     assert_eq!(
         run_ok(
-            r#"fn main() { let a = [10, 20]; let mut s = 0; a.forEach(fn(v, i) { s = s + v }); print(s) }"#
+            r#"fn main() { let a = [1, 2, 3]; print(a.find(fn(v) { v > 1 })); print(a.findIndex(fn(v) { v > 1 })); print(a.find(fn(v) { v > 9 })); print(a.findIndex(fn(v) { v > 9 })) }"#
+        ),
+        vec!["2", "1", "null", "-1"]
+    );
+}
+
+#[test]
+fn list_some_and_every() {
+    assert_eq!(
+        run_ok(
+            r#"fn main() { let a = [1, 2, 3]; print(a.some(fn(v) { v == 2 })); print(a.some(fn(v) { v == 9 })); print(a.every(fn(v) { v > 0 })); print(a.every(fn(v) { v > 2 })) }"#
+        ),
+        vec!["true", "false", "true", "false"]
+    );
+}
+
+#[test]
+fn list_reduce_requires_initial() {
+    assert_eq!(
+        run_ok(
+            r#"fn main() { let a = [1, 2, 3]; print(a.reduce(fn(acc, v) { acc + v }, 10)) }"#
+        ),
+        vec!["16"]
+    );
+    let err = run(r#"fn main() { let a = [1, 2]; a.reduce(fn(acc, v) { acc + v }) }"#)
+        .unwrap_err();
+    assert!(err.message.contains("2 arguments"), "{}", err.message);
+}
+
+#[test]
+fn list_sort_with_comparator() {
+    assert_eq!(
+        run_ok(
+            r#"fn main() { let a = [3, 1, 2]; a.sort(fn(x, y) { x - y }); print(a) }"#
+        ),
+        vec!["[1, 2, 3]"]
+    );
+}
+
+#[test]
+fn list_for_each_receives_element_only() {
+    assert_eq!(
+        run_ok(
+            r#"fn main() { let a = [10, 20]; let mut s = 0; a.forEach(fn(v) { s = s + v }); print(s) }"#
         ),
         vec!["30"]
     );
 }
 
 // ──────────────────────────────────────────────────────────────────────
-//  Array global constructors
+//  string members (spec `types/primitive-types.md`)
 // ──────────────────────────────────────────────────────────────────────
 
 #[test]
-fn array_new_with_fill() {
+fn string_len_and_byte_len() {
     assert_eq!(
-        run_raw(r#"fn main() { print(Array.create(3, 0)) }"#).unwrap(),
-        vec!["[0, 0, 0]"]
+        run_ok(r#"fn main() { let s = "héllo"; print(s.len); print(s.byteLen) }"#),
+        vec!["5", "6"]
     );
 }
 
 #[test]
-fn array_new_without_fill() {
+fn string_code_at() {
     assert_eq!(
-        run_raw(r#"fn main() { print(Array.create(2)) }"#).unwrap(),
-        vec!["[null, null]"]
+        run_ok(r#"fn main() { print("Aé".codeAt(0)); print("Aé".codeAt(1)) }"#),
+        vec!["65", "233"]
     );
 }
 
 #[test]
-fn array_fill() {
+fn string_slice() {
     assert_eq!(
-        run_raw(r#"fn main() { print(Array.fill(4, "x")) }"#).unwrap(),
-        vec!["[x, x, x, x]"]
+        run_ok(r#"fn main() { print("hello".slice(1, 4)); print("hello".slice(2, 2)) }"#),
+        vec!["ell", ""]
     );
 }
 
 #[test]
-fn array_from() {
+fn string_bytes() {
     assert_eq!(
-        run_raw(r#"fn main() { let a = [1, 2]; let b = Array.clone(a); print(b) }"#).unwrap(),
-        vec!["[1, 2]"]
-    );
-}
-
-#[test]
-fn array_from_copies() {
-    assert_eq!(
-        run_raw(
-            r#"fn main() { let a = [1, 2]; let b = Array.clone(a); b.push(3); print(a); print(b) }"#
-        )
-        .unwrap(),
-        vec!["[1, 2]", "[1, 2, 3]"]
+        run_ok(r#"fn main() { print("hé".bytes()) }"#),
+        vec!["[104, 195, 169]"]
     );
 }
 
 // ──────────────────────────────────────────────────────────────────────
-//  flat() – flatten nested arrays
+//  Map and Set members (spec `types/composite-types.md`)
 // ──────────────────────────────────────────────────────────────────────
 
 #[test]
-fn list_flat_basic() {
+fn map_get_set_has_remove_size() {
     assert_eq!(
-        run_ok(r#"fn main() { let a = [[1, 2], [3, 4]]; print(a.flat()) }"#),
-        vec!["[1, 2, 3, 4]"]
+        run_ok(
+            r#"fn main() { let mut m: Map<string, int> = { a: 1 }; m.set("b", 2); print(m.get("a")); print(m.get("z")); print(m.has("b")); print(m.size); print(m.remove("a")); print(m.size) }"#
+        ),
+        vec!["1", "null", "true", "2", "1", "1"]
     );
 }
 
 #[test]
-fn list_flat_mixed() {
+fn map_keys_values_entries() {
     assert_eq!(
-        run_ok(r#"fn main() { let a = [1, [2, 3], 4]; print(a.flat()) }"#),
-        vec!["[1, 2, 3, 4]"]
+        run_ok(
+            r#"fn main() { let m: Map<string, int> = { a: 1, b: 2 }; print(m.keys()); print(m.values()); print(m.entries()) }"#
+        ),
+        vec!["[a, b]", "[1, 2]", "[[a, 1], [b, 2]]"]
     );
 }
 
 #[test]
-fn list_flat_empty() {
+fn map_from_entries() {
     assert_eq!(
-        run_ok(r#"fn main() { let a: List<List<number> > = []; print(a.flat()) }"#),
-        vec!["[]"]
+        run_ok(
+            r#"fn main() { let m = Map::fromEntries([("a", 1), ("a", 2)]); print(m.get("a")); print(m.size) }"#
+        ),
+        vec!["2", "1"]
     );
 }
 
 #[test]
-fn list_flat_single_level() {
-    assert_eq!(
-        run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.flat()) }"#),
-        vec!["[1, 2, 3]"]
-    );
+fn map_subscript_is_rejected() {
+    let err = run(r#"fn main() { let m: Map<string, int> = { a: 1 }; print(m["a"]) }"#)
+        .unwrap_err();
+    assert!(err.message.contains("not subscriptable"), "{}", err.message);
 }
 
 #[test]
-fn list_flat_nested_deep() {
-    assert_eq!(
-        run_ok(r#"fn main() { let a = [[1], [2, [3, 4]]]; print(a.flat()) }"#),
-        vec!["[1, 2, [3, 4]]"]
-    );
-}
-
-// ──────────────────────────────────────────────────────────────────────
-//  shrink() – release excess memory
-// ──────────────────────────────────────────────────────────────────────
-
-#[test]
-fn list_shrink_returns_self() {
-    assert_eq!(
-        run_ok(r#"fn main() { let a = [1, 2, 3]; let b = a.shrink(); print(b) }"#),
-        vec!["[1, 2, 3]"]
-    );
+fn map_member_access_is_rejected() {
+    let err = run(r#"fn main() { let m: Map<string, int> = { a: 1 }; print(m.a) }"#)
+        .unwrap_err();
+    assert!(err.message.contains("no member"), "{}", err.message);
 }
 
 #[test]
-fn list_shrink_preserves_elements() {
+fn set_has_insert_remove_size() {
     assert_eq!(
-        run_ok(r#"fn main() { let a = [10, 20, 30]; a.shrink(); print(a); print(a.length) }"#),
-        vec!["[10, 20, 30]", "3"]
+        run_ok(
+            r#"fn main() { let mut s = Set::fromList([1, 2, 2]); print(s.size); print(s.has(2)); print(s.insert(2)); print(s.insert(3)); print(s.remove(1)); print(s.size) }"#
+        ),
+        vec!["2", "true", "false", "true", "true", "2"]
     );
 }
-
-// ──────────────────────────────────────────────────────────────────────
-//  clear() – remove all elements
-// ──────────────────────────────────────────────────────────────────────
-
-#[test]
-fn list_clear() {
-    assert_eq!(
-        run_ok(r#"fn main() { let a = [1, 2, 3]; a.clear(); print(a); print(a.length) }"#),
-        vec!["[]", "0"]
-    );
-}
-
-#[test]
-fn list_clear_returns_self() {
-    assert_eq!(
-        run_ok(r#"fn main() { let a = [1, 2]; let b = a.clear(); print(b) }"#),
-        vec!["[]"]
-    );
-}
-
 // ──────────────────────────────────────────────────────────────────────
 //  Tuple destructuring: let (a, b, c) = expr
 // ──────────────────────────────────────────────────────────────────────
@@ -2978,4 +2770,106 @@ fn std_glob_alias_and_qualified_forms_run() {
         "#,
     );
     assert_eq!(out, ["5", "4", "8", "true"]);
+}
+
+#[test]
+fn map_and_set_iterate() {
+    assert_eq!(
+        run_ok(
+            r#"fn main() { let m: Map<string, int> = { a: 1, b: 2 }; for k in m { print(k) } }"#
+        ),
+        vec!["a", "b"]
+    );
+    assert_eq!(
+        run_ok(
+            r#"fn main() { let s = Set::fromList([1, 2, 2]); let mut total = 0; for v in s { total = total + v } print(total) }"#
+        ),
+        vec!["3"]
+    );
+}
+
+// ──────────────────────────────────────────────────────────────────────
+//  Const generic parameters (spec `types/generics.md`)
+// ──────────────────────────────────────────────────────────────────────
+
+#[test]
+fn const_generic_params_bind_at_call() {
+    assert_eq!(
+        run_ok(
+            r#"
+            fn count<const N: int>(): int { N }
+            fn repeat<const N: int>(value: int): int { N * value }
+            const M = -1
+            fn main() {
+                print(count<3>())
+                print(repeat<2>(5))
+                print(count<M>())
+            }
+            "#
+        ),
+        vec!["3", "10", "-1"]
+    );
+}
+
+#[test]
+fn mixed_type_and_const_generic_params() {
+    assert_eq!(
+        run_ok(
+            r#"
+            fn pair_value<T, const N: int>(value: T): int { N }
+            fn main() { print(pair_value<string, 7>("x")) }
+            "#
+        ),
+        vec!["7"]
+    );
+}
+
+#[test]
+fn const_param_is_a_value_in_nested_calls() {
+    assert_eq!(
+        run_ok(
+            r#"
+            fn count<const N: int>(): int { N }
+            fn outer<const N: int>(): int { count<N>() + 1 }
+            fn main() { print(outer<4>()) }
+            "#
+        ),
+        vec!["5"]
+    );
+}
+
+// ──────────────────────────────────────────────────────────────────────
+//  Fixed-length arrays (spec `types/composite-types.md`)
+// ──────────────────────────────────────────────────────────────────────
+
+#[test]
+fn array_literal_members_and_iteration_run() {
+    assert_eq!(
+        run_ok(
+            r#"
+            fn main() {
+                let a: Array<int, 3> = [1, 2, 3]
+                print(a.len)
+                print(a[1])
+                print(a.map(fn(x) { x * 2 }))
+                print(a.slice(0, 2))
+                print(a.indexOf(2))
+                let mut total = 0
+                for x in a { total = total + x }
+                print(total)
+            }
+            "#
+        ),
+        vec!["3", "2", "[2, 4, 6]", "[1, 2]", "1", "6"]
+    );
+}
+
+#[test]
+fn array_filled_runs() {
+    assert_eq!(
+        run_ok(
+            r#"fn main() { let a = Array::filled<int, 4>(7); print(a); print(a.len) }"#
+        ),
+        vec!["[7, 7, 7, 7]", "4"]
+    );
 }

@@ -5,7 +5,8 @@ use pest::iterators::Pair;
 use xulo_core::ast::{
     AssignStmt, BindingPattern, Block, ComponentStmt, DeferBody, DeferStmt, EffectStmt, EnumDef,
     EnumPayloadParam, EnumVariant, EnvStmt, ExportItem, ExportStmt, ExprStmt, Expression,
-    ExternBlockDecl, ExternItem, FnBound, FnDef, ForStmt, ImplDecl, LetBinding, ModDecl, Param,
+    ExternBlockDecl, ExternItem, FnBound, FnDef, ForStmt, GenericParam,
+    GenericParamKind, ImplDecl, LetBinding, ModDecl, Param,
     ParamMode, PathHead, ReturnStmt, StateStmt, Statement, StoreStmt, StructDef, StructField,
     TraitDecl, TraitMethod, Type, TypeAlias, UiElement, UseDecl, UseEntry, UseTarget, WhileStmt,
 };
@@ -198,6 +199,7 @@ fn fn_decl(pair: Pair<'_, Rule>) -> R<FnDef> {
     let mut name = String::new();
     let mut name_span = 0..0;
     let mut type_params = Vec::new();
+    let mut generic_params = Vec::new();
     let mut bounds = Vec::new();
     let mut params = Vec::new();
     let mut return_type = None;
@@ -213,8 +215,9 @@ fn fn_decl(pair: Pair<'_, Rule>) -> R<FnDef> {
                 name_span = span_of(&p);
             }
             Rule::generic_params => {
-                let (tp, b) = generic_params(p)?;
+                let (tp, b, gp) = generic_params_of(p)?;
                 type_params = tp;
+                generic_params = gp;
                 bounds.extend(b);
             }
             Rule::parameter_list => params = parameter_list(p)?,
@@ -230,6 +233,7 @@ fn fn_decl(pair: Pair<'_, Rule>) -> R<FnDef> {
         params,
         return_type,
         type_params,
+        generic_params,
         bounds,
         is_async,
         body: body.expect("fn_decl has a body"),
@@ -270,6 +274,7 @@ fn test_decl(pair: Pair<'_, Rule>) -> R<FnDef> {
         params: Vec::new(),
         return_type: None,
         type_params: Vec::new(),
+        generic_params: Vec::new(),
         bounds: Vec::new(),
         is_async,
         body: body.expect("test_decl has a body"),
@@ -311,6 +316,7 @@ fn extern_fn_decl(pair: Pair<'_, Rule>) -> R<FnDef> {
         params,
         return_type,
         type_params: Vec::new(),
+        generic_params: Vec::new(),
         bounds: Vec::new(),
         is_async: false,
         body: body.expect("extern_fn_decl has a body"),
@@ -472,14 +478,32 @@ fn parameter(pair: Pair<'_, Rule>) -> R<Param> {
     })
 }
 
-fn generic_params(pair: Pair<'_, Rule>) -> R<(Vec<String>, Vec<FnBound>)> {
+fn generic_params_of(
+    pair: Pair<'_, Rule>,
+) -> R<(Vec<String>, Vec<FnBound>, Vec<GenericParam>)> {
     let mut params = Vec::new();
     let mut bounds = Vec::new();
+    let mut all = Vec::new();
     for p in pair.into_inner() {
         check_rule(&p, Rule::generic_param)?;
         let mut inner = p.into_inner();
-        let name_pair = inner.next().expect("generic_param has a name");
-        let name = name_pair.as_str().to_string();
+        let first = inner.next().expect("generic_param has a child");
+        if first.as_rule() == Rule::kw_const {
+            // `const N: int` — the declared type follows the name.
+            let name_pair = inner.next().expect("const parameter has a name");
+            check_rule(&name_pair, Rule::identifier)?;
+            let name = name_pair.as_str().to_string();
+            let type_pair = inner.next().expect("const parameter has a type");
+            check_rule(&type_pair, Rule::type_expr)?;
+            all.push(GenericParam {
+                name,
+                kind: GenericParamKind::Const,
+                const_type: Some(type_expr(type_pair)?),
+            });
+            continue;
+        }
+        check_rule(&first, Rule::identifier)?;
+        let name = first.as_str().to_string();
         if let Some(tb) = inner.next() {
             check_rule(&tb, Rule::trait_bound)?;
             bounds.push(FnBound {
@@ -487,9 +511,14 @@ fn generic_params(pair: Pair<'_, Rule>) -> R<(Vec<String>, Vec<FnBound>)> {
                 traits: trait_bound(tb)?,
             });
         }
-        params.push(name);
+        params.push(name.clone());
+        all.push(GenericParam {
+            name,
+            kind: GenericParamKind::Type,
+            const_type: None,
+        });
     }
-    Ok((params, bounds))
+    Ok((params, bounds, all))
 }
 
 fn trait_bound(pair: Pair<'_, Rule>) -> R<Vec<String>> {
@@ -544,6 +573,7 @@ fn struct_decl(pair: Pair<'_, Rule>) -> R<StructDef> {
     let mut name = String::new();
     let mut name_span = 0..0;
     let mut type_params = Vec::new();
+    let mut generic_params = Vec::new();
     let mut type_bounds = Vec::new();
     let mut fields = Vec::new();
     let mut attributes = Vec::new();
@@ -556,9 +586,10 @@ fn struct_decl(pair: Pair<'_, Rule>) -> R<StructDef> {
                 name_span = span_of(&p);
             }
             Rule::generic_params => {
-                let (tp, bd) = generic_params(p)?;
+                let (tp, bd, gp) = generic_params_of(p)?;
                 type_params = tp;
                 type_bounds = bd;
+                generic_params = gp;
             }
             Rule::field_list => {
                 for f in p.into_inner() {
@@ -593,6 +624,7 @@ fn struct_decl(pair: Pair<'_, Rule>) -> R<StructDef> {
         name,
         name_span,
         type_params,
+        generic_params,
         type_bounds,
         fields,
         span,
@@ -604,6 +636,7 @@ fn enum_decl(pair: Pair<'_, Rule>) -> R<EnumDef> {
     let mut name = String::new();
     let mut name_span = 0..0;
     let mut type_params = Vec::new();
+    let mut generic_params = Vec::new();
     let mut type_bounds = Vec::new();
     let mut variants = Vec::new();
     let mut attributes = Vec::new();
@@ -616,9 +649,10 @@ fn enum_decl(pair: Pair<'_, Rule>) -> R<EnumDef> {
                 name_span = span_of(&p);
             }
             Rule::generic_params => {
-                let (tp, bd) = generic_params(p)?;
+                let (tp, bd, gp) = generic_params_of(p)?;
                 type_params = tp;
                 type_bounds = bd;
+                generic_params = gp;
             }
             Rule::variant_list => {
                 for v in p.into_inner() {
@@ -648,6 +682,7 @@ fn enum_decl(pair: Pair<'_, Rule>) -> R<EnumDef> {
         name,
         name_span,
         type_params,
+        generic_params,
         type_bounds,
         variants,
         attributes,
@@ -695,6 +730,7 @@ fn trait_decl(pair: Pair<'_, Rule>) -> R<TraitDecl> {
     let mut name = String::new();
     let mut name_span = 0..0;
     let mut type_params = Vec::new();
+    let mut generic_params = Vec::new();
     let mut methods = Vec::new();
     let mut attributes = Vec::new();
     for p in pair.into_inner() {
@@ -706,7 +742,9 @@ fn trait_decl(pair: Pair<'_, Rule>) -> R<TraitDecl> {
                 name_span = span_of(&p);
             }
             Rule::generic_params => {
-                type_params = generic_params(p)?.0;
+                let (tp, _, gp) = generic_params_of(p)?;
+                type_params = tp;
+                generic_params = gp;
             }
             Rule::trait_methods => {
                 for m in p.into_inner() {
@@ -721,6 +759,7 @@ fn trait_decl(pair: Pair<'_, Rule>) -> R<TraitDecl> {
         name,
         name_span,
         type_params,
+        generic_params,
         methods,
         span,
         attributes,
@@ -765,6 +804,7 @@ fn impl_decl(pair: Pair<'_, Rule>) -> R<ImplDecl> {
     let mut trait_name = String::new();
     let mut type_name = String::new();
     let mut type_params = Vec::new();
+    let mut generic_params = Vec::new();
     let mut type_bounds = Vec::new();
     let mut type_args = Vec::new();
     let mut methods = Vec::new();
@@ -776,9 +816,10 @@ fn impl_decl(pair: Pair<'_, Rule>) -> R<ImplDecl> {
             Rule::attribute_list => attributes = attribute_list(p)?,
             Rule::kw_impl | Rule::kw_for => {}
             Rule::generic_params => {
-                let (params, bounds) = generic_params(p)?;
+                let (params, bounds, gp) = generic_params_of(p)?;
                 type_params = params;
                 type_bounds = bounds;
+                generic_params = gp;
             }
             Rule::identifier if !seen_type => {
                 trait_name = p.as_str().to_string();
@@ -800,6 +841,7 @@ fn impl_decl(pair: Pair<'_, Rule>) -> R<ImplDecl> {
         trait_name,
         type_name,
         type_params,
+        generic_params,
         type_bounds,
         type_args,
         methods,
@@ -813,6 +855,7 @@ fn type_alias(pair: Pair<'_, Rule>) -> R<TypeAlias> {
     let mut name = String::new();
     let mut name_span = 0..0;
     let mut type_params = Vec::new();
+    let mut generic_params = Vec::new();
     let mut type_bounds = Vec::new();
     let mut type_ = None;
     for p in pair.into_inner() {
@@ -823,9 +866,10 @@ fn type_alias(pair: Pair<'_, Rule>) -> R<TypeAlias> {
                 name_span = span_of(&p);
             }
             Rule::generic_params => {
-                let (tp, bd) = generic_params(p)?;
+                let (tp, bd, gp) = generic_params_of(p)?;
                 type_params = tp;
                 type_bounds = bd;
+                generic_params = gp;
             }
             Rule::type_expr => type_ = Some(type_expr(p)?),
             _ => unreachable!("type_alias child {:?}", p.as_rule()),
@@ -835,6 +879,7 @@ fn type_alias(pair: Pair<'_, Rule>) -> R<TypeAlias> {
         name,
         name_span,
         type_params,
+        generic_params,
         type_bounds,
         type_: type_.expect("type_alias has a type"),
     })

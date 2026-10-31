@@ -23,4 +23,15 @@ fn main() {
     let start = std::time::monotonicNanos()
     print(std::time::monotonic() >= 0)
     print(start >= 0)
+
+    // 日历（UTC）：字段 ↔ ISO 8601 时间戳，格式固定
+    let noon = std::time::fromParts(2026, 10, 26, 12)
+    print(std::time::format(noon)) // 2026-10-26T12:00:00.000Z
+    match std::time::parse("2026-10-26T12:00:00.000Z") {
+        Result::Ok(ms) => print(ms == noon) // true
+        Result::Err(e) => print(e.message)
+    }
+    let f = std::time::parts(noon)
+    print(f.year, f.month, f.day, f.hour) // 2026 10 26 12
+    print(std::time::weekday(noon)) // 1 —— 周一（0 是周日）
 }

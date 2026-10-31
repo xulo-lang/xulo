@@ -1,0 +1,33 @@
+// std::path：路径字符串运算——拼接、拆解、换扩展名、规范化、相对化（spec
+// modules/path.md）。全部是纯函数：不查宿主文件系统，POSIX 规则在任何
+// 宿主上一致；只有 relative 可能返回 null（两种无法命名的关系）。
+fn main() {
+    // 拼接
+    print(std::path::join("var/log", "app.log")) // var/log/app.log
+    print(std::path::join("/etc", "hosts")) // /etc/hosts
+
+    // 绝对 / 相对：只看开头的 /
+    print(std::path::isAbsolute("/etc/hosts")) // true
+    print(std::path::isAbsolute("etc/hosts")) // false
+
+    // 拆解：目录名、末段、扩展名（含点）、去扩展的词干
+    print(std::path::dirname("/etc/hosts")) // /etc
+    print(std::path::basename("/etc/hosts")) // hosts
+    print(std::path::ext("a/b/c.tar")) // .tar
+    print(std::path::stem("archive.tar.gz")) // archive.tar
+
+    // 换扩展名
+    print(std::path::withExt("notes.txt", ".md")) // notes.md
+
+    // 规范化：消去 . 与多余分隔符（保守，不解析 ..）
+    print(std::path::normalize("p/./q//r")) // p/q/r
+
+    // split：一次拆成记录
+    let parts = std::path::split("/home/x/main.go")
+    print(parts.dir, parts.base, parts.ext) // /home/x main.go .go
+
+    // 相对化：从 a/b 看 a/c 是 ../c；无法命名的关系是 null
+    print(std::path::relative("/srv/app", "/srv/logs") ?? "null") // ../logs
+    print(std::path::relative("/srv/app", "/srv/app") ?? "null") // /
+    print(str(std::path::relative("/srv/app", "other"))) // null
+}

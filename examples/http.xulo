@@ -1,0 +1,137 @@
+// std::http：HTTP/1.1 客户端与服务器（spec modules/http.md）。Request/
+// Response 是纯数据，handler 不经 socket 就能测；serve 会阻塞到监听套接
+// 字出错为止——所以客户端与服务器分两个进程跑（spec 明文规定）。本文件
+// 是一份完整往返：把自己再拉起一份当服务器（XUL_HTTP_ROLE=serve），父进程
+// 当客户端取三个响应后收掉它。`xulo run examples/http.xulo` 即可复现。
+use std::http::{Request, Response};
+use std::os::execPath;
+use std::process::{args, Command};
+
+// 路由：按 method + path 分派（普通函数，不经 socket 也能直接调用测试）
+fn route(req: Request): Response {
+    if req.method == "GET" and req.path == "/health" {
+        Response.text("ok")
+    } else if req.method == "POST" and req.path == "/echo" {
+        Response.text(req.body, 201)
+    } else if req.method == "GET" and req.path == "/greet" {
+        Response.text("hello, " + (req.queryValue("name") ?? "stranger"))
+    } else if req.method == "POST" and req.path == "/greet" {
+        Response.text("hello, " + (req.formValue("name") ?? "stranger"))
+    } else {
+        Response.text("not found", 404)
+    }
+}
+
+// 中间件：包一层函数值——`fn(Request): Response` 就是 handler 的类型
+fn logging(inner: fn(Request): Response): fn(Request): Response {
+    (req) => {
+        std::io::println(req.method + " " + req.path)
+        inner(req)
+    }
+}
+
+async fn main() {
+    // 角色一：服务器子进程——绑定后一直服务到被收掉
+    let role = match std::os::getenv("XUL_HTTP_ROLE") {
+        Result::Ok(v) => v ?? ""
+        Result::Err(e) => ""
+    }
+    if role == "serve" {
+        match std::http::listen("127.0.0.1:8080") {
+            Result::Ok(server) => match server.serve(logging(route)) {
+                Result::Ok(_) => print("served")
+                Result::Err(e) => std::io::eprintln(e.message)
+            }
+            Result::Err(e) => std::io::eprintln(e.message)
+        }
+        return
+    }
+
+    // ── 数据面：手造的 Request 直接交给 handler（无需 socket）──
+    let req = Request(
+        method: "GET",
+        path: "/greet",
+        query: [{ name: "name", value: "xulo" }],
+        form: [],
+        headers: [{ name: "user-agent", value: "demo" }],
+        body: "",
+        version: "HTTP/1.1",
+        remoteAddr: "127.0.0.1:50000"
+    )
+    print(req.queryValue("name")) // xulo
+    print(req.header("user-agent")) // demo —— 大小写不敏感
+    print(str(req.header("x-none"))) // null —— 查不到
+    let direct = route(req)
+    print(direct.status, direct.body) // 200 hello, xulo
+
+    // Response 速记：text/json 预设 Content-Type；手写的写什么给什么
+    let ok = Response.text("done", 201)
+    print(ok.status, ok.header("content-type"), ok.body) // 201 text/plain; charset=utf-8 done
+    match std::http::Response.json({ ok: true }) {
+        Result::Ok(res) => print(res.header("content-type"), res.body) // application/json {"ok":true}
+        Result::Err(e) => print(e.message)
+    }
+    let bare = Response(status: 404, headers: [], body: "gone")
+    print(bare.status, bare.header("content-type") ?? "none", bare.body) // 404 none gone
+
+    // ── 回环：拉起自身当服务器，然后取三个响应 ──
+    let exe = match execPath() {
+        Result::Ok(p) => p
+        Result::Err(e) => ""
+    }
+    let argv = args()
+    let script = argv[argv.len - 1]
+    let launched = Command::direct(exe, ["run", script]).env("XUL_HTTP_ROLE", "serve").launch()
+    let server = match launched {
+        Result::Ok(child) => child
+        Result::Err(e) => {
+            print(e.message)
+            return
+        }
+    }
+    // 等子进程绑定：连接被拒就退避一下重试（拉起一个进程需要时间）
+    let mut tries = 0
+    while tries < 20 {
+        match std::http::fetch("http://127.0.0.1:8080/health", 200) {
+            Result::Ok(res) => {
+                tries = 20
+                print(res.status) // 200
+                print(res.body) // ok
+            }
+            Result::Err(e) => {
+                tries = tries + 1
+                if tries == 20 {
+                    print("gave up waiting for the server")
+                }
+            }
+        }
+        let nap = await std::time::sleep(100)
+    }
+    // 表单 POST：Content-Type 决定 formValue 的解码
+    match std::http::request(
+        "POST",
+        "http://127.0.0.1:8080/greet",
+        [{ name: "content-type", value: "application/x-www-form-urlencoded" }],
+        "name=xulo"
+    ) {
+        Result::Ok(res) => print(res.status, res.body) // 200 hello, xulo
+        Result::Err(e) => print(e.message)
+    }
+    // 404 是数据：路由没接住的路径照常返回 Response
+    match std::http::fetch("http://127.0.0.1:8080/missing") {
+        Result::Ok(res) => print(res.status, res.body) // 404 not found
+        Result::Err(e) => print(e.message)
+    }
+    // 收掉服务器子进程：wait 拿回它的 exit code 与捕获输出
+    match server.kill() {
+        Result::Ok(_) => print("server stopped") // server stopped
+        Result::Err(e) => print(e.message)
+    }
+    match server.wait() {
+        Result::Ok(run) => {
+            print(run.code) // -1 —— 被信号带走，没有 exit code
+            print(run.stdout) // 中间件的实时日志
+        }
+        Result::Err(e) => print(e.message)
+    }
+}

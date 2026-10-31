@@ -1008,3 +1008,52 @@ fn head_only_use_requires_as_alias() {
         err.message
     );
 }
+
+// ---------------------------------------------------------------
+// Const generic parameters and arguments
+// ---------------------------------------------------------------
+
+#[test]
+fn const_generic_param_parses() {
+    use xulo_core::ast::GenericParamKind;
+    let p = parse_ok("fn count<const N: int>(): int { N }");
+    let Statement::Fn(f) = &p.statements[0] else {
+        panic!("expected fn");
+    };
+    assert!(f.type_params.is_empty());
+    assert_eq!(f.generic_params.len(), 1);
+    assert_eq!(f.generic_params[0].name, "N");
+    assert_eq!(f.generic_params[0].kind, GenericParamKind::Const);
+    assert_eq!(f.generic_params[0].const_type, Some(Type::Number));
+}
+
+#[test]
+fn mixed_generic_params_keep_written_order() {
+    use xulo_core::ast::GenericParamKind;
+    let p = parse_ok("fn f<T, const N: int>(x: T): int { N }");
+    let Statement::Fn(f) = &p.statements[0] else {
+        panic!("expected fn");
+    };
+    assert_eq!(f.type_params, vec!["T".to_string()]);
+    let kinds: Vec<_> = f.generic_params.iter().map(|p| p.kind).collect();
+    assert_eq!(kinds, vec![GenericParamKind::Type, GenericParamKind::Const]);
+}
+
+#[test]
+fn const_argument_parses_as_call_type_args() {
+    let p = parse_ok("fn main() { let n = count<3>() }");
+    let Statement::Fn(f) = &p.statements[0] else {
+        panic!("expected fn");
+    };
+    let Statement::Let(binding) = &f.body.statements[0] else {
+        panic!("expected let");
+    };
+    let Some(Expression::Call(call)) = &binding.value else {
+        panic!("expected call");
+    };
+    assert_eq!(call.type_args.as_ref().map(|a| a.len()), Some(1));
+    assert_eq!(
+        call.type_args.as_ref().unwrap()[0],
+        Type::Literal("3".to_string())
+    );
+}

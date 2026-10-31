@@ -17,18 +17,19 @@ fn run_ok(src: &str) -> Vec<String> {
 }
 
 #[test]
-fn string_inspection_uses_scalar_indices() {
+fn string_members_use_scalar_indices() {
     let out = run_ok(
         r#"
         fn main() {
-            print(stringSize(""))
-            print(stringSize("hello"))
-            print(stringSize("héllo"))
-            print(stringCodeAt("héllo", 1))
-            print(stringCodeAt("abc", 0))
-            print(stringSlice("héllo", 1, 4))
-            print(stringSlice("abc", 1, 1))
-            print(stringBytes("hé"))
+            print("".len)
+            print("hello".len)
+            print("héllo".len)
+            print("héllo".byteLen)
+            print("héllo".codeAt(1))
+            print("abc".codeAt(0))
+            print("héllo".slice(1, 4))
+            print("abc".slice(1, 1))
+            print("hé".bytes())
         }
         "#,
     );
@@ -38,6 +39,7 @@ fn string_inspection_uses_scalar_indices() {
             "0".to_string(),
             "5".to_string(),
             "5".to_string(),
+            "6".to_string(),
             "233".to_string(),
             "97".to_string(),
             "éll".to_string(),
@@ -51,7 +53,7 @@ fn string_inspection_uses_scalar_indices() {
 fn out_of_range_string_indices_fail_at_runtime() {
     let err = run(r#"
         fn main() {
-            print(stringCodeAt("abc", 3))
+            print("abc".codeAt(3))
         }
         "#)
     .expect_err("index 3 is out of range");
@@ -59,7 +61,7 @@ fn out_of_range_string_indices_fail_at_runtime() {
 
     let err = run(r#"
         fn main() {
-            print(stringSlice("abc", 2, 1))
+            print("abc".slice(2, 1))
         }
         "#)
     .expect_err("start > end is out of range");

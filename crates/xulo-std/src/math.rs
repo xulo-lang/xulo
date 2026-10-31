@@ -43,6 +43,48 @@ pub fn max(a: f64, b: f64) -> f64 {
     }
 }
 
+/// `Math::sign(x)`: `-1`, `0`, or `1` by the sign of `x`; `NaN` propagates.
+pub fn sign(x: f64) -> f64 {
+    if x.is_nan() {
+        f64::NAN
+    } else if x > 0.0 {
+        1.0
+    } else if x < 0.0 {
+        -1.0
+    } else {
+        0.0
+    }
+}
+
+/// `Math::hypot(a, b)`: `sqrt(a² + b²)` computed without intermediate overflow.
+pub fn hypot(a: f64, b: f64) -> f64 {
+    a.hypot(b)
+}
+
+/// `Math::clamp(x, lo, hi)`: `x` limited to the `lo …= hi` range; `NaN`
+/// propagates.
+pub fn clamp(x: f64, lo: f64, hi: f64) -> f64 {
+    if x.is_nan() || lo.is_nan() || hi.is_nan() {
+        f64::NAN
+    } else if x < lo {
+        lo
+    } else if x > hi {
+        hi
+    } else {
+        x
+    }
+}
+
+/// `Math::log1p(x)`: the natural logarithm of `1 + x`, accurate for small `x`.
+pub fn log1p(x: f64) -> f64 {
+    x.ln_1p()
+}
+
+/// `Math::expm1(x)`: `eˣ − 1`, accurate for small `x`.
+pub fn expm1(x: f64) -> f64 {
+    x.exp_m1()
+}
+
 /// `Math::floor(x)`: the largest integer value not greater than `x`.
 pub fn floor(x: f64) -> f64 {
     x.floor()
@@ -221,6 +263,26 @@ pub fn random() -> f64 {
     RNG.with(|rng| {
         let bits = xoshiro_next(&mut rng.borrow_mut()) >> 11;
         bits as f64 * (1.0 / ((1u64 << 53) as f64))
+    })
+}
+
+/// `Math::randomInt(lo, hi)`: a pseudo-random integer in `lo …= hi`, drawn
+/// uniformly from the same stream as [`random`]. The caller guarantees
+/// `lo <= hi` (an empty range is a runtime failure).
+pub fn random_int(lo: i64, hi: i64) -> i64 {
+    RNG.with(|rng| {
+        let span = (hi as i128 - lo as i128 + 1) as u128;
+        let mut state = rng.borrow_mut();
+        if span == 1u128 << 64 {
+            return xoshiro_next(&mut state) as i64;
+        }
+        let limit = (1u128 << 64) - ((1u128 << 64) % span);
+        loop {
+            let draw = xoshiro_next(&mut state) as u128;
+            if draw < limit {
+                return (lo as i128 + (draw % span) as i128) as i64;
+            }
+        }
     })
 }
 

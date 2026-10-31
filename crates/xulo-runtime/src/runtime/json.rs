@@ -208,9 +208,28 @@ pub extern "C" fn xulo_json_parse(text: *const c_char) -> *mut XuloEnum {
 /// 解释器不走此入口）。
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn xulo_json_stringify(value: i64, tag: i64) -> *mut XuloEnum {
-    match payload_to_json(value, tag, 0).and_then(|json| xulo_std::json::stringify(&json)) {
+pub extern "C" fn xulo_json_stringify(value: i64, tag: i64, indent: i64) -> *mut XuloEnum {
+    let result = payload_to_json(value, tag, 0).and_then(|json| {
+        if indent < 0 {
+            xulo_std::json::stringify(&json)
+        } else {
+            xulo_std::json::stringify_indent(&json, indent)
+        }
+    });
+    match result {
         Ok(text) => fs_ok(intern_string(text) as i64, 0),
         Err(message) => fs_err(message),
     }
+}
+
+/// `std::json::valid(text)` -> bool（总谓词）
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_json_valid(text: *const c_char) -> i64 {
+    let text = if text.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(text).to_str().unwrap_or("").to_string() }
+    };
+    i64::from(xulo_std::json::valid(&text))
 }

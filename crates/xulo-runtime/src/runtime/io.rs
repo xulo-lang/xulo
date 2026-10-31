@@ -80,6 +80,28 @@ pub extern "C" fn xulo_io_read() -> *mut XuloEnum {
     }
 }
 
+/// `std::io::readN(max)` -> `Result<string?, Error>`
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_io_read_n(max: i64) -> *mut XuloEnum {
+    match xulo_std::io::read_n(max) {
+        Ok(Some(text)) => fs_ok(intern_string(text) as i64, 0),
+        Ok(None) => fs_ok(0, 6),
+        Err(message) => fs_err(message),
+    }
+}
+
+/// `std::io::stdinIsTTY()` -> bool（总谓词）
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_io_stdin_is_tty() -> i64 {
+    i64::from(xulo_std::io::stdin_is_tty())
+}
+
+/// `std::io::stdoutIsTTY()` -> bool（总谓词）
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_io_stdout_is_tty() -> i64 {
+    i64::from(xulo_std::io::stdout_is_tty())
+}
+
 /// A C string argument of an `std::io` write: a null pointer reads as the
 /// empty string, so a bad caller fails in `xulo_std` rather than here.
 fn cstr_arg(text: *const c_char) -> String {

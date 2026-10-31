@@ -1,0 +1,119 @@
+// std::fs：文件系统——读写、元数据、目录、字节与临时文件（spec
+// modules/fs.md）。每个操作都是 Result；不存在、不是文件、目标已存在都
+// 只是 Err。本例在系统临时目录下自建一个干净沙箱，输出全部由自己写的
+// 文件推导，宿主无关。
+fn main() {
+    // 沙箱：tempDir 建唯一空目录，结尾 removeDir 清场
+    match std::fs::tempDir() {
+        Result::Ok(dir) => {
+            let a = std::path::join(dir, "a.txt")
+            let b = std::path::join(std::path::join(dir, "sub"), "b.txt")
+
+            // 写 / 读 / 存在
+            match std::fs::write(a, "hello fs") {
+                Result::Ok(_) => print("written") // written
+                Result::Err(e) => print(e.message)
+            }
+            match std::fs::read(a) {
+                Result::Ok(text) => print(text) // hello fs
+                Result::Err(e) => print(e.message)
+            }
+            print(std::fs::exists(a)) // true
+
+            // 元数据：kind / size / mode
+            match std::fs::stat(a) {
+                Result::Ok(info) => {
+                    print(info.kind) // file
+                    print(info.size) // 8
+                    print(info.mode > 0) // true
+                }
+                Result::Err(e) => print(e.message)
+            }
+
+            // 字节读写：List<u8> 往返
+            match std::fs::writeBytes(a, [104, 105]) {
+                Result::Ok(_) => print("bytes written") // bytes written
+                Result::Err(e) => print(e.message)
+            }
+            match std::fs::readBytes(a) {
+                Result::Ok(bs) => {
+                    print(bs.len) // 2
+                    print(bs[0]) // 104 —— 'h'
+                }
+                Result::Err(e) => print(e.message)
+            }
+
+            // 目录：mkdir / readDir（排序裸名）/ walk（递归相对路径）
+            match std::fs::mkdir(std::path::join(dir, "sub")) {
+                Result::Ok(_) => print("mkdir") // mkdir
+                Result::Err(e) => print(e.message)
+            }
+            match std::fs::write(b, "nested") {
+                Result::Ok(_) => print("nested written") // nested written
+                Result::Err(e) => print(e.message)
+            }
+            match std::fs::readDir(dir) {
+                Result::Ok(names) => print(names) // [a.txt, sub]
+                Result::Err(e) => print(e.message)
+            }
+            // walk 递归给出根目录下的全部路径（含根本身；带宿主前缀，
+            // 示例只打条数与末段）
+            match std::fs::walk(dir) {
+                Result::Ok(names) => {
+                    print(names.len) // 4 —— 根 + a.txt + sub + sub/b.txt
+                    print(std::path::basename(names[3])) // b.txt
+                }
+                Result::Err(e) => print(e.message)
+            }
+
+            // 复制 / 改名
+            let c = std::path::join(dir, "c.txt")
+            match std::fs::copy(a, c) {
+                Result::Ok(_) => print("copied") // copied
+                Result::Err(e) => print(e.message)
+            }
+            match std::fs::rename(c, std::path::join(dir, "d.txt")) {
+                Result::Ok(_) => print("renamed") // renamed
+                Result::Err(e) => print(e.message)
+            }
+
+            // 临时文件：唯一未用的路径，立刻是空文件
+            match std::fs::tempFile("xulo-demo-") {
+                Result::Ok(tmp) => {
+                    match std::fs::read(tmp) {
+                        Result::Ok(text) => print(text == "") // true —— 空文件
+                        Result::Err(e) => print(e.message)
+                    }
+                    match std::fs::remove(tmp) {
+                        Result::Ok(_) => print("temp removed") // temp removed
+                        Result::Err(e) => print(e.message)
+                    }
+                }
+                Result::Err(e) => print(e.message)
+            }
+
+            // 清场：先 remove 全部文件，空目录再 removeDir
+            match std::fs::remove(b) {
+                Result::Ok(_) => print("file removed") // file removed
+                Result::Err(e) => print(e.message)
+            }
+            match std::fs::remove(a) {
+                Result::Ok(_) => print("a removed") // a removed
+                Result::Err(e) => print(e.message)
+            }
+            match std::fs::remove(std::path::join(dir, "d.txt")) {
+                Result::Ok(_) => print("d removed") // d removed
+                Result::Err(e) => print(e.message)
+            }
+            match std::fs::removeDir(std::path::join(dir, "sub")) {
+                Result::Ok(_) => print("sub removed") // sub removed
+                Result::Err(e) => print(e.message)
+            }
+            match std::fs::removeDir(dir) {
+                Result::Ok(_) => print("dir removed") // dir removed
+                Result::Err(e) => print(e.message)
+            }
+        }
+        Result::Err(e) => print(e.message)
+    }
+}

@@ -185,6 +185,7 @@ impl Interpreter {
             }
             Expression::FnExpr(f) => Ok(Value::Function(Rc::new(FunctionValue {
                 params: f.params.clone(),
+                generic_params: Vec::new(),
                 body: f.body.clone(),
                 return_type: f.return_type.clone(),
                 is_async: f.is_async,
@@ -272,6 +273,7 @@ impl Interpreter {
                 };
                 Ok(Value::Function(Rc::new(FunctionValue {
                     params: arrow.params.clone(),
+                    generic_params: Vec::new(),
                     body,
                     return_type: arrow.return_type.clone(),
                     is_async: arrow.is_async,
@@ -784,19 +786,24 @@ impl Interpreter {
                 let fields = fields.borrow();
                 match fields.iter().find(|(k, _)| k == &m.property) {
                     Some((_, v)) => Ok(v.clone()),
+                    // The brace form of a map literal is the only object that
+                    // answers `.size` (spec `types/composite-types.md`); a
+                    // real member named `size` still wins above.
+                    None if m.property == "size" => Ok(Value::Number(fields.len() as f64)),
                     None => Ok(Value::Null),
                 }
             }
-            Value::List(list) if m.property == "length" => {
+            Value::List(list) if m.property == "len" => {
                 Ok(Value::Number(list.borrow().len() as f64))
             }
-            Value::List(list) if m.property == "capacity" => {
-                Ok(Value::Number(list.borrow().capacity() as f64))
+            Value::String(s) if m.property == "len" => {
+                Ok(Value::Number(s.chars().count() as f64))
             }
-            Value::String(s) if m.property == "length" => {
-                // JS `.length` counts UTF-16 code units, not Unicode scalars
-                // (`"😀".length` is 2 there); mirror it.
-                Ok(Value::Number(s.encode_utf16().count() as f64))
+            Value::String(s) if m.property == "byteLen" => {
+                Ok(Value::Number(s.len() as f64))
+            }
+            Value::Set(set) if m.property == "size" => {
+                Ok(Value::Number(set.borrow().len() as f64))
             }
             other => Err(RunError::err(
                 format!(

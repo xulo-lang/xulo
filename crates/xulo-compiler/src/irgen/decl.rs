@@ -105,7 +105,7 @@ impl IrGenerator {
         name: &str,
         f: &FnDef,
     ) -> Result<FuncId, XuloError> {
-        let params: Vec<(LocalId, IrType)> = f
+        let mut params: Vec<(LocalId, IrType)> = f
             .params
             .iter()
             .enumerate()
@@ -118,6 +118,18 @@ impl IrGenerator {
                 (LocalId(i), ty)
             })
             .collect();
+        // Const parameters are compile-time values; the compiled path carries
+        // them as hidden `i64` parameters appended after the ordinary ones,
+        // supplied at every call site (spec `types/generics.md`).
+        for p in f
+            .generic_params
+            .iter()
+            .filter(|p| p.kind == xulo_core::ast::GenericParamKind::Const)
+        {
+            let _ = p;
+            let id = LocalId(params.len());
+            params.push((id, IrType::I64));
+        }
 
         let return_type = f
             .return_type
@@ -136,6 +148,8 @@ impl IrGenerator {
                 .map(|p| (p.name.clone(), p.default.clone()))
                 .collect(),
         );
+        self.func_generic_params
+            .insert(name.to_string(), f.generic_params.clone());
 
         let func = IrFunction::new(name.to_string(), params, return_type);
         Ok(self.module.add_function(func))

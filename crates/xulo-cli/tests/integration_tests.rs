@@ -41,6 +41,58 @@ fn temp_dir(files: &[(&str, &str)], entry: &str) -> (PathBuf, PathBuf) {
     (dir.clone(), dir.join(entry))
 }
 
+/// `examples/os.xulo` 经 `xulo run` 的输出逐行固定。走子进程而不是
+/// 解释器内联跑：chdir/setenv 是进程全局状态，不该波及并行测试线程。
+#[test]
+fn run_os_example() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap()
+        .to_path_buf();
+    let out = Command::new(BIN)
+        .arg("run")
+        .arg(root.join("examples/os.xulo"))
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "true\nmoved\nback\nset\nhello\nunset\nnull\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n"
+    );
+}
+
+/// `examples/http.xulo` 经 `xulo run` 的完整往返：数据段 + 自拉起服务器
+/// 子进程的真实 fetch/request/404 + kill/wait。只能走 CLI——示例用
+/// argv/execPath 把自己再拉起一份当服务器（serve 会阻塞，客户端与服务端
+/// 必须分进程）。
+#[test]
+fn run_http_example() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap()
+        .to_path_buf();
+    let out = Command::new(BIN)
+        .arg("run")
+        .arg(root.join("examples/http.xulo"))
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "xulo\ndemo\nnull\n200 hello, xulo\n201 text/plain; charset=utf-8 done\napplication/json {\"ok\":true}\n404 none gone\n200\nok\n200 hello, xulo\n404 not found\nserver stopped\n-1\nGET /health\nPOST /greet\nGET /missing\n\n"
+    );
+}
+
 #[test]
 fn run_hello_world() {
     let file = temp_file("hello.xulo", r#"fn main() { print("Hello, world!") }"#);
@@ -1502,8 +1554,10 @@ fn run_optional_chaining_deep_on_null() {
     let file = temp_file(
         "opt.xulo",
         r#"
+        struct Inner { b: string }
+        struct Outer { a: Inner }
         fn main() {
-            let u: Map<string, unknown>? = null
+            let u: Outer? = null
             print(u?.a?.b)
             print(u == null)
         }

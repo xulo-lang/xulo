@@ -1,0 +1,80 @@
+// std::net：TCP 套接字——监听 / 连接 / 接受、读写、半关闭与关闭（spec
+// modules/net.md）。v1 是同步的，一个程序按 listen → connect → accept
+// 的顺序握手（connect 经监听队列完成，不等 accept），回环收发就是完整
+// 的客户端与服务器。返回句柄是数字，可失败操作都是 Result。
+fn main() {
+    match std::net::tcpListen("127.0.0.1:0") {
+        Result::Ok(server) => {
+            // 端口 0 让系统分配：sockLocalAddr 读回真实地址（不打印——
+            // 端口号宿主相关，示例输出保持稳定）
+            match std::net::sockLocalAddr(server) {
+                Result::Ok(addr) => {
+                    print(addr != "") // true
+                    match std::net::tcpConnect(addr) {
+                        Result::Ok(client) => {
+                            match std::net::tcpAccept(server) {
+                                Result::Ok(peer) => {
+                                    // 双向往返：write 报字节数，read 停在到达的字节
+                                    match std::net::sockWrite(client, "ping") {
+                                        Result::Ok(n) => print(n) // 4
+                                        Result::Err(e) => print(e.message)
+                                    }
+                                    match std::net::sockRead(peer, 64) {
+                                        Result::Ok(text) => print(text ?? "eof") // ping
+                                        Result::Err(e) => print(e.message)
+                                    }
+                                    match std::net::sockWrite(peer, "pong") {
+                                        Result::Ok(n) => print(n) // 4
+                                        Result::Err(e) => print(e.message)
+                                    }
+                                    match std::net::sockRead(client, 64) {
+                                        Result::Ok(text) => print(text ?? "eof") // pong
+                                        Result::Err(e) => print(e.message)
+                                    }
+
+                                    // 带毫秒预算的读：没有数据时到点返回 Err
+                                    match std::net::sockRead(client, 64, 25) {
+                                        Result::Ok(text) => print(text ?? "eof")
+                                        Result::Err(e) => print("read timed out") // 预算到期
+                                    }
+
+                                    // 半关闭写端：对端读到 EOF（null）
+                                    match std::net::sockShutdownWrite(client) {
+                                        Result::Ok(_) => print("write side closed")
+                                        Result::Err(e) => print(e.message)
+                                    }
+                                    match std::net::sockRead(peer, 64) {
+                                        Result::Ok(text) => print(text ?? "eof") // eof
+                                        Result::Err(e) => print(e.message)
+                                    }
+
+                                    // 对端地址也能查
+                                    match std::net::sockPeerAddr(peer) {
+                                        Result::Ok(peerAddr) => print(peerAddr != "") // true
+                                        Result::Err(e) => print(e.message)
+                                    }
+                                    match std::net::sockClose(client) {
+                                        Result::Ok(_) => print("client closed")
+                                        Result::Err(e) => print(e.message)
+                                    }
+                                    match std::net::sockClose(peer) {
+                                        Result::Ok(_) => print("peer closed")
+                                        Result::Err(e) => print(e.message)
+                                    }
+                                    match std::net::sockClose(server) {
+                                        Result::Ok(_) => print("server closed")
+                                        Result::Err(e) => print(e.message)
+                                    }
+                                }
+                                Result::Err(e) => print(e.message)
+                            }
+                        }
+                        Result::Err(e) => print(e.message)
+                    }
+                }
+                Result::Err(e) => print(e.message)
+            }
+        }
+        Result::Err(e) => print(e.message)
+    }
+}

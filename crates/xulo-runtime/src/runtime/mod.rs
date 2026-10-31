@@ -6,6 +6,7 @@ use crate::value::format_number;
 
 mod fs;
 mod heap;
+mod http;
 mod io;
 mod json;
 mod net;
@@ -14,11 +15,13 @@ mod process;
 mod regex;
 mod scalar;
 mod string;
+mod time;
 
 // 再导出各子模块的 `xulo_*`：xulo-compiler/backend.rs 按 `xulo_runtime::runtime::xulo_*`
 // 路径取函数地址，这里保持该路径不变（`no_mangle` 符号本身与模块布局无关）。
 pub use fs::*;
 pub use heap::*;
+pub use http::*;
 pub use io::*;
 pub use json::*;
 pub use net::*;
@@ -27,6 +30,7 @@ pub use process::*;
 pub use regex::*;
 pub use scalar::*;
 pub use string::*;
+pub use time::*;
 
 /// 字符串方法（`repeat` / `pad_start` / `pad_end`）的重复/宽度上限：编译路径
 /// 超过即报错退出（对齐 `toFixed` 的越界约定），解释路径转成 RunError。

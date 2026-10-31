@@ -25,40 +25,40 @@ fn echo_round_trip_through_qualified_calls() {
     let out = run_ok(
         r#"
         fn main() {
-            match std::net::tcp_listen("127.0.0.1:0") {
+            match std::net::tcpListen("127.0.0.1:0") {
                 Result::Ok(server) => {
-                    match std::net::sock_local_addr(server) {
+                    match std::net::sockLocalAddr(server) {
                         Result::Ok(addr) => {
                             print(addr)
-                            match std::net::tcp_connect(addr) {
+                            match std::net::tcpConnect(addr) {
                                 Result::Ok(client) => {
-                                    match std::net::tcp_accept(server) {
+                                    match std::net::tcpAccept(server) {
                                         Result::Ok(accepted) => {
-                                            match std::net::sock_write(client, "ping") {
+                                            match std::net::sockWrite(client, "ping") {
                                                 Result::Ok(n) => print(n)
                                                 Result::Err(e) => print(e.message)
                                             }
-                                            match std::net::sock_read(accepted, 64) {
+                                            match std::net::sockRead(accepted, 64) {
                                                 Result::Ok(text) => print(text ?? "eof")
                                                 Result::Err(e) => print(e.message)
                                             }
-                                            match std::net::sock_write(accepted, "pong") {
+                                            match std::net::sockWrite(accepted, "pong") {
                                                 Result::Ok(n) => print(n)
                                                 Result::Err(e) => print(e.message)
                                             }
-                                            match std::net::sock_read(client, 64) {
+                                            match std::net::sockRead(client, 64) {
                                                 Result::Ok(text) => print(text ?? "eof")
                                                 Result::Err(e) => print(e.message)
                                             }
-                                            match std::net::sock_close(client) {
+                                            match std::net::sockClose(client) {
                                                 Result::Ok(_) => print("client closed")
                                                 Result::Err(e) => print(e.message)
                                             }
-                                            match std::net::sock_close(accepted) {
+                                            match std::net::sockClose(accepted) {
                                                 Result::Ok(_) => print("accepted closed")
                                                 Result::Err(e) => print(e.message)
                                             }
-                                            match std::net::sock_close(server) {
+                                            match std::net::sockClose(server) {
                                                 Result::Ok(_) => print("server closed")
                                                 Result::Err(e) => print(e.message)
                                             }
@@ -107,19 +107,19 @@ fn glob_import_binds_every_member_bare_and_eof_is_null() {
         use std::net::*;
 
         fn main() {
-            match tcp_listen("127.0.0.1:0") {
+            match tcpListen("127.0.0.1:0") {
                 Result::Ok(server) => {
-                    match sock_local_addr(server) {
+                    match sockLocalAddr(server) {
                         Result::Ok(addr) => {
-                            match tcp_connect(addr) {
+                            match tcpConnect(addr) {
                                 Result::Ok(client) => {
-                                    match tcp_accept(server) {
+                                    match tcpAccept(server) {
                                         Result::Ok(accepted) => {
-                                            match sock_shutdown(client) {
+                                            match sockShutdown(client) {
                                                 Result::Ok(_) => print("half-closed")
                                                 Result::Err(e) => print(e.message)
                                             }
-                                            match sock_read(accepted, 64) {
+                                            match sockRead(accepted, 64) {
                                                 Result::Ok(text) => print(text ?? "eof")
                                                 Result::Err(e) => print(e.message)
                                             }
@@ -146,24 +146,24 @@ fn kind_mismatch_and_dead_handles_surface_error_messages() {
     let out = run_ok(
         r#"
         fn main() {
-            match std::net::tcp_listen("127.0.0.1:0") {
+            match std::net::tcpListen("127.0.0.1:0") {
                 Result::Ok(server) => {
                     // A listener is not a stream: writing to it is data.
-                    match std::net::sock_write(server, "x") {
+                    match std::net::sockWrite(server, "x") {
                         Result::Ok(_) => print("wrote")
                         Result::Err(e) => print(e.message)
                     }
                     // A number the registry never issued stays an Err.
-                    match std::net::sock_read(999999, 8) {
+                    match std::net::sockRead(999999, 8) {
                         Result::Ok(text) => print(text ?? "eof")
                         Result::Err(e) => print(e.message)
                     }
-                    match std::net::sock_close(server) {
+                    match std::net::sockClose(server) {
                         Result::Ok(_) => print("closed")
                         Result::Err(e) => print(e.message)
                     }
                     // The second close sees no handle at all.
-                    match std::net::sock_close(server) {
+                    match std::net::sockClose(server) {
                         Result::Ok(_) => print("closed again")
                         Result::Err(e) => print(e.message)
                     }
@@ -185,7 +185,7 @@ fn unresolvable_address_is_an_err_not_a_crash() {
     let out = run_ok(
         r#"
         fn main() {
-            match std::net::tcp_connect("no.such.host.invalid:80") {
+            match std::net::tcpConnect("no.such.host.invalid:80") {
                 Result::Ok(h) => print(h)
                 Result::Err(e) => print(e.message)
             }
@@ -201,9 +201,9 @@ fn read_size_is_validated_and_reported() {
     let out = run_ok(
         r#"
         fn main() {
-            match std::net::tcp_listen("127.0.0.1:0") {
+            match std::net::tcpListen("127.0.0.1:0") {
                 Result::Ok(server) => {
-                    match std::net::sock_read(server, 0) {
+                    match std::net::sockRead(server, 0) {
                         Result::Ok(_) => print("read")
                         Result::Err(e) => print(e.message)
                     }
@@ -215,4 +215,108 @@ fn read_size_is_validated_and_reported() {
     );
     assert_eq!(out.len(), 1);
     assert!(out[0].contains("read size"), "{:?}", out[0]);
+}
+
+#[test]
+fn sock_shutdown_write_half_closes_and_keeps_reading() {
+    let out = run_ok(
+        r#"
+        fn main() {
+            match std::net::tcpListen("127.0.0.1:0") {
+                Result::Ok(server) => {
+                    match std::net::sockLocalAddr(server) {
+                        Result::Ok(addr) => {
+                            match std::net::tcpConnect(addr) {
+                                Result::Ok(client) => {
+                                    match std::net::tcpAccept(server) {
+                                        Result::Ok(accepted) => {
+                                            match std::net::sockWrite(client, "req") {
+                                                Result::Ok(n) => print(n)
+                                                Result::Err(e) => print(e.message)
+                                            }
+                                            match std::net::sockShutdownWrite(client) {
+                                                Result::Ok(_) => print("half")
+                                                Result::Err(e) => print(e.message)
+                                            }
+                                            match std::net::sockWrite(client, "more") {
+                                                Result::Ok(_) => print("bad")
+                                                Result::Err(_) => print("write err")
+                                            }
+                                            match std::net::sockRead(accepted, 64) {
+                                                Result::Ok(t) => print(t)
+                                                Result::Err(e) => print(e.message)
+                                            }
+                                            match std::net::sockRead(accepted, 64) {
+                                                Result::Ok(t) => {
+                                                    if t == null { print("eof") } else { print(t) }
+                                                }
+                                                Result::Err(e) => print(e.message)
+                                            }
+                                            let c1 = std::net::sockClose(client)
+                                            let c2 = std::net::sockClose(accepted)
+                                            let c3 = std::net::sockClose(server)
+                                        }
+                                        Result::Err(e) => print(e.message)
+                                    }
+                                }
+                                Result::Err(e) => print(e.message)
+                            }
+                        }
+                        Result::Err(e) => print(e.message)
+                    }
+                }
+                Result::Err(e) => print(e.message)
+            }
+        }
+        "#,
+    );
+    assert_eq!(out, vec!["3", "half", "write err", "req", "eof"]);
+}
+
+#[test]
+fn timeouts_expire_as_errors_and_stay_reusable() {
+    let out = run_ok(
+        r#"
+        fn main() {
+            match std::net::tcpListen("127.0.0.1:0") {
+                Result::Ok(server) => {
+                    match std::net::tcpAccept(server, 20) {
+                        Result::Ok(_) => print("bad")
+                        Result::Err(e) => print("accept timeout")
+                    }
+                    let still = std::net::sockClose(server)
+                    match std::net::tcpConnect("127.0.0.1:9", 20) {
+                        Result::Ok(_) => print("bad")
+                        Result::Err(_) => print("connect timeout/refused")
+                    }
+                }
+                Result::Err(e) => print(e.message)
+            }
+        }
+        "#,
+    );
+    assert_eq!(out, vec!["accept timeout", "connect timeout/refused"]);
+}
+
+/// `examples/net.xulo` 全文经解释器运行的输出逐行固定（示例即测试）。
+#[test]
+fn net_example() {
+    let out = run_ok(include_str!("../../../examples/net.xulo"));
+    assert_eq!(
+        out,
+        vec![
+            "true".to_string(),
+            "4".to_string(),
+            "ping".to_string(),
+            "4".to_string(),
+            "pong".to_string(),
+            "read timed out".to_string(),
+            "write side closed".to_string(),
+            "eof".to_string(),
+            "true".to_string(),
+            "client closed".to_string(),
+            "peer closed".to_string(),
+            "server closed".to_string(),
+        ]
+    );
 }

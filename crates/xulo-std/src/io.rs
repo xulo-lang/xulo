@@ -11,7 +11,8 @@
 //! is how the integration tests capture bytes without touching the process
 //! streams.
 
-use std::io::{self, BufRead, Write};
+use std::cell::RefCell;
+use std::io::{self, BufRead, IsTerminal, Read, Write};
 
 /// The failure message of an operation: which stream it was on, and the
 /// underlying OS error (`cannot write to stdout: broken pipe (os error 32)`).
@@ -123,4 +124,73 @@ pub fn read_line() -> Result<Option<String>, String> {
 /// that are not valid UTF-8 are a failure.
 pub fn read() -> Result<String, String> {
     read_from(&mut io::stdin().lock())
+}
+
+
+/// The maximum byte count a single `readN` accepts (spec `modules/io.md`).
+pub const MAX_READ_N: i64 = 16 * 1024 * 1024;
+
+thread_local! {
+    /// Bytes read from stdin but held back because they were an incomplete
+    /// UTF-8 sequence at the previous cut (spec `modules/io.md`).
+    static PENDING: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+}
+
+/// `std::io::readN(max)`: up to `max` bytes of stdin decoded as UTF-8, or
+/// `Ok(null)` at end of input. The read stops at a character boundary; an
+/// incomplete trailing sequence is kept for the next call. A `max` outside
+/// `1 …= 16777216` is an error (spec `modules/io.md`).
+pub fn read_n(max: i64) -> Result<Option<String>, String> {
+    if !(1..=MAX_READ_N).contains(&max) {
+        return Err(format!(
+            "std::io::readN: max must be in 1..=16777216, found {max}"
+        ));
+    }
+    let max = max as usize;
+    let mut out = PENDING.with(|p| std::mem::take(&mut *p.borrow_mut()));
+    let mut stdin = io::stdin().lock();
+    while out.len() < max {
+        let mut byte = [0u8; 1];
+        match stdin.read(&mut byte) {
+            Ok(0) => break,
+            Ok(_) => out.push(byte[0]),
+            Err(e) => return Err(format!("cannot read from stdin: {e}")),
+        }
+    }
+    if out.is_empty() {
+        return Ok(None);
+    }
+    match std::str::from_utf8(&out) {
+        Ok(text) => Ok(Some(text.to_string())),
+        Err(e) if e.error_len().is_none() => {
+            let valid = e.valid_up_to();
+            if valid == 0 {
+                // A single character longer than `max`: hold it for a larger
+                // read rather than splitting it.
+                PENDING.with(|p| *p.borrow_mut() = out);
+                return Err(
+                    "cannot read from stdin: incomplete UTF-8 sequence at the read limit"
+                        .to_string(),
+                );
+            }
+            let text = String::from_utf8(out[..valid].to_vec())
+                .map_err(|e| format!("cannot read from stdin: invalid UTF-8 at byte {}", e.utf8_error().valid_up_to()))?;
+            PENDING.with(|p| *p.borrow_mut() = out[valid..].to_vec());
+            Ok(Some(text))
+        }
+        Err(e) => Err(format!(
+            "cannot read from stdin: invalid UTF-8 at byte {}",
+            e.valid_up_to()
+        )),
+    }
+}
+
+/// `std::io::stdinIsTTY()`: whether stdin is a terminal. Total.
+pub fn stdin_is_tty() -> bool {
+    io::stdin().is_terminal()
+}
+
+/// `std::io::stdoutIsTTY()`: whether stdout is a terminal. Total.
+pub fn stdout_is_tty() -> bool {
+    io::stdout().is_terminal()
 }

@@ -6,15 +6,16 @@ use std::ops::Range;
 use symbol_table::{Symbol, SymbolKind, SymbolTable};
 use xulo_core::ast::{
     AssignStmt, AssignTarget, Attribute, BinaryOperator, Block, Call, CallArg, EnumPayloadParam,
-    EnumVariant, ExportItem, Expression, FnBound, FnDef, IfExpr, ImplDecl, LetBinding, Literal,
-    ObjectField, PathHead, Program, Statement, TraitDecl, Type, TypeAlias, UiElement, UseDecl,
-    UseTarget, impl_fn_name,
+    EnumVariant, ExportItem, Expression, FnBound, FnDef, GenericParam, GenericParamKind, IfExpr,
+    ImplDecl, LetBinding, Literal, ObjectField, PathHead, Program, Statement, TraitDecl, Type,
+    TypeAlias, UiElement, UseDecl, UseTarget, impl_fn_name,
 };
 use xulo_core::error::{ErrorKind, XuloError};
 
 /// Result of a single semantic error, without a source span (spans are
 /// attached by the lexer/parser; semantic checks target names).
 type SResult<T> = Result<T, XuloError>;
+
 
 /// The virtual module id the `regex` module resolves to. It carries a
 /// control-byte prefix so it can never collide with a real module id (spec
@@ -69,6 +70,7 @@ fn std_ns_key(enum_name: &str) -> Option<&str> {
             | "std::net"
             | "std::process"
             | "std::json"
+            | "std::http"
     )
     .then_some(enum_name)
 }
@@ -103,6 +105,48 @@ impl TypeEntryKind {
     }
 }
 
+/// The generic parameter kinds of a prelude type that takes const arguments
+/// (`Array<T, N>`, spec `types/composite-types.md`).
+fn builtin_generic_params(name: &str) -> Option<Vec<GenericParam>> {
+    match name {
+        "Array" => Some(vec![
+            GenericParam {
+                name: "T".to_string(),
+                kind: GenericParamKind::Type,
+                const_type: None,
+            },
+            GenericParam {
+                name: "N".to_string(),
+                kind: GenericParamKind::Const,
+                const_type: Some(Type::Number),
+            },
+        ]),
+        _ => None,
+    }
+}
+
+/// The element type and, when written as an integer literal, the length of an
+/// `Array<T, N>` type (spec `types/composite-types.md`).
+fn array_parts(ty: &Type) -> Option<(Type, Option<usize>)> {
+    let Type::Named(name, args) = ty else {
+        return None;
+    };
+    if name != "Array" || args.len() != 2 {
+        return None;
+    }
+    let len = match &args[1] {
+        Type::Literal(text) => text.parse::<i64>().ok().and_then(|n| {
+            if n >= 0 {
+                Some(n as usize)
+            } else {
+                None
+            }
+        }),
+        _ => None,
+    };
+    Some((args[0].clone(), len))
+}
+
 /// The fixed arity of a prelude type (spec `builtins/prelude.md`): the number
 /// of type arguments an application of it must write. Names whose declaration
 /// the program provides are answered from the type table instead; these exist
@@ -111,7 +155,7 @@ impl TypeEntryKind {
 fn builtin_type_arity(name: &str) -> Option<usize> {
     match name {
         "List" | "Set" | "Task" => Some(1),
-        "Map" | "Result" => Some(2),
+        "Array" | "Map" | "Result" => Some(2),
         // The primitive value types are keywords (spec
         // `lexical-structure.md`), so an annotation reaches the checker
         // through `PrimitiveType` and not as a named head — except the ones
@@ -355,6 +399,27 @@ fn builtin_type_entries() -> HashMap<String, TypeEntry> {
     // `RegexMatch` needs no import: an annotation of the name answers from
     // here, while `use regex::RegexMatch` binds the same shape locally.
     builtins.insert("RegexMatch".to_string(), regex_match_type_entry());
+    // The `std::http` data types answer annotations and named-field
+    // construction without an import (`Response(status: 200, …)`); the
+    // qualified annotation spelling resolves through an alias to the same
+    // shape. `Server` is opaque — `listen` is its only issuer.
+    builtins.insert("Request".to_string(), request_type_entry());
+    builtins.insert("Response".to_string(), response_type_entry());
+    builtins.insert("Server".to_string(), server_type_entry());
+    for (short, long) in [
+        ("Request", "std::http::Request"),
+        ("Response", "std::http::Response"),
+        ("Server", "std::http::Server"),
+    ] {
+        builtins.insert(
+            long.to_string(),
+            TypeEntry {
+                type_params: Vec::new(),
+                type_bounds: Vec::new(),
+                kind: TypeEntryKind::Alias(Type::Named(short.to_string(), Vec::new())),
+            },
+        );
+    }
     builtins
 }
 
@@ -428,15 +493,248 @@ fn regex_match_type_entry() -> TypeEntry {
         type_bounds: Vec::new(),
         kind: TypeEntryKind::Struct(vec![
             ("value".to_string(), Type::String, None),
+            ("index".to_string(), Type::Number, None),
+            ("end".to_string(), Type::Number, None),
             (
                 "group".to_string(),
                 Type::FnSig {
-                    params: vec![Type::Number],
+                    params: vec![Type::Union(vec![Type::Number, Type::String])],
                     ret: Some(Box::new(Type::Optional(Box::new(Type::String)))),
                 },
                 None,
             ),
         ]),
+    }
+}
+
+/// The `Command` type entry (spec `modules/process.md`): one child's
+/// specification — the four pure setters, each returning the refined
+/// `Command`, and the two runners. Typed here as method signatures so a
+/// member call through the imported (or qualified) name answers with its
+/// declared result; the runtime object carries natives of the same names.
+fn command_type_entry() -> TypeEntry {
+    let command = || Type::Named("Command".to_string(), Vec::new());
+    TypeEntry {
+        type_params: Vec::new(),
+        type_bounds: Vec::new(),
+        kind: TypeEntryKind::Struct(vec![
+            (
+                "input".to_string(),
+                Type::FnSig {
+                    params: vec![Type::String],
+                    ret: Some(Box::new(command())),
+                },
+                None,
+            ),
+            (
+                "cwd".to_string(),
+                Type::FnSig {
+                    params: vec![Type::String],
+                    ret: Some(Box::new(command())),
+                },
+                None,
+            ),
+            (
+                "env".to_string(),
+                Type::FnSig {
+                    params: vec![Type::String, Type::String],
+                    ret: Some(Box::new(command())),
+                },
+                None,
+            ),
+            (
+                "timeout".to_string(),
+                Type::FnSig {
+                    params: vec![Type::Number],
+                    ret: Some(Box::new(command())),
+                },
+                None,
+            ),
+            (
+                "run".to_string(),
+                Type::FnSig {
+                    params: vec![],
+                    ret: Some(Box::new(BuiltinRet::ResultRunOutErr.ty())),
+                },
+                None,
+            ),
+            (
+                "launch".to_string(),
+                Type::FnSig {
+                    params: vec![],
+                    ret: Some(Box::new(BuiltinRet::ResultChildErr.ty())),
+                },
+                None,
+            ),
+        ]),
+    }
+}
+
+/// The `Child` type entry: the kept handle's three operations — `wait` and
+/// `kill` fallible, `pid` total — typed as method signatures. Like `RegExp`,
+/// it is reached through its imported or qualified name: the value itself
+/// comes from `launch`.
+fn child_type_entry() -> TypeEntry {
+    TypeEntry {
+        type_params: Vec::new(),
+        type_bounds: Vec::new(),
+        kind: TypeEntryKind::Struct(vec![
+            (
+                "wait".to_string(),
+                Type::FnSig {
+                    params: vec![],
+                    ret: Some(Box::new(BuiltinRet::ResultRunOutErr.ty())),
+                },
+                None,
+            ),
+            (
+                "kill".to_string(),
+                Type::FnSig {
+                    params: vec![],
+                    ret: Some(Box::new(BuiltinRet::ResultUnitErr.ty())),
+                },
+                None,
+            ),
+            (
+                "pid".to_string(),
+                Type::FnSig {
+                    params: vec![],
+                    ret: Some(Box::new(Type::Number)),
+                },
+                None,
+            ),
+        ]),
+    }
+}
+
+/// The closed inherent member set of a `Command`/`Child` receiver (spec
+/// `modules/process.md`): each setter takes the receiver by value and yields
+/// the refined `Command` — the specification is pure — while the runners and
+/// handle operations carry their declared `Result`s. `Ok(None)` means the
+/// name is not a member of the handle.
+fn process_inherent_sig(recv_name: &str, member: &str) -> Option<InherentSig> {
+    let sig = |params: Vec<Type>, ret: Type| {
+        Some(InherentSig {
+            params,
+            optional_tail: 0,
+            ret,
+        })
+    };
+    let command = || Type::Named("Command".to_string(), Vec::new());
+    match (recv_name, member) {
+        ("Command", "input" | "cwd") => sig(vec![Type::String], command()),
+        ("Command", "env") => sig(vec![Type::String, Type::String], command()),
+        ("Command", "timeout") => sig(vec![Type::Number], command()),
+        ("Command", "run") => sig(vec![], BuiltinRet::ResultRunOutErr.ty()),
+        ("Command", "launch") => sig(vec![], BuiltinRet::ResultChildErr.ty()),
+        ("Child", "wait") => sig(vec![], BuiltinRet::ResultRunOutErr.ty()),
+        ("Child", "kill") => sig(vec![], BuiltinRet::ResultUnitErr.ty()),
+        ("Child", "pid") => sig(vec![], Type::Number),
+        _ => None,
+    }
+}
+
+/// The `{ name, value }` record list shared by `Request`'s `query`/`form`/
+/// `headers` and `Response`'s `headers` (spec `modules/http.md`, "Types").
+fn header_list_ty() -> Type {
+    Type::List(Box::new(Type::ObjectType(vec![
+        ("name".to_string(), Type::String),
+        ("value".to_string(), Type::String),
+    ])))
+}
+
+/// The `Request` type entry (spec `modules/http.md`): the eight public
+/// fields, so the named-field constructor checks `E0205`/`E0206` like a
+/// struct literal. The lookup methods live on the inherent side.
+fn request_type_entry() -> TypeEntry {
+    TypeEntry {
+        type_params: Vec::new(),
+        type_bounds: Vec::new(),
+        kind: TypeEntryKind::Struct(vec![
+            ("method".to_string(), Type::String, None),
+            ("path".to_string(), Type::String, None),
+            ("query".to_string(), header_list_ty(), None),
+            ("form".to_string(), header_list_ty(), None),
+            ("headers".to_string(), header_list_ty(), None),
+            ("body".to_string(), Type::String, None),
+            ("version".to_string(), Type::String, None),
+            ("remoteAddr".to_string(), Type::String, None),
+        ]),
+    }
+}
+
+/// The `Response` type entry: the three public fields; `Response.text`/
+/// `Response.json` are static shorthands of the same shape.
+fn response_type_entry() -> TypeEntry {
+    TypeEntry {
+        type_params: Vec::new(),
+        type_bounds: Vec::new(),
+        kind: TypeEntryKind::Struct(vec![
+            ("status".to_string(), Type::Number, None),
+            ("headers".to_string(), header_list_ty(), None),
+            ("body".to_string(), Type::String, None),
+        ]),
+    }
+}
+
+/// The `Server` type entry: opaque — only `listen` issues one — so the
+/// members are the two handle methods, typed as method signatures.
+fn server_type_entry() -> TypeEntry {
+    TypeEntry {
+        type_params: Vec::new(),
+        type_bounds: Vec::new(),
+        kind: TypeEntryKind::Struct(vec![
+            (
+                "addr".to_string(),
+                Type::FnSig {
+                    params: vec![],
+                    ret: Some(Box::new(BuiltinRet::ResultStrErr.ty())),
+                },
+                None,
+            ),
+            (
+                "serve".to_string(),
+                Type::FnSig {
+                    params: vec![Type::FnSig {
+                        params: vec![Type::Named("Request".to_string(), Vec::new())],
+                        ret: Some(Box::new(Type::Named("Response".to_string(), Vec::new()))),
+                    }],
+                    ret: Some(Box::new(BuiltinRet::ResultUnitErr.ty())),
+                },
+                None,
+            ),
+        ]),
+    }
+}
+
+/// The closed inherent member set of an http data receiver (spec
+/// `modules/http.md`): the lookup methods are absence-typed (`string?`), and
+/// `Server` carries its two handle operations. `Ok(None)` means the name is
+/// not a member.
+fn http_inherent_sig(recv_name: &str, member: &str) -> Option<InherentSig> {
+    let sig = |params: Vec<Type>, ret: Type| {
+        Some(InherentSig {
+            params,
+            optional_tail: 0,
+            ret,
+        })
+    };
+    match (recv_name, member) {
+        ("Request", "header" | "queryValue" | "formValue") => {
+            sig(vec![Type::String], Type::Optional(Box::new(Type::String)))
+        }
+        ("Response", "header") => {
+            sig(vec![Type::String], Type::Optional(Box::new(Type::String)))
+        }
+        ("Server", "addr") => sig(vec![], BuiltinRet::ResultStrErr.ty()),
+        ("Server", "serve") => sig(
+            vec![Type::FnSig {
+                params: vec![Type::Named("Request".to_string(), Vec::new())],
+                ret: Some(Box::new(Type::Named("Response".to_string(), Vec::new()))),
+            }],
+            BuiltinRet::ResultUnitErr.ty(),
+        ),
+        _ => None,
     }
 }
 
@@ -488,6 +786,14 @@ enum BuiltinTy {
     /// Any value — `std::json::stringify` serializes arbitrary JSON input;
     /// `assignable` accepts everything as `any`, so the check never rejects.
     Any,
+    /// `List<u8>` — a byte-list argument (`std::fs::writeBytes`).
+    ListU8,
+    /// `List<string>` — `std::process::exec`'s argument vector, whose
+    /// element type is enforced (`[]` is `List<any>` and passes).
+    ListStr,
+    /// `List<{ name, value }>` — `std::http::request`'s header list, whose
+    /// record shape is checked structurally.
+    ListHeaders,
 }
 
 impl BuiltinTy {
@@ -499,6 +805,9 @@ impl BuiltinTy {
             BuiltinTy::U64 => "u64",
             BuiltinTy::String => "string",
             BuiltinTy::Any => "any",
+            BuiltinTy::ListU8 => "List<u8>",
+            BuiltinTy::ListStr => "List<string>",
+            BuiltinTy::ListHeaders => "List<{ name: string, value: string }>",
         }
     }
 
@@ -506,6 +815,9 @@ impl BuiltinTy {
         match self {
             BuiltinTy::String => Type::String,
             BuiltinTy::Any => Type::Any,
+            BuiltinTy::ListU8 => Type::List(Box::new(Type::Named("u8".to_string(), Vec::new()))),
+            BuiltinTy::ListStr => Type::List(Box::new(Type::String)),
+            BuiltinTy::ListHeaders => header_list_ty(),
             _ => Type::Number,
         }
     }
@@ -539,12 +851,37 @@ enum BuiltinRet {
     /// `List<string>` — `std::process::args()`, the process's argv.
     ListStr,
     /// `Result<{stdout: string, stderr: string, code: number}, Error>` — the
-    /// capture record `std::process::run` yields.
+    /// capture record `std::process::run` (and `exec`, `Command::run`,
+    /// `Child::wait`) yields.
     ResultRunOutErr,
+    /// `Result<Child, Error>` — a child launched and kept behind its handle
+    /// (`std::process::launch`, `Command::launch`).
+    ResultChildErr,
+    /// `Result<Response, Error>` — an HTTP exchange (`std::http::fetch`,
+    /// `std::http::request`, `Response::json`).
+    ResultResponseErr,
+    /// `Result<Server, Error>` — a bound, listening server
+    /// (`std::http::listen`).
+    ResultServerErr,
     /// `Result<any, Error>` — a fallible operation whose success payload is
     /// an arbitrary value (`std::json::parse`, which yields whatever JSON
     /// the text described).
     ResultAnyErr,
+    /// `{ dir: string, base: string, ext: string }` — `std::path::split`.
+    PathSplit,
+    /// `{ year: int, month: int, day: int, hour: int, minute: int,
+    /// second: int, millisecond: int }` — `std::time::parts`.
+    TimeParts,
+    /// `string?` — `std::path::relative` (absence is `null`).
+    OptString,
+    /// `Result<List<u8>, Error>` — a fallible byte read (`std::fs::readBytes`).
+    ResultListU8Err,
+    /// `Result<List<string>, Error>` — a fallible name/path listing
+    /// (`std::fs::readDir`, `std::fs::walk`).
+    ResultListStrErr,
+    /// `Result<{ kind: string, size: number, modified: u64, mode: number }, Error>`
+    /// — the record `std::fs::stat` yields.
+    ResultStatErr,
 }
 
 impl BuiltinRet {
@@ -588,13 +925,75 @@ impl BuiltinRet {
                         ("stdout".to_string(), Type::String),
                         ("stderr".to_string(), Type::String),
                         ("code".to_string(), Type::Number),
-                    ]),
+                    ]                    ),
                     Type::Named("Error".to_string(), Vec::new()),
                 ],
             ),
+            BuiltinRet::ResultChildErr => Type::Named(
+                "Result".to_string(),
+                vec![
+                    Type::Named("Child".to_string(), Vec::new()),
+                    Type::Named("Error".to_string(), Vec::new()),
+                ],
+            ),
+            BuiltinRet::ResultResponseErr => Type::Named(
+                "Result".to_string(),
+                vec![
+                    Type::Named("Response".to_string(), Vec::new()),
+                    Type::Named("Error".to_string(), Vec::new()),
+                ],
+            ),
+            BuiltinRet::ResultServerErr => Type::Named(
+                "Result".to_string(),
+                vec![
+                    Type::Named("Server".to_string(), Vec::new()),
+                    Type::Named("Error".to_string(), Vec::new()),
+                ],
+            ),
+            BuiltinRet::PathSplit => Type::ObjectType(vec![
+                ("dir".to_string(), Type::String),
+                ("base".to_string(), Type::String),
+                ("ext".to_string(), Type::String),
+            ]),
+            BuiltinRet::TimeParts => Type::ObjectType(vec![
+                ("year".to_string(), Type::Number),
+                ("month".to_string(), Type::Number),
+                ("day".to_string(), Type::Number),
+                ("hour".to_string(), Type::Number),
+                ("minute".to_string(), Type::Number),
+                ("second".to_string(), Type::Number),
+                ("millisecond".to_string(), Type::Number),
+            ]),
+            BuiltinRet::OptString => Type::Optional(Box::new(Type::String)),
             BuiltinRet::ResultAnyErr => Type::Named(
                 "Result".to_string(),
                 vec![Type::Any, Type::Named("Error".to_string(), Vec::new())],
+            ),
+            BuiltinRet::ResultListU8Err => Type::Named(
+                "Result".to_string(),
+                vec![
+                    Type::List(Box::new(Type::Named("u8".to_string(), Vec::new()))),
+                    Type::Named("Error".to_string(), Vec::new()),
+                ],
+            ),
+            BuiltinRet::ResultListStrErr => Type::Named(
+                "Result".to_string(),
+                vec![
+                    Type::List(Box::new(Type::String)),
+                    Type::Named("Error".to_string(), Vec::new()),
+                ],
+            ),
+            BuiltinRet::ResultStatErr => Type::Named(
+                "Result".to_string(),
+                vec![
+                    Type::ObjectType(vec![
+                        ("kind".to_string(), Type::String),
+                        ("size".to_string(), Type::Number),
+                        ("modified".to_string(), Type::Number),
+                        ("mode".to_string(), Type::Number),
+                    ]),
+                    Type::Named("Error".to_string(), Vec::new()),
+                ],
             ),
         }
     }
@@ -603,6 +1002,9 @@ impl BuiltinRet {
 /// One intrinsic function's registered signature.
 struct BuiltinSig {
     params: &'static [BuiltinTy],
+    /// How many trailing parameters may be omitted (`std::fs::tempFile`'s
+    /// prefix; the compiler pads a missing argument with null).
+    optional_tail: usize,
     ret: BuiltinRet,
 }
 
@@ -610,6 +1012,167 @@ struct BuiltinSig {
 enum BuiltinMember {
     Constant,
     Fn(BuiltinSig),
+}
+
+/// The signature of one inherent member of a built-in collection or `string`
+/// (spec `types/composite-types.md`, `types/primitive-types.md`).
+struct InherentSig {
+    /// The declared parameter types. `Type::Any` where the member's own
+    /// generic parameter is inferred from a callback (`map`/`reduce`).
+    params: Vec<Type>,
+    /// How many trailing parameters may be omitted by the caller.
+    optional_tail: usize,
+    ret: Type,
+}
+
+fn unit_type() -> Type {
+    Type::Named("unit".to_string(), Vec::new())
+}
+
+/// The read-only property members: `.len`, `.size`, and `.byteLen`.
+fn builtin_property(recv: &Type, member: &str) -> Option<Type> {
+    match (recv, member) {
+        (Type::List(_), "len") => Some(Type::Number),
+        (Type::Named(name, _), "len") if name == "Array" => Some(Type::Number),
+        (Type::String, "len" | "byteLen") => Some(Type::Number),
+        (Type::Named(name, _), "size") if name == "Map" || name == "Set" => Some(Type::Number),
+        // The brace form of a map literal currently types as the loose
+        // `object`; it still answers the Map members.
+        (Type::Object, "size") => Some(Type::Number),
+        _ => None,
+    }
+}
+
+/// The non-callback inherent members of `List<T>`, `Map<K, V>`, `Set<T>`, and
+/// `string` (spec `types/composite-types.md`, `types/primitive-types.md`).
+fn builtin_inherent_sig(recv: &Type, member: &str) -> Option<InherentSig> {
+    let sig = |params: Vec<Type>, optional_tail: usize, ret: Type| {
+        Some(InherentSig {
+            params,
+            optional_tail,
+            ret,
+        })
+    };
+    match recv {
+        Type::List(inner) => {
+            let t = (**inner).clone();
+            match member {
+                "push" | "unshift" => sig(vec![t], 0, unit_type()),
+                "pop" | "shift" => sig(vec![], 0, Type::Optional(Box::new(t))),
+                "splice" => sig(
+                    vec![Type::Number, Type::Number, Type::List(inner.clone())],
+                    1,
+                    Type::List(inner.clone()),
+                ),
+                "resize" => sig(vec![Type::Number, t], 0, unit_type()),
+                "truncate" => sig(vec![Type::Number], 0, unit_type()),
+                "clear" | "reverse" => sig(vec![], 0, unit_type()),
+                "slice" => sig(
+                    vec![Type::Number, Type::Optional(Box::new(Type::Number))],
+                    1,
+                    Type::List(inner.clone()),
+                ),
+                "indexOf" | "lastIndexOf" => sig(vec![t], 0, Type::Number),
+                "includes" => sig(vec![t], 0, Type::Boolean),
+                "join" => sig(vec![Type::String], 1, Type::String),
+                "entries" => sig(
+                    vec![],
+                    0,
+                    Type::List(Box::new(Type::Tuple(vec![Type::Number, t]))),
+                ),
+                _ => None,
+            }
+        }
+        Type::Named(name, args) if name == "Array" => {
+            let elem = args.first().cloned().unwrap_or(Type::Any);
+            let n = args.get(1).cloned().unwrap_or(Type::Any);
+            match member {
+                "slice" => sig(
+                    vec![Type::Number, Type::Optional(Box::new(Type::Number))],
+                    1,
+                    Type::List(Box::new(elem.clone())),
+                ),
+                "indexOf" | "lastIndexOf" => sig(vec![elem.clone()], 0, Type::Number),
+                "includes" => sig(vec![elem.clone()], 0, Type::Boolean),
+                "join" => sig(vec![Type::String], 1, Type::String),
+                "entries" => sig(
+                    vec![],
+                    0,
+                    Type::List(Box::new(Type::Tuple(vec![Type::Number, elem]))),
+                ),
+                "reverse" => sig(vec![], 0, unit_type()),
+                "filter" => sig(
+                    vec![Type::Any],
+                    0,
+                    Type::List(Box::new(args.first().cloned().unwrap_or(Type::Any))),
+                ),
+                "map" => sig(
+                    vec![Type::Any],
+                    0,
+                    Type::Named("Array".to_string(), vec![Type::Any, n]),
+                ),
+                "find" => sig(
+                    vec![Type::Any],
+                    0,
+                    Type::Optional(Box::new(args.first().cloned().unwrap_or(Type::Any))),
+                ),
+                "findIndex" => sig(vec![Type::Any], 0, Type::Number),
+                "some" | "every" | "forEach" | "sort" => sig(vec![Type::Any], 0, if member == "some" || member == "every" { Type::Boolean } else { unit_type() }),
+                "reduce" => sig(vec![Type::Any, Type::Any], 0, Type::Any),
+                _ => None,
+            }
+        }
+        Type::String => match member {
+            "codeAt" => sig(vec![Type::Number], 0, Type::Number),
+            "slice" => sig(vec![Type::Number, Type::Number], 0, Type::String),
+            "bytes" => sig(
+                vec![],
+                0,
+                Type::List(Box::new(Type::Named("u8".to_string(), Vec::new()))),
+            ),
+            _ => None,
+        },
+        Type::Named(name, args) if name == "Map" => {
+            let key = args.first().cloned().unwrap_or(Type::Any);
+            let val = args.get(1).cloned().unwrap_or(Type::Any);
+            map_inherent_sig(&key, &val, member)
+        }
+        Type::Object => map_inherent_sig(&Type::Any, &Type::Any, member),
+        Type::Named(name, args) if name == "Set" => {
+            let elem = args.first().cloned().unwrap_or(Type::Any);
+            match member {
+                "has" | "remove" => sig(vec![elem], 0, Type::Boolean),
+                "insert" => sig(vec![elem], 0, Type::Boolean),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+fn map_inherent_sig(key: &Type, val: &Type, member: &str) -> Option<InherentSig> {
+    let sig = |params: Vec<Type>, optional_tail: usize, ret: Type| {
+        Some(InherentSig {
+            params,
+            optional_tail,
+            ret,
+        })
+    };
+    let key = key.clone();
+    let val = val.clone();
+    match member {
+        "get" | "remove" => sig(vec![key], 0, Type::Optional(Box::new(val))),
+        "set" => sig(vec![key, val], 0, unit_type()),
+        "has" => sig(vec![key], 0, Type::Boolean),
+        "keys" => sig(vec![], 0, Type::List(Box::new(key))),
+        "values" => sig(vec![], 0, Type::List(Box::new(val))),
+        "entries" => sig(
+            vec![],
+            0,
+            Type::List(Box::new(Type::Tuple(vec![key, val]))),
+        ),
+        _ => None,
+    }
 }
 
 /// The intrinsic table of `Math` and `Time` (spec
@@ -622,12 +1185,51 @@ fn builtin_member(ns: &str, member: &str) -> Option<BuiltinMember> {
     use BuiltinMember as M;
     use BuiltinRet as R;
     use BuiltinTy as T;
-    let f = |params: &'static [T], ret: R| Some(M::Fn(BuiltinSig { params, ret }));
+    let f = |params: &'static [T], ret: R| {
+        Some(M::Fn(BuiltinSig {
+            params,
+            optional_tail: 0,
+            ret,
+        }))
+    };
+    let f1 = |params: &'static [T], ret: R| {
+        Some(M::Fn(BuiltinSig {
+            params,
+            optional_tail: 1,
+            ret,
+        }))
+    };
+    let f2 = |params: &'static [T], ret: R| {
+        Some(M::Fn(BuiltinSig {
+            params,
+            optional_tail: 2,
+            ret,
+        }))
+    };
+    let f3 = |params: &'static [T], ret: R| {
+        Some(M::Fn(BuiltinSig {
+            params,
+            optional_tail: 3,
+            ret,
+        }))
+    };
+    let f4 = |params: &'static [T], ret: R| {
+        Some(M::Fn(BuiltinSig {
+            params,
+            optional_tail: 4,
+            ret,
+        }))
+    };
     match ns {
         "std::math" => match member {
             "PI" | "E" | "TAU" | "INFINITY" | "NAN" => Some(M::Constant),
             "abs" => f(&[T::Number], R::Number),
             "min" | "max" => f(&[T::Number, T::Number], R::Number),
+            "sign" => f(&[T::Number], R::Number),
+            "hypot" => f(&[T::Float, T::Float], R::Float),
+            "clamp" => f(&[T::Number, T::Number, T::Number], R::Number),
+            "log1p" | "expm1" => f(&[T::Float], R::Float),
+            "randomInt" => f(&[T::Int, T::Int], R::Int),
             "sqrt" | "cbrt" => f(&[T::Float], R::Float),
             "floor" | "ceil" | "round" | "trunc" => f(&[T::Float], R::Int),
             "pow" => f(&[T::Float, T::Float], R::Float),
@@ -644,13 +1246,39 @@ fn builtin_member(ns: &str, member: &str) -> Option<BuiltinMember> {
         "std::time" => match member {
             "now" | "nowNanos" | "monotonic" | "monotonicNanos" => f(&[], R::Number),
             "sleep" => f(&[T::U64], R::TaskUnit),
+            // 日历（spec `modules/time.md`）：UTC 单域。format/parse 交换
+            // ISO 8601 文本，parts/fromParts 交换字段记录，weekday 是星期
+            // 序号；fromParts 的 hour…millisecond 四个尾参可缺席（默认 0）。
+            "format" => f(&[T::U64], R::String),
+            "parse" => f(&[T::String], R::ResultNumErr),
+            "parts" => f(&[T::U64], R::TimeParts),
+            "fromParts" => {
+                f4(&[T::Int, T::Int, T::Int, T::Int, T::Int, T::Int, T::Int], R::Number)
+            }
+            "weekday" => f(&[T::U64], R::Int),
             _ => None,
         },
         "std::fs" => match member {
             "read" => f(&[T::String], R::ResultStrErr),
             "write" => f(&[T::String, T::String], R::ResultUnitErr),
+            "append" | "createNew" => f(&[T::String, T::String], R::ResultUnitErr),
             "exists" => f(&[T::String], R::Bool),
-            "remove" | "mkdir" => f(&[T::String], R::ResultUnitErr),
+            "touch" | "remove" | "mkdir" | "removeDir" => {
+                f(&[T::String], R::ResultUnitErr)
+            }
+            "realpath" => f(&[T::String], R::ResultStrErr),
+            "setTimes" => f(&[T::String, T::U64], R::ResultUnitErr),
+            "setMode" => f(&[T::String, T::Number], R::ResultUnitErr),
+            "stat" => f(&[T::String], R::ResultStatErr),
+            "copy" | "rename" => f(&[T::String, T::String], R::ResultUnitErr),
+            "readDir" | "walk" => f(&[T::String], R::ResultListStrErr),
+            "readBytes" => f(&[T::String], R::ResultListU8Err),
+            "writeBytes" | "appendBytes" => f(&[T::String, T::ListU8], R::ResultUnitErr),
+            // The temp creators take an optional prefix (or, for the `…In`
+            // pair, a required directory plus an optional prefix); the
+            // compiler pads a missing trailing argument with null.
+            "tempFile" | "tempDir" => f1(&[T::String], R::ResultStrErr),
+            "tempFileIn" | "tempDirIn" => f1(&[T::String, T::String], R::ResultStrErr),
             _ => None,
         },
         // The host streams: writes take the text to emit, `flush` pushes what
@@ -661,6 +1289,8 @@ fn builtin_member(ns: &str, member: &str) -> Option<BuiltinMember> {
             "flush" => f(&[], R::ResultUnitErr),
             "readLine" => f(&[], R::ResultOptStrErr),
             "read" => f(&[], R::ResultStrErr),
+            "readN" => f(&[T::Number], R::ResultOptStrErr),
+            "stdinIsTTY" | "stdoutIsTTY" => f(&[], R::Bool),
             _ => None,
         },
         // OS surface: the working directory, the environment, and process /
@@ -669,7 +1299,11 @@ fn builtin_member(ns: &str, member: &str) -> Option<BuiltinMember> {
         "std::os" => match member {
             "getenv" => f(&[T::String], R::ResultOptStrErr),
             "setenv" => f(&[T::String, T::String], R::ResultUnitErr),
+            "unsetenv" => f(&[T::String], R::ResultUnitErr),
             "cwd" => f(&[], R::ResultStrErr),
+            "tmpDir" => f(&[], R::String),
+            "homeDir" | "hostName" | "userName" | "execPath" => f(&[], R::ResultStrErr),
+            "cpuCount" => f(&[], R::Number),
             "chdir" => f(&[T::String], R::ResultUnitErr),
             "pid" => f(&[], R::Number),
             "platform" | "arch" => f(&[], R::String),
@@ -679,29 +1313,44 @@ fn builtin_member(ns: &str, member: &str) -> Option<BuiltinMember> {
         // every member is total, so none returns a `Result`.
         "std::path" => match member {
             "join" => f(&[T::String, T::String], R::String),
-            "dirname" | "basename" | "ext" | "normalize" => f(&[T::String], R::String),
+            "dirname" | "basename" | "ext" | "normalize" | "stem" => {
+                f(&[T::String], R::String)
+            }
+            "isAbsolute" => f(&[T::String], R::Bool),
+            "split" => f(&[T::String], R::PathSplit),
+            "withExt" => f(&[T::String, T::String], R::String),
+            "relative" => f(&[T::String, T::String], R::OptString),
             _ => None,
         },
-        // TCP surface (implementation-first, spec `memory-and-runtime.md`):
+        // TCP surface (implementation-first, spec `modules/net.md`): the
         // openers yield the opaque numeric socket handle, reads distinguish
-        // `null` (EOF) from text, and every member validates its handle.
+        // `null` (EOF) from text, and every member validates its handle. The
+        // four blocking members take an optional trailing `timeout` in
+        // milliseconds; the compiler pads a missing budget with null.
         "std::net" => match member {
-            "tcp_listen" | "tcp_connect" => f(&[T::String], R::ResultNumErr),
-            "tcp_accept" => f(&[T::Number], R::ResultNumErr),
-            "sock_read" => f(&[T::Number, T::Number], R::ResultOptStrErr),
-            "sock_write" => f(&[T::Number, T::String], R::ResultNumErr),
-            "sock_close" | "sock_shutdown" => f(&[T::Number], R::ResultUnitErr),
-            "sock_local_addr" | "sock_peer_addr" => f(&[T::Number], R::ResultStrErr),
+            "tcpListen" => f(&[T::String], R::ResultNumErr),
+            "tcpConnect" => f1(&[T::String, T::U64], R::ResultNumErr),
+            "tcpAccept" => f1(&[T::Number, T::U64], R::ResultNumErr),
+            "sockRead" => f1(&[T::Number, T::Number, T::U64], R::ResultOptStrErr),
+            "sockWrite" => f1(&[T::Number, T::String, T::U64], R::ResultNumErr),
+            "sockClose" | "sockShutdown" | "sockShutdownWrite" => {
+                f(&[T::Number], R::ResultUnitErr)
+            }
+            "sockLocalAddr" | "sockPeerAddr" => f(&[T::Number], R::ResultStrErr),
             _ => None,
         },
         // Process control and child capture: `exit` never returns, `args`
-        // reads argv, `run` declares the optional input as its second
-        // parameter (`check_builtin_fn_call` accepts 1-or-2 arguments for
-        // it; the compiler pads a missing input with null).
+        // reads argv, and the three captures declare their optional
+        // `input`/`timeout` pair as trailing parameters (`check_builtin_fn_call`
+        // accepts 1..=3 / 2..=4 for them and accepts an explicit `null` there;
+        // the compiler pads a missing argument with null and `-1` for the
+        // absent timeout).
         "std::process" => match member {
             "exit" => f(&[T::Number], R::Never),
             "args" => f(&[], R::ListStr),
-            "run" => f(&[T::String, T::String], R::ResultRunOutErr),
+            "run" => f2(&[T::String, T::String, T::U64], R::ResultRunOutErr),
+            "exec" => f2(&[T::String, T::ListStr, T::String, T::U64], R::ResultRunOutErr),
+            "launch" => f2(&[T::String, T::String, T::U64], R::ResultChildErr),
             _ => None,
         },
         // JSON 编解码（implementation-first）：`parse` 把文本解成它描述
@@ -709,7 +1358,20 @@ fn builtin_member(ns: &str, member: &str) -> Option<BuiltinMember> {
         // （语法错误 / 不可序列化值）。
         "std::json" => match member {
             "parse" => f(&[T::String], R::ResultAnyErr),
-            "stringify" => f(&[T::Any], R::ResultStrErr),
+            "stringify" => f1(&[T::Any, T::Number], R::ResultStrErr),
+            "valid" => f(&[T::String], R::Bool),
+            _ => None,
+        },
+        // HTTP/1.1 客户端与服务器（spec `modules/http.md`）：`fetch` 是
+        // GET 简写，`request` 带 method/headers/body，`listen` 绑定服务
+        // 器；`request` 的 headers/body/timeout 三个尾参可缺席。
+        "std::http" => match member {
+            "fetch" => f1(&[T::String, T::U64], R::ResultResponseErr),
+            "request" => f3(
+                &[T::String, T::String, T::ListHeaders, T::String, T::U64],
+                R::ResultResponseErr,
+            ),
+            "listen" => f(&[T::String], R::ResultServerErr),
             _ => None,
         },
         _ => None,
@@ -739,9 +1401,12 @@ fn std_face_members(module: &str) -> Option<Vec<(String, FaceKind)>> {
                 "abs",
                 "min",
                 "max",
+                "sign",
                 "sqrt",
                 "cbrt",
                 "pow",
+                "hypot",
+                "clamp",
                 "floor",
                 "ceil",
                 "round",
@@ -757,8 +1422,11 @@ fn std_face_members(module: &str) -> Option<Vec<(String, FaceKind)>> {
                 "log",
                 "log2",
                 "log10",
+                "log1p",
                 "exp",
+                "expm1",
                 "random",
+                "randomInt",
                 "wrappingAdd",
                 "wrappingSub",
                 "wrappingMul",
@@ -770,29 +1438,114 @@ fn std_face_members(module: &str) -> Option<Vec<(String, FaceKind)>> {
             ]),
         ]
         .concat(),
-        "time" => fns(&["now", "nowNanos", "monotonic", "monotonicNanos", "sleep"]),
-        "fs" => fns(&["read", "write", "exists", "remove", "mkdir"]),
+        "time" => fns(&[
+            "now",
+            "nowNanos",
+            "monotonic",
+            "monotonicNanos",
+            "sleep",
+            "format",
+            "parse",
+            "parts",
+            "fromParts",
+            "weekday",
+        ]),
+        "fs" => fns(&[
+            "read",
+            "readBytes",
+            "write",
+            "writeBytes",
+            "append",
+            "appendBytes",
+            "createNew",
+            "touch",
+            "setTimes",
+            "setMode",
+            "exists",
+            "realpath",
+            "stat",
+            "copy",
+            "rename",
+            "remove",
+            "mkdir",
+            "readDir",
+            "walk",
+            "removeDir",
+            "tempFile",
+            "tempDir",
+            "tempFileIn",
+            "tempDirIn",
+        ]),
         // `print`/`println` are exported by the module but absent from its
         // glob face: their names belong to the prelude intrinsics, which a
         // glob cannot rebind (`PRELUDE_INTRINSIC_VALUES`).
-        "io" => fns(&["eprint", "eprintln", "flush", "readLine", "read"]),
+        "io" => fns(&[
+            "eprint",
+            "eprintln",
+            "flush",
+            "readLine",
+            "read",
+            "readN",
+            "stdinIsTTY",
+            "stdoutIsTTY",
+        ]),
         "os" => fns(&[
-            "getenv", "setenv", "cwd", "chdir", "pid", "platform", "arch",
+            "getenv",
+            "setenv",
+            "unsetenv",
+            "cwd",
+            "chdir",
+            "tmpDir",
+            "homeDir",
+            "hostName",
+            "userName",
+            "execPath",
+            "cpuCount",
+            "pid",
+            "platform",
+            "arch",
         ]),
-        "path" => fns(&["join", "dirname", "basename", "ext", "normalize"]),
+        "path" => fns(&[
+            "isAbsolute",
+            "join",
+            "dirname",
+            "basename",
+            "split",
+            "ext",
+            "stem",
+            "withExt",
+            "normalize",
+            "relative",
+        ]),
         "net" => fns(&[
-            "tcp_listen",
-            "tcp_accept",
-            "tcp_connect",
-            "sock_read",
-            "sock_write",
-            "sock_shutdown",
-            "sock_close",
-            "sock_local_addr",
-            "sock_peer_addr",
+            "tcpListen",
+            "tcpAccept",
+            "tcpConnect",
+            "sockRead",
+            "sockWrite",
+            "sockShutdown",
+            "sockShutdownWrite",
+            "sockClose",
+            "sockLocalAddr",
+            "sockPeerAddr",
         ]),
-        "process" => fns(&["exit", "args", "run"]),
-        "json" => fns(&["parse", "stringify"]),
+        "process" => [
+            fns(&["exit", "args", "run", "exec", "launch"]),
+            ["Command", "Child"]
+                .iter()
+                .map(|n| (n.to_string(), FaceKind::Type))
+                .collect(),
+        ]
+        .concat(),
+        "json" => fns(&["parse", "stringify", "valid"]),
+        "http" => [
+            fns(&["fetch", "request", "listen"]),
+            ["Request", "Response", "Server"]
+                .iter()
+                .map(|n| (n.to_string(), FaceKind::Type))
+                .collect(),
+        ]
+        .concat(),
         "regex" => ["RegExp", "RegexError", "RegexMatch"]
             .iter()
             .map(|n| (n.to_string(), FaceKind::Type))
@@ -880,6 +1633,9 @@ pub(crate) struct ImplRecord {
     /// Declared type parameters (`impl<T> …`); empty for a non-generic
     /// `impl`, which applies to its receiver name alone.
     type_params: Vec<String>,
+    /// Declared const parameters (`impl<const N: int> …`); matched from the
+    /// implemented type (spec `types/traits.md`).
+    const_params: Vec<String>,
     /// The receiver's written type arguments — the pattern applicability
     /// is decided against (`Pair<T, T>` in `impl<T> Pair<T, T> { … }`).
     type_args: Vec<Type>,
@@ -911,6 +1667,13 @@ pub struct Analyzer {
     /// Type-parameter names currently in scope (these are valid as `Named`)
     /// and are erased to `Any` for kind/arithmetic checks.
     generics: Vec<String>,
+    /// Const-parameter names currently in scope. Their names are values of
+    /// type `int` in the body, never types (spec `types/generics.md`).
+    const_generics: Vec<String>,
+    /// Full generic parameter lists (type and const, in written order) of the
+    /// program's own generic types, keyed by type name. Used by type
+    /// applications to check kind and arity.
+    type_generic_params: HashMap<String, Vec<GenericParam>>,
     /// Stack of bound maps for in-scope generic type parameters: parameter name
     /// -> the trait's structural `ObjectType` shape. Enables `member_field_type`
     /// refinement and call-site `assignable` checks for `T: Trait` bounds.
@@ -1037,6 +1800,14 @@ pub struct Analyzer {
     /// A program-declared type of the same name shadows the import, so this
     /// records only what the import bound — never what the program declared.
     regex_names: std::collections::HashSet<String>,
+    /// Local names bound from the built-in `process` module's types
+    /// (`use std::process::Command`): the heads whose static members are the
+    /// module's (`Command::shell`). Shadowing works like `regex_names`.
+    process_type_names: std::collections::HashSet<String>,
+    /// Local names bound from the built-in `http` module's types
+    /// (`use std::http::Response`): the heads whose static members are the
+    /// module's (`Response.text`). Shadowing works like `regex_names`.
+    http_type_names: std::collections::HashSet<String>,
     /// Locals a std `use` bound to an intrinsic function
     /// (`use std::math::*` → `floor`), keyed by local name: their value maps
     /// to the builtin table so bare calls keep `std::` diagnostics.
@@ -1138,7 +1909,7 @@ impl UseKind {
             SymbolKind::Variable => UseKind::Variable,
             SymbolKind::State => UseKind::State,
             SymbolKind::Store => UseKind::Store,
-            SymbolKind::Function(_, _, _, _) => UseKind::Function,
+            SymbolKind::Function(..) => UseKind::Function,
         }
     }
 }
@@ -1501,6 +2272,7 @@ fn face_fn_symbol(f: &FnDef) -> Symbol {
             f.params.clone(),
             symbol_return,
             f.bounds.clone(),
+            f.generic_params.clone(),
         ),
         is_shared: false,
         is_param: false,
@@ -1756,11 +2528,15 @@ fn run_analysis(
         current_return: None,
         declared_return: false,
         regex_names: std::collections::HashSet::new(),
+        process_type_names: std::collections::HashSet::new(),
+        http_type_names: std::collections::HashSet::new(),
         std_fns: HashMap::new(),
         type_table: HashMap::new(),
         provisional_types: HashMap::new(),
         builtins: builtin_type_entries(),
         generics: Vec::new(),
+        const_generics: Vec::new(),
+        type_generic_params: HashMap::new(),
         bound_shapes: Vec::new(),
         bound_traits: Vec::new(),
         impls: imported_impls.iter().cloned().collect(),
@@ -1882,6 +2658,12 @@ fn run_analysis(
                 },
                 type_name: imp.type_name.clone(),
                 type_params: imp.type_params.clone(),
+                const_params: imp
+                    .generic_params
+                    .iter()
+                    .filter(|p| p.kind == GenericParamKind::Const)
+                    .map(|p| p.name.clone())
+                    .collect(),
                 type_args: imp.type_args.clone(),
                 bounds: imp.type_bounds.clone(),
                 methods: imp
@@ -3234,6 +4016,7 @@ impl Analyzer {
             trait_name: Some("ToString".to_string()),
             type_name: type_name.to_string(),
             type_params: Vec::new(),
+            const_params: Vec::new(),
             type_args: Vec::new(),
             bounds: Vec::new(),
             methods: vec![ImplMethodType {
@@ -3280,10 +4063,13 @@ impl Analyzer {
     fn check_statement(&mut self, statement: &Statement) -> SResult<()> {
         match statement {
             Statement::Fn(f) => {
+                self.validate_const_params(&f.generic_params)?;
                 self.generics.extend(f.type_params.iter().cloned());
+                let consts = self.push_const_params(&f.generic_params);
                 let result = self.check_fn(f);
                 self.generics
                     .truncate(self.generics.len().saturating_sub(f.type_params.len()));
+                self.pop_const_params(consts);
                 result
             }
             Statement::Test(f) => self.check_test(f),
@@ -3318,9 +4104,20 @@ impl Analyzer {
                                     | xulo_core::ast::UnaryOperator::Copy
                             )
                     );
-                let value_type = match &binding.value {
-                    Some(value) => self.check_expression(value),
-                    None => Ok(binding.type_annotation.clone().unwrap_or(Type::Any)),
+                let value_type = match (&binding.value, &binding.type_annotation) {
+                    (Some(value), Some(ann))
+                        if array_parts(&self.resolve_alias(ann, 0)).is_some() =>
+                    {
+                        match value {
+                            Expression::Literal {
+                                value: Literal::List(elements),
+                                ..
+                            } => self.check_array_literal(ann, elements),
+                            _ => self.check_expression(value),
+                        }
+                    }
+                    (Some(value), _) => self.check_expression(value),
+                    (None, _) => Ok(binding.type_annotation.clone().unwrap_or(Type::Any)),
                 };
                 self.capture_operand = saved_capture;
                 let value_type = value_type?;
@@ -3552,7 +4349,19 @@ impl Analyzer {
                 };
                 // `move` is legal as a whole `return` value (E0403).
                 self.in_move_position = true;
-                let value_type = self.check_expression(value)?;
+                let declared = self.current_return.clone();
+                let target = declared.as_ref().map(|expected| match expected {
+                    Type::Async(inner) => inner.as_ref().clone(),
+                    other => other.clone(),
+                });
+                let value_type = match (value, target.as_ref()) {
+                    (Expression::Literal { value: Literal::List(elements), .. }, Some(target))
+                        if array_parts(&self.resolve_alias(target, 0)).is_some() =>
+                    {
+                        self.check_array_literal(target, elements)?
+                    }
+                    _ => self.check_expression(value)?,
+                };
                 if let Some(expected) = &self.current_return {
                     let target = match expected {
                         Type::Async(inner) => inner.as_ref(),
@@ -3583,20 +4392,31 @@ impl Analyzer {
             }
             Statement::For(stmt) => {
                 let iterable_type = self.check_expression(&stmt.iterable)?;
-                match iterable_type {
-                    Type::List(_) | Type::Any => {}
+                // A `List` iterates its elements, a `Map` its keys in
+                // insertion order, and a `Set` its elements (spec
+                // `types/composite-types.md`, `expressions/control-flow.md`).
+                let elem = match &iterable_type {
+                    Type::List(elem) => (**elem).clone(),
+                    Type::Any => Type::Any,
+                    Type::Object => Type::String,
+                    Type::Named(name, args) if name == "Map" => {
+                        args.first().cloned().unwrap_or(Type::Any)
+                    }
+                    Type::Named(name, args) if name == "Set" => {
+                        args.first().cloned().unwrap_or(Type::Any)
+                    }
+                    Type::Named(name, args) if name == "Array" => {
+                        args.first().cloned().unwrap_or(Type::Any)
+                    }
                     other => {
                         return Err(self.err(format!(
-                            "for loop must iterate over a `List`, found `{}`",
+                            "for loop must iterate over a `List`, `Map`, or `Set`, found `{}`",
                             other.name()
                         )));
                     }
-                }
-                self.table.push_scope();
-                let iter_type = match &iterable_type {
-                    Type::List(elem) => (**elem).clone(),
-                    _ => Type::Any,
                 };
+                self.table.push_scope();
+                let iter_type = elem;
                 self.table.declare_with_def(
                     Symbol {
                         name: stmt.iter_var.clone(),
@@ -3708,7 +4528,7 @@ impl Analyzer {
             let symbol = Symbol {
                 name: item.local_name.clone(),
                 type_: ret.clone(),
-                kind: SymbolKind::Function(Vec::new(), item.params.clone(), ret, Vec::new()),
+                kind: SymbolKind::Function(Vec::new(), item.params.clone(), ret, Vec::new(), Vec::new()),
                 is_shared: false,
                 is_param: false,
                 is_const: true,
@@ -3872,6 +4692,7 @@ impl Analyzer {
                 f.params.clone(),
                 symbol_return,
                 f.bounds.clone(),
+                f.generic_params.clone(),
             ),
             is_shared: false,
             is_param: false,
@@ -4408,6 +5229,7 @@ impl Analyzer {
                         | "net"
                         | "process"
                         | "json"
+                        | "http"
                 ) {
                     return Err(self
                         .err_code(
@@ -4569,8 +5391,20 @@ impl Analyzer {
                     .at(u.span.clone()));
             }
         };
-        self.imported_types.insert(local.to_string(), entry);
         self.regex_names.insert(local.to_string());
+        self.bind_builtin_type_name(local, entry, u)
+    }
+
+    /// The shared tail of a built-in std type import: record the type entry
+    /// under `local`, its publication, and the binding for unused-use
+    /// reporting.
+    fn bind_builtin_type_name(
+        &mut self,
+        local: &str,
+        entry: TypeEntry,
+        u: &xulo_core::ast::UseDecl,
+    ) -> SResult<()> {
+        self.imported_types.insert(local.to_string(), entry);
         if u.is_pub {
             self.own_interface.insert(local.to_string());
             if let Some(e) = self.imported_types.get(local).cloned() {
@@ -4582,6 +5416,92 @@ impl Analyzer {
             .borrow_mut()
             .insert(local.to_string(), u.span.clone());
         Ok(())
+    }
+
+    /// Bind one exported type of the built-in `process` module under `local`:
+    /// the `Command` specification and the `Child` handle (spec
+    /// `modules/process.md`). Like a regex type, it binds with no constructor
+    /// value of its own — `Command::shell` is reached through the type name,
+    /// and a `Child` comes from `launch` — so the head records into
+    /// `process_type_names` for the static dispatch.
+    fn bind_process_type_member(
+        &mut self,
+        segments: &[String],
+        local: &str,
+        u: &xulo_core::ast::UseDecl,
+    ) -> SResult<()> {
+        if segments.len() != 1 {
+            return Err(self
+                .err_code(
+                    "E0607",
+                    format!(
+                        "cannot resolve `process`{}",
+                        if segments.is_empty() {
+                            String::new()
+                        } else {
+                            format!("::{}", segments[1..].join("::"))
+                        }
+                    ),
+                )
+                .at(u.span.clone()));
+        }
+        let entry = match segments[0].as_str() {
+            "Command" => command_type_entry(),
+            "Child" => child_type_entry(),
+            other => {
+                return Err(self
+                    .err_code(
+                        "E0601",
+                        format!("module `std::process` does not export `{other}`"),
+                    )
+                    .at(u.span.clone()));
+            }
+        };
+        self.process_type_names.insert(local.to_string());
+        self.bind_builtin_type_name(local, entry, u)
+    }
+
+    /// Bind one exported type of the built-in `http` module under `local`:
+    /// `Request`/`Response` (plain data) and the opaque `Server` (spec
+    /// `modules/http.md`). Like the other built-in type imports, it binds
+    /// with no constructor value of its own — `Response.text` is reached
+    /// through the type name — and records the head in `http_type_names`.
+    fn bind_http_type_member(
+        &mut self,
+        segments: &[String],
+        local: &str,
+        u: &xulo_core::ast::UseDecl,
+    ) -> SResult<()> {
+        if segments.len() != 1 {
+            return Err(self
+                .err_code(
+                    "E0607",
+                    format!(
+                        "cannot resolve `http`{}",
+                        if segments.is_empty() {
+                            String::new()
+                        } else {
+                            format!("::{}", segments[1..].join("::"))
+                        }
+                    ),
+                )
+                .at(u.span.clone()));
+        }
+        let entry = match segments[0].as_str() {
+            "Request" => request_type_entry(),
+            "Response" => response_type_entry(),
+            "Server" => server_type_entry(),
+            other => {
+                return Err(self
+                    .err_code(
+                        "E0601",
+                        format!("module `std::http` does not export `{other}`"),
+                    )
+                    .at(u.span.clone()));
+            }
+        };
+        self.http_type_names.insert(local.to_string());
+        self.bind_builtin_type_name(local, entry, u)
     }
 
     /// Bind a path that resolved inside the built-in `std` tree: the module
@@ -4638,6 +5558,12 @@ impl Analyzer {
         if module == "regex" {
             return self.bind_regex_member(std::slice::from_ref(member), local, u);
         }
+        if module == "process" && matches!(member.as_str(), "Command" | "Child") {
+            return self.bind_process_type_member(std::slice::from_ref(member), local, u);
+        }
+        if module == "http" && matches!(member.as_str(), "Request" | "Response" | "Server") {
+            return self.bind_http_type_member(std::slice::from_ref(member), local, u);
+        }
         let ns = format!("std::{module}");
         self.bind_std_value_member(&ns, member, local, u)
     }
@@ -4653,7 +5579,18 @@ impl Analyzer {
         let mut contributed = std::collections::HashSet::new();
         for (name, kind) in members {
             if kind == FaceKind::Type {
-                self.bind_regex_member(std::slice::from_ref(&name), &name, u)?;
+                match module {
+                    "regex" => self.bind_regex_member(std::slice::from_ref(&name), &name, u)?,
+                    "process" => {
+                        self.bind_process_type_member(std::slice::from_ref(&name), &name, u)?
+                    }
+                    "http" => self.bind_http_type_member(std::slice::from_ref(&name), &name, u)?,
+                    other => {
+                        return Err(self
+                            .err_code("E0607", format!("cannot resolve `std::{other}`"))
+                            .at(u.span.clone()));
+                    }
+                }
             } else {
                 let ns = format!("std::{module}");
                 self.bind_std_value_member(&ns, &name, &name, u)?;
@@ -4837,7 +5774,7 @@ impl Analyzer {
                 let symbol = found.unwrap_or(Symbol {
                     name: local.to_string(),
                     type_: Type::Any,
-                    kind: SymbolKind::Function(Vec::new(), Vec::new(), Type::Any, Vec::new()),
+                    kind: SymbolKind::Function(Vec::new(), Vec::new(), Type::Any, Vec::new(), Vec::new()),
                     is_shared: false,
                     is_param: false,
                     is_const: true,
@@ -4973,7 +5910,7 @@ impl Analyzer {
         let symbol = Symbol {
             name: local.to_string(),
             type_: Type::Any,
-            kind: SymbolKind::Function(Vec::new(), Vec::new(), Type::Any, Vec::new()),
+            kind: SymbolKind::Function(Vec::new(), Vec::new(), Type::Any, Vec::new(), Vec::new()),
             is_shared: false,
             is_param: false,
             is_const: true,
@@ -5075,7 +6012,7 @@ impl Analyzer {
             None => Symbol {
                 name: local.to_string(),
                 type_: Type::Any,
-                kind: SymbolKind::Function(Vec::new(), Vec::new(), Type::Any, Vec::new()),
+                kind: SymbolKind::Function(Vec::new(), Vec::new(), Type::Any, Vec::new(), Vec::new()),
                 is_shared: false,
                 is_param: false,
                 is_const: true,
@@ -5387,7 +6324,12 @@ impl Analyzer {
 
     fn check_assign(&mut self, assign: &AssignStmt) -> SResult<()> {
         let target_type = self.assign_target_type(&assign.target)?;
-        let value_type = self.check_expression(&assign.value)?;
+        let value_type = match (&assign.value, array_parts(&self.resolve_alias(&target_type, 0))) {
+            (Expression::Literal { value: Literal::List(elements), .. }, Some(_)) => {
+                self.check_array_literal(&target_type, elements)?
+            }
+            _ => self.check_expression(&assign.value)?,
+        };
         // A numeric literal reassigns a fixed-bit binding when it fits
         // (literal coercion, spec `type-system/coercion.md`); an out-of-
         // range one is E0209 rather than the generic mismatch.
@@ -5413,7 +6355,7 @@ impl Analyzer {
     /// a place, with the mutability its parameter declares.
     fn record_task_borrows(&mut self, call: &xulo_core::ast::Call, task: &str) {
         let params = match self.table.lookup(&call.callee).map(|s| &s.kind) {
-            Some(SymbolKind::Function(_, params, _, _)) => params.clone(),
+            Some(SymbolKind::Function(_, params, _, _, _)) => params.clone(),
             _ => return,
         };
         for (i, arg) in call.arguments.iter().enumerate() {
@@ -5723,7 +6665,7 @@ impl Analyzer {
                     SymbolKind::Store => Err(self.err(format!(
                         "cannot assign to `{name}`: store bindings are read-only"
                     ))),
-                    SymbolKind::Function(_, _, _, _) => {
+                    SymbolKind::Function(..) => {
                         Err(self.err(format!("cannot assign to `{name}`: it is a function")))
                     }
                 }
@@ -5734,6 +6676,15 @@ impl Analyzer {
                 self.check_place_writable(object, &place)?;
                 let resolved = self.resolve_alias(&object_type, 0);
                 match resolved {
+                    Type::List(_) | Type::String => Err(self.err_code(
+                        "E0402",
+                        format!("cannot assign member `{property}`: the target is not a place"),
+                    )),
+                    Type::Named(ref name, _) if name == "Map" || name == "Set" => Err(self
+                        .err_code(
+                            "E0102",
+                            format!("no member `{property}` on `{}`", resolved.name()),
+                        )),
                     Type::Object | Type::Any | Type::Named(_, _) => Ok(Type::Any),
                     Type::ObjectType(fields) => fields
                         .iter()
@@ -5754,6 +6705,10 @@ impl Analyzer {
                 let resolved = self.resolve_alias(&object_type, 0);
                 match resolved {
                     Type::List(inner) => Ok(*inner),
+                    Type::Named(ref name, _) if name == "Map" || name == "Set" => Err(self.err_code(
+                        "E0215",
+                        format!("`{}` is not subscriptable", resolved.name()),
+                    )),
                     Type::Object | Type::Any | Type::Named(_, _) => Ok(Type::Any),
                     other => {
                         Err(self.err(format!("cannot assign into `{}` by index", other.name())))
@@ -6052,10 +7007,11 @@ impl Analyzer {
             } => {
                 let iterable_type = self.check_expression(iterable)?;
                 match iterable_type {
-                    Type::List(_) | Type::Any => {}
+                    Type::List(_) | Type::Any | Type::Object => {}
+                    Type::Named(name, _) if name == "Map" || name == "Set" || name == "Array" => {}
                     other => {
                         return Err(self.err(format!(
-                            "for loop must iterate over a `List`, found `{}`",
+                            "for loop must iterate over a `List`, `Map`, or `Set`, found `{}`",
                             other.name()
                         )));
                     }
@@ -6093,14 +7049,19 @@ impl Analyzer {
     }
 
     fn check_type_alias(&mut self, alias: &TypeAlias) -> SResult<()> {
+        self.validate_const_params(&alias.generic_params)?;
         self.generics.extend(alias.type_params.iter().cloned());
+        let consts = self.push_const_params(&alias.generic_params);
         let result = self.check_type(&alias.type_);
         self.generics
             .truncate(self.generics.len().saturating_sub(alias.type_params.len()));
+        self.pop_const_params(consts);
         result?;
         if self.type_table.contains_key(&alias.name) {
             return Err(self.err(format!("type `{}` is already defined", alias.name)));
         }
+        self.type_generic_params
+            .insert(alias.name.clone(), alias.generic_params.clone());
         self.type_table.insert(
             alias.name.clone(),
             TypeEntry {
@@ -6116,8 +7077,10 @@ impl Analyzer {
         if self.type_table.contains_key(&e.name) {
             return Err(self.err(format!("type `{}` is already defined", e.name)));
         }
+        self.validate_const_params(&e.generic_params)?;
         let mut seen = std::collections::HashSet::new();
         self.generics.extend(e.type_params.iter().cloned());
+        let consts = self.push_const_params(&e.generic_params);
         for variant in &e.variants {
             if !seen.insert(variant.name.clone()) {
                 self.generics
@@ -6132,11 +7095,15 @@ impl Analyzer {
             {
                 self.generics
                     .truncate(self.generics.len().saturating_sub(e.type_params.len()));
+                self.pop_const_params(consts);
                 return Err(e2);
             }
         }
         self.generics
             .truncate(self.generics.len().saturating_sub(e.type_params.len()));
+        self.pop_const_params(consts);
+        self.type_generic_params
+            .insert(e.name.clone(), e.generic_params.clone());
         self.type_table.insert(
             e.name.clone(),
             TypeEntry {
@@ -6167,13 +7134,16 @@ impl Analyzer {
             },
             Some(s.name_span.clone()),
         );
+        self.validate_const_params(&s.generic_params)?;
         self.generics.extend(s.type_params.iter().cloned());
+        let consts = self.push_const_params(&s.generic_params);
         let mut fields = Vec::new();
         let mut seen = std::collections::HashSet::new();
         for field in &s.fields {
             if !seen.insert(field.name.clone()) {
                 self.generics
                     .truncate(self.generics.len().saturating_sub(s.type_params.len()));
+                self.pop_const_params(consts);
                 return Err(self.err(format!(
                     "struct `{}` has a duplicate field `{}`",
                     s.name, field.name
@@ -6188,6 +7158,9 @@ impl Analyzer {
         }
         self.generics
             .truncate(self.generics.len().saturating_sub(s.type_params.len()));
+        self.pop_const_params(consts);
+        self.type_generic_params
+            .insert(s.name.clone(), s.generic_params.clone());
         self.type_table.insert(
             s.name.clone(),
             TypeEntry {
@@ -6329,8 +7302,11 @@ impl Analyzer {
     fn check_trait(&mut self, t: &TraitDecl) -> SResult<()> {
         // A trait is a fixed contract; the grammar accepts a parameter list
         // only so the attempt can be diagnosed (spec `types/traits.md`).
-        if !t.type_params.is_empty() {
-            return Err(self.err_code("E0810", "a trait may not declare type parameters"));
+        if !t.type_params.is_empty() || !t.generic_params.is_empty() {
+            return Err(self.err_code(
+                "E0810",
+                "a trait may not declare generic parameters",
+            ));
         }
         if self.type_table.contains_key(&t.name) {
             return Err(self.err(format!("type `{}` is already defined", t.name)));
@@ -6440,12 +7416,28 @@ impl Analyzer {
                 .or_default()
                 .extend(bound.traits.iter().cloned());
         }
+        self.validate_const_params(&imp.generic_params)?;
+        for param in &imp.generic_params {
+            if param.kind == GenericParamKind::Const
+                && !type_mentions(&Type::Named(imp.type_name.clone(), imp.type_args.clone()), &param.name)
+            {
+                return Err(self.err_code(
+                    "E0817",
+                    format!(
+                        "const parameter `{}` does not occur in the implemented type",
+                        param.name
+                    ),
+                ));
+            }
+        }
         self.generics.extend(imp.type_params.iter().cloned());
+        let consts = self.push_const_params(&imp.generic_params);
         self.bound_shapes.push(bound_map);
         self.bound_traits.push(trait_map);
         let result = self.check_impl_body(imp);
         let pushed = imp.type_params.len();
         self.generics.truncate(self.generics.len() - pushed);
+        self.pop_const_params(consts);
         self.bound_shapes.pop();
         self.bound_traits.pop();
         result
@@ -6890,16 +7882,13 @@ impl Analyzer {
         let Type::Named(_, receiver_args) = receiver else {
             return None;
         };
-        if record.type_params.is_empty() {
+        if record.type_params.is_empty() && record.const_params.is_empty() {
             return Some(HashMap::new());
         }
+        let mut bindable = record.type_params.clone();
+        bindable.extend(record.const_params.iter().cloned());
         let mut bindings = HashMap::new();
-        if !pattern_matches(
-            &record.type_args,
-            receiver_args,
-            &record.type_params,
-            &mut bindings,
-        ) {
+        if !pattern_matches(&record.type_args, receiver_args, &bindable, &mut bindings) {
             return None;
         }
         for bound in &record.bounds {
@@ -6967,15 +7956,30 @@ impl Analyzer {
     /// list of the wrong length is `E0808`, and an accepted list yields the
     /// bindings that take the place of inference for this call (spec
     /// `types/generics.md`).
-    fn written_type_args(
+    fn written_generic_args(
         &self,
         call: &Call,
-        type_params: &[String],
+        params: &[GenericParam],
     ) -> SResult<Option<HashMap<String, Type>>> {
+        let has_const = params.iter().any(|p| p.kind == GenericParamKind::Const);
         let Some(written) = &call.type_args else {
+            // A const argument is never inferred: a callee with const
+            // parameters must write its full list (spec `types/generics.md`,
+            // E0816).
+            if has_const {
+                return Err(self
+                    .err_code(
+                        "E0816",
+                        format!(
+                            "`{}` requires a written generic-argument list",
+                            call.callee
+                        ),
+                    )
+                    .at(call.span.clone()));
+            }
             return Ok(None);
         };
-        if type_params.is_empty() {
+        if params.is_empty() {
             return Err(self
                 .err_code(
                     "E0807",
@@ -6983,26 +7987,50 @@ impl Analyzer {
                 )
                 .at(call.span.clone()));
         }
-        if written.len() != type_params.len() {
-            let expected = type_params.len();
+        if written.len() != params.len() {
+            let expected = params.len();
             return Err(self
                 .err_code(
                     "E0808",
                     format!(
-                        "expected {expected} type argument{}, found {}",
+                        "expected {expected} generic argument{}, found {}",
                         if expected == 1 { "" } else { "s" },
                         written.len()
                     ),
                 )
                 .at(call.span.clone()));
         }
-        Ok(Some(
-            type_params
-                .iter()
-                .cloned()
-                .zip(written.iter().cloned())
-                .collect(),
-        ))
+        let mut bindings = HashMap::new();
+        for (param, arg) in params.iter().zip(written.iter()) {
+            match param.kind {
+                GenericParamKind::Type => {
+                    let numeric_literal =
+                        matches!(arg, Type::Literal(text) if text.parse::<i64>().is_ok());
+                    let const_name =
+                        matches!(arg, Type::Named(n, a) if a.is_empty() && self.is_const_param(n));
+                    if numeric_literal || const_name {
+                        return Err(self
+                            .err_code(
+                                "E0813",
+                                format!("`{}` is not a type argument", arg.display()),
+                            )
+                            .at(call.span.clone()));
+                    }
+                    bindings.insert(param.name.clone(), arg.clone());
+                }
+                GenericParamKind::Const => {
+                    if !self.is_const_arg(arg) {
+                        return Err(self
+                            .err_code(
+                                "E0813",
+                                format!("`{}` is not a const argument", arg.display()),
+                            )
+                            .at(call.span.clone()));
+                    }
+                }
+            }
+        }
+        Ok(Some(bindings))
     }
 
     /// `E0807` for a callee that declares no type parameters at all — an
@@ -7198,6 +8226,11 @@ impl Analyzer {
                             .at(span.clone()));
                     }
                 }
+                // A const parameter is a compile-time `int` value in the
+                // declaration's body (spec `types/generics.md`).
+                if self.is_const_param(name) {
+                    return Ok(Type::Number);
+                }
                 let sym = self.lookup_symbol(name)?;
                 // E0903 (spec ffi.md, "Calling"): an imported symbol is
                 // callable in direct call position only — `check_call`
@@ -7218,7 +8251,19 @@ impl Analyzer {
                 self.record_use(expr.span().clone(), name, &sym);
                 // A function name used as a value has its function type,
                 // not its return type: `let f = double; f(21)`.
-                if let SymbolKind::Function(type_params, params, ret, _) = &sym.kind
+                if let SymbolKind::Function(_, _, _, _, gps) = &sym.kind
+                    && gps.iter().any(|p| p.kind == GenericParamKind::Const)
+                {
+                    return Err(self
+                        .err_code(
+                            "E0216",
+                            format!(
+                                "`{name}` declares const parameters and cannot be used as a function value"
+                            ),
+                        )
+                        .at(expr.span().clone()));
+                }
+                if let SymbolKind::Function(type_params, params, ret, _, _) = &sym.kind
                     && type_params.is_empty()
                 {
                     return Ok(Type::FnSig {
@@ -7804,6 +8849,21 @@ impl Analyzer {
             }
             other => other,
         };
+        // Read-only inherent properties (spec `types/composite-types.md`,
+        // `types/primitive-types.md`).
+        if let Some(prop) = builtin_property(&inner, &m.property) {
+            return Ok(prop);
+        }
+        // Map and Set expose no entry member form: `m.key` and `s.v` are
+        // E0102 (a subscript is E0215, in `check_index`).
+        if let Type::Named(name, _) = &inner
+            && (name == "Map" || name == "Set" || name == "Array")
+        {
+            return Err(self.err_code(
+                "E0102",
+                format!("no member `{}` on `{}`", m.property, inner.name()),
+            ));
+        }
         self.member_field_type(&inner, &m.property)
     }
 
@@ -7818,6 +8878,63 @@ impl Analyzer {
             .find_map(|map| map.get(name).cloned())
     }
 
+    /// Whether `name` is an in-scope const parameter (a compile-time `int`
+    /// value, never a type).
+    fn is_const_param(&self, name: &str) -> bool {
+        self.const_generics.iter().any(|n| n == name)
+    }
+
+    /// Push a declaration's const-parameter names into scope, returning how
+    /// many were added so the caller can pop exactly those.
+    fn push_const_params(&mut self, params: &[GenericParam]) -> usize {
+        let before = self.const_generics.len();
+        for p in params {
+            if p.kind == GenericParamKind::Const {
+                self.const_generics.push(p.name.clone());
+            }
+        }
+        self.const_generics.len() - before
+    }
+
+    fn pop_const_params(&mut self, count: usize) {
+        self.const_generics
+            .truncate(self.const_generics.len().saturating_sub(count));
+    }
+
+    /// A const parameter's declared type MUST be `int` (spec
+    /// `types/generics.md`, E0812).
+    fn validate_const_params(&self, params: &[GenericParam]) -> SResult<()> {
+        for p in params {
+            if p.kind == GenericParamKind::Const
+                && !matches!(&p.const_type, Some(Type::Number))
+            {
+                return Err(self.err_code(
+                    "E0812",
+                    "a const parameter must have type `int`",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// The value a generic argument supplies at a const parameter position:
+    /// an integer literal, a const parameter name, or a `const` binding.
+    /// Returns `None` when the node is not a const argument (`E0813`).
+    fn is_const_arg(&self, arg: &Type) -> bool {
+        match arg {
+            Type::Literal(text) => text.parse::<i64>().is_ok(),
+            Type::Named(name, args) if args.is_empty() => {
+                self.is_const_param(name)
+                    || self.table.lookup(name).is_some_and(|sym| {
+                        sym.is_const
+                            && matches!(sym.kind, SymbolKind::Variable)
+                            && self.assignable(&sym.type_, &Type::Number)
+                    })
+            }
+            _ => false,
+        }
+    }
+
     fn member_field_type(&self, ty: &Type, property: &str) -> SResult<Type> {
         match ty {
             Type::ObjectType(fields) => fields
@@ -7826,10 +8943,10 @@ impl Analyzer {
                 .map(|(_, t)| t.clone())
                 .ok_or_else(|| self.err(format!("type has no member `{property}`"))),
             Type::Object | Type::Any => Ok(Type::Any),
-            Type::List(_) => match property {
-                "length" | "capacity" => Ok(Type::Number),
-                _ => Ok(Type::Any),
-            },
+            Type::List(_) => Err(self.err_code(
+                "E0102",
+                format!("no member `{property}` on `{}`", ty.name()),
+            )),
             Type::Named(name, _) => {
                 // A declared struct's fields type their member access (`e`
                 // : `Error` has `message: string`); a name the struct does
@@ -7883,6 +9000,235 @@ impl Analyzer {
         }
     }
 
+    /// Check a call whose receiver is a built-in collection or `string`
+    /// against its closed inherent member set (spec
+    /// `types/composite-types.md`, `types/primitive-types.md`). `Ok(None)`
+    /// leaves the receiver for the ordinary struct/trait resolution.
+    fn check_inherent_member_call(
+        &mut self,
+        receiver: &Type,
+        call: &xulo_core::ast::Call,
+    ) -> SResult<Option<Type>> {
+        let member = call.method.as_deref().unwrap_or("");
+        let recv = self.resolve_alias(receiver, 0);
+        if builtin_property(&recv, member).is_some() {
+            return Err(self
+                .err_code(
+                    "E0402",
+                    format!("`{member}` is a read-only property and is not callable"),
+                )
+                .at(call.span.clone()));
+        }
+        let args = &call.arguments;
+        let n = args.len();
+        // The List callback members infer their own type parameter from the
+        // callback (`map`/`reduce`), so they are checked by hand.
+        if let Type::List(inner) = &recv {
+            let t = (**inner).clone();
+            match member {
+                "forEach" | "filter" | "find" | "findIndex" | "some" | "every" | "sort" => {
+                    let want = if member == "sort" { 2 } else { 1 };
+                    let expected_args = 1;
+                    if n != expected_args {
+                        return Err(self.err_code(
+                            "E0207",
+                            format!("`{member}()` expects exactly {expected_args} argument(s), found {n}"),
+                        ).at(call.span.clone()));
+                    }
+                    let cb = self.check_arg_value(&args[0].value)?;
+                    if let Type::FnSig { params, .. } = &cb
+                        && params.len() != want
+                    {
+                        return Err(self.err_code(
+                            "E0202",
+                            format!(
+                                "callback to `{member}` expects fn with {want} parameter(s), found {}",
+                                params.len()
+                            ),
+                        ).at(args[0].value.span().clone()));
+                    }
+                    let ret = match member {
+                        "forEach" | "sort" => unit_type(),
+                        "filter" => Type::List(inner.clone()),
+                        "find" => Type::Optional(Box::new(t)),
+                        "findIndex" => Type::Number,
+                        _ => Type::Boolean,
+                    };
+                    return Ok(Some(ret));
+                }
+                "map" => {
+                    if n != 1 {
+                        return Err(self.err_code(
+                            "E0207",
+                            format!("`map()` expects exactly 1 argument, found {n}"),
+                        ).at(call.span.clone()));
+                    }
+                    let cb = self.check_arg_value(&args[0].value)?;
+                    let u = match &cb {
+                        Type::FnSig { ret, .. } => {
+                            ret.clone().map(|r| *r).unwrap_or(Type::Any)
+                        }
+                        _ => Type::Any,
+                    };
+                    return Ok(Some(Type::List(Box::new(u))));
+                }
+                "reduce" => {
+                    if n != 2 {
+                        return Err(self.err_code(
+                            "E0207",
+                            format!("`reduce()` expects exactly 2 arguments, found {n}"),
+                        ).at(call.span.clone()));
+                    }
+                    let cb = self.check_arg_value(&args[0].value)?;
+                    let init = self.check_arg_value(&args[1].value)?;
+                    let u = match &cb {
+                        Type::FnSig { ret, .. } => {
+                            ret.clone().map(|r| *r).unwrap_or(init.clone())
+                        }
+                        _ => init.clone(),
+                    };
+                    return Ok(Some(u));
+                }
+                _ => {}
+            }
+        }
+        // The Array read/callback members mirror List's; `map` preserves the
+        // length, `slice`/`filter` yield `List`s (spec
+        // `types/composite-types.md`).
+        if let Type::Named(name, a) = &recv
+            && name == "Array"
+        {
+            let t = a.first().cloned().unwrap_or(Type::Any);
+            let len = a.get(1).cloned().unwrap_or(Type::Any);
+            match member {
+                "forEach" | "filter" | "find" | "findIndex" | "some" | "every" | "sort" => {
+                    let want = if member == "sort" { 2 } else { 1 };
+                    if n != 1 {
+                        return Err(self.err_code(
+                            "E0207",
+                            format!("`{member}()` expects exactly 1 argument, found {n}"),
+                        ).at(call.span.clone()));
+                    }
+                    let cb = self.check_arg_value(&args[0].value)?;
+                    if let Type::FnSig { params, .. } = &cb
+                        && params.len() != want
+                    {
+                        return Err(self.err_code(
+                            "E0202",
+                            format!(
+                                "callback to `{member}` expects fn with {want} parameter(s), found {}",
+                                params.len()
+                            ),
+                        ).at(args[0].value.span().clone()));
+                    }
+                    let ret = match member {
+                        "forEach" | "sort" => unit_type(),
+                        "filter" => Type::List(Box::new(t)),
+                        "find" => Type::Optional(Box::new(t)),
+                        "findIndex" => Type::Number,
+                        _ => Type::Boolean,
+                    };
+                    return Ok(Some(ret));
+                }
+                "map" => {
+                    if n != 1 {
+                        return Err(self.err_code(
+                            "E0207",
+                            format!("`map()` expects exactly 1 argument, found {n}"),
+                        ).at(call.span.clone()));
+                    }
+                    let cb = self.check_arg_value(&args[0].value)?;
+                    let u = match &cb {
+                        Type::FnSig { ret, .. } => ret.clone().map(|r| *r).unwrap_or(Type::Any),
+                        _ => Type::Any,
+                    };
+                    return Ok(Some(Type::Named(
+                        "Array".to_string(),
+                        vec![u, len],
+                    )));
+                }
+                "reduce" => {
+                    if n != 2 {
+                        return Err(self.err_code(
+                            "E0207",
+                            format!("`reduce()` expects exactly 2 arguments, found {n}"),
+                        ).at(call.span.clone()));
+                    }
+                    let cb = self.check_arg_value(&args[0].value)?;
+                    let init = self.check_arg_value(&args[1].value)?;
+                    let u = match &cb {
+                        Type::FnSig { ret, .. } => ret.clone().map(|r| *r).unwrap_or(init.clone()),
+                        _ => init.clone(),
+                    };
+                    return Ok(Some(u));
+                }
+                _ => {}
+            }
+        }
+        // A `Command`/`Child`/http receiver answers its handle's closed
+        // member set (spec `modules/process.md`, `modules/http.md`): a head
+        // the program declared shadows the builtin like anywhere else. An
+        // unknown member on the set is E0102 — closed, not open to loose
+        // `any` calls.
+        let sig = if let Type::Named(n, _) = &recv
+            && matches!(
+                n.as_str(),
+                "Command" | "Child" | "Request" | "Response" | "Server"
+            )
+            && !self.type_table.contains_key(n)
+        {
+            let closed = if matches!(n.as_str(), "Command" | "Child") {
+                process_inherent_sig(n, member)
+            } else {
+                http_inherent_sig(n, member)
+            };
+            match closed {
+                Some(sig) => sig,
+                None => {
+                    return Err(self
+                        .err_code("E0102", format!("no member `{member}` on `{n}`"))
+                        .at(call.span.clone()));
+                }
+            }
+        } else {
+            match builtin_inherent_sig(&recv, member) {
+                Some(sig) => sig,
+                None => return Ok(None),
+            }
+        };
+        let max = sig.params.len();
+        let min = max - sig.optional_tail;
+        if n < min || n > max {
+            return Err(self
+                .err_code(
+                    "E0207",
+                    format!("`{member}()` expects {min}..={max} arguments, found {n}"),
+                )
+                .at(call.span.clone()));
+        }
+        for (i, arg) in args.iter().enumerate() {
+            let found = self.check_arg_value(&arg.value)?;
+            let want = &sig.params[i];
+            if matches!(want, Type::Any) {
+                continue;
+            }
+            if !self.assignable(&found, want) && !self.literal_matches(&arg.value, want) {
+                return Err(self
+                    .err_code(
+                        "E0202",
+                        format!(
+                            "argument {} to `{member}` must be `{}`, found `{}`",
+                            i + 1,
+                            want.name(),
+                            found.name()
+                        ),
+                    )
+                    .at(arg.value.span().clone()));
+            }
+        }
+        Ok(Some(sig.ret))
+    }
+
     fn check_index(&mut self, idx: &xulo_core::ast::IndexExpr) -> SResult<Type> {
         self.place_depth += 1;
         let object = self.check_expression(&idx.object);
@@ -7895,10 +9241,73 @@ impl Analyzer {
         let resolved = self.resolve_alias(&object, 0);
         match resolved {
             Type::List(inner) => Ok(*inner),
+            Type::Named(ref name, _) if name == "Map" || name == "Set" => Err(self
+                .err_code(
+                    "E0215",
+                    format!("`{}` is not subscriptable", resolved.name()),
+                )
+                .at(idx.span.clone())),
             Type::Object | Type::Any | Type::String | Type::Null => Ok(Type::Any),
             Type::Named(_, _) => Ok(Type::Any),
             other => Err(self.err(format!("cannot index into `{}`", other.name()))),
         }
+    }
+
+    /// Check a list literal in an expected `Array<T, N>` context: the element
+    /// count MUST equal N (`E0815`), a spread or an abstract N is `E0818`, and
+    /// every element checks against T (spec `expressions/literals.md`).
+    fn check_array_literal(
+        &mut self,
+        annotation: &Type,
+        elements: &[Expression],
+    ) -> SResult<Type> {
+        let resolved = self.resolve_alias(annotation, 0);
+        let Some((elem, len)) = array_parts(&resolved) else {
+            return Err(self.err(format!(
+                "expected an `Array` type, found `{}`",
+                resolved.name()
+            )));
+        };
+        let Some(len) = len else {
+            return Err(self.err_code(
+                "E0818",
+                "an array literal's length cannot be checked statically",
+            ));
+        };
+        if elements
+            .iter()
+            .any(|e| matches!(e, Expression::Spread { .. }))
+        {
+            return Err(self.err_code(
+                "E0818",
+                "an array literal with a spread cannot have its length checked statically",
+            ));
+        }
+        if elements.len() != len {
+            return Err(self.err_code(
+                "E0815",
+                format!(
+                    "an `{}` literal needs {len} element{}, found {}",
+                    resolved.name(),
+                    if len == 1 { "" } else { "s" },
+                    elements.len()
+                ),
+            ));
+        }
+        for element in elements {
+            let found = self.check_expression(element)?;
+            if !self.assignable(&found, &elem) && !self.literal_matches(element, &elem) {
+                return Err(self.err_code(
+                    "E0202",
+                    format!(
+                        "array element must be `{}`, found `{}`",
+                        elem.name(),
+                        found.name()
+                    ),
+                ));
+            }
+        }
+        Ok(resolved)
     }
 
     fn check_nullish(&mut self, n: &xulo_core::ast::NullishExpr) -> SResult<Type> {
@@ -8399,6 +9808,194 @@ impl Analyzer {
         Ok(regex_compile_result_type())
     }
 
+    /// The type of one `Command`/`Child` static member as a function value
+    /// (spec `modules/process.md`): the two `Command` constructors are the
+    /// only statics — the setters and runners are methods, reached on a
+    /// value — and every `Child` member runs on a handle. The same shape
+    /// serves the bare-reference form (`let f = Command::shell`) and the
+    /// call form's argument check.
+    fn process_static_member_sig(&self, name: &str, variant: &str) -> SResult<Type> {
+        let command = || Type::Named("Command".to_string(), Vec::new());
+        let fn_sig = |params: Vec<Type>, ret: Type| {
+            Type::FnSig {
+                params,
+                ret: Some(Box::new(ret)),
+            }
+        };
+        match (name, variant) {
+            ("Command", "shell") => Ok(fn_sig(vec![Type::String], command())),
+            ("Command", "direct") => Ok(fn_sig(
+                vec![Type::String, Type::List(Box::new(Type::String))],
+                command(),
+            )),
+            ("Command", member @ ("input" | "cwd" | "env" | "timeout" | "run" | "launch")) => {
+                Err(self.err(format!(
+                    "`Command::{member}` is a method: run it on a `Command` value"
+                )))
+            }
+            ("Child", member @ ("wait" | "kill" | "pid")) => Err(self.err(format!(
+                "`Child::{member}` runs on a handle: collect the child from `launch` first"
+            ))),
+            (other, member) => Err(self.err(format!("`{other}` has no member `{member}`"))),
+        }
+    }
+
+    /// `Command::shell(cmd)` / `Command::direct(program, args)` — the two
+    /// static constructors of the built-in `process` types (spec
+    /// `modules/process.md`). Arity is `E0207`, an inadmissible argument
+    /// `E0202` (spec `expressions/calls.md`).
+    fn check_process_static_call(
+        &mut self,
+        call: &Call,
+        name: &str,
+        variant: &str,
+    ) -> SResult<Type> {
+        self.no_type_args(call)?;
+        if call.arguments.iter().any(|a| a.name.is_some()) {
+            return Err(self
+                .err(format!("`{name}::{variant}` takes positional arguments"))
+                .at(call.span.clone()));
+        }
+        let sig = self.process_static_member_sig(name, variant)?;
+        let Type::FnSig { params, ret } = sig else {
+            return Err(self
+                .err(format!("`{name}::{variant}` is not a constructor"))
+                .at(call.span.clone()));
+        };
+        if call.arguments.len() != params.len() {
+            return Err(self
+                .err_code(
+                    "E0207",
+                    format!(
+                        "expected {} argument{}, found {}",
+                        params.len(),
+                        if params.len() == 1 { "" } else { "s" },
+                        call.arguments.len()
+                    ),
+                )
+                .at(call.span.clone()));
+        }
+        for (arg, want) in call.arguments.iter().zip(params.iter()) {
+            let found = self.check_arg_value(&arg.value)?;
+            if !self.assignable(&found, want) && !self.literal_matches(&arg.value, want) {
+                return Err(self
+                    .err_code(
+                        "E0202",
+                        format!(
+                            "argument to `{name}::{variant}` must be `{}`, found `{}`",
+                            want.name(),
+                            found.name()
+                        ),
+                    )
+                    .at(arg.value.span().clone()));
+            }
+        }
+        Ok(ret.map(|r| *r).unwrap_or(Type::Any))
+    }
+
+    /// `Response.text(body[, status])` / `Response.json(value)` — the two
+    /// static shorthands of the built-in `http` types (spec
+    /// `modules/http.md`); every other member of a data type is an instance
+    /// method (or, on `Server`, unreachable without `listen`). Arity is
+    /// `E0207`, an inadmissible argument `E0202`.
+    fn check_http_static_call(&mut self, call: &Call, name: &str, variant: &str) -> SResult<Type> {
+        self.no_type_args(call)?;
+        if call.arguments.iter().any(|a| a.name.is_some()) {
+            return Err(self
+                .err(format!("`{name}.{variant}` takes positional arguments"))
+                .at(call.span.clone()));
+        }
+        match (name, variant) {
+            ("Response", "text") => {
+                // `text(body[, status])` — status defaults to 200 at run
+                // time; the shorthand is total.
+                if !(1..=2).contains(&call.arguments.len()) {
+                    return Err(self
+                        .err_code(
+                            "E0207",
+                            format!(
+                                "expected 1 to 2 arguments, found {}",
+                                call.arguments.len()
+                            ),
+                        )
+                        .at(call.span.clone()));
+                }
+                for (i, (arg, want)) in call
+                    .arguments
+                    .iter()
+                    .zip([Type::String, Type::Number].iter())
+                    .enumerate()
+                {
+                    let found = self.check_arg_value(&arg.value)?;
+                    if !self.assignable(&found, want) && !self.literal_matches(&arg.value, want) {
+                        return Err(self
+                            .err_code(
+                                "E0202",
+                                format!(
+                                    "argument {} to `{name}.{variant}` must be `{}`, found `{}`",
+                                    i + 1,
+                                    want.name(),
+                                    found.name()
+                                ),
+                            )
+                            .at(arg.value.span().clone()));
+                    }
+                }
+                Ok(Type::Named("Response".to_string(), Vec::new()))
+            }
+            ("Response", "json") => {
+                if call.arguments.len() != 1 {
+                    return Err(self.err_code(
+                        "E0207",
+                        format!("expected 1 argument, found {}", call.arguments.len()),
+                    ).at(call.span.clone()));
+                }
+                self.check_arg_value(&call.arguments[0].value)?;
+                Ok(BuiltinRet::ResultResponseErr.ty())
+            }
+            ("Response", "header")
+            | ("Request", "header" | "queryValue" | "formValue")
+            | ("Server", "addr" | "serve") => Err(self
+                .err(format!(
+                    "`{name}.{variant}` is a method: run it on a `{name}` value"
+                ))
+                .at(call.span.clone())),
+            (other, member) => Err(self
+                .err(format!("`{other}` has no member `{member}`"))
+                .at(call.span.clone())),
+        }
+    }
+
+    /// The object expression of a static call on a built-in `http` data type
+    /// (`Response.text(…)`): the name refers to the type itself — bare, the
+    /// `std::http::` path, or a namespace alias — and not to a value of it.
+    /// `None` leaves the call to ordinary dispatch; a binding of the name
+    /// shadows the builtin.
+    fn http_data_head(&self, object: &Expression) -> Option<String> {
+        match object {
+            Expression::EnumRef(e) => {
+                let from_http = e.enum_name == "std::http"
+                    || self
+                        .namespaces
+                        .get(&e.enum_name)
+                        .is_some_and(|id| std_module_name(id) == Some("http"));
+                (from_http && matches!(e.variant.as_str(), "Request" | "Response" | "Server"))
+                    .then(|| e.variant.clone())
+            }
+            Expression::Identifier { name, .. }
+                if matches!(name.as_str(), "Request" | "Response" | "Server") =>
+            {
+                // Only what `use std::http::…` bound: a bare head without its
+                // import is guided below, and a program's own binding shadows.
+                (self.http_type_names.contains(name)
+                    && self.lookup_symbol(name).is_err()
+                    && !self.type_table.contains_key(name))
+                    .then(|| name.clone())
+            }
+            _ => None,
+        }
+    }
+
     /// Type-check a call to a member of the built-in `Task` namespace.
     /// Returns `Task<T>` (spec signatures), which `await` unwraps to `T`.
     /// `Math::max(a, b)` / `Time::sleep(ms)`: check a call to an intrinsic
@@ -8420,24 +10017,23 @@ impl Analyzer {
             }
             None => {
                 return Err(self
-                    .err(format!("`{ns}` has no member `{member}`"))
+                    .err_code("E0601", format!("`{ns}` has no member `{member}`"))
                     .at(call.span.clone()));
             }
         };
-        // `std::process::run(cmd[, input])` takes an optional second
-        // argument (the piped stdin); every other intrinsic keeps fixed
-        // arity. The compiler pads a missing input with null.
-        let run_optional_input = ns == "std::process" && member == "run";
-        let arity_ok = if run_optional_input {
-            matches!(call.arguments.len(), 1 | 2)
-        } else {
-            call.arguments.len() == sig.params.len()
-        };
+        // Members with trailing optional parameters (`std::process::run`'s
+        // input/timeout, `std::json::stringify`'s indent, `std::fs::tempFile`'s
+        // prefix) accept the shortened arity; the compiler pads missing
+        // trailing arguments with null.
+        let required = sig.params.len() - sig.optional_tail;
+        let arity_ok = call.arguments.len() >= required && call.arguments.len() <= sig.params.len();
         if !arity_ok {
-            let expected = if run_optional_input {
-                "1 or 2".to_string()
-            } else {
-                sig.params.len().to_string()
+            // An optional tail reads as `X to Y` (spec checked examples:
+            // `expected 2 to 3 arguments`; `RegExp::compile` writes its own
+            // `1 or 2` in `check_regex_static_call`).
+            let expected = match sig.optional_tail {
+                0 => sig.params.len().to_string(),
+                _ => format!("{} to {}", required, sig.params.len()),
             };
             return Err(self
                 .err_code(
@@ -8451,9 +10047,31 @@ impl Analyzer {
                 )
                 .at(call.span.clone()));
         }
-        for (arg, param) in call.arguments.iter().zip(sig.params.iter()) {
+        for (i, (arg, param)) in call
+            .arguments
+            .iter()
+            .zip(sig.params.iter())
+            .enumerate()
+        {
             let found = self.check_arg_value(&arg.value)?;
-            let expected = param.ty();
+            // A `List<u8>` parameter accepts any list at check time — the
+            // literal `[1, 2, 255]` types as `List<number>` — and the
+            // runtime validates every element is a byte in `0 …= 255`.
+            let base = if matches!(param, BuiltinTy::ListU8) {
+                // Element types are checked at the runtime (each element must
+                // be a byte in `0 …= 255`); the check only demands a list.
+                Type::List(Box::new(Type::Any))
+            } else {
+                param.ty()
+            };
+            // An explicit `null` lands in an optional position (`run("…",
+            // null, 500)`), so a trailing parameter accepts it on top of its
+            // declared type.
+            let expected = if i >= required {
+                Type::Optional(Box::new(base))
+            } else {
+                base
+            };
             if !self.assignable(&found, &expected) && !self.literal_matches(&arg.value, &expected) {
                 return Err(self
                     .err_code(
@@ -8490,6 +10108,33 @@ impl Analyzer {
                 )
                 .at(call.span.clone()));
         };
+        // `std::process::Command::shell(…)` / `Child::wait(…)`: the built-in
+        // process types' static form (the module path needs no import), the
+        // same dispatch the imported-name form takes.
+        if module == "process"
+            && let Some((type_name, tail)) = member.split_once("::")
+            && matches!(type_name, "Command" | "Child")
+        {
+            return self.check_process_static_call(call, type_name, tail);
+        }
+        // `std::http::Response.text(…)` / `Response(…)` construction: the
+        // data types' statics and their named-field constructor through the
+        // module path (spec `modules/http.md`, "Types").
+        if module == "http"
+            && let Some((type_name, tail)) = member.split_once("::")
+            && matches!(type_name, "Request" | "Response" | "Server")
+        {
+            return self.check_http_static_call(call, type_name, tail);
+        }
+        if module == "http" && matches!(member, "Request" | "Response") {
+            self.no_type_args(call)?;
+            return self.check_struct_ctor_call(call, member);
+        }
+        if module == "http" && member == "Server" {
+            return Err(self
+                .err("`Server` is opaque: only `std::http::listen` issues one")
+                .at(call.span.clone()));
+        }
         if member.contains("::") {
             return Err(self
                 .err_code("E0607", format!("cannot resolve `std::{rest}`"))
@@ -8497,7 +10142,7 @@ impl Analyzer {
         }
         if !matches!(
             module,
-            "math" | "time" | "fs" | "io" | "os" | "path" | "net" | "process" | "json"
+            "math" | "time" | "fs" | "io" | "os" | "path" | "net" | "process" | "json" | "http"
         ) {
             return Err(self
                 .err_code("E0607", format!("cannot resolve `std::{module}`"))
@@ -8617,6 +10262,27 @@ impl Analyzer {
     }
 
     fn check_call(&mut self, call: &xulo_core::ast::Call) -> SResult<Type> {
+        // Built-in data types construct with named fields — `Response(status:
+        // 200, …)` — like a struct literal, bare or through a std path;
+        // `Server` is opaque and has no literal (spec `modules/http.md`,
+        // "Types"). A binding of the name — a program's own type, or a value
+        // — shadows the builtin as everywhere else.
+        if call.object.is_none()
+            && !call.callee.contains("::")
+            && matches!(call.callee.as_str(), "Request" | "Response" | "Server")
+            && !self.type_table.contains_key(&call.callee)
+            && self.lookup_symbol(&call.callee).is_err()
+        {
+            return match call.callee.as_str() {
+                "Request" | "Response" => {
+                    self.no_type_args(call)?;
+                    self.check_struct_ctor_call(call, &call.callee)
+                }
+                _ => Err(self
+                    .err("`Server` is opaque: only `std::http::listen` issues one")
+                    .at(call.span.clone())),
+            };
+        }
         if call.is_enum() {
             // The built-in `std` tree splits at the last `::` of its module
             // path (`std::math::floor`), so the first-`::` enum split below
@@ -8628,8 +10294,128 @@ impl Analyzer {
             let (enum_name, variant) = call.enum_parts().unwrap();
             // Trait dispatch, built-in namespace members, and enum
             // construction alike declare no type parameters, so a written
-            // list anywhere on a `Head::member` call is `E0807`.
-            self.no_type_args(call)?;
+            // list anywhere on a `Head::member` call is `E0807` — except the
+            // built-in `Array::filled<T, const N: int>` below, which declares
+            // a full generic-argument list.
+            if call.callee != "Array::filled" {
+                self.no_type_args(call)?;
+            }
+            // `Map::fromEntries` and `Set::fromList` are the static
+            // constructors of the two built-in container types (spec
+            // `types/composite-types.md`).
+            if self.type_entry(enum_name).is_none()
+                && enum_name == "Map"
+                && variant == "fromEntries"
+            {
+                if call.arguments.len() != 1 {
+                    return Err(self
+                        .err_code(
+                            "E0207",
+                            format!(
+                                "`Map::fromEntries` expects exactly 1 argument, found {}",
+                                call.arguments.len()
+                            ),
+                        )
+                        .at(call.span.clone()));
+                }
+                let found = self.check_arg_value(&call.arguments[0].value)?;
+                let (key, val) = match &found {
+                    Type::List(inner) => match &**inner {
+                        Type::Tuple(parts) if parts.len() == 2 => {
+                            (parts[0].clone(), parts[1].clone())
+                        }
+                        _ => (Type::Any, Type::Any),
+                    },
+                    _ => (Type::Any, Type::Any),
+                };
+                return Ok(Type::Named("Map".to_string(), vec![key, val]));
+            }
+            if self.type_entry(enum_name).is_none()
+                && enum_name == "Set"
+                && variant == "fromList"
+            {
+                if call.arguments.len() != 1 {
+                    return Err(self
+                        .err_code(
+                            "E0207",
+                            format!(
+                                "`Set::fromList` expects exactly 1 argument, found {}",
+                                call.arguments.len()
+                            ),
+                        )
+                        .at(call.span.clone()));
+                }
+                let found = self.check_arg_value(&call.arguments[0].value)?;
+                let elem = match &found {
+                    Type::List(inner) => (**inner).clone(),
+                    _ => Type::Any,
+                };
+                return Ok(Type::Named("Set".to_string(), vec![elem]));
+            }
+            // `Array::filled<T, const N: int>(value)` is the built-in fixed
+            // array constructor (spec `types/composite-types.md`).
+            if self.type_entry(enum_name).is_none()
+                && enum_name == "Array"
+                && variant == "filled"
+            {
+                let targs = call.type_args.clone().ok_or_else(|| {
+                    self.err_code(
+                        "E0816",
+                        "`Array::filled` requires a written generic-argument list",
+                    )
+                    .at(call.span.clone())
+                })?;
+                if targs.len() != 2 {
+                    return Err(self
+                        .err_code(
+                            "E0808",
+                            format!(
+                                "`Array::filled` expects 2 generic arguments, found {}",
+                                targs.len()
+                            ),
+                        )
+                        .at(call.span.clone()));
+                }
+                if matches!(targs[0], Type::Literal(ref t) if t.parse::<i64>().is_ok())
+                    || matches!(&targs[0], Type::Named(n, a) if a.is_empty() && self.is_const_param(n))
+                {
+                    return Err(self.err_code(
+                        "E0813",
+                        format!("`{}` is not a type argument", targs[0].display()),
+                    ));
+                }
+                if !self.is_const_arg(&targs[1]) {
+                    return Err(self.err_code(
+                        "E0813",
+                        format!("`{}` is not a const argument", targs[1].display()),
+                    ));
+                }
+                if call.arguments.len() != 1 {
+                    return Err(self
+                        .err_code(
+                            "E0207",
+                            format!(
+                                "`Array::filled` expects exactly 1 argument, found {}",
+                                call.arguments.len()
+                            ),
+                        )
+                        .at(call.span.clone()));
+                }
+                let found = self.check_arg_value(&call.arguments[0].value)?;
+                if !self.assignable(&found, &targs[0])
+                    && !self.literal_matches(&call.arguments[0].value, &targs[0])
+                {
+                    return Err(self.err_code(
+                        "E0202",
+                        format!(
+                            "argument to `Array::filled` must be `{}`, found `{}`",
+                            targs[0].name(),
+                            found.name()
+                        ),
+                    ));
+                }
+                return Ok(Type::Named("Array".to_string(), targs));
+            }
             // `Area::area(recv)` is a trait dispatch call when `Area` is a
             // registered trait; otherwise it is an enum construction.
             if let Some(entry) = self.type_entry(enum_name)
@@ -8660,13 +10446,16 @@ impl Analyzer {
                 }
                 if matches!(
                     enum_name,
-                    "Math" | "Time" | "Fs" | "Io" | "Os" | "Path" | "Net" | "Process" | "Json"
+                    "Math" | "Time" | "Fs" | "Io" | "Os" | "Path" | "Net" | "Process" | "Json" | "Http"
                 ) {
                     return Err(self
-                        .err(format!(
-                            "`{enum_name}` lives under `std`: use `std::{0}::{variant}` or import it with `use std::{0}::*`",
-                            enum_name.to_lowercase()
-                        ))
+                        .err_code(
+                            "E0607",
+                            format!(
+                                "`{enum_name}` lives under `std`: use `std::{0}::{variant}` or import it with `use std::{0}::*`",
+                                enum_name.to_lowercase()
+                            ),
+                        )
                         .at(call.span.clone()));
                 }
             }
@@ -8685,6 +10474,16 @@ impl Analyzer {
             if self.regex_names.contains(enum_name) {
                 return self.check_regex_static_call(call, enum_name, variant);
             }
+            // The `process` module's `Command`/`Child` statics
+            // (`Command::shell("…")`): `process_type_names` records what
+            // `use std::process::…` bound, and a program-declared type of
+            // the same name — or a module that resolved above — shadows the
+            // builtin like anywhere else.
+            if self.process_type_names.contains(enum_name)
+                && !self.type_table.contains_key(enum_name)
+            {
+                return self.check_process_static_call(call, enum_name, variant);
+            }
             // The same heads without their import: name the fix instead of
             // reporting an unknown enum.
             if matches!(enum_name, "RegExp" | "RegexError" | "RegexMatch")
@@ -8693,6 +10492,15 @@ impl Analyzer {
                 return Err(self
                     .err(format!(
                         "`{enum_name}` belongs to the built-in `std::regex` module: import it with `use std::regex::{{{enum_name}}}` or `use std::regex::{{RegExp, RegexError}}`"
+                    ))
+                    .at(call.span.clone()));
+            }
+            if matches!(enum_name, "Command" | "Child")
+                && self.type_entry(enum_name).is_none()
+            {
+                return Err(self
+                    .err(format!(
+                        "`{enum_name}` belongs to the built-in `std::process` module: import it with `use std::process::{{{enum_name}}}` or call `std::process::{enum_name}::{variant}(…)`"
                     ))
                     .at(call.span.clone()));
             }
@@ -8707,6 +10515,27 @@ impl Analyzer {
             return self.check_enum_call(enum_name.to_string(), variant.to_string(), &args);
         }
         if let Some(object) = &call.object {
+            // Statics of the built-in `http` data types (`Response.text(…)`
+            // — bare, `std::http::…`, or an alias): the receiver names the
+            // type itself, never a value of it.
+            if let Some(type_name) = self.http_data_head(object) {
+                let method = call.method.as_deref().unwrap_or("");
+                return self.check_http_static_call(call, &type_name, method);
+            }
+            // The same bare head without its import: name the fix instead of
+            // reporting an undefined variable.
+            if let Expression::Identifier { name, .. } = object.as_ref()
+                && matches!(name.as_str(), "Request" | "Response" | "Server")
+                && self.lookup_symbol(name).is_err()
+                && !self.type_table.contains_key(name)
+            {
+                let method = call.method.as_deref().unwrap_or("");
+                return Err(self
+                    .err(format!(
+                        "`{name}` belongs to the built-in `std::http` module: import it with `use std::http::{{{name}}}` or call `std::http::{name}.{method}(…)`"
+                    ))
+                    .at(call.span.clone()));
+            }
             // Method call `obj.method(args)`.
             let receiver = self.check_expression(object)?;
             // No method declared in this language is generic — impl methods,
@@ -8734,6 +10563,12 @@ impl Analyzer {
                     return Ok(ret.clone().map(|r| *r).unwrap_or(Type::Any));
                 }
                 return Err(self.err_code("E0102", format!("no member `{method}` on `{name}`")));
+            }
+            // Built-in collection/string members are inherent and closed: the
+            // List/Map/Set/string sets are checked here, before struct and
+            // trait resolution (spec `types/composite-types.md`).
+            if let Some(ret) = self.check_inherent_member_call(&receiver, call)? {
+                return Ok(ret);
             }
             for arg in &call.arguments {
                 self.check_arg_value(&arg.value)?;
@@ -8848,40 +10683,49 @@ impl Analyzer {
                     }
                 }
             }
-            // Infer return type for known list methods
-            if let Type::List(inner) = &receiver
-                && let Some(method) = &call.method
-            {
-                return Ok(match method.as_str() {
-                    "length" | "capacity" | "indexOf" => Type::Number,
-                    "isEmpty" => Type::Boolean,
-                    "first" | "last" | "get" => Type::Optional(inner.clone()),
-                    "pop" | "remove" => *inner.clone(),
-                    "push" | "set" | "insert" | "reverse" | "sort" | "shrink" | "clear" => {
-                        receiver.clone()
-                    }
-                    "removeValue" | "contains" | "some" | "every" => Type::Boolean,
-                    "filter" | "slice" | "concat" | "map" | "flat" => Type::List(inner.clone()),
-                    "join" => Type::String,
-                    "reduce" | "find" | "forEach" => Type::Any,
-                    _ => Type::Any,
-                });
-            }
-            // Infer the return type of the known string methods: the pattern
-            // consumer and the reshaping members yield a new string, the
-            // predicates yield booleans, `length` counts characters, and
-            // `split` yields the list of pieces.
-            if matches!(receiver, Type::String)
-                && let Some(method) = &call.method
-            {
-                return Ok(match method.as_str() {
-                    "replace" | "to_uppercase" | "to_lowercase" | "trim" | "pad_start"
-                    | "pad_end" | "repeat" => Type::String,
-                    "contains" | "starts_with" | "ends_with" => Type::Boolean,
-                    "length" => Type::Number,
-                    "split" => Type::List(Box::new(Type::String)),
-                    _ => Type::Any,
-                });
+            // The built-in collection and string member sets are closed: an
+            // unknown member on one of them is E0102 (spec
+            // `types/composite-types.md`, `types/primitive-types.md`).
+            // `string.replace` and `string.split` are the regex module's
+            // members and keep their loose typing here.
+            match &receiver {
+                Type::List(_) => {
+                    return Err(self
+                        .err_code(
+                            "E0102",
+                            format!(
+                                "no member `{}` on `{}`",
+                                call.method.as_deref().unwrap_or(""),
+                                receiver.name()
+                            ),
+                        )
+                        .at(call.span.clone()));
+                }
+                Type::String => {
+                    return match call.method.as_deref() {
+                        Some("replace") => Ok(Type::String),
+                        Some("split") => Ok(Type::List(Box::new(Type::String))),
+                        other => Err(self
+                            .err_code(
+                                "E0102",
+                                format!("no member `{}` on `string`", other.unwrap_or("")),
+                            )
+                            .at(call.span.clone())),
+                    };
+                }
+                Type::Named(name, _) if name == "Map" || name == "Set" || name == "Array" => {
+                    return Err(self
+                        .err_code(
+                            "E0102",
+                            format!(
+                                "no member `{}` on `{}`",
+                                call.method.as_deref().unwrap_or(""),
+                                receiver.name()
+                            ),
+                        )
+                        .at(call.span.clone()));
+                }
+                _ => {}
             }
             return Ok(Type::Any);
         }
@@ -9024,55 +10868,6 @@ impl Analyzer {
             }
             return Ok(Type::Any);
         }
-        // String inspection prelude functions (spec `builtins/prelude.md`):
-        // scalar counts, the scalar at an index, a scalar-range slice, and
-        // the UTF-8 bytes. Their argument types are fixed, so no table is
-        // needed; the user-symbol lookup above already handled shadowing.
-        if matches!(
-            call.callee.as_str(),
-            "stringSize" | "stringCodeAt" | "stringSlice" | "stringBytes"
-        ) {
-            self.no_type_args(call)?;
-            let (expected, ret) = match call.callee.as_str() {
-                "stringSize" | "stringBytes" => (1, Type::Number),
-                "stringCodeAt" => (2, Type::Number),
-                _ => (3, Type::String),
-            };
-            if call.arguments.len() != expected {
-                return Err(self
-                    .err_code(
-                        "E0207",
-                        format!(
-                            "expected {expected} argument{}, found {}",
-                            if expected == 1 { "" } else { "s" },
-                            call.arguments.len()
-                        ),
-                    )
-                    .at(call.span.clone()));
-            }
-            for (i, arg) in call.arguments.iter().enumerate() {
-                let found = self.check_arg_value(&arg.value)?;
-                let want = if i == 0 { Type::String } else { Type::Number };
-                if !self.assignable(&found, &want) && !self.literal_matches(&arg.value, &want) {
-                    return Err(self
-                        .err_code(
-                            "E0202",
-                            format!(
-                                "argument to `{}` must be `{}`, found `{}`",
-                                call.callee,
-                                want.name(),
-                                found.name()
-                            ),
-                        )
-                        .at(arg.value.span().clone()));
-                }
-            }
-            return Ok(if call.callee == "stringBytes" {
-                Type::List(Box::new(Type::Named("u8".to_string(), Vec::new())))
-            } else {
-                ret
-            });
-        }
         if self.test_names.contains(&call.callee) {
             return Err(self
                 .err_code(
@@ -9106,7 +10901,7 @@ impl Analyzer {
             )));
         }
         match &sym.kind {
-            SymbolKind::Function(type_params, params, return_type, callee_bounds) => {
+            SymbolKind::Function(type_params, params, return_type, callee_bounds, generic_params) => {
                 // An unseeded import (no module graph) is opaque: accept any
                 // argument list and return `any`. Local functions never reach
                 // here, even when un-annotated (zero params, no return type).
@@ -9131,10 +10926,23 @@ impl Analyzer {
                 let params = params.clone();
                 let return_type = return_type.clone();
                 let callee_bounds = callee_bounds.clone();
-                // A written type-argument list replaces inference for this
-                // call; arity (`E0808`) and the non-generic case (`E0807`)
-                // are settled before any call-site state is pushed.
-                let written = self.written_type_args(call, &type_params)?;
+                let generic_params = if generic_params.is_empty() && !type_params.is_empty() {
+                    type_params
+                        .iter()
+                        .map(|n| GenericParam {
+                            name: n.clone(),
+                            kind: GenericParamKind::Type,
+                            const_type: None,
+                        })
+                        .collect::<Vec<_>>()
+                } else {
+                    generic_params.clone()
+                };
+                // A written generic-argument list replaces inference for this
+                // call; arity (`E0808`), kinds (`E0813`), the required list
+                // for a const callee (`E0816`), and the non-generic case
+                // (`E0807`) are settled before any call-site state is pushed.
+                let written = self.written_generic_args(call, &generic_params)?;
                 self.generics.extend(type_params.iter().cloned());
                 // Call-site bounds: the callee's `T: Trait` clauses constrain
                 // its argument checks the same way they do inside its body.
@@ -9627,6 +11435,15 @@ impl Analyzer {
                 _ => Err(self.err(format!("`{enum_name}` has no member `{variant}`"))),
             };
         }
+        // The `process` module's `Command`/`Child` statics as values
+        // (`let f = Command::shell`), reached through the imported name —
+        // only what `use std::process::…` bound, so a program's own type of
+        // the name shadows it like any other declaration.
+        if self.process_type_names.contains(&enum_name)
+            && !self.type_table.contains_key(&enum_name)
+        {
+            return self.process_static_member_sig(&enum_name, variant);
+        }
         // A built-in namespace's members are constants (`Math::PI`) or
         // functions reached by call (`Math::max(...)`); a bare function
         // reference types as a function value (spec
@@ -9645,12 +11462,15 @@ impl Analyzer {
             }
             if matches!(
                 enum_name.as_str(),
-                "Math" | "Time" | "Fs" | "Io" | "Os" | "Path" | "Net" | "Process" | "Json"
+                "Math" | "Time" | "Fs" | "Io" | "Os" | "Path" | "Net" | "Process" | "Json" | "Http"
             ) {
-                return Err(self.err(format!(
-                    "`{enum_name}` lives under `std`: use `std::{0}::{variant}` or import it with `use std::{0}::*`",
-                    enum_name.to_lowercase()
-                )));
+                return Err(self.err_code(
+                    "E0607",
+                    format!(
+                        "`{enum_name}` lives under `std`: use `std::{0}::{variant}` or import it with `use std::{0}::*`",
+                        enum_name.to_lowercase()
+                    ),
+                ));
             }
             if enum_name == "Task" {
                 return match task_bare_member_sig(variant) {
@@ -9671,6 +11491,14 @@ impl Analyzer {
         {
             return Err(self.err(format!(
                 "`{enum_name}` belongs to the built-in `std::regex` module: import it with `use std::regex::{{{enum_name}}}` or `use std::regex::{{RegExp, RegexError}}`"
+            )));
+        }
+        // The process module's heads without their import: same guidance.
+        if matches!(enum_name.as_str(), "Command" | "Child")
+            && self.type_entry(&enum_name).is_none()
+        {
+            return Err(self.err(format!(
+                "`{enum_name}` belongs to the built-in `std::process` module: import it with `use std::process::{{{enum_name}}}`"
             )));
         }
         let Some(entry) = self.type_entry(&enum_name) else {
@@ -9724,6 +11552,33 @@ impl Analyzer {
         // A std alias/namespace head (`use std::math as m` → `m::floor(…)`):
         // the synthetic modules carry no world face — dispatch on the table.
         if let Some(std_module) = std_module_name(&module) {
+            // `proc::Command::shell(…)` on a `use std::process as proc`: the
+            // process types' statics through an alias head.
+            if std_module == "process"
+                && let Some((type_name, tail)) = member.split_once("::")
+                && matches!(type_name, "Command" | "Child")
+            {
+                return self
+                    .check_process_static_call(call, type_name, tail)
+                    .map(Some);
+            }
+            // `http::Response.text(…)` / `http::Response(…)` through an
+            // alias head: the data types' statics and constructor.
+            if std_module == "http"
+                && let Some((type_name, tail)) = member.split_once("::")
+                && matches!(type_name, "Request" | "Response" | "Server")
+            {
+                return self.check_http_static_call(call, type_name, tail).map(Some);
+            }
+            if std_module == "http" && matches!(member, "Request" | "Response") {
+                self.no_type_args(call)?;
+                return self.check_struct_ctor_call(call, member).map(Some);
+            }
+            if std_module == "http" && member == "Server" {
+                return Err(self
+                    .err("`Server` is opaque: only `std::http::listen` issues one")
+                    .at(call.span.clone()));
+            }
             if member.contains("::") || std_module == "regex" {
                 return Err(self
                     .err(
@@ -9861,7 +11716,7 @@ impl Analyzer {
                     .unwrap_or(Symbol {
                         name: member.to_string(),
                         type_: Type::Any,
-                        kind: SymbolKind::Function(Vec::new(), Vec::new(), Type::Any, Vec::new()),
+                        kind: SymbolKind::Function(Vec::new(), Vec::new(), Type::Any, Vec::new(), Vec::new()),
                         is_shared: false,
                         is_param: false,
                         is_const: true,
@@ -10449,19 +12304,52 @@ impl Analyzer {
             return Err(self.err_code(
                 "E0230",
                 format!(
-                    "`{name}` expects {expected} type argument{}, found {}",
+                    "`{name}` expects {expected} generic argument{}, found {}",
                     if expected == 1 { "" } else { "s" },
                     args.len()
                 ),
             ));
         }
-        // Every position a type argument is written is checked against the
-        // bound its parameter declares (spec `type-system/checking-rules.md`).
-        if let Some(entry) = self.type_entry(name) {
-            for (i, arg) in args.iter().enumerate() {
-                let Some(param) = entry.type_params.get(i) else {
-                    break;
-                };
+        // Interpret each written argument by the kind of the parameter it
+        // fills (spec `types/generics.md`): a const position takes an integer
+        // literal, a `const` binding, or a const parameter; a type position
+        // takes a type. A mismatch is `E0813`.
+        let declared = self
+            .type_generic_params
+            .get(name)
+            .cloned()
+            .or_else(|| builtin_generic_params(name));
+        for (i, arg) in args.iter().enumerate() {
+            let param = declared.as_ref().and_then(|ps| ps.get(i));
+            match param.map(|p| p.kind) {
+                Some(GenericParamKind::Const) => {
+                    if !self.is_const_arg(arg) {
+                        return Err(self.err_code(
+                            "E0813",
+                            format!("`{}` is not a const argument", arg.display()),
+                        ));
+                    }
+                    continue;
+                }
+                Some(GenericParamKind::Type) => {
+                    let numeric_literal =
+                        matches!(arg, Type::Literal(text) if text.parse::<i64>().is_ok());
+                    let const_name =
+                        matches!(arg, Type::Named(n, a) if a.is_empty() && self.is_const_param(n));
+                    if numeric_literal || const_name {
+                        return Err(self.err_code(
+                            "E0813",
+                            format!("`{}` is not a type argument", arg.display()),
+                        ));
+                    }
+                }
+                None => {}
+            }
+            // Every type argument position is checked against the bound its
+            // parameter declares (spec `type-system/checking-rules.md`).
+            if let Some(entry) = self.type_entry(name)
+                && let Some(param) = entry.type_params.get(i)
+            {
                 for bound in entry.type_bounds.iter().filter(|b| &b.param == param) {
                     for trait_name in &bound.traits {
                         if !self.satisfies_bound(arg, trait_name) {
@@ -10473,8 +12361,6 @@ impl Analyzer {
                     }
                 }
             }
-        }
-        for arg in args {
             self.check_type(arg)?;
         }
         // A name is known when the program declares it (a type table entry,
@@ -10497,6 +12383,9 @@ impl Analyzer {
     /// known statically: a user `struct`/`enum`/`type`/`trait`, or a prelude
     /// type whose arity the language fixes.
     fn declared_type_arity(&self, name: &str) -> Option<usize> {
+        if let Some(params) = self.type_generic_params.get(name) {
+            return Some(params.len());
+        }
         if let Some(entry) = self.type_entry(name) {
             return Some(entry.type_params.len());
         }
@@ -10912,6 +12801,28 @@ fn pattern_type_matches(
             .all(|p| pattern_type_matches(p, actual, params, bindings)),
         Type::Any => true,
         other => other == actual,
+    }
+}
+
+/// Whether `name` occurs anywhere in `ty` (used for E0817: an `impl`'s const
+/// parameter MUST occur in the implemented type).
+fn type_mentions(ty: &Type, name: &str) -> bool {
+    match ty {
+        Type::Named(n, args) => {
+            (n == name && args.is_empty()) || args.iter().any(|a| type_mentions(a, name))
+        }
+        Type::List(inner) | Type::Optional(inner) | Type::Async(inner) => {
+            type_mentions(inner, name)
+        }
+        Type::Union(parts) | Type::Intersection(parts) | Type::Tuple(parts) => {
+            parts.iter().any(|p| type_mentions(p, name))
+        }
+        Type::ObjectType(fields) => fields.iter().any(|(_, t)| type_mentions(t, name)),
+        Type::FnSig { params, ret } => {
+            params.iter().any(|p| type_mentions(p, name))
+                || ret.as_ref().is_some_and(|r| type_mentions(r, name))
+        }
+        _ => false,
     }
 }
 

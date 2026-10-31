@@ -208,3 +208,38 @@ fn unknown_fs_member_is_rejected_by_the_semantic_pass() {
         err.message
     );
 }
+
+/// `examples/fs.xulo` 全文经解释器运行的输出逐行固定（示例即测试）。
+/// 沙箱在系统临时目录内自建自删，宿主无关。
+#[test]
+fn fs_example() {
+    let out = run_ok(include_str!("../../../examples/fs.xulo"));
+    assert_eq!(
+        out,
+        vec![
+            "written".to_string(),
+            "hello fs".to_string(),
+            "true".to_string(),
+            "file".to_string(),
+            "8".to_string(),
+            "true".to_string(),
+            "bytes written".to_string(),
+            "2".to_string(),
+            "104".to_string(),
+            "mkdir".to_string(),
+            "nested written".to_string(),
+            "[a.txt, sub]".to_string(),
+            "4".to_string(),
+            "b.txt".to_string(),
+            "copied".to_string(),
+            "renamed".to_string(),
+            "true".to_string(),
+            "temp removed".to_string(),
+            "file removed".to_string(),
+            "a removed".to_string(),
+            "d removed".to_string(),
+            "sub removed".to_string(),
+            "dir removed".to_string(),
+        ]
+    );
+}

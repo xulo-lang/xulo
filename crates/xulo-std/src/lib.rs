@@ -16,6 +16,7 @@
 pub mod ffi;
 pub mod format;
 pub mod fs;
+pub mod http;
 pub mod io;
 pub mod json;
 pub mod math;

@@ -322,6 +322,7 @@ impl Interpreter {
         let closure = &effect.closure;
         let func = Value::Function(Rc::new(FunctionValue {
             params: closure.params.clone(),
+            generic_params: Vec::new(),
             body: closure.body.clone(),
             return_type: closure.return_type.clone(),
             is_async: closure.is_async,
@@ -571,12 +572,28 @@ impl Interpreter {
             Ok(Flow::Continue)
         } else {
             let iterable = self.eval(&f.iterable, env)?;
+            // A `Map` iterates its keys in insertion order and a `Set` its
+            // elements (spec `types/composite-types.md`); both are snapshotted,
+            // while a `List` keeps its live-borrow iteration below.
+            let iterable = match iterable {
+                Value::Object(fields) => Value::List(Rc::new(RefCell::new(
+                    fields
+                        .borrow()
+                        .iter()
+                        .map(|(k, _)| Value::String(k.clone().into()))
+                        .collect(),
+                ))),
+                Value::Set(set) => {
+                    Value::List(Rc::new(RefCell::new(set.borrow().clone())))
+                }
+                other => other,
+            };
             let list = match iterable {
                 Value::List(list) => list,
                 other => {
                     return Err(RunError::err(
                         format!(
-                            "for loop must iterate over a `List`, found {}",
+                            "for loop must iterate over a `List`, `Map`, or `Set`, found {}",
                             other.kind_name()
                         ),
                         f.iterable.span().clone(),

@@ -49,6 +49,48 @@ pub extern "C" fn xulo_os_chdir(path: *const c_char) -> *mut XuloEnum {
     }
 }
 
+/// `std::os::unsetenv(name)` -> `Result<null, Error>`
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_os_unsetenv(name: *const c_char) -> *mut XuloEnum {
+    let name = cstr_arg(name);
+    match xulo_std::os::unsetenv(&name) {
+        Ok(()) => fs_ok(0, 6),
+        Err(message) => fs_err(message),
+    }
+}
+
+/// `std::os::tmpDir()` -> string（总谓词，不失败）
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_os_tmp_dir() -> *const c_char {
+    intern_string(xulo_std::os::tmp_dir())
+}
+
+/// `std::os::homeDir()` / `hostName()` / `userName()` / `execPath()` ->
+/// `Result<string, Error>`
+macro_rules! os_string_result {
+    ($name:ident, $call:path) => {
+        #[unsafe(no_mangle)]
+        pub extern "C" fn $name() -> *mut XuloEnum {
+            match $call() {
+                Ok(value) => fs_ok(intern_string(value) as i64, 0),
+                Err(message) => fs_err(message),
+            }
+        }
+    };
+}
+
+os_string_result!(xulo_os_home_dir, xulo_std::os::home_dir);
+os_string_result!(xulo_os_host_name, xulo_std::os::host_name);
+os_string_result!(xulo_os_user_name, xulo_std::os::user_name);
+os_string_result!(xulo_os_exec_path, xulo_std::os::exec_path);
+
+/// `std::os::cpuCount()` -> number（总谓词，不失败）
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_os_cpu_count() -> i64 {
+    xulo_std::os::cpu_count()
+}
+
 /// `std::os::pid()` -> number（总谓词，不失败）
 #[unsafe(no_mangle)]
 pub extern "C" fn xulo_os_pid() -> i64 {

@@ -68,8 +68,8 @@ fn main() {
         Result::Err(e) => print(e.message)
     }
 
-    // 字符串辅助方法
-    print("abc".to_uppercase()) // ABC
+    // 字符串辅助方法：len / slice / bytes
+    print("abc".len, "hello".slice(0, 3)) // 3 hel
 
     // `?`：错误值传播成调用者的 Result
     match compile_any("[a-z]+") {

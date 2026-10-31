@@ -247,6 +247,51 @@ impl IrGenerator {
         }
     }
 
+    /// Lower one written const argument to an `i64` operand: an integer
+    /// literal, a const parameter (a local), or a module-level `const` whose
+    /// initializer is inlined (spec `types/generics.md`).
+    fn generate_const_argument(&mut self, arg: &Type) -> Result<Operand, XuloError> {
+        match arg {
+            Type::Literal(text) => {
+                let n: i64 = text.parse().map_err(|_| {
+                    XuloError::new(
+                        ErrorKind::Semantic,
+                        format!("`{text}` is not a const argument"),
+                    )
+                })?;
+                let func_idx = self.current_func.unwrap();
+                let local = self.module.functions[func_idx].add_local(IrType::I64);
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::Const {
+                        dst: local,
+                        value: IrValue::I64(n),
+                    });
+                Ok(Operand::Local(local))
+            }
+            Type::Named(name, args) if args.is_empty() => {
+                if let Some(&local) = self.locals.get(name) {
+                    return Ok(Operand::Local(local));
+                }
+                if self.const_def(name).is_some() {
+                    let expr = Expression::Identifier {
+                        name: name.clone(),
+                        span: 0..0,
+                    };
+                    return self.generate_expression(&expr);
+                }
+                Err(XuloError::new(
+                    ErrorKind::Semantic,
+                    format!("`{name}` is not a const value"),
+                ))
+            }
+            other => Err(XuloError::new(
+                ErrorKind::Semantic,
+                format!("{} is not a const argument", other.display()),
+            )),
+        }
+    }
+
     pub(super) fn generate_literal(&mut self, lit: &Literal) -> Result<Operand, XuloError> {
         let func_idx = self.current_func.unwrap();
         let (value, ty) = match lit {
@@ -705,6 +750,30 @@ impl IrGenerator {
             }
         }
 
+        // A call to a const-generic function supplies its const arguments as
+        // hidden trailing parameters (compile-time values, spec
+        // `types/generics.md`).
+        if call.object.is_none() {
+            let key = self.resolve_callee_name(&call.callee);
+            if let Some(gps) = self.func_generic_params.get(&key).cloned() {
+                for (i, p) in gps.iter().enumerate() {
+                    if p.kind != xulo_core::ast::GenericParamKind::Const {
+                        continue;
+                    }
+                    let Some(arg) = call.type_args.as_ref().and_then(|a| a.get(i)) else {
+                        return Err(XuloError::new(
+                            ErrorKind::Semantic,
+                            format!(
+                                "`{}` requires a written const argument for `{}`",
+                                call.callee, p.name
+                            ),
+                        ));
+                    };
+                    args.push(self.generate_const_argument(arg)?);
+                }
+            }
+        }
+
         // Trait 派发：语义层把 `Trait::method(recv)` 与 `str(v)` 标注成
         // `impl_{Trait}_{Type}_{method}`（泛型参数上的派发标注为 `dyn:`）。
         // AOT 把派发名静态解析到已注册的 impl 函数，位置与解释器 call()
@@ -764,26 +833,101 @@ impl IrGenerator {
                 || call.callee.starts_with("std::path::")
                 || call.callee.starts_with("std::net::")
                 || call.callee.starts_with("std::process::")
-                || call.callee.starts_with("std::json::"))
+                || call.callee.starts_with("std::json::")
+                || call.callee.starts_with("std::http::"))
         {
-            // `std::process::run(cmd[, input])` 的可选第二参缺席时补 NULL
-            // 指针（FFI 判空 → 不接管 stdin）——与 RegExp::compile 补齐
-            // flags 的同一种 IR 侧补齐
-            if call.callee == "std::process::run" && args.len() == 1 {
+            // `std::process::run`/`exec` 的可选 `input`/`timeout` 缺席时补
+            // NULL 指针与 -1.0（FFI 判空 → 不接管 stdin / 不限时）——顺序
+            // 补齐，缺 1 个只补尾参，缺 2 个两个都补
+            if call.callee == "std::process::run" {
+                if args.len() == 1 {
+                    args.push(Operand::Const(IrValue::Null));
+                }
+                if args.len() == 2 {
+                    args.push(Operand::Const(IrValue::F64(-1.0)));
+                }
+            }
+            if call.callee == "std::process::exec" {
+                if args.len() == 2 {
+                    args.push(Operand::Const(IrValue::Null));
+                }
+                if args.len() == 3 {
+                    args.push(Operand::Const(IrValue::F64(-1.0)));
+                }
+            }
+            // `std::fs::tempFile([prefix])` / `tempDir([prefix])` 的可选前缀
+            // 与 `tempFileIn`/`tempDirIn` 的可选第二参缺席时补 NULL 指针
+            //（FFI 判空 → 无前缀），与 process::run 的可选 input 同一种补齐
+            if matches!(
+                call.callee.as_str(),
+                "std::fs::tempFile" | "std::fs::tempDir"
+            ) && args.is_empty()
+            {
                 args.push(Operand::Const(IrValue::Null));
+            }
+            if matches!(
+                call.callee.as_str(),
+                "std::fs::tempFileIn" | "std::fs::tempDirIn"
+            ) && args.len() == 1
+            {
+                args.push(Operand::Const(IrValue::Null));
+            }
+            // `std::net` 的四个阻塞成员的可选 `timeout`（毫秒）缺席时补
+            // -1.0（FFI 把负数/NaN 读作无预算），f64 形参不能收 NULL
+            if matches!(
+                call.callee.as_str(),
+                "std::net::tcpConnect" | "std::net::tcpAccept"
+            ) && args.len() == 1
+            {
+                args.push(Operand::Const(IrValue::F64(-1.0)));
+            }
+            if matches!(call.callee.as_str(), "std::net::sockRead" | "std::net::sockWrite")
+                && args.len() == 2
+            {
+                args.push(Operand::Const(IrValue::F64(-1.0)));
+            }
+            // `std::time::fromParts(year, month, day[, hour[, minute[,
+            // second[, millisecond]]]])` 的四个可选时间字段缺席时补 0.0
+            if call.callee == "std::time::fromParts" {
+                while args.len() < 7 {
+                    args.push(Operand::Const(IrValue::F64(0.0)));
+                }
+            }
+            // `std::http::fetch`/`request` 的可选 `headers`/`body`/`timeout`
+            // 缺席时补 NULL 指针与 -1.0（FFI 判空 → 无头/无体/不限时）
+            if call.callee == "std::http::fetch" && args.len() == 1 {
+                args.push(Operand::Const(IrValue::F64(-1.0)));
+            }
+            if call.callee == "std::http::request" {
+                if args.len() == 2 {
+                    args.push(Operand::Const(IrValue::Null));
+                }
+                if args.len() == 3 {
+                    args.push(Operand::Const(IrValue::Null));
+                }
+                if args.len() == 4 {
+                    args.push(Operand::Const(IrValue::F64(-1.0)));
+                }
             }
             // `std::json::stringify(value)` 需要值的运行时标签一并传给
             // FFI（与 print/str 同一套 dyn 判定：match 绑定走伴随标签槽，
             // 其余按源表达式静态推断）
-            if call.callee == "std::json::stringify" && args.len() == 1 {
-                let arg_expr = &call.arguments[0].value;
-                if let Expression::Identifier { name, .. } = arg_expr
-                    && let Some(tag_op) = self.dyn_tag_of.get(name).cloned()
-                {
-                    args.push(tag_op);
-                } else {
-                    let tag = self.determine_element_tag(arg_expr);
-                    args.push(Operand::Const(IrValue::I64(tag)));
+            if call.callee == "std::json::stringify" && (1..=2).contains(&args.len()) {
+                let tag = {
+                    let arg_expr = &call.arguments[0].value;
+                    if let Expression::Identifier { name, .. } = arg_expr
+                        && let Some(tag_op) = self.dyn_tag_of.get(name).cloned()
+                    {
+                        tag_op
+                    } else {
+                        Operand::Const(IrValue::I64(self.determine_element_tag(arg_expr)))
+                    }
+                };
+                let indent = if args.len() == 2 { args.pop() } else { None };
+                args.push(tag);
+                match indent {
+                    Some(indent) => args.push(indent),
+                    None => args.push(Operand::Const(IrValue::I64(-1))),
                 }
             }
             return self.generate_intrinsic_call(&call.callee, &args);
@@ -867,6 +1011,12 @@ impl IrGenerator {
                 "pad_start" => Some(RuntimeFn::StringPadStart),
                 "pad_end" => Some(RuntimeFn::StringPadEnd),
                 "repeat" => Some(RuntimeFn::StringRepeat),
+                // Built-in `string` members (spec `types/primitive-types.md`).
+                "codeAt" => Some(RuntimeFn::StringCodeAt),
+                "bytes" => Some(RuntimeFn::StringBytes),
+                "slice" if !self.expr_is_list_receiver(&call.object) => {
+                    Some(RuntimeFn::StringSlice)
+                }
                 // `contains`/`length` 在列表与字符串上重名：列表接收者保持
                 // 原路径（这些成员尚未 lowering，按用户函数解析报错）
                 "contains" if !self.expr_is_list_receiver(&call.object) => {
@@ -921,12 +1071,6 @@ impl IrGenerator {
                     args.push(tag_op);
                     Some(RuntimeFn::Stringify)
                 }
-                // String inspection prelude functions (spec
-                // `builtins/prelude.md`): fixed signatures, no receiver.
-                "stringSize" => Some(RuntimeFn::StringSize),
-                "stringCodeAt" => Some(RuntimeFn::StringCodeAt),
-                "stringSlice" => Some(RuntimeFn::StringSlice),
-                "stringBytes" => Some(RuntimeFn::StringBytes),
                 _ => None,
             }
         };
@@ -1426,6 +1570,25 @@ impl IrGenerator {
                             self.locals.insert(bind.clone(), raw);
                         }
                         self.dyn_tag_of.insert(bind.clone(), Operand::Local(tag));
+                        // `readDir`/`walk`/`process::args` 的 Ok 载荷是
+                        // List<string>：绑定注册元素类型，`.len`/索引才会走
+                        // 数组 lowering（否则 `.len` 误入 StringSize）
+                        if matches!(
+                            &m.value,
+                            Expression::Call(call)
+                                if call.object.is_none()
+                                    && matches!(
+                                        call.callee.as_str(),
+                                        "std::fs::readDir"
+                                            | "std::fs::walk"
+                                            | "std::process::args"
+                                    )
+                        ) {
+                            self.source_types.insert(
+                                bind.clone(),
+                                Type::List(Box::new(Type::String)),
+                            );
+                        }
                     }
                     self.generate_match_arm_body(arm, result_local)?;
                     self.module.functions[func_idx]
@@ -1653,6 +1816,28 @@ impl IrGenerator {
     ) -> Result<Operand, XuloError> {
         let func_idx = self.current_func.unwrap();
         let object = self.generate_expression(&member.object)?;
+        // Read-only collection properties (spec `types/composite-types.md`,
+        // `types/primitive-types.md`): `.len` on a `List`, `.byteLen` on a
+        // `string`. `.size` on a map has no compiled representation yet.
+        let prop_fn = match member.property.as_str() {
+            "len" if self.expr_is_list_receiver(&Some(Box::new(member.object.clone()))) => {
+                Some(RuntimeFn::ArrayLen)
+            }
+            "len" => Some(RuntimeFn::StringSize),
+            "byteLen" => Some(RuntimeFn::StringByteLen),
+            _ => None,
+        };
+        if let Some(func) = prop_fn {
+            let local = self.module.functions[func_idx].add_local(IrType::I64);
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::RuntimeCall {
+                    dst: Some(local),
+                    func,
+                    args: vec![object],
+                });
+            return Ok(Operand::Local(local));
+        }
         let local = self.module.functions[func_idx].add_local(IrType::Pointer);
 
         self.module.functions[func_idx]

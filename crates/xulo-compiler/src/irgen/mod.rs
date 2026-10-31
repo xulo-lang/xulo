@@ -30,6 +30,9 @@ pub struct IrGenerator {
     func_return_types: HashMap<String, Option<Type>>,
     /// 用户函数的形参表（名字 + 默认表达式）：命名参数重排与缺省参数补齐
     func_params: HashMap<String, Vec<(String, Option<Expression>)>>,
+    /// 每个函数声明对应的完整泛型形参表（含 const 形参）；调用点按它
+    /// 追加 const 实参（spec `types/generics.md`）。
+    func_generic_params: HashMap<String, Vec<xulo_core::ast::GenericParam>>,
     label_map: HashMap<String, Label>,
     loop_stack: Vec<LoopContext>,
     /// struct 定义（结构体构造需要字段顺序与默认值）
@@ -219,6 +222,7 @@ impl IrGenerator {
             source_types: HashMap::new(),
             func_return_types: HashMap::new(),
             func_params: HashMap::new(),
+            func_generic_params: HashMap::new(),
             label_map: HashMap::new(),
             loop_stack: Vec::new(),
             structs: HashMap::new(),
@@ -696,8 +700,10 @@ impl IrGenerator {
                     // 表的 tag 映射
                     if call.callee.starts_with("std::os::") {
                         return match call.callee.as_str() {
-                            "std::os::pid" => Some(Type::Number),
-                            "std::os::platform" | "std::os::arch" => Some(Type::String),
+                            "std::os::pid" | "std::os::cpuCount" => Some(Type::Number),
+                            "std::os::platform"
+                            | "std::os::arch"
+                            | "std::os::tmpDir" => Some(Type::String),
                             _ => None,
                         };
                     }
@@ -721,7 +727,20 @@ impl IrGenerator {
                     // 没有可标的原始类型）——必须在下面按 tag 的兜底之前
                     // 拦住，否则 tag=7 会被误推成 Number
                     if call.callee.starts_with("std::json::") {
-                        return None;
+                        return if call.callee == "std::json::valid" {
+                            Some(Type::Boolean)
+                        } else {
+                            None
+                        };
+                    }
+                    // `std::path`: isAbsolute is a bool, split a record and
+                    // relative an optional string; the rest are strings.
+                    if call.callee.starts_with("std::path::") {
+                        return match call.callee.as_str() {
+                            "std::path::isAbsolute" => Some(Type::Boolean),
+                            "std::path::relative" => Some(Type::Optional(Box::new(Type::String))),
+                            _ => Some(Type::String),
+                        };
                     }
                     // Math::/Time:: 内建：按 lowering 表的 tag 映射返回类型
                     if let Some((_, _, tag)) = Self::intrinsic_lowering(&call.callee) {
@@ -744,6 +763,22 @@ impl IrGenerator {
                         .is_some_and(|o| self.struct_name_of_expr(o).is_none())
                 {
                     return Some(Type::List(Box::new(Type::String)));
+                }
+                // Built-in `string` members (spec `types/primitive-types.md`).
+                if call.object.is_some() {
+                    match call.method.as_deref() {
+                        Some("codeAt") => return Some(Type::Number),
+                        Some("slice") if !self.expr_is_list_receiver(&call.object) => {
+                            return Some(Type::String);
+                        }
+                        Some("bytes") => {
+                            return Some(Type::List(Box::new(Type::Named(
+                                "u8".to_string(),
+                                Vec::new(),
+                            ))));
+                        }
+                        _ => {}
+                    }
                 }
                 // 方法调用用 `Type::method` 作键；否则用（规范化后的）函数名
                 let key = if let Some(recv) = &call.object
@@ -778,6 +813,9 @@ impl IrGenerator {
                     && let Some(field) = fields.iter().find(|f| f.name == member.property)
                 {
                     return Some(field.type_.clone());
+                }
+                if matches!(member.property.as_str(), "len" | "byteLen" | "size") {
+                    return Some(Type::Number);
                 }
                 None
             }
@@ -1031,7 +1069,9 @@ impl IrGenerator {
                         "test" | "contains" | "starts_with" | "ends_with" => return 5,
                         "group" | "replace" | "to_uppercase" | "to_lowercase" | "trim"
                         | "pad_start" | "pad_end" | "repeat" => return 0,
-                        "length" => return 1,
+                        "length" | "codeAt" => return 1,
+                        "bytes" => return 3,
+                        "slice" if !self.expr_is_list_receiver(&call.object) => return 0,
                         "split" | "find_all" => return 3,
                         "find" => return -1, // match 对象或 null
                         _ => {}
@@ -1318,6 +1358,8 @@ impl IrGenerator {
                 std::borrow::Cow::Owned(format!("Process::{rest}"))
             } else if let Some(rest) = callee.strip_prefix("std::json::") {
                 std::borrow::Cow::Owned(format!("Json::{rest}"))
+            } else if let Some(rest) = callee.strip_prefix("std::http::") {
+                std::borrow::Cow::Owned(format!("Http::{rest}"))
             } else {
                 std::borrow::Cow::Borrowed(callee)
             };
@@ -1325,6 +1367,12 @@ impl IrGenerator {
             "Math::abs" => ("xulo_math_abs", IrType::F64, 2),
             "Math::min" => ("xulo_math_min", IrType::F64, 2),
             "Math::max" => ("xulo_math_max", IrType::F64, 2),
+            "Math::sign" => ("xulo_math_sign", IrType::F64, 2),
+            "Math::hypot" => ("xulo_math_hypot", IrType::F64, 2),
+            "Math::clamp" => ("xulo_math_clamp", IrType::F64, 2),
+            "Math::log1p" => ("xulo_math_log1p", IrType::F64, 2),
+            "Math::expm1" => ("xulo_math_expm1", IrType::F64, 2),
+            "Math::randomInt" => ("xulo_math_random_int", IrType::I64, 1),
             "Math::floor" => ("xulo_math_floor", IrType::F64, 2),
             "Math::ceil" => ("xulo_math_ceil", IrType::F64, 2),
             "Math::round" => ("xulo_math_round", IrType::F64, 2),
@@ -1357,12 +1405,35 @@ impl IrGenerator {
             "Time::nowNanos" => ("xulo_time_now_nanos", IrType::I64, 1),
             "Time::monotonic" => ("xulo_time_monotonic", IrType::I64, 1),
             "Time::monotonicNanos" => ("xulo_time_monotonic_nanos", IrType::I64, 1),
+            // `std::time` 日历：format/parse 交换 ISO 8601 文本，parts 返回
+            // 字段对象（tag=4），fromParts/weekday 返回整数
+            "Time::format" => ("xulo_time_format", IrType::Pointer, 0),
+            "Time::parse" => ("xulo_time_parse", IrType::Pointer, 7),
+            "Time::parts" => ("xulo_time_parts", IrType::Pointer, 4),
+            "Time::fromParts" => ("xulo_time_from_parts", IrType::I64, 1),
+            "Time::weekday" => ("xulo_time_weekday", IrType::I64, 1),
             // `std::fs`：可失败操作返回内置 Result 枚举（tag=7），exists 是 bool
             "Fs::read" => ("xulo_fs_read", IrType::Pointer, 7),
             "Fs::write" => ("xulo_fs_write", IrType::Pointer, 7),
             "Fs::exists" => ("xulo_fs_exists", IrType::Bool, 5),
             "Fs::remove" => ("xulo_fs_remove", IrType::Pointer, 7),
             "Fs::mkdir" => ("xulo_fs_mkdir", IrType::Pointer, 7),
+            "Fs::append" => ("xulo_fs_append", IrType::Pointer, 7),
+            "Fs::createNew" => ("xulo_fs_create_new", IrType::Pointer, 7),
+            "Fs::touch" => ("xulo_fs_touch", IrType::Pointer, 7),
+            "Fs::setTimes" => ("xulo_fs_set_times", IrType::Pointer, 7),
+            "Fs::setMode" => ("xulo_fs_set_mode", IrType::Pointer, 7),
+            "Fs::realpath" => ("xulo_fs_realpath", IrType::Pointer, 7),
+            "Fs::stat" => ("xulo_fs_stat", IrType::Pointer, 7),
+            "Fs::copy" => ("xulo_fs_copy", IrType::Pointer, 7),
+            "Fs::rename" => ("xulo_fs_rename", IrType::Pointer, 7),
+            "Fs::removeDir" => ("xulo_fs_remove_dir", IrType::Pointer, 7),
+            "Fs::readDir" => ("xulo_fs_read_dir", IrType::Pointer, 7),
+            "Fs::walk" => ("xulo_fs_walk", IrType::Pointer, 7),
+            "Fs::tempFile" => ("xulo_fs_temp_file", IrType::Pointer, 7),
+            "Fs::tempDir" => ("xulo_fs_temp_dir", IrType::Pointer, 7),
+            "Fs::tempFileIn" => ("xulo_fs_temp_file_in", IrType::Pointer, 7),
+            "Fs::tempDirIn" => ("xulo_fs_temp_dir_in", IrType::Pointer, 7),
             // `std::io`：七个成员全部可失败，一律返回内置 Result 枚举
             // （tag=7）；读入结果由运行时按载荷 tag 区分字符串与 null(EOF)
             "Io::print" => ("xulo_io_print", IrType::Pointer, 7),
@@ -1372,41 +1443,63 @@ impl IrGenerator {
             "Io::flush" => ("xulo_io_flush", IrType::Pointer, 7),
             "Io::readLine" => ("xulo_io_read_line", IrType::Pointer, 7),
             "Io::read" => ("xulo_io_read", IrType::Pointer, 7),
+            "Io::readN" => ("xulo_io_read_n", IrType::Pointer, 7),
+            "Io::stdinIsTTY" => ("xulo_io_stdin_is_tty", IrType::Bool, 5),
+            "Io::stdoutIsTTY" => ("xulo_io_stdout_is_tty", IrType::Bool, 5),
             // `std::os`：可失败成员返回内置 Result 枚举（tag=7，getenv 载荷
             // 区分字符串/null）；pid 是数字，platform/arch 是字符串
             "Os::getenv" => ("xulo_os_getenv", IrType::Pointer, 7),
             "Os::setenv" => ("xulo_os_setenv", IrType::Pointer, 7),
+            "Os::unsetenv" => ("xulo_os_unsetenv", IrType::Pointer, 7),
+            "Os::tmpDir" => ("xulo_os_tmp_dir", IrType::Pointer, 0),
+            "Os::homeDir" => ("xulo_os_home_dir", IrType::Pointer, 7),
+            "Os::hostName" => ("xulo_os_host_name", IrType::Pointer, 7),
+            "Os::userName" => ("xulo_os_user_name", IrType::Pointer, 7),
+            "Os::execPath" => ("xulo_os_exec_path", IrType::Pointer, 7),
+            "Os::cpuCount" => ("xulo_os_cpu_count", IrType::I64, 1),
             "Os::cwd" => ("xulo_os_cwd", IrType::Pointer, 7),
             "Os::chdir" => ("xulo_os_chdir", IrType::Pointer, 7),
             "Os::pid" => ("xulo_os_pid", IrType::I64, 1),
             "Os::platform" => ("xulo_os_platform", IrType::Pointer, 0),
             "Os::arch" => ("xulo_os_arch", IrType::Pointer, 0),
             // `std::path`：全成员返回驻留字符串（tag=0，总谓词不失败）
+            "Path::isAbsolute" => ("xulo_path_is_absolute", IrType::Bool, 5),
+            "Path::stem" => ("xulo_path_stem", IrType::Pointer, 0),
+            "Path::withExt" => ("xulo_path_with_ext", IrType::Pointer, 0),
             "Path::join" => ("xulo_path_join", IrType::Pointer, 0),
             "Path::dirname" => ("xulo_path_dirname", IrType::Pointer, 0),
             "Path::basename" => ("xulo_path_basename", IrType::Pointer, 0),
             "Path::ext" => ("xulo_path_ext", IrType::Pointer, 0),
             "Path::normalize" => ("xulo_path_normalize", IrType::Pointer, 0),
-            // `std::net`：九成员一律返回内置 Result 枚举（tag=7）——开句
+            // `std::net`：十成员一律返回内置 Result 枚举（tag=7）——开句
             // 载荷是句柄数字（tag=1），读入载荷区分字符串/null(EOF，tag=6)
-            "Net::tcp_listen" => ("xulo_net_tcp_listen", IrType::Pointer, 7),
-            "Net::tcp_accept" => ("xulo_net_tcp_accept", IrType::Pointer, 7),
-            "Net::tcp_connect" => ("xulo_net_tcp_connect", IrType::Pointer, 7),
-            "Net::sock_read" => ("xulo_net_sock_read", IrType::Pointer, 7),
-            "Net::sock_write" => ("xulo_net_sock_write", IrType::Pointer, 7),
-            "Net::sock_shutdown" => ("xulo_net_sock_shutdown", IrType::Pointer, 7),
-            "Net::sock_close" => ("xulo_net_sock_close", IrType::Pointer, 7),
-            "Net::sock_local_addr" => ("xulo_net_sock_local_addr", IrType::Pointer, 7),
-            "Net::sock_peer_addr" => ("xulo_net_sock_peer_addr", IrType::Pointer, 7),
-            // `std::process`：run 返回 Result 枚举（tag=7），args 返回数组
-            // （tag=3），exit 永不返回（假 i64 返回，tag=6）
+            "Net::tcpListen" => ("xulo_net_tcp_listen", IrType::Pointer, 7),
+            "Net::tcpAccept" => ("xulo_net_tcp_accept", IrType::Pointer, 7),
+            "Net::tcpConnect" => ("xulo_net_tcp_connect", IrType::Pointer, 7),
+            "Net::sockRead" => ("xulo_net_sock_read", IrType::Pointer, 7),
+            "Net::sockWrite" => ("xulo_net_sock_write", IrType::Pointer, 7),
+            "Net::sockShutdown" => ("xulo_net_sock_shutdown", IrType::Pointer, 7),
+            "Net::sockShutdownWrite" => ("xulo_net_sock_shutdown_write", IrType::Pointer, 7),
+            "Net::sockClose" => ("xulo_net_sock_close", IrType::Pointer, 7),
+            "Net::sockLocalAddr" => ("xulo_net_sock_local_addr", IrType::Pointer, 7),
+            "Net::sockPeerAddr" => ("xulo_net_sock_peer_addr", IrType::Pointer, 7),
+            // `std::process`：run/exec 返回 Result 枚举（tag=7），args 返回
+            // 数组（tag=3），exit 永不返回（假 i64 返回，tag=6）。launch/
+            // Command/Child 保留子进程句柄，没有 AOT 落地（走解释器）
             "Process::exit" => ("xulo_process_exit", IrType::I64, 6),
             "Process::args" => ("xulo_process_args", IrType::Pointer, 3),
             "Process::run" => ("xulo_process_run", IrType::Pointer, 7),
+            "Process::exec" => ("xulo_process_exec", IrType::Pointer, 7),
             // `std::json`：两成员都返回内置 Result 枚举（tag=7）——parse
             // 的载荷种类由 FFI 写进枚举，stringify 的载荷是驻留字符串
             "Json::parse" => ("xulo_json_parse", IrType::Pointer, 7),
             "Json::stringify" => ("xulo_json_stringify", IrType::Pointer, 7),
+            "Json::valid" => ("xulo_json_valid", IrType::Bool, 5),
+            // `std::http`：fetch/request 返回 Result 枚举（tag=7，载荷是
+            // `{status, headers, body}` 对象）。listen/Server/Response.text/
+            // 构造器没有 AOT 落地（走解释器）
+            "Http::fetch" => ("xulo_http_fetch", IrType::Pointer, 7),
+            "Http::request" => ("xulo_http_request", IrType::Pointer, 7),
             _ => return None,
         };
         Some(lowering)

@@ -6,6 +6,7 @@ fn test_enum_def_basic() {
         name: "Color".to_string(),
         name_span: 5..10,
         type_params: vec![],
+        generic_params: vec![],
         type_bounds: Vec::new(),
         variants: vec![
             EnumVariant {
@@ -31,6 +32,7 @@ fn test_enum_def_with_payload() {
         name: "Result".to_string(),
         name_span: 5..11,
         type_params: vec![],
+        generic_params: vec![],
         type_bounds: Vec::new(),
         variants: vec![
             EnumVariant {
@@ -62,6 +64,7 @@ fn test_enum_def_generic() {
         name: "Option".to_string(),
         name_span: 5..11,
         type_params: vec!["T".to_string()],
+        generic_params: vec![],
         type_bounds: Vec::new(),
         variants: vec![
             EnumVariant {
@@ -179,6 +182,7 @@ fn test_export_fn() {
             params: vec![],
             return_type: None,
             type_params: vec![],
+            generic_params: vec![],
             bounds: vec![],
             is_async: false,
             body: Block { statements: vec![] },
@@ -220,6 +224,7 @@ fn test_type_alias() {
         name: "UserID".to_string(),
         name_span: 5..11,
         type_params: vec![],
+        generic_params: vec![],
         type_bounds: Vec::new(),
         type_: Type::Number,
     };
@@ -232,6 +237,7 @@ fn test_type_alias_generic() {
         name: "Predicate".to_string(),
         name_span: 5..14,
         type_params: vec!["T".to_string()],
+        generic_params: vec![],
         type_bounds: Vec::new(),
         type_: Type::FnSig {
             params: vec![Type::Named("T".to_string(), Vec::new())],
@@ -247,6 +253,7 @@ fn test_trait_decl() {
         name: "Display".to_string(),
         name_span: 6..13,
         type_params: vec![],
+        generic_params: vec![],
         methods: vec![TraitMethod {
             name: "fmt".to_string(),
             name_span: 15..18,
@@ -270,6 +277,7 @@ fn test_impl_decl() {
         trait_name: "Display".to_string(),
         type_name: "User".to_string(),
         type_params: vec![],
+        generic_params: vec![],
         type_bounds: vec![],
         type_args: vec![],
         methods: vec![FnDef {
@@ -278,6 +286,7 @@ fn test_impl_decl() {
             params: vec![],
             return_type: Some(Type::String),
             type_params: vec![],
+            generic_params: vec![],
             bounds: vec![],
             is_async: false,
             body: Block { statements: vec![] },

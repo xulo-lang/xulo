@@ -32,34 +32,7 @@ fn references_symbol(bytes: &[u8], symbol: &str) -> bool {
 }
 
 /// examples/math_time.xulo 全文：AOT 编译路径的输出必须与解释器逐行一致
-const MATH_TIME_EXAMPLE: &str = r#"
-// 命名空间 std::math:: / std::time::：常量、常用数学函数、时钟与计时
-fn main() {
-    // 常量
-    print(std::math::PI, std::math::E, std::math::TAU)
-    print(std::math::INFINITY)
-
-    // 取整与整数运算
-    print(std::math::floor(3.7), std::math::ceil(3.2), std::math::round(3.5))
-    print(std::math::abs(-42))
-    print(std::math::min(3, 9), std::math::max(3, 9))
-    print(std::math::pow(2.0, 10.0))
-    print(std::math::sqrt(2.0))
-
-    // 定点小数格式化
-    print(std::math::toFixed(3.14159, 2))
-
-    // 三角函数与对数
-    print(std::math::sin(0.0), std::math::cos(0.0))
-    print(std::math::log(std::math::E))
-
-    // 时钟
-    print(std::time::now() >= 0)
-    let start = std::time::monotonicNanos()
-    print(std::time::monotonic() >= 0)
-    print(start >= 0)
-}
-"#;
+const MATH_TIME_EXAMPLE: &str = include_str!("../../../examples/math_time.xulo");
 
 #[test]
 fn test_math_time_example_matches_interpreter() {
@@ -78,6 +51,10 @@ fn test_math_time_example_matches_interpreter() {
         "true",
         "true",
         "true",
+        "2026-10-26T12:00:00.000Z",
+        "true",
+        "2026 10 26 12",
+        "1",
     ]
     .iter()
     .map(|s| s.to_string())
@@ -574,33 +551,33 @@ fn test_std_net_loopback_echo_round_trip() {
     let out = compile_and_run(
         r#"
 fn main() {
-    match std::net::tcp_listen("127.0.0.1:0") {
+    match std::net::tcpListen("127.0.0.1:0") {
         Result::Ok(server) => {
-            match std::net::sock_local_addr(server) {
+            match std::net::sockLocalAddr(server) {
                 Result::Ok(addr) => {
-                    match std::net::tcp_connect(addr) {
+                    match std::net::tcpConnect(addr) {
                         Result::Ok(client) => {
-                            match std::net::tcp_accept(server) {
+                            match std::net::tcpAccept(server) {
                                 Result::Ok(accepted) => {
-                                    match std::net::sock_write(client, "ping") {
+                                    match std::net::sockWrite(client, "ping") {
                                         Result::Ok(n) => print(n)
                                         Result::Err(e) => print(e.message)
                                     }
-                                    match std::net::sock_read(accepted, 64) {
+                                    match std::net::sockRead(accepted, 64) {
                                         Result::Ok(text) => print(text ?? "eof")
                                         Result::Err(e) => print(e.message)
                                     }
-                                    match std::net::sock_write(accepted, "pong") {
+                                    match std::net::sockWrite(accepted, "pong") {
                                         Result::Ok(n) => print(n)
                                         Result::Err(e) => print(e.message)
                                     }
-                                    match std::net::sock_read(client, 64) {
+                                    match std::net::sockRead(client, 64) {
                                         Result::Ok(text) => print(text ?? "eof")
                                         Result::Err(e) => print(e.message)
                                     }
-                                    std::net::sock_close(client)
-                                    std::net::sock_close(accepted)
-                                    std::net::sock_close(server)
+                                    std::net::sockClose(client)
+                                    std::net::sockClose(accepted)
+                                    std::net::sockClose(server)
                                 }
                                 Result::Err(e) => print(e.message)
                             }
@@ -626,17 +603,17 @@ fn test_std_net_error_payloads_surface_messages() {
     let out = compile_and_run(
         r#"
 fn main() {
-    match std::net::tcp_listen("127.0.0.1:0") {
+    match std::net::tcpListen("127.0.0.1:0") {
         Result::Ok(server) => {
-            match std::net::sock_write(server, "x") {
+            match std::net::sockWrite(server, "x") {
                 Result::Ok(_) => print("wrote")
                 Result::Err(e) => print(e.message)
             }
-            match std::net::sock_read(999999, 8) {
+            match std::net::sockRead(999999, 8) {
                 Result::Ok(_) => print("read")
                 Result::Err(e) => print(e.message)
             }
-            std::net::sock_close(server)
+            std::net::sockClose(server)
         }
         Result::Err(e) => print(e.message)
     }
@@ -655,15 +632,16 @@ fn test_aot_object_references_net_symbols() {
     let bytes = object_bytes(
         r#"
 fn main() {
-    std::net::tcp_listen("127.0.0.1:0")
-    std::net::tcp_connect("127.0.0.1:1")
-    std::net::tcp_accept(1)
-    std::net::sock_read(1, 8)
-    std::net::sock_write(1, "x")
-    std::net::sock_shutdown(1)
-    std::net::sock_close(1)
-    std::net::sock_local_addr(1)
-    std::net::sock_peer_addr(1)
+    std::net::tcpListen("127.0.0.1:0")
+    std::net::tcpConnect("127.0.0.1:1")
+    std::net::tcpAccept(1)
+    std::net::sockRead(1, 8)
+    std::net::sockWrite(1, "x")
+    std::net::sockShutdown(1)
+    std::net::sockShutdownWrite(1)
+    std::net::sockClose(1)
+    std::net::sockLocalAddr(1)
+    std::net::sockPeerAddr(1)
 }
 "#,
     );
@@ -674,6 +652,7 @@ fn main() {
         "xulo_net_sock_read",
         "xulo_net_sock_write",
         "xulo_net_sock_shutdown",
+        "xulo_net_sock_shutdown_write",
         "xulo_net_sock_close",
         "xulo_net_sock_local_addr",
         "xulo_net_sock_peer_addr",
@@ -691,13 +670,13 @@ fn test_std_net_bare_import_lowers_like_the_qualified_form() {
 use std::net::*;
 
 fn main() {
-    match tcp_listen("127.0.0.1:0") {
+    match tcpListen("127.0.0.1:0") {
         Result::Ok(server) => {
-            match sock_local_addr(server) {
+            match sockLocalAddr(server) {
                 Result::Ok(addr) => print(addr)
                 Result::Err(e) => print(e.message)
             }
-            sock_close(server)
+            sockClose(server)
         }
         Result::Err(e) => print(e.message)
     }
@@ -761,7 +740,7 @@ fn main() {
     assert_eq!(out, vec!["true", "true"], "unexpected: {out:?}");
 }
 
-/// AOT 对象文件引用 `std::process` 的全部三个运行时符号（链接期接线回归）。
+/// AOT 对象文件引用 `std::process` 的全部四个运行时符号（链接期接线回归）。
 #[test]
 fn test_aot_object_references_process_symbols() {
     let bytes = object_bytes(
@@ -770,11 +749,86 @@ fn main() {
     std::process::args()
     std::process::run("true")
     std::process::run("true", "")
+    std::process::exec("true", [])
 }
 "#,
     );
-    for symbol in ["xulo_process_args", "xulo_process_run", "xulo_process_exit"] {
+    for symbol in [
+        "xulo_process_args",
+        "xulo_process_run",
+        "xulo_process_exec",
+        "xulo_process_exit",
+    ] {
         assert!(references_symbol(&bytes, symbol), "object missing {symbol}");
+    }
+}
+
+/// `std::process::exec` 编译路径：直接执行（不经 shell）、可选 input/
+/// timeout 的 IR 补齐，与解释器同构。
+#[test]
+fn test_std_process_exec_runs_directly_and_pads_optionals() {
+    let out = compile_and_run(
+        r#"
+fn main() {
+    match std::process::exec("echo", ["$((2 + 3))"]) {
+        Result::Ok(r) => print(r.stdout)
+        Result::Err(e) => print(e.message)
+    }
+    match std::process::exec("cat", [], "payload") {
+        Result::Ok(r) => print(r.stdout)
+        Result::Err(e) => print(e.message)
+    }
+    match std::process::exec("/nonexistent/xulo-probe", []) {
+        Result::Ok(r) => print(r.stdout)
+        Result::Err(e) => print(e.message)
+    }
+}
+"#,
+    );
+    assert_eq!(out.len(), 3, "unexpected: {out:?}");
+    assert_eq!(out[0], "$((2 + 3))\n", "no shell: literal argument");
+    assert_eq!(out[1], "payload");
+    assert!(out[2].contains("cannot run"), "unexpected: {out:?}");
+}
+
+/// `run` 的可选 `timeout` 也在编译路径生效（-1 → 不限时，数值预算按毫秒）。
+#[test]
+fn test_std_process_run_timeout_budget_in_the_aot_path() {
+    let out = compile_and_run(
+        r#"
+fn main() {
+    match std::process::run("sleep 10", null, 300) {
+        Result::Ok(r) => print(r.stdout)
+        Result::Err(e) => print(e.message)
+    }
+    match std::process::run("echo edge", null, 60000) {
+        Result::Ok(r) => print(r.stdout)
+        Result::Err(e) => print(e.message)
+    }
+}
+"#,
+    );
+    assert_eq!(out.len(), 2, "unexpected: {out:?}");
+    assert!(out[0].contains("timed out after 300 ms"), "unexpected: {out:?}");
+    assert_eq!(out[1], "edge\n");
+}
+
+/// AOT gap：`launch`/`Command`/`Child` 保留子进程句柄，只有解释器能跑——
+/// 编译路径在 IR 生成就以 "undefined function" 拒绝（与 fs 字节成员同列）。
+#[test]
+fn test_aot_gap_launch_and_command_need_the_interpreter() {
+    for src in [
+        "fn main() { std::process::launch(\"make\") }",
+        "fn main() { std::process::Command::shell(\"make\") }",
+        "use std::process::Command;\nfn main() { Command::shell(\"make\").run() }",
+    ] {
+        let err = compile_to_ir(src, Path::new("test.xulo"))
+            .expect_err("handle members have no AOT lowering");
+        assert!(
+            err.message.contains("undefined function"),
+            "{src}: {}",
+            err.message
+        );
     }
 }
 
@@ -979,4 +1033,186 @@ fn test_float_range_bound() {
 "#,
     );
     assert_eq!(out, vec!["[0, 1]"]);
+}
+
+/// AOT 对象文件引用 `std::http` 客户端的两个运行时符号（链接期接线回归）。
+#[test]
+fn test_aot_object_references_http_symbols() {
+    let bytes = object_bytes(
+        r#"
+fn main() {
+    std::http::fetch("http://127.0.0.1:1/")
+    std::http::request("GET", "http://127.0.0.1:1/")
+}
+"#,
+    );
+    for symbol in ["xulo_http_fetch", "xulo_http_request"] {
+        assert!(references_symbol(&bytes, symbol), "object missing {symbol}");
+    }
+}
+
+/// `std::http::fetch` 编译路径：载荷对象的字段访问（status/headers/body）
+/// 与解释器同构；可选 timeout 的 IR 补齐（-1 → 不限时）。
+#[test]
+fn test_std_http_fetch_reads_the_answer_fields() {
+    let server = xulo_std::http::listen("127.0.0.1:0").expect("bind");
+    let addr = server.addr().expect("addr");
+    std::thread::spawn(move || {
+        let _ = server.serve(|_req| xulo_std::http::Response::text("from aot", 200));
+    });
+    let out = compile_and_run(&format!(
+        r#"
+fn main() {{
+    match std::http::fetch("http://{addr}/health") {{
+        Result::Ok(res) => {{
+            print(res.status)
+            print(res.body)
+        }}
+        Result::Err(e) => print(e.message)
+    }}
+    match std::http::fetch("http://{addr}/x", 60000) {{
+        Result::Ok(res) => print(res.body)
+        Result::Err(e) => print(e.message)
+    }}
+}}
+"#
+    ));
+    assert_eq!(
+        out,
+        vec!["200".to_string(), "from aot".to_string(), "from aot".to_string()],
+        "unexpected: {out:?}"
+    );
+}
+
+/// `std::http::request` 编译路径：method/headers/body 三个可选参的补齐
+/// 与载荷往返。
+#[test]
+fn test_std_http_request_roundtrip_in_the_aot_path() {
+    let server = xulo_std::http::listen("127.0.0.1:0").expect("bind");
+    let addr = server.addr().expect("addr");
+    std::thread::spawn(move || {
+        let _ = server.serve(|req| {
+            let who = req.form_value("name").unwrap_or("stranger".to_string());
+            xulo_std::http::Response::text(&format!("{} {}", req.method, who), 201)
+        });
+    });
+    let out = compile_and_run(&format!(
+        r#"
+fn main() {{
+    match std::http::request(
+        "POST",
+        "http://{addr}/greet",
+        [{{ name: "content-type", value: "application/x-www-form-urlencoded" }}],
+        "name=aot"
+    ) {{
+        Result::Ok(res) => {{
+            print(res.status)
+            print(res.body)
+        }}
+        Result::Err(e) => print(e.message)
+    }}
+    match std::http::request("GET", "http://{addr}/plain") {{
+        Result::Ok(res) => print(res.body)
+        Result::Err(e) => print(e.message)
+    }}
+}}
+"#
+    ));
+    assert_eq!(
+        out,
+        vec![
+            "201".to_string(),
+            "POST aot".to_string(),
+            "GET stranger".to_string()
+        ],
+        "unexpected: {out:?}"
+    );
+}
+
+/// AOT gap：`listen`/`Server` 与对象上的方法/构造器只有解释器能跑——
+/// 编译路径在 IR 生成就拒绝（与 fs 字节成员、process 的 launch 同列）。
+#[test]
+fn test_aot_gap_http_server_needs_the_interpreter() {
+    for (src, needle) in [
+        (
+            "fn main() { std::http::listen(\"127.0.0.1:1\") }",
+            "undefined function",
+        ),
+        (
+            "fn main() { std::http::Response.text(\"x\") }",
+            "undefined variant",
+        ),
+        (
+            "fn main() { std::http::Response(status: 200, headers: [], body: \"ok\") }",
+            "undefined function",
+        ),
+    ] {
+        let err = compile_to_ir(src, Path::new("test.xulo"))
+            .expect_err("server/object members have no AOT lowering");
+        assert!(
+            err.message.contains(needle),
+            "{src}: {}",
+            err.message
+        );
+    }
+}
+
+/// AOT 对象文件引用 `std::time` 日历的全部五个运行时符号（链接期接线回归）。
+#[test]
+fn test_aot_object_references_time_calendar_symbols() {
+    let bytes = object_bytes(
+        r#"
+fn main() {
+    std::time::format(0)
+    std::time::parse("1970-01-01T00:00:00.000Z")
+    std::time::parts(0)
+    std::time::fromParts(2026, 10, 26)
+    std::time::weekday(0)
+}
+"#,
+    );
+    for symbol in [
+        "xulo_time_format",
+        "xulo_time_parse",
+        "xulo_time_parts",
+        "xulo_time_from_parts",
+        "xulo_time_weekday",
+    ] {
+        assert!(references_symbol(&bytes, symbol), "object missing {symbol}");
+    }
+}
+
+/// `std::time` 日历的编译路径：format/parse 交换、parts 字段读取、
+/// fromParts 的可选时间字段补齐（缺省 0.0），与解释器同构。
+#[test]
+fn test_std_time_calendar_roundtrips_in_the_aot_path() {
+    let out = compile_and_run(
+        r#"
+fn main() {
+    let noon = std::time::fromParts(2026, 10, 26, 12)
+    print(std::time::format(noon))
+    match std::time::parse("2026-10-26T12:00:00.000Z") {
+        Result::Ok(ms) => print(ms == noon)
+        Result::Err(e) => print(e.message)
+    }
+    let f = std::time::parts(noon)
+    print(f.year)
+    print(f.day)
+    print(str(std::time::weekday(noon)))
+    print(std::time::format(std::time::fromParts(2026, 10, 26)))
+}
+"#,
+    );
+    assert_eq!(
+        out,
+        vec![
+            "2026-10-26T12:00:00.000Z".to_string(),
+            "true".to_string(),
+            "2026".to_string(),
+            "26".to_string(),
+            "1".to_string(),
+            "2026-10-26T00:00:00.000Z".to_string(),
+        ],
+        "unexpected: {out:?}"
+    );
 }

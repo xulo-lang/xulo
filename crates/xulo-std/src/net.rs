@@ -16,6 +16,7 @@
 //! is called, so a single-threaded program never deadlocks.
 
 use std::cell::{Cell, RefCell};
+use std::time::Duration;
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream, ToSocketAddrs};
@@ -66,6 +67,12 @@ fn resolve(addr: &str) -> Result<Vec<std::net::SocketAddr>, String> {
         .map_err(|e| format!("cannot resolve `{addr}`: {e}"))
 }
 
+/// A caller-supplied wait budget in milliseconds (`null` = wait without
+/// limit), the optional trailing argument of the four blocking members.
+fn budget(timeout_ms: Option<u64>) -> Option<Duration> {
+    timeout_ms.map(Duration::from_millis)
+}
+
 /// `std::net::tcp_listen(addr)`: create and bind a listener on `addr`
 /// (`"127.0.0.1:8080"`; the listen backlog is the OS default, ~128) —
 /// returns the listener handle. Port `0` asks the OS for an ephemeral port
@@ -89,7 +96,7 @@ pub fn tcp_listen(addr: &str) -> Result<i64, String> {
 /// return the new stream's handle. The operand must be a live listener.
 /// The listener is taken out of the registry across the blocking accept so
 /// the `RefCell` is never borrowed twice, then put straight back.
-pub fn tcp_accept(listener: i64) -> Result<i64, String> {
+pub fn tcp_accept(listener: i64, timeout_ms: Option<u64>) -> Result<i64, String> {
     lookup(listener)?;
     let taken = REGISTRY.with(|reg| reg.borrow_mut().remove(&listener));
     let Some(socket) = taken else {
@@ -104,24 +111,63 @@ pub fn tcp_accept(listener: i64) -> Result<i64, String> {
             ));
         }
     };
-    let accepted = l.accept();
+    // A budget is polled through a non-blocking accept loop: the listener has
+    // no accept-with-timeout of its own. The listener is put back in either
+    // case, so a timed-out accept leaves it usable for the next try.
+    let accepted = match budget(timeout_ms) {
+        None => l.accept().map_err(|e| format!("accept failed: {e}")),
+        Some(limit) => {
+            let _ = l.set_nonblocking(true);
+            let deadline = std::time::Instant::now() + limit;
+            let mut result = Err(format!("accept timed out after {timeout_ms:?} ms"));
+            loop {
+                match l.accept() {
+                    Ok(pair) => {
+                        result = Ok(pair);
+                        break;
+                    }
+                    Err(e)
+                        if matches!(
+                            e.kind(),
+                            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                        ) =>
+                    {
+                        if std::time::Instant::now() >= deadline {
+                            break;
+                        }
+                        std::thread::sleep(Duration::from_millis(2));
+                    }
+                    Err(e) => {
+                        result = Err(format!("accept failed: {e}"));
+                        break;
+                    }
+                }
+            }
+            let _ = l.set_nonblocking(false);
+            result
+        }
+    };
     REGISTRY.with(|reg| reg.borrow_mut().insert(listener, Socket::Listener(l)));
     match accepted {
         Ok((stream, _peer)) => {
             let _ = stream.set_nonblocking(false);
             Ok(register(Socket::Stream(Rc::new(RefCell::new(stream)))))
         }
-        Err(e) => Err(format!("accept failed: {e}")),
+        Err(e) => Err(e),
     }
 }
 
 /// `std::net::tcp_connect(addr)`: block until the connection completes (or
 /// fails) — returns the stream's handle.
-pub fn tcp_connect(addr: &str) -> Result<i64, String> {
+pub fn tcp_connect(addr: &str, timeout_ms: Option<u64>) -> Result<i64, String> {
     let addrs = resolve(addr)?;
     let mut last = format!("cannot connect to `{addr}`");
     for candidate in addrs {
-        match TcpStream::connect(candidate) {
+        let connected = match budget(timeout_ms) {
+            None => TcpStream::connect(candidate),
+            Some(limit) => TcpStream::connect_timeout(&candidate, limit),
+        };
+        match connected {
             Ok(stream) => {
                 let _ = stream.set_nonblocking(false);
                 return Ok(register(Socket::Stream(Rc::new(RefCell::new(stream)))));
@@ -150,7 +196,7 @@ fn stream_of(handle: i64) -> Result<Rc<RefCell<TcpStream>>, String> {
 /// `io::readLine`'s EOF); `Ok(text)` may be shorter than `max`. TCP is
 /// byte-oriented, so a multi-byte UTF-8 character split across two reads
 /// surfaces as replacement bytes — frame messages when text matters.
-pub fn sock_read(handle: i64, max: usize) -> Result<Option<String>, String> {
+pub fn sock_read(handle: i64, max: usize, timeout_ms: Option<u64>) -> Result<Option<String>, String> {
     // Argument domain first (same order as the FFI boundary): a zero or
     // oversized length is reported as itself, whatever the handle names.
     if max == 0 || max > MAX_IO_BYTES {
@@ -159,25 +205,55 @@ pub fn sock_read(handle: i64, max: usize) -> Result<Option<String>, String> {
         ));
     }
     let stream = stream_of(handle)?;
+    let mut s = stream.borrow_mut();
+    let applied = s.set_read_timeout(budget(timeout_ms));
     let mut buf = vec![0u8; max];
-    match stream.borrow_mut().read(&mut buf) {
+    let out = match s.read(&mut buf) {
         Ok(0) => Ok(None),
         Ok(n) => {
             buf.truncate(n);
             Ok(Some(String::from_utf8_lossy(&buf).into_owned()))
         }
+        Err(e)
+            if matches!(
+                e.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+            ) =>
+        {
+            Err(format!("read timed out after {timeout_ms:?} ms"))
+        }
         Err(e) => Err(format!("read failed: {e}")),
+    };
+    // The budget is a property of the call: clear it so the next read
+    // without an argument waits without limit again.
+    if applied.is_ok() {
+        let _ = s.set_read_timeout(None);
     }
+    out
 }
 
 /// `std::net::sock_write(handle, text)`: block until every byte of `text`
 /// is handed to the kernel — returns the byte count (UTF-8 length).
-pub fn sock_write(handle: i64, text: &str) -> Result<i64, String> {
+pub fn sock_write(handle: i64, text: &str, timeout_ms: Option<u64>) -> Result<i64, String> {
     let stream = stream_of(handle)?;
-    match stream.borrow_mut().write_all(text.as_bytes()) {
+    let mut s = stream.borrow_mut();
+    let applied = s.set_write_timeout(budget(timeout_ms));
+    let out = match s.write_all(text.as_bytes()) {
         Ok(()) => Ok(text.len() as i64),
+        Err(e)
+            if matches!(
+                e.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+            ) =>
+        {
+            Err(format!("write timed out after {timeout_ms:?} ms"))
+        }
         Err(e) => Err(format!("write failed: {e}")),
+    };
+    if applied.is_ok() {
+        let _ = s.set_write_timeout(None);
     }
+    out
 }
 
 /// `std::net::sock_shutdown(handle)`: half-close both directions so the peer
@@ -185,6 +261,17 @@ pub fn sock_write(handle: i64, text: &str) -> Result<i64, String> {
 pub fn sock_shutdown(handle: i64) -> Result<(), String> {
     let stream = stream_of(handle)?;
     match stream.borrow().shutdown(Shutdown::Both) {
+        Ok(()) => Ok(()),
+        Err(e) => Err(format!("shutdown failed: {e}")),
+    }
+}
+
+/// `std::net::sock_shutdown_write(handle)`: close only the writing half —
+/// the peer sees end of stream while this side's reads keep working until
+/// the peer closes; the handle stays open for `sock_close`.
+pub fn sock_shutdown_write(handle: i64) -> Result<(), String> {
+    let stream = stream_of(handle)?;
+    match stream.borrow().shutdown(Shutdown::Write) {
         Ok(()) => Ok(()),
         Err(e) => Err(format!("shutdown failed: {e}")),
     }

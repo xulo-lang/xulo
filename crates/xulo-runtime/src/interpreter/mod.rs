@@ -252,29 +252,6 @@ impl Interpreter {
         global
             .borrow_mut()
             .define("Error", Value::Native(Rc::new(native_error)), false);
-        // String inspection prelude operations (spec `builtins/prelude.md`):
-        // scalar counts and indices, a scalar-range slice, and the UTF-8
-        // bytes as a `List<u8>`.
-        global.borrow_mut().define(
-            "stringSize",
-            Value::Native(Rc::new(native_string_size)),
-            false,
-        );
-        global.borrow_mut().define(
-            "stringCodeAt",
-            Value::Native(Rc::new(native_string_code_at)),
-            false,
-        );
-        global.borrow_mut().define(
-            "stringSlice",
-            Value::Native(Rc::new(native_string_slice)),
-            false,
-        );
-        global.borrow_mut().define(
-            "stringBytes",
-            Value::Native(Rc::new(native_string_bytes)),
-            false,
-        );
         // Array global: Array.new(size, fill?), Array.fill(n, v), Array.clone(iter)
         let array_methods = vec![
             (
@@ -328,6 +305,15 @@ impl Interpreter {
             ("abs".to_string(), Value::Native(Rc::new(native_math_abs))),
             ("min".to_string(), Value::Native(Rc::new(native_math_min))),
             ("max".to_string(), Value::Native(Rc::new(native_math_max))),
+            ("sign".to_string(), Value::Native(Rc::new(native_math_sign))),
+            ("hypot".to_string(), Value::Native(Rc::new(native_math_hypot))),
+            ("clamp".to_string(), Value::Native(Rc::new(native_math_clamp))),
+            ("log1p".to_string(), Value::Native(Rc::new(native_math_log1p))),
+            ("expm1".to_string(), Value::Native(Rc::new(native_math_expm1))),
+            (
+                "randomInt".to_string(),
+                Value::Native(Rc::new(native_math_random_int)),
+            ),
             ("sqrt".to_string(), Value::Native(Rc::new(native_math_sqrt))),
             ("cbrt".to_string(), Value::Native(Rc::new(native_math_cbrt))),
             ("pow".to_string(), Value::Native(Rc::new(native_math_pow))),
@@ -460,6 +446,28 @@ impl Interpreter {
                 "sleep".to_string(),
                 Value::Native(Rc::new(native_time_sleep)),
             ),
+            // 日历（spec `modules/time.md`）：UTC 单域的 format/parse 与
+            // parts/fromParts/weekday
+            (
+                "format".to_string(),
+                Value::Native(Rc::new(native_time_format)),
+            ),
+            (
+                "parse".to_string(),
+                Value::Native(Rc::new(native_time_parse)),
+            ),
+            (
+                "parts".to_string(),
+                Value::Native(Rc::new(native_time_parts)),
+            ),
+            (
+                "fromParts".to_string(),
+                Value::Native(Rc::new(native_time_from_parts)),
+            ),
+            (
+                "weekday".to_string(),
+                Value::Native(Rc::new(native_time_weekday)),
+            ),
         ];
         let time_obj = Value::Object(Rc::new(RefCell::new(time_members)));
         // The `std::fs` namespace of filesystem primitives (implementation-first;
@@ -478,6 +486,70 @@ impl Interpreter {
                 Value::Native(Rc::new(native_fs_remove)),
             ),
             ("mkdir".to_string(), Value::Native(Rc::new(native_fs_mkdir))),
+            (
+                "append".to_string(),
+                Value::Native(Rc::new(native_fs_append)),
+            ),
+            (
+                "createNew".to_string(),
+                Value::Native(Rc::new(native_fs_create_new)),
+            ),
+            ("touch".to_string(), Value::Native(Rc::new(native_fs_touch))),
+            (
+                "setTimes".to_string(),
+                Value::Native(Rc::new(native_fs_set_times)),
+            ),
+            (
+                "setMode".to_string(),
+                Value::Native(Rc::new(native_fs_set_mode)),
+            ),
+            (
+                "realpath".to_string(),
+                Value::Native(Rc::new(native_fs_realpath)),
+            ),
+            ("stat".to_string(), Value::Native(Rc::new(native_fs_stat))),
+            ("copy".to_string(), Value::Native(Rc::new(native_fs_copy))),
+            (
+                "rename".to_string(),
+                Value::Native(Rc::new(native_fs_rename)),
+            ),
+            (
+                "removeDir".to_string(),
+                Value::Native(Rc::new(native_fs_remove_dir)),
+            ),
+            (
+                "readDir".to_string(),
+                Value::Native(Rc::new(native_fs_read_dir)),
+            ),
+            ("walk".to_string(), Value::Native(Rc::new(native_fs_walk))),
+            (
+                "readBytes".to_string(),
+                Value::Native(Rc::new(native_fs_read_bytes)),
+            ),
+            (
+                "writeBytes".to_string(),
+                Value::Native(Rc::new(native_fs_write_bytes)),
+            ),
+            (
+                "appendBytes".to_string(),
+                Value::Native(Rc::new(native_fs_append_bytes)),
+            ),
+            (
+                "tempFile".to_string(),
+                Value::Native(Rc::new(native_fs_temp_file)),
+            ),
+            (
+                "tempDir".to_string(),
+                Value::Native(Rc::new(native_fs_temp_dir)),
+            ),
+            (
+                "tempFileIn".to_string(),
+                Value::Native(Rc::new(native_fs_temp_file_in)),
+            ),
+            (
+                "tempDirIn".to_string(),
+                Value::Native(Rc::new(native_fs_temp_dir_in)),
+            ),
         ];
         let fs_obj = Value::Object(Rc::new(RefCell::new(fs_members)));
         // The `std::io` namespace of the host's standard streams
@@ -506,6 +578,18 @@ impl Interpreter {
                 Value::Native(Rc::new(native_io_read_line)),
             ),
             ("read".to_string(), Value::Native(Rc::new(native_io_read))),
+            (
+                "readN".to_string(),
+                Value::Native(Rc::new(native_io_read_n)),
+            ),
+            (
+                "stdinIsTTY".to_string(),
+                Value::Native(Rc::new(native_io_stdin_is_tty)),
+            ),
+            (
+                "stdoutIsTTY".to_string(),
+                Value::Native(Rc::new(native_io_stdout_is_tty)),
+            ),
         ];
         let io_obj = Value::Object(Rc::new(RefCell::new(io_members)));
         // The `std::os` namespace of process / host identity, the working
@@ -530,6 +614,46 @@ impl Interpreter {
                 Value::Native(Rc::new(native_os_platform)),
             ),
             ("arch".to_string(), Value::Native(Rc::new(native_os_arch))),
+            (
+                "unsetenv".to_string(),
+                Value::Native(Rc::new(native_os_unsetenv)),
+            ),
+            (
+                "tmpDir".to_string(),
+                Value::Native(Rc::new(native_os_tmp_dir)),
+            ),
+            (
+                "homeDir".to_string(),
+                Value::Native(Rc::new(native_os_string_result(
+                    "std::os::homeDir",
+                    xulo_std::os::home_dir,
+                ))),
+            ),
+            (
+                "hostName".to_string(),
+                Value::Native(Rc::new(native_os_string_result(
+                    "std::os::hostName",
+                    xulo_std::os::host_name,
+                ))),
+            ),
+            (
+                "userName".to_string(),
+                Value::Native(Rc::new(native_os_string_result(
+                    "std::os::userName",
+                    xulo_std::os::user_name,
+                ))),
+            ),
+            (
+                "execPath".to_string(),
+                Value::Native(Rc::new(native_os_string_result(
+                    "std::os::execPath",
+                    xulo_std::os::exec_path,
+                ))),
+            ),
+            (
+                "cpuCount".to_string(),
+                Value::Native(Rc::new(native_os_cpu_count)),
+            ),
         ];
         let os_obj = Value::Object(Rc::new(RefCell::new(os_members)));
         // The `std::path` namespace of POSIX path string operations
@@ -551,6 +675,20 @@ impl Interpreter {
                 "normalize".to_string(),
                 Value::Native(Rc::new(native_path_normalize)),
             ),
+            (
+                "isAbsolute".to_string(),
+                Value::Native(Rc::new(native_path_is_absolute)),
+            ),
+            ("split".to_string(), Value::Native(Rc::new(native_path_split))),
+            ("stem".to_string(), Value::Native(Rc::new(native_path_stem))),
+            (
+                "withExt".to_string(),
+                Value::Native(Rc::new(native_path_with_ext)),
+            ),
+            (
+                "relative".to_string(),
+                Value::Native(Rc::new(native_path_relative)),
+            ),
         ];
         let path_obj = Value::Object(Rc::new(RefCell::new(path_members)));
         // The `std::net` TCP surface: openers yield an opaque numeric socket
@@ -558,48 +696,53 @@ impl Interpreter {
         // never-opened number is a clean `Result::Err`, never a crash.
         // v1 is synchronous: `tcp_accept` / `sock_read` block the calling
         // task (cooperative scheduling freezes until they return).
-        let net_members: Vec<(String, Value)> = vec![
-            (
-                "tcp_listen".to_string(),
+        let net_members: Vec<(String, Value)> = vec![(
+                "tcpListen".to_string(),
                 Value::Native(Rc::new(native_net_tcp_listen)),
             ),
             (
-                "tcp_accept".to_string(),
+                "tcpAccept".to_string(),
                 Value::Native(Rc::new(native_net_tcp_accept)),
             ),
             (
-                "tcp_connect".to_string(),
+                "tcpConnect".to_string(),
                 Value::Native(Rc::new(native_net_tcp_connect)),
             ),
             (
-                "sock_read".to_string(),
+                "sockRead".to_string(),
                 Value::Native(Rc::new(native_net_sock_read)),
             ),
             (
-                "sock_write".to_string(),
+                "sockWrite".to_string(),
                 Value::Native(Rc::new(native_net_sock_write)),
             ),
             (
-                "sock_shutdown".to_string(),
+                "sockShutdown".to_string(),
                 Value::Native(Rc::new(native_net_sock_shutdown)),
             ),
             (
-                "sock_close".to_string(),
+                "sockShutdownWrite".to_string(),
+                Value::Native(Rc::new(native_net_sock_shutdown_write)),
+            ),
+            (
+                "sockClose".to_string(),
                 Value::Native(Rc::new(native_net_sock_close)),
             ),
             (
-                "sock_local_addr".to_string(),
+                "sockLocalAddr".to_string(),
                 Value::Native(Rc::new(native_net_sock_local_addr)),
             ),
             (
-                "sock_peer_addr".to_string(),
+                "sockPeerAddr".to_string(),
                 Value::Native(Rc::new(native_net_sock_peer_addr)),
             ),
         ];
         let net_obj = Value::Object(Rc::new(RefCell::new(net_members)));
         // The `std::process` surface: `exit` terminates the process (after
-        // draining the buffered `print` lines), `args` reads argv, and
-        // `run` captures a shell child synchronously.
+        // draining the buffered `print` lines), `args` reads argv, and the
+        // three captures spawn shell/direct children — `run`/`exec` blocking
+        // to completion, `launch` keeping the `Child` handle. `Command` is
+        // the specification type's statics (`shell`/`direct`).
         let process_members: Vec<(String, Value)> = vec![
             (
                 "exit".to_string(),
@@ -613,6 +756,15 @@ impl Interpreter {
                 "run".to_string(),
                 Value::Native(Rc::new(native_process_run)),
             ),
+            (
+                "exec".to_string(),
+                Value::Native(Rc::new(native_process_exec)),
+            ),
+            (
+                "launch".to_string(),
+                Value::Native(Rc::new(native_process_launch)),
+            ),
+            ("Command".to_string(), command_static_object()),
         ];
         let process_obj = Value::Object(Rc::new(RefCell::new(process_members)));
         // The `std::json` surface: `parse` turns JSON text into the tree of
@@ -627,6 +779,7 @@ impl Interpreter {
                 "stringify".to_string(),
                 Value::Native(Rc::new(native_json_stringify)),
             ),
+            ("valid".to_string(), Value::Native(Rc::new(native_json_valid))),
         ];
         let json_obj = Value::Object(Rc::new(RefCell::new(json_members)));
         // The `std::regex` module behind the language's `RegExp` type (spec
@@ -641,6 +794,33 @@ impl Interpreter {
             "RegExp".to_string(),
             Value::Object(Rc::new(RefCell::new(regexp_static))),
         )])));
+        // The `std::http` surface (spec `modules/http.md`): the client's
+        // `fetch`/`request`, the server's `listen`, and the data types whose
+        // statics and named-field constructors hang off their type objects.
+        let http_members: Vec<(String, Value)> = vec![
+            (
+                "fetch".to_string(),
+                Value::Native(Rc::new(native_http_fetch)),
+            ),
+            (
+                "request".to_string(),
+                Value::Native(Rc::new(native_http_request)),
+            ),
+            (
+                "listen".to_string(),
+                Value::Native(Rc::new(native_http_listen)),
+            ),
+            ("Request".to_string(), http_request_type_object()),
+            ("Response".to_string(), http_response_type_object()),
+            ("Server".to_string(), http_server_type_object()),
+        ];
+        let http_obj = Value::Object(Rc::new(RefCell::new(http_members)));
+        // The data type objects live in the root scope too: a constructed
+        // `Response` finds its methods on the type under its own name however
+        // the value reached the program (spec `modules/http.md`, "Types").
+        global.borrow_mut().define("Request", http_request_type_object(), false);
+        global.borrow_mut().define("Response", http_response_type_object(), false);
+        global.borrow_mut().define("Server", http_server_type_object(), false);
         // The whole built-in tree hangs off a single `std` namespace object:
         // `std::math::floor(…)` walks `std` → `math` → `floor` through the
         // generic namespace dispatch, and `setup_module` copies members out
@@ -656,13 +836,14 @@ impl Interpreter {
             ("process".to_string(), process_obj),
             ("json".to_string(), json_obj),
             ("regex".to_string(), regex_obj),
+            ("http".to_string(), http_obj),
         ];
         global.borrow_mut().define(
             "std",
             Value::Object(Rc::new(RefCell::new(std_members))),
             false,
         );
-        Interpreter {
+        let interp = Interpreter {
             out: RefCell::new(Vec::new()),
             global,
             tasks: RefCell::new(Vec::new()),
@@ -682,7 +863,39 @@ impl Interpreter {
             entry_env: RefCell::new(None),
             state_store: RefCell::new(std::collections::HashMap::new()),
             services: RefCell::new(Vec::new()),
-        }
+        };
+        // The built-in data types construct with named fields like a struct
+        // literal (spec `modules/http.md`, "Types"): the constructor metadata
+        // is their public fields, defaults none — the semantic pass reports a
+        // missing one as `E0205` before execution.
+        interp.struct_fields.borrow_mut().insert(
+            "Request".to_string(),
+            StructCtorDecl {
+                env: interp.global.clone(),
+                fields: vec![
+                    ("method".to_string(), None),
+                    ("path".to_string(), None),
+                    ("query".to_string(), None),
+                    ("form".to_string(), None),
+                    ("headers".to_string(), None),
+                    ("body".to_string(), None),
+                    ("version".to_string(), None),
+                    ("remoteAddr".to_string(), None),
+                ],
+            },
+        );
+        interp.struct_fields.borrow_mut().insert(
+            "Response".to_string(),
+            StructCtorDecl {
+                env: interp.global.clone(),
+                fields: vec![
+                    ("status".to_string(), None),
+                    ("headers".to_string(), None),
+                    ("body".to_string(), None),
+                ],
+            },
+        );
+        interp
     }
 
     /// Run a whole program: register functions/enums, execute top-level

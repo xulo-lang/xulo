@@ -1,0 +1,48 @@
+// std::json：文本 ↔ 值树的编解码（spec modules/json.md）——parse 把 JSON
+// 文本解成它描述的任意值，stringify 还原文本（可带 0…=8 空格缩进），valid
+// 只问语法。语法错误与不可序列化的值都是 Result::Err，对象键按字典序输出。
+fn main() {
+    // parse：文本 → 值树，读法与字面量一致
+    match std::json::parse("[1, true, \"x\", null]") {
+        Result::Ok(v) => {
+            print(v[0], v[1], v[2], str(v[3])) // 1 true x null
+        }
+        Result::Err(e) => print(e.message)
+    }
+    match std::json::parse("{\"user\": {\"name\": \"x\", \"tags\": [\"a\", \"b\"]}}") {
+        Result::Ok(v) => {
+            print(v.user.name) // x
+            print(v.user.tags[1]) // b
+        }
+        Result::Err(e) => print(e.message)
+    }
+
+    // stringify：值树 → 紧凑文本
+    match std::json::stringify([1, "two", false, null, 2.5]) {
+        Result::Ok(s) => print(s) // [1,"two",false,null,2.5]
+        Result::Err(e) => print(e.message)
+    }
+    match std::json::stringify({ name: "x", n: 3 }) {
+        Result::Ok(s) => print(s) // {"n":3,"name":"x"}（键按字典序）
+        Result::Err(e) => print(e.message)
+    }
+    // 缩进：第二参是每级空格数（0…=8）
+    match std::json::stringify({ a: 1 }, 2) {
+        Result::Ok(s) => print(s)
+        Result::Err(e) => print(e.message)
+    }
+
+    // valid：只问语法，是普通的 bool
+    print(std::json::valid("{}")) // true
+    print(std::json::valid("{")) // false
+
+    // 错误类：语法错误与缩进越界都是 Err，不是崩溃
+    match std::json::parse("{oops") {
+        Result::Ok(v) => print("parsed")
+        Result::Err(e) => print("parse failed")
+    }
+    match std::json::stringify({ a: 1 }, 9) {
+        Result::Ok(s) => print(s)
+        Result::Err(e) => print("indent outside 0..=8")
+    }
+}

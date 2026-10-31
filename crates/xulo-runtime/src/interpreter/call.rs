@@ -54,6 +54,27 @@ impl Interpreter {
             })?;
             return self.call_value(&callee, &call.arguments, env);
         }
+        // `Map::fromEntries` and `Set::fromList` are the static constructors
+        // of the two built-in container types (spec
+        // `types/composite-types.md`); they are not enum variants.
+        if call.object.is_none()
+            && !self
+                .enum_names
+                .borrow()
+                .iter()
+                .any(|n| n == "Map" || n == "Set")
+        {
+            if call.callee == "Map::fromEntries" {
+                return self.map_from_entries(call, env);
+            }
+            if call.callee == "Set::fromList" {
+                return self.set_from_list(call, env);
+            }
+            if call.callee == "Array::filled" {
+                return self.array_filled(call, env);
+            }
+        }
+
         // A built-in namespace head (`Task::all`) resolves to its intrinsic
         // object in the root environment (spec
         // `builtins/intrinsic-functions.md`). The `std` tree walks the
@@ -89,7 +110,22 @@ impl Interpreter {
                         .map(|(_, v)| v.clone());
                     if i + 1 == segments.len() {
                         return match found {
-                            Some(func) => self.call_value(&func, &call.arguments, env),
+                            Some(func) => {
+                                // A built-in data type object called as its
+                                // named-field constructor (`std::http::Response(…)`):
+                                // the `__ctor` marker turns the call into the
+                                // struct construction bare names take.
+                                if let Value::Object(ref obj) = func
+                                    && let Some(Value::String(type_name)) = obj
+                                        .borrow()
+                                        .iter()
+                                        .find(|(k, _)| k == "__ctor")
+                                        .map(|(_, v)| v.clone())
+                                {
+                                    return self.construct_struct(&type_name, call, env);
+                                }
+                                self.call_value(&func, &call.arguments, env)
+                            }
                             None => Err(RunError::err(
                                 format!("`{head}` has no member `{member}`"),
                                 call.span.clone(),
@@ -144,7 +180,23 @@ impl Interpreter {
                         let values = self.bind_extern_args(&names, &call.arguments, env)?;
                         self.call_value_with_values(&callee, &values)
                     }
-                    None => self.call_value(&callee, &call.arguments, env),
+                    None => {
+                        if let Value::Function(func) = &callee
+                            && func
+                                .generic_params
+                                .iter()
+                                .any(|p| p.kind == xulo_core::ast::GenericParamKind::Const)
+                        {
+                            let consts = self.eval_const_args(func, call, env)?;
+                            return self.call_function_with_consts(
+                                func,
+                                &call.arguments,
+                                env,
+                                &consts,
+                            );
+                        }
+                        self.call_value(&callee, &call.arguments, env)
+                    }
                 }
             }
             None => Err(RunError::err(
@@ -235,6 +287,20 @@ impl Interpreter {
         }
     }
 
+    /// Record a built instance's type — the same bookkeeping
+    /// `construct_struct` does — so method dispatch finds that type's
+    /// methods on it (`Response.text`'s output answers `.header`).
+    pub(super) fn register_instance(
+        &self,
+        obj: &Rc<RefCell<Vec<(String, Value)>>>,
+        name: &str,
+    ) {
+        self.instance_types.borrow_mut().insert(
+            Rc::as_ptr(obj) as usize,
+            (Rc::downgrade(obj), name.to_string()),
+        );
+    }
+
     /// A member of a built-in namespace object registered in the root
     /// environment (`Math`/`Time`/`Task`), cloned out for dispatch.
     pub(super) fn builtin_ns_member(&self, ns: &str, member: &str) -> Option<Value> {
@@ -271,6 +337,9 @@ impl Interpreter {
             }
             Value::String(s) => {
                 return self.string_method(method, s.clone(), &call.arguments, &call.span, env);
+            }
+            Value::Set(set) => {
+                return self.set_method(method, set.clone(), &call.arguments, &call.span, env);
             }
             _ => None,
         };
@@ -323,6 +392,21 @@ impl Interpreter {
                         self.struct_method(method, &receiver, &call.arguments, env)
                 {
                     return struct_callee;
+                }
+                // A plain object — the brace form of a map literal or an
+                // untyped map value — answers the Map members once no
+                // struct method claimed the name (spec
+                // `types/composite-types.md`).
+                if let Value::Object(fields) = &receiver
+                    && self.instance_type(fields).is_none()
+                {
+                    return self.map_method(
+                        method,
+                        fields.clone(),
+                        &call.arguments,
+                        &call.span,
+                        env,
+                    );
                 }
                 Err(RunError::err(
                     format!("`{method}` is not a function of {}", receiver.kind_name()),
@@ -388,147 +472,38 @@ impl Interpreter {
         env: &Rc<RefCell<crate::env::Env>>,
     ) -> Result<Value, RunError> {
         match method {
-            "to_uppercase" => {
-                if !args.is_empty() {
-                    return Err(RunError::err(
-                        format!("`to_uppercase()` takes no arguments, found {}", args.len()),
-                        span.clone(),
-                    ));
-                }
-                Ok(Value::String(receiver.to_uppercase().into()))
-            }
-            "to_lowercase" => {
-                if !args.is_empty() {
-                    return Err(RunError::err(
-                        format!("`to_lowercase()` takes no arguments, found {}", args.len()),
-                        span.clone(),
-                    ));
-                }
-                Ok(Value::String(receiver.to_lowercase().into()))
-            }
-            "trim" => {
-                if !args.is_empty() {
-                    return Err(RunError::err(
-                        format!("`trim()` takes no arguments, found {}", args.len()),
-                        span.clone(),
-                    ));
-                }
-                Ok(Value::String(receiver.trim().into()))
-            }
-            "length" => {
-                if !args.is_empty() {
-                    return Err(RunError::err(
-                        format!("`length()` takes no arguments, found {}", args.len()),
-                        span.clone(),
-                    ));
-                }
-                Ok(Value::Number(receiver.chars().count() as f64))
-            }
-            "contains" | "starts_with" | "ends_with" => {
-                if args.len() != 1 {
-                    return Err(RunError::err(
-                        format!(
-                            "`{method}()` requires exactly 1 argument, found {}",
-                            args.len()
-                        ),
-                        span.clone(),
-                    ));
-                }
-                let Value::String(needle) = self.eval(&args[0].value, env)? else {
-                    return Err(RunError::err(
-                        format!("`{method}()` expects a string argument"),
-                        args[0].value.span().clone(),
-                    ));
-                };
-                Ok(Value::Boolean(match method {
-                    "contains" => receiver.contains(&*needle),
-                    "starts_with" => receiver.starts_with(&*needle),
-                    _ => receiver.ends_with(&*needle),
-                }))
-            }
-            "split" => {
-                if args.len() != 1 {
-                    return Err(RunError::err(
-                        format!(
-                            "`split()` requires exactly 1 argument, found {}",
-                            args.len()
-                        ),
-                        span.clone(),
-                    ));
-                }
-                let Value::String(sep) = self.eval(&args[0].value, env)? else {
-                    return Err(RunError::err(
-                        "`split()` expects a string argument",
-                        args[0].value.span().clone(),
-                    ));
-                };
-                let parts: Vec<Value> = if sep.is_empty() {
-                    receiver
-                        .chars()
-                        .map(|ch| Value::String(ch.to_string().into()))
-                        .collect()
-                } else {
-                    receiver
-                        .split(&*sep)
-                        .map(|part| Value::String(part.into()))
-                        .collect()
-                };
-                Ok(Value::List(Rc::new(RefCell::new(parts))))
-            }
-            "pad_start" | "pad_end" => {
-                if args.len() != 1 {
-                    return Err(RunError::err(
-                        format!(
-                            "`{method}()` requires exactly 1 argument, found {}",
-                            args.len()
-                        ),
-                        span.clone(),
-                    ));
-                }
-                let width = self.eval_number_arg(&args[0], env)?;
-                if width > crate::runtime::MAX_STRING_GROWTH as f64 {
-                    return Err(RunError::err(
-                        format!(
-                            "`{method}()` width must be at most {}, found {width}",
-                            crate::runtime::MAX_STRING_GROWTH
-                        ),
-                        args[0].value.span().clone(),
-                    ));
-                }
-                let width = width as usize;
-                let len = receiver.chars().count();
-                if len >= width {
-                    return Ok(Value::String(receiver));
-                }
-                let fill = " ".repeat(width - len);
-                Ok(Value::String(if method == "pad_start" {
-                    format!("{fill}{receiver}").into()
-                } else {
-                    format!("{receiver}{fill}").into()
-                }))
-            }
-            "repeat" => {
-                if args.len() != 1 {
-                    return Err(RunError::err(
-                        format!(
-                            "`repeat()` requires exactly 1 argument, found {}",
-                            args.len()
-                        ),
-                        span.clone(),
-                    ));
-                }
+            "codeAt" => {
+                expect_args(method, args, 1, 1, span)?;
                 let n = self.eval_number_arg(&args[0], env)?;
-                if n > crate::runtime::MAX_STRING_GROWTH as f64 {
+                let i = non_negative_index(n, span)?;
+                let len = receiver.chars().count();
+                if i >= len {
                     return Err(RunError::err(
-                        format!(
-                            "`repeat()` count must be at most {}, found {n}",
-                            crate::runtime::MAX_STRING_GROWTH
-                        ),
-                        args[0].value.span().clone(),
+                        format!("index {n} out of bounds for a string of length {len}"),
+                        span.clone(),
                     ));
                 }
-                let n = n as usize;
-                Ok(Value::String(receiver.repeat(n).into()))
+                Ok(Value::Number(
+                    receiver.chars().nth(i).map(|c| c as u32).unwrap_or(0) as f64,
+                ))
+            }
+            "slice" => {
+                expect_args(method, args, 2, 2, span)?;
+                let start = self.eval_number_arg(&args[0], env)?;
+                let end = self.eval_number_arg(&args[1], env)?;
+                let len = receiver.chars().count();
+                let (s, e) = slice_bounds(start, Some(end), len, span)?;
+                let out: String = receiver.chars().skip(s).take(e - s).collect();
+                Ok(Value::String(out.into()))
+            }
+            "bytes" => {
+                expect_args(method, args, 0, 0, span)?;
+                let bytes: Vec<Value> = receiver
+                    .as_bytes()
+                    .iter()
+                    .map(|b| Value::Number(*b as f64))
+                    .collect();
+                Ok(Value::List(Rc::new(RefCell::new(bytes))))
             }
             "replace" => {
                 if args.len() != 2 {
@@ -558,8 +533,277 @@ impl Interpreter {
                 };
                 self.call_value_with_values(&replace_impl, &[Value::String(receiver), replacement])
             }
+            "split" => {
+                if args.len() != 1 {
+                    return Err(RunError::err(
+                        format!(
+                            "`split()` requires exactly 1 argument, found {}",
+                            args.len()
+                        ),
+                        span.clone(),
+                    ));
+                }
+                let arg = self.eval(&args[0].value, env)?;
+                if let Value::Object(fields) = &arg
+                    && let Some(split_fn) = fields
+                        .borrow()
+                        .iter()
+                        .find(|(k, _)| k == "__split")
+                        .map(|(_, v)| v.clone())
+                {
+                    return self
+                        .call_value_with_values(&split_fn, &[Value::String(receiver)]);
+                }
+                let Value::String(sep) = arg else {
+                    return Err(RunError::err(
+                        "`split()` expects a compiled `RegExp`",
+                        args[0].value.span().clone(),
+                    ));
+                };
+                let parts: Vec<Value> = if sep.is_empty() {
+                    receiver
+                        .chars()
+                        .map(|ch| Value::String(ch.to_string().into()))
+                        .collect()
+                } else {
+                    receiver
+                        .split(&*sep)
+                        .map(|part| Value::String(part.into()))
+                        .collect()
+                };
+                Ok(Value::List(Rc::new(RefCell::new(parts))))
+            }
             _ => Err(RunError::err(
-                format!("`{method}` is not a function of a string"),
+                format!("`{method}` is not a method of string"),
+                span.clone(),
+            )),
+        }
+    }
+
+    /// `Array::filled<T, const N: int>(value)`: N copies of `value` (spec
+    /// `types/composite-types.md`). The runtime carries a fixed array as a
+    /// list-shaped value; the static type keeps the length.
+    fn array_filled(&self, call: &Call, env: &Rc<RefCell<Env>>) -> Result<Value, RunError> {
+        let args = &call.arguments;
+        if args.len() != 1 {
+            return Err(RunError::err(
+                format!(
+                    "`Array::filled` expects exactly 1 argument, found {}",
+                    args.len()
+                ),
+                call.span.clone(),
+            ));
+        }
+        let Some(targs) = &call.type_args else {
+            return Err(RunError::err(
+                "`Array::filled` requires a written generic-argument list",
+                call.span.clone(),
+            ));
+        };
+        let Some(length) = targs.get(1) else {
+            return Err(RunError::err(
+                "`Array::filled` requires a const length argument",
+                call.span.clone(),
+            ));
+        };
+        let n = match length {
+            Type::Literal(text) => text.parse::<i64>().map_err(|_| {
+                RunError::err(format!("`{text}` is not a const length"), call.span.clone())
+            })?,
+            Type::Named(name, a) if a.is_empty() => match env.borrow().get(name) {
+                Some(Value::Number(n)) => n as i64,
+                _ => {
+                    return Err(RunError::err(
+                        format!("`{name}` is not a const length"),
+                        call.span.clone(),
+                    ));
+                }
+            },
+            other => {
+                return Err(RunError::err(
+                    format!("{} is not a const length", other.display()),
+                    call.span.clone(),
+                ));
+            }
+        };
+        if n < 0 {
+            return Err(RunError::err(
+                format!("array length must be non-negative, found {n}"),
+                call.span.clone(),
+            ));
+        }
+        let value = self.eval(&args[0].value, env)?;
+        Ok(Value::List(Rc::new(RefCell::new(vec![value; n as usize]))))
+    }
+
+    /// `Map::fromEntries(entries)`: build a map from `(K, V)` pairs in list
+    /// order, with a later duplicate key replacing the earlier one.
+    fn map_from_entries(
+        &self,
+        call: &Call,
+        env: &Rc<RefCell<Env>>,
+    ) -> Result<Value, RunError> {
+        expect_args("Map::fromEntries", &call.arguments, 1, 1, &call.span)?;
+        let entries = self.eval(&call.arguments[0].value, env)?;
+        let Value::List(entries) = entries else {
+            return Err(RunError::err(
+                "`Map::fromEntries` expects a List of (key, value) pairs",
+                call.arguments[0].value.span().clone(),
+            ));
+        };
+        let entries = entries.borrow().clone();
+        let mut fields: Vec<(String, Value)> = Vec::with_capacity(entries.len());
+        for entry in entries {
+            let Value::List(pair) = entry else {
+                return Err(RunError::err(
+                    "`Map::fromEntries` expects each entry to be a (key, value) pair",
+                    call.span.clone(),
+                ));
+            };
+            let pair = pair.borrow();
+            if pair.len() != 2 {
+                return Err(RunError::err(
+                    "`Map::fromEntries` expects each entry to be a (key, value) pair",
+                    call.span.clone(),
+                ));
+            }
+            let key = map_key_string(&pair[0]);
+            let value = pair[1].clone();
+            match fields.iter_mut().find(|(k, _)| *k == key) {
+                Some((_, slot)) => *slot = value,
+                None => fields.push((key, value)),
+            }
+        }
+        Ok(Value::Object(Rc::new(RefCell::new(fields))))
+    }
+
+    /// `Set::fromList(values)`: build a set holding each distinct value once.
+    fn set_from_list(
+        &self,
+        call: &Call,
+        env: &Rc<RefCell<Env>>,
+    ) -> Result<Value, RunError> {
+        expect_args("Set::fromList", &call.arguments, 1, 1, &call.span)?;
+        let values = self.eval(&call.arguments[0].value, env)?;
+        let Value::List(values) = values else {
+            return Err(RunError::err(
+                "`Set::fromList` expects a List",
+                call.arguments[0].value.span().clone(),
+            ));
+        };
+        let mut out: Vec<Value> = Vec::new();
+        for value in values.borrow().iter().cloned() {
+            if !out.iter().any(|seen| equal(seen, &value)) {
+                out.push(value);
+            }
+        }
+        Ok(Value::Set(Rc::new(RefCell::new(out))))
+    }
+
+    pub(super) fn map_method(
+        &self,
+        method: &str,
+        fields: Rc<RefCell<Vec<(String, Value)>>>,
+        args: &[CallArg],
+        span: &std::ops::Range<usize>,
+        env: &Rc<RefCell<crate::env::Env>>,
+    ) -> Result<Value, RunError> {
+        match method {
+            "get" | "has" | "remove" => {
+                expect_args(method, args, 1, 1, span)?;
+                let key = map_key_string(&self.eval(&args[0].value, env)?);
+                let mut fields = fields.borrow_mut();
+                let found = fields.iter().position(|(k, _)| *k == key);
+                match method {
+                    "get" => Ok(found.map(|i| fields[i].1.clone()).unwrap_or(Value::Null)),
+                    "has" => Ok(Value::Boolean(found.is_some())),
+                    _ => Ok(found
+                        .map(|i| fields.remove(i).1)
+                        .unwrap_or(Value::Null)),
+                }
+            }
+            "set" => {
+                expect_args(method, args, 2, 2, span)?;
+                let key = map_key_string(&self.eval(&args[0].value, env)?);
+                let value = self.eval(&args[1].value, env)?;
+                let mut fields = fields.borrow_mut();
+                match fields.iter_mut().find(|(k, _)| *k == key) {
+                    Some((_, slot)) => *slot = value,
+                    None => fields.push((key, value)),
+                }
+                Ok(Value::Null)
+            }
+            "keys" => {
+                expect_args(method, args, 0, 0, span)?;
+                let keys: Vec<Value> = fields
+                    .borrow()
+                    .iter()
+                    .map(|(k, _)| Value::String(k.clone().into()))
+                    .collect();
+                Ok(Value::List(Rc::new(RefCell::new(keys))))
+            }
+            "values" => {
+                expect_args(method, args, 0, 0, span)?;
+                let values: Vec<Value> = fields.borrow().iter().map(|(_, v)| v.clone()).collect();
+                Ok(Value::List(Rc::new(RefCell::new(values))))
+            }
+            "entries" => {
+                expect_args(method, args, 0, 0, span)?;
+                let entries: Vec<Value> = fields
+                    .borrow()
+                    .iter()
+                    .map(|(k, v)| {
+                        Value::List(Rc::new(RefCell::new(vec![
+                            Value::String(k.clone().into()),
+                            v.clone(),
+                        ])))
+                    })
+                    .collect();
+                Ok(Value::List(Rc::new(RefCell::new(entries))))
+            }
+            _ => Err(RunError::err(
+                format!("`{method}` is not a method of map"),
+                span.clone(),
+            )),
+        }
+    }
+
+    pub(super) fn set_method(
+        &self,
+        method: &str,
+        set: Rc<RefCell<Vec<Value>>>,
+        args: &[CallArg],
+        span: &std::ops::Range<usize>,
+        env: &Rc<RefCell<crate::env::Env>>,
+    ) -> Result<Value, RunError> {
+        match method {
+            "has" | "insert" | "remove" => {
+                expect_args(method, args, 1, 1, span)?;
+                let value = self.eval(&args[0].value, env)?;
+                let mut set = set.borrow_mut();
+                let found = set.iter().position(|v| equal(v, &value));
+                match method {
+                    "has" => Ok(Value::Boolean(found.is_some())),
+                    "insert" => {
+                        if found.is_some() {
+                            Ok(Value::Boolean(false))
+                        } else {
+                            set.push(value);
+                            Ok(Value::Boolean(true))
+                        }
+                    }
+                    _ => {
+                        if let Some(i) = found {
+                            set.remove(i);
+                            Ok(Value::Boolean(true))
+                        } else {
+                            Ok(Value::Boolean(false))
+                        }
+                    }
+                }
+            }
+            _ => Err(RunError::err(
+                format!("`{method}` is not a method of set"),
                 span.clone(),
             )),
         }
@@ -573,173 +817,133 @@ impl Interpreter {
         span: &std::ops::Range<usize>,
         env: &Rc<RefCell<crate::env::Env>>,
     ) -> Result<Value, RunError> {
+        use std::cmp::Ordering;
         match method {
-            // ── basic properties ──
-            "isEmpty" => Ok(Value::Boolean(list.borrow().is_empty())),
-            "first" => {
-                let l = list.borrow();
-                Ok(l.first().cloned().unwrap_or(Value::Null))
-            }
-            "last" => {
-                let l = list.borrow();
-                Ok(l.last().cloned().unwrap_or(Value::Null))
-            }
-
-            // ── safe access & mutation ──
-            "get" => {
-                if args.len() != 1 {
-                    return Err(RunError::err(
-                        "get() requires exactly 1 argument",
-                        span.clone(),
-                    ));
-                }
-                let idx = self.eval_number_arg(&args[0], env)?;
-                if idx.is_nan() || idx < 0.0 || idx.fract() != 0.0 {
-                    return Err(RunError::err(
-                        format!("index must be a non-negative integer, found {idx}"),
-                        span.clone(),
-                    ));
-                }
-                let i = idx as usize;
-                if i >= list.borrow().len() {
-                    Ok(Value::Null)
-                } else {
-                    Ok(list.borrow()[i].clone())
-                }
-            }
-            "set" => {
-                if args.len() != 2 {
-                    return Err(RunError::err(
-                        "set() requires exactly 2 arguments",
-                        span.clone(),
-                    ));
-                }
-                let idx = self.eval_number_arg(&args[0], env)?;
-                let val = self.eval(&args[1].value, env)?;
-                let i = self.list_index_bound(idx, list.borrow().len(), span)?;
-                list.borrow_mut()[i] = val;
-                Ok(Value::List(list))
-            }
             "push" => {
-                if args.len() != 1 {
-                    return Err(RunError::err(
-                        "push() requires exactly 1 argument",
-                        span.clone(),
-                    ));
-                }
+                expect_args(method, args, 1, 1, span)?;
                 let val = self.eval(&args[0].value, env)?;
                 list.borrow_mut().push(val);
-                Ok(Value::List(list))
+                Ok(Value::Null)
             }
             "pop" => {
-                if !args.is_empty() {
-                    return Err(RunError::err("pop() takes no arguments", span.clone()));
-                }
-                let val = list
-                    .borrow_mut()
-                    .pop()
-                    .ok_or_else(|| RunError::err("pop() called on an empty list", span.clone()))?;
-                Ok(val)
+                expect_args(method, args, 0, 0, span)?;
+                Ok(list.borrow_mut().pop().unwrap_or(Value::Null))
             }
-            "insert" => {
-                if args.len() != 2 {
-                    return Err(RunError::err(
-                        "insert() requires exactly 2 arguments",
-                        span.clone(),
-                    ));
-                }
-                let idx = self.eval_number_arg(&args[0], env)?;
-                let val = self.eval(&args[1].value, env)?;
-                let i = self.list_index_bound(idx, list.borrow().len(), span)?;
-                list.borrow_mut().insert(i, val);
-                Ok(Value::List(list))
-            }
-            "remove" => {
-                if args.len() != 1 {
-                    return Err(RunError::err(
-                        "remove() requires exactly 1 argument",
-                        span.clone(),
-                    ));
-                }
-                let idx = self.eval_number_arg(&args[0], env)?;
-                let i = self.list_index_bound(idx, list.borrow().len(), span)?;
-                Ok(list.borrow_mut().remove(i))
-            }
-            "removeValue" => {
-                if args.len() != 1 {
-                    return Err(RunError::err(
-                        "removeValue() requires exactly 1 argument",
-                        span.clone(),
-                    ));
-                }
-                let val = self.eval(&args[0].value, env)?;
+            "shift" => {
+                expect_args(method, args, 0, 0, span)?;
                 let mut l = list.borrow_mut();
-                if let Some(pos) = l.iter().position(|v| equal(v, &val)) {
-                    l.remove(pos);
-                    Ok(Value::Boolean(true))
+                if l.is_empty() {
+                    Ok(Value::Null)
                 } else {
-                    Ok(Value::Boolean(false))
+                    Ok(l.remove(0))
                 }
             }
-
-            // ── slicing & views ──
+            "unshift" => {
+                expect_args(method, args, 1, 1, span)?;
+                let val = self.eval(&args[0].value, env)?;
+                list.borrow_mut().insert(0, val);
+                Ok(Value::Null)
+            }
+            "splice" => {
+                expect_args(method, args, 2, 3, span)?;
+                let start = self.eval_number_arg(&args[0], env)?;
+                let delete = self.eval_number_arg(&args[1], env)?;
+                let items = if args.len() == 3 {
+                    match self.eval(&args[2].value, env)? {
+                        Value::List(items) => items.borrow().clone(),
+                        other => {
+                            return Err(RunError::err(
+                                format!(
+                                    "splice() expects a List of items, found {}",
+                                    other.kind_name()
+                                ),
+                                args[2].value.span().clone(),
+                            ));
+                        }
+                    }
+                } else {
+                    Vec::new()
+                };
+                let len = list.borrow().len();
+                let start = non_negative_index(start, span)?;
+                if start > len {
+                    return Err(RunError::err(
+                        format!("splice start {start} out of bounds for a list of length {len}"),
+                        span.clone(),
+                    ));
+                }
+                let delete = non_negative_index(delete, span)?;
+                if delete > len - start {
+                    return Err(RunError::err(
+                        format!(
+                            "splice deleteCount {delete} out of bounds at index {start} for a list of length {len}"
+                        ),
+                        span.clone(),
+                    ));
+                }
+                let removed: Vec<Value> = list
+                    .borrow_mut()
+                    .splice(start..start + delete, items)
+                    .collect();
+                Ok(Value::List(Rc::new(RefCell::new(removed))))
+            }
+            "resize" => {
+                expect_args(method, args, 2, 2, span)?;
+                let n = self.eval_number_arg(&args[0], env)?;
+                let fill = self.eval(&args[1].value, env)?;
+                let n = non_negative_index(n, span)?;
+                list.borrow_mut().resize(n, fill);
+                Ok(Value::Null)
+            }
+            "truncate" => {
+                expect_args(method, args, 1, 1, span)?;
+                let n = self.eval_number_arg(&args[0], env)?;
+                let n = non_negative_index(n, span)?;
+                list.borrow_mut().truncate(n);
+                Ok(Value::Null)
+            }
+            "clear" => {
+                expect_args(method, args, 0, 0, span)?;
+                list.borrow_mut().clear();
+                Ok(Value::Null)
+            }
             "slice" => {
-                if args.len() > 2 {
-                    return Err(RunError::err(
-                        "slice() takes at most 2 arguments",
-                        span.clone(),
-                    ));
-                }
-                let l = list.borrow();
-                let len = l.len() as i64;
-                let start = if args.is_empty() {
-                    0i64
+                expect_args(method, args, 1, 2, span)?;
+                let len = list.borrow().len();
+                let start = self.eval_number_arg(&args[0], env)?;
+                let end = if args.len() == 2 {
+                    Some(self.eval_number_arg(&args[1], env)?)
                 } else {
-                    self.eval_number_arg(&args[0], env)? as i64
+                    None
                 };
-                let end = if args.len() < 2 {
-                    len
-                } else {
-                    self.eval_number_arg(&args[1], env)? as i64
-                };
-                let s = start.max(0).min(len) as usize;
-                let e = end.max(0).min(len) as usize;
-                Ok(Value::List(Rc::new(RefCell::new(l[s..e].to_vec()))))
+                let (s, e) = slice_bounds(start, end, len, span)?;
+                let out = list.borrow()[s..e].to_vec();
+                Ok(Value::List(Rc::new(RefCell::new(out))))
             }
-            "indexOf" => {
-                if args.len() != 1 {
-                    return Err(RunError::err(
-                        "indexOf() requires exactly 1 argument",
-                        span.clone(),
-                    ));
-                }
+            "indexOf" | "lastIndexOf" | "includes" => {
+                expect_args(method, args, 1, 1, span)?;
                 let val = self.eval(&args[0].value, env)?;
                 let l = list.borrow();
-                match l.iter().position(|v| equal(v, &val)) {
-                    Some(i) => Ok(Value::Number(i as f64)),
-                    None => Ok(Value::Number(-1.0)),
+                match method {
+                    "indexOf" => Ok(Value::Number(
+                        l.iter()
+                            .position(|v| equal(v, &val))
+                            .map(|i| i as f64)
+                            .unwrap_or(-1.0),
+                    )),
+                    "lastIndexOf" => Ok(Value::Number(
+                        l.iter()
+                            .rposition(|v| equal(v, &val))
+                            .map(|i| i as f64)
+                            .unwrap_or(-1.0),
+                    )),
+                    _ => Ok(Value::Boolean(l.iter().any(|v| equal(v, &val)))),
                 }
-            }
-            "contains" => {
-                if args.len() != 1 {
-                    return Err(RunError::err(
-                        "contains() requires exactly 1 argument",
-                        span.clone(),
-                    ));
-                }
-                let val = self.eval(&args[0].value, env)?;
-                let l = list.borrow();
-                Ok(Value::Boolean(l.iter().any(|v| equal(v, &val))))
             }
             "join" => {
-                if args.len() > 1 {
-                    return Err(RunError::err(
-                        "join() takes at most 1 argument",
-                        span.clone(),
-                    ));
-                }
+                expect_args(method, args, 0, 1, span)?;
                 let sep = if args.is_empty() {
-                    String::new()
+                    ",".to_string()
                 } else {
                     match self.eval(&args[0].value, env)? {
                         Value::String(s) => s.to_string(),
@@ -751,211 +955,155 @@ impl Interpreter {
                 Ok(Value::String(parts.join(&sep).into()))
             }
             "reverse" => {
-                if !args.is_empty() {
-                    return Err(RunError::err("reverse() takes no arguments", span.clone()));
-                }
+                expect_args(method, args, 0, 0, span)?;
                 list.borrow_mut().reverse();
-                Ok(Value::List(list))
+                Ok(Value::Null)
             }
-            "sort" => {
-                if !args.is_empty() {
-                    return Err(RunError::err("sort() takes no arguments", span.clone()));
-                }
-                list.borrow_mut().sort_by(|a, b| match (a, b) {
-                    (Value::Number(x), Value::Number(y)) => {
-                        x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal)
-                    }
-                    (Value::String(x), Value::String(y)) => x.cmp(y),
-                    _ => std::cmp::Ordering::Equal,
-                });
-                Ok(Value::List(list))
-            }
-            "concat" => {
-                if args.len() != 1 {
-                    return Err(RunError::err(
-                        "concat() requires exactly 1 argument",
-                        span.clone(),
-                    ));
-                }
-                let other = self.eval(&args[0].value, env)?;
-                match other {
-                    Value::List(other_list) => {
-                        let mut out = list.borrow().clone();
-                        out.extend(other_list.borrow().iter().cloned());
-                        Ok(Value::List(Rc::new(RefCell::new(out))))
-                    }
-                    _ => Err(RunError::err(
-                        format!("concat() expected a list, found {}", other.kind_name()),
-                        span.clone(),
-                    )),
-                }
-            }
-            "flat" => {
-                if !args.is_empty() {
-                    return Err(RunError::err("flat() takes no arguments", span.clone()));
-                }
-                let mut out = Vec::new();
-                for item in list.borrow().iter() {
-                    match item {
-                        Value::List(inner) => {
-                            out.extend(inner.borrow().iter().cloned());
-                        }
-                        other => out.push(other.clone()),
-                    }
-                }
+            "entries" => {
+                expect_args(method, args, 0, 0, span)?;
+                let out: Vec<Value> = list
+                    .borrow()
+                    .iter()
+                    .enumerate()
+                    .map(|(i, v)| {
+                        Value::List(Rc::new(RefCell::new(vec![
+                            Value::Number(i as f64),
+                            v.clone(),
+                        ])))
+                    })
+                    .collect();
                 Ok(Value::List(Rc::new(RefCell::new(out))))
             }
-            "shrink" => {
-                if !args.is_empty() {
-                    return Err(RunError::err("shrink() takes no arguments", span.clone()));
+            "forEach" => {
+                expect_args(method, args, 1, 1, span)?;
+                let f = self.eval(&args[0].value, env)?;
+                let snapshot = list.borrow().clone();
+                for item in snapshot {
+                    self.call_value_with_values(&f, &[item])?;
                 }
-                list.borrow_mut().shrink_to_fit();
-                Ok(Value::List(list))
+                Ok(Value::Null)
             }
-            "clear" => {
-                if !args.is_empty() {
-                    return Err(RunError::err("clear() takes no arguments", span.clone()));
-                }
-                list.borrow_mut().clear();
-                Ok(Value::List(list))
-            }
-
-            // ── higher-order functions ──
             "map" => {
-                if args.len() != 1 {
-                    return Err(RunError::err(
-                        "map() requires exactly 1 argument (a function)",
-                        span.clone(),
-                    ));
-                }
-                let f_val = self.eval(&args[0].value, env)?;
-                let l = list.borrow();
-                let mut out = Vec::with_capacity(l.len());
-                for (i, item) in l.iter().enumerate() {
-                    let result = self
-                        .call_value_with_values(&f_val, &[item.clone(), Value::Number(i as f64)])?;
-                    out.push(result);
+                expect_args(method, args, 1, 1, span)?;
+                let f = self.eval(&args[0].value, env)?;
+                let snapshot = list.borrow().clone();
+                let mut out = Vec::with_capacity(snapshot.len());
+                for item in snapshot {
+                    out.push(self.call_value_with_values(&f, &[item])?);
                 }
                 Ok(Value::List(Rc::new(RefCell::new(out))))
             }
             "filter" => {
-                if args.len() != 1 {
-                    return Err(RunError::err(
-                        "filter() requires exactly 1 argument (a function)",
-                        span.clone(),
-                    ));
-                }
-                let f_val = self.eval(&args[0].value, env)?;
-                let l = list.borrow();
+                expect_args(method, args, 1, 1, span)?;
+                let f = self.eval(&args[0].value, env)?;
+                let snapshot = list.borrow().clone();
                 let mut out = Vec::new();
-                for item in l.iter() {
-                    let keep = self.call_value_with_values(&f_val, std::slice::from_ref(item))?;
-                    if is_truthy(&keep) {
-                        out.push(item.clone());
+                for item in snapshot {
+                    if is_truthy(&self.call_value_with_values(&f, std::slice::from_ref(&item))?) {
+                        out.push(item);
                     }
                 }
                 Ok(Value::List(Rc::new(RefCell::new(out))))
             }
-            "reduce" => {
-                if args.is_empty() || args.len() > 2 {
-                    return Err(RunError::err(
-                        "reduce() requires 1 or 2 arguments",
-                        span.clone(),
-                    ));
-                }
-                let f_val = self.eval(&args[0].value, env)?;
-                let l = list.borrow();
-                let has_init = args.len() == 2;
-                let mut acc = if has_init {
-                    self.eval(&args[1].value, env)?
-                } else if l.is_empty() {
-                    return Err(RunError::err(
-                        "reduce() called on an empty list without initial value",
-                        span.clone(),
-                    ));
-                } else {
-                    l[0].clone()
-                };
-                let start = if has_init { 0 } else { 1 };
-                for item in &l[start..] {
-                    let new_acc = self.call_value_with_values(&f_val, &[acc, item.clone()])?;
-                    acc = new_acc;
-                }
-                Ok(acc)
-            }
             "find" => {
-                if args.len() != 1 {
-                    return Err(RunError::err(
-                        "find() requires exactly 1 argument (a function)",
-                        span.clone(),
-                    ));
-                }
-                let f_val = self.eval(&args[0].value, env)?;
-                let l = list.borrow();
-                for item in l.iter() {
-                    let found = self.call_value_with_values(&f_val, std::slice::from_ref(item))?;
-                    if is_truthy(&found) {
-                        return Ok(item.clone());
+                expect_args(method, args, 1, 1, span)?;
+                let f = self.eval(&args[0].value, env)?;
+                let snapshot = list.borrow().clone();
+                for item in snapshot {
+                    if is_truthy(&self.call_value_with_values(&f, std::slice::from_ref(&item))?) {
+                        return Ok(item);
                     }
                 }
                 Ok(Value::Null)
             }
-            "some" => {
-                if args.len() != 1 {
-                    return Err(RunError::err(
-                        "some() requires exactly 1 argument (a function)",
-                        span.clone(),
-                    ));
+            "findIndex" => {
+                expect_args(method, args, 1, 1, span)?;
+                let f = self.eval(&args[0].value, env)?;
+                let snapshot = list.borrow().clone();
+                for (i, item) in snapshot.into_iter().enumerate() {
+                    if is_truthy(&self.call_value_with_values(&f, &[item])?) {
+                        return Ok(Value::Number(i as f64));
+                    }
                 }
-                let f_val = self.eval(&args[0].value, env)?;
-                let l = list.borrow();
-                for item in l.iter() {
-                    let result = self.call_value_with_values(&f_val, std::slice::from_ref(item))?;
-                    if is_truthy(&result) {
+                Ok(Value::Number(-1.0))
+            }
+            "some" => {
+                expect_args(method, args, 1, 1, span)?;
+                let f = self.eval(&args[0].value, env)?;
+                let snapshot = list.borrow().clone();
+                for item in snapshot {
+                    if is_truthy(&self.call_value_with_values(&f, std::slice::from_ref(&item))?) {
                         return Ok(Value::Boolean(true));
                     }
                 }
                 Ok(Value::Boolean(false))
             }
             "every" => {
-                if args.len() != 1 {
-                    return Err(RunError::err(
-                        "every() requires exactly 1 argument (a function)",
-                        span.clone(),
-                    ));
-                }
-                let f_val = self.eval(&args[0].value, env)?;
-                let l = list.borrow();
-                for item in l.iter() {
-                    let result = self.call_value_with_values(&f_val, std::slice::from_ref(item))?;
-                    if !is_truthy(&result) {
+                expect_args(method, args, 1, 1, span)?;
+                let f = self.eval(&args[0].value, env)?;
+                let snapshot = list.borrow().clone();
+                for item in snapshot {
+                    if !is_truthy(&self.call_value_with_values(&f, std::slice::from_ref(&item))?) {
                         return Ok(Value::Boolean(false));
                     }
                 }
                 Ok(Value::Boolean(true))
             }
-            "forEach" => {
-                if args.len() != 1 {
-                    return Err(RunError::err(
-                        "forEach() requires exactly 1 argument (a function)",
-                        span.clone(),
-                    ));
+            "reduce" => {
+                expect_args(method, args, 2, 2, span)?;
+                let f = self.eval(&args[0].value, env)?;
+                let mut acc = self.eval(&args[1].value, env)?;
+                let snapshot = list.borrow().clone();
+                for item in snapshot {
+                    acc = self.call_value_with_values(&f, &[acc, item])?;
                 }
-                let f_val = self.eval(&args[0].value, env)?;
-                let l = list.borrow();
-                for (i, item) in l.iter().enumerate() {
-                    self.call_value_with_values(&f_val, &[item.clone(), Value::Number(i as f64)])?;
-                }
-                Ok(Value::Null)
+                Ok(acc)
             }
-
+            "sort" => {
+                expect_args(method, args, 1, 1, span)?;
+                let f = self.eval(&args[0].value, env)?;
+                let mut failure: Option<RunError> = None;
+                list.borrow_mut().sort_by(|a, b| {
+                    if failure.is_some() {
+                        return Ordering::Equal;
+                    }
+                    match self.call_value_with_values(&f, &[a.clone(), b.clone()]) {
+                        Ok(Value::Number(n)) => {
+                            if n < 0.0 {
+                                Ordering::Less
+                            } else if n > 0.0 {
+                                Ordering::Greater
+                            } else {
+                                Ordering::Equal
+                            }
+                        }
+                        Ok(other) => {
+                            failure = Some(RunError::err(
+                                format!(
+                                    "sort comparator must return a number, found {}",
+                                    other.kind_name()
+                                ),
+                                span.clone(),
+                            ));
+                            Ordering::Equal
+                        }
+                        Err(e) => {
+                            failure = Some(e);
+                            Ordering::Equal
+                        }
+                    }
+                });
+                match failure {
+                    Some(e) => Err(e),
+                    None => Ok(Value::Null),
+                }
+            }
             _ => Err(RunError::err(
                 format!("`{method}` is not a method of list"),
                 span.clone(),
             )),
         }
     }
-
     pub(super) fn eval_number_arg(
         &self,
         arg: &CallArg,
@@ -969,28 +1117,6 @@ impl Interpreter {
                 arg.value.span().clone(),
             )),
         }
-    }
-
-    pub(super) fn list_index_bound(
-        &self,
-        n: f64,
-        len: usize,
-        span: &std::ops::Range<usize>,
-    ) -> Result<usize, RunError> {
-        if n.is_nan() || n < 0.0 || n.fract() != 0.0 {
-            return Err(RunError::err(
-                format!("index must be a non-negative integer, found {n}"),
-                span.clone(),
-            ));
-        }
-        let i = n as usize;
-        if i > len {
-            return Err(RunError::err(
-                format!("index {n} out of bounds for a list of length {len}"),
-                span.clone(),
-            ));
-        }
-        Ok(i)
     }
 
     pub(super) fn enum_construct(
@@ -1222,6 +1348,117 @@ impl Interpreter {
         Ok(())
     }
 
+    /// Evaluate the const arguments a call writes, in declaration order. A
+    /// const argument is an integer literal, a `const` binding, or a const
+    /// parameter name (spec `types/generics.md`).
+    fn eval_const_args(
+        &self,
+        func: &FunctionValue,
+        call: &Call,
+        env: &Rc<RefCell<Env>>,
+    ) -> Result<Vec<(String, i64)>, RunError> {
+        let Some(written) = &call.type_args else {
+            return Err(RunError::err(
+                format!("`{}` requires a written generic-argument list", call.callee),
+                call.span.clone(),
+            ));
+        };
+        let mut out = Vec::new();
+        for (i, p) in func.generic_params.iter().enumerate() {
+            if p.kind != xulo_core::ast::GenericParamKind::Const {
+                continue;
+            }
+            let Some(arg) = written.get(i) else {
+                return Err(RunError::err(
+                    format!("missing generic argument for const parameter `{}`", p.name),
+                    call.span.clone(),
+                ));
+            };
+            let value = match arg {
+                Type::Literal(text) => text.parse::<i64>().map_err(|_| {
+                    RunError::err(
+                        format!("`{text}` is not a const argument"),
+                        call.span.clone(),
+                    )
+                })?,
+                Type::Named(name, args) if args.is_empty() => match env.borrow().get(name) {
+                    Some(Value::Number(n)) => n as i64,
+                    _ => {
+                        return Err(RunError::err(
+                            format!("`{name}` is not a const value"),
+                            call.span.clone(),
+                        ));
+                    }
+                },
+                other => {
+                    return Err(RunError::err(
+                        format!("{} is not a const argument", other.display()),
+                        call.span.clone(),
+                    ));
+                }
+            };
+            out.push((p.name.clone(), value));
+        }
+        Ok(out)
+    }
+
+    /// Call a function after binding its const parameters (compile-time values
+    /// that the body reads as ordinary immutable `int`s).
+    fn call_function_with_consts(
+        &self,
+        func: &Rc<FunctionValue>,
+        args: &[CallArg],
+        call_env: &Rc<RefCell<Env>>,
+        consts: &[(String, i64)],
+    ) -> Result<Value, RunError> {
+        let depth = self.call_depth.get();
+        if depth >= MAX_CALL_DEPTH {
+            return Err(RunError::err(
+                format!("call depth exceeded: recursion limit of {MAX_CALL_DEPTH} reached"),
+                0..0,
+            ));
+        }
+        self.call_depth.set(depth + 1);
+        let result = (|| {
+            let bound = self.bind_args(&func.params, args, call_env)?;
+            if func.is_async {
+                let func = func.clone();
+                let consts = consts.to_vec();
+                return Ok(self.spawn_async(move |_yielder| {
+                    let env = Env::child(&func.closure);
+                    with_interp(|interp| {
+                        for (name, value) in &consts {
+                            env.borrow_mut()
+                                .define(name, Value::Number(*value as f64), false);
+                        }
+                        interp.bind_callee_args(&env, &func.params, bound)?;
+                        match interp.run_body(&func.body, &env, func.return_type.is_some()) {
+                            Err(RunError::Propagate(v)) => Ok(v),
+                            other => other,
+                        }
+                    })
+                }));
+            }
+            let env = Env::child(&func.closure);
+            for (name, value) in consts {
+                env.borrow_mut()
+                    .define(name, Value::Number(*value as f64), false);
+            }
+            self.bind_callee_args(&env, &func.params, bound)?;
+            let result = if is_component_return(&func.return_type) {
+                self.run_component_body(&func.body, &env)
+            } else {
+                self.run_body(&func.body, &env, func.return_type.is_some())
+            };
+            match result {
+                Err(RunError::Propagate(v)) => Ok(v),
+                other => other,
+            }
+        })();
+        self.call_depth.set(depth);
+        result
+    }
+
     pub(super) fn run_function(
         &self,
         func: &Rc<FunctionValue>,
@@ -1368,5 +1605,68 @@ impl Interpreter {
         } else {
             Ok(Value::Null)
         }
+    }
+}
+
+/// Check a built-in method call's positional arity (spec
+/// `types/composite-types.md`: too few or too many is `E0207`, reported by
+/// the semantic pass; this is the runtime guard for the unchecked path).
+fn expect_args(
+    method: &str,
+    args: &[CallArg],
+    min: usize,
+    max: usize,
+    span: &std::ops::Range<usize>,
+) -> Result<(), RunError> {
+    if args.len() < min || args.len() > max {
+        return Err(RunError::err(
+            format!(
+                "`{method}()` expects {min}..={max} arguments, found {}",
+                args.len()
+            ),
+            span.clone(),
+        ));
+    }
+    Ok(())
+}
+
+fn non_negative_index(n: f64, span: &std::ops::Range<usize>) -> Result<usize, RunError> {
+    if n.is_nan() || n < 0.0 || n.fract() != 0.0 {
+        return Err(RunError::err(
+            format!("index must be a non-negative integer, found {n}"),
+            span.clone(),
+        ));
+    }
+    Ok(n as usize)
+}
+
+/// The `start …= len`, `start <= end` domain of `.slice` (spec
+/// `types/composite-types.md`).
+fn slice_bounds(
+    start: f64,
+    end: Option<f64>,
+    len: usize,
+    span: &std::ops::Range<usize>,
+) -> Result<(usize, usize), RunError> {
+    let s = non_negative_index(start, span)?;
+    let e = match end {
+        Some(end) => non_negative_index(end, span)?,
+        None => len,
+    };
+    if s > len || e > len || s > e {
+        return Err(RunError::err(
+            format!("slice bounds {start}..{e} out of range for a list of length {len}"),
+            span.clone(),
+        ));
+    }
+    Ok((s, e))
+}
+
+fn map_key_string(value: &Value) -> String {
+    match value {
+        Value::String(s) => s.to_string(),
+        Value::Number(n) => n.to_string(),
+        Value::Boolean(b) => b.to_string(),
+        other => other.format(),
     }
 }
