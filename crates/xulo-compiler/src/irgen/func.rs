@@ -97,19 +97,7 @@ impl IrGenerator {
                 self.collect_scope_stmts(&w.body.statements, binds, refs, children_free);
             }
             Statement::Assign(a) => {
-                match &a.target {
-                    // 赋值目标是「写已存在的绑定」而非声明：被捕获时它是
-                    // 自由引用（`fn(){ count = count + 1 }` 捕获外层 count）
-                    AssignTarget::Name(n) => push_unique(refs, n),
-                    AssignTarget::Member(obj, _) => {
-                        self.collect_scope_expr(obj, binds, refs, children_free)
-                    }
-                    AssignTarget::Index(obj, idx) => {
-                        self.collect_scope_expr(obj, binds, refs, children_free);
-                        self.collect_scope_expr(idx, binds, refs, children_free);
-                    }
-                }
-                self.collect_scope_expr(&a.value, binds, refs, children_free);
+                self.collect_scope_assign(a, binds, refs, children_free);
             }
             Statement::Try(t) => {
                 push_unique(binds, &t.catch_var);
@@ -124,6 +112,33 @@ impl IrGenerator {
             },
             // 不参与 AOT lowering 的声明（struct/enum/use/组件等）无需分析
             _ => {}
+        }
+    }
+
+    fn collect_scope_assign(
+        &self,
+        assign: &xulo_core::ast::AssignStmt,
+        binds: &mut Vec<String>,
+        refs: &mut Vec<String>,
+        children_free: &mut Vec<Vec<String>>,
+    ) {
+        match &assign.target {
+            // 赋值目标是「写已存在的绑定」而非声明：被捕获时它是
+            // 自由引用（`fn(){ count = count + 1 }` 捕获外层 count）
+            AssignTarget::Name(n) => push_unique(refs, n),
+            AssignTarget::Member(obj, _) => {
+                self.collect_scope_expr(obj, binds, refs, children_free)
+            }
+            AssignTarget::Index(obj, idx) => {
+                self.collect_scope_expr(obj, binds, refs, children_free);
+                self.collect_scope_expr(idx, binds, refs, children_free);
+            }
+        }
+        match &assign.value {
+            AssignValue::Expr(expr) => self.collect_scope_expr(expr, binds, refs, children_free),
+            AssignValue::Assign(inner) => {
+                self.collect_scope_assign(inner, binds, refs, children_free)
+            }
         }
     }
 

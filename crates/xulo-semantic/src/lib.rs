@@ -5,7 +5,7 @@ use std::ops::Range;
 
 use symbol_table::{Symbol, SymbolKind, SymbolTable};
 use xulo_core::ast::{
-    AssignStmt, AssignTarget, Attribute, BinaryOperator, Block, Call, CallArg, EnumPayloadParam,
+    AssignStmt, AssignTarget, AssignValue, Attribute, BinaryOperator, Block, Call, CallArg, EnumPayloadParam,
     EnumVariant, ExportItem, Expression, FnBound, FnDef, GenericParam, GenericParamKind, IfExpr,
     ImplDecl, LetBinding, Literal, ObjectField, PathHead, Program, Statement, TraitDecl, Type,
     TypeAlias, UiElement, UseDecl, UseTarget, impl_fn_name,
@@ -3118,6 +3118,21 @@ fn walk_program(program: &mut Program, f: &mut dyn FnMut(&mut Expression)) {
     }
 }
 
+fn walk_assign(assign: &mut AssignStmt, f: &mut dyn FnMut(&mut Expression)) {
+    match &mut assign.target {
+        AssignTarget::Member(object, _) => walk_expr(object, f),
+        AssignTarget::Index(object, index) => {
+            walk_expr(object, f);
+            walk_expr(index, f);
+        }
+        AssignTarget::Name(_) => {}
+    }
+    match &mut assign.value {
+        AssignValue::Expr(expr) => walk_expr(expr, f),
+        AssignValue::Assign(inner) => walk_assign(inner, f),
+    }
+}
+
 fn walk_stmt(stmt: &mut Statement, f: &mut dyn FnMut(&mut Expression)) {
     match stmt {
         Statement::Fn(fd) | Statement::Test(fd) => walk_block(&mut fd.body, f),
@@ -3139,17 +3154,7 @@ fn walk_stmt(stmt: &mut Statement, f: &mut dyn FnMut(&mut Expression)) {
             walk_expr(&mut w.condition, f);
             walk_block(&mut w.body, f);
         }
-        Statement::Assign(a) => {
-            match &mut a.target {
-                AssignTarget::Member(object, _) => walk_expr(object, f),
-                AssignTarget::Index(object, index) => {
-                    walk_expr(object, f);
-                    walk_expr(index, f);
-                }
-                AssignTarget::Name(_) => {}
-            }
-            walk_expr(&mut a.value, f);
-        }
+        Statement::Assign(a) => walk_assign(a, f),
         Statement::Expr(e) => walk_expr(&mut e.expr, f),
         Statement::Block(b) => walk_block(b, f),
         Statement::Defer(d) => match &mut d.body {
@@ -6618,21 +6623,36 @@ impl Analyzer {
     }
 
     fn check_assign(&mut self, assign: &AssignStmt) -> SResult<()> {
+        self.check_assign_value(assign).map(|_| ())
+    }
+
+    /// Check an assignment, returning the type of its value. A nested
+    /// assignment (`a = b = c`) is checked first and contributes its own
+    /// assigned value's type (spec `ast.md`, "Statements").
+    fn check_assign_value(&mut self, assign: &AssignStmt) -> SResult<Type> {
         let target_type = self.assign_target_type(&assign.target)?;
-        let value_type = match (&assign.value, array_parts(&self.resolve_alias(&target_type, 0))) {
-            (Expression::Literal { value: Literal::List(elements), .. }, Some(_)) => {
-                self.check_array_literal(&target_type, elements)?
+        let value_type = match &assign.value {
+            AssignValue::Assign(inner) => self.check_assign_value(inner)?,
+            AssignValue::Expr(expr) => {
+                match (expr, array_parts(&self.resolve_alias(&target_type, 0))) {
+                    (Expression::Literal { value: Literal::List(elements), .. }, Some(_)) => {
+                        self.check_array_literal(&target_type, elements)?
+                    }
+                    _ => self.check_expression(expr)?,
+                }
             }
-            _ => self.check_expression(&assign.value)?,
+        };
+        let literal_ok = match &assign.value {
+            AssignValue::Expr(expr) => self.literal_matches(expr, &target_type),
+            AssignValue::Assign(_) => false,
         };
         // A numeric literal reassigns a fixed-bit binding when it fits
         // (literal coercion, spec `type-system/coercion.md`); an out-of-
         // range one is E0209 rather than the generic mismatch.
-        if !self.assignable(&value_type, &target_type)
-            && !self.literal_matches(&assign.value, &target_type)
-        {
-            if let Some(e) =
-                self.fixed_literal_error(&assign.value, &target_type, assign.value.span().clone())
+        if !self.assignable(&value_type, &target_type) && !literal_ok {
+            if let AssignValue::Expr(expr) = &assign.value
+                && let Some(e) =
+                    self.fixed_literal_error(expr, &target_type, expr.span().clone())
             {
                 return Err(e);
             }
@@ -6643,7 +6663,7 @@ impl Analyzer {
                 target_type.name()
             )));
         }
-        Ok(())
+        Ok(value_type)
     }
 
     /// Record the borrows a task-returning call holds: every argument that is

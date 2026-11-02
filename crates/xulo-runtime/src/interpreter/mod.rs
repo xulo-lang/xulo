@@ -6,7 +6,7 @@ use corosensei::stack::DefaultStack;
 use corosensei::{Coroutine, Yielder};
 
 use xulo_core::ast::{
-    AssignTarget, Attribute, BinaryOp, BinaryOperator, BindingPattern, Block, Call, ComponentStmt,
+    AssignTarget, AssignValue, Attribute, BinaryOp, BinaryOperator, BindingPattern, Block, Call, ComponentStmt,
     EffectStmt, EnumDef, Expression, FnDef, ForStmt, IfExpr, ImplDecl, LetBinding, Literal,
     MatchExpr, ObjectField, Param, Program, ReturnStmt, Statement, StoreStmt, StructDef, TryStmt,
     Type, UiElement, UnaryOperator, impl_fn_name,

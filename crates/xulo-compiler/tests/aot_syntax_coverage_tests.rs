@@ -518,3 +518,22 @@ fn ui_state_declaration_is_rejected() {
         err.message
     );
 }
+
+#[test]
+fn chained_assignment_lowers_inner_first() {
+    let out = compile_and_run(
+        r#"
+        fn main() {
+            let mut a = 0
+            let mut b = 0
+            a = b = 5
+            print(a, b)
+            let mut o = { x: 0 }
+            let mut xs = [0]
+            o.x = xs[0] = 3
+            print(o.x, xs[0])
+        }
+        "#,
+    );
+    assert_eq!(out, vec!["5 5", "3 3"]);
+}

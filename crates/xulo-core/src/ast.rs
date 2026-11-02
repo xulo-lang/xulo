@@ -309,11 +309,29 @@ pub enum AssignTarget {
     Index(Box<Expression>, Box<Expression>),
 }
 
+/// The right-hand side of an assignment: an expression, or another
+/// assignment when the grammar's `AssignmentExpression` chains (`a = b = c`).
+#[derive(Debug, Clone, PartialEq)]
+pub enum AssignValue {
+    Expr(Expression),
+    Assign(Box<AssignStmt>),
+}
+
+impl AssignValue {
+    /// The source span of the assigned value expression or nested assignment.
+    pub fn span(&self) -> Range<usize> {
+        match self {
+            AssignValue::Expr(expr) => expr.span().clone(),
+            AssignValue::Assign(assign) => assign.span.clone(),
+        }
+    }
+}
+
 /// A reassignment statement: `target = expr`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AssignStmt {
     pub target: AssignTarget,
-    pub value: Expression,
+    pub value: AssignValue,
     pub span: Range<usize>,
 }
 

@@ -686,8 +686,24 @@ impl IrGenerator {
     }
 
     pub(super) fn generate_assign(&mut self, assign: &AssignStmt) -> Result<(), XuloError> {
+        self.generate_assign_value(assign)?;
+        Ok(())
+    }
+
+    /// Lower an assignment and return the value it assigns. A chained
+    /// right-hand side (`a = b = c`) lowers the inner assignment first and
+    /// feeds its value to the outer target.
+    pub(super) fn generate_assign_value(
+        &mut self,
+        assign: &AssignStmt,
+    ) -> Result<Operand, XuloError> {
         let func_idx = self.current_func.unwrap();
-        let value = self.generate_expression(&assign.value)?;
+        let value = match &assign.value {
+            AssignValue::Expr(expr) => self.generate_expression(expr)?,
+            AssignValue::Assign(inner) => self.generate_assign_value(inner)?,
+        };
+        let tag = Self::assign_value_tag(self, &assign.value);
+        let result = value.clone();
 
         match &assign.target {
             AssignTarget::Name(name) => {
@@ -713,7 +729,6 @@ impl IrGenerator {
             }
             AssignTarget::Member(obj, field) => {
                 let obj_operand = self.generate_expression(obj)?;
-                let tag = self.determine_element_tag(&assign.value);
                 self.module.functions[func_idx]
                     .instructions
                     .push(Instruction::SetField {
@@ -726,7 +741,6 @@ impl IrGenerator {
             AssignTarget::Index(obj, idx) => {
                 let obj_operand = self.generate_expression(obj)?;
                 let idx_operand = self.generate_expression(idx)?;
-                let tag = self.determine_element_tag(&assign.value);
                 self.module.functions[func_idx]
                     .instructions
                     .push(Instruction::SetIndex {
@@ -738,6 +752,13 @@ impl IrGenerator {
             }
         }
 
-        Ok(())
+        Ok(result)
+    }
+
+    fn assign_value_tag(&self, value: &AssignValue) -> i64 {
+        match value {
+            AssignValue::Expr(expr) => self.determine_element_tag(expr),
+            AssignValue::Assign(inner) => self.assign_value_tag(&inner.value),
+        }
     }
 }

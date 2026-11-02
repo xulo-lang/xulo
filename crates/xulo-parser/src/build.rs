@@ -3,7 +3,7 @@ use std::ops::Range;
 use pest::iterators::Pair;
 
 use xulo_core::ast::{
-    AssignStmt, BindingPattern, Block, ComponentStmt, DeferBody, DeferStmt, EffectStmt, EnumDef,
+    AssignStmt, AssignValue, BindingPattern, Block, ComponentStmt, DeferBody, DeferStmt, EffectStmt, EnumDef,
     EnumPayloadParam, EnumVariant, EnvStmt, ExportItem, ExportStmt, ExprStmt, Expression,
     ExternBlockDecl, ExternItem, FnBound, FnDef, ForStmt, GenericParam,
     GenericParamKind, ImplDecl, LetBinding, ModDecl, Param,
@@ -1248,6 +1248,31 @@ pub(crate) fn statement(pair: Pair<'_, Rule>) -> R<Statement> {
     }
 }
 
+/// Lower `AssignmentExpression`: a ternary expression, or a nested
+/// assignment (`a = b = c` becomes `a = (b = c)`, spec `ast.md`,
+/// "Statements").
+pub(crate) fn assignment_value(pair: Pair<'_, Rule>) -> R<AssignValue> {
+    let span = span_of(&pair);
+    let mut inner = pair.into_inner();
+    let first = next(&mut inner, Rule::ternary_expression);
+    let first_span = span_of(&first);
+    let expr = ternary_entry(first)?;
+    match inner.next() {
+        None => Ok(AssignValue::Expr(expr)),
+        Some(op) if op.as_rule() == Rule::assign_op => {
+            let rhs = next(&mut inner, Rule::assignment_expression);
+            let value = assignment_value(rhs)?;
+            let target = assign_target(expr, first_span)?;
+            Ok(AssignValue::Assign(Box::new(AssignStmt {
+                target,
+                value,
+                span,
+            })))
+        }
+        Some(other) => unreachable!("assignment_expression child {:?}", other.as_rule()),
+    }
+}
+
 fn inner_statement(pair: Pair<'_, Rule>) -> R<Statement> {
     let pair = single(pair);
     match pair.as_rule() {
@@ -1276,15 +1301,7 @@ fn inner_statement(pair: Pair<'_, Rule>) -> R<Statement> {
                 None => statement_from_expr(expr, span),
                 Some(op) if op.as_rule() == Rule::assign_op => {
                     let rhs = next(&mut inner, Rule::assignment_expression);
-                    let mut parts = rhs.into_inner();
-                    let first = next(&mut parts, Rule::ternary_expression);
-                    if parts.next().is_some() {
-                        return Err(err(
-                            "chained assignment is not supported; split `a = b = c` into two statements",
-                            span,
-                        ));
-                    }
-                    let value = ternary_entry(first)?;
+                    let value = assignment_value(rhs)?;
                     let target = assign_target(expr, lhs_span)?;
                     Ok(Statement::Assign(AssignStmt {
                         target,

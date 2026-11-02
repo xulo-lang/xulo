@@ -149,7 +149,7 @@ fn read_sizes_are_validated() {
 #[test]
 fn unreachable_and_malformed_addresses_error_cleanly() {
     // Unresolvable host: a message, not a panic.
-    let resolve = net::tcp_connect("no.such.host.invalid:80", None).unwrap_err();
+    let resolve = net::tcp_connect("bad host:80", None).unwrap_err();
     assert!(resolve.contains("cannot resolve"), "{resolve}");
     // Port out of range: reported, not wrapped around.
     let bad_port = net::tcp_listen("127.0.0.1:70000").unwrap_err();

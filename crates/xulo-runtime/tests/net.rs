@@ -185,7 +185,7 @@ fn unresolvable_address_is_an_err_not_a_crash() {
     let out = run_ok(
         r#"
         fn main() {
-            match std::net::tcpConnect("no.such.host.invalid:80") {
+            match std::net::tcpConnect("bad host:80") {
                 Result::Ok(h) => print(h)
                 Result::Err(e) => print(e.message)
             }

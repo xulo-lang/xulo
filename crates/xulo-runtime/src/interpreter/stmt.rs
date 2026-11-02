@@ -660,7 +660,22 @@ impl Interpreter {
         a: &xulo_core::ast::AssignStmt,
         env: &Rc<RefCell<Env>>,
     ) -> Result<Flow, RunError> {
-        let value = self.eval(&a.value, env)?;
+        self.exec_assign_value(a, env)?;
+        Ok(Flow::Continue)
+    }
+
+    /// Run an assignment and return the value it assigned, so a chained
+    /// right-hand side (`a = b = c`) can feed the outer target.
+    pub(super) fn exec_assign_value(
+        &self,
+        a: &xulo_core::ast::AssignStmt,
+        env: &Rc<RefCell<Env>>,
+    ) -> Result<Value, RunError> {
+        let value = match &a.value {
+            AssignValue::Expr(expr) => self.eval(expr, env)?,
+            AssignValue::Assign(inner) => self.exec_assign_value(inner, env)?,
+        };
+        let result = value.clone();
         match &a.target {
             AssignTarget::Name(name) => {
                 // A `@State` name holds a signal cell: assignment rewrites into
@@ -745,7 +760,7 @@ impl Interpreter {
                 }
             }
         }
-        Ok(Flow::Continue)
+        Ok(result)
     }
 
     pub(super) fn exec_try(&self, t: &TryStmt, env: &Rc<RefCell<Env>>) -> Result<Flow, RunError> {

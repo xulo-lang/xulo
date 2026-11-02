@@ -2989,3 +2989,22 @@ fn derive_debug_reaches_structural_positions() {
         ]
     );
 }
+
+#[test]
+fn chained_assignment_assigns_inner_then_outer() {
+    let out = run_ok(
+        r#"
+        fn main() {
+            let mut a = 0
+            let mut b = 0
+            a = b = 5
+            print(a, b)
+            let mut o = { x: 0 }
+            let mut xs = [0]
+            o.x = xs[0] = 3
+            print(o.x, xs[0])
+        }
+        "#,
+    );
+    assert_eq!(out, vec!["5 5", "3 3"]);
+}

@@ -134,6 +134,23 @@ fn rejects_let_type_mismatch_on_assignment() {
 }
 
 #[test]
+fn chained_assignment_checks_both_targets() {
+    analyze_src(
+        r#"fn main() { let mut a = 1 let mut b = 2 a = b = 3 print(a, b) }"#,
+    )
+    .unwrap_or_else(|e| panic!("{}: {}", e.code(), e.message));
+    let err = analyze_src(
+        r#"fn main() { let mut a: number = 1 let mut b: string = "s" a = b = 3 }"#,
+    )
+    .unwrap_err();
+    assert!(
+        err.message.contains("cannot assign a value of type `number` to `b: string`"),
+        "unexpected: {}",
+        err.message
+    );
+}
+
+#[test]
 fn rejects_assigning_undefined() {
     let err = analyze_src("fn main() { y = 1 }").unwrap_err();
     assert!(err.message.contains("undefined variable `y`"));

@@ -1,5 +1,21 @@
 use super::*;
 
+fn assign_value_has_closure(value: &AssignValue) -> bool {
+    match value {
+        AssignValue::Expr(expr) => expr_has_closure(expr),
+        AssignValue::Assign(assign) => {
+            let target = match &assign.target {
+                AssignTarget::Name(_) => false,
+                AssignTarget::Member(object, _) => expr_has_closure(object),
+                AssignTarget::Index(object, index) => {
+                    expr_has_closure(object) || expr_has_closure(index)
+                }
+            };
+            target || assign_value_has_closure(&assign.value)
+        }
+    }
+}
+
 pub(super) fn block_has_closure(block: &Block) -> bool {
     block.statements.iter().any(stmt_has_closure)
 }
@@ -25,7 +41,7 @@ pub(super) fn stmt_has_closure(stmt: &Statement) -> bool {
                     expr_has_closure(object) || expr_has_closure(index)
                 }
             };
-            target || expr_has_closure(&a.value)
+            target || assign_value_has_closure(&a.value)
         }
         Statement::TypeAlias(_)
         | Statement::Enum(_)

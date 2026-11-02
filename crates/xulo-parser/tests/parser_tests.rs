@@ -359,9 +359,24 @@ fn assignment_forms() {
 }
 
 #[test]
-fn chained_assignment_rejected() {
-    let e = parse_err("fn f() { a = b = c }");
-    assert!(e.message.contains("chained assignment"), "{}", e.message);
+fn chained_assignment_nests_the_right_hand_side() {
+    // `a = b = c` is `a = (b = c)` (spec `ast.md`, "Statements").
+    let p = parse_ok("fn f() { a = b = c }");
+    let Statement::Fn(f) = &p.statements[0] else {
+        panic!();
+    };
+    let Statement::Assign(outer) = &f.body.statements[0] else {
+        panic!("expected assignment");
+    };
+    assert!(matches!(&outer.target, xulo_core::ast::AssignTarget::Name(n) if n == "a"));
+    let xulo_core::ast::AssignValue::Assign(inner) = &outer.value else {
+        panic!("expected nested assignment");
+    };
+    assert!(matches!(&inner.target, xulo_core::ast::AssignTarget::Name(n) if n == "b"));
+    let xulo_core::ast::AssignValue::Expr(Expression::Identifier { name, .. }) = &inner.value else {
+        panic!("expected identifier rhs");
+    };
+    assert_eq!(name, "c");
 }
 
 #[test]
