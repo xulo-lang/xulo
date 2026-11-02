@@ -62,7 +62,7 @@ pub struct ExprStmt {
 }
 
 /// One declaration attribute: `#Name` with an optional parenthesized,
-/// comma-separated list of identifier arguments (`#Derive(ToString)`,
+/// comma-separated list of identifier arguments (`#Derive(Debug)`,
 /// `#Test`). Attributes are written on the five item declarations — `fn`,
 /// `struct`, `enum`, `trait`, `impl` — and on the test form; which names are
 /// defined and where they may appear is a checking rule (spec

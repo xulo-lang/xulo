@@ -9,9 +9,9 @@ fn attributes_parse_on_every_attributed_declaration() {
         r#"
 #Test
 fn t() {}
-#Derive(ToString)
+#Derive(Debug)
 struct S { a: string }
-#Derive(ToString)
+#Derive(Debug)
 enum E { A B }
 #Known
 trait Named { fn name(self): string }
@@ -46,11 +46,11 @@ impl Named for S { fn name(self): string { return self.a } }
     assert_eq!(attrs_of(0), Vec::<(String, Vec<String>, bool)>::new());
     assert_eq!(
         attrs_of(1),
-        vec![("Derive".to_string(), vec!["ToString".to_string()], true)]
+        vec![("Derive".to_string(), vec!["Debug".to_string()], true)]
     );
     assert_eq!(
         attrs_of(2),
-        vec![("Derive".to_string(), vec!["ToString".to_string()], true)]
+        vec![("Derive".to_string(), vec!["Debug".to_string()], true)]
     );
     assert_eq!(attrs_of(3), vec![("Known".to_string(), vec![], false)]);
     assert_eq!(attrs_of(4), vec![("Known".to_string(), vec![], false)]);
@@ -58,7 +58,7 @@ impl Named for S { fn name(self): string { return self.a } }
 
 #[test]
 fn derive_argument_lists_carry_every_name() {
-    let program = parse_program("#Derive(ToString, Display)\nstruct S { a: string }")
+    let program = parse_program("#Derive(Debug, Display)\nstruct S { a: string }")
         .unwrap_or_else(|e| panic!("{}", e.message));
     let Statement::Struct(s) = &program.statements[0] else {
         panic!("expected struct");
@@ -68,9 +68,9 @@ fn derive_argument_lists_carry_every_name() {
         .iter()
         .map(|(n, _)| n.as_str())
         .collect();
-    assert_eq!(args, vec!["ToString", "Display"]);
+    assert_eq!(args, vec!["Debug", "Display"]);
     assert!(s.attributes[0].has_parens);
-    assert_eq!(s.attributes[0].span, 0..26);
+    assert_eq!(s.attributes[0].span, 0..23);
 }
 
 #[test]

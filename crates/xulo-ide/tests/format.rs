@@ -139,16 +139,16 @@ fn comparison_operator_spacing_is_untouched() {
 fn declaration_attributes_stay_glued_and_on_their_own_line() {
     // `#Test` is glued to its name, and the item keyword it decorates always
     // starts the next line — even when the source wrote them on one.
-    let out = fmt("#Test fn t(){print(1)}\n#Derive(ToString)\nstruct S{a:string}");
+    let out = fmt("#Test fn t(){print(1)}\n#Derive(Debug)\nstruct S{a:string}");
     assert!(out.contains("#Test\nfn t() {"), "out: {out}");
-    assert!(out.contains("#Derive(ToString)\nstruct S {"), "out: {out}");
+    assert!(out.contains("#Derive(Debug)\nstruct S {"), "out: {out}");
 }
 
 #[test]
 fn stacked_attributes_keep_one_per_line() {
-    let out = fmt("#Derive(ToString)\n#Derive(ToString)\nenum E{A B}");
+    let out = fmt("#Derive(Debug)\n#Derive(Debug)\nenum E{A B}");
     assert!(
-        out.contains("#Derive(ToString)\n#Derive(ToString)\nenum E {"),
+        out.contains("#Derive(Debug)\n#Derive(Debug)\nenum E {"),
         "out: {out}"
     );
 }

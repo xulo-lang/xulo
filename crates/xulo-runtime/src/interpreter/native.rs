@@ -1974,16 +1974,16 @@ pub(super) fn regex_match_value(m: &xulo_std::regex::Match) -> Value {
 pub(super) fn native_print(interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     let line = args
         .iter()
-        .map(|v| v.format())
-        .collect::<Vec<_>>()
+        .map(|v| interp.render_print(v))
+        .collect::<Result<Vec<_>, _>>()?
         .join(" ");
     interp.out.borrow_mut().push(line);
     Ok(Value::Null)
 }
 
-pub(super) fn native_str(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+pub(super) fn native_str(interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     Ok(match args.first() {
-        Some(v) => Value::String(v.format().into()),
+        Some(v) => Value::String(interp.render_display(v)?.into()),
         None => Value::String(String::new().into()),
     })
 }

@@ -2426,7 +2426,7 @@ fn build_control_flow_matches_interpreter_output() {
 }
 
 /// AOT 编译 `examples/trait_shapes.xulo`：`Trait::method(recv)` 静态派发
-/// 与 `str()` 的 ToString 派发都要能落地产物，输出与解释器逐字节一致。
+/// 与 `str()` 的 `Display` 派发都要能落地产物，输出与解释器逐字节一致。
 #[test]
 fn build_trait_shapes_matches_interpreter_output() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -2540,7 +2540,7 @@ fn build_modules_example_matches_interpreter_output() {
 }
 
 /// 跨模块 AOT：命名空间/成员导入、`pub const`、`use type`、跨模块 trait
-/// 派发与 ToString，以及入口模块里的 `#Derive(ToString)`。
+/// 派发与 `Display`，以及入口模块里的 `#Derive(Debug)`。
 #[test]
 fn build_cross_module_trait_dispatch_matches_interpreter() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -2563,8 +2563,11 @@ pub struct Rect { w: number, h: number }
 impl Shape for Rect {
     fn area(self): number { return self.w * self.h }
 }
-impl ToString for Rect {
-    fn toString(self): string { return "Rect(" + str(self.w) + "x" + str(self.h) + ")" }
+impl Display for Rect {
+    fn display(self, format: Format): string { return "Rect(" + str(self.w) + "x" + str(self.h) + ")" }
+}
+impl Debug for Rect {
+    fn debug(self, format: Format): string { return "Rect(" + str(self.w) + "x" + str(self.h) + ")" }
 }
 pub const PI = 3.14
 pub fn rect(w: number, h: number): Rect { return Rect(w: w, h: h) }
@@ -2578,7 +2581,7 @@ use type shapes::{Shape, Rect};
 use shapes::{rect, PI};
 use shapes as sh;
 
-#Derive(ToString)
+#Derive(Debug)
 struct Box2 { r: Rect, n: number }
 
 fn main() {
@@ -2587,7 +2590,7 @@ fn main() {
     print(sh::rect(1, 2).w)
     print(sh::PI)
     let b = Box2(r: rect(2, 5), n: 7)
-    print(str(b))
+    print(b)
     print(shapes::rect(6, 7).w)
 }
 "#,

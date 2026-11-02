@@ -173,7 +173,7 @@ fn builtin_type_arity(name: &str) -> Option<usize> {
         "usize" | "isize" | "Ptr" => Some(0),
         // `View` and `Range` are primitive but UpperCamelCase, and `Error` is
         // a prelude type (spec `types/primitive-types.md`).
-        "View" | "Error" | "Range" => Some(0),
+        "View" | "Error" | "Range" | "Format" => Some(0),
         _ => None,
     }
 }
@@ -378,25 +378,47 @@ fn builtin_type_entries() -> HashMap<String, TypeEntry> {
             kind: TypeEntryKind::Struct(vec![("message".to_string(), Type::String, None)]),
         },
     );
-    // `ToString` is the built-in protocol trait (spec `types/traits.md`):
-    // `str(v)` and `${v}` accept a base type or a type with this impl, and
-    // `#Derive(ToString)` expands to the same impl an author would write.
+    // `Format` is the built-in formatting context (spec `types/traits.md`,
+    // "Built-in formatting traits"): `precision` is optional, so a
+    // construction may omit it; `alternate` is the `#` flag.
     builtins.insert(
-        "ToString".to_string(),
+        "Format".to_string(),
         TypeEntry {
             type_params: Vec::new(),
             type_bounds: Vec::new(),
-            kind: TypeEntryKind::Trait(TraitDef {
-                methods: vec![TraitMethodSig {
-                    name: "toString".to_string(),
-                    params: Vec::new(),
-                    return_type: Type::String,
-                    has_self: true,
-                    is_async: false,
-                }],
-            }),
+            kind: TypeEntryKind::Struct(vec![
+                (
+                    "precision".to_string(),
+                    Type::Optional(Box::new(Type::Number)),
+                    None,
+                ),
+                ("alternate".to_string(), Type::Boolean, None),
+            ]),
         },
     );
+    // `Display` and `Debug` are the built-in formatting protocols (spec
+    // `types/traits.md`, "Built-in formatting traits"). `str(v)` and `${v}`
+    // accept a base type or a type with a `Display` impl, `#Derive(Debug)`
+    // expands to the same impl an author would write, and `print` consults
+    // a user type's `Display` first, then its `Debug`.
+    for (trait_name, method) in [("Display", "display"), ("Debug", "debug")] {
+        builtins.insert(
+            trait_name.to_string(),
+            TypeEntry {
+                type_params: Vec::new(),
+                type_bounds: Vec::new(),
+                kind: TypeEntryKind::Trait(TraitDef {
+                    methods: vec![TraitMethodSig {
+                        name: method.to_string(),
+                        params: vec![Type::Named("Format".to_string(), Vec::new())],
+                        return_type: Type::String,
+                        has_self: true,
+                        is_async: false,
+                    }],
+                }),
+            },
+        );
+    }
     // `RegexMatch` needs no import: an annotation of the name answers from
     // here, while `use regex::RegexMatch` binds the same shape locally.
     builtins.insert("RegexMatch".to_string(), regex_match_type_entry());
@@ -1703,11 +1725,14 @@ pub struct Analyzer {
     /// Registered `impl Trait for Type` blocks: `(trait, type)` -> method names
     /// provided. The receiver type's concrete name must be known statically.
     impls: std::collections::HashSet<(String, String, String)>,
-    /// Every type with a string form — a `ToString` impl (hand-written or
-    /// `#Derive(ToString)`) — built before checking so `str(v)` / `${v}`
-    /// (E0212) and derive field checks (E0801) are order-independent (spec
+    /// Every type with a string form — a `Display` impl (hand-written or
+    /// imported) — built before checking so `str(v)` / `${v}` (E0212) and
+    /// derive field checks (E0801) are order-independent (spec
     /// `types/traits.md`, `builtins/intrinsic-functions.md`).
-    string_forms: std::collections::HashSet<String>,
+    displays: std::collections::HashSet<String>,
+    /// Every type with a `Debug` impl (hand-written or `#Derive(Debug)`),
+    /// used by `print`'s fallback and by the derive's field rules.
+    debug_forms: std::collections::HashSet<String>,
     /// Mangled dispatch function names already claimed by `impl` methods, plus
     /// user functions present in the symbol table. Mangles join `trait`, `type`
     /// and `method` with `_`, so distinct `impl`s can collapse onto the same
@@ -2125,11 +2150,11 @@ pub fn module_face(program: &Program, module_id: &str) -> ModuleFace {
             Statement::TypeAlias(a) => set_face_name(&mut face, &a.name, false, FaceKind::Type),
             Statement::Enum(e) => {
                 set_face_name(&mut face, &e.name, false, FaceKind::Type);
-                face_derive_tostring(&mut face, &e.attributes, &e.name, e.type_params.is_empty());
+                face_derive_debug(&mut face, &e.attributes, &e.name, e.type_params.is_empty());
             }
             Statement::Struct(s) => {
                 set_face_name(&mut face, &s.name, false, FaceKind::Type);
-                face_derive_tostring(&mut face, &s.attributes, &s.name, s.type_params.is_empty());
+                face_derive_debug(&mut face, &s.attributes, &s.name, s.type_params.is_empty());
             }
             Statement::Trait(t) => set_face_name(&mut face, &t.name, false, FaceKind::Type),
             // Inherent methods live in the receiver's object at runtime, not
@@ -2180,20 +2205,20 @@ fn set_face_name(face: &mut ModuleFace, name: &str, is_pub: bool, kind: FaceKind
     }
 }
 
-/// `#Derive(ToString)` on a non-generic struct/enum registers the derived
+/// `#Derive(Debug)` on a non-generic struct/enum registers the derived
 /// method for dispatch, mirroring `validate_derive_decls`.
-fn face_derive_tostring(face: &mut ModuleFace, attrs: &[Attribute], name: &str, non_generic: bool) {
+fn face_derive_debug(face: &mut ModuleFace, attrs: &[Attribute], name: &str, non_generic: bool) {
     if !non_generic {
         return;
     }
     if attrs
         .iter()
-        .any(|a| a.name == "Derive" && a.args.iter().any(|(arg, _)| arg == "ToString"))
+        .any(|a| a.name == "Derive" && a.args.iter().any(|(arg, _)| arg == "Debug"))
     {
         face.impls.push((
-            "ToString".to_string(),
+            "Debug".to_string(),
             name.to_string(),
-            "toString".to_string(),
+            "debug".to_string(),
         ));
     }
 }
@@ -2366,7 +2391,7 @@ fn face_export(face: &mut ModuleFace, item: &ExportItem) {
                     kind: TypeEntryKind::Enum(e.variants.clone()),
                 },
             ));
-            face_derive_tostring(face, &e.attributes, &e.name, e.type_params.is_empty());
+            face_derive_debug(face, &e.attributes, &e.name, e.type_params.is_empty());
         }
         ExportItem::Struct(s) => {
             set_face_name(face, &s.name, true, FaceKind::Type);
@@ -2385,7 +2410,7 @@ fn face_export(face: &mut ModuleFace, item: &ExportItem) {
                     ),
                 },
             ));
-            face_derive_tostring(face, &s.attributes, &s.name, s.type_params.is_empty());
+            face_derive_debug(face, &s.attributes, &s.name, s.type_params.is_empty());
         }
         ExportItem::Trait(t) => {
             set_face_name(face, &t.name, true, FaceKind::Type);
@@ -2556,7 +2581,8 @@ fn run_analysis(
         bound_shapes: Vec::new(),
         bound_traits: Vec::new(),
         impls: imported_impls.iter().cloned().collect(),
-        string_forms: std::collections::HashSet::new(),
+        displays: std::collections::HashSet::new(),
+        debug_forms: std::collections::HashSet::new(),
         impl_mangled: std::collections::HashSet::new(),
         declared_impls: Vec::new(),
         trait_dispatch: Vec::new(),
@@ -2713,23 +2739,38 @@ fn run_analysis(
             }
         }
     }
-    // Hand-written `impl ToString for T` contributes to the string-form index
+    // Hand-written `impl Display for T` contributes to the string-form index
     // wherever it sits, so `str(v)` and `${v}` (E0212) and derive field
     // checks (E0801) see it regardless of position (spec
-    // `builtins/intrinsic-functions.md`, `types/traits.md`).
+    // `builtins/intrinsic-functions.md`, `types/traits.md`). `Debug` feeds
+    // `print`'s fallback and the derive's field rules.
     for statement in &program.statements {
         if let Statement::Impl(imp) = statement
-            && imp.trait_name == "ToString"
             && !imp.is_inherent
         {
-            analyzer.string_forms.insert(imp.type_name.clone());
+            match imp.trait_name.as_str() {
+                "Display" => {
+                    analyzer.displays.insert(imp.type_name.clone());
+                }
+                "Debug" => {
+                    analyzer.debug_forms.insert(imp.type_name.clone());
+                }
+                _ => {}
+            }
         }
     }
-    // 导入模块的 `impl ToString for T` / `#Derive(ToString)` 同样赋予 T
-    // 字符串形式：跨模块 `str(v)`（E0212）与派生字段检查（E0801）要能看到。
+    // 导入模块的 `impl Display for T` / `impl Debug for T` / `#Derive(Debug)`
+    // 同样赋予 T 对应能力：跨模块 `str(v)`（E0212）、`print` 与派生字段
+    // 检查（E0801）要能看到。
     for (trait_name, type_name, method) in imported_impls {
-        if trait_name == "ToString" && method == "toString" {
-            analyzer.string_forms.insert(type_name.clone());
+        match (trait_name.as_str(), method.as_str()) {
+            ("Display", "display") => {
+                analyzer.displays.insert(type_name.clone());
+            }
+            ("Debug", "debug") => {
+                analyzer.debug_forms.insert(type_name.clone());
+            }
+            _ => {}
         }
     }
     // Header forms (`mod`, `use`, `pub use`) may appear only before any
@@ -2849,7 +2890,7 @@ fn run_analysis(
             }
         }
     }
-    // The attribute registry runs before the check loop: `#Derive(ToString)`
+    // The attribute registry runs before the check loop: `#Derive(Debug)`
     // registers its impl up front so a `str(s)` or `s.to_string()` use of the
     // derived type resolves no matter where it sits in the file (spec
     // `types/traits.md`, "Attributes").
@@ -2875,6 +2916,14 @@ fn run_analysis(
     // holds every declaration (spec `types/composite-types.md`, E0113).
     if (analyzer.first_error.is_none() || lenient)
         && let Err(err) = analyzer.check_struct_composition(program)
+        && analyzer.first_error.is_none()
+    {
+        analyzer.first_error = Some(err);
+    }
+    // The derive's field rules run once the type table is complete, for the
+    // same reason: a field's `struct`/`enum` kind is a module property.
+    if (analyzer.first_error.is_none() || lenient)
+        && let Err(err) = analyzer.check_derive_fields(program)
         && analyzer.first_error.is_none()
     {
         analyzer.first_error = Some(err);
@@ -3692,7 +3741,7 @@ impl Analyzer {
     /// does not allow is `E0109`, and arguments that do not fit the
     /// registered shape are `E0110` (`E0111` for an unregistered derive
     /// target, `E0112` for a derive on a generic type, `E0805` for a
-    /// repeated or hand-conflicting `#Derive(ToString)`). A valid derive
+    /// repeated or hand-conflicting `#Derive(Debug)`). A valid derive
     /// registers its impl up front — and its field types without a string
     /// form are `E0801` — so `str(s)` on the derived type resolves no
     /// matter where the use sits.
@@ -3784,22 +3833,12 @@ impl Analyzer {
             }
         }
 
-        // Every target is registered now: a field or payload type with no
-        // string form fails the derive (spec `types/traits.md`, "Derive").
-        for (_span, fields) in &derives {
-            for (ty, label_span) in fields {
-                if !self.type_has_string_form(ty) {
-                    record_first!(
-                        first,
-                        self.err_code(
-                            "E0801",
-                            format!("`{}` does not implement `ToString`", ty.display())
-                        )
-                        .at(label_span.clone())
-                    );
-                }
-            }
-        }
+        // Field checking is deferred until the type table holds every
+        // declaration ([`Self::check_derive_fields`]): a field's `struct`
+        // kind and its `Debug` impl are module properties, exactly like the
+        // struct-composition rule. The walk above still registers each
+        // target's impl and its `Debug` availability up front.
+        let _ = &derives;
 
         match first {
             Some(err) => Err(err),
@@ -3875,7 +3914,7 @@ impl Analyzer {
     }
 
     /// Validate the attributes of a `struct`/`enum` declaration and register
-    /// every valid `#Derive(ToString)` for field checking. `fields` is
+    /// every valid `#Derive(Debug)` for field checking. `fields` is
     /// deferred as a closure so the caller's borrows end first.
     #[allow(clippy::too_many_arguments)]
     fn validate_derive_decls(
@@ -3907,14 +3946,14 @@ impl Analyzer {
                 continue;
             }
             if self.attr_gate(a, target, first) == Some(AttrKind::Derive) {
-                // A second `#Derive(ToString)` on the same declaration is the
-                // conflicting-impl error (spec: "a second `#Derive(ToString)`").
+                // A second `#Derive(Debug)` on the same declaration is the
+                // conflicting-impl error (spec: "a second `#Derive(Debug)`").
                 record_first!(
                     *first,
                     self.err_code(
                         "E0805",
                         format!(
-                            "`ToString` is already implemented for `{}` (method `toString`)",
+                            "`Debug` is already implemented for `{}` (method `debug`)",
                             type_name
                         )
                     )
@@ -3928,7 +3967,7 @@ impl Analyzer {
     /// `types/traits.md`, "Derive"): a parenthesized list of registered
     /// targets (`E0110`/`E0111`), no type parameters (`E0112`), no
     /// conflicting impl (`E0805`), then the impl registrations that make
-    /// `str(s)` and `s.to_string()` resolve the derived type.
+    /// `u.debug(format)` and `print(u)` resolve the derived type.
     fn validate_derive_attr(
         &mut self,
         attr: &Attribute,
@@ -3951,9 +3990,7 @@ impl Analyzer {
         }
         let mut targets_ok = true;
         for (arg, arg_span) in &attr.args {
-            if attribute_registry(arg) != Some(AttrKind::Derive)
-                && !matches!(arg.as_str(), "ToString")
-            {
+            if attribute_registry(arg) != Some(AttrKind::Derive) && arg.as_str() != "Debug" {
                 record_first!(
                     *first,
                     self.err_code(
@@ -3961,7 +3998,7 @@ impl Analyzer {
                         format!("`{arg}` is not a registered derive target")
                     )
                     .at(arg_span.clone())
-                    .with_note("registered targets: `ToString`")
+                    .with_note("registered targets: `Debug`")
                 );
                 targets_ok = false;
             }
@@ -3981,16 +4018,16 @@ impl Analyzer {
             return;
         }
         if !self.impls.insert((
-            "ToString".to_string(),
+            "Debug".to_string(),
             type_name.to_string(),
-            "toString".to_string(),
+            "debug".to_string(),
         )) {
             record_first!(
                 *first,
                 self.err_code(
                     "E0805",
                     format!(
-                        "`ToString` is already implemented for `{}` (method `toString`)",
+                        "`Debug` is already implemented for `{}` (method `debug`)",
                         type_name
                     )
                 )
@@ -3998,7 +4035,7 @@ impl Analyzer {
             );
             return;
         }
-        let mangled = impl_fn_name("ToString", type_name, "toString");
+        let mangled = impl_fn_name("Debug", type_name, "debug");
         if !self.impl_mangled.insert(mangled.clone()) {
             record_first!(
                 *first,
@@ -4023,45 +4060,286 @@ impl Analyzer {
             .entry(type_name.to_string())
             .or_default()
             .push(ImplMethodSig {
-                name: "toString".to_string(),
+                name: "debug".to_string(),
                 has_self: true,
-                param_count: 1,
-                param_types: vec![Type::Any],
+                param_count: 2,
+                param_types: vec![Type::Any, Type::Named("Format".to_string(), Vec::new())],
             });
         self.declared_impls.push(ImplRecord {
-            trait_name: Some("ToString".to_string()),
+            trait_name: Some("Debug".to_string()),
             type_name: type_name.to_string(),
             type_params: Vec::new(),
             const_params: Vec::new(),
             type_args: Vec::new(),
             bounds: Vec::new(),
             methods: vec![ImplMethodType {
-                name: "toString".to_string(),
+                name: "debug".to_string(),
                 ret: Type::String,
             }],
         });
-        self.string_forms.insert(type_name.to_string());
+        self.debug_forms.insert(type_name.to_string());
         derives.push((attr.span.clone(), fields));
     }
 
+    /// Check every `#Derive(Debug)` field after the type table is complete:
+    /// a field or payload that cannot be rendered by the derive's rules
+    /// fails it (spec `types/traits.md`, "Derive"). A `struct` needs its own
+    /// `Debug` (`E0801`), an `enum` falls back to the output table, and
+    /// `unknown` is `E0212`.
+    fn check_derive_fields(&self, program: &Program) -> SResult<()> {
+        let check = |attrs: &[Attribute], fields: Vec<(Type, Range<usize>)>| -> SResult<()> {
+            if !attrs
+                .iter()
+                .any(|a| a.name == "Derive" && a.args.iter().any(|(arg, _)| arg == "Debug"))
+            {
+                return Ok(());
+            }
+            for (ty, label_span) in fields {
+                if let Some((code, message)) = self.derive_field_error(&ty) {
+                    return Err(self.err_code(code, message).at(label_span));
+                }
+            }
+            Ok(())
+        };
+        for statement in &program.statements {
+            match statement {
+                Statement::Struct(s) => check(
+                    &s.attributes,
+                    s.fields
+                        .iter()
+                        .map(|f| (f.type_.clone(), f.name_span.clone()))
+                        .collect(),
+                )?,
+                Statement::Enum(e) => check(&e.attributes, enum_field_forms(&e.variants))?,
+                Statement::Export(export) => match &export.item {
+                    ExportItem::Struct(s) => check(
+                        &s.attributes,
+                        s.fields
+                            .iter()
+                            .map(|f| (f.type_.clone(), f.name_span.clone()))
+                            .collect(),
+                    )?,
+                    ExportItem::Enum(e) => check(&e.attributes, enum_field_forms(&e.variants))?,
+                    _ => {}
+                },
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
     /// Does `t` have a string form — a base type, or a named type with a
-    /// `ToString` impl (spec `builtins/intrinsic-functions.md`)? Shared by
-    /// E0212 (`str`/`${}`) and E0801 (`#Derive` fields). Spec-silent forms
-    /// (structural objects, functions, tuples, unions, async) stay
-    /// permissive so dynamic paths keep working.
-    fn type_has_string_form(&self, t: &Type) -> bool {
+    /// `Display` impl (spec `builtins/intrinsic-functions.md`)? Shared by
+    /// E0212 (`str`/`${}`/`List.join`) and the `print`/derive checks.
+    fn type_has_display(&self, t: &Type) -> bool {
         match t {
             Type::String | Type::Number | Type::Boolean | Type::Any | Type::Object => true,
-            Type::Null | Type::List(_) => false,
+            Type::Null | Type::List(_) | Type::Optional(_) => false,
             // An in-scope generic parameter's form is unknown until
             // instantiation: `str(v)` inside `fn show<T>(v: T)` must not be
             // rejected by the absence of a bound (spec has no "is base or
-            // ToString" bound to write).
-            Type::Named(name, _) => {
-                self.string_forms.contains(name) || self.generics.iter().any(|g| g == name)
+            // Display" bound to write).
+            Type::Named(name, args) => {
+                if name == "unknown" {
+                    return false;
+                }
+                if self.displays.contains(name) || self.generics.iter().any(|g| g == name) {
+                    return true;
+                }
+                // Follow one alias hop: `type Label = User` inherits User's
+                // display form for the string positions.
+                if let Some(TypeEntryKind::Alias(target)) =
+                    self.type_entry(name).map(|e| &e.kind)
+                {
+                    return self.type_has_display(target) && args.is_empty();
+                }
+                false
             }
-            Type::Optional(inner) => self.type_has_string_form(inner),
             _ => true,
+        }
+    }
+
+    fn type_has_debug(&self, t: &Type) -> bool {
+        match t {
+            Type::Named(name, _) => {
+                if self.debug_forms.contains(name) {
+                    return true;
+                }
+                match self.type_entry(name).map(|e| &e.kind) {
+                    Some(TypeEntryKind::Alias(target)) => self.type_has_debug(target),
+                    _ => false,
+                }
+            }
+            _ => false,
+        }
+    }
+
+    /// A user-declared `struct`/`enum` by name, following aliases. `true`
+    /// for a struct, `false` for an enum. Prelude shapes (`Result`, `Error`,
+    /// `Format`, …) are not user types — each has its own output-table row.
+    fn user_type_kind(&self, name: &str) -> Option<bool> {
+        // Prelude and built-in std types have their own output-table rows or
+        // render through dedicated intrinsics; only a program's own nominal
+        // declarations (in this module or an imported user module) answer
+        // here.
+        if self.builtins.contains_key(name)
+            || self.regex_names.contains(name)
+            || self.process_type_names.contains(name)
+            || self.http_type_names.contains(name)
+        {
+            return None;
+        }
+        let user_declared =
+            self.type_table.contains_key(name) || self.imported_types.contains_key(name);
+        match self.type_entry(name).map(|e| &e.kind) {
+            Some(TypeEntryKind::Struct(_)) if user_declared => Some(true),
+            Some(TypeEntryKind::Enum(_)) if user_declared => Some(false),
+            Some(TypeEntryKind::Alias(Type::Named(inner, _))) => self.user_type_kind(inner),
+            _ => None,
+        }
+    }
+
+    /// The first rendering error a `#Derive(Debug)` field or structural
+    /// position produces: `E0801` for a `struct` with no `Debug`, `E0212`
+    /// for `unknown`. `None` means the position renders.
+    fn derive_field_error(&self, t: &Type) -> Option<(&'static str, String)> {
+        match t {
+            Type::Named(name, args) => {
+                if name == "unknown" {
+                    return Some((
+                        "E0212",
+                        "`unknown` has no string form; narrow it before rendering".to_string(),
+                    ));
+                }
+                if let Some(is_struct) = self.user_type_kind(name) {
+                    if is_struct {
+                        if !self.type_has_debug(t) {
+                            return Some((
+                                "E0801",
+                                format!("`{}` does not implement `Debug`", t.display()),
+                            ));
+                        }
+                        return None;
+                    }
+                    // An enum renders through its `Debug` when it has one;
+                    // otherwise the output table's enum row renders it, and
+                    // its payloads are structural positions of that row.
+                    if self.type_has_debug(t) {
+                        return None;
+                    }
+                    if let Some(TypeEntryKind::Enum(variants)) =
+                        self.type_entry(name).map(|e| &e.kind)
+                    {
+                        for variant in variants {
+                            for payload in variant.payload.iter().flatten() {
+                                if let Some(err) = self.derive_field_error(&payload.type_) {
+                                    return Some(err);
+                                }
+                            }
+                        }
+                    }
+                    return None;
+                }
+                // A prelude application (`List<User>`, `Result<User, E>`,
+                // `Array<User, N>`) reaches its structural positions.
+                for arg in args {
+                    if matches!(arg, Type::Literal(_)) {
+                        continue;
+                    }
+                    if let Some(err) = self.derive_field_error(arg) {
+                        return Some(err);
+                    }
+                }
+                None
+            }
+            Type::List(inner) | Type::Optional(inner) | Type::Async(inner) => {
+                self.derive_field_error(inner)
+            }
+            Type::Tuple(items) | Type::Union(items) | Type::Intersection(items) => {
+                items.iter().find_map(|i| self.derive_field_error(i))
+            }
+            Type::ObjectType(fields) => fields.iter().find_map(|(_, ty)| self.derive_field_error(ty)),
+            Type::FnSig { params, ret } => params
+                .iter()
+                .find_map(|p| self.derive_field_error(p))
+                .or_else(|| ret.as_deref().and_then(|r| self.derive_field_error(r))),
+            _ => None,
+        }
+    }
+
+    /// The first error `print` reports for an operand of type `t` (spec
+    /// `builtins/intrinsic-functions.md`, "Output"): `unknown` in the
+    /// operand or any structural position, or a user `struct` with neither
+    /// `Display` nor `Debug`, is `E0212`. A user `enum` without either falls
+    /// back to the output table and renders.
+    fn print_rendering_error(&self, t: &Type) -> Option<(String, Option<String>)> {
+        match t {
+            Type::Named(name, args) => {
+                if name == "unknown" {
+                    return Some((
+                        "`unknown` has no string form; narrow it before printing".to_string(),
+                        None,
+                    ));
+                }
+                if self.generics.iter().any(|g| g == name) {
+                    // A type parameter is decided at the call that supplies
+                    // its type argument, not in the generic body.
+                    return None;
+                }
+                if let Some(is_struct) = self.user_type_kind(name) {
+                    if self.type_has_display(t) || self.type_has_debug(t) {
+                        return None;
+                    }
+                    if is_struct {
+                        return Some((
+                            format!("`{}` has no string form; implement `Display`", t.display()),
+                            Some(
+                                "`print` accepts a type implementing `Display` or `Debug`"
+                                    .to_string(),
+                            ),
+                        ));
+                    }
+                    // An enum with neither implementation falls back to the
+                    // output table; its payloads are still structural
+                    // positions, so `unknown` and impl-less structs inside
+                    // them are reached.
+                    if let Some(TypeEntryKind::Enum(variants)) =
+                        self.type_entry(name).map(|e| &e.kind)
+                    {
+                        for variant in variants {
+                            for payload in variant.payload.iter().flatten() {
+                                if let Some(err) = self.print_rendering_error(&payload.type_) {
+                                    return Some(err);
+                                }
+                            }
+                        }
+                    }
+                    return None;
+                }
+                for arg in args {
+                    if matches!(arg, Type::Literal(_)) {
+                        continue;
+                    }
+                    if let Some(err) = self.print_rendering_error(arg) {
+                        return Some(err);
+                    }
+                }
+                None
+            }
+            Type::List(inner) | Type::Optional(inner) | Type::Async(inner) => {
+                self.print_rendering_error(inner)
+            }
+            Type::Tuple(items) | Type::Union(items) | Type::Intersection(items) => {
+                items.iter().find_map(|i| self.print_rendering_error(i))
+            }
+            Type::ObjectType(fields) => fields
+                .iter()
+                .find_map(|(_, ty)| self.print_rendering_error(ty)),
+            Type::FnSig { params, ret } => params
+                .iter()
+                .find_map(|p| self.print_rendering_error(p))
+                .or_else(|| ret.as_deref().and_then(|r| self.print_rendering_error(r))),
+            _ => None,
         }
     }
 
@@ -9028,6 +9306,31 @@ impl Analyzer {
     ) -> SResult<Option<Type>> {
         let member = call.method.as_deref().unwrap_or("");
         let recv = self.resolve_alias(receiver, 0);
+        // `List.join`/`Array.join` render their elements through the `str`
+        // domain: a base type or a `Display` implementor (spec
+        // `types/composite-types.md`).
+        if member == "join" {
+            let elem = match &recv {
+                Type::List(inner) => Some((**inner).clone()),
+                Type::Named(name, args) if name == "Array" => {
+                    args.first().cloned()
+                }
+                _ => None,
+            };
+            if let Some(elem) = elem
+                && !self.type_has_display(&elem)
+            {
+                return Err(self
+                    .err_code(
+                        "E0212",
+                        format!(
+                            "`{}` has no string form; implement `Display`",
+                            elem.display()
+                        ),
+                    )
+                    .at(call.span.clone()));
+            }
+        }
         if builtin_property(&recv, member).is_some() {
             return Err(self
                 .err_code(
@@ -10287,12 +10590,15 @@ impl Analyzer {
         // — shadows the builtin as everywhere else.
         if call.object.is_none()
             && !call.callee.contains("::")
-            && matches!(call.callee.as_str(), "Request" | "Response" | "Server")
+            && matches!(
+                call.callee.as_str(),
+                "Request" | "Response" | "Server" | "Format"
+            )
             && !self.type_table.contains_key(&call.callee)
             && self.lookup_symbol(&call.callee).is_err()
         {
             return match call.callee.as_str() {
-                "Request" | "Response" => {
+                "Request" | "Response" | "Format" => {
                     self.no_type_args(call)?;
                     self.check_struct_ctor_call(call, &call.callee)
                 }
@@ -10580,6 +10886,27 @@ impl Analyzer {
                     }
                     return Ok(ret.clone().map(|r| *r).unwrap_or(Type::Any));
                 }
+                // `toString` is the derived action of `Display`: a parameter
+                // bounded by `Display` grants it even though the trait
+                // declares only `display` (spec `types/traits.md`,
+                // "Member calls").
+                if method == "toString"
+                    && self
+                        .bound_traits
+                        .iter()
+                        .rev()
+                        .find_map(|m| m.get(name))
+                        .is_some_and(|traits| traits.iter().any(|t| t == "Display"))
+                {
+                    if !call.arguments.is_empty() {
+                        return Err(self
+                            .err_code("E0207", "`toString` takes no arguments")
+                            .at(call.span.clone()));
+                    }
+                    self.trait_dispatch
+                        .push((call.span.clone(), "dyn:Display:display".to_string()));
+                    return Ok(Type::String);
+                }
                 return Err(self.err_code("E0102", format!("no member `{method}` on `{name}`")));
             }
             // Built-in collection/string members are inherent and closed: the
@@ -10666,7 +10993,7 @@ impl Analyzer {
                     }
                     // Step 2: methods of trait impls applicable to the
                     // receiver; exactly one candidate may result.
-                    let mut candidates: Vec<Type> = Vec::new();
+                    let mut candidates: Vec<(Type, String)> = Vec::new();
                     for name in &names {
                         for record in self
                             .declared_impls
@@ -10677,13 +11004,46 @@ impl Analyzer {
                                 continue;
                             };
                             if let Some(m) = record.methods.iter().find(|m| &m.name == method) {
-                                candidates.push(substitute_type(&m.ret, &bindings));
+                                let trait_name = record.trait_name.clone().unwrap_or_default();
+                                candidates.push((
+                                    substitute_type(&m.ret, &bindings),
+                                    impl_fn_name(&trait_name, name, method),
+                                ));
                             }
                         }
                     }
                     match candidates.len() {
-                        1 => return Ok(candidates.pop().unwrap()),
+                        1 => {
+                            let (ret, mangled) = candidates.pop().unwrap();
+                            // Annotate so the compiled path can dispatch an
+                            // enum receiver, which carries no object to hang
+                            // methods on (the interpreter's dynamic fallback
+                            // answers the same call).
+                            self.trait_dispatch.push((call.span.clone(), mangled));
+                            return Ok(ret);
+                        }
                         0 => {
+                            // Step 3: a receiver implementing `Display` has
+                            // the derived `toString` action — `display` at
+                            // the default `Format`. It yields to both steps
+                            // above, so only an empty candidate set reaches
+                            // here (spec `types/traits.md`, "Member calls").
+                            if method == "toString" {
+                                if !call.arguments.is_empty() {
+                                    return Err(self
+                                        .err_code("E0207", "`toString` takes no arguments")
+                                        .at(call.span.clone()));
+                                }
+                                if let Some(name) =
+                                    names.iter().find(|n| self.displays.contains(*n))
+                                {
+                                    self.trait_dispatch.push((
+                                        call.span.clone(),
+                                        impl_fn_name("Display", name, "display"),
+                                    ));
+                                    return Ok(Type::String);
+                                }
+                            }
                             return Err(self.err_code(
                                 "E0102",
                                 format!("no member `{method}` on `{}`", resolved.display()),
@@ -10789,7 +11149,28 @@ impl Analyzer {
         if call.callee == "print" || call.callee == "println" || call.callee == "repl_echo" {
             self.no_type_args(call)?;
             for arg in &call.arguments {
-                self.check_arg_value(&arg.value)?;
+                let operand = self.check_arg_value(&arg.value)?;
+                // A bare struct/enum name is the type's constructor object,
+                // not a value of the type; `print(User)` keeps the table's
+                // object rendering.
+                let type_object = matches!(
+                    &arg.value,
+                    Expression::Identifier { name, .. }
+                        if matches!(
+                            self.type_entry(name).map(|e| &e.kind),
+                            Some(TypeEntryKind::Struct(_)) | Some(TypeEntryKind::Enum(_))
+                        )
+                );
+                if type_object {
+                    continue;
+                }
+                if let Some((message, note)) = self.print_rendering_error(&operand) {
+                    let mut err = self.err_code("E0212", message);
+                    if let Some(note) = note {
+                        err = err.with_note(note);
+                    }
+                    return Err(err.at(arg.value.span().clone()));
+                }
             }
             return Ok(Type::Any);
         }
@@ -10805,28 +11186,37 @@ impl Analyzer {
             }
             let operand = self.check_expression(&call.arguments[0].value)?;
             // `str(v)` and `${v}` accept exactly the same operands: a base
-            // type or a value whose type implements `ToString`; anything
+            // type or a value whose type implements `Display`; anything
             // else is `E0212` (spec `builtins/intrinsic-functions.md`,
-            // `expressions/literals.md`).
-            if !self.type_has_string_form(&operand) {
-                return Err(self
-                    .err_code(
-                        "E0212",
-                        format!(
-                            "`{}` has no string form; implement `ToString`",
-                            operand.display()
-                        ),
-                    )
-                    .at(call.arguments[0].value.span().clone()));
+            // `expressions/literals.md`). A `Debug`-only type carries the
+            // note that `print` still accepts it.
+            if !self.type_has_display(&operand) {
+                let mut err = self.err_code(
+                    "E0212",
+                    format!(
+                        "`{}` has no string form; implement `Display`",
+                        operand.display()
+                    ),
+                );
+                if let Type::Named(name, _) = &operand
+                    && self.debug_forms.contains(name)
+                {
+                    err = err.with_note(format!(
+                        "`{}` implements `Debug`, which `print` accepts; string form requires `Display`",
+                        name
+                    ));
+                }
+                return Err(err.at(call.arguments[0].value.span().clone()));
             }
-            // A `ToString` implementor renders through `toString`: the call
-            // is annotated for dispatch exactly like `Trait::method(recv)`.
+            // A `Display` implementor renders through `display` at the
+            // default `Format`: the call is annotated for dispatch exactly
+            // like `Trait::method(recv)`.
             if let Type::Named(name, _) = &operand
-                && self.string_forms.contains(name)
+                && self.displays.contains(name)
             {
                 self.trait_dispatch.push((
                     call.span.clone(),
-                    impl_fn_name("ToString", name, "toString"),
+                    impl_fn_name("Display", name, "display"),
                 ));
             }
             return Ok(Type::String);

@@ -1,6 +1,6 @@
 //! Trait 派发（`Trait::method(recv)` 与 `str(v)`）的 codegen 回归：
 //! 语义层把调用标注成派发名，AOT 须静态解析到 impl 函数；派生
-//! `#Derive(ToString)` 须生成与解释器一致的渲染。JIT 输出逐行对齐解释器。
+//! `#Derive(Debug)` 与 `Display` 须生成与解释器一致的渲染。JIT 输出逐行对齐解释器。
 use std::path::Path;
 use xulo_compiler::aot::AotCodeGen;
 use xulo_compiler::{codegen::CodeGen, compile_to_ir};
@@ -54,21 +54,21 @@ fn explicit_trait_dispatch_matches_interpreter() {
     );
 }
 
-/// 手写 `impl ToString for T`：`str(v)`、模板与 `Trait::method` 三条派发
+/// 手写 `impl Display for T`：`str(v)`、模板与 `Trait::method` 三条派发
 /// 路径与成员调用 `v.toString()` 都走同一个实现。
 #[test]
-fn handwritten_tostring_dispatch_matches_interpreter() {
+fn handwritten_display_dispatch_matches_interpreter() {
     let out = compile_and_run(
         r#"
 struct Point { x: number, y: number }
-impl ToString for Point {
-    fn toString(self): string { "Point(" + str(self.x) + ", " + str(self.y) + ")" }
+impl Display for Point {
+    fn display(self, format: Format): string { "Point(" + str(self.x) + ", " + str(self.y) + ")" }
 }
 fn main() {
     let p = Point(x: 1.5, y: 2)
     print(str(p))
     print(p.toString())
-    print(ToString::toString(p))
+    print(Display::display(p, Format(precision: null, alternate: false)))
     print(`${p}`)
 }
 "#,
@@ -76,46 +76,45 @@ fn main() {
     assert_eq!(out, lines(&["Point(1.5, 2)"; 4]));
 }
 
-/// `#Derive(ToString)` struct：字段按声明序 `Type(name: v, …)`，小数字段
+/// `#Derive(Debug)` struct：字段按声明序 `Type(name: v, …)`，小数字段
 /// 按对象里存的真实标签渲染，可选字段缺省为 null，Named 字段递归走派生。
 #[test]
-fn derived_struct_tostring_matches_interpreter() {
+fn derived_struct_debug_matches_interpreter() {
     let out = compile_and_run(
         r#"
-#Derive(ToString)
+#Derive(Debug)
 struct P { x: number }
-#Derive(ToString)
+#Derive(Debug)
 struct User { name: string, age: number, nick: string?, home: P }
 fn main() {
     let u = User(name: "lyy", age: 30.5, home: P(x: 1))
-    print(str(u))
-    print(`${u}`)
-    print(u.toString())
+    print(u)
+    print(u.debug(Format(precision: null, alternate: false)))
 }
 "#,
     );
     assert_eq!(
         out,
-        lines(&["User(name: lyy, age: 30.5, nick: null, home: P(x: 1))"; 3])
+        lines(&["User(name: lyy, age: 30.5, nick: null, home: P(x: 1))"; 2])
     );
 }
 
-/// `#Derive(ToString)` enum：`Type::Variant` 与 `Type::Variant(p0, …)`，
+/// `#Derive(Debug)` enum：`Type::Variant` 与 `Type::Variant(p0, …)`，
 /// payload 按各自声明类型（Named 递归）渲染。
 #[test]
-fn derived_enum_tostring_matches_interpreter() {
+fn derived_enum_debug_matches_interpreter() {
     let out = compile_and_run(
         r#"
-#Derive(ToString)
+#Derive(Debug)
 struct P { x: number }
-#Derive(ToString)
+#Derive(Debug)
 enum Shape { Dot, Circle(number), Pair(string, number), Named(P) }
 fn main() {
-    print(str(Shape::Dot))
-    print(str(Shape::Circle(3.5)))
-    print(str(Shape::Pair("a", 2)))
-    print(str(Shape::Named(P(x: 9))))
-    print(`${Shape::Circle(4)}`)
+    print(Shape::Dot)
+    print(Shape::Circle(3.5))
+    print(Shape::Pair("a", 2))
+    print(Shape::Named(P(x: 9)))
+    print(Shape::Circle(4).debug(Format(precision: null, alternate: false)))
 }
 "#,
     );
@@ -136,9 +135,9 @@ fn main() {
 fn aot_object_references_object_get_tag() {
     let bytes = object_bytes(
         r#"
-#Derive(ToString)
+#Derive(Debug)
 struct P { x: number }
-fn main() { print(str(P(x: 1))) }
+fn main() { print(P(x: 1)) }
 "#,
     );
     assert!(
@@ -166,5 +165,39 @@ fn main() { print(measure(Rect(w: 2))) }
         err.message.contains("dynamic trait dispatch"),
         "unexpected error: {}",
         err.message
+    );
+}
+
+/// `print` consults a user type's `Display` first, then its `Debug`, for
+/// both a struct and an enum receiver (spec `builtins/intrinsic-functions.md`,
+/// "Output").
+#[test]
+fn print_consults_display_then_debug_matches_interpreter() {
+    let out = compile_and_run(
+        r#"
+struct Shown { v: number }
+impl Display for Shown {
+    fn display(self, format: Format): string { "shown" }
+}
+#Derive(Debug)
+struct DebugOnly { v: number }
+#Derive(Debug)
+enum Shape { Dot, Circle(number) }
+fn main() {
+    print(Shown(v: 1))
+    print(DebugOnly(v: 2))
+    print(Shape::Dot)
+    print(Shape::Circle(3.5))
+}
+"#,
+    );
+    assert_eq!(
+        out,
+        lines(&[
+            "shown",
+            "DebugOnly(v: 2)",
+            "Shape::Dot",
+            "Shape::Circle(3.5)",
+        ])
     );
 }

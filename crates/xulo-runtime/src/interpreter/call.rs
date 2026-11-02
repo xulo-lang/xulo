@@ -17,7 +17,16 @@ impl Interpreter {
                         call.span.clone(),
                     )
                 })?;
-                let args = self.eval_args(&call.arguments, env)?;
+                let mut args = Vec::new();
+                if let Some(object) = &call.object {
+                    args.push(self.eval(object, env)?);
+                }
+                args.extend(self.eval_args(&call.arguments, env)?);
+                if matches!((trait_name, method), ("Display", "display") | ("Debug", "debug"))
+                    && args.len() == 1
+                {
+                    args.push(self.default_format());
+                }
                 let key = format!("{trait_name}::{method}");
                 let mut resolved = None;
                 for struct_name in self.struct_names.borrow().iter() {
@@ -52,7 +61,21 @@ impl Interpreter {
                     call.span.clone(),
                 )
             })?;
-            return self.call_value(&callee, &call.arguments, env);
+            let mut values = Vec::new();
+            if let Some(object) = &call.object {
+                values.push(self.eval(object, env)?);
+            }
+            values.extend(self.eval_args(&call.arguments, env)?);
+            // `str(v)` / `${v}` / `v.toString()` dispatch to `display` at the
+            // default `Format`; a written `Display::display(v, fmt)` already
+            // carries one.
+            if values.len() == 1
+                && ((impl_name.starts_with("impl_Display_") && impl_name.ends_with("_display"))
+                    || (impl_name.starts_with("impl_Debug_") && impl_name.ends_with("_debug")))
+            {
+                values.push(self.default_format());
+            }
+            return self.call_value_with_values(&callee, &values);
         }
         // `Map::fromEntries` and `Set::fromList` are the static constructors
         // of the two built-in container types (spec
@@ -346,22 +369,6 @@ impl Interpreter {
         match callee {
             Some(v) => self.call_value(&v, &call.arguments, env),
             None => {
-                // A derived (or hand written) `ToString` on an enum is a
-                // standalone mangled function — enum instances carry no object
-                // to hang methods on — so `variant.toString()` dispatches
-                // through it with the receiver bound as `self`.
-                if let Value::Enum { enum_name, .. } = &receiver
-                    && method == "toString"
-                {
-                    let mangled = impl_fn_name("ToString", enum_name, "toString");
-                    if let Some(func) = env.borrow().get(&mangled) {
-                        let arg_values = self.eval_args(&call.arguments, env)?;
-                        let mut args = Vec::with_capacity(arg_values.len() + 1);
-                        args.push(receiver.clone());
-                        args.extend(arg_values);
-                        return self.call_value_with_values(&func, &args);
-                    }
-                }
                 // A constructed instance knows its struct type: the method
                 // resolves on that type's object (inherent methods, a derived
                 // `toString`) with the receiver bound as `self`, so two
@@ -407,6 +414,21 @@ impl Interpreter {
                         &call.span,
                         env,
                     );
+                }
+                // `toString` is the derived action of `Display`: when no
+                // inherent or declared member claimed it, a `Display`
+                // implementor answers through `display` at the default
+                // `Format` (spec `types/traits.md`, "Member calls").
+                if method == "toString"
+                    && call.arguments.is_empty()
+                    && let Some(out) = self.call_trait_impl(
+                        "Display",
+                        "display",
+                        &receiver,
+                        std::slice::from_ref(&self.default_format()),
+                    )
+                {
+                    return out;
                 }
                 Err(RunError::err(
                     format!("`{method}` is not a function of {}", receiver.kind_name()),
@@ -951,7 +973,10 @@ impl Interpreter {
                     }
                 };
                 let l = list.borrow();
-                let parts: Vec<String> = l.iter().map(|v| v.format()).collect();
+                let parts: Vec<String> = l
+                    .iter()
+                    .map(|v| self.render_display(v))
+                    .collect::<Result<_, _>>()?;
                 Ok(Value::String(parts.join(&sep).into()))
             }
             "reverse" => {

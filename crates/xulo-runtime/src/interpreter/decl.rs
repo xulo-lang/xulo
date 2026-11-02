@@ -1,21 +1,15 @@
 use super::*;
 
-/// How a derived `toString` renders one field or payload parameter:
-/// structurally, or by delegating to that type's `ToString` impl (hand
-/// written or itself derived — both live under the same mangled name).
-pub(super) enum DerivedForm {
-    Structural,
-    ToStr(String),
-}
-
-pub(super) fn derived_form(ty: &Type) -> DerivedForm {
-    match ty {
-        // `string` parses as `Type::String`, so a named type here is a
-        // user type; the semantic pass has already rejected the derive
-        // unless the type has a string form (E0212/E0801).
-        Type::Named(name, _) => DerivedForm::ToStr(name.clone()),
-        _ => DerivedForm::Structural,
-    }
+/// Which rendering a caller asks for: the output table's user-type consult.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum RenderMode {
+    /// `str`/`${…}`/`List.join`: a user type renders through `Display`.
+    DisplayOnly,
+    /// A `#Derive(Debug)` field: a user type renders through `Debug`, an
+    /// enum without one falls back to the table's enum row.
+    DebugField,
+    /// `print`: a user type renders through `Display`, then `Debug`.
+    Print,
 }
 
 /// A struct constructor's declaration: field names in order, each field's
@@ -27,9 +21,203 @@ pub(super) struct StructCtorDecl {
 }
 
 impl Interpreter {
+    /// The default `Format` every consumer hands a `display`/`debug`:
+    /// `Format(precision: null, alternate: false)` (spec
+    /// `types/traits.md`, "Built-in formatting traits").
+    pub(super) fn default_format(&self) -> Value {
+        let obj = Rc::new(RefCell::new(vec![
+            ("precision".to_string(), Value::Null),
+            ("alternate".to_string(), Value::Boolean(false)),
+        ]));
+        self.register_instance(&obj, "Format");
+        Value::Object(obj)
+    }
+
+    /// Call a registered impl for `value`, when one exists. `extra` follows
+    /// the receiver (a `Format` for `Display`/`Debug`).
+    pub(super) fn call_trait_impl(
+        &self,
+        trait_name: &str,
+        method: &str,
+        value: &Value,
+        extra: &[Value],
+    ) -> Option<Result<Value, RunError>> {
+        let type_name = match value {
+            Value::Enum { enum_name, .. } => Some(enum_name.clone()),
+            Value::Object(obj) => self.instance_type(obj),
+            _ => None,
+        }?;
+        let mangled = impl_fn_name(trait_name, &type_name, method);
+        let func = self.global.borrow().get(&mangled)?;
+        let mut args = Vec::with_capacity(extra.len() + 1);
+        args.push(value.clone());
+        args.extend(extra.iter().cloned());
+        Some(self.call_value_with_values(&func, &args))
+    }
+
+    fn impl_string(&self, out: Result<Value, RunError>) -> Result<String, RunError> {
+        Ok(match out? {
+            Value::String(s) => s.to_string(),
+            other => other.format(),
+        })
+    }
+
+    /// Render a value under one of the three user-type consult modes. The
+    /// recursion reaches structural positions (a container's elements, a
+    /// tuple's elements, an object's fields), so a user type inside a
+    /// container is consulted exactly as at the top.
+    pub(super) fn render_in_mode(
+        &self,
+        value: &Value,
+        mode: RenderMode,
+        seen: &mut std::collections::HashSet<usize>,
+        format: &Value,
+    ) -> Result<String, RunError> {
+        let render = |v: &Value, seen: &mut std::collections::HashSet<usize>| {
+            self.render_in_mode(v, mode, seen, format)
+        };
+        match value {
+            Value::Object(fields) => {
+                if let Some(type_name) = self.instance_type(fields) {
+                    if type_name == "Format" {
+                        let fields = fields.borrow();
+                        let get = |name: &str| {
+                            fields
+                                .iter()
+                                .find(|(k, _)| k == name)
+                                .map(|(_, v)| v.clone())
+                                .unwrap_or(Value::Null)
+                        };
+                        let precision = render(&get("precision"), seen)?;
+                        let alternate = render(&get("alternate"), seen)?;
+                        return Ok(format!(
+                            "Format(precision: {precision}, alternate: {alternate})"
+                        ));
+                    }
+                    if type_name == "Error" {
+                        let fields = fields.borrow();
+                        let message = fields
+                            .iter()
+                            .find(|(k, _)| k == "message")
+                            .map(|(_, v)| v.clone())
+                            .unwrap_or(Value::Null);
+                        return Ok(format!("Error({})", render(&message, seen)?));
+                    }
+                    if mode != RenderMode::DebugField
+                        && let Some(out) = self.call_trait_impl(
+                            "Display",
+                            "display",
+                            value,
+                            std::slice::from_ref(&self.default_format()),
+                        )
+                    {
+                        return self.impl_string(out);
+                    }
+                    if mode != RenderMode::DisplayOnly
+                        && let Some(out) =
+                            self.call_trait_impl("Debug", "debug", value, std::slice::from_ref(format))
+                    {
+                        return self.impl_string(out);
+                    }
+                }
+                let id = Rc::as_ptr(fields) as usize;
+                if !seen.insert(id) {
+                    return Ok("{ <cycle> }".into());
+                }
+                let parts = fields
+                    .borrow()
+                    .iter()
+                    .map(|(k, v)| Ok(format!("{k}: {}", render(v, seen)?)))
+                    .collect::<Result<Vec<_>, RunError>>()?;
+                seen.remove(&id);
+                Ok(format!("{{ {} }}", parts.join(", ")))
+            }
+            Value::Enum {
+                enum_name,
+                tag,
+                payload,
+            } => {
+                if mode != RenderMode::DebugField
+                    && let Some(out) = self.call_trait_impl(
+                        "Display",
+                        "display",
+                        value,
+                        std::slice::from_ref(&self.default_format()),
+                    )
+                {
+                    return self.impl_string(out);
+                }
+                if mode != RenderMode::DisplayOnly
+                    && let Some(out) =
+                        self.call_trait_impl("Debug", "debug", value, std::slice::from_ref(format))
+                {
+                    return self.impl_string(out);
+                }
+                let sep = if mode == RenderMode::DebugField {
+                    "::"
+                } else {
+                    "."
+                };
+                match payload {
+                    None => Ok(format!("{enum_name}{sep}{tag}")),
+                    Some(p) => Ok(format!("{enum_name}{sep}{tag}({})", render(p, seen)?)),
+                }
+            }
+            Value::List(list) => {
+                let id = Rc::as_ptr(list) as usize;
+                if !seen.insert(id) {
+                    return Ok("[<cycle>]".into());
+                }
+                let parts = list
+                    .borrow()
+                    .iter()
+                    .map(|v| render(v, seen))
+                    .collect::<Result<Vec<_>, RunError>>()?;
+                seen.remove(&id);
+                Ok(format!("[{}]", parts.join(", ")))
+            }
+            Value::Set(set) => {
+                let id = Rc::as_ptr(set) as usize;
+                if !seen.insert(id) {
+                    return Ok("[<cycle>]".into());
+                }
+                let parts = set
+                    .borrow()
+                    .iter()
+                    .map(|v| render(v, seen))
+                    .collect::<Result<Vec<_>, RunError>>()?;
+                seen.remove(&id);
+                Ok(format!("Set([{}])", parts.join(", ")))
+            }
+            Value::Signal(cell) => render(&cell.borrow(), seen),
+            other => Ok(other.format()),
+        }
+    }
+
+    /// `print`'s rendering: `Display`, then `Debug`, then the output table
+    /// (spec `builtins/intrinsic-functions.md`, "Output").
+    pub(super) fn render_print(&self, value: &Value) -> Result<String, RunError> {
+        self.render_in_mode(
+            value,
+            RenderMode::Print,
+            &mut std::collections::HashSet::new(),
+            &self.default_format(),
+        )
+    }
+
+    /// `str`/`${…}`/`List.join`'s rendering: `Display`, then the table.
+    pub(super) fn render_display(&self, value: &Value) -> Result<String, RunError> {
+        self.render_in_mode(
+            value,
+            RenderMode::DisplayOnly,
+            &mut std::collections::HashSet::new(),
+            &self.default_format(),
+        )
+    }
+
     /// Register a `struct` declaration: the shared type object (inherent
-    /// methods and a derived `toString` land on it), the constructor
-    /// metadata `User(name: …)` builds instances from, and the name
+    /// methods and a derived `debug` land on it), the constructor metadata
+    /// `User(name: …)` builds instances from, and the name
     /// `struct_method`/dispatch look the object up by.
     pub(super) fn register_struct(&self, s: &StructDef, env: &Rc<RefCell<Env>>) {
         self.struct_names.borrow_mut().push(s.name.clone());
@@ -52,79 +240,62 @@ impl Interpreter {
         self.register_derived_struct(s, env);
     }
 
-    /// Whether a declaration carries `#Derive(ToString)` (spec
+    /// Whether a declaration carries `#Derive(Debug)` (spec
     /// `types/traits.md` registers exactly one derive target).
-    pub(super) fn derives_to_string(attributes: &[Attribute]) -> bool {
+    pub(super) fn derives_debug(attributes: &[Attribute]) -> bool {
         attributes
             .iter()
-            .any(|attr| attr.name == "Derive" && attr.args.iter().any(|(arg, _)| arg == "ToString"))
+            .any(|attr| attr.name == "Derive" && attr.args.iter().any(|(arg, _)| arg == "Debug"))
     }
 
-    /// Render one derived field/parameter. Nested named types resolve through
-    /// the interpreter root, where every `impl` — hand written and derived —
-    /// registers its mangled name, so derived renderers compose.
-    pub(super) fn derived_to_string(
+    /// Render one derived field/parameter through `Debug` rules: a user
+    /// type uses its own `debug`, an enum without one falls back to the
+    /// table's enum row, and everything else renders directly.
+    pub(super) fn derived_debug(
         &self,
         value: &Value,
-        form: &DerivedForm,
+        format: &Value,
     ) -> Result<String, RunError> {
-        match form {
-            DerivedForm::Structural => Ok(value.format()),
-            DerivedForm::ToStr(type_name) => {
-                let mangled = impl_fn_name("ToString", type_name, "toString");
-                let func = self.global.borrow().get(&mangled);
-                match func {
-                    Some(func) => {
-                        let out =
-                            self.call_value_with_values(&func, std::slice::from_ref(value))?;
-                        Ok(match out {
-                            Value::String(s) => s.to_string(),
-                            other => other.format(),
-                        })
-                    }
-                    // No analysis pass registered an impl: fall back to
-                    // structural rendering, matching an underived type.
-                    None => Ok(value.format()),
-                }
-            }
-        }
+        self.render_in_mode(
+            value,
+            RenderMode::DebugField,
+            &mut std::collections::HashSet::new(),
+            format,
+        )
     }
 
-    /// Register `#Derive(ToString)` for a struct (spec `types/traits.md`): the
-    /// generated method sits on the struct's object so `user.toString()`
+    /// Register `#Derive(Debug)` for a struct (spec `types/traits.md`): the
+    /// generated method sits on the struct's object so `user.debug(fmt)`
     /// resolves like a hand written member, and under its mangled name on the
-    /// shared root so `ToString::toString(user)` and an annotated `str(user)`
-    /// dispatch through the same function.
+    /// shared root so `Debug::debug(user, fmt)` dispatches through the same
+    /// function.
     pub(super) fn register_derived_struct(&self, s: &StructDef, env: &Rc<RefCell<Env>>) {
-        if !Self::derives_to_string(&s.attributes) {
+        if !Self::derives_debug(&s.attributes) {
             return;
         }
         let type_name = s.name.clone();
-        let forms: Vec<(String, DerivedForm)> = s
-            .fields
-            .iter()
-            .map(|f| (f.name.clone(), derived_form(&f.type_)))
-            .collect();
+        let fields: Vec<String> = s.fields.iter().map(|f| f.name.clone()).collect();
         let renderer: Value = Value::Native(Rc::new(move |interp, args| {
             let receiver = args.first().cloned().unwrap_or(Value::Null);
-            let out = interp.render_derived_struct(&type_name, &forms, &receiver)?;
+            let format = args.get(1).cloned().unwrap_or_else(|| interp.default_format());
+            let out = interp.render_derived_struct(&type_name, &fields, &receiver, &format)?;
             Ok(Value::String(out.into()))
         }));
         if let Some(Value::Object(obj)) = env.borrow().get(&s.name) {
             let mut obj = obj.borrow_mut();
-            if !obj.iter().any(|(k, _)| k == "toString") {
-                obj.push(("toString".to_string(), renderer.clone()));
+            if !obj.iter().any(|(k, _)| k == "debug") {
+                obj.push(("debug".to_string(), renderer.clone()));
             }
-            // The qualified key is what a generic `T: ToString` bound's
+            // The qualified key is what a generic `T: Debug` bound's
             // dynamic dispatch looks for on the receiver's struct object —
             // the same slot a hand-written trait impl registers.
-            let qualified = "ToString::toString".to_string();
+            let qualified = "Debug::debug".to_string();
             if !obj.iter().any(|(k, _)| *k == qualified) {
                 obj.push((qualified, renderer.clone()));
             }
         }
         self.global.borrow_mut().define(
-            &impl_fn_name("ToString", &s.name, "toString"),
+            &impl_fn_name("Debug", &s.name, "debug"),
             renderer,
             false,
         );
@@ -135,90 +306,84 @@ impl Interpreter {
     pub(super) fn render_derived_struct(
         &self,
         type_name: &str,
-        forms: &[(String, DerivedForm)],
+        fields: &[String],
         receiver: &Value,
+        format: &Value,
     ) -> Result<String, RunError> {
-        let Value::Object(fields) = receiver else {
+        let Value::Object(instance) = receiver else {
             return Ok(receiver.format());
         };
-        let fields = fields.borrow();
-        let mut parts = Vec::with_capacity(forms.len());
-        for (name, form) in forms {
-            let value = fields
+        let instance = instance.borrow();
+        let mut parts = Vec::with_capacity(fields.len());
+        for name in fields {
+            let value = instance
                 .iter()
                 .find(|(k, _)| k == name)
                 .map(|(_, v)| v.clone())
                 .unwrap_or(Value::Null);
-            parts.push(format!("{name}: {}", self.derived_to_string(&value, form)?));
+            parts.push(format!("{name}: {}", self.derived_debug(&value, format)?));
         }
         Ok(format!("{type_name}({})", parts.join(", ")))
     }
 
-    /// Register `#Derive(ToString)` for an enum: enum instances carry no
+    /// Register `#Derive(Debug)` for an enum: enum instances carry no
     /// object, so the generated method exists only under its mangled name —
-    /// `variant.to_string()` dispatches to it, as do `Trait::method` calls and
-    /// annotated `str(v)`.
+    /// `variant.debug(fmt)` dispatches to it, as do `Debug::debug` calls and
+    /// `print(v)`.
     pub(super) fn register_derived_enum(&self, e: &EnumDef) {
-        if !Self::derives_to_string(&e.attributes) {
+        if !Self::derives_debug(&e.attributes) {
             return;
         }
         let type_name = e.name.clone();
-        let variants: Vec<(String, Vec<DerivedForm>)> = e
+        let variants: Vec<(String, usize)> = e
             .variants
             .iter()
-            .map(|v| {
-                let forms = v
-                    .payload
-                    .as_deref()
-                    .unwrap_or(&[])
-                    .iter()
-                    .map(|p| derived_form(&p.type_))
-                    .collect();
-                (v.name.clone(), forms)
-            })
+            .map(|v| (v.name.clone(), v.payload.as_deref().unwrap_or(&[]).len()))
             .collect();
         let renderer: Value = Value::Native(Rc::new(move |interp, args| {
             let receiver = args.first().cloned().unwrap_or(Value::Null);
-            let out = interp.render_derived_enum(&type_name, &variants, &receiver)?;
+            let format = args.get(1).cloned().unwrap_or_else(|| interp.default_format());
+            let out = interp.render_derived_enum(&type_name, &variants, &receiver, &format)?;
             Ok(Value::String(out.into()))
         }));
         self.global.borrow_mut().define(
-            &impl_fn_name("ToString", &e.name, "toString"),
+            &impl_fn_name("Debug", &e.name, "debug"),
             renderer,
             false,
         );
     }
 
     /// Render an enum instance as `Enum::Variant` or `Enum::Variant(p, …)`,
-    /// each payload slot through its declared type's string form.
+    /// each payload slot through the derive's `Debug` field rules.
     pub(super) fn render_derived_enum(
         &self,
         type_name: &str,
-        variants: &[(String, Vec<DerivedForm>)],
+        variants: &[(String, usize)],
         receiver: &Value,
+        format: &Value,
     ) -> Result<String, RunError> {
         let Value::Enum { tag, payload, .. } = receiver else {
             return Ok(receiver.format());
         };
-        let Some((_, forms)) = variants.iter().find(|(name, _)| name == tag) else {
+        let Some((_, arity)) = variants.iter().find(|(name, _)| name == tag) else {
             return Ok(receiver.format());
         };
         let slots: Vec<Value> = match payload {
             None => Vec::new(),
             // A single-slot variant stores its one value directly — even when
             // that value is itself a list.
-            Some(p) if forms.len() == 1 => vec![(**p).clone()],
+            Some(p) if *arity == 1 => vec![(**p).clone()],
             Some(p) => match &**p {
                 Value::List(items) => items.borrow().clone(),
                 single => vec![single.clone()],
             },
         };
-        if slots.len() != forms.len() {
+        if slots.len() != *arity {
             return Ok(receiver.format());
         }
         let mut parts = Vec::with_capacity(slots.len());
-        for (value, form) in slots.iter().zip(forms) {
-            parts.push(self.derived_to_string(value, form)?);
+        for value in &slots {
+            parts.push(self.derived_debug(value, format)?);
         }
         if parts.is_empty() {
             Ok(format!("{type_name}::{tag}"))

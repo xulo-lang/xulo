@@ -29,5 +29,5 @@ fn main() {
     // 相对化：从 a/b 看 a/c 是 ../c；无法命名的关系是 null
     print(std::path::relative("/srv/app", "/srv/logs") ?? "null") // ../logs
     print(std::path::relative("/srv/app", "/srv/app") ?? "null") // /
-    print(str(std::path::relative("/srv/app", "other"))) // null
+    print(std::path::relative("/srv/app", "other")) // null
 }

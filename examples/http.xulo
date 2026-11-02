@@ -60,7 +60,7 @@ async fn main() {
     )
     print(req.queryValue("name")) // xulo
     print(req.header("user-agent")) // demo —— 大小写不敏感
-    print(str(req.header("x-none"))) // null —— 查不到
+    print(req.header("x-none")) // null —— 查不到
     let direct = route(req)
     print(direct.status, direct.body) // 200 hello, xulo
 

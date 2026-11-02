@@ -903,6 +903,24 @@ impl Interpreter {
                 ],
             },
         );
+        // The built-in formatting context (spec `types/traits.md`,
+        // "Built-in formatting traits"): constructible like an ordinary
+        // struct, with `precision` omittable.
+        interp.global.borrow_mut().define(
+            "Format",
+            Value::Object(Rc::new(RefCell::new(Vec::new()))),
+            false,
+        );
+        interp.struct_fields.borrow_mut().insert(
+            "Format".to_string(),
+            StructCtorDecl {
+                env: interp.global.clone(),
+                fields: vec![
+                    ("precision".to_string(), None),
+                    ("alternate".to_string(), None),
+                ],
+            },
+        );
         interp
     }
 

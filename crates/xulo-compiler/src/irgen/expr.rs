@@ -799,6 +799,16 @@ impl IrGenerator {
                     format!("undefined impl function `{impl_name}`"),
                 ));
             };
+            // `str(v)` / `${v}` / `v.toString()` dispatch to `display` at the
+            // default `Format`; a written `Display::display(v, fmt)` already
+            // carries one (spec `types/traits.md`).
+            if args.len() == 1
+                && ((impl_name.starts_with("impl_Display_") && impl_name.ends_with("_display"))
+                    || (impl_name.starts_with("impl_Debug_") && impl_name.ends_with("_debug")))
+            {
+                let format = self.default_format_operand();
+                args.push(format);
+            }
             let ret_type = self.module.functions[fid.0].return_type.clone();
             let local = self.module.functions[func_idx].add_local(ret_type);
             self.module.functions[func_idx]
@@ -1044,9 +1054,14 @@ impl IrGenerator {
                         args.push(Operand::Const(IrValue::I64(6)));
                     } else {
                         // 从原始 AST 表达式推断类型标签（而非生成后的 operand）；
-                        // match 绑定用伴随的运行时标签槽
+                        // match 绑定用伴随的运行时标签槽。用户类型的
+                        // `Display`/`Debug` 先于输出表咨询（spec
+                        // `builtins/intrinsic-functions.md`, "Output"）。
                         let arg_expr = &call.arguments[0].value;
-                        if let Expression::Identifier { name, .. } = arg_expr
+                        let value = args[0].clone();
+                        if let Some(rendered) = self.user_print_operand(arg_expr, value) {
+                            args = vec![rendered, Operand::Const(IrValue::I64(0))];
+                        } else if let Expression::Identifier { name, .. } = arg_expr
                             && let Some(tag_op) = self.dyn_tag_of.get(name).cloned()
                         {
                             args.push(tag_op);
@@ -1292,16 +1307,20 @@ impl IrGenerator {
         let mut joined: Option<Operand> = None;
         for arg in &call.arguments {
             let v = self.generate_expression(&arg.value)?;
-            let tag = self.determine_element_tag(&arg.value);
-            let s_local = self.module.functions[func_idx].add_local(IrType::Pointer);
-            self.module.functions[func_idx]
-                .instructions
-                .push(Instruction::RuntimeCall {
-                    dst: Some(s_local),
-                    func: RuntimeFn::Stringify,
-                    args: vec![v, Operand::Const(IrValue::I64(tag))],
-                });
-            let next = Operand::Local(s_local);
+            let next = if let Some(rendered) = self.user_print_operand(&arg.value, v.clone()) {
+                rendered
+            } else {
+                let tag = self.determine_element_tag(&arg.value);
+                let s_local = self.module.functions[func_idx].add_local(IrType::Pointer);
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::RuntimeCall {
+                        dst: Some(s_local),
+                        func: RuntimeFn::Stringify,
+                        args: vec![v, Operand::Const(IrValue::I64(tag))],
+                    });
+                Operand::Local(s_local)
+            };
             joined = Some(match joined {
                 None => next,
                 Some(prev) => {

@@ -41,7 +41,7 @@ pub struct IrGenerator {
     methods: HashMap<String, FuncId>,
     /// 派发名 `impl_{Trait}_{Type}_{method}` -> impl 函数的 IR 函数。
     /// 语义层把 `Trait::method(recv)` 与 `str(v)` 标注成派发名；AOT 在此
-    /// 静态解析（派生 `#Derive(ToString)` 注册到同一张表）。
+    /// 静态解析（派生 `#Derive(Debug)` 注册到同一张表）。
     trait_impls: HashMap<String, FuncId>,
     /// 方法名 -> 定义它的类型列表（唯一时可按方法名分派）
     method_types: HashMap<String, Vec<String>>,
@@ -331,10 +331,29 @@ impl IrGenerator {
             }
         }
 
-        // 3. `#Derive(ToString)`：语义层只登记派发名，不生成 AST impl；
+        // 内置 `Format` 的构造元数据（spec `types/traits.md`）：普通结构体
+        // 构造，`precision` 可省略（缺省补 null）。
+        self.structs.entry("Format".to_string()).or_insert_with(|| {
+            vec![
+                StructField {
+                    name: "precision".to_string(),
+                    name_span: 0..0,
+                    type_: Type::Optional(Box::new(Type::Number)),
+                    default: None,
+                },
+                StructField {
+                    name: "alternate".to_string(),
+                    name_span: 0..0,
+                    type_: Type::Boolean,
+                    default: None,
+                },
+            ]
+        });
+
+        // 3. `#Derive(Debug)`：语义层只登记派发名，不生成 AST impl；
         //    这里先注册派生函数（正文在所有注册完成后统一生成，可互引）。
         //    先于 impl 方法注册：手写固有方法同名时覆盖派发表项，与解释器
-        //    「派生只在未有 toString 时落到结构体对象」的优先级一致。
+        //    「派生只在未有 debug 时落到结构体对象」的优先级一致。
         self.register_derived_decls(programs);
 
         // 4. 注册 impl 方法：按 `{规范化类型}::{method}` 命名，trait impl 另有
@@ -447,8 +466,8 @@ impl IrGenerator {
             self.generate_function_body(&func_def)?;
         }
 
-        // 8. 派生 `#Derive(ToString)` 正文：所有目标注册完成后生成，
-        //    嵌套派生/手写 ToString 的互相引用都能解析。
+        // 8. 派生 `#Derive(Debug)` 正文：所有目标注册完成后生成，
+        //    嵌套派生/手写 Debug 的互相引用都能解析。
         self.generate_derived_bodies(programs)?;
 
         Ok(self.module.clone())
@@ -746,6 +765,15 @@ impl IrGenerator {
                     if let Some((_, _, tag)) = Self::intrinsic_lowering(&call.callee) {
                         return Some(if tag == 0 { Type::String } else { Type::Number });
                     }
+                    // 枚举构造：Shape::Circle(2) -> Shape
+                    if let Some((enum_name, variant)) = call.callee.split_once("::")
+                        && self.enum_variant_index(enum_name, variant).is_some()
+                    {
+                        return Some(Type::Named(
+                            self.resolve_type(enum_name),
+                            Vec::new(),
+                        ));
+                    }
                     // 结构体构造：Point(x: 1) -> Point
                     let ctor = self.resolve_type(&call.callee);
                     if self.structs.contains_key(&ctor) {
@@ -823,6 +851,14 @@ impl IrGenerator {
             Expression::EnumRef(e) if e.enum_name == "std::math" => Some(Type::Number),
             // 命名空间成员引用（`m::PI`）：常量/函数的静态类型
             Expression::EnumRef(e) => {
+                // 无载荷枚举变体：`Color::Red` 的类型是 `Color`，print 端
+                // 据此咨询它的 `Display`/`Debug`。
+                if self.enum_variant_index(&e.enum_name, &e.variant).is_some() {
+                    return Some(Type::Named(
+                        self.resolve_type(&e.enum_name),
+                        Vec::new(),
+                    ));
+                }
                 let target = self.ctx()?.namespaces.get(&e.enum_name)?.clone();
                 let canonical = Self::join_item(&target, &e.variant);
                 if let Some(def) = self.consts.get(&canonical) {

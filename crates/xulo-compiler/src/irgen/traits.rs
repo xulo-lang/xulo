@@ -1,11 +1,69 @@
 use super::*;
 
 impl IrGenerator {
-    /// 声明是否带 `#Derive(ToString)`（与语义层/解释器同一判定）
-    pub(super) fn derives_to_string(attributes: &[Attribute]) -> bool {
+    /// 构造默认 `Format(precision: null, alternate: false)` 的对象操作数
+    /// （spec `types/traits.md`，`display`/`debug` 的默认上下文）。
+    pub(super) fn default_format_operand(&mut self) -> Operand {
+        let func_idx = self.current_func.unwrap();
+        let precision = Operand::Const(IrValue::Null);
+        let alternate = Operand::Const(IrValue::I64(0));
+        let dst = self.module.functions[func_idx].add_local(IrType::Pointer);
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::NewObject {
+                dst,
+                fields: vec![
+                    ("precision".to_string(), precision, 6),
+                    ("alternate".to_string(), alternate, 5),
+                ],
+            });
+        Operand::Local(dst)
+    }
+
+    /// 若 `expr` 的静态类型实现了 `Display`（先）或 `Debug`（后），生成一次
+    /// 默认 `Format` 的渲染调用并返回字符串操作数；否则 `None`，让 `print`
+    /// 走输出表。与解释器 `render_print` 的用户类型咨询一致。
+    pub(super) fn user_print_operand(
+        &mut self,
+        expr: &Expression,
+        value: Operand,
+    ) -> Option<Operand> {
+        let Some(Type::Named(name, _)) = self.infer_source_type_from_expr(expr) else {
+            return None;
+        };
+        let resolved = self.resolve_type(&name);
+        let decl_name = resolved
+            .rsplit("::")
+            .next()
+            .unwrap_or(&resolved)
+            .to_string();
+        let fid = self
+            .trait_impls
+            .get(&impl_fn_name("Display", &decl_name, "display"))
+            .copied()
+            .or_else(|| {
+                self.trait_impls
+                    .get(&impl_fn_name("Debug", &decl_name, "debug"))
+                    .copied()
+            })?;
+        let format = self.default_format_operand();
+        let func_idx = self.current_func.unwrap();
+        let dst = self.module.functions[func_idx].add_local(IrType::Pointer);
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Call {
+                dst: Some(dst),
+                func: fid,
+                args: vec![value, format],
+            });
+        Some(Operand::Local(dst))
+    }
+
+    /// 声明是否带 `#Derive(Debug)`（与语义层/解释器同一判定）
+    pub(super) fn derives_debug(attributes: &[Attribute]) -> bool {
         attributes
             .iter()
-            .any(|attr| attr.name == "Derive" && attr.args.iter().any(|(arg, _)| arg == "ToString"))
+            .any(|attr| attr.name == "Derive" && attr.args.iter().any(|(arg, _)| arg == "Debug"))
     }
 
     /// 取出一条可派生声明的（类型名、属性、目标）
@@ -30,17 +88,17 @@ impl IrGenerator {
         }
     }
 
-    /// 注册 `#Derive(ToString)` 的派生函数：IR 名为派发名
-    /// `impl_ToString_{Type}_toString`，签名 `(self: ptr) -> string`。
-    /// 结构体的派生同时挂到 `Type::toString`（成员调用 `u.toString()`
+    /// 注册 `#Derive(Debug)` 的派生函数：IR 名为派发名
+    /// `impl_Debug_{Type}_debug`，签名 `(self: ptr, format: ptr) -> string`。
+    /// 结构体的派生同时挂到 `Type::debug`（成员调用 `u.debug(fmt)`
     /// 走与手写 impl 相同的既有解析路径），枚举只有派发名——与解释器
     /// 的注册位置一致。
-    pub(super) fn register_derived_tostring(&mut self, type_name: &str, is_struct: bool) -> FuncId {
-        let mangled = impl_fn_name("ToString", type_name, "toString");
+    pub(super) fn register_derived_debug(&mut self, type_name: &str, is_struct: bool) -> FuncId {
+        let mangled = impl_fn_name("Debug", type_name, "debug");
         // 返回字符串：Pointer 槽承载 C 字符串
         let func = IrFunction::new(
             mangled.clone(),
-            vec![(LocalId(0), IrType::Pointer)],
+            vec![(LocalId(0), IrType::Pointer), (LocalId(1), IrType::Pointer)],
             IrType::Pointer,
         );
         let fid = self.module.add_function(func);
@@ -49,23 +107,29 @@ impl IrGenerator {
         self.trait_impls.insert(mangled, fid);
         if is_struct {
             let type_key = self.resolve_type(type_name);
-            let method_key = format!("{type_key}::toString");
+            let method_key = format!("{type_key}::debug");
             self.methods.insert(method_key.clone(), fid);
-            // 成员调用 `u.toString()` 的返回标签也按这个键查表
+            // 成员调用 `u.debug(fmt)` 的返回标签也按这个键查表
             self.func_return_types
                 .insert(method_key, Some(Type::String));
             self.method_types
-                .entry("toString".to_string())
+                .entry("debug".to_string())
                 .or_default()
                 .push(type_key);
         }
         fid
     }
 
-    /// 派生渲染一个字段/payload 值：Named 类型有 ToString 派发时递归调用
-    /// 其实现（手写或派生），否则按调用方给的运行时标签做结构化渲染。
-    /// 与解释器 `derived_to_string` 的 `DerivedForm` 分派一致。
-    pub(super) fn derive_render(&mut self, value: Operand, tag: Operand, ty: &Type) -> Operand {
+    /// 派生渲染一个字段/payload 值：Named 类型有 Debug 派发时递归调用
+    /// 其实现（手写或派生，转发 format），否则按调用方给的运行时标签做
+    /// 结构化渲染（枚举无 Debug 时落到输出表的枚举行）。
+    pub(super) fn derive_render(
+        &mut self,
+        value: Operand,
+        tag: Operand,
+        ty: &Type,
+        format: Operand,
+    ) -> Operand {
         let func_idx = self.current_func.unwrap();
         if let Type::Named(name, _) = ty {
             // 派发名用声明名（语义层如此 mangling；别名导入取解析后的末段）
@@ -77,7 +141,7 @@ impl IrGenerator {
                 .to_string();
             if let Some(&fid) = self
                 .trait_impls
-                .get(&impl_fn_name("ToString", &decl_name, "toString"))
+                .get(&impl_fn_name("Debug", &decl_name, "debug"))
             {
                 let dst = self.module.functions[func_idx].add_local(IrType::Pointer);
                 self.module.functions[func_idx]
@@ -85,7 +149,7 @@ impl IrGenerator {
                     .push(Instruction::Call {
                         dst: Some(dst),
                         func: fid,
-                        args: vec![value],
+                        args: vec![value, format],
                     });
                 return Operand::Local(dst);
             }
@@ -101,7 +165,7 @@ impl IrGenerator {
         Operand::Local(dst)
     }
 
-    /// 派生 struct 的 `toString` 正文：`Type(name: v, …)`，字段按声明序，
+    /// 派生 struct 的 `debug` 正文：`Type(name: v, …)`，字段按声明序，
     /// 每段 `名字: 渲染值` 用 `", "` 连接（spec `types/traits.md` 的派生
     /// 示例，与解释器 `render_derived_struct` 一致）。
     pub(super) fn generate_derived_struct_body(
@@ -111,6 +175,7 @@ impl IrGenerator {
     ) -> Result<(), XuloError> {
         let func_idx = self.current_func.unwrap();
         let self_op = Operand::Local(LocalId(0));
+        let format_op = Operand::Local(LocalId(1));
         let mut cur = self.const_string_local(&format!("{type_name}("));
         for (i, field) in fields.iter().enumerate() {
             if i > 0 {
@@ -136,8 +201,12 @@ impl IrGenerator {
                     func: RuntimeFn::ObjectGetTag,
                     args: vec![self_op.clone(), name_op],
                 });
-            let rendered =
-                self.derive_render(Operand::Local(value), Operand::Local(tag), &field.type_);
+            let rendered = self.derive_render(
+                Operand::Local(value),
+                Operand::Local(tag),
+                &field.type_,
+                format_op.clone(),
+            );
             cur = self.string_concat(cur, rendered);
         }
         let close = self.const_string_local(")");
@@ -148,7 +217,7 @@ impl IrGenerator {
         Ok(())
     }
 
-    /// 派生 enum 的 `toString` 正文：逐个变体测试 `EnumVariant(self) == i`，
+    /// 派生 enum 的 `debug` 正文：逐个变体测试 `EnumVariant(self) == i`，
     /// 渲染 `Type::Variant` 或 `Type::Variant(p0, …)`；payload 槽的标签取
     /// `EnumGetTag`（构造侧写入的真实标签）。
     pub(super) fn generate_derived_enum_body(
@@ -158,6 +227,7 @@ impl IrGenerator {
     ) -> Result<(), XuloError> {
         let func_idx = self.current_func.unwrap();
         let self_op = Operand::Local(LocalId(0));
+        let format_op = Operand::Local(LocalId(1));
         let result_local = self.module.functions[func_idx].add_local(IrType::Pointer);
         let end_label = self.module.functions[func_idx].add_label();
 
@@ -212,7 +282,13 @@ impl IrGenerator {
         }
 
         let last = variants.len() - 1;
-        self.render_derived_variant(type_name, &variants[last], &self_op, result_local);
+        self.render_derived_variant(
+            type_name,
+            &variants[last],
+            &self_op,
+            &format_op,
+            result_local,
+        );
         self.module.functions[func_idx]
             .instructions
             .push(Instruction::Jump(end_label));
@@ -221,7 +297,13 @@ impl IrGenerator {
             self.module.functions[func_idx]
                 .instructions
                 .push(Instruction::Label(body_label));
-            self.render_derived_variant(type_name, &variants[i], &self_op, result_local);
+            self.render_derived_variant(
+                type_name,
+                &variants[i],
+                &self_op,
+                &format_op,
+                result_local,
+            );
             self.module.functions[func_idx]
                 .instructions
                 .push(Instruction::Jump(end_label));
@@ -242,6 +324,7 @@ impl IrGenerator {
         type_name: &str,
         variant: &EnumVariant,
         self_op: &Operand,
+        format_op: &Operand,
         result_local: LocalId,
     ) {
         let func_idx = self.current_func.unwrap();
@@ -271,8 +354,12 @@ impl IrGenerator {
                         func: RuntimeFn::EnumGetTag,
                         args: vec![self_op.clone(), Operand::Const(IrValue::I64(j as i64))],
                     });
-                let rendered =
-                    self.derive_render(Operand::Local(value), Operand::Local(tag), &param.type_);
+                let rendered = self.derive_render(
+                    Operand::Local(value),
+                    Operand::Local(tag),
+                    &param.type_,
+                    format_op.clone(),
+                );
                 cur = self.string_concat(cur, rendered);
             }
             let close = self.const_string_local(")");
@@ -286,7 +373,7 @@ impl IrGenerator {
             });
     }
 
-    /// 阶段 3：登记 `#Derive(ToString)` 的 trait 派发名（函数体留给
+    /// 阶段 3：登记 `#Derive(Debug)` 的 trait 派发名（函数体留给
     /// [`Self::generate_derived_bodies`] 在所有注册完成后统一生成）。
     pub(super) fn register_derived_decls(&mut self, programs: &[(String, &Program)]) {
         for (id, program) in programs {
@@ -295,9 +382,9 @@ impl IrGenerator {
                 let Some((type_name, attributes, decl)) = Self::derived_decl(stmt) else {
                     continue;
                 };
-                if Self::derives_to_string(attributes) {
+                if Self::derives_debug(attributes) {
                     let is_struct = matches!(decl, DerivedDecl::Struct(_));
-                    self.register_derived_tostring(type_name, is_struct);
+                    self.register_derived_debug(type_name, is_struct);
                 }
             }
         }
@@ -334,8 +421,8 @@ impl IrGenerator {
         Ok(())
     }
 
-    /// 阶段 8：生成 `#Derive(ToString)` 的函数正文（在所有目标注册完成后
-    /// 进行，嵌套派生/手写 ToString 的互相引用都能解析）。
+    /// 阶段 8：生成 `#Derive(Debug)` 的函数正文（在所有目标注册完成后
+    /// 进行，嵌套派生/手写 Debug 的互相引用都能解析）。
     pub(super) fn generate_derived_bodies(
         &mut self,
         programs: &[(String, &Program)],
@@ -346,10 +433,10 @@ impl IrGenerator {
                 let Some((type_name, attributes, decl)) = Self::derived_decl(stmt) else {
                     continue;
                 };
-                if !Self::derives_to_string(attributes) {
+                if !Self::derives_debug(attributes) {
                     continue;
                 }
-                let mangled = impl_fn_name("ToString", type_name, "toString");
+                let mangled = impl_fn_name("Debug", type_name, "debug");
                 let Some(&fid) = self.trait_impls.get(&mangled) else {
                     continue;
                 };

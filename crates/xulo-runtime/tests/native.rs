@@ -1465,8 +1465,10 @@ fn builtin_call_with_named_arguments_ignores_labels() {
 fn missing_map_key_reads_null() {
     // Absence is `null`: `get` reads a missing key without trapping (spec
     // `types/composite-types.md`).
-    let out = run_ok(r#"fn main() { let o: Map<string, unknown> = {} print(o.get("missing")) }"#);
-    assert_eq!(out, vec!["null"]);
+    let out = run_ok(
+        r#"fn main() { let o: Map<string, unknown> = {} print(o.get("missing") == null) }"#,
+    );
+    assert_eq!(out, vec!["true"]);
 } // ── break / continue ──────────────────────────────────────────────────────
 
 #[test]
@@ -2498,44 +2500,59 @@ fn time_clocks_read_sane_values() {
     assert_eq!(out, vec!["true", "true"]);
 }
 
-// --- P2: `#Derive(ToString)`, `str` / template string forms, constructor calls
+// --- P2: `#Derive(Debug)`, `Display`, `str` / template string forms, constructor calls
 
 #[test]
 fn derived_struct_spec_example_all_string_forms() {
-    // spec `types/traits.md`: `str(s)`, backtick `${s}`, `s.to_string()`,
-    // and qualified `ToString::toString(u)` all render the derived form.
+    // spec `types/traits.md`: `#Derive(Debug)` supplies the structural
+    // form `print` consults; `Display` is written by hand and backs `str`,
+    // `${…}`, and the derived `toString` action.
     let out = run_annotated(
         r#"
-            #Derive(ToString)
+            #Derive(Debug)
             struct User { name: string, age: number }
+            impl Display for User {
+                fn display(self, format: Format): string {
+                    return `${self.name} (${self.age})`
+                }
+            }
             fn main() {
                 let u = User(name: "Alice", age: 30)
+                print(u)
                 print(str(u))
                 print(`${u}`)
                 print(u.toString())
-                print(ToString::toString(u))
+                print(Display::display(u, Format(precision: null, alternate: false)))
             }
         "#,
     )
     .unwrap_or_else(|e| panic!("{}", e.message));
-    let expected = "User(name: Alice, age: 30)";
-    assert_eq!(out, vec![expected; 4]);
+    assert_eq!(
+        out,
+        vec![
+            "Alice (30)",
+            "Alice (30)",
+            "Alice (30)",
+            "Alice (30)",
+            "Alice (30)",
+        ]
+    );
 }
 
 #[test]
 fn derived_struct_nested_and_empty_render() {
     let out = run_annotated(
         r#"
-            #Derive(ToString)
+            #Derive(Debug)
             struct User { name: string, age: number }
-            #Derive(ToString)
+            #Derive(Debug)
             struct Tagged { inner: User, label: string }
-            #Derive(ToString)
+            #Derive(Debug)
             struct Empty { }
             fn main() {
                 let t = Tagged(inner: User(name: "Alice", age: 30), label: "x")
-                print(str(t))
-                print(str(Empty()))
+                print(t)
+                print(Empty())
             }
         "#,
     )
@@ -2555,15 +2572,15 @@ fn derived_enum_variants_render_spec_form() {
     // slots through their declared type's string form.
     let out = run_annotated(
         r#"
-            #Derive(ToString)
+            #Derive(Debug)
             enum Shape { Circle(number), Rect(number, number) }
-            #Derive(ToString)
+            #Derive(Debug)
             enum Status { Active, Offline(string) }
             fn main() {
-                print(str(Shape::Circle(2.5)))
-                print(str(Shape::Rect(3, 4)))
-                print(str(Status::Active))
-                print(str(Status::Offline("gone")))
+                print(Shape::Circle(2.5))
+                print(Shape::Rect(3, 4))
+                print(Status::Active)
+                print(Status::Offline("gone"))
             }
         "#,
     )
@@ -2587,17 +2604,17 @@ fn derived_structs_do_not_cross_types() {
     // across types otherwise).
     let out = run_annotated(
         r#"
-            #Derive(ToString)
+            #Derive(Debug)
             struct User { name: string, age: number }
-            #Derive(ToString)
+            #Derive(Debug)
             struct Plain { n: number }
             fn main() {
                 let a = User(name: "A", age: 1)
                 let b = Plain(n: 7)
-                print(str(a))
-                print(str(b))
-                print(a.toString())
-                print(b.toString())
+                print(a)
+                print(b)
+                print(a.debug(Format(precision: null, alternate: false)))
+                print(b.debug(Format(precision: null, alternate: false)))
             }
         "#,
     )
@@ -2615,25 +2632,24 @@ fn derived_structs_do_not_cross_types() {
 
 #[test]
 fn manual_to_string_impl_runs_on_all_forms() {
-    // A hand-written `impl ToString` (no derive — derive + manual on the
-    // same type is E0805) answers member, qualified, and `str` forms alike.
-    // A derived struct living in the same program must not steal the
-    // dispatch.
+    // A hand-written `impl Display` answers member, qualified, and `str`
+    // forms alike, and grants the derived `toString` action. A derived
+    // struct living in the same program must not steal the dispatch.
     let out = run_annotated(
         r#"
-            #Derive(ToString)
+            #Derive(Debug)
             struct Plain { n: number }
             struct Hand { v: number }
-            impl ToString for Hand {
-                fn toString(self): string { return "Hand(" + str(self.v) + ")" }
+            impl Display for Hand {
+                fn display(self, format: Format): string { return "Hand(" + str(self.v) + ")" }
             }
             fn main() {
                 let h = Hand(v: 1)
                 let p = Plain(n: 9)
                 print(str(h))
                 print(h.toString())
-                print(ToString::toString(h))
-                print(str(p))
+                print(Display::display(h, Format(precision: null, alternate: false)))
+                print(p)
             }
         "#,
     )
@@ -2651,7 +2667,7 @@ fn struct_constructor_reads_fields_and_optional_defaults_to_null() {
                 let b = Opt(name: "y", alias: "z")
                 print(str(a.name))
                 print(a.alias)
-                print(str(b.alias))
+                print(b.alias)
             }
         "#,
     )
@@ -2685,7 +2701,7 @@ fn constructed_instance_reaches_inherent_impl_methods() {
 #[test]
 fn str_rejects_non_string_forms_at_runtime_pipeline() {
     // `str` / templates accept exactly the operand set with a string form
-    // (spec intrinsic-functions.md E0212): lists, enums without ToString,
+    // (spec intrinsic-functions.md E0212): lists, enums without Display/Debug,
     // and null are compile-time errors, not conversions.
     for src in [
         "fn main() { print(str([1, 2])) }",
@@ -2871,5 +2887,105 @@ fn array_filled_runs() {
             r#"fn main() { let a = Array::filled<int, 4>(7); print(a); print(a.len) }"#
         ),
         vec!["[7, 7, 7, 7]", "4"]
+    );
+}
+
+// ──────────────────────────────────────────────────────────────────────
+//  Built-in formatting traits (spec `types/traits.md`,
+//  `builtins/intrinsic-functions.md`): `Display`, `Debug`, `Format`.
+// ──────────────────────────────────────────────────────────────────────
+
+#[test]
+fn display_receives_format_and_backs_to_string() {
+    let out = run_annotated(
+        r#"
+            struct Money { cents: number }
+            impl Display for Money {
+                fn display(self, format: Format): string {
+                    let p = format.precision ?? 0
+                    return `${self.cents}:${p}:${format.alternate}`
+                }
+            }
+            fn show<T: Display>(x: T): string { return x.toString() }
+            fn main() {
+                let m = Money(cents: 5)
+                print(m.display(Format(precision: 2, alternate: true)))
+                print(m.toString())
+                print(str(m))
+                print(`${m}`)
+                print(show(m))
+            }
+        "#,
+    )
+    .unwrap_or_else(|e| panic!("{}", e.message));
+    assert_eq!(
+        out,
+        vec!["5:2:true", "5:0:false", "5:0:false", "5:0:false", "5:0:false"]
+    );
+}
+
+#[test]
+fn print_prefers_display_then_debug_then_table() {
+    let out = run_annotated(
+        r#"
+            #Derive(Debug)
+            struct DebugOnly { v: number }
+            struct Both { v: number }
+            impl Display for Both {
+                fn display(self, format: Format): string { return "shown" }
+            }
+            impl Debug for Both {
+                fn debug(self, format: Format): string { return "debugged" }
+            }
+            enum Plain { A, B(number) }
+            fn main() {
+                print(DebugOnly(v: 1))
+                print(Both(v: 2))
+                print(Plain::A)
+                print(Plain::B(3))
+            }
+        "#,
+    )
+    .unwrap_or_else(|e| panic!("{}", e.message));
+    assert_eq!(
+        out,
+        vec![
+            "DebugOnly(v: 1)",
+            "shown",
+            "Plain.A",
+            "Plain.B(3)",
+        ]
+    );
+}
+
+#[test]
+fn derive_debug_reaches_structural_positions() {
+    let out = run_annotated(
+        r#"
+            #Derive(Debug)
+            struct User { name: string }
+            enum Color { Red }
+            #Derive(Debug)
+            struct Wrap {
+                xs: List<User>,
+                maybe: User?,
+                r: Result<User, string>
+            }
+            fn main() {
+                let u = User(name: "A")
+                print(Wrap(
+                    xs: [u],
+                    maybe: u,
+                    r: Result::Ok(u)
+                ))
+            }
+        "#,
+    )
+    .unwrap_or_else(|e| panic!("{}", e.message));
+    assert_eq!(
+        out,
+        vec![
+            "Wrap(xs: [User(name: A)], maybe: User(name: A), r: Result::Ok(User(name: A)))"
+        ]
     );
 }

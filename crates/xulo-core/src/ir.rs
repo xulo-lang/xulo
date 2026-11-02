@@ -67,7 +67,7 @@ pub enum RuntimeFn {
     ArraySet,
     ArrayConcat,
     ObjectGet,
-    /// 读对象字段的运行时标签（派生 ToString 按字段真实标签渲染，
+    /// 读对象字段的运行时标签（派生 Debug 按字段真实标签渲染，
     /// 字段值 0 分不清 null 与整数 0）
     ObjectGetTag,
     ObjectSet,

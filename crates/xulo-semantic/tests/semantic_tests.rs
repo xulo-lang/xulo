@@ -1006,7 +1006,12 @@ fn effect_can_capture_state_store_and_env() {
             @State let count: number = 0
             @Store let { user } = useAppStore()
             @Environment let router: Map<string, unknown>
-            @Effect fn() { print(count) print(user) print(router) }
+            @Effect fn() {
+                let u = user
+                let r = router
+                print(count)
+                print(u == r)
+            }
         }
     "#;
     assert!(analyze_src(src).is_ok());
@@ -5109,7 +5114,7 @@ fn unknown_attribute_is_e0108() {
 
 #[test]
 fn derive_on_a_function_is_e0109() {
-    let err = analyze_src("#Derive(ToString)\nfn f() {}").unwrap_err();
+    let err = analyze_src("#Derive(Debug)\nfn f() {}").unwrap_err();
     assert_eq!(err.code(), "E0109", "unexpected: {}", err.message);
     assert!(
         err.message
@@ -5231,16 +5236,16 @@ fn unregistered_derive_target_is_e0111_with_note() {
         err.message
     );
     let note = err.note.expect("E0111 carries the registry note");
-    assert_eq!(note, "registered targets: `ToString`");
+    assert_eq!(note, "registered targets: `Debug`");
 }
 
 #[test]
 fn derive_on_a_generic_type_is_e0112() {
-    let err = analyze_src("#Derive(ToString)\nstruct Box<T> { v: T }").unwrap_err();
+    let err = analyze_src("#Derive(Debug)\nstruct Box<T> { v: T }").unwrap_err();
     assert_eq!(err.code(), "E0112", "unexpected: {}", err.message);
     assert!(
         err.message
-            .contains("cannot derive `ToString` for a generic type"),
+            .contains("cannot derive `Debug` for a generic type"),
         "unexpected: {}",
         err.message
     );
@@ -5255,32 +5260,47 @@ fn referencing_a_test_fn_is_e0107() {
 }
 
 #[test]
-fn derive_field_without_string_form_is_e0801() {
-    let err = analyze_src("#Derive(ToString)\nstruct S { xs: List<number> }").unwrap_err();
+fn derive_struct_field_without_debug_is_e0801() {
+    let err = analyze_src(
+        "struct W { a: number }\n#Derive(Debug)\nstruct S { w: W }",
+    )
+    .unwrap_err();
     assert_eq!(err.code(), "E0801", "unexpected: {}", err.message);
     assert!(
-        err.message
-            .contains("`List<number>` does not implement `ToString`"),
+        err.message.contains("`W` does not implement `Debug`"),
         "unexpected: {}",
         err.message
     );
 }
 
 #[test]
+fn derive_accepts_containers_and_enums() {
+    // The table renders containers and enum values with no implementation,
+    // so they are no longer E0801 (spec `types/traits.md`, "Derive").
+    let src = r#"
+        enum Color { Red, Green }
+        #Derive(Debug)
+        struct S { xs: List<number>, c: Color, pair: (number, string) }
+        fn main() { print(S(xs: [1], c: Color::Red, pair: (1, "x"))) }
+    "#;
+    analyze_src(src).unwrap_or_else(|err| panic!("{}: {}", err.code(), err.message));
+}
+
+#[test]
 fn second_derive_is_e0805() {
     let err =
-        analyze_src("#Derive(ToString)\n#Derive(ToString)\nstruct S { a: string }").unwrap_err();
+        analyze_src("#Derive(Debug)\n#Derive(Debug)\nstruct S { a: string }").unwrap_err();
     assert_eq!(err.code(), "E0805", "unexpected: {}", err.message);
 }
 
 #[test]
 fn derive_after_manual_impl_is_e0805() {
-    // The derive expands into an impl, so a hand-written `impl ToString` for
+    // The derive expands into an impl, so a hand-written `impl Debug` for
     // the same type collides however the two are ordered (spec
     // `types/traits.md`).
     let err = analyze_src(
-        "#Derive(ToString)\nstruct S { a: string }\n\
-         impl ToString for S { fn toString(self): string { return self.a } }",
+        "#Derive(Debug)\nstruct S { a: string }\n\
+         impl Debug for S { fn debug(self, format: Format): string { return self.a } }",
     )
     .unwrap_err();
     assert_eq!(err.code(), "E0805", "unexpected: {}", err.message);
@@ -5292,12 +5312,21 @@ fn well_formed_attributes_and_derive_are_accepted() {
     // and uses of the derived type (member call, explicit dispatch, `str`,
     // interpolation — spec `types/traits.md`).
     let src = r#"
-        #Derive(ToString)
+        #Derive(Debug)
         struct User { name: string, age: number }
-        #Derive(ToString)
+        impl Display for User {
+            fn display(self, format: Format): string { return self.name }
+        }
+        #Derive(Debug)
         struct Tagged { inner: User }
-        #Derive(ToString)
+        impl Display for Tagged {
+            fn display(self, format: Format): string { return `Tagged(${self.inner})` }
+        }
+        #Derive(Debug)
         enum Shape { Circle(number) Rect(number, number) }
+        impl Display for Shape {
+            fn display(self, format: Format): string { return "Shape" }
+        }
         #Test
         fn passes() { let x: number = 1 }
         #Test
@@ -5307,7 +5336,7 @@ fn well_formed_attributes_and_derive_are_accepted() {
         fn main() {
             let u = User(name: "Alice", age: 30)
             let s: string = u.toString()
-            let t: string = ToString::toString(u)
+            let t: string = Display::display(u, Format(precision: null, alternate: false))
             let b: string = str(u)
             let c: string = str(Tagged(inner: u))
             let d: string = str(Shape::Rect(3, 4))
@@ -5777,7 +5806,7 @@ fn regex_methods_answer_their_declared_types() {
                 let found: string = m.value
                 let one: string? = m.group(1)
                 print(found)
-                print(str(one))
+                print(one)
             }
             let all = re.find_all("ab cd")
             for item in all {
@@ -7209,7 +7238,7 @@ fn http_alias_and_import_forms_reach_the_surface() {
                 version: "HTTP/1.1",
                 remoteAddr: "1.2.3.4:5"
             )
-            print(str(r.header("x")))
+            print(r.header("x"))
             let s: Result<Server, Error> = h::listen("127.0.0.1:1")
         }
     "#;
@@ -7429,6 +7458,99 @@ fn fmt_glob_face_exports_only_format() {
             || err.message.contains("has no member `spray`")
             || err.message.contains("unknown function `spray`"),
         "{}",
+        err.message
+    );
+}
+
+// ──────────────────────────────────────────────────────────────────────
+//  Built-in formatting: `Display`, `Debug`, `Format`, `print`'s consult
+//  (spec `types/traits.md`, `builtins/intrinsic-functions.md`).
+// ──────────────────────────────────────────────────────────────────────
+
+#[test]
+fn print_rejects_a_struct_with_neither_display_nor_debug() {
+    let err = analyze_src("struct S { v: number }\nfn main() { print(S(v: 1)) }").unwrap_err();
+    assert_eq!(err.code(), "E0212", "unexpected: {}", err.message);
+    assert!(
+        err.message.contains("`S` has no string form; implement `Display`"),
+        "unexpected: {}",
+        err.message
+    );
+    assert_eq!(
+        err.note.as_deref(),
+        Some("`print` accepts a type implementing `Display` or `Debug`")
+    );
+}
+
+#[test]
+fn print_of_a_debug_only_type_is_well_formed() {
+    let src = r#"
+        #Derive(Debug)
+        struct S { v: number }
+        fn main() { print(S(v: 1)) }
+    "#;
+    analyze_src(src).unwrap_or_else(|err| panic!("{}: {}", err.code(), err.message));
+}
+
+#[test]
+fn str_of_a_debug_only_type_notes_print_still_accepts_it() {
+    let err = analyze_src(
+        "#Derive(Debug)\nstruct S { v: number }\nfn main() { print(str(S(v: 1))) }",
+    )
+    .unwrap_err();
+    assert_eq!(err.code(), "E0212", "unexpected: {}", err.message);
+    let note = err.note.unwrap_or_default();
+    assert!(
+        note.contains("`S` implements `Debug`, which `print` accepts"),
+        "unexpected note: {note}"
+    );
+}
+
+#[test]
+fn print_rejects_unknown_in_a_structural_position() {
+    let err = analyze_src(
+        "fn main() { let xs: List<unknown> = [] print(xs) }",
+    )
+    .unwrap_err();
+    assert_eq!(err.code(), "E0212", "unexpected: {}", err.message);
+    assert!(
+        err.message.contains("`unknown` has no string form"),
+        "unexpected: {}",
+        err.message
+    );
+}
+
+#[test]
+fn derive_debug_rejects_unknown_field() {
+    let err = analyze_src("#Derive(Debug)\nstruct S { v: unknown }").unwrap_err();
+    assert_eq!(err.code(), "E0212", "unexpected: {}", err.message);
+    assert!(
+        err.message.contains("`unknown` has no string form"),
+        "unexpected: {}",
+        err.message
+    );
+}
+
+#[test]
+fn display_and_debug_are_builtin_traits_and_to_string_is_reserved() {
+    let src = r#"
+        struct S { v: number }
+        impl Display for S {
+            fn display(self, format: Format): string { return "S" }
+        }
+        fn main() {
+            let s = S(v: 1)
+            let a: string = s.toString()
+            let b: string = Display::display(s, Format(precision: null, alternate: false))
+            print(a, b)
+        }
+    "#;
+    analyze_src(src).unwrap_or_else(|err| panic!("{}: {}", err.code(), err.message));
+    let err = analyze_src("struct S { v: number }\nimpl ToString for S { fn toString(self): string { \"\" } }")
+        .unwrap_err();
+    assert!(
+        err.message.contains("unknown trait `ToString`"),
+        "unexpected: {}",
         err.message
     );
 }

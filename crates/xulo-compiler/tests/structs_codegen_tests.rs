@@ -47,7 +47,7 @@ impl Point {
     }
 }
 
-#Derive(ToString)
+#Derive(Debug)
 struct User { name: string, age: number, nick: string? }
 
 fn describe(u: User): string {
@@ -83,7 +83,7 @@ fn test_structs_example_matches_interpreter() {
         "(4, 6)",
         "lyy (30)",
         "no nick",
-        "{ name: lyy, age: 30, nick: null }",
+        "User(name: lyy, age: 30, nick: null)",
         "(5, 0)",
         "2.23606797749979",
     ]
