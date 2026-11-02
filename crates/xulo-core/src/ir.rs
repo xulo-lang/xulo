@@ -327,6 +327,11 @@ pub enum Instruction {
     },
 
     // 闭包
+    /// dst = 函数地址（i64）：`std::fmt` 的类型渲染回调用
+    FuncAddr {
+        dst: LocalId,
+        func: FuncId,
+    },
     /// dst = MakeClosure(func, env)：打包函数地址与捕获环境
     MakeClosure {
         dst: LocalId,

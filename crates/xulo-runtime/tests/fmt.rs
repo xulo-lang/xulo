@@ -131,11 +131,11 @@ fn fmt_runtime_failures_stop_the_program() {
         flag.message
     );
 
-    let precision = run(r#"fn main() { print(std::fmt::format("%.3v", [1])) }"#).unwrap_err();
+    let precision = run(r#"fn main() { print(std::fmt::format("%.3t", [true])) }"#).unwrap_err();
     assert!(
         precision
             .message
-            .contains("precision is not valid for verb `v`"),
+            .contains("precision is not valid for verb `t`"),
         "{}",
         precision.message
     );
@@ -154,4 +154,55 @@ fn fmt_special_values_and_negative_zero_come_through() {
         "#,
     );
     assert_eq!(out, vec!["NaN", "Infinity", "-Infinity", "-0"]);
+}
+
+
+#[test]
+fn fmt_text_verbs_consult_display_then_debug_with_the_directive_format() {
+    let out = run_ok(
+        r#"
+        #Derive(Debug)
+        struct Point { x: int, y: int }
+        struct Money { cents: int }
+        impl Display for Money {
+            fn display(self, format: Format): string {
+                let p = format.precision ?? 2
+                return `${self.cents}:${p}:${format.alternate}`
+            }
+        }
+        fn main() {
+            print(std::fmt::format("%v", [Point(x: 1, y: 2)]))
+            print(std::fmt::format("%s", [Money(cents: 12345)]))
+            print(std::fmt::format("%.1s", [Money(cents: 12345)]))
+            print(std::fmt::format("%#s", [Money(cents: 12345)]))
+            print(std::fmt::format("%.3s", [[1, 2, 3]]))
+        }
+        "#,
+    );
+    assert_eq!(
+        out,
+        vec![
+            "Point(x: 1, y: 2)",
+            "12345:2:false",
+            "12345:1:false",
+            "12345:2:true",
+            "[1,",
+        ]
+    );
+}
+
+#[test]
+fn fmt_text_verb_rejects_a_bare_struct_at_run_time() {
+    let err = run(
+        r#"
+        struct Bare { x: int }
+        fn main() { print(std::fmt::format("%v", [Bare(x: 1)])) }
+        "#,
+    )
+    .unwrap_err();
+    assert!(
+        err.message.contains("need `Display` or `Debug` for a struct"),
+        "{}",
+        err.message
+    );
 }

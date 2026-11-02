@@ -4,25 +4,45 @@
 //! domains, and the runtime-failure shapes. The interpreter's `Value` and the
 //! compiled tagged-payload conversions live in `xulo-runtime`.
 
-use xulo_std::fmt::{FmtArg, format};
+use xulo_std::fmt::{FmtArg, FmtText, format};
 
-fn s(text: &str) -> FmtArg {
+fn s(text: &str) -> FmtArg<'static> {
     FmtArg::Str(text.to_string())
 }
 
-fn i(n: i64) -> FmtArg {
+fn i(n: i64) -> FmtArg<'static> {
     FmtArg::Int(n)
 }
 
-fn f(x: f64) -> FmtArg {
+fn f(x: f64) -> FmtArg<'static> {
     FmtArg::Float(x)
 }
 
-fn ok(template: &str, args: Vec<FmtArg>) -> String {
+/// A user value whose implementation answers (no precision cut follows).
+fn consulted(text: &'static str) -> FmtArg<'static> {
+    FmtArg::User {
+        kind: "a struct",
+        render: Box::new(move |precision, alternate| {
+            Ok(FmtText::Consulted(format!(
+                "{text}:{precision:?}:{alternate}"
+            )))
+        }),
+    }
+}
+
+/// A value with no implementation: the table text is cut by precision.
+fn table(text: &'static str) -> FmtArg<'static> {
+    FmtArg::User {
+        kind: "a struct",
+        render: Box::new(move |_, _| Ok(FmtText::Table(text.to_string()))),
+    }
+}
+
+fn ok(template: &str, args: Vec<FmtArg<'_>>) -> String {
     format(template, &args).expect("well-formed")
 }
 
-fn bad(template: &str, args: Vec<FmtArg>) -> String {
+fn bad(template: &str, args: Vec<FmtArg<'_>>) -> String {
     format(template, &args).expect_err("runtime failure")
 }
 
@@ -45,6 +65,18 @@ fn text_verbs_render_the_str_table() {
     assert_eq!(ok("%v", vec![FmtArg::Null]), "null");
     assert_eq!(ok("%s", vec![FmtArg::Rendered("[1, 2]".into())]), "[1, 2]");
     assert_eq!(ok("%t / %v", vec![FmtArg::Bool(true), FmtArg::Null]), "true / null");
+    // A written precision cuts a table rendering for both text verbs.
+    assert_eq!(ok("%.3v", vec![FmtArg::Rendered("[1, 2, 3]".into())]), "[1,");
+    assert_eq!(ok("%.3s", vec![FmtArg::Rendered("[1, 2, 3]".into())]), "[1,");
+}
+
+#[test]
+fn text_verbs_consult_user_values_under_the_directive_format() {
+    // An implementation's return is used as returned: precision is handed
+    // over, never re-applied as a cut.
+    assert_eq!(ok("%.1s", vec![consulted("123.45")]), "123.45:Some(1):false");
+    assert_eq!(ok("%#v", vec![consulted("x")]), "x:None:true");
+    assert_eq!(ok("%.2s", vec![table("abcdef")]), "ab");
 }
 
 #[test]
@@ -234,10 +266,11 @@ fn malformed_templates_are_runtime_failures() {
     assert!(bad("%5.", vec![]).contains("`.` must be followed"));
     assert!(bad("%.d", vec![]).contains("`.` must be followed"));
     assert!(bad("%#d", vec![i(1)]).contains("flag `#` is not valid for verb `d`"));
+    assert_eq!(ok("%#v", vec![i(1)]), "1");
+    assert_eq!(ok("%#s", vec![s("x")]), "x");
     assert!(bad("%+s", vec![s("x")]).contains("flag `+` is not valid for verb `s`"));
     assert!(bad("% s", vec![s("x")]).contains("flag ` ` is not valid for verb `s`"));
     assert!(bad("%0s", vec![s("x")]).contains("flag `0` is not valid for verb `s`"));
-    assert!(bad("%.3v", vec![i(1)]).contains("precision is not valid for verb `v`"));
     assert!(bad("%.3t", vec![FmtArg::Bool(true)]).contains("precision is not valid for verb `t`"));
     assert!(bad("%.16f", vec![f(1.0)]).contains("precision out of range for verb `f`: 0 to 15"));
     assert!(bad("%.0g", vec![f(1.0)]).contains("precision out of range for verb `g`: 1 to 17"));

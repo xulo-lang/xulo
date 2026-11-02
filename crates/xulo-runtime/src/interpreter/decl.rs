@@ -194,6 +194,92 @@ impl Interpreter {
         }
     }
 
+    /// A `Format` value built for `std::fmt` from a directive's precision
+    /// and `#` flag (spec `types/traits.md`).
+    pub(super) fn format_value_for(
+        &self,
+        precision: Option<usize>,
+        alternate: bool,
+    ) -> Value {
+        let precision = match precision {
+            Some(p) => Value::Number(p as f64),
+            None => Value::Null,
+        };
+        let obj = Rc::new(RefCell::new(vec![
+            ("precision".to_string(), precision),
+            ("alternate".to_string(), Value::Boolean(alternate)),
+        ]));
+        self.register_instance(&obj, "Format");
+        Value::Object(obj)
+    }
+
+    /// The user-declared kind of a value, for `std::fmt`'s text verbs:
+    /// `Some("a struct")`/`Some("an enum")` when the Output consult applies.
+    pub(super) fn fmt_user_kind(&self, value: &Value) -> Option<&'static str> {
+        match value {
+            Value::Enum { .. } => Some("an enum"),
+            Value::Object(obj) => {
+                let name = self.instance_type(obj)?;
+                self.struct_names.borrow().contains(&name).then_some("a struct")
+            }
+            _ => None,
+        }
+    }
+
+    /// `std::fmt`'s `%v`/`%s` consult: ask the user value's `Display`, then
+    /// `Debug`, under the directive's `Format`; otherwise render by the
+    /// Output table. A user `struct` with neither is the argument-domain
+    /// runtime failure the chapter fixes (spec `std-spec/modules/fmt.md`).
+    pub(super) fn fmt_render(
+        &self,
+        value: &Value,
+        precision: Option<usize>,
+        alternate: bool,
+    ) -> Result<xulo_std::fmt::FmtText, String> {
+        use xulo_std::fmt::FmtText;
+        let format = self.format_value_for(precision, alternate);
+        if let Some(kind) = self.fmt_user_kind(value) {
+            if let Some(out) = self.call_trait_impl(
+                "Display",
+                "display",
+                value,
+                std::slice::from_ref(&format),
+            ) {
+                return self
+                    .impl_string(out)
+                    .map(FmtText::Consulted)
+                    .map_err(|e| match e {
+                        RunError::Err(e) => e.message,
+                        _ => "`std::fmt::format` rendering failed".to_string(),
+                    });
+            }
+            if let Some(out) =
+                self.call_trait_impl("Debug", "debug", value, std::slice::from_ref(&format))
+            {
+                return self
+                    .impl_string(out)
+                    .map(FmtText::Consulted)
+                    .map_err(|e| match e {
+                        RunError::Err(e) => e.message,
+                        _ => "`std::fmt::format` rendering failed".to_string(),
+                    });
+            }
+            if kind == "a struct" {
+                return Err(
+                    "`std::fmt::format` `%v` and `%s` need `Display` or `Debug` for a struct"
+                        .to_string(),
+                );
+            }
+        }
+        let mut seen = std::collections::HashSet::new();
+        self.render_in_mode(value, RenderMode::Print, &mut seen, &format)
+            .map(FmtText::Table)
+            .map_err(|e| match e {
+                RunError::Err(e) => e.message,
+                _ => "`std::fmt::format` rendering failed".to_string(),
+            })
+    }
+
     /// `print`'s rendering: `Display`, then `Debug`, then the output table
     /// (spec `builtins/intrinsic-functions.md`, "Output").
     pub(super) fn render_print(&self, value: &Value) -> Result<String, RunError> {

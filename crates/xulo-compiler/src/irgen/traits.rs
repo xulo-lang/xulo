@@ -1,6 +1,99 @@
 use super::*;
 
 impl IrGenerator {
+    /// `std::fmt::format` 的渲染描述表：每个参数四项
+    /// `[kind, display, debug, 0]`（kind 0=非用户值、1=struct、2=enum）。
+    /// 只对字面量参数表有静态类型信息；其他形态补 NULL，由运行时按输出表
+    /// 渲染。
+    pub(super) fn fmt_meta_operand(&mut self, elements: Option<&[Expression]>) -> Operand {
+        let Some(elements) = elements else {
+            return Operand::Const(IrValue::Null);
+        };
+        let func_idx = self.current_func.unwrap();
+        let mut rows: Vec<(i64, Option<FuncId>, Option<FuncId>)> = Vec::new();
+        let mut any_user = false;
+        for elem in elements {
+            let Some(Type::Named(name, _)) = self.infer_source_type_from_expr(elem) else {
+                rows.push((0, None, None));
+                continue;
+            };
+            let resolved = self.resolve_type(&name);
+            let decl_name = resolved
+                .rsplit("::")
+                .next()
+                .unwrap_or(&resolved)
+                .to_string();
+            let builtin = matches!(
+                decl_name.as_str(),
+                "Format" | "Error" | "Result" | "Request" | "Response" | "Server"
+            );
+            if builtin {
+                rows.push((0, None, None));
+                continue;
+            }
+            let is_enum = self.enums.contains_key(&resolved)
+                || self.enums.contains_key(&decl_name);
+            let is_struct = self.structs.contains_key(&resolved)
+                || self.structs.contains_key(&decl_name);
+            if !is_enum && !is_struct {
+                rows.push((0, None, None));
+                continue;
+            }
+            any_user = true;
+            let display = self
+                .trait_impls
+                .get(&impl_fn_name("Display", &decl_name, "display"))
+                .copied();
+            let debug = self
+                .trait_impls
+                .get(&impl_fn_name("Debug", &decl_name, "debug"))
+                .copied();
+            rows.push((if is_struct { 1 } else { 2 }, display, debug));
+        }
+        if !any_user {
+            return Operand::Const(IrValue::Null);
+        }
+        let arr = self.module.functions[func_idx].add_local(IrType::Pointer);
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::RuntimeCall {
+                dst: Some(arr),
+                func: RuntimeFn::AllocArray,
+                args: vec![Operand::Const(IrValue::I64((rows.len() * 4) as i64))],
+            });
+        for (kind, display, debug) in rows {
+            let mut values = vec![Operand::Const(IrValue::I64(kind)), Operand::Const(IrValue::I64(0))];
+            if let Some(fid) = display {
+                let addr = self.module.functions[func_idx].add_local(IrType::I64);
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::FuncAddr { dst: addr, func: fid });
+                values[1] = Operand::Local(addr);
+            }
+            let debug_op = if let Some(fid) = debug {
+                let addr = self.module.functions[func_idx].add_local(IrType::I64);
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::FuncAddr { dst: addr, func: fid });
+                Operand::Local(addr)
+            } else {
+                Operand::Const(IrValue::I64(0))
+            };
+            values.insert(2, debug_op);
+            values.push(Operand::Const(IrValue::I64(0)));
+            for value in values {
+                self.module.functions[func_idx].instructions.push(
+                    Instruction::RuntimeCall {
+                        dst: None,
+                        func: RuntimeFn::ArrayPush,
+                        args: vec![Operand::Local(arr), value, Operand::Const(IrValue::I64(1))],
+                    },
+                );
+            }
+        }
+        Operand::Local(arr)
+    }
+
     /// 构造默认 `Format(precision: null, alternate: false)` 的对象操作数
     /// （spec `types/traits.md`，`display`/`debug` 的默认上下文）。
     pub(super) fn default_format_operand(&mut self) -> Operand {

@@ -1759,7 +1759,7 @@ pub(super) fn native_json_valid(_interp: &Interpreter, args: &[Value]) -> Result
 /// mismatch, or an operand that does not suit its verb is an uncaught
 /// runtime failure — the argument domain § 5.3 leaves to stop the program
 /// (the shape `std::math::toFixed`'s `digits` already takes).
-pub(super) fn native_fmt_format(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+pub(super) fn native_fmt_format(interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     let template = builtin_str_arg(args, 0, "std::fmt::format")?;
     use xulo_std::fmt::FmtArg;
     let arg_values: Vec<Value> = match args.get(1) {
@@ -1776,9 +1776,10 @@ pub(super) fn native_fmt_format(_interp: &Interpreter, args: &[Value]) -> Result
         }
     };
     // A number is one value model: a whole float is its integer (`2` and
-    // `2.0` suit `%d` alike), and every other value reaches the verbs through
-    // its `str` rendering.
-    let fmt_args: Vec<FmtArg> = arg_values
+    // `2.0` suit `%d` alike). Every other value carries the Output consult:
+    // `%v`/`%s` ask its `Display`/`Debug` under the directive's `Format`,
+    // then fall back to the table (spec `std-spec/modules/fmt.md`).
+    let fmt_args: Vec<FmtArg<'_>> = arg_values
         .iter()
         .map(|value| match value {
             Value::String(s) => FmtArg::Str(s.to_string()),
@@ -1798,7 +1799,16 @@ pub(super) fn native_fmt_format(_interp: &Interpreter, args: &[Value]) -> Result
             }
             Value::Boolean(b) => FmtArg::Bool(*b),
             Value::Null => FmtArg::Null,
-            other => FmtArg::Rendered(other.format()),
+            other => {
+                let kind = interp.fmt_user_kind(other).unwrap_or("a value");
+                let value = other.clone();
+                FmtArg::User {
+                    kind,
+                    render: Box::new(move |precision, alternate| {
+                        interp.fmt_render(&value, precision, alternate)
+                    }),
+                }
+            }
         })
         .collect();
     xulo_std::fmt::format(&template, &fmt_args)

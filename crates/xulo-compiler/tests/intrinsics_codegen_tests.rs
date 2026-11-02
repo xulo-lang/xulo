@@ -1012,6 +1012,10 @@ fn test_fmt_example_matches_interpreter() {
         "42 / 2.5",
         "\"a\\tb\"",
         "€ / true",
+        "Point(x: 1, y: 2)",
+        "12345:2:false",
+        "12345:1:false",
+        "12345:2:true",
         "255 ff FF 100 101",
         "0xff 0XFF 0o100 0b101",
         "-42",
@@ -1037,6 +1041,42 @@ fn test_fmt_example_matches_interpreter() {
     .map(|s| s.to_string())
     .collect();
     assert_eq!(out, expected, "unexpected output for examples/fmt.xulo");
+}
+
+/// `std::fmt` 的文本动词咨询用户 `Display`/`Debug`：`Format` 来自指令的
+/// precision/#，返回值不再二次截断，表渲染才截断（std-spec fmt change）。
+#[test]
+fn test_fmt_text_verbs_consult_user_types() {
+    let out = compile_and_run(
+        r#"
+#Derive(Debug)
+struct Point { x: int, y: int }
+struct Money { cents: int }
+impl Display for Money {
+    fn display(self, format: Format): string {
+        let p = format.precision ?? 2
+        return `${self.cents}:${p}:${format.alternate}`
+    }
+}
+fn main() {
+    print(std::fmt::format("%v", [Point(x: 1, y: 2)]))
+    print(std::fmt::format("%s", [Money(cents: 12345)]))
+    print(std::fmt::format("%.1s", [Money(cents: 12345)]))
+    print(std::fmt::format("%#s", [Money(cents: 12345)]))
+    print(std::fmt::format("%.3s", [[1, 2, 3]]))
+}
+"#,
+    );
+    assert_eq!(
+        out,
+        vec![
+            "Point(x: 1, y: 2)",
+            "12345:2:false",
+            "12345:1:false",
+            "12345:2:true",
+            "[1,",
+        ]
+    );
 }
 
 /// AOT 对象文件引用 `std::fmt` 的运行时符号（链接期接线回归）。

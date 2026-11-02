@@ -922,8 +922,22 @@ impl IrGenerator {
             }
             // `std::fmt::format(template[, args])` 的可选参数表缺席时补
             // NULL 指针（FFI 判空 → 空表）
-            if call.callee == "std::fmt::format" && args.len() == 1 {
-                args.push(Operand::Const(IrValue::Null));
+            if call.callee == "std::fmt::format" {
+                if args.len() == 1 {
+                    args.push(Operand::Const(IrValue::Null));
+                }
+                let elements = call
+                    .arguments
+                    .get(1)
+                    .and_then(|a| match &a.value {
+                        Expression::Literal {
+                            value: Literal::List(elems),
+                            ..
+                        } => Some(elems.as_slice()),
+                        _ => None,
+                    });
+                let meta = self.fmt_meta_operand(elements);
+                args.push(meta);
             }
             // `std::json::stringify(value)` 需要值的运行时标签一并传给
             // FFI（与 print/str 同一套 dyn 判定：match 绑定走伴随标签槽，

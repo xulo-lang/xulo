@@ -906,6 +906,12 @@ impl CodeGen {
                         builder.ins().call(fref, &[arr_val, idx_val, val, tag_val]);
                     }
                 }
+                Instruction::FuncAddr { dst, func } => {
+                    let addr = Self::function_addr(all_func_ids[func.0], &mut builder);
+                    if let Some(&var) = vars.get(dst) {
+                        builder.def_var(var, addr);
+                    }
+                }
                 Instruction::MakeClosure { dst, func, env } => {
                     let env_val = resolve_operand(&mut builder, env, &vars);
                     if let Some(&alloc_id) = self.runtime_func_ids.get("xulo_alloc_closure") {

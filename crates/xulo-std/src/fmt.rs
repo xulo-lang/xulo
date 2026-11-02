@@ -9,18 +9,32 @@
 //! § 5.3). Nothing here touches I/O or state.
 
 /// One formatted argument. The interpreter maps its `Value` onto this enum;
-/// the compiled path maps the (payload, tag) pair. `Rendered` carries the
-/// pre-rendered `str` text of a container (or any value the verbs treat as
-/// its `str` rendering), so the engine itself never sees the runtime's
-/// recursive value structures.
-#[derive(Debug, Clone)]
-pub enum FmtArg {
+/// the compiled path maps the (payload, tag) pair. `Rendered` carries a
+/// pre-rendered table text (a container, `null`, …), so the engine itself
+/// never sees the runtime's recursive value structures. `User` carries a
+/// value whose type may implement `Display`/`Debug`: the verb asks the
+/// closure under the directive's `Format`, and the closure reports whether
+/// an implementation answered (no precision cut follows) or the value fell
+/// through to the table (the cut applies).
+pub enum FmtArg<'a> {
     Str(String),
     Int(i64),
     Float(f64),
     Bool(bool),
     Null,
     Rendered(String),
+    User {
+        /// The value's short kind name for mismatch messages.
+        kind: &'static str,
+        render: Box<dyn Fn(Option<usize>, bool) -> Result<FmtText, String> + 'a>,
+    },
+}
+
+/// What a [`FmtArg::User`] closure found: an implementation's text, or the
+/// table rendering (which a written precision then cuts).
+pub enum FmtText {
+    Consulted(String),
+    Table(String),
 }
 
 /// A parsed `%` directive: verb, flags, width, precision.
@@ -49,7 +63,7 @@ fn is_numeric_verb(verb: char) -> bool {
 
 /// The verbs that take `#` (alternate form).
 fn is_alt_verb(verb: char) -> bool {
-    matches!(verb, 'x' | 'X' | 'o' | 'b')
+    matches!(verb, 'x' | 'X' | 'o' | 'b' | 'v' | 's')
 }
 
 fn is_verb(verb: char) -> bool {
@@ -152,7 +166,7 @@ fn parse(template: &str) -> Result<Vec<Piece>, String> {
                         "precision out of range for verb `{verb}`: {lo} to {hi}"
                     )));
                 }
-            } else if verb != 's' && verb != 'q' {
+            } else if !matches!(verb, 's' | 'v' | 'q') {
                 return Err(err(format!("precision is not valid for verb `{verb}`")));
             }
         }
@@ -197,7 +211,7 @@ fn parse_number(i: &mut usize, chars: &[char], what: &str) -> Result<Option<usiz
 }
 
 /// The operand's short kind name for error messages.
-fn arg_kind(arg: &FmtArg) -> &'static str {
+fn arg_kind(arg: &FmtArg<'_>) -> &'static str {
     match arg {
         FmtArg::Str(_) => "a string",
         FmtArg::Int(_) => "an int",
@@ -205,11 +219,12 @@ fn arg_kind(arg: &FmtArg) -> &'static str {
         FmtArg::Bool(_) => "a bool",
         FmtArg::Null => "null",
         FmtArg::Rendered(_) => "a rendered value",
+        FmtArg::User { kind, .. } => kind,
     }
 }
 
 /// The operand as a string for the `%v`/`%s` verbs (the `str` rendering).
-fn text_of(arg: &FmtArg) -> String {
+fn text_of(arg: &FmtArg<'_>) -> String {
     match arg {
         FmtArg::Str(s) => s.clone(),
         FmtArg::Int(n) => n.to_string(),
@@ -217,13 +232,14 @@ fn text_of(arg: &FmtArg) -> String {
         FmtArg::Bool(b) => b.to_string(),
         FmtArg::Null => "null".to_string(),
         FmtArg::Rendered(s) => s.clone(),
+        FmtArg::User { .. } => unreachable!("user values are rendered by render_dir"),
     }
 }
 
 /// The operand as an integer for the integer verbs. A whole float is its
 /// exact integer value (the runtime has one number model: `2` and `2.0` are
 /// the same value), anything else is a mismatch.
-fn int_of(arg: &FmtArg) -> Option<i64> {
+fn int_of(arg: &FmtArg<'_>) -> Option<i64> {
     match arg {
         FmtArg::Int(n) => Some(*n),
         FmtArg::Float(f) => {
@@ -239,7 +255,7 @@ fn int_of(arg: &FmtArg) -> Option<i64> {
 
 /// The operand as a float for the floating-point verbs (an int renders as
 /// its exact float value).
-fn float_of(arg: &FmtArg) -> Option<f64> {
+fn float_of(arg: &FmtArg<'_>) -> Option<f64> {
     match arg {
         FmtArg::Int(n) => Some(*n as f64),
         FmtArg::Float(f) => Some(*f),
@@ -445,21 +461,33 @@ fn sign_of(dir: &Directive, negative: bool) -> &'static str {
 }
 
 /// Render one directive against its operand.
-fn render_dir(dir: &Directive, arg: &FmtArg) -> Result<String, String> {
+fn render_dir(dir: &Directive, arg: &FmtArg<'_>) -> Result<String, String> {
     let verb = dir.verb;
     let mut negative = false;
     let mut alt = "";
     let body;
     match verb {
-        'v' => {
-            body = text_of(arg);
-        }
-        's' => {
-            let text = text_of(arg);
-            body = match dir.precision {
-                Some(p) => cut(text, p),
-                None => text,
+        'v' | 's' => {
+            let text = match arg {
+                FmtArg::User { render, .. } => match render(dir.precision, dir.alt)? {
+                    // An implementation answered: its text is used as
+                    // returned — precision was handed over, never re-cut.
+                    FmtText::Consulted(text) => text,
+                    // No implementation: the table rendering keeps the cut.
+                    FmtText::Table(text) => match dir.precision {
+                        Some(p) => cut(text, p),
+                        None => text,
+                    },
+                },
+                other => {
+                    let text = text_of(other);
+                    match dir.precision {
+                        Some(p) => cut(text, p),
+                        None => text,
+                    }
+                }
             };
+            body = text;
         }
         'q' => {
             let FmtArg::Str(text) = arg else {
@@ -601,7 +629,7 @@ fn render_dir(dir: &Directive, arg: &FmtArg) -> Result<String, String> {
 /// directive replaced by its formatted argument (spec `std-spec/modules/
 /// fmt.md`). A malformed template, a directive-count mismatch, or an operand
 /// that does not suit its verb is an `Err` — a runtime failure.
-pub fn format(template: &str, args: &[FmtArg]) -> Result<String, String> {
+pub fn format(template: &str, args: &[FmtArg<'_>]) -> Result<String, String> {
     let pieces = parse(template)?;
     let directives = pieces
         .iter()

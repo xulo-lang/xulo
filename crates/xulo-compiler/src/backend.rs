@@ -1162,12 +1162,13 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
         params: &[I64],
         returns: &[I64],
     },
-    // `std::fmt`：format 的模板是驻留字符串指针、args 是数组指针（缺席
-    // 由 IR 侧补 NULL），返回驻留字符串指针；不合是 FFI 侧运行时失败
+    // `std::fmt`：format 的模板是驻留字符串指针、args 是数组指针、meta 是
+    // 每参数的渲染描述表（缺席由 IR 侧补 NULL），返回驻留字符串指针；不合
+    // 是 FFI 侧运行时失败
     RuntimeFnDesc {
         name: "xulo_fmt_format",
         addr: xulo_runtime::runtime::xulo_fmt_format as *const u8,
-        params: &[I64, I64],
+        params: &[I64, I64, I64],
         returns: &[I64],
     },
 ];

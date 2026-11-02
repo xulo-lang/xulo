@@ -1,14 +1,33 @@
 // std::fmt：模板化文本组装（spec std-spec/modules/fmt.md）——模板里的字面
-// 文本原样保留，`%` 指令按位消费参数列表；模板或操作数不合是运行时失败。
+// 文本原样保留，`%` 指令按位消费参数列表；文本指令 %v/%s 走与 print 相同的
+// Output 渲染（用户类型先问 Display、再问 Debug，Format 来自指令），模板或
+// 操作数不合是运行时失败。
 use std::fmt::*;
 use std::fmt as f;
 
+#Derive(Debug)
+struct Point { x: int, y: int }
+
+struct Money { cents: int }
+impl Display for Money {
+    fn display(self, format: Format): string {
+        let p = format.precision ?? 2
+        return `${self.cents}:${p}:${format.alternate}`
+    }
+}
+
 fn main() {
-    // 文本指令：%s/%v 是 str 渲染，%q 加引号转义，%t 布尔，%c 单个码点
+    // 文本指令：%s/%v 是 Output 渲染，%q 加引号转义，%t 布尔，%c 单个码点
     print(std::fmt::format("hello, %s", ["world"])) // hello, world
     print(std::fmt::format("%v / %s", [42, 2.5])) // 42 / 2.5
     print(std::fmt::format("%q", ["a\tb"])) // "a\tb"
     print(std::fmt::format("%c / %t", [8364, true])) // € / true
+
+    // 用户类型：Debug 兜底（无 Display）与 Display 接收指令的 precision/#
+    print(std::fmt::format("%v", [Point(x: 1, y: 2)])) // Point(x: 1, y: 2)
+    print(std::fmt::format("%s", [Money(cents: 12345)])) // 12345:2:false
+    print(std::fmt::format("%.1s", [Money(cents: 12345)])) // 12345:1:false
+    print(std::fmt::format("%#s", [Money(cents: 12345)])) // 12345:2:true
 
     // 整数指令：%d 十进制、%x/%X 十六进制、%o 八进制、%b 二进制；符号保
     // 留、数字是绝对值的；# 交替形式在符号后放 0x/0X/0o/0b
