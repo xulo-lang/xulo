@@ -1057,3 +1057,41 @@ fn const_argument_parses_as_call_type_args() {
         Type::Literal("3".to_string())
     );
 }
+
+// ---------------------------------------------------------------
+// Comments (spec `lexical-structure.md`; the documentation-comment
+// classification in `documentation-comments.md` is informative and assigns
+// comment text no language meaning)
+// ---------------------------------------------------------------
+
+#[test]
+fn documentation_comment_forms_are_discarded_as_ordinary_comments() {
+    // Every `///`, `//!`, `/** … */`, `/*! … */`, `/**/`, `/***/`, and
+    // `////` form is trivia: parsing sees the declarations alone.
+    let p = parse_ok(
+        r#"
+        //! module documentation
+        /// line documentation
+        fn a() {}
+        /**
+         * block documentation
+         */
+        fn b() {}
+        //// four slashes is ordinary
+        /***/
+        fn c() {}
+        /*! inner block documentation */
+        /**/
+        fn main() { a() b() c() }
+        "#,
+    );
+    let names: Vec<&str> = p
+        .statements
+        .iter()
+        .filter_map(|s| match s {
+            Statement::Fn(f) => Some(f.name.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(names, vec!["a", "b", "c", "main"]);
+}
