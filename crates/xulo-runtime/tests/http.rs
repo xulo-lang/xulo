@@ -111,7 +111,7 @@ fn a_xulo_server_answers_a_xulo_client() {
                 }} else if req.method == "POST" and req.path == "/echo" {{
                     std::http::Response.text(req.body, 201)
                 }} else if req.method == "GET" and req.path == "/greet" {{
-                    std::http::Response.text("hello, " + (req.queryValue("name") ?? "stranger"))
+                    std::http::Response.text("hello, " + (req.query_value("name") ?? "stranger"))
                 }} else if req.method == "GET" and req.path == "/json" {{
                     match std::http::Response.json({{ ok: true }}) {{
                         Result::Ok(res) => res
@@ -138,7 +138,8 @@ fn a_xulo_server_answers_a_xulo_client() {
         let marker = format!("xulo-{port}");
         let mut bound = false;
         for _ in 0..40 {
-            if let Ok(res) = xulo_std::http::fetch(&format!("http://127.0.0.1:{port}/token"), Some(500))
+            if let Ok(res) =
+                xulo_std::http::fetch(&format!("http://127.0.0.1:{port}/token"), Some(500))
                 && res.body == marker
             {
                 bound = true;
@@ -218,12 +219,12 @@ fn data_types_construct_and_answer_their_lookups() {
                 headers: [{ name: "X-A", value: "b" }],
                 body: "",
                 version: "HTTP/1.1",
-                remoteAddr: "1.2.3.4:5"
+                remote_addr: "1.2.3.4:5"
             )
-            print(r.queryValue("q"))
+            print(r.query_value("q"))
             print(r.header("x-a"))
             print(r.header("nope"))
-            print(r.formValue("nope"))
+            print(r.form_value("nope"))
             let res = std::http::Response(status: 201, headers: [], body: "made")
             print(res.status)
             print(res.body)
@@ -274,7 +275,11 @@ fn statics_reach_the_types_through_paths_and_imports() {
     );
     assert_eq!(
         out,
-        vec!["alias".to_string(), "glob".to_string(), "qualified".to_string()],
+        vec![
+            "alias".to_string(),
+            "glob".to_string(),
+            "qualified".to_string()
+        ],
         "{out:?}"
     );
 }
@@ -298,10 +303,7 @@ fn fetch_budget_expiry_is_an_error_value() {
         }}
         "#
     ));
-    assert!(
-        out[0].contains("timed out after 300 ms"),
-        "{out:?}"
-    );
+    assert!(out[0].contains("timed out after 300 ms"), "{out:?}");
 }
 
 #[test]

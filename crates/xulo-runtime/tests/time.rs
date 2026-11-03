@@ -22,7 +22,7 @@ fn calendar_roundtrips_and_answers_the_spec_examples() {
     let out = run_ok(
         r#"
         fn main() {
-            let noon = std::time::fromParts(2026, 10, 26, 12)
+            let noon = std::time::from_parts(2026, 10, 26, 12)
             print(std::time::format(noon))
             match std::time::parse("2026-10-26T12:00:00.000Z") {
                 Result::Ok(ms) => print(ms == noon)
@@ -32,7 +32,7 @@ fn calendar_roundtrips_and_answers_the_spec_examples() {
             print(`${f.year}-${f.month}-${f.day}`)
             print(str(std::time::weekday(noon)))
             print(str(std::time::weekday(0)))
-            print(std::time::format(std::time::fromParts(2026, 10, 26)))
+            print(std::time::format(std::time::from_parts(2026, 10, 26)))
         }
         "#,
     );
@@ -71,12 +71,12 @@ fn parse_failures_are_error_values() {
 
 #[test]
 fn domain_violations_are_runtime_failures_that_stop_the_program() {
-    // `format` past 9999-12-31 — the toFixed-shape argument-domain failure.
+    // `format` past 9999-12-31 — the to_fixed-shape argument-domain failure.
     let err = run(r#"fn main() { print(std::time::format(253402300800000)) }"#)
         .expect_err("past the domain");
     assert!(err.message.contains("9999-12-31"), "{}", err.message);
-    // `fromParts` with a date the calendar does not have.
-    let err = run(r#"fn main() { print(str(std::time::fromParts(2026, 2, 30))) }"#)
+    // `from_parts` with a date the calendar does not have.
+    let err = run(r#"fn main() { print(str(std::time::from_parts(2026, 2, 30))) }"#)
         .expect_err("no such date");
     assert!(err.message.contains("real instant"), "{}", err.message);
 }

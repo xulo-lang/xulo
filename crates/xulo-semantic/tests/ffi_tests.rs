@@ -35,8 +35,8 @@ fn spec_import_block_and_export_example_analyze() {
         extern "C" {
           fn abs(x: i32): i32
           fn getpid(): i32
-          fn malloc(size: usize): Ptr? as cMalloc
-          fn free(p: Ptr?) as cFree
+          fn malloc(size: usize): Ptr? as c_malloc
+          fn free(p: Ptr?) as c_free
         }
 
         pub extern "C" fn sum(xs: i32, n: i32): i32 {
@@ -59,25 +59,25 @@ fn ptr_nullable_narrowing_forms_analyze() {
     // ordinary `Ptr` value flowing through Xulo code.
     ok(r#"
         extern "C" {
-          fn malloc(size: usize): Ptr? as cMalloc
-          fn free(p: Ptr?) as cFree
+          fn malloc(size: usize): Ptr? as c_malloc
+          fn free(p: Ptr?) as c_free
         }
 
         fn store(size: usize) {
-          let p = cMalloc(size)
+          let p = c_malloc(size)
           if p != null {
-            cFree(p)
+            c_free(p)
           } else {
             print("out of memory")
           }
         }
 
-        fn mustAllocate(size: usize): Ptr {
-          let p = cMalloc(size) ?? panic("out of memory")
+        fn must_allocate(size: usize): Ptr {
+          let p = c_malloc(size) ?? panic("out of memory")
           p
         }
 
-        fn roundTrip(p: Ptr): Ptr? { p }
+        fn round_trip(p: Ptr): Ptr? { p }
     "#);
 }
 
@@ -85,7 +85,7 @@ fn ptr_nullable_narrowing_forms_analyze() {
 fn all_abi_safe_types_are_accepted() {
     ok(r#"
         extern "C" {
-          fn takesAll(b: bool, a: i8, c: i16, d: i32, e: i64,
+          fn takes_all(b: bool, a: i8, c: i16, d: i32, e: i64,
                       f: u8, g: u16, h: u32, i: u64,
                       j: f32, k: f64, l: usize, m: isize, n: Ptr, o: Ptr?)
         }
@@ -477,11 +477,11 @@ fn e0201_non_literal_between_fixed_bit_types() {
 fn fixed_bit_arithmetic_stays_in_its_own_type() {
     ok(r#"
         extern "C" { fn abs(x: i32): i32 }
-        fn addSame(a: i32, b: i32): i32 { a + b }
-        fn shiftLit(a: u32): u32 { a << 2 }
+        fn add_same(a: i32, b: i32): i32 { a + b }
+        fn shift_lit(a: u32): u32 { a << 2 }
         fn mask(a: u8): u8 { a & 7 }
-        fn withLiteral(a: u32): u32 { a + 8 }
-        fn compareLit(a: u32): bool { a < 10 }
+        fn with_literal(a: u32): u32 { a + 8 }
+        fn compare_lit(a: u32): bool { a < 10 }
     "#);
     ok(r#"
         extern "C" { fn abs(x: i32): i32 }

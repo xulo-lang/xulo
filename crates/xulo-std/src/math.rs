@@ -177,7 +177,7 @@ pub fn exp(x: f64) -> f64 {
     x.exp()
 }
 
-/// `Math::toFixed(x, digits)`: the decimal numeral of `x` with exactly
+/// `Math::to_fixed(x, digits)`: the decimal numeral of `x` with exactly
 /// `digits` digits after the decimal point, rounded halfway away from zero
 /// and keeping trailing zeros. Special values ignore `digits`.
 ///
@@ -266,7 +266,7 @@ pub fn random() -> f64 {
     })
 }
 
-/// `Math::randomInt(lo, hi)`: a pseudo-random integer in `lo …= hi`, drawn
+/// `Math::random_int(lo, hi)`: a pseudo-random integer in `lo …= hi`, drawn
 /// uniformly from the same stream as [`random`]. The caller guarantees
 /// `lo <= hi` (an empty range is a runtime failure).
 pub fn random_int(lo: i64, hi: i64) -> i64 {
@@ -286,44 +286,44 @@ pub fn random_int(lo: i64, hi: i64) -> i64 {
     })
 }
 
-/// `Math::wrappingAdd(a, b)`: the two's-complement `int` result of `a + b`
+/// `Math::wrapping_add(a, b)`: the two's-complement `int` result of `a + b`
 /// modulo 2⁶⁴. Never traps (spec `builtins/intrinsic-functions.md`).
 pub fn wrapping_add(a: i64, b: i64) -> i64 {
     a.wrapping_add(b)
 }
 
-/// `Math::wrappingSub(a, b)`: `a − b` modulo 2⁶⁴, as two's complement.
+/// `Math::wrapping_sub(a, b)`: `a − b` modulo 2⁶⁴, as two's complement.
 pub fn wrapping_sub(a: i64, b: i64) -> i64 {
     a.wrapping_sub(b)
 }
 
-/// `Math::wrappingMul(a, b)`: `a × b` modulo 2⁶⁴, as two's complement.
+/// `Math::wrapping_mul(a, b)`: `a × b` modulo 2⁶⁴, as two's complement.
 pub fn wrapping_mul(a: i64, b: i64) -> i64 {
     a.wrapping_mul(b)
 }
 
-/// `Math::popCount(x)`: the number of 1 bits in the 64-bit representation.
+/// `Math::pop_count(x)`: the number of 1 bits in the 64-bit representation.
 pub fn pop_count(x: i64) -> i64 {
     (x as u64).count_ones() as i64
 }
 
-/// `Math::countLeadingZeros(x)`: leading zero bits; 64 when `x` is 0.
+/// `Math::count_leading_zeros(x)`: leading zero bits; 64 when `x` is 0.
 pub fn count_leading_zeros(x: i64) -> i64 {
     (x as u64).leading_zeros() as i64
 }
 
-/// `Math::countTrailingZeros(x)`: trailing zero bits; 64 when `x` is 0.
+/// `Math::count_trailing_zeros(x)`: trailing zero bits; 64 when `x` is 0.
 pub fn count_trailing_zeros(x: i64) -> i64 {
     (x as u64).trailing_zeros() as i64
 }
 
-/// `Math::rotateLeft(x, amount)`: rotate the 64-bit representation left by
+/// `Math::rotate_left(x, amount)`: rotate the 64-bit representation left by
 /// `amount` modulo 64.
 pub fn rotate_left(x: i64, amount: u64) -> i64 {
     (x as u64).rotate_left(amount as u32) as i64
 }
 
-/// `Math::rotateRight(x, amount)`: rotate the 64-bit representation right by
+/// `Math::rotate_right(x, amount)`: rotate the 64-bit representation right by
 /// `amount` modulo 64.
 pub fn rotate_right(x: i64, amount: u64) -> i64 {
     (x as u64).rotate_right(amount as u32) as i64

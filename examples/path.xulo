@@ -7,8 +7,8 @@ fn main() {
     print(std::path::join("/etc", "hosts")) // /etc/hosts
 
     // 绝对 / 相对：只看开头的 /
-    print(std::path::isAbsolute("/etc/hosts")) // true
-    print(std::path::isAbsolute("etc/hosts")) // false
+    print(std::path::is_absolute("/etc/hosts")) // true
+    print(std::path::is_absolute("etc/hosts")) // false
 
     // 拆解：目录名、末段、扩展名（含点）、去扩展的词干
     print(std::path::dirname("/etc/hosts")) // /etc
@@ -17,7 +17,7 @@ fn main() {
     print(std::path::stem("archive.tar.gz")) // archive.tar
 
     // 换扩展名
-    print(std::path::withExt("notes.txt", ".md")) // notes.md
+    print(std::path::with_ext("notes.txt", ".md")) // notes.md
 
     // 规范化：消去 . 与多余分隔符（保守，不解析 ..）
     print(std::path::normalize("p/./q//r")) // p/q/r

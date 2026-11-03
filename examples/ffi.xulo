@@ -3,10 +3,10 @@
 // 具名参数与省略 `Ptr?`（补 null）和普通 fn 完全一致；
 // `p != null` 收窄可选绑定，`pub extern fn` 导出实现供宿主调用
 extern "C" {
-    fn abs(x: i32): i32 as cAbs
+    fn abs(x: i32): i32 as c_abs
     fn sqrt(x: f64): f64
     fn pow(x: f64, y: f64): f64
-    fn isalnum(c: i32): bool as cIsAlnum
+    fn isalnum(c: i32): bool as c_is_alnum
     fn srand(seed: u32)
     fn malloc(size: usize): Ptr?
     fn free(p: Ptr?)
@@ -16,15 +16,15 @@ pub extern "C" fn triple(n: i32): i32 { n * 3 }
 
 fn main() {
     // 声明名是 C 符号，`as` 别名才是本地绑定；负数字面量按目标类型收窄
-    print(cAbs(-42)) // 42
+    print(c_abs(-42)) // 42
 
     // f64 边界；具名参数按声明序落位，调用处可以乱序
     print(sqrt(x: 16))   // 4
     print(pow(y: 10, x: 2)) // 1024
 
     // C 的 int 返回按声明的 bool 解释（0 → false，非 0 → true）
-    print(cIsAlnum(65)) // true —— 'A'
-    print(cIsAlnum(33)) // false —— '#'
+    print(c_is_alnum(65)) // true —— 'A'
+    print(c_is_alnum(33)) // false —— '#'
 
     // void 返回是 null
     srand(1)

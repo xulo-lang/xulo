@@ -75,13 +75,13 @@ xulo
 | `templates.xulo` | 反引号模板字面量 `${...}`、转义、多行、嵌套、Unicode |
 | `collections.xulo` | 列表 / 对象：下标、`+` 拼接、`...` 展开、成员访问 |
 | `optional_chaining.xulo` | `T?` 可选类型、`?.`、`??`、三目、`and` / `or` / `!` |
-| `math_time.xulo` | `std::math::`（常量、取整、幂与开方、`toFixed`）与 `std::time::`（时钟与 UTC 日历）命名空间 |
-| `time.xulo` | `std::time::`：墙上/单调时钟、`sleep` 任务、UTC 日历（`fromParts` / `format` / `parse` / `parts` / `weekday`） |
+| `math_time.xulo` | `std::math::`（常量、取整、幂与开方、`to_fixed`）与 `std::time::`（时钟与 UTC 日历）命名空间 |
+| `time.xulo` | `std::time::`：墙上/单调时钟、`sleep` 任务、UTC 日历（`from_parts` / `format` / `parse` / `parts` / `weekday`） |
 | `std.xulo` | `std` 标准库：`std::math::` / `std::time::` / `std::fs::` / `std::io::`（`Result` 与 `match` 错误处理） |
 | `json.xulo` | `std::json::`：`parse` / `stringify`（含缩进）/ `valid`，语法错误是 `Result::Err` |
 | `path.xulo` | `std::path::`：拼接、拆解、换扩展名、规范化、相对化（纯字符串运算） |
 | `os.xulo` | `std::os::`：工作目录、环境变量、临时/家目录、进程与宿主身份 |
-| `fs.xulo` | `std::fs::`：读写、`stat` 元数据、`readDir` / `walk`、字节读写、`tempFile`、复制改名 |
+| `fs.xulo` | `std::fs::`：读写、`stat` 元数据、`read_dir` / `walk`、字节读写、`temp_file`、复制改名 |
 | `net.xulo` | `std::net::`：TCP 监听/连接/接受、双向读写、半关闭、读超时（单进程回环） |
 | `regex.xulo` | `std::regex::`：`RegExp::compile`、`test` / `find` / `find_all`、字符串 `replace`（`use` 导入与 `?` 传播） |
 | `process.xulo` | `std::process::`：`args` / `run` / `exec`、`launch` 与 `Child` 句柄、`Command` 规格、超时与 kill |

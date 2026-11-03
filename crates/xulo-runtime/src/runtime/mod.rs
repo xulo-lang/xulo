@@ -4,8 +4,8 @@ use std::os::raw::c_char;
 
 use crate::value::format_number;
 
-mod fs;
 mod fmt;
+mod fs;
 mod heap;
 mod http;
 mod io;
@@ -20,8 +20,8 @@ mod time;
 
 // 再导出各子模块的 `xulo_*`：xulo-compiler/backend.rs 按 `xulo_runtime::runtime::xulo_*`
 // 路径取函数地址，这里保持该路径不变（`no_mangle` 符号本身与模块布局无关）。
-pub use fs::*;
 pub use fmt::*;
+pub use fs::*;
 pub use heap::*;
 pub use http::*;
 pub use io::*;
@@ -35,7 +35,7 @@ pub use string::*;
 pub use time::*;
 
 /// 字符串方法（`repeat` / `pad_start` / `pad_end`）的重复/宽度上限：编译路径
-/// 超过即报错退出（对齐 `toFixed` 的越界约定），解释路径转成 RunError。
+/// 超过即报错退出（对齐 `to_fixed` 的越界约定），解释路径转成 RunError。
 pub(crate) const MAX_STRING_GROWTH: i64 = 1 << 20;
 
 /// xulo 对象
@@ -299,6 +299,6 @@ pub extern "C" fn xulo_cleanup() {
         strings.borrow_mut().clear();
     });
 
-    // std::math::toFixed 交给编译产物的字符串由 xulo-std 持有，一并释放。
+    // std::math::to_fixed 交给编译产物的字符串由 xulo-std 持有，一并释放。
     xulo_std::ffi::release_strings();
 }

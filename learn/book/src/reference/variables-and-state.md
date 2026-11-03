@@ -25,7 +25,7 @@ let maybe: string? = null     // 可选类型
 ```xulo
 @State let count: number = 0
 @State let name: string = ""
-@State let isActive: bool = true
+@State let is_active: bool = true
 ```
 
 - `@State` 只能在 UI 组件（返回 `View` 的函数）顶层声明
@@ -38,7 +38,7 @@ let maybe: string? = null     // 可选类型
 
 ```xulo
 // stores/app.xulo
-import { createStore } from "@xulo/store"
+import { create_store } from "@xulo/store"
 
 type AppState = {
   user: User?
@@ -48,16 +48,16 @@ type AppState = {
 }
 
 // ✅ 对象字面量用括号包裹，避免歧义
-fn setUser(state: AppState, user: User?): AppState {
+fn set_user(state: AppState, user: User?): AppState {
   ({ ...state, user: user })
 }
 
-fn setTheme(state: AppState, theme: Theme): AppState {
+fn set_theme(state: AppState, theme: Theme): AppState {
   ({ ...state, theme: theme })
 }
 
-// 注意：当前实现暂不支持显式泛型调用（`createStore<AppState>`），故省略类型实参。
-pub const useAppStore = createStore(
+// 注意：当前实现暂不支持显式泛型调用（`create_store<AppState>`），故省略类型实参。
+pub const use_app_store = create_store(
   {
     user: null,
     theme: Theme::Light,
@@ -65,8 +65,8 @@ pub const useAppStore = createStore(
     loading: false
   },
   {
-    setUser: setUser,
-    setTheme: setTheme
+    set_user: set_user,
+    set_theme: set_theme
   }
 )
 ```
@@ -74,22 +74,22 @@ pub const useAppStore = createStore(
 ### 使用 Store
 
 ```xulo
-import { useAppStore } from "../stores/app"
+import { use_app_store } from "../stores/app"
 
 fn Home(): View {
-  @Store const { user, theme, loading } = useAppStore()
-  @Store const { setTheme } = useAppStore()
+  @Store const { user, theme, loading } = use_app_store()
+  @Store const { set_theme } = use_app_store()
 
   VStack {
     Text("User: " + user?.name)
-    Button(onClick: fn() { setTheme(Theme::Dark) }) {
+    Button(onClick: fn() { set_theme(Theme::Dark) }) {
       Text("Dark mode")
     }
   }
 }
 ```
 
-- `@Store` 解构取值（`{ user }`）和取函数（`{ setUser }`）
+- `@Store` 解构取值（`{ user }`）和取函数（`{ set_user }`）
 - 依赖追踪与重渲染由外部 store 运行时接管
 
 ## 环境注入 `@Environment`
@@ -107,19 +107,19 @@ router.push("/about")
 ```xulo
 @Effect fn() {
   // 组件挂载时执行
-  fetchUser(id)
+  fetch_user(id)
 }
 
 @Effect fn() {
   // 依赖变化时重新执行
-  fetchUser(id)
+  fetch_user(id)
 }, [id]
 
 @Effect fn() {
   // 清理函数
-  setupSubscription()
+  setup_subscription()
   return fn() {
-    cleanupSubscription()
+    cleanup_subscription()
   }
 }
 ```
@@ -133,7 +133,7 @@ router.push("/about")
 ```xulo
 // 双向绑定（用 $ 前缀）
 Input(value: $name)
-Checkbox(checked: $isActive)
+Checkbox(checked: $is_active)
 
 // 等价于
 Input(value: name, onInput: fn(e) {
@@ -153,9 +153,9 @@ Input(value: name, onInput: fn(e) {
 
 ```xulo
 fn UserProfile(): View {
-  @Store const { user, loading } = useAppStore()
+  @Store const { user, loading } = use_app_store()
   @State let editing: bool = false
-  @Effect fn() { fetchUser(id) }
+  @Effect fn() { fetch_user(id) }
 
   VStack { ... }
 }
@@ -164,8 +164,8 @@ fn UserProfile(): View {
 ### ❌ 错误用法（普通函数 / 异步函数 / 嵌套块）
 
 ```xulo
-fn helperFunction() {
-  @Store const { user } = useAppStore()  // ❌ 禁止
+fn helper_function() {
+  @Store const { user } = use_app_store()  // ❌ 禁止
   @State let count = 0                   // ❌ 禁止
 }
 

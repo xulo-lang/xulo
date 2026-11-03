@@ -5,17 +5,16 @@ use std::ops::Range;
 
 use symbol_table::{Symbol, SymbolKind, SymbolTable};
 use xulo_core::ast::{
-    AssignStmt, AssignTarget, AssignValue, Attribute, BinaryOperator, Block, Call, CallArg, EnumPayloadParam,
-    EnumVariant, ExportItem, Expression, FnBound, FnDef, GenericParam, GenericParamKind, IfExpr,
-    ImplDecl, LetBinding, Literal, ObjectField, PathHead, Program, Statement, TraitDecl, Type,
-    TypeAlias, UiElement, UseDecl, UseTarget, impl_fn_name,
+    AssignStmt, AssignTarget, AssignValue, Attribute, BinaryOperator, Block, Call, CallArg,
+    EnumPayloadParam, EnumVariant, ExportItem, Expression, FnBound, FnDef, GenericParam,
+    GenericParamKind, IfExpr, ImplDecl, LetBinding, Literal, ObjectField, PathHead, Program,
+    Statement, TraitDecl, Type, TypeAlias, UiElement, UseDecl, UseTarget, impl_fn_name,
 };
 use xulo_core::error::{ErrorKind, XuloError};
 
 /// Result of a single semantic error, without a source span (spans are
 /// attached by the lexer/parser; semantic checks target names).
 type SResult<T> = Result<T, XuloError>;
-
 
 /// The virtual module id the `regex` module resolves to. It carries a
 /// control-byte prefix so it can never collide with a real module id (spec
@@ -136,13 +135,10 @@ fn array_parts(ty: &Type) -> Option<(Type, Option<usize>)> {
         return None;
     }
     let len = match &args[1] {
-        Type::Literal(text) => text.parse::<i64>().ok().and_then(|n| {
-            if n >= 0 {
-                Some(n as usize)
-            } else {
-                None
-            }
-        }),
+        Type::Literal(text) => text
+            .parse::<i64>()
+            .ok()
+            .and_then(|n| if n >= 0 { Some(n as usize) } else { None }),
         _ => None,
     };
     Some((args[0].clone(), len))
@@ -681,7 +677,7 @@ fn request_type_entry() -> TypeEntry {
             ("headers".to_string(), header_list_ty(), None),
             ("body".to_string(), Type::String, None),
             ("version".to_string(), Type::String, None),
-            ("remoteAddr".to_string(), Type::String, None),
+            ("remote_addr".to_string(), Type::String, None),
         ]),
     }
 }
@@ -743,12 +739,10 @@ fn http_inherent_sig(recv_name: &str, member: &str) -> Option<InherentSig> {
         })
     };
     match (recv_name, member) {
-        ("Request", "header" | "queryValue" | "formValue") => {
+        ("Request", "header" | "query_value" | "form_value") => {
             sig(vec![Type::String], Type::Optional(Box::new(Type::String)))
         }
-        ("Response", "header") => {
-            sig(vec![Type::String], Type::Optional(Box::new(Type::String)))
-        }
+        ("Response", "header") => sig(vec![Type::String], Type::Optional(Box::new(Type::String))),
         ("Server", "addr") => sig(vec![], BuiltinRet::ResultStrErr.ty()),
         ("Server", "serve") => sig(
             vec![Type::FnSig {
@@ -809,7 +803,7 @@ enum BuiltinTy {
     /// Any value — `std::json::stringify` serializes arbitrary JSON input;
     /// `assignable` accepts everything as `any`, so the check never rejects.
     Any,
-    /// `List<u8>` — a byte-list argument (`std::fs::writeBytes`).
+    /// `List<u8>` — a byte-list argument (`std::fs::write_bytes`).
     ListU8,
     /// `List<string>` — `std::process::exec`'s argument vector, whose
     /// element type is enforced (`[]` is `List<any>` and passes).
@@ -868,7 +862,7 @@ enum BuiltinRet {
     /// (`Fs::write`, `Fs::remove`, `Fs::mkdir`).
     ResultUnitErr,
     /// `Result<string?, Error>` — a fallible read whose success payload is an
-    /// optional string: `null` is the end of the stream (`std::io::readLine`).
+    /// optional string: `null` is the end of the stream (`std::io::read_line`).
     ResultOptStrErr,
     /// `Result<number, Error>` — a fallible operation whose success payload is
     /// a number: the socket handle `std::net`'s openers yield, or the byte
@@ -903,10 +897,10 @@ enum BuiltinRet {
     TimeParts,
     /// `string?` — `std::path::relative` (absence is `null`).
     OptString,
-    /// `Result<List<u8>, Error>` — a fallible byte read (`std::fs::readBytes`).
+    /// `Result<List<u8>, Error>` — a fallible byte read (`std::fs::read_bytes`).
     ResultListU8Err,
     /// `Result<List<string>, Error>` — a fallible name/path listing
-    /// (`std::fs::readDir`, `std::fs::walk`).
+    /// (`std::fs::read_dir`, `std::fs::walk`).
     ResultListStrErr,
     /// `Result<{ kind: string, size: number, modified: u64, mode: number }, Error>`
     /// — the record `std::fs::stat` yields.
@@ -954,7 +948,7 @@ impl BuiltinRet {
                         ("stdout".to_string(), Type::String),
                         ("stderr".to_string(), Type::String),
                         ("code".to_string(), Type::Number),
-                    ]                    ),
+                    ]),
                     Type::Named("Error".to_string(), Vec::new()),
                 ],
             ),
@@ -1031,7 +1025,7 @@ impl BuiltinRet {
 /// One intrinsic function's registered signature.
 struct BuiltinSig {
     params: &'static [BuiltinTy],
-    /// How many trailing parameters may be omitted (`std::fs::tempFile`'s
+    /// How many trailing parameters may be omitted (`std::fs::temp_file`'s
     /// prefix; the compiler pads a missing argument with null).
     optional_tail: usize,
     ret: BuiltinRet,
@@ -1058,12 +1052,12 @@ fn unit_type() -> Type {
     Type::Named("unit".to_string(), Vec::new())
 }
 
-/// The read-only property members: `.len`, `.size`, and `.byteLen`.
+/// The read-only property members: `.len`, `.size`, and `.byte_len`.
 fn builtin_property(recv: &Type, member: &str) -> Option<Type> {
     match (recv, member) {
         (Type::List(_), "len") => Some(Type::Number),
         (Type::Named(name, _), "len") if name == "Array" => Some(Type::Number),
-        (Type::String, "len" | "byteLen") => Some(Type::Number),
+        (Type::String, "len" | "byte_len") => Some(Type::Number),
         (Type::Named(name, _), "size") if name == "Map" || name == "Set" => Some(Type::Number),
         // The brace form of a map literal currently types as the loose
         // `object`; it still answers the Map members.
@@ -1101,7 +1095,7 @@ fn builtin_inherent_sig(recv: &Type, member: &str) -> Option<InherentSig> {
                     1,
                     Type::List(inner.clone()),
                 ),
-                "indexOf" | "lastIndexOf" => sig(vec![t], 0, Type::Number),
+                "index_of" | "last_index_of" => sig(vec![t], 0, Type::Number),
                 "includes" => sig(vec![t], 0, Type::Boolean),
                 "join" => sig(vec![Type::String], 1, Type::String),
                 "entries" => sig(
@@ -1121,7 +1115,7 @@ fn builtin_inherent_sig(recv: &Type, member: &str) -> Option<InherentSig> {
                     1,
                     Type::List(Box::new(elem.clone())),
                 ),
-                "indexOf" | "lastIndexOf" => sig(vec![elem.clone()], 0, Type::Number),
+                "index_of" | "last_index_of" => sig(vec![elem.clone()], 0, Type::Number),
                 "includes" => sig(vec![elem.clone()], 0, Type::Boolean),
                 "join" => sig(vec![Type::String], 1, Type::String),
                 "entries" => sig(
@@ -1145,14 +1139,22 @@ fn builtin_inherent_sig(recv: &Type, member: &str) -> Option<InherentSig> {
                     0,
                     Type::Optional(Box::new(args.first().cloned().unwrap_or(Type::Any))),
                 ),
-                "findIndex" => sig(vec![Type::Any], 0, Type::Number),
-                "some" | "every" | "forEach" | "sort" => sig(vec![Type::Any], 0, if member == "some" || member == "every" { Type::Boolean } else { unit_type() }),
+                "find_index" => sig(vec![Type::Any], 0, Type::Number),
+                "some" | "every" | "for_each" | "sort" => sig(
+                    vec![Type::Any],
+                    0,
+                    if member == "some" || member == "every" {
+                        Type::Boolean
+                    } else {
+                        unit_type()
+                    },
+                ),
                 "reduce" => sig(vec![Type::Any, Type::Any], 0, Type::Any),
                 _ => None,
             }
         }
         Type::String => match member {
-            "codeAt" => sig(vec![Type::Number], 0, Type::Number),
+            "code_at" => sig(vec![Type::Number], 0, Type::Number),
             "slice" => sig(vec![Type::Number, Type::Number], 0, Type::String),
             "bytes" => sig(
                 vec![],
@@ -1195,11 +1197,7 @@ fn map_inherent_sig(key: &Type, val: &Type, member: &str) -> Option<InherentSig>
         "has" => sig(vec![key], 0, Type::Boolean),
         "keys" => sig(vec![], 0, Type::List(Box::new(key))),
         "values" => sig(vec![], 0, Type::List(Box::new(val))),
-        "entries" => sig(
-            vec![],
-            0,
-            Type::List(Box::new(Type::Tuple(vec![key, val]))),
-        ),
+        "entries" => sig(vec![], 0, Type::List(Box::new(Type::Tuple(vec![key, val])))),
         _ => None,
     }
 }
@@ -1258,68 +1256,67 @@ fn builtin_member(ns: &str, member: &str) -> Option<BuiltinMember> {
             "hypot" => f(&[T::Float, T::Float], R::Float),
             "clamp" => f(&[T::Number, T::Number, T::Number], R::Number),
             "log1p" | "expm1" => f(&[T::Float], R::Float),
-            "randomInt" => f(&[T::Int, T::Int], R::Int),
+            "random_int" => f(&[T::Int, T::Int], R::Int),
             "sqrt" | "cbrt" => f(&[T::Float], R::Float),
             "floor" | "ceil" | "round" | "trunc" => f(&[T::Float], R::Int),
             "pow" => f(&[T::Float, T::Float], R::Float),
-            "toFixed" => f(&[T::Float, T::Int], R::String),
+            "to_fixed" => f(&[T::Float, T::Int], R::String),
             "sin" | "cos" | "tan" | "asin" | "acos" | "atan" => f(&[T::Float], R::Float),
             "atan2" => f(&[T::Float, T::Float], R::Float),
             "log" | "log2" | "log10" | "exp" => f(&[T::Float], R::Float),
             "random" => f(&[], R::Float),
-            "wrappingAdd" | "wrappingSub" | "wrappingMul" => f(&[T::Int, T::Int], R::Int),
-            "popCount" | "countLeadingZeros" | "countTrailingZeros" => f(&[T::Int], R::Int),
-            "rotateLeft" | "rotateRight" => f(&[T::Int, T::U64], R::Int),
+            "wrapping_add" | "wrapping_sub" | "wrapping_mul" => f(&[T::Int, T::Int], R::Int),
+            "pop_count" | "count_leading_zeros" | "count_trailing_zeros" => f(&[T::Int], R::Int),
+            "rotate_left" | "rotate_right" => f(&[T::Int, T::U64], R::Int),
             _ => None,
         },
         "std::time" => match member {
-            "now" | "nowNanos" | "monotonic" | "monotonicNanos" => f(&[], R::Number),
+            "now" | "now_nanos" | "monotonic" | "monotonic_nanos" => f(&[], R::Number),
             "sleep" => f(&[T::U64], R::TaskUnit),
             // 日历（spec `modules/time.md`）：UTC 单域。format/parse 交换
-            // ISO 8601 文本，parts/fromParts 交换字段记录，weekday 是星期
-            // 序号；fromParts 的 hour…millisecond 四个尾参可缺席（默认 0）。
+            // ISO 8601 文本，parts/from_parts 交换字段记录，weekday 是星期
+            // 序号；from_parts 的 hour…millisecond 四个尾参可缺席（默认 0）。
             "format" => f(&[T::U64], R::String),
             "parse" => f(&[T::String], R::ResultNumErr),
             "parts" => f(&[T::U64], R::TimeParts),
-            "fromParts" => {
-                f4(&[T::Int, T::Int, T::Int, T::Int, T::Int, T::Int, T::Int], R::Number)
-            }
+            "from_parts" => f4(
+                &[T::Int, T::Int, T::Int, T::Int, T::Int, T::Int, T::Int],
+                R::Number,
+            ),
             "weekday" => f(&[T::U64], R::Int),
             _ => None,
         },
         "std::fs" => match member {
             "read" => f(&[T::String], R::ResultStrErr),
             "write" => f(&[T::String, T::String], R::ResultUnitErr),
-            "append" | "createNew" => f(&[T::String, T::String], R::ResultUnitErr),
+            "append" | "create_new" => f(&[T::String, T::String], R::ResultUnitErr),
             "exists" => f(&[T::String], R::Bool),
-            "touch" | "remove" | "mkdir" | "removeDir" => {
-                f(&[T::String], R::ResultUnitErr)
-            }
+            "touch" | "remove" | "mkdir" | "remove_dir" => f(&[T::String], R::ResultUnitErr),
             "realpath" => f(&[T::String], R::ResultStrErr),
-            "setTimes" => f(&[T::String, T::U64], R::ResultUnitErr),
-            "setMode" => f(&[T::String, T::Number], R::ResultUnitErr),
+            "set_times" => f(&[T::String, T::U64], R::ResultUnitErr),
+            "set_mode" => f(&[T::String, T::Number], R::ResultUnitErr),
             "stat" => f(&[T::String], R::ResultStatErr),
             "copy" | "rename" => f(&[T::String, T::String], R::ResultUnitErr),
-            "readDir" | "walk" => f(&[T::String], R::ResultListStrErr),
-            "readBytes" => f(&[T::String], R::ResultListU8Err),
-            "writeBytes" | "appendBytes" => f(&[T::String, T::ListU8], R::ResultUnitErr),
+            "read_dir" | "walk" => f(&[T::String], R::ResultListStrErr),
+            "read_bytes" => f(&[T::String], R::ResultListU8Err),
+            "write_bytes" | "append_bytes" => f(&[T::String, T::ListU8], R::ResultUnitErr),
             // The temp creators take an optional prefix (or, for the `…In`
             // pair, a required directory plus an optional prefix); the
             // compiler pads a missing trailing argument with null.
-            "tempFile" | "tempDir" => f1(&[T::String], R::ResultStrErr),
-            "tempFileIn" | "tempDirIn" => f1(&[T::String, T::String], R::ResultStrErr),
+            "temp_file" | "temp_dir" => f1(&[T::String], R::ResultStrErr),
+            "temp_file_in" | "temp_dir_in" => f1(&[T::String, T::String], R::ResultStrErr),
             _ => None,
         },
         // The host streams: writes take the text to emit, `flush` pushes what
-        // is buffered, and the two reads take no operand (`readLine` yields
+        // is buffered, and the two reads take no operand (`read_line` yields
         // `string?`, so `null` ends a line loop).
         "std::io" => match member {
             "print" | "println" | "eprint" | "eprintln" => f(&[T::String], R::ResultUnitErr),
             "flush" => f(&[], R::ResultUnitErr),
-            "readLine" => f(&[], R::ResultOptStrErr),
+            "read_line" => f(&[], R::ResultOptStrErr),
             "read" => f(&[], R::ResultStrErr),
-            "readN" => f(&[T::Number], R::ResultOptStrErr),
-            "stdinIsTTY" | "stdoutIsTTY" => f(&[], R::Bool),
+            "read_n" => f(&[T::Number], R::ResultOptStrErr),
+            "stdin_is_tty" | "stdout_is_tty" => f(&[], R::Bool),
             _ => None,
         },
         // OS surface: the working directory, the environment, and process /
@@ -1330,9 +1327,9 @@ fn builtin_member(ns: &str, member: &str) -> Option<BuiltinMember> {
             "setenv" => f(&[T::String, T::String], R::ResultUnitErr),
             "unsetenv" => f(&[T::String], R::ResultUnitErr),
             "cwd" => f(&[], R::ResultStrErr),
-            "tmpDir" => f(&[], R::String),
-            "homeDir" | "hostName" | "userName" | "execPath" => f(&[], R::ResultStrErr),
-            "cpuCount" => f(&[], R::Number),
+            "tmp_dir" => f(&[], R::String),
+            "home_dir" | "host_name" | "user_name" | "exec_path" => f(&[], R::ResultStrErr),
+            "cpu_count" => f(&[], R::Number),
             "chdir" => f(&[T::String], R::ResultUnitErr),
             "pid" => f(&[], R::Number),
             "platform" | "arch" => f(&[], R::String),
@@ -1342,12 +1339,10 @@ fn builtin_member(ns: &str, member: &str) -> Option<BuiltinMember> {
         // every member is total, so none returns a `Result`.
         "std::path" => match member {
             "join" => f(&[T::String, T::String], R::String),
-            "dirname" | "basename" | "ext" | "normalize" | "stem" => {
-                f(&[T::String], R::String)
-            }
-            "isAbsolute" => f(&[T::String], R::Bool),
+            "dirname" | "basename" | "ext" | "normalize" | "stem" => f(&[T::String], R::String),
+            "is_absolute" => f(&[T::String], R::Bool),
             "split" => f(&[T::String], R::PathSplit),
-            "withExt" => f(&[T::String, T::String], R::String),
+            "with_ext" => f(&[T::String, T::String], R::String),
             "relative" => f(&[T::String, T::String], R::OptString),
             _ => None,
         },
@@ -1357,15 +1352,15 @@ fn builtin_member(ns: &str, member: &str) -> Option<BuiltinMember> {
         // four blocking members take an optional trailing `timeout` in
         // milliseconds; the compiler pads a missing budget with null.
         "std::net" => match member {
-            "tcpListen" => f(&[T::String], R::ResultNumErr),
-            "tcpConnect" => f1(&[T::String, T::U64], R::ResultNumErr),
-            "tcpAccept" => f1(&[T::Number, T::U64], R::ResultNumErr),
-            "sockRead" => f1(&[T::Number, T::Number, T::U64], R::ResultOptStrErr),
-            "sockWrite" => f1(&[T::Number, T::String, T::U64], R::ResultNumErr),
-            "sockClose" | "sockShutdown" | "sockShutdownWrite" => {
+            "tcp_listen" => f(&[T::String], R::ResultNumErr),
+            "tcp_connect" => f1(&[T::String, T::U64], R::ResultNumErr),
+            "tcp_accept" => f1(&[T::Number, T::U64], R::ResultNumErr),
+            "sock_read" => f1(&[T::Number, T::Number, T::U64], R::ResultOptStrErr),
+            "sock_write" => f1(&[T::Number, T::String, T::U64], R::ResultNumErr),
+            "sock_close" | "sock_shutdown" | "sock_shutdown_write" => {
                 f(&[T::Number], R::ResultUnitErr)
             }
-            "sockLocalAddr" | "sockPeerAddr" => f(&[T::Number], R::ResultStrErr),
+            "sock_local_addr" | "sock_peer_addr" => f(&[T::Number], R::ResultStrErr),
             _ => None,
         },
         // Process control and child capture: `exit` never returns, `args`
@@ -1378,7 +1373,10 @@ fn builtin_member(ns: &str, member: &str) -> Option<BuiltinMember> {
             "exit" => f(&[T::Number], R::Never),
             "args" => f(&[], R::ListStr),
             "run" => f2(&[T::String, T::String, T::U64], R::ResultRunOutErr),
-            "exec" => f2(&[T::String, T::ListStr, T::String, T::U64], R::ResultRunOutErr),
+            "exec" => f2(
+                &[T::String, T::ListStr, T::String, T::U64],
+                R::ResultRunOutErr,
+            ),
             "launch" => f2(&[T::String, T::String, T::U64], R::ResultChildErr),
             _ => None,
         },
@@ -1448,7 +1446,7 @@ fn std_face_members(module: &str) -> Option<Vec<(String, FaceKind)>> {
                 "ceil",
                 "round",
                 "trunc",
-                "toFixed",
+                "to_fixed",
                 "sin",
                 "cos",
                 "tan",
@@ -1463,41 +1461,41 @@ fn std_face_members(module: &str) -> Option<Vec<(String, FaceKind)>> {
                 "exp",
                 "expm1",
                 "random",
-                "randomInt",
-                "wrappingAdd",
-                "wrappingSub",
-                "wrappingMul",
-                "popCount",
-                "countLeadingZeros",
-                "countTrailingZeros",
-                "rotateLeft",
-                "rotateRight",
+                "random_int",
+                "wrapping_add",
+                "wrapping_sub",
+                "wrapping_mul",
+                "pop_count",
+                "count_leading_zeros",
+                "count_trailing_zeros",
+                "rotate_left",
+                "rotate_right",
             ]),
         ]
         .concat(),
         "time" => fns(&[
             "now",
-            "nowNanos",
+            "now_nanos",
             "monotonic",
-            "monotonicNanos",
+            "monotonic_nanos",
             "sleep",
             "format",
             "parse",
             "parts",
-            "fromParts",
+            "from_parts",
             "weekday",
         ]),
         "fs" => fns(&[
             "read",
-            "readBytes",
+            "read_bytes",
             "write",
-            "writeBytes",
+            "write_bytes",
             "append",
-            "appendBytes",
-            "createNew",
+            "append_bytes",
+            "create_new",
             "touch",
-            "setTimes",
-            "setMode",
+            "set_times",
+            "set_mode",
             "exists",
             "realpath",
             "stat",
@@ -1505,13 +1503,13 @@ fn std_face_members(module: &str) -> Option<Vec<(String, FaceKind)>> {
             "rename",
             "remove",
             "mkdir",
-            "readDir",
+            "read_dir",
             "walk",
-            "removeDir",
-            "tempFile",
-            "tempDir",
-            "tempFileIn",
-            "tempDirIn",
+            "remove_dir",
+            "temp_file",
+            "temp_dir",
+            "temp_file_in",
+            "temp_dir_in",
         ]),
         // `print`/`println` are exported by the module but absent from its
         // glob face: their names belong to the prelude intrinsics, which a
@@ -1520,11 +1518,11 @@ fn std_face_members(module: &str) -> Option<Vec<(String, FaceKind)>> {
             "eprint",
             "eprintln",
             "flush",
-            "readLine",
+            "read_line",
             "read",
-            "readN",
-            "stdinIsTTY",
-            "stdoutIsTTY",
+            "read_n",
+            "stdin_is_tty",
+            "stdout_is_tty",
         ]),
         "os" => fns(&[
             "getenv",
@@ -1532,39 +1530,39 @@ fn std_face_members(module: &str) -> Option<Vec<(String, FaceKind)>> {
             "unsetenv",
             "cwd",
             "chdir",
-            "tmpDir",
-            "homeDir",
-            "hostName",
-            "userName",
-            "execPath",
-            "cpuCount",
+            "tmp_dir",
+            "home_dir",
+            "host_name",
+            "user_name",
+            "exec_path",
+            "cpu_count",
             "pid",
             "platform",
             "arch",
         ]),
         "path" => fns(&[
-            "isAbsolute",
+            "is_absolute",
             "join",
             "dirname",
             "basename",
             "split",
             "ext",
             "stem",
-            "withExt",
+            "with_ext",
             "normalize",
             "relative",
         ]),
         "net" => fns(&[
-            "tcpListen",
-            "tcpAccept",
-            "tcpConnect",
-            "sockRead",
-            "sockWrite",
-            "sockShutdown",
-            "sockShutdownWrite",
-            "sockClose",
-            "sockLocalAddr",
-            "sockPeerAddr",
+            "tcp_listen",
+            "tcp_accept",
+            "tcp_connect",
+            "sock_read",
+            "sock_write",
+            "sock_shutdown",
+            "sock_shutdown_write",
+            "sock_close",
+            "sock_local_addr",
+            "sock_peer_addr",
         ]),
         "process" => [
             fns(&["exit", "args", "run", "exec", "launch"]),
@@ -2215,11 +2213,8 @@ fn face_derive_debug(face: &mut ModuleFace, attrs: &[Attribute], name: &str, non
         .iter()
         .any(|a| a.name == "Derive" && a.args.iter().any(|(arg, _)| arg == "Debug"))
     {
-        face.impls.push((
-            "Debug".to_string(),
-            name.to_string(),
-            "debug".to_string(),
-        ));
+        face.impls
+            .push(("Debug".to_string(), name.to_string(), "debug".to_string()));
     }
 }
 
@@ -4153,9 +4148,7 @@ impl Analyzer {
                 }
                 // Follow one alias hop: `type Label = User` inherits User's
                 // display form for the string positions.
-                if let Some(TypeEntryKind::Alias(target)) =
-                    self.type_entry(name).map(|e| &e.kind)
-                {
+                if let Some(TypeEntryKind::Alias(target)) = self.type_entry(name).map(|e| &e.kind) {
                     return self.type_has_display(target) && args.is_empty();
                 }
                 false
@@ -4263,7 +4256,9 @@ impl Analyzer {
             Type::Tuple(items) | Type::Union(items) | Type::Intersection(items) => {
                 items.iter().find_map(|i| self.derive_field_error(i))
             }
-            Type::ObjectType(fields) => fields.iter().find_map(|(_, ty)| self.derive_field_error(ty)),
+            Type::ObjectType(fields) => fields
+                .iter()
+                .find_map(|(_, ty)| self.derive_field_error(ty)),
             Type::FnSig { params, ret } => params
                 .iter()
                 .find_map(|p| self.derive_field_error(p))
@@ -4654,9 +4649,13 @@ impl Analyzer {
                     other => other.clone(),
                 });
                 let value_type = match (value, target.as_ref()) {
-                    (Expression::Literal { value: Literal::List(elements), .. }, Some(target))
-                        if array_parts(&self.resolve_alias(target, 0)).is_some() =>
-                    {
+                    (
+                        Expression::Literal {
+                            value: Literal::List(elements),
+                            ..
+                        },
+                        Some(target),
+                    ) if array_parts(&self.resolve_alias(target, 0)).is_some() => {
                         self.check_array_literal(target, elements)?
                     }
                     _ => self.check_expression(value)?,
@@ -4827,7 +4826,13 @@ impl Analyzer {
             let symbol = Symbol {
                 name: item.local_name.clone(),
                 type_: ret.clone(),
-                kind: SymbolKind::Function(Vec::new(), item.params.clone(), ret, Vec::new(), Vec::new()),
+                kind: SymbolKind::Function(
+                    Vec::new(),
+                    item.params.clone(),
+                    ret,
+                    Vec::new(),
+                    Vec::new(),
+                ),
                 is_shared: false,
                 is_param: false,
                 is_const: true,
@@ -6074,7 +6079,13 @@ impl Analyzer {
                 let symbol = found.unwrap_or(Symbol {
                     name: local.to_string(),
                     type_: Type::Any,
-                    kind: SymbolKind::Function(Vec::new(), Vec::new(), Type::Any, Vec::new(), Vec::new()),
+                    kind: SymbolKind::Function(
+                        Vec::new(),
+                        Vec::new(),
+                        Type::Any,
+                        Vec::new(),
+                        Vec::new(),
+                    ),
                     is_shared: false,
                     is_param: false,
                     is_const: true,
@@ -6312,7 +6323,13 @@ impl Analyzer {
             None => Symbol {
                 name: local.to_string(),
                 type_: Type::Any,
-                kind: SymbolKind::Function(Vec::new(), Vec::new(), Type::Any, Vec::new(), Vec::new()),
+                kind: SymbolKind::Function(
+                    Vec::new(),
+                    Vec::new(),
+                    Type::Any,
+                    Vec::new(),
+                    Vec::new(),
+                ),
                 is_shared: false,
                 is_param: false,
                 is_const: true,
@@ -6635,9 +6652,13 @@ impl Analyzer {
             AssignValue::Assign(inner) => self.check_assign_value(inner)?,
             AssignValue::Expr(expr) => {
                 match (expr, array_parts(&self.resolve_alias(&target_type, 0))) {
-                    (Expression::Literal { value: Literal::List(elements), .. }, Some(_)) => {
-                        self.check_array_literal(&target_type, elements)?
-                    }
+                    (
+                        Expression::Literal {
+                            value: Literal::List(elements),
+                            ..
+                        },
+                        Some(_),
+                    ) => self.check_array_literal(&target_type, elements)?,
                     _ => self.check_expression(expr)?,
                 }
             }
@@ -6651,8 +6672,7 @@ impl Analyzer {
         // range one is E0209 rather than the generic mismatch.
         if !self.assignable(&value_type, &target_type) && !literal_ok {
             if let AssignValue::Expr(expr) = &assign.value
-                && let Some(e) =
-                    self.fixed_literal_error(expr, &target_type, expr.span().clone())
+                && let Some(e) = self.fixed_literal_error(expr, &target_type, expr.span().clone())
             {
                 return Err(e);
             }
@@ -7020,10 +7040,11 @@ impl Analyzer {
                 let resolved = self.resolve_alias(&object_type, 0);
                 match resolved {
                     Type::List(inner) => Ok(*inner),
-                    Type::Named(ref name, _) if name == "Map" || name == "Set" => Err(self.err_code(
-                        "E0215",
-                        format!("`{}` is not subscriptable", resolved.name()),
-                    )),
+                    Type::Named(ref name, _) if name == "Map" || name == "Set" => Err(self
+                        .err_code(
+                            "E0215",
+                            format!("`{}` is not subscriptable", resolved.name()),
+                        )),
                     Type::Object | Type::Any | Type::Named(_, _) => Ok(Type::Any),
                     other => {
                         Err(self.err(format!("cannot assign into `{}` by index", other.name())))
@@ -7618,10 +7639,7 @@ impl Analyzer {
         // A trait is a fixed contract; the grammar accepts a parameter list
         // only so the attempt can be diagnosed (spec `types/traits.md`).
         if !t.type_params.is_empty() || !t.generic_params.is_empty() {
-            return Err(self.err_code(
-                "E0810",
-                "a trait may not declare generic parameters",
-            ));
+            return Err(self.err_code("E0810", "a trait may not declare generic parameters"));
         }
         if self.type_table.contains_key(&t.name) {
             return Err(self.err(format!("type `{}` is already defined", t.name)));
@@ -7734,7 +7752,10 @@ impl Analyzer {
         self.validate_const_params(&imp.generic_params)?;
         for param in &imp.generic_params {
             if param.kind == GenericParamKind::Const
-                && !type_mentions(&Type::Named(imp.type_name.clone(), imp.type_args.clone()), &param.name)
+                && !type_mentions(
+                    &Type::Named(imp.type_name.clone(), imp.type_args.clone()),
+                    &param.name,
+                )
             {
                 return Err(self.err_code(
                     "E0817",
@@ -8285,10 +8306,7 @@ impl Analyzer {
                 return Err(self
                     .err_code(
                         "E0816",
-                        format!(
-                            "`{}` requires a written generic-argument list",
-                            call.callee
-                        ),
+                        format!("`{}` requires a written generic-argument list", call.callee),
                     )
                     .at(call.span.clone()));
             }
@@ -9220,13 +9238,8 @@ impl Analyzer {
     /// `types/generics.md`, E0812).
     fn validate_const_params(&self, params: &[GenericParam]) -> SResult<()> {
         for p in params {
-            if p.kind == GenericParamKind::Const
-                && !matches!(&p.const_type, Some(Type::Number))
-            {
-                return Err(self.err_code(
-                    "E0812",
-                    "a const parameter must have type `int`",
-                ));
+            if p.kind == GenericParamKind::Const && !matches!(&p.const_type, Some(Type::Number)) {
+                return Err(self.err_code("E0812", "a const parameter must have type `int`"));
             }
         }
         Ok(())
@@ -9332,9 +9345,7 @@ impl Analyzer {
         if member == "join" {
             let elem = match &recv {
                 Type::List(inner) => Some((**inner).clone()),
-                Type::Named(name, args) if name == "Array" => {
-                    args.first().cloned()
-                }
+                Type::Named(name, args) if name == "Array" => args.first().cloned(),
                 _ => None,
             };
             if let Some(elem) = elem
@@ -9366,7 +9377,7 @@ impl Analyzer {
         if let Type::List(inner) = &recv {
             let t = (**inner).clone();
             match member {
-                "forEach" | "filter" | "find" | "findIndex" | "some" | "every" | "sort" => {
+                "for_each" | "filter" | "find" | "find_index" | "some" | "every" | "sort" => {
                     let want = if member == "sort" { 2 } else { 1 };
                     let expected_args = 1;
                     if n != expected_args {
@@ -9388,43 +9399,43 @@ impl Analyzer {
                         ).at(args[0].value.span().clone()));
                     }
                     let ret = match member {
-                        "forEach" | "sort" => unit_type(),
+                        "for_each" | "sort" => unit_type(),
                         "filter" => Type::List(inner.clone()),
                         "find" => Type::Optional(Box::new(t)),
-                        "findIndex" => Type::Number,
+                        "find_index" => Type::Number,
                         _ => Type::Boolean,
                     };
                     return Ok(Some(ret));
                 }
                 "map" => {
                     if n != 1 {
-                        return Err(self.err_code(
-                            "E0207",
-                            format!("`map()` expects exactly 1 argument, found {n}"),
-                        ).at(call.span.clone()));
+                        return Err(self
+                            .err_code(
+                                "E0207",
+                                format!("`map()` expects exactly 1 argument, found {n}"),
+                            )
+                            .at(call.span.clone()));
                     }
                     let cb = self.check_arg_value(&args[0].value)?;
                     let u = match &cb {
-                        Type::FnSig { ret, .. } => {
-                            ret.clone().map(|r| *r).unwrap_or(Type::Any)
-                        }
+                        Type::FnSig { ret, .. } => ret.clone().map(|r| *r).unwrap_or(Type::Any),
                         _ => Type::Any,
                     };
                     return Ok(Some(Type::List(Box::new(u))));
                 }
                 "reduce" => {
                     if n != 2 {
-                        return Err(self.err_code(
-                            "E0207",
-                            format!("`reduce()` expects exactly 2 arguments, found {n}"),
-                        ).at(call.span.clone()));
+                        return Err(self
+                            .err_code(
+                                "E0207",
+                                format!("`reduce()` expects exactly 2 arguments, found {n}"),
+                            )
+                            .at(call.span.clone()));
                     }
                     let cb = self.check_arg_value(&args[0].value)?;
                     let init = self.check_arg_value(&args[1].value)?;
                     let u = match &cb {
-                        Type::FnSig { ret, .. } => {
-                            ret.clone().map(|r| *r).unwrap_or(init.clone())
-                        }
+                        Type::FnSig { ret, .. } => ret.clone().map(|r| *r).unwrap_or(init.clone()),
                         _ => init.clone(),
                     };
                     return Ok(Some(u));
@@ -9441,13 +9452,15 @@ impl Analyzer {
             let t = a.first().cloned().unwrap_or(Type::Any);
             let len = a.get(1).cloned().unwrap_or(Type::Any);
             match member {
-                "forEach" | "filter" | "find" | "findIndex" | "some" | "every" | "sort" => {
+                "for_each" | "filter" | "find" | "find_index" | "some" | "every" | "sort" => {
                     let want = if member == "sort" { 2 } else { 1 };
                     if n != 1 {
-                        return Err(self.err_code(
-                            "E0207",
-                            format!("`{member}()` expects exactly 1 argument, found {n}"),
-                        ).at(call.span.clone()));
+                        return Err(self
+                            .err_code(
+                                "E0207",
+                                format!("`{member}()` expects exactly 1 argument, found {n}"),
+                            )
+                            .at(call.span.clone()));
                     }
                     let cb = self.check_arg_value(&args[0].value)?;
                     if let Type::FnSig { params, .. } = &cb
@@ -9462,37 +9475,38 @@ impl Analyzer {
                         ).at(args[0].value.span().clone()));
                     }
                     let ret = match member {
-                        "forEach" | "sort" => unit_type(),
+                        "for_each" | "sort" => unit_type(),
                         "filter" => Type::List(Box::new(t)),
                         "find" => Type::Optional(Box::new(t)),
-                        "findIndex" => Type::Number,
+                        "find_index" => Type::Number,
                         _ => Type::Boolean,
                     };
                     return Ok(Some(ret));
                 }
                 "map" => {
                     if n != 1 {
-                        return Err(self.err_code(
-                            "E0207",
-                            format!("`map()` expects exactly 1 argument, found {n}"),
-                        ).at(call.span.clone()));
+                        return Err(self
+                            .err_code(
+                                "E0207",
+                                format!("`map()` expects exactly 1 argument, found {n}"),
+                            )
+                            .at(call.span.clone()));
                     }
                     let cb = self.check_arg_value(&args[0].value)?;
                     let u = match &cb {
                         Type::FnSig { ret, .. } => ret.clone().map(|r| *r).unwrap_or(Type::Any),
                         _ => Type::Any,
                     };
-                    return Ok(Some(Type::Named(
-                        "Array".to_string(),
-                        vec![u, len],
-                    )));
+                    return Ok(Some(Type::Named("Array".to_string(), vec![u, len])));
                 }
                 "reduce" => {
                     if n != 2 {
-                        return Err(self.err_code(
-                            "E0207",
-                            format!("`reduce()` expects exactly 2 arguments, found {n}"),
-                        ).at(call.span.clone()));
+                        return Err(self
+                            .err_code(
+                                "E0207",
+                                format!("`reduce()` expects exactly 2 arguments, found {n}"),
+                            )
+                            .at(call.span.clone()));
                     }
                     let cb = self.check_arg_value(&args[0].value)?;
                     let init = self.check_arg_value(&args[1].value)?;
@@ -9596,11 +9610,7 @@ impl Analyzer {
     /// Check a list literal in an expected `Array<T, N>` context: the element
     /// count MUST equal N (`E0815`), a spread or an abstract N is `E0818`, and
     /// every element checks against T (spec `expressions/literals.md`).
-    fn check_array_literal(
-        &mut self,
-        annotation: &Type,
-        elements: &[Expression],
-    ) -> SResult<Type> {
+    fn check_array_literal(&mut self, annotation: &Type, elements: &[Expression]) -> SResult<Type> {
         let resolved = self.resolve_alias(annotation, 0);
         let Some((elem, len)) = array_parts(&resolved) else {
             return Err(self.err(format!(
@@ -10156,11 +10166,9 @@ impl Analyzer {
     /// call form's argument check.
     fn process_static_member_sig(&self, name: &str, variant: &str) -> SResult<Type> {
         let command = || Type::Named("Command".to_string(), Vec::new());
-        let fn_sig = |params: Vec<Type>, ret: Type| {
-            Type::FnSig {
-                params,
-                ret: Some(Box::new(ret)),
-            }
+        let fn_sig = |params: Vec<Type>, ret: Type| Type::FnSig {
+            params,
+            ret: Some(Box::new(ret)),
         };
         match (name, variant) {
             ("Command", "shell") => Ok(fn_sig(vec![Type::String], command())),
@@ -10253,10 +10261,7 @@ impl Analyzer {
                     return Err(self
                         .err_code(
                             "E0207",
-                            format!(
-                                "expected 1 to 2 arguments, found {}",
-                                call.arguments.len()
-                            ),
+                            format!("expected 1 to 2 arguments, found {}", call.arguments.len()),
                         )
                         .at(call.span.clone()));
                 }
@@ -10285,16 +10290,18 @@ impl Analyzer {
             }
             ("Response", "json") => {
                 if call.arguments.len() != 1 {
-                    return Err(self.err_code(
-                        "E0207",
-                        format!("expected 1 argument, found {}", call.arguments.len()),
-                    ).at(call.span.clone()));
+                    return Err(self
+                        .err_code(
+                            "E0207",
+                            format!("expected 1 argument, found {}", call.arguments.len()),
+                        )
+                        .at(call.span.clone()));
                 }
                 self.check_arg_value(&call.arguments[0].value)?;
                 Ok(BuiltinRet::ResultResponseErr.ty())
             }
             ("Response", "header")
-            | ("Request", "header" | "queryValue" | "formValue")
+            | ("Request", "header" | "query_value" | "form_value")
             | ("Server", "addr" | "serve") => Err(self
                 .err(format!(
                     "`{name}.{variant}` is a method: run it on a `{name}` value"
@@ -10330,7 +10337,7 @@ impl Analyzer {
                 (self.http_type_names.contains(name)
                     && self.lookup_symbol(name).is_err()
                     && !self.type_table.contains_key(name))
-                    .then(|| name.clone())
+                .then(|| name.clone())
             }
             _ => None,
         }
@@ -10362,7 +10369,7 @@ impl Analyzer {
             }
         };
         // Members with trailing optional parameters (`std::process::run`'s
-        // input/timeout, `std::json::stringify`'s indent, `std::fs::tempFile`'s
+        // input/timeout, `std::json::stringify`'s indent, `std::fs::temp_file`'s
         // prefix) accept the shortened arity; the compiler pads missing
         // trailing arguments with null.
         let required = sig.params.len() - sig.optional_tail;
@@ -10387,12 +10394,7 @@ impl Analyzer {
                 )
                 .at(call.span.clone()));
         }
-        for (i, (arg, param)) in call
-            .arguments
-            .iter()
-            .zip(sig.params.iter())
-            .enumerate()
-        {
+        for (i, (arg, param)) in call.arguments.iter().zip(sig.params.iter()).enumerate() {
             let found = self.check_arg_value(&arg.value)?;
             // A `List<u8>` parameter accepts any list at check time — the
             // literal `[1, 2, 255]` types as `List<number>` — and the
@@ -10482,8 +10484,17 @@ impl Analyzer {
         }
         if !matches!(
             module,
-            "math" | "time" | "fs" | "io" | "os" | "path" | "net" | "process" | "json" | "fmt"
-            | "http"
+            "math"
+                | "time"
+                | "fs"
+                | "io"
+                | "os"
+                | "path"
+                | "net"
+                | "process"
+                | "json"
+                | "fmt"
+                | "http"
         ) {
             return Err(self
                 .err_code("E0607", format!("cannot resolve `std::{module}`"))
@@ -10644,19 +10655,19 @@ impl Analyzer {
             if call.callee != "Array::filled" {
                 self.no_type_args(call)?;
             }
-            // `Map::fromEntries` and `Set::fromList` are the static
+            // `Map::from_entries` and `Set::from_list` are the static
             // constructors of the two built-in container types (spec
             // `types/composite-types.md`).
             if self.type_entry(enum_name).is_none()
                 && enum_name == "Map"
-                && variant == "fromEntries"
+                && variant == "from_entries"
             {
                 if call.arguments.len() != 1 {
                     return Err(self
                         .err_code(
                             "E0207",
                             format!(
-                                "`Map::fromEntries` expects exactly 1 argument, found {}",
+                                "`Map::from_entries` expects exactly 1 argument, found {}",
                                 call.arguments.len()
                             ),
                         )
@@ -10674,16 +10685,14 @@ impl Analyzer {
                 };
                 return Ok(Type::Named("Map".to_string(), vec![key, val]));
             }
-            if self.type_entry(enum_name).is_none()
-                && enum_name == "Set"
-                && variant == "fromList"
+            if self.type_entry(enum_name).is_none() && enum_name == "Set" && variant == "from_list"
             {
                 if call.arguments.len() != 1 {
                     return Err(self
                         .err_code(
                             "E0207",
                             format!(
-                                "`Set::fromList` expects exactly 1 argument, found {}",
+                                "`Set::from_list` expects exactly 1 argument, found {}",
                                 call.arguments.len()
                             ),
                         )
@@ -10698,10 +10707,7 @@ impl Analyzer {
             }
             // `Array::filled<T, const N: int>(value)` is the built-in fixed
             // array constructor (spec `types/composite-types.md`).
-            if self.type_entry(enum_name).is_none()
-                && enum_name == "Array"
-                && variant == "filled"
-            {
+            if self.type_entry(enum_name).is_none() && enum_name == "Array" && variant == "filled" {
                 let targs = call.type_args.clone().ok_or_else(|| {
                     self.err_code(
                         "E0816",
@@ -10790,7 +10796,17 @@ impl Analyzer {
                 }
                 if matches!(
                     enum_name,
-                    "Math" | "Time" | "Fs" | "Io" | "Os" | "Path" | "Net" | "Process" | "Json" | "Fmt" | "Http"
+                    "Math"
+                        | "Time"
+                        | "Fs"
+                        | "Io"
+                        | "Os"
+                        | "Path"
+                        | "Net"
+                        | "Process"
+                        | "Json"
+                        | "Fmt"
+                        | "Http"
                 ) {
                     return Err(self
                         .err_code(
@@ -10839,9 +10855,7 @@ impl Analyzer {
                     ))
                     .at(call.span.clone()));
             }
-            if matches!(enum_name, "Command" | "Child")
-                && self.type_entry(enum_name).is_none()
-            {
+            if matches!(enum_name, "Command" | "Child") && self.type_entry(enum_name).is_none() {
                 return Err(self
                     .err(format!(
                         "`{enum_name}` belongs to the built-in `std::process` module: import it with `use std::process::{{{enum_name}}}` or call `std::process::{enum_name}::{variant}(…)`"
@@ -10906,11 +10920,11 @@ impl Analyzer {
                     }
                     return Ok(ret.clone().map(|r| *r).unwrap_or(Type::Any));
                 }
-                // `toString` is the derived action of `Display`: a parameter
+                // `to_string` is the derived action of `Display`: a parameter
                 // bounded by `Display` grants it even though the trait
                 // declares only `display` (spec `types/traits.md`,
                 // "Member calls").
-                if method == "toString"
+                if method == "to_string"
                     && self
                         .bound_traits
                         .iter()
@@ -10920,7 +10934,7 @@ impl Analyzer {
                 {
                     if !call.arguments.is_empty() {
                         return Err(self
-                            .err_code("E0207", "`toString` takes no arguments")
+                            .err_code("E0207", "`to_string` takes no arguments")
                             .at(call.span.clone()));
                     }
                     self.trait_dispatch
@@ -11044,14 +11058,14 @@ impl Analyzer {
                         }
                         0 => {
                             // Step 3: a receiver implementing `Display` has
-                            // the derived `toString` action — `display` at
+                            // the derived `to_string` action — `display` at
                             // the default `Format`. It yields to both steps
                             // above, so only an empty candidate set reaches
                             // here (spec `types/traits.md`, "Member calls").
-                            if method == "toString" {
+                            if method == "to_string" {
                                 if !call.arguments.is_empty() {
                                     return Err(self
-                                        .err_code("E0207", "`toString` takes no arguments")
+                                        .err_code("E0207", "`to_string` takes no arguments")
                                         .at(call.span.clone()));
                                 }
                                 if let Some(name) =
@@ -11234,10 +11248,8 @@ impl Analyzer {
             if let Type::Named(name, _) = &operand
                 && self.displays.contains(name)
             {
-                self.trait_dispatch.push((
-                    call.span.clone(),
-                    impl_fn_name("Display", name, "display"),
-                ));
+                self.trait_dispatch
+                    .push((call.span.clone(), impl_fn_name("Display", name, "display")));
             }
             return Ok(Type::String);
         }
@@ -11329,7 +11341,13 @@ impl Analyzer {
             )));
         }
         match &sym.kind {
-            SymbolKind::Function(type_params, params, return_type, callee_bounds, generic_params) => {
+            SymbolKind::Function(
+                type_params,
+                params,
+                return_type,
+                callee_bounds,
+                generic_params,
+            ) => {
                 // An unseeded import (no module graph) is opaque: accept any
                 // argument list and return `any`. Local functions never reach
                 // here, even when un-annotated (zero params, no return type).
@@ -11867,8 +11885,7 @@ impl Analyzer {
         // (`let f = Command::shell`), reached through the imported name —
         // only what `use std::process::…` bound, so a program's own type of
         // the name shadows it like any other declaration.
-        if self.process_type_names.contains(&enum_name)
-            && !self.type_table.contains_key(&enum_name)
+        if self.process_type_names.contains(&enum_name) && !self.type_table.contains_key(&enum_name)
         {
             return self.process_static_member_sig(&enum_name, variant);
         }
@@ -11890,7 +11907,17 @@ impl Analyzer {
             }
             if matches!(
                 enum_name.as_str(),
-                "Math" | "Time" | "Fs" | "Io" | "Os" | "Path" | "Net" | "Process" | "Json" | "Fmt" | "Http"
+                "Math"
+                    | "Time"
+                    | "Fs"
+                    | "Io"
+                    | "Os"
+                    | "Path"
+                    | "Net"
+                    | "Process"
+                    | "Json"
+                    | "Fmt"
+                    | "Http"
             ) {
                 return Err(self.err_code(
                     "E0607",
@@ -12144,7 +12171,13 @@ impl Analyzer {
                     .unwrap_or(Symbol {
                         name: member.to_string(),
                         type_: Type::Any,
-                        kind: SymbolKind::Function(Vec::new(), Vec::new(), Type::Any, Vec::new(), Vec::new()),
+                        kind: SymbolKind::Function(
+                            Vec::new(),
+                            Vec::new(),
+                            Type::Any,
+                            Vec::new(),
+                            Vec::new(),
+                        ),
                         is_shared: false,
                         is_param: false,
                         is_const: true,

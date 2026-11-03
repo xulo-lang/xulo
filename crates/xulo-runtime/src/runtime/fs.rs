@@ -124,7 +124,7 @@ pub extern "C" fn xulo_fs_append(path: *const c_char, content: *const c_char) ->
     }
 }
 
-/// `std::fs::createNew(path, contents)` -> `Result<null, Error>`
+/// `std::fs::create_new(path, contents)` -> `Result<null, Error>`
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn xulo_fs_create_new(
@@ -147,7 +147,7 @@ pub extern "C" fn xulo_fs_touch(path: *const c_char) -> *mut XuloEnum {
     }
 }
 
-/// `std::fs::setTimes(path, modified)` -> `Result<null, Error>`（毫秒）
+/// `std::fs::set_times(path, modified)` -> `Result<null, Error>`（毫秒）
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn xulo_fs_set_times(path: *const c_char, modified: f64) -> *mut XuloEnum {
@@ -162,7 +162,7 @@ pub extern "C" fn xulo_fs_set_times(path: *const c_char, modified: f64) -> *mut 
     }
 }
 
-/// `std::fs::setMode(path, mode)` -> `Result<null, Error>`（0 …= 4095）
+/// `std::fs::set_mode(path, mode)` -> `Result<null, Error>`（0 …= 4095）
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn xulo_fs_set_mode(path: *const c_char, mode: f64) -> *mut XuloEnum {
@@ -224,7 +224,7 @@ pub extern "C" fn xulo_fs_rename(from: *const c_char, to: *const c_char) -> *mut
     }
 }
 
-/// `std::fs::removeDir(path)` -> `Result<null, Error>`
+/// `std::fs::remove_dir(path)` -> `Result<null, Error>`
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn xulo_fs_remove_dir(path: *const c_char) -> *mut XuloEnum {
@@ -242,7 +242,7 @@ fn string_list_ok(names: Vec<String>) -> *mut XuloEnum {
     fs_ok(arr as i64, 3)
 }
 
-/// `std::fs::readDir(path)` -> `Result<List<string>, Error>`
+/// `std::fs::read_dir(path)` -> `Result<List<string>, Error>`
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn xulo_fs_read_dir(path: *const c_char) -> *mut XuloEnum {
@@ -262,7 +262,7 @@ pub extern "C" fn xulo_fs_walk(path: *const c_char) -> *mut XuloEnum {
     }
 }
 
-/// `std::fs::tempFile([prefix])` -> `Result<string, Error>`
+/// `std::fs::temp_file([prefix])` -> `Result<string, Error>`
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn xulo_fs_temp_file(prefix: *const c_char) -> *mut XuloEnum {
@@ -272,7 +272,7 @@ pub extern "C" fn xulo_fs_temp_file(prefix: *const c_char) -> *mut XuloEnum {
     }
 }
 
-/// `std::fs::tempDir([prefix])` -> `Result<string, Error>`
+/// `std::fs::temp_dir([prefix])` -> `Result<string, Error>`
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn xulo_fs_temp_dir(prefix: *const c_char) -> *mut XuloEnum {
@@ -282,20 +282,17 @@ pub extern "C" fn xulo_fs_temp_dir(prefix: *const c_char) -> *mut XuloEnum {
     }
 }
 
-/// `std::fs::tempFileIn(dir[, prefix])` -> `Result<string, Error>`
+/// `std::fs::temp_file_in(dir[, prefix])` -> `Result<string, Error>`
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn xulo_fs_temp_file_in(
-    dir: *const c_char,
-    prefix: *const c_char,
-) -> *mut XuloEnum {
+pub extern "C" fn xulo_fs_temp_file_in(dir: *const c_char, prefix: *const c_char) -> *mut XuloEnum {
     match xulo_std::fs::temp_file_in(&cstr_to_string(dir), cstr_opt(prefix).as_deref()) {
         Ok(path) => fs_ok(intern_string(path) as i64, 0),
         Err(message) => fs_err(message),
     }
 }
 
-/// `std::fs::tempDirIn(dir[, prefix])` -> `Result<string, Error>`
+/// `std::fs::temp_dir_in(dir[, prefix])` -> `Result<string, Error>`
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn xulo_fs_temp_dir_in(dir: *const c_char, prefix: *const c_char) -> *mut XuloEnum {

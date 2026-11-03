@@ -340,17 +340,17 @@ pub(super) fn native_math_expm1(_interp: &Interpreter, args: &[Value]) -> Result
     )?)))
 }
 
-/// `std::math::randomInt(lo, hi)`: a uniform integer in `lo …= hi`; `lo > hi`
+/// `std::math::random_int(lo, hi)`: a uniform integer in `lo …= hi`; `lo > hi`
 /// is a runtime failure (spec `builtins/intrinsic-functions.md`).
 pub(super) fn native_math_random_int(
     _interp: &Interpreter,
     args: &[Value],
 ) -> Result<Value, RunError> {
-    let lo = builtin_int_arg(args, 0, "std::math::randomInt")?;
-    let hi = builtin_int_arg(args, 1, "std::math::randomInt")?;
+    let lo = builtin_int_arg(args, 0, "std::math::random_int")?;
+    let hi = builtin_int_arg(args, 1, "std::math::random_int")?;
     if lo > hi {
         return Err(RunError::err(
-            format!("`std::math::randomInt` range is empty: lo {lo} is greater than hi {hi}"),
+            format!("`std::math::random_int` range is empty: lo {lo} is greater than hi {hi}"),
             0..0,
         ));
     }
@@ -409,7 +409,7 @@ pub(super) fn native_math_trunc(_interp: &Interpreter, args: &[Value]) -> Result
     )?)))
 }
 
-/// `std::math::toFixed(x, digits)`: the decimal numeral of `x` with exactly
+/// `std::math::to_fixed(x, digits)`: the decimal numeral of `x` with exactly
 /// `digits` digits after the decimal point, rounded halfway away from zero
 /// and keeping trailing zeros (spec `builtins/intrinsic-functions.md`).
 /// Special values ignore `digits`. A `digits` value outside `0..=15` is a
@@ -418,19 +418,19 @@ pub(super) fn native_math_to_fixed(
     _interp: &Interpreter,
     args: &[Value],
 ) -> Result<Value, RunError> {
-    let x = builtin_num_arg(args, 0, "std::math::toFixed")?;
+    let x = builtin_num_arg(args, 0, "std::math::to_fixed")?;
     let digits = match args.get(1) {
         Some(Value::Number(d)) if d.fract() == 0.0 && (0.0..=15.0).contains(d) => *d as usize,
         Some(Value::Number(d)) => {
             return Err(RunError::err(
-                format!("`std::math::toFixed` digits must be an integer in 0..=15, found {d}"),
+                format!("`std::math::to_fixed` digits must be an integer in 0..=15, found {d}"),
                 0..0,
             ));
         }
         other => {
             return Err(RunError::err(
                 format!(
-                    "`std::math::toFixed` expects a number for `digits`, found {}",
+                    "`std::math::to_fixed` expects a number for `digits`, found {}",
                     other
                         .map(|v| v.kind_name())
                         .unwrap_or_else(|| "nothing".into())
@@ -493,13 +493,13 @@ pub(super) fn native_math_exp(_interp: &Interpreter, args: &[Value]) -> Result<V
     )?)))
 }
 
-/// `std::io::readN(max)`: up to `max` bytes of stdin (1..=16777216), decoded
+/// `std::io::read_n(max)`: up to `max` bytes of stdin (1..=16777216), decoded
 /// as UTF-8; `Ok(null)` at end of input. A bad `max` is `Err`, not a runtime
 /// failure (spec `modules/io.md`).
 pub(super) fn native_io_read_n(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    let n = builtin_num_arg(args, 0, "std::io::readN")?;
+    let n = builtin_num_arg(args, 0, "std::io::read_n")?;
     let result = if !n.is_finite() {
-        Err(format!("std::io::readN: max must be a number, found {n}"))
+        Err(format!("std::io::read_n: max must be a number, found {n}"))
     } else {
         let max = n.trunc() as i64;
         xulo_std::io::read_n(max).map(|opt| match opt {
@@ -510,12 +510,12 @@ pub(super) fn native_io_read_n(_interp: &Interpreter, args: &[Value]) -> Result<
     Ok(std_result(result))
 }
 
-/// `std::io::stdinIsTTY()` / `stdoutIsTTY()`: total terminal probes.
+/// `std::io::stdin_is_tty()` / `stdout_is_tty()`: total terminal probes.
 pub(super) fn native_io_stdin_is_tty(
     _interp: &Interpreter,
     args: &[Value],
 ) -> Result<Value, RunError> {
-    no_arg_guard(args, "std::io::stdinIsTTY")?;
+    no_arg_guard(args, "std::io::stdin_is_tty")?;
     Ok(Value::Boolean(xulo_std::io::stdin_is_tty()))
 }
 
@@ -523,7 +523,7 @@ pub(super) fn native_io_stdout_is_tty(
     _interp: &Interpreter,
     args: &[Value],
 ) -> Result<Value, RunError> {
-    no_arg_guard(args, "std::io::stdoutIsTTY")?;
+    no_arg_guard(args, "std::io::stdout_is_tty")?;
     Ok(Value::Boolean(xulo_std::io::stdout_is_tty()))
 }
 
@@ -543,12 +543,12 @@ pub(super) fn native_time_now(_interp: &Interpreter, args: &[Value]) -> Result<V
     Ok(Value::Number(xulo_std::time::now_millis() as f64))
 }
 
-/// `std::time::nowNanos`: nanoseconds since the Unix epoch (wall clock).
+/// `std::time::now_nanos`: nanoseconds since the Unix epoch (wall clock).
 pub(super) fn native_time_now_nanos(
     _interp: &Interpreter,
     args: &[Value],
 ) -> Result<Value, RunError> {
-    no_arg_guard(args, "std::time::nowNanos")?;
+    no_arg_guard(args, "std::time::now_nanos")?;
     Ok(Value::Number(xulo_std::time::now_nanos() as f64))
 }
 
@@ -562,12 +562,12 @@ pub(super) fn native_time_monotonic(
     Ok(Value::Number(xulo_std::time::monotonic_millis() as f64))
 }
 
-/// `std::time::monotonicNanos`: nanoseconds on the monotonic clock.
+/// `std::time::monotonic_nanos`: nanoseconds on the monotonic clock.
 pub(super) fn native_time_monotonic_nanos(
     _interp: &Interpreter,
     args: &[Value],
 ) -> Result<Value, RunError> {
-    no_arg_guard(args, "std::time::monotonicNanos")?;
+    no_arg_guard(args, "std::time::monotonic_nanos")?;
     Ok(Value::Number(xulo_std::time::monotonic_nanos() as f64))
 }
 
@@ -612,11 +612,8 @@ fn builtin_ms_arg(args: &[Value], i: usize, name: &str) -> Result<u64, RunError>
 
 /// `std::time::format(ms)`: the timestamp as ISO 8601 UTC. A `ms` past
 /// `9999-12-31T23:59:59.999Z` is a runtime failure (spec
-/// `memory-and-runtime.md`), exactly like `Math::toFixed`'s digits domain.
-pub(super) fn native_time_format(
-    _interp: &Interpreter,
-    args: &[Value],
-) -> Result<Value, RunError> {
+/// `memory-and-runtime.md`), exactly like `Math::to_fixed`'s digits domain.
+pub(super) fn native_time_format(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     let ms = builtin_ms_arg(args, 0, "std::time::format")?;
     match xulo_std::time::format(ms) {
         Ok(text) => Ok(Value::String(text.into())),
@@ -627,10 +624,7 @@ pub(super) fn native_time_format(
 /// `std::time::parse(text)`: the timestamp an ISO 8601 UTC string denotes —
 /// `Result::Err` of the built-in `Error` for anything malformed or outside
 /// the calendar domain.
-pub(super) fn native_time_parse(
-    _interp: &Interpreter,
-    args: &[Value],
-) -> Result<Value, RunError> {
+pub(super) fn native_time_parse(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     let text = builtin_str_arg(args, 0, "std::time::parse")?;
     Ok(std_result(
         xulo_std::time::parse(&text).map(|ms| Value::Number(ms as f64)),
@@ -656,7 +650,7 @@ pub(super) fn native_time_parts(_interp: &Interpreter, args: &[Value]) -> Result
     ]))))
 }
 
-/// `std::time::fromParts(year, month, day[, hour[, minute[, second[,
+/// `std::time::from_parts(year, month, day[, hour[, minute[, second[,
 /// millisecond]]]])`: the timestamp those UTC fields denote; the time
 /// fields default to 0. A field set outside the calendar is a runtime
 /// failure.
@@ -670,7 +664,7 @@ pub(super) fn native_time_from_parts(
             Some(Value::Number(n)) if n.is_finite() && n.fract() == 0.0 => Ok(*n as i64),
             other => Err(RunError::err(
                 format!(
-                    "`std::time::fromParts` `{name}` expects an integer, found {}",
+                    "`std::time::from_parts` `{name}` expects an integer, found {}",
                     other
                         .map(|v| v.kind_name())
                         .unwrap_or_else(|| "nothing".into())
@@ -776,11 +770,7 @@ pub(super) fn builtin_opt_str_arg(
 }
 
 /// A `List<u8>` argument: each element must be an integer in `0 …= 255`.
-pub(super) fn builtin_bytes_arg(
-    args: &[Value],
-    i: usize,
-    name: &str,
-) -> Result<Vec<u8>, RunError> {
+pub(super) fn builtin_bytes_arg(args: &[Value], i: usize, name: &str) -> Result<Vec<u8>, RunError> {
     let Some(Value::List(items)) = args.get(i) else {
         let found = args
             .get(i)
@@ -813,10 +803,7 @@ pub(super) fn builtin_bytes_arg(
 
 fn str_list_value(items: Vec<String>) -> Value {
     Value::List(Rc::new(RefCell::new(
-        items
-            .into_iter()
-            .map(|s| Value::String(s.into()))
-            .collect(),
+        items.into_iter().map(|s| Value::String(s.into())).collect(),
     )))
 }
 
@@ -838,14 +825,14 @@ pub(super) fn native_fs_append(_interp: &Interpreter, args: &[Value]) -> Result<
     ))
 }
 
-/// `std::fs::createNew(path, contents)`: exclusive creation — the path must
+/// `std::fs::create_new(path, contents)`: exclusive creation — the path must
 /// name nothing yet, and the check is one host operation with the create.
 pub(super) fn native_fs_create_new(
     _interp: &Interpreter,
     args: &[Value],
 ) -> Result<Value, RunError> {
-    let path = builtin_str_arg(args, 0, "std::fs::createNew")?;
-    let content = builtin_str_arg(args, 1, "std::fs::createNew")?;
+    let path = builtin_str_arg(args, 0, "std::fs::create_new")?;
+    let content = builtin_str_arg(args, 1, "std::fs::create_new")?;
     Ok(std_result(
         xulo_std::fs::create_new(&path, &content).map(|()| Value::Null),
     ))
@@ -858,39 +845,41 @@ pub(super) fn native_fs_touch(_interp: &Interpreter, args: &[Value]) -> Result<V
     Ok(std_result(xulo_std::fs::touch(&path).map(|()| Value::Null)))
 }
 
-/// `std::fs::setTimes(path, modified)`: stamp the modification time in
+/// `std::fs::set_times(path, modified)`: stamp the modification time in
 /// milliseconds since the Unix epoch.
 pub(super) fn native_fs_set_times(
     _interp: &Interpreter,
     args: &[Value],
 ) -> Result<Value, RunError> {
-    let path = builtin_str_arg(args, 0, "std::fs::setTimes")?;
-    let ms = builtin_num_arg(args, 1, "std::fs::setTimes")?;
-    let ms = if ms.is_finite() && ms >= 0.0 { ms as u64 } else { 0 };
+    let path = builtin_str_arg(args, 0, "std::fs::set_times")?;
+    let ms = builtin_num_arg(args, 1, "std::fs::set_times")?;
+    let ms = if ms.is_finite() && ms >= 0.0 {
+        ms as u64
+    } else {
+        0
+    };
     Ok(std_result(
         xulo_std::fs::set_times(&path, ms).map(|()| Value::Null),
     ))
 }
 
-/// `std::fs::setMode(path, mode)`: set the POSIX permission bits; a mode
+/// `std::fs::set_mode(path, mode)`: set the POSIX permission bits; a mode
 /// outside `0 …= 4095` fails before the host is touched.
-pub(super) fn native_fs_set_mode(
-    _interp: &Interpreter,
-    args: &[Value],
-) -> Result<Value, RunError> {
-    let path = builtin_str_arg(args, 0, "std::fs::setMode")?;
-    let mode = builtin_num_arg(args, 1, "std::fs::setMode")?;
-    let mode = if mode.is_finite() && mode >= 0.0 { mode as u64 } else { u64::MAX };
+pub(super) fn native_fs_set_mode(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    let path = builtin_str_arg(args, 0, "std::fs::set_mode")?;
+    let mode = builtin_num_arg(args, 1, "std::fs::set_mode")?;
+    let mode = if mode.is_finite() && mode >= 0.0 {
+        mode as u64
+    } else {
+        u64::MAX
+    };
     Ok(std_result(
         xulo_std::fs::set_mode(&path, mode).map(|()| Value::Null),
     ))
 }
 
 /// `std::fs::realpath(path)`: the absolute, link-free path that names it.
-pub(super) fn native_fs_realpath(
-    _interp: &Interpreter,
-    args: &[Value],
-) -> Result<Value, RunError> {
+pub(super) fn native_fs_realpath(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     let path = builtin_str_arg(args, 0, "std::fs::realpath")?;
     Ok(std_result(
         xulo_std::fs::realpath(&path).map(|s| Value::String(s.into())),
@@ -929,25 +918,24 @@ pub(super) fn native_fs_rename(_interp: &Interpreter, args: &[Value]) -> Result<
     ))
 }
 
-/// `std::fs::removeDir(path)`: delete the directory and everything in it; a
+/// `std::fs::remove_dir(path)`: delete the directory and everything in it; a
 /// symlink at `path` fails rather than deleting what it points at.
 pub(super) fn native_fs_remove_dir(
     _interp: &Interpreter,
     args: &[Value],
 ) -> Result<Value, RunError> {
-    let path = builtin_str_arg(args, 0, "std::fs::removeDir")?;
+    let path = builtin_str_arg(args, 0, "std::fs::remove_dir")?;
     Ok(std_result(
         xulo_std::fs::remove_dir(&path).map(|()| Value::Null),
     ))
 }
 
-/// `std::fs::readDir(path)`: the bare names of the directory's entries.
-pub(super) fn native_fs_read_dir(
-    _interp: &Interpreter,
-    args: &[Value],
-) -> Result<Value, RunError> {
-    let path = builtin_str_arg(args, 0, "std::fs::readDir")?;
-    Ok(std_result(xulo_std::fs::read_dir(&path).map(str_list_value)))
+/// `std::fs::read_dir(path)`: the bare names of the directory's entries.
+pub(super) fn native_fs_read_dir(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    let path = builtin_str_arg(args, 0, "std::fs::read_dir")?;
+    Ok(std_result(
+        xulo_std::fs::read_dir(&path).map(str_list_value),
+    ))
 }
 
 /// `std::fs::walk(path)`: the start path and every path beneath it.
@@ -956,90 +944,83 @@ pub(super) fn native_fs_walk(_interp: &Interpreter, args: &[Value]) -> Result<Va
     Ok(std_result(xulo_std::fs::walk(&path).map(str_list_value)))
 }
 
-/// `std::fs::readBytes(path)`: the whole file as raw bytes; any content is
+/// `std::fs::read_bytes(path)`: the whole file as raw bytes; any content is
 /// `Ok`, only path failures are `Err`.
 pub(super) fn native_fs_read_bytes(
     _interp: &Interpreter,
     args: &[Value],
 ) -> Result<Value, RunError> {
-    let path = builtin_str_arg(args, 0, "std::fs::readBytes")?;
+    let path = builtin_str_arg(args, 0, "std::fs::read_bytes")?;
     Ok(std_result(
         xulo_std::fs::read_bytes(&path).map(byte_list_value),
     ))
 }
 
-/// `std::fs::writeBytes(path, bytes)`: create or truncate, then write the
+/// `std::fs::write_bytes(path, bytes)`: create or truncate, then write the
 /// bytes; no decoding in either direction.
 pub(super) fn native_fs_write_bytes(
     _interp: &Interpreter,
     args: &[Value],
 ) -> Result<Value, RunError> {
-    let path = builtin_str_arg(args, 0, "std::fs::writeBytes")?;
-    let bytes = builtin_bytes_arg(args, 1, "std::fs::writeBytes")?;
+    let path = builtin_str_arg(args, 0, "std::fs::write_bytes")?;
+    let bytes = builtin_bytes_arg(args, 1, "std::fs::write_bytes")?;
     Ok(std_result(
         xulo_std::fs::write_bytes(&path, &bytes).map(|()| Value::Null),
     ))
 }
 
-/// `std::fs::appendBytes(path, bytes)`: grow the file by the bytes.
+/// `std::fs::append_bytes(path, bytes)`: grow the file by the bytes.
 pub(super) fn native_fs_append_bytes(
     _interp: &Interpreter,
     args: &[Value],
 ) -> Result<Value, RunError> {
-    let path = builtin_str_arg(args, 0, "std::fs::appendBytes")?;
-    let bytes = builtin_bytes_arg(args, 1, "std::fs::appendBytes")?;
+    let path = builtin_str_arg(args, 0, "std::fs::append_bytes")?;
+    let bytes = builtin_bytes_arg(args, 1, "std::fs::append_bytes")?;
     Ok(std_result(
         xulo_std::fs::append_bytes(&path, &bytes).map(|()| Value::Null),
     ))
 }
 
-/// `std::fs::tempFile([prefix])`: a unique empty file in the host temp dir.
+/// `std::fs::temp_file([prefix])`: a unique empty file in the host temp dir.
 pub(super) fn native_fs_temp_file(
     _interp: &Interpreter,
     args: &[Value],
 ) -> Result<Value, RunError> {
-    let prefix = builtin_opt_str_arg(args, 0, "std::fs::tempFile")?;
+    let prefix = builtin_opt_str_arg(args, 0, "std::fs::temp_file")?;
     Ok(std_result(
-        xulo_std::fs::temp_file(prefix.as_deref())
-            .map(|p| Value::String(p.into())),
+        xulo_std::fs::temp_file(prefix.as_deref()).map(|p| Value::String(p.into())),
     ))
 }
 
-/// `std::fs::tempDir([prefix])`: a unique empty directory in the host temp dir.
-pub(super) fn native_fs_temp_dir(
-    _interp: &Interpreter,
-    args: &[Value],
-) -> Result<Value, RunError> {
-    let prefix = builtin_opt_str_arg(args, 0, "std::fs::tempDir")?;
+/// `std::fs::temp_dir([prefix])`: a unique empty directory in the host temp dir.
+pub(super) fn native_fs_temp_dir(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    let prefix = builtin_opt_str_arg(args, 0, "std::fs::temp_dir")?;
     Ok(std_result(
-        xulo_std::fs::temp_dir(prefix.as_deref())
-            .map(|p| Value::String(p.into())),
+        xulo_std::fs::temp_dir(prefix.as_deref()).map(|p| Value::String(p.into())),
     ))
 }
 
-/// `std::fs::tempFileIn(dir[, prefix])`: a unique empty file inside `dir`.
+/// `std::fs::temp_file_in(dir[, prefix])`: a unique empty file inside `dir`.
 pub(super) fn native_fs_temp_file_in(
     _interp: &Interpreter,
     args: &[Value],
 ) -> Result<Value, RunError> {
-    let dir = builtin_str_arg(args, 0, "std::fs::tempFileIn")?;
-    let prefix = builtin_opt_str_arg(args, 1, "std::fs::tempFileIn")?;
+    let dir = builtin_str_arg(args, 0, "std::fs::temp_file_in")?;
+    let prefix = builtin_opt_str_arg(args, 1, "std::fs::temp_file_in")?;
     Ok(std_result(
-        xulo_std::fs::temp_file_in(&dir, prefix.as_deref())
-            .map(|p| Value::String(p.into())),
+        xulo_std::fs::temp_file_in(&dir, prefix.as_deref()).map(|p| Value::String(p.into())),
     ))
 }
 
-/// `std::fs::tempDirIn(dir[, prefix])`: a unique empty directory inside `dir`.
+/// `std::fs::temp_dir_in(dir[, prefix])`: a unique empty directory inside `dir`.
 pub(super) fn native_fs_temp_dir_in(
     _interp: &Interpreter,
     args: &[Value],
 ) -> Result<Value, RunError> {
-    let dir = builtin_str_arg(args, 0, "std::fs::tempDirIn")?;
-    let prefix = builtin_opt_str_arg(args, 1, "std::fs::tempDirIn")?;
+    let dir = builtin_str_arg(args, 0, "std::fs::temp_dir_in")?;
+    let prefix = builtin_opt_str_arg(args, 1, "std::fs::temp_dir_in")?;
     Ok(std_result(
-        xulo_std::fs::temp_dir_in(&dir, prefix.as_deref())
-            .map(|p| Value::String(p.into())),
+        xulo_std::fs::temp_dir_in(&dir, prefix.as_deref()).map(|p| Value::String(p.into())),
     ))
 }
 
@@ -1083,14 +1064,14 @@ pub(super) fn native_io_flush(_interp: &Interpreter, args: &[Value]) -> Result<V
     Ok(std_result(xulo_std::io::flush().map(|()| Value::Null)))
 }
 
-/// `std::io::readLine()`: the next line of stdin without its terminator, or
+/// `std::io::read_line()`: the next line of stdin without its terminator, or
 /// `Result::Ok(null)` at end of input — the sentinel a line loop breaks on.
 /// An empty line is `Result::Ok("")`, so it never passes for the end.
 pub(super) fn native_io_read_line(
     _interp: &Interpreter,
     args: &[Value],
 ) -> Result<Value, RunError> {
-    no_arg_guard(args, "std::io::readLine")?;
+    no_arg_guard(args, "std::io::read_line")?;
     Ok(std_result(xulo_std::io::read_line().map(
         |line| match line {
             Some(text) => Value::String(text.into()),
@@ -1109,7 +1090,7 @@ pub(super) fn native_io_read(_interp: &Interpreter, args: &[Value]) -> Result<Va
 }
 
 /// `std::os::getenv(name)`: the variable's value, or `Result::Ok(null)` when
-/// unset — the optional-string shape a program matches like `readLine`.
+/// unset — the optional-string shape a program matches like `read_line`.
 pub(super) fn native_os_getenv(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     let name = builtin_str_arg(args, 0, "std::os::getenv")?;
     Ok(std_result(xulo_std::os::getenv(&name).map(
@@ -1153,13 +1134,13 @@ pub(super) fn native_os_unsetenv(_interp: &Interpreter, args: &[Value]) -> Resul
     ))
 }
 
-/// `std::os::tmpDir()`: the host's temporary directory — total.
+/// `std::os::tmp_dir()`: the host's temporary directory — total.
 pub(super) fn native_os_tmp_dir(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    no_arg_guard(args, "std::os::tmpDir")?;
+    no_arg_guard(args, "std::os::tmp_dir")?;
     Ok(Value::String(xulo_std::os::tmp_dir().into()))
 }
 
-/// `std::os::homeDir()` / `hostName()` / `userName()` / `execPath()`:
+/// `std::os::home_dir()` / `host_name()` / `user_name()` / `exec_path()`:
 /// `Result<string, Error>`.
 pub(super) fn native_os_string_result(
     name: &'static str,
@@ -1171,9 +1152,12 @@ pub(super) fn native_os_string_result(
     }
 }
 
-/// `std::os::cpuCount()`: the logical processors available — total.
-pub(super) fn native_os_cpu_count(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    no_arg_guard(args, "std::os::cpuCount")?;
+/// `std::os::cpu_count()`: the logical processors available — total.
+pub(super) fn native_os_cpu_count(
+    _interp: &Interpreter,
+    args: &[Value],
+) -> Result<Value, RunError> {
+    no_arg_guard(args, "std::os::cpu_count")?;
     Ok(Value::Number(xulo_std::os::cpu_count() as f64))
 }
 
@@ -1230,12 +1214,12 @@ pub(super) fn native_path_ext(_interp: &Interpreter, args: &[Value]) -> Result<V
     Ok(Value::String(xulo_std::path::ext(&path).into()))
 }
 
-/// `std::path::isAbsolute(path)`: whether it starts with `/`; total.
+/// `std::path::is_absolute(path)`: whether it starts with `/`; total.
 pub(super) fn native_path_is_absolute(
     _interp: &Interpreter,
     args: &[Value],
 ) -> Result<Value, RunError> {
-    let path = builtin_str_arg(args, 0, "std::path::isAbsolute")?;
+    let path = builtin_str_arg(args, 0, "std::path::is_absolute")?;
     Ok(Value::Boolean(xulo_std::path::is_absolute(&path)))
 }
 
@@ -1256,13 +1240,13 @@ pub(super) fn native_path_stem(_interp: &Interpreter, args: &[Value]) -> Result<
     Ok(Value::String(xulo_std::path::stem(&path).into()))
 }
 
-/// `std::path::withExt(path, ext)`: replace the final component's extension.
+/// `std::path::with_ext(path, ext)`: replace the final component's extension.
 pub(super) fn native_path_with_ext(
     _interp: &Interpreter,
     args: &[Value],
 ) -> Result<Value, RunError> {
-    let path = builtin_str_arg(args, 0, "std::path::withExt")?;
-    let ext = builtin_str_arg(args, 1, "std::path::withExt")?;
+    let path = builtin_str_arg(args, 0, "std::path::with_ext")?;
+    let ext = builtin_str_arg(args, 1, "std::path::with_ext")?;
     Ok(Value::String(xulo_std::path::with_ext(&path, &ext).into()))
 }
 
@@ -1299,7 +1283,7 @@ pub(super) fn native_net_tcp_listen(
     _interp: &Interpreter,
     args: &[Value],
 ) -> Result<Value, RunError> {
-    let addr = builtin_str_arg(args, 0, "std::net::tcpListen")?;
+    let addr = builtin_str_arg(args, 0, "std::net::tcp_listen")?;
     Ok(std_result(
         xulo_std::net::tcp_listen(&addr).map(|h| Value::Number(h as f64)),
     ))
@@ -1329,8 +1313,8 @@ pub(super) fn native_net_tcp_accept(
     _interp: &Interpreter,
     args: &[Value],
 ) -> Result<Value, RunError> {
-    let handle = builtin_num_arg(args, 0, "std::net::tcpAccept")? as i64;
-    let timeout = builtin_opt_timeout_ms(args, 1, "std::net::tcpAccept")?;
+    let handle = builtin_num_arg(args, 0, "std::net::tcp_accept")? as i64;
+    let timeout = builtin_opt_timeout_ms(args, 1, "std::net::tcp_accept")?;
     Ok(std_result(
         xulo_std::net::tcp_accept(handle, timeout).map(|h| Value::Number(h as f64)),
     ))
@@ -1342,8 +1326,8 @@ pub(super) fn native_net_tcp_connect(
     _interp: &Interpreter,
     args: &[Value],
 ) -> Result<Value, RunError> {
-    let addr = builtin_str_arg(args, 0, "std::net::tcpConnect")?;
-    let timeout = builtin_opt_timeout_ms(args, 1, "std::net::tcpConnect")?;
+    let addr = builtin_str_arg(args, 0, "std::net::tcp_connect")?;
+    let timeout = builtin_opt_timeout_ms(args, 1, "std::net::tcp_connect")?;
     Ok(std_result(
         xulo_std::net::tcp_connect(&addr, timeout).map(|h| Value::Number(h as f64)),
     ))
@@ -1358,9 +1342,9 @@ pub(super) fn native_net_sock_read(
     _interp: &Interpreter,
     args: &[Value],
 ) -> Result<Value, RunError> {
-    let handle = builtin_num_arg(args, 0, "std::net::sockRead")? as i64;
-    let max = builtin_num_arg(args, 1, "std::net::sockRead")?;
-    let timeout = builtin_opt_timeout_ms(args, 2, "std::net::sockRead")?;
+    let handle = builtin_num_arg(args, 0, "std::net::sock_read")? as i64;
+    let max = builtin_num_arg(args, 1, "std::net::sock_read")?;
+    let timeout = builtin_opt_timeout_ms(args, 2, "std::net::sock_read")?;
     Ok(std_result(
         xulo_std::net::sock_read(handle, max as usize, timeout).map(|text| match text {
             Some(s) => Value::String(s.into()),
@@ -1375,9 +1359,9 @@ pub(super) fn native_net_sock_write(
     _interp: &Interpreter,
     args: &[Value],
 ) -> Result<Value, RunError> {
-    let handle = builtin_num_arg(args, 0, "std::net::sockWrite")? as i64;
-    let text = builtin_str_arg(args, 1, "std::net::sockWrite")?;
-    let timeout = builtin_opt_timeout_ms(args, 2, "std::net::sockWrite")?;
+    let handle = builtin_num_arg(args, 0, "std::net::sock_write")? as i64;
+    let text = builtin_str_arg(args, 1, "std::net::sock_write")?;
+    let timeout = builtin_opt_timeout_ms(args, 2, "std::net::sock_write")?;
     Ok(std_result(
         xulo_std::net::sock_write(handle, &text, timeout).map(|n| Value::Number(n as f64)),
     ))
@@ -1388,19 +1372,19 @@ pub(super) fn native_net_sock_shutdown(
     _interp: &Interpreter,
     args: &[Value],
 ) -> Result<Value, RunError> {
-    let handle = builtin_num_arg(args, 0, "std::net::sockShutdown")? as i64;
+    let handle = builtin_num_arg(args, 0, "std::net::sock_shutdown")? as i64;
     Ok(std_result(
         xulo_std::net::sock_shutdown(handle).map(|()| Value::Null),
     ))
 }
 
-/// `std::net::sockShutdownWrite(handle)`: close only the writing half —
+/// `std::net::sock_shutdown_write(handle)`: close only the writing half —
 /// the peer sees EOF while this side keeps reading until it closes.
 pub(super) fn native_net_sock_shutdown_write(
     _interp: &Interpreter,
     args: &[Value],
 ) -> Result<Value, RunError> {
-    let handle = builtin_num_arg(args, 0, "std::net::sockShutdownWrite")? as i64;
+    let handle = builtin_num_arg(args, 0, "std::net::sock_shutdown_write")? as i64;
     Ok(std_result(
         xulo_std::net::sock_shutdown_write(handle).map(|()| Value::Null),
     ))
@@ -1412,7 +1396,7 @@ pub(super) fn native_net_sock_close(
     _interp: &Interpreter,
     args: &[Value],
 ) -> Result<Value, RunError> {
-    let handle = builtin_num_arg(args, 0, "std::net::sockClose")? as i64;
+    let handle = builtin_num_arg(args, 0, "std::net::sock_close")? as i64;
     Ok(std_result(
         xulo_std::net::sock_close(handle).map(|()| Value::Null),
     ))
@@ -1423,7 +1407,7 @@ pub(super) fn native_net_sock_local_addr(
     _interp: &Interpreter,
     args: &[Value],
 ) -> Result<Value, RunError> {
-    let handle = builtin_num_arg(args, 0, "std::net::sockLocalAddr")? as i64;
+    let handle = builtin_num_arg(args, 0, "std::net::sock_local_addr")? as i64;
     Ok(std_result(
         xulo_std::net::sock_local_addr(handle).map(|a| Value::String(a.into())),
     ))
@@ -1435,7 +1419,7 @@ pub(super) fn native_net_sock_peer_addr(
     _interp: &Interpreter,
     args: &[Value],
 ) -> Result<Value, RunError> {
-    let handle = builtin_num_arg(args, 0, "std::net::sockPeerAddr")? as i64;
+    let handle = builtin_num_arg(args, 0, "std::net::sock_peer_addr")? as i64;
     Ok(std_result(
         xulo_std::net::sock_peer_addr(handle).map(|a| Value::String(a.into())),
     ))
@@ -1489,7 +1473,10 @@ pub(super) fn native_process_run(_interp: &Interpreter, args: &[Value]) -> Resul
 /// `std::process::exec(program, args[, input[, timeout]])`: run `program`
 /// directly — no shell, `args` is the child's argv exactly as given — and
 /// capture both streams the same way `run` does.
-pub(super) fn native_process_exec(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+pub(super) fn native_process_exec(
+    _interp: &Interpreter,
+    args: &[Value],
+) -> Result<Value, RunError> {
     let program = builtin_str_arg(args, 0, "std::process::exec")?;
     let argv = builtin_str_list_arg(args, 1, "std::process::exec")?;
     let input = builtin_opt_input(args, 2, "std::process::exec")?;
@@ -1603,9 +1590,9 @@ pub(super) fn command_object(spec: Rc<xulo_std::process::CommandSpec>) -> Value 
             Value::Native(Rc::new(move |_i, call_args| {
                 let name = builtin_str_arg(call_args, 0, "Command::env")?;
                 let value = builtin_str_arg(call_args, 1, "Command::env")?;
-                Ok(command_object(
-                    Rc::new((*env_spec).clone().env(&name, &value)),
-                ))
+                Ok(command_object(Rc::new(
+                    (*env_spec).clone().env(&name, &value),
+                )))
             })),
         ),
         (
@@ -1618,9 +1605,9 @@ pub(super) fn command_object(spec: Rc<xulo_std::process::CommandSpec>) -> Value 
                         0..0,
                     ));
                 }
-                Ok(command_object(
-                    Rc::new((*timeout_spec).clone().timeout(ms as u64)),
-                ))
+                Ok(command_object(Rc::new(
+                    (*timeout_spec).clone().timeout(ms as u64),
+                )))
             })),
         ),
         (
@@ -1650,9 +1637,9 @@ pub(super) fn command_static_object() -> Value {
             "shell".to_string(),
             Value::Native(Rc::new(|_i, call_args| {
                 let cmd = builtin_str_arg(call_args, 0, "Command::shell")?;
-                Ok(command_object(Rc::new(xulo_std::process::CommandSpec::shell(
-                    &cmd,
-                ))))
+                Ok(command_object(Rc::new(
+                    xulo_std::process::CommandSpec::shell(&cmd),
+                )))
             })),
         ),
         (
@@ -1660,9 +1647,9 @@ pub(super) fn command_static_object() -> Value {
             Value::Native(Rc::new(|_i, call_args| {
                 let program = builtin_str_arg(call_args, 0, "Command::direct")?;
                 let argv = builtin_str_list_arg(call_args, 1, "Command::direct")?;
-                Ok(command_object(Rc::new(xulo_std::process::CommandSpec::direct(
-                    &program, argv,
-                ))))
+                Ok(command_object(Rc::new(
+                    xulo_std::process::CommandSpec::direct(&program, argv),
+                )))
             })),
         ),
     ])))
@@ -1758,7 +1745,7 @@ pub(super) fn native_json_valid(_interp: &Interpreter, args: &[Value]) -> Result
 /// `std-spec/modules/fmt.md`). A malformed template, a directive-count
 /// mismatch, or an operand that does not suit its verb is an uncaught
 /// runtime failure — the argument domain § 5.3 leaves to stop the program
-/// (the shape `std::math::toFixed`'s `digits` already takes).
+/// (the shape `std::math::to_fixed`'s `digits` already takes).
 pub(super) fn native_fmt_format(interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     let template = builtin_str_arg(args, 0, "std::fmt::format")?;
     use xulo_std::fmt::FmtArg;
@@ -1955,27 +1942,25 @@ pub(super) fn regex_match_value(m: &xulo_std::regex::Match) -> Value {
         ("end".to_string(), Value::Number(m.end_index as f64)),
         (
             "group".to_string(),
-            Value::Native(Rc::new(move |_interp, call_args| {
-                match call_args.first() {
-                    Some(Value::Number(index)) => {
-                        if !index.is_finite() || *index < 1.0 || index.fract() != 0.0 {
-                            return Ok(Value::Null);
-                        }
-                        Ok(groups
-                            .get(*index as usize - 1)
-                            .cloned()
-                            .flatten()
-                            .map(|s| Value::String(s.into()))
-                            .unwrap_or(Value::Null))
+            Value::Native(Rc::new(move |_interp, call_args| match call_args.first() {
+                Some(Value::Number(index)) => {
+                    if !index.is_finite() || *index < 1.0 || index.fract() != 0.0 {
+                        return Ok(Value::Null);
                     }
-                    Some(Value::String(name)) => Ok(named
-                        .iter()
-                        .find(|(n, _)| n == name.as_ref())
-                        .and_then(|(_, g)| g.clone())
+                    Ok(groups
+                        .get(*index as usize - 1)
+                        .cloned()
+                        .flatten()
                         .map(|s| Value::String(s.into()))
-                        .unwrap_or(Value::Null)),
-                    _ => Ok(Value::Null),
+                        .unwrap_or(Value::Null))
                 }
+                Some(Value::String(name)) => Ok(named
+                    .iter()
+                    .find(|(n, _)| n == name.as_ref())
+                    .and_then(|(_, g)| g.clone())
+                    .map(|s| Value::String(s.into()))
+                    .unwrap_or(Value::Null)),
+                _ => Ok(Value::Null),
             })),
         ),
     ])))
@@ -2103,83 +2088,82 @@ pub(super) fn builtin_int_arg(args: &[Value], i: usize, name: &str) -> Result<i6
     Ok(n as i64)
 }
 
-/// `std::math::wrappingAdd(a, b)` (spec `builtins/intrinsic-functions.md`).
+/// `std::math::wrapping_add(a, b)` (spec `builtins/intrinsic-functions.md`).
 pub(super) fn native_math_wrapping_add(
     _interp: &Interpreter,
     args: &[Value],
 ) -> Result<Value, RunError> {
-    let a = builtin_int_arg(args, 0, "std::math::wrappingAdd")?;
-    let b = builtin_int_arg(args, 1, "std::math::wrappingAdd")?;
+    let a = builtin_int_arg(args, 0, "std::math::wrapping_add")?;
+    let b = builtin_int_arg(args, 1, "std::math::wrapping_add")?;
     Ok(Value::Number(xulo_std::math::wrapping_add(a, b) as f64))
 }
 
-/// `std::math::wrappingSub(a, b)`.
+/// `std::math::wrapping_sub(a, b)`.
 pub(super) fn native_math_wrapping_sub(
     _interp: &Interpreter,
     args: &[Value],
 ) -> Result<Value, RunError> {
-    let a = builtin_int_arg(args, 0, "std::math::wrappingSub")?;
-    let b = builtin_int_arg(args, 1, "std::math::wrappingSub")?;
+    let a = builtin_int_arg(args, 0, "std::math::wrapping_sub")?;
+    let b = builtin_int_arg(args, 1, "std::math::wrapping_sub")?;
     Ok(Value::Number(xulo_std::math::wrapping_sub(a, b) as f64))
 }
 
-/// `std::math::wrappingMul(a, b)`.
+/// `std::math::wrapping_mul(a, b)`.
 pub(super) fn native_math_wrapping_mul(
     _interp: &Interpreter,
     args: &[Value],
 ) -> Result<Value, RunError> {
-    let a = builtin_int_arg(args, 0, "std::math::wrappingMul")?;
-    let b = builtin_int_arg(args, 1, "std::math::wrappingMul")?;
+    let a = builtin_int_arg(args, 0, "std::math::wrapping_mul")?;
+    let b = builtin_int_arg(args, 1, "std::math::wrapping_mul")?;
     Ok(Value::Number(xulo_std::math::wrapping_mul(a, b) as f64))
 }
 
-/// `std::math::popCount(x)`.
+/// `std::math::pop_count(x)`.
 pub(super) fn native_math_pop_count(
     _interp: &Interpreter,
     args: &[Value],
 ) -> Result<Value, RunError> {
-    let x = builtin_int_arg(args, 0, "std::math::popCount")?;
+    let x = builtin_int_arg(args, 0, "std::math::pop_count")?;
     Ok(Value::Number(xulo_std::math::pop_count(x) as f64))
 }
 
-/// `std::math::countLeadingZeros(x)`.
+/// `std::math::count_leading_zeros(x)`.
 pub(super) fn native_math_count_leading_zeros(
     _interp: &Interpreter,
     args: &[Value],
 ) -> Result<Value, RunError> {
-    let x = builtin_int_arg(args, 0, "std::math::countLeadingZeros")?;
+    let x = builtin_int_arg(args, 0, "std::math::count_leading_zeros")?;
     Ok(Value::Number(xulo_std::math::count_leading_zeros(x) as f64))
 }
 
-/// `std::math::countTrailingZeros(x)`.
+/// `std::math::count_trailing_zeros(x)`.
 pub(super) fn native_math_count_trailing_zeros(
     _interp: &Interpreter,
     args: &[Value],
 ) -> Result<Value, RunError> {
-    let x = builtin_int_arg(args, 0, "std::math::countTrailingZeros")?;
+    let x = builtin_int_arg(args, 0, "std::math::count_trailing_zeros")?;
     Ok(Value::Number(xulo_std::math::count_trailing_zeros(x) as f64))
 }
 
-/// `std::math::rotateLeft(x, amount)`: `amount` is `u64` and taken modulo 64.
+/// `std::math::rotate_left(x, amount)`: `amount` is `u64` and taken modulo 64.
 pub(super) fn native_math_rotate_left(
     _interp: &Interpreter,
     args: &[Value],
 ) -> Result<Value, RunError> {
-    let x = builtin_int_arg(args, 0, "std::math::rotateLeft")?;
-    let amount = builtin_int_arg(args, 1, "std::math::rotateLeft")? as u64;
+    let x = builtin_int_arg(args, 0, "std::math::rotate_left")?;
+    let amount = builtin_int_arg(args, 1, "std::math::rotate_left")? as u64;
     Ok(Value::Number(xulo_std::math::rotate_left(x, amount) as f64))
 }
 
-/// `std::math::rotateRight(x, amount)`: `amount` is `u64` and modulo 64.
+/// `std::math::rotate_right(x, amount)`: `amount` is `u64` and modulo 64.
 pub(super) fn native_math_rotate_right(
     _interp: &Interpreter,
     args: &[Value],
 ) -> Result<Value, RunError> {
-    let x = builtin_int_arg(args, 0, "std::math::rotateRight")?;
-    let amount = builtin_int_arg(args, 1, "std::math::rotateRight")? as u64;
+    let x = builtin_int_arg(args, 0, "std::math::rotate_right")?;
+    let amount = builtin_int_arg(args, 1, "std::math::rotate_right")? as u64;
     Ok(Value::Number(xulo_std::math::rotate_right(x, amount) as f64))
 }
-
 
 // ──────────────────────────────────────────────────────────────────
 //  std::http — the client, the server, and the data types
@@ -2202,7 +2186,10 @@ fn http_header_list_value(headers: &[xulo_std::http::Header]) -> Value {
 
 /// A `{ name, value }` record list argument (`std::http::request`'s
 /// headers): every element must carry string `name`/`value` fields.
-fn http_header_list_arg(value: &Value, name: &str) -> Result<Vec<xulo_std::http::Header>, RunError> {
+fn http_header_list_arg(
+    value: &Value,
+    name: &str,
+) -> Result<Vec<xulo_std::http::Header>, RunError> {
     let Value::List(items) = value else {
         return Err(RunError::err(
             format!(
@@ -2285,7 +2272,7 @@ fn http_request_value(interp: &Interpreter, req: xulo_std::http::Request) -> Val
         ("body".to_string(), Value::String(req.body.into())),
         ("version".to_string(), Value::String(req.version.into())),
         (
-            "remoteAddr".to_string(),
+            "remote_addr".to_string(),
             Value::String(req.remote_addr.into()),
         ),
     ]));
@@ -2347,10 +2334,7 @@ fn http_server_value(server: xulo_std::http::Server) -> Value {
 }
 
 /// `std::http::fetch(url[, timeout])`: `GET` and read the whole answer.
-pub(super) fn native_http_fetch(
-    interp: &Interpreter,
-    args: &[Value],
-) -> Result<Value, RunError> {
+pub(super) fn native_http_fetch(interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     let url = builtin_str_arg(args, 0, "std::http::fetch")?;
     let timeout = builtin_opt_timeout_ms(args, 1, "std::http::fetch")?;
     Ok(std_result(
@@ -2360,10 +2344,7 @@ pub(super) fn native_http_fetch(
 
 /// `std::http::request(method, url[, headers[, body[, timeout]]])`: any
 /// method, with headers and a body.
-pub(super) fn native_http_request(
-    interp: &Interpreter,
-    args: &[Value],
-) -> Result<Value, RunError> {
+pub(super) fn native_http_request(interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     let method = builtin_str_arg(args, 0, "std::http::request")?;
     let url = builtin_str_arg(args, 1, "std::http::request")?;
     let headers = match args.get(2) {
@@ -2392,10 +2373,7 @@ pub(super) fn native_http_request(
 
 /// `std::http::listen(addr)`: bind and listen — `Result::Ok` of the opaque
 /// `Server` handle.
-pub(super) fn native_http_listen(
-    _interp: &Interpreter,
-    args: &[Value],
-) -> Result<Value, RunError> {
+pub(super) fn native_http_listen(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     let addr = builtin_str_arg(args, 0, "std::http::listen")?;
     Ok(std_result(
         xulo_std::http::listen(&addr).map(http_server_value),
@@ -2437,7 +2415,8 @@ pub(super) fn native_http_response_json(
     let Some(value) = args.first() else {
         return Err(RunError::err("`Response.json` expects 1 argument", 0..0));
     };
-    match crate::runtime::value_to_json(value, 0).and_then(|json| xulo_std::json::stringify(&json)) {
+    match crate::runtime::value_to_json(value, 0).and_then(|json| xulo_std::json::stringify(&json))
+    {
         Ok(text) => Ok(result_ok(http_response_value(
             interp,
             xulo_std::http::Response::json(&text, 200),
@@ -2446,8 +2425,8 @@ pub(super) fn native_http_response_json(
     }
 }
 
-/// The `Request`/`Response` lookup methods (`header`, `queryValue`,
-/// `formValue`) hang off the type objects with the receiver as their first
+/// The `Request`/`Response` lookup methods (`header`, `query_value`,
+/// `form_value`) hang off the type objects with the receiver as their first
 /// argument — the instance-method convention of constructed values.
 pub(super) fn native_http_request_header(
     _interp: &Interpreter,
@@ -2460,7 +2439,7 @@ pub(super) fn native_http_request_query_value(
     _interp: &Interpreter,
     args: &[Value],
 ) -> Result<Value, RunError> {
-    http_lookup(args, "Request.queryValue", |req, name| {
+    http_lookup(args, "Request.query_value", |req, name| {
         req.query_value(name)
     })
 }
@@ -2469,7 +2448,7 @@ pub(super) fn native_http_request_form_value(
     _interp: &Interpreter,
     args: &[Value],
 ) -> Result<Value, RunError> {
-    http_lookup(args, "Request.formValue", |req, name| req.form_value(name))
+    http_lookup(args, "Request.form_value", |req, name| req.form_value(name))
 }
 
 pub(super) fn native_http_response_header(
@@ -2529,10 +2508,7 @@ fn lookup_receiver(args: &[Value], name: &str) -> Result<(Value, String), RunErr
 
 /// A `Request` value's eight fields back into the pure record (the lookup
 /// methods read it).
-fn http_request_from_value(
-    value: &Value,
-    name: &str,
-) -> Result<xulo_std::http::Request, RunError> {
+fn http_request_from_value(value: &Value, name: &str) -> Result<xulo_std::http::Request, RunError> {
     let text = |key: &str| -> Result<String, RunError> {
         match http_field(value, key) {
             Some(Value::String(s)) => Ok(s.to_string()),
@@ -2560,7 +2536,7 @@ fn http_request_from_value(
         headers: pairs("headers")?,
         body: text("body")?,
         version: text("version")?,
-        remote_addr: text("remoteAddr")?,
+        remote_addr: text("remote_addr")?,
     })
 }
 
@@ -2575,11 +2551,11 @@ pub(super) fn http_request_type_object() -> Value {
             Value::Native(Rc::new(native_http_request_header)),
         ),
         (
-            "queryValue".to_string(),
+            "query_value".to_string(),
             Value::Native(Rc::new(native_http_request_query_value)),
         ),
         (
-            "formValue".to_string(),
+            "form_value".to_string(),
             Value::Native(Rc::new(native_http_request_form_value)),
         ),
     ])))

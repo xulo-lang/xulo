@@ -10,17 +10,17 @@
 //!
 //! v1 is **synchronous and blocking**: `tcp_accept` and `sock_read` park the
 //! calling thread (in the cooperative interpreter that freezes the whole
-//! scheduler, exactly like `std::io::readLine` — there is no epoll in the
+//! scheduler, exactly like `std::io::read_line` — there is no epoll in the
 //! runtime yet). Tests and one-shot tools should handshake in program order:
 //! `tcp_connect` completes through the listen backlog *before* `tcp_accept`
 //! is called, so a single-threaded program never deadlocks.
 
 use std::cell::{Cell, RefCell};
-use std::time::Duration;
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream, ToSocketAddrs};
 use std::rc::Rc;
+use std::time::Duration;
 
 /// A registered socket: listeners accept, streams read and write. `Rc` keeps
 /// a handle usable from both a `match` binding and the registry entry the
@@ -193,10 +193,14 @@ fn stream_of(handle: i64) -> Result<Rc<RefCell<TcpStream>>, String> {
 
 /// `std::net::sock_read(handle, max)`: block for up to `max` bytes of input.
 /// `Ok(null)` is end-of-stream (the peer closed — the same `null` read as
-/// `io::readLine`'s EOF); `Ok(text)` may be shorter than `max`. TCP is
+/// `io::read_line`'s EOF); `Ok(text)` may be shorter than `max`. TCP is
 /// byte-oriented, so a multi-byte UTF-8 character split across two reads
 /// surfaces as replacement bytes — frame messages when text matters.
-pub fn sock_read(handle: i64, max: usize, timeout_ms: Option<u64>) -> Result<Option<String>, String> {
+pub fn sock_read(
+    handle: i64,
+    max: usize,
+    timeout_ms: Option<u64>,
+) -> Result<Option<String>, String> {
     // Argument domain first (same order as the FFI boundary): a zero or
     // oversized length is reported as itself, whatever the handle names.
     if max == 0 || max > MAX_IO_BYTES {

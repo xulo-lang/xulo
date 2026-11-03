@@ -57,7 +57,7 @@ let name = user?.name ?? "anonymous"   // ?? 空合并
 let head = [1, 2]
 let tail = [3, 4]
 let all = [...head, ...tail]   // 展开合并
-let withExtra = [...all, 9]
+let with_extra = [...all, 9]
 ```
 
 `...` 只能出现在列表/对象字面量内，展开操作数必须是 `List<T>`（列表）或对象。
@@ -87,6 +87,6 @@ let label = match status {
 
 ```xulo
 xs[0](10)        // 调用列表中的函数
-getFn()(x)       // 调用返回的函数
+get_fn()(x)       // 调用返回的函数
 (f)(5)           // 调用括号包裹的函数值
 ```

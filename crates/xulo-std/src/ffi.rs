@@ -171,24 +171,24 @@ pub extern "C" fn xulo_math_expm1(x: f64) -> f64 {
     math::expm1(x)
 }
 
-/// `Math::randomInt(lo, hi)` compiled entry point: `lo > hi` is a runtime
+/// `Math::random_int(lo, hi)` compiled entry point: `lo > hi` is a runtime
 /// failure (spec `memory-and-runtime.md`).
 #[unsafe(no_mangle)]
 pub extern "C" fn xulo_math_random_int(lo: i64, hi: i64) -> i64 {
     if lo > hi {
-        eprintln!("`Math::randomInt` range is empty: lo {lo} is greater than hi {hi}");
+        eprintln!("`Math::random_int` range is empty: lo {lo} is greater than hi {hi}");
         std::process::exit(1);
     }
     math::random_int(lo, hi)
 }
 
-/// `Math::toFixed` compiled entry point: `digits` outside `0..=15` is a
+/// `Math::to_fixed` compiled entry point: `digits` outside `0..=15` is a
 /// runtime failure (spec `memory-and-runtime.md`), matching the interpreter's
 /// `RunError`.
 #[unsafe(no_mangle)]
 pub extern "C" fn xulo_math_to_fixed(x: f64, digits: i64) -> *const c_char {
     if !(0..=15).contains(&digits) {
-        eprintln!("`Math::toFixed` digits must be an integer in 0..=15, found {digits}");
+        eprintln!("`Math::to_fixed` digits must be an integer in 0..=15, found {digits}");
         std::process::exit(1);
     }
     keep(math::to_fixed(x, digits as usize))
@@ -268,14 +268,11 @@ pub extern "C" fn xulo_path_stem(p: *const c_char) -> *const c_char {
 
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn xulo_path_with_ext(
-    p: *const c_char,
-    ext: *const c_char,
-) -> *const c_char {
+pub extern "C" fn xulo_path_with_ext(p: *const c_char, ext: *const c_char) -> *const c_char {
     keep(path::with_ext(&cstr_arg(p), &cstr_arg(ext)))
 }
 
-/// `Math::wrappingAdd` / `Math::wrappingSub` / `Math::wrappingMul` compiled
+/// `Math::wrapping_add` / `Math::wrapping_sub` / `Math::wrapping_mul` compiled
 /// entry points: two's-complement results modulo 2⁶⁴, never trapping.
 #[unsafe(no_mangle)]
 pub extern "C" fn xulo_math_wrapping_add(a: i64, b: i64) -> i64 {
@@ -292,7 +289,7 @@ pub extern "C" fn xulo_math_wrapping_mul(a: i64, b: i64) -> i64 {
     math::wrapping_mul(a, b)
 }
 
-/// `Math::popCount` / `Math::countLeadingZeros` / `Math::countTrailingZeros`
+/// `Math::pop_count` / `Math::count_leading_zeros` / `Math::count_trailing_zeros`
 /// compiled entry points.
 #[unsafe(no_mangle)]
 pub extern "C" fn xulo_math_pop_count(x: i64) -> i64 {
@@ -309,7 +306,7 @@ pub extern "C" fn xulo_math_count_trailing_zeros(x: i64) -> i64 {
     math::count_trailing_zeros(x)
 }
 
-/// `Math::rotateLeft` / `Math::rotateRight` compiled entry points: the
+/// `Math::rotate_left` / `Math::rotate_right` compiled entry points: the
 /// amount is taken modulo 64, so every value is in domain.
 #[unsafe(no_mangle)]
 pub extern "C" fn xulo_math_rotate_left(x: i64, amount: u64) -> i64 {
@@ -327,7 +324,9 @@ pub extern "C" fn xulo_math_rotate_right(x: i64, amount: u64) -> i64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn xulo_time_format(ms: f64) -> *const c_char {
     if !(ms.is_finite() && ms.fract() == 0.0 && ms >= 0.0) {
-        eprintln!("`std::time::format` expects a non-negative integer millisecond count, found {ms}");
+        eprintln!(
+            "`std::time::format` expects a non-negative integer millisecond count, found {ms}"
+        );
         std::process::exit(1);
     }
     match time::format(ms as u64) {
@@ -339,7 +338,7 @@ pub extern "C" fn xulo_time_format(ms: f64) -> *const c_char {
     }
 }
 
-/// `Time::fromParts` compiled entry point: the timestamp those UTC fields
+/// `Time::from_parts` compiled entry point: the timestamp those UTC fields
 /// denote; the time fields default to 0 (the IR pads the absent arguments).
 /// A field set outside the calendar is a runtime failure.
 #[unsafe(no_mangle)]
@@ -356,7 +355,7 @@ pub extern "C" fn xulo_time_from_parts(
         if x.is_finite() && x.fract() == 0.0 {
             x as i64
         } else {
-            eprintln!("`std::time::fromParts` `{name}` expects an integer, found {x}");
+            eprintln!("`std::time::from_parts` `{name}` expects an integer, found {x}");
             std::process::exit(1);
         }
     };
@@ -381,7 +380,9 @@ pub extern "C" fn xulo_time_from_parts(
 #[unsafe(no_mangle)]
 pub extern "C" fn xulo_time_weekday(ms: f64) -> i64 {
     if !(ms.is_finite() && ms.fract() == 0.0 && ms >= 0.0) {
-        eprintln!("`std::time::weekday` expects a non-negative integer millisecond count, found {ms}");
+        eprintln!(
+            "`std::time::weekday` expects a non-negative integer millisecond count, found {ms}"
+        );
         std::process::exit(1);
     }
     time::weekday(ms as u64)

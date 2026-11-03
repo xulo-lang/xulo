@@ -128,13 +128,13 @@ fn jit_passes_ptr_handle_through_malloc_and_free() {
     let out = output_of(
         r#"
         extern "C" {
-          fn malloc(size: usize): Ptr? as cMalloc
-          fn free(p: Ptr?) as cFree
+          fn malloc(size: usize): Ptr? as c_malloc
+          fn free(p: Ptr?) as c_free
         }
         fn main() {
-            let p = cMalloc(64)
+            let p = c_malloc(64)
             if p != null {
-                cFree(p)
+                c_free(p)
                 print("allocated")
             }
         }
@@ -248,17 +248,17 @@ fn jit_named_arguments_reorder_by_declaration() {
 #[test]
 fn jit_omitted_ptr_param_binds_null() {
     // An omitted (only `Ptr?` may be) parameter binds null at the call site:
-    // `cFree()` compiles to a call with a zero address — `free(NULL)`, a no-op.
+    // `c_free()` compiles to a call with a zero address — `free(NULL)`, a no-op.
     let out = output_of(
         r#"
         extern "C" {
-            fn malloc(size: usize): Ptr? as cMalloc
-            fn free(p: Ptr?) as cFree
+            fn malloc(size: usize): Ptr? as c_malloc
+            fn free(p: Ptr?) as c_free
         }
         fn main() {
-            let p = cMalloc(32)
-            cFree(p)
-            cFree()
+            let p = c_malloc(32)
+            c_free(p)
+            c_free()
             print("ok")
         }
         "#,
@@ -271,12 +271,12 @@ fn aot_omitted_ptr_param_compiles_to_zero_address() {
     let bytes = object_bytes(
         r#"
         extern "C" {
-            fn malloc(size: usize): Ptr? as cMalloc
-            fn free(p: Ptr?) as cFree
+            fn malloc(size: usize): Ptr? as c_malloc
+            fn free(p: Ptr?) as c_free
         }
         fn main() {
-            let p = cMalloc(32)
-            cFree()
+            let p = c_malloc(32)
+            c_free()
             print("ok")
         }
         "#,

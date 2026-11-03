@@ -192,7 +192,7 @@ fn extern_missing_symbol_fails_at_registration() {
     // Registration runs before any statement — the error precedes side effects.
     let err = err_of(
         r#"
-        extern "C" { fn missingXuloFn(): i32 }
+        extern "C" { fn missing_xulo_fn(): i32 }
         fn main() { print("never") }
         "#,
     );
@@ -208,7 +208,7 @@ fn extern_arity_beyond_trampoline_is_rejected_at_registration() {
     let err = err_of(
         r#"
         extern "C" {
-            fn sevenParams(a: i32, b: i32, c: i32, d: i32, e: i32, f: i32, g: i32)
+            fn seven_params(a: i32, b: i32, c: i32, d: i32, e: i32, f: i32, g: i32)
         }
         fn main() { print("never") }
         "#,
@@ -235,7 +235,7 @@ fn extern_import_cannot_be_used_as_a_value() {
 #[test]
 fn pub_extern_block_exports_its_bindings() {
     let interp = Interpreter::new();
-    let program = parse_program(r#"pub extern "C" { fn abs(x: i32): i32 as cAbs }"#).unwrap();
+    let program = parse_program(r#"pub extern "C" { fn abs(x: i32): i32 as c_abs }"#).unwrap();
     let exports = interp
         .exec_module(&program, &[], false)
         .unwrap_or_else(|e| match e {
@@ -244,8 +244,8 @@ fn pub_extern_block_exports_its_bindings() {
             xulo_runtime::interpreter::RunError::Throw(_) => panic!("uncaught throw"),
         });
     assert!(
-        exports.bindings.iter().any(|(n, _)| n == "cAbs"),
-        "cAbs not exported: {:?}",
+        exports.bindings.iter().any(|(n, _)| n == "c_abs"),
+        "c_abs not exported: {:?}",
         exports.bindings.iter().map(|(n, _)| n).collect::<Vec<_>>()
     );
 }

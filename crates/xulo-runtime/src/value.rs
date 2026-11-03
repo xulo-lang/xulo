@@ -31,7 +31,7 @@ pub enum Value {
     Ptr(PtrValue),
     List(Rc<RefCell<Vec<Value>>>),
     /// A `Set<T>`: an unordered collection of unique values, constructed by
-    /// `Set::fromList` (spec `types/composite-types.md`).
+    /// `Set::from_list` (spec `types/composite-types.md`).
     Set(Rc<RefCell<Vec<Value>>>),
     Object(Rc<RefCell<Vec<(String, Value)>>>),
     /// A user function or closure, capturing its defining environment.

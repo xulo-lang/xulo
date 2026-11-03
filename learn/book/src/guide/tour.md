@@ -74,7 +74,7 @@ fn Counter(): View {
 ## 异步
 
 ```xulo
-fn fetchUser(id: string): async {
+fn fetch_user(id: string): async {
   try {
     let response = await fetch("/api/users/" + id)
     return await response.json()

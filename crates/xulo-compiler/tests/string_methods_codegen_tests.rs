@@ -1,5 +1,5 @@
 //! Built-in `string` member lowering on the compiled path (spec
-//! `types/primitive-types.md`): `.len`, `.byteLen`, `.codeAt`, `.slice`, and
+//! `types/primitive-types.md`): `.len`, `.byte_len`, `.code_at`, `.slice`, and
 //! `.bytes()`, plus the AOT runtime symbols they reference.
 
 use std::path::Path;
@@ -41,8 +41,8 @@ fn string_members_run_on_the_compiled_path() {
         r#"
 fn main() {
     print("hello".len)
-    print("héllo".byteLen)
-    print("hel".codeAt(0))
+    print("héllo".byte_len)
+    print("hel".code_at(0))
     print("hello".slice(1, 4))
     let bs = "hi".bytes()
     print(bs[0])
@@ -82,8 +82,8 @@ fn aot_object_references_string_member_symbols() {
         r#"
 fn main() {
     "x".len
-    "x".byteLen
-    "x".codeAt(0)
+    "x".byte_len
+    "x".code_at(0)
     "x".slice(0, 1)
     "x".bytes()
 }

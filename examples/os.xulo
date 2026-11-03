@@ -6,7 +6,7 @@ fn main() {
     match std::os::cwd() {
         Result::Ok(here) => {
             print(here != "") // true
-            match std::os::chdir(std::os::tmpDir()) {
+            match std::os::chdir(std::os::tmp_dir()) {
                 Result::Ok(_) => print("moved") // moved
                 Result::Err(e) => print(e.message)
             }
@@ -37,25 +37,25 @@ fn main() {
     }
 
     // 目录与身份：宿主相关的读数只打布尔
-    print(std::os::tmpDir() != "") // true
-    match std::os::homeDir() {
+    print(std::os::tmp_dir() != "") // true
+    match std::os::home_dir() {
         Result::Ok(dir) => print(dir != "") // true
         Result::Err(e) => print(e.message)
     }
-    match std::os::execPath() {
+    match std::os::exec_path() {
         Result::Ok(path) => print(path != "") // true — 本程序在哪
         Result::Err(e) => print(e.message)
     }
-    match std::os::hostName() {
+    match std::os::host_name() {
         Result::Ok(name) => print(name != "") // true
         Result::Err(e) => print(e.message)
     }
-    match std::os::userName() {
+    match std::os::user_name() {
         Result::Ok(name) => print(name != "") // true
         Result::Err(e) => print(e.message)
     }
     print(std::os::pid() > 0) // true
     print(std::os::platform() != "") // true — linux / macos / …
     print(std::os::arch() != "") // true — x86_64 / aarch64 / …
-    print(std::os::cpuCount() > 0) // true
+    print(std::os::cpu_count() > 0) // true
 }

@@ -1,5 +1,5 @@
 //! Built-in `string` members through the full pipeline (lex → parse →
-//! semantic → native interpreter): `.len`, `.byteLen`, `.codeAt`, `.slice`,
+//! semantic → native interpreter): `.len`, `.byte_len`, `.code_at`, `.slice`,
 //! `.bytes()`, and their runtime failures (spec `types/primitive-types.md`).
 
 use xulo_core::error::XuloError;
@@ -22,8 +22,8 @@ fn string_members_produce_the_expected_values() {
         r#"
         fn main() {
             print("  Hi There  ".len)
-            print("ABC".byteLen)
-            print("a,b,c".codeAt(0))
+            print("ABC".byte_len)
+            print("a,b,c".code_at(0))
             print("hello".slice(1, 4))
             print("hé".bytes())
         }
@@ -43,7 +43,7 @@ fn string_members_produce_the_expected_values() {
 
 #[test]
 fn string_slice_and_code_at_reject_out_of_range() {
-    let err = run(r#"fn main() { "abc".codeAt(3) }"#).expect_err("index out of range");
+    let err = run(r#"fn main() { "abc".code_at(3) }"#).expect_err("index out of range");
     assert_eq!(err.code(), "E0006");
 
     let err = run(r#"fn main() { "abc".slice(2, 1) }"#).expect_err("start > end");

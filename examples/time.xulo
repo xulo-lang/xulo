@@ -2,11 +2,11 @@
 // 给读数（毫秒/纳秒、墙上/单调），sleep 产出要 await 的任务，日历把时间戳
 // 与 ISO 8601 文本/字段互转。日历是 UTC 单域：没有时区、没有夏令时。
 async fn main() {
-    // 时钟：墙上时钟（now / nowNanos）与单调时钟（monotonic /
-    // monotonicNanos，进程内只前进）——读数宿主相关，示例只检查形状
+    // 时钟：墙上时钟（now / now_nanos）与单调时钟（monotonic /
+    // monotonic_nanos，进程内只前进）——读数宿主相关，示例只检查形状
     print(std::time::now() > 0) // true —— 1970 年后的任何时刻
-    print(std::time::nowNanos() > 0) // true
-    let t0 = std::time::monotonicNanos()
+    print(std::time::now_nanos() > 0) // true
+    let t0 = std::time::monotonic_nanos()
     let t1 = std::time::monotonic()
     print(t0 >= 0) // true
     print(t1 >= 0) // true
@@ -16,10 +16,10 @@ async fn main() {
     print("awake") // awake
 
     // 日历：字段 ↔ 时间戳 ↔ ISO 8601（格式固定，恰好三位小数 + Z）
-    let noon = std::time::fromParts(2026, 10, 26, 12)
+    let noon = std::time::from_parts(2026, 10, 26, 12)
     print(std::time::format(noon)) // 2026-10-26T12:00:00.000Z
     match std::time::parse("2026-10-26T12:00:00.000Z") {
-        Result::Ok(ms) => print(ms == noon) // true —— parse 与 fromParts 同一时刻
+        Result::Ok(ms) => print(ms == noon) // true —— parse 与 from_parts 同一时刻
         Result::Err(e) => print(e.message)
     }
 
@@ -32,8 +32,8 @@ async fn main() {
     print(std::time::weekday(noon)) // 1 —— 周一
     print(std::time::weekday(0)) // 4 —— 周四
 
-    // 缺省的时间字段是 0：fromParts(2026, 10, 26) 就是当天零点
-    print(std::time::format(std::time::fromParts(2026, 10, 26))) // 2026-10-26T00:00:00.000Z
+    // 缺省的时间字段是 0：from_parts(2026, 10, 26) 就是当天零点
+    print(std::time::format(std::time::from_parts(2026, 10, 26))) // 2026-10-26T00:00:00.000Z
 
     // 无法解析的文本是 Result::Err，不是崩溃
     match std::time::parse("2026-02-30T00:00:00Z") {

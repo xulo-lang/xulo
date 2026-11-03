@@ -76,7 +76,7 @@ MyCard(title: "Hello") {
 VStack {
   children                                  // 转发 List<View>
   user.name                                 // string 值
-  renderRow(item)                           // 调用产出 View 的表达式
+  render_row(item)                           // 调用产出 View 的表达式
 }
 ```
 
@@ -86,7 +86,7 @@ VStack {
 ## 条件渲染
 
 ```xulo
-if isLoggedIn {
+if is_logged_in {
   Text("Welcome back!")
 } else {
   Button(onClick: login) {
@@ -122,10 +122,10 @@ fn Button(
 
 ```xulo
 // 函数引用
-fn handleClick() {
+fn handle_click() {
   count = count + 1
 }
-Button(onClick: handleClick) {
+Button(onClick: handle_click) {
   Text("Click me")
 }
 
@@ -137,10 +137,10 @@ Button(onClick: fn() {
 }
 
 // 带参数的事件处理
-fn handleInput(value: string) {
+fn handle_input(value: string) {
   name = value
 }
-Input(onInput: fn(e) { handleInput(e.value) })
+Input(onInput: fn(e) { handle_input(e.value) })
 ```
 
 ## 主题系统

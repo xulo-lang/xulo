@@ -1,6 +1,6 @@
 //! `std::os` 的 AOT 落地：与 `fs`/`io` 同构，`Result` 的 Ok/Err 构造共用一套
 //! （Err 携带 `Error(message)` 对象，字段 `message` 是字符串）。`getenv` 的
-//! 成功载荷与 `readLine` 一样区分字符串（tag 0）与 null（tag 6，变量未设置）。
+//! 成功载荷与 `read_line` 一样区分字符串（tag 0）与 null（tag 6，变量未设置）。
 
 use super::fs::{fs_err, fs_ok};
 use super::*;
@@ -60,13 +60,13 @@ pub extern "C" fn xulo_os_unsetenv(name: *const c_char) -> *mut XuloEnum {
     }
 }
 
-/// `std::os::tmpDir()` -> string（总谓词，不失败）
+/// `std::os::tmp_dir()` -> string（总谓词，不失败）
 #[unsafe(no_mangle)]
 pub extern "C" fn xulo_os_tmp_dir() -> *const c_char {
     intern_string(xulo_std::os::tmp_dir())
 }
 
-/// `std::os::homeDir()` / `hostName()` / `userName()` / `execPath()` ->
+/// `std::os::home_dir()` / `host_name()` / `user_name()` / `exec_path()` ->
 /// `Result<string, Error>`
 macro_rules! os_string_result {
     ($name:ident, $call:path) => {
@@ -85,7 +85,7 @@ os_string_result!(xulo_os_host_name, xulo_std::os::host_name);
 os_string_result!(xulo_os_user_name, xulo_std::os::user_name);
 os_string_result!(xulo_os_exec_path, xulo_std::os::exec_path);
 
-/// `std::os::cpuCount()` -> number（总谓词，不失败）
+/// `std::os::cpu_count()` -> number（总谓词，不失败）
 #[unsafe(no_mangle)]
 pub extern "C" fn xulo_os_cpu_count() -> i64 {
     xulo_std::os::cpu_count()

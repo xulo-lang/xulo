@@ -22,8 +22,11 @@ fn run_ok(src: &str) -> Vec<String> {
 }
 
 fn scratch(label: &str) -> PathBuf {
-    let dir =
-        std::env::temp_dir().join(format!("xulo-runtime-fs4b-{}-{}", std::process::id(), label));
+    let dir = std::env::temp_dir().join(format!(
+        "xulo-runtime-fs4b-{}-{}",
+        std::process::id(),
+        label
+    ));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).expect("scratch dir");
     dir
@@ -62,8 +65,8 @@ fn create_new_is_exclusive() {
         r#"
         fn main() {{
             let path = "{}"
-            match std::fs::createNew(path, "first") {{ Result::Ok(_) => print("ok1") Result::Err(e) => print(e.message) }}
-            match std::fs::createNew(path, "second") {{ Result::Ok(_) => print("bad") Result::Err(_) => print("err2") }}
+            match std::fs::create_new(path, "first") {{ Result::Ok(_) => print("ok1") Result::Err(e) => print(e.message) }}
+            match std::fs::create_new(path, "second") {{ Result::Ok(_) => print("bad") Result::Err(_) => print("err2") }}
             match std::fs::read(path) {{ Result::Ok(t) => print(t) Result::Err(e) => print(e.message) }}
         }}
         "#,
@@ -86,7 +89,7 @@ fn touch_and_set_times() {
             let w = std::fs::write(path, "keep")
             match std::fs::touch(path) {{ Result::Ok(_) => {{}} Result::Err(e) => print(e.message) }}
             match std::fs::read(path) {{ Result::Ok(t) => print(t) Result::Err(e) => print(e.message) }}
-            match std::fs::setTimes(path, 0) {{ Result::Ok(_) => {{}} Result::Err(e) => print(e.message) }}
+            match std::fs::set_times(path, 0) {{ Result::Ok(_) => {{}} Result::Err(e) => print(e.message) }}
             match std::fs::stat(path) {{ Result::Ok(i) => print(i.modified) Result::Err(e) => print(e.message) }}
         }}
         "#,
@@ -105,8 +108,8 @@ fn set_mode_domain_and_bits() {
         fn main() {{
             let path = "{}"
             let w = std::fs::write(path, "x")
-            match std::fs::setMode(path, 4096) {{ Result::Ok(_) => print("bad") Result::Err(_) => print("range") }}
-            match std::fs::setMode(path, 0o755) {{ Result::Ok(_) => print("set") Result::Err(e) => print(e.message) }}
+            match std::fs::set_mode(path, 4096) {{ Result::Ok(_) => print("bad") Result::Err(_) => print("range") }}
+            match std::fs::set_mode(path, 0o755) {{ Result::Ok(_) => print("set") Result::Err(e) => print(e.message) }}
             match std::fs::stat(path) {{ Result::Ok(i) => print(i.mode == 493) Result::Err(e) => print(e.message) }}
         }}
         "#,
@@ -180,7 +183,14 @@ fn copy_and_rename_replace_and_refuse_self() {
     ));
     assert_eq!(
         out,
-        vec!["copied", "payload", "self-copy", "renamed", "false", "self-rename"]
+        vec![
+            "copied",
+            "payload",
+            "self-copy",
+            "renamed",
+            "false",
+            "self-rename"
+        ]
     );
     let _ = fs::remove_dir_all(&dir);
 }
@@ -193,8 +203,8 @@ fn read_dir_lists_bare_names_sorted() {
     let out = run_ok(&format!(
         r#"
         fn main() {{
-            match std::fs::readDir("{}") {{ Result::Ok(names) => print(names) Result::Err(e) => print(e.message) }}
-            match std::fs::readDir("{}-missing") {{ Result::Ok(_) => print("bad") Result::Err(_) => print("missing") }}
+            match std::fs::read_dir("{}") {{ Result::Ok(names) => print(names) Result::Err(e) => print(e.message) }}
+            match std::fs::read_dir("{}-missing") {{ Result::Ok(_) => print("bad") Result::Err(_) => print("missing") }}
         }}
         "#,
         p(&dir),
@@ -232,11 +242,11 @@ fn remove_dir_takes_the_tree() {
     let out = run_ok(&format!(
         r#"
         fn main() {{
-            match std::fs::removeDir("{tree}") {{ Result::Ok(_) => print("gone") Result::Err(e) => print(e.message) }}
+            match std::fs::remove_dir("{tree}") {{ Result::Ok(_) => print("gone") Result::Err(e) => print(e.message) }}
             print(std::fs::exists("{tree}"))
-            match std::fs::removeDir("{tree}") {{ Result::Ok(_) => print("bad") Result::Err(_) => print("missing") }}
+            match std::fs::remove_dir("{tree}") {{ Result::Ok(_) => print("bad") Result::Err(_) => print("missing") }}
             let w = std::fs::write("{dir}/f.txt", "x")
-            match std::fs::removeDir("{dir}/f.txt") {{ Result::Ok(_) => print("bad") Result::Err(_) => print("file") }}
+            match std::fs::remove_dir("{dir}/f.txt") {{ Result::Ok(_) => print("bad") Result::Err(_) => print("file") }}
         }}
         "#,
         tree = p(&tree),
@@ -254,19 +264,16 @@ fn byte_round_trip_survives_non_utf8() {
         r#"
         fn main() {{
             let path = "{}"
-            match std::fs::writeBytes(path, [0x00, 0xFF, 0x7F, 0x45]) {{ Result::Ok(_) => {{}} Result::Err(e) => print(e.message) }}
-            match std::fs::readBytes(path) {{ Result::Ok(bs) => print(bs) Result::Err(e) => print(e.message) }}
-            match std::fs::appendBytes(path, [1, 2]) {{ Result::Ok(_) => {{}} Result::Err(e) => print(e.message) }}
-            match std::fs::readBytes(path) {{ Result::Ok(bs) => print(bs.len) Result::Err(e) => print(e.message) }}
+            match std::fs::write_bytes(path, [0x00, 0xFF, 0x7F, 0x45]) {{ Result::Ok(_) => {{}} Result::Err(e) => print(e.message) }}
+            match std::fs::read_bytes(path) {{ Result::Ok(bs) => print(bs) Result::Err(e) => print(e.message) }}
+            match std::fs::append_bytes(path, [1, 2]) {{ Result::Ok(_) => {{}} Result::Err(e) => print(e.message) }}
+            match std::fs::read_bytes(path) {{ Result::Ok(bs) => print(bs.len) Result::Err(e) => print(e.message) }}
             match std::fs::read(path) {{ Result::Ok(_) => print("bad") Result::Err(_) => print("not utf8") }}
         }}
         "#,
         p(&blob)
     ));
-    assert_eq!(
-        out,
-        vec!["[0, 255, 127, 69]", "6", "not utf8"]
-    );
+    assert_eq!(out, vec!["[0, 255, 127, 69]", "6", "not utf8"]);
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -276,19 +283,19 @@ fn temp_creators_yield_unique_empty_entries() {
     let out = run_ok(&format!(
         r#"
         fn main() {{
-            match std::fs::tempFile("xulo4b_") {{
+            match std::fs::temp_file("xulo4b_") {{
                 Result::Ok(tp) => {{ print(tp.split("xulo4b_").len == 2); match std::fs::read(tp) {{ Result::Ok(t) => print(t == "") Result::Err(e) => print(e.message) }} let rm = std::fs::remove(tp) }}
                 Result::Err(e) => print(e.message)
             }}
-            match std::fs::tempDir() {{
-                Result::Ok(td) => {{ match std::fs::readDir(td) {{ Result::Ok(n) => print(n.len == 0) Result::Err(e) => print(e.message) }} let rm = std::fs::removeDir(td) }}
+            match std::fs::temp_dir() {{
+                Result::Ok(td) => {{ match std::fs::read_dir(td) {{ Result::Ok(n) => print(n.len == 0) Result::Err(e) => print(e.message) }} let rm = std::fs::remove_dir(td) }}
                 Result::Err(e) => print(e.message)
             }}
-            match std::fs::tempFileIn("{dir}", "in_") {{
+            match std::fs::temp_file_in("{dir}", "in_") {{
                 Result::Ok(tp) => {{ print(tp.split("in_").len == 2); let rm = std::fs::remove(tp) }}
                 Result::Err(e) => print(e.message)
             }}
-            match std::fs::tempDirIn("{dir}-missing", "x") {{ Result::Ok(_) => print("bad") Result::Err(_) => print("missing dir") }}
+            match std::fs::temp_dir_in("{dir}-missing", "x") {{ Result::Ok(_) => print("bad") Result::Err(_) => print("missing dir") }}
         }}
         "#,
         dir = p(&dir)

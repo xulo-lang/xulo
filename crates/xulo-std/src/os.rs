@@ -10,7 +10,7 @@ use std::env;
 
 /// `Os::getenv(name)`: the value of an environment variable, or
 /// `Result::Ok(null)` when the variable is unset — the same optional-string
-/// shape `std::io::readLine` uses for end-of-stream. A variable whose bytes
+/// shape `std::io::read_line` uses for end-of-stream. A variable whose bytes
 /// are not valid UTF-8 is a failure, not a lie of `null`.
 pub fn getenv(name: &str) -> Result<Option<String>, String> {
     match env::var(name) {
@@ -99,7 +99,7 @@ pub fn unsetenv(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// `Os::tmpDir()`: the host's temporary directory (`TMPDIR` when set and
+/// `Os::tmp_dir()`: the host's temporary directory (`TMPDIR` when set and
 /// non-empty, else the platform default). Total; it does not probe existence.
 pub fn tmp_dir() -> String {
     match env::var_os("TMPDIR") {
@@ -108,17 +108,19 @@ pub fn tmp_dir() -> String {
     }
 }
 
-/// `Os::homeDir()`: the current user's home directory; an unset or empty
+/// `Os::home_dir()`: the current user's home directory; an unset or empty
 /// variable is `Err` (absence is a failure here, spec `modules/os.md`).
 pub fn home_dir() -> Result<String, String> {
     let var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
     match env::var_os(var) {
         Some(value) if !value.is_empty() => Ok(value.to_string_lossy().into_owned()),
-        _ => Err(format!("cannot determine the home directory: `{var}` is not set")),
+        _ => Err(format!(
+            "cannot determine the home directory: `{var}` is not set"
+        )),
     }
 }
 
-/// `Os::hostName()`: the machine's name, or `Err` when the host will not say.
+/// `Os::host_name()`: the machine's name, or `Err` when the host will not say.
 pub fn host_name() -> Result<String, String> {
     if cfg!(windows) {
         match env::var_os("COMPUTERNAME") {
@@ -139,26 +141,29 @@ pub fn host_name() -> Result<String, String> {
     }
 }
 
-/// `Os::userName()`: the account the process runs as, or `Err`.
+/// `Os::user_name()`: the account the process runs as, or `Err`.
 pub fn user_name() -> Result<String, String> {
     let var = if cfg!(windows) { "USERNAME" } else { "USER" };
     match env::var_os(var) {
         Some(value) if !value.is_empty() => Ok(value.to_string_lossy().into_owned()),
-        _ => Err(format!("cannot determine the user name: `{var}` is not set")),
+        _ => Err(format!(
+            "cannot determine the user name: `{var}` is not set"
+        )),
     }
 }
 
-/// `Os::execPath()`: the executable the host started, with symbolic links
+/// `Os::exec_path()`: the executable the host started, with symbolic links
 /// resolved (spec `modules/os.md`).
 pub fn exec_path() -> Result<String, String> {
-    let exe = env::current_exe().map_err(|e| format!("cannot determine the executable path: {e}"))?;
+    let exe =
+        env::current_exe().map_err(|e| format!("cannot determine the executable path: {e}"))?;
     Ok(std::fs::canonicalize(&exe)
         .unwrap_or(exe)
         .to_string_lossy()
         .into_owned())
 }
 
-/// `Os::cpuCount()`: the logical processors available to the process; at
+/// `Os::cpu_count()`: the logical processors available to the process; at
 /// least 1 (spec `modules/os.md`).
 pub fn cpu_count() -> i64 {
     std::thread::available_parallelism()

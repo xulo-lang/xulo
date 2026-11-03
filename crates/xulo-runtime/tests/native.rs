@@ -577,9 +577,9 @@ fn string_index_reads_characters() {
 
 #[test]
 fn string_len_counts_unicode_scalars() {
-    // `.len` counts Unicode scalar values; `.byteLen` counts UTF-8 bytes
+    // `.len` counts Unicode scalar values; `.byte_len` counts UTF-8 bytes
     // (spec `types/primitive-types.md`).
-    let out = run_ok(r#"fn main() { let s = "😀"; print(s.len); print(s.byteLen) }"#);
+    let out = run_ok(r#"fn main() { let s = "😀"; print(s.len); print(s.byte_len) }"#);
     assert_eq!(out, vec!["1", "4"]);
 }
 
@@ -1465,9 +1465,8 @@ fn builtin_call_with_named_arguments_ignores_labels() {
 fn missing_map_key_reads_null() {
     // Absence is `null`: `get` reads a missing key without trapping (spec
     // `types/composite-types.md`).
-    let out = run_ok(
-        r#"fn main() { let o: Map<string, unknown> = {} print(o.get("missing") == null) }"#,
-    );
+    let out =
+        run_ok(r#"fn main() { let o: Map<string, unknown> = {} print(o.get("missing") == null) }"#);
     assert_eq!(out, vec!["true"]);
 } // ── break / continue ──────────────────────────────────────────────────────
 
@@ -1714,9 +1713,7 @@ fn list_push_returns_unit_and_appends() {
 #[test]
 fn list_pop_and_shift() {
     assert_eq!(
-        run_ok(
-            r#"fn main() { let a = [1, 2, 3]; print(a.pop()); print(a.shift()); print(a) }"#
-        ),
+        run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.pop()); print(a.shift()); print(a) }"#),
         vec!["3", "1", "[2]"]
     );
 }
@@ -1724,9 +1721,7 @@ fn list_pop_and_shift() {
 #[test]
 fn list_pop_and_shift_empty_return_null() {
     assert_eq!(
-        run_ok(
-            r#"fn main() { let a: List<int> = []; print(a.pop()); print(a.shift()) }"#
-        ),
+        run_ok(r#"fn main() { let a: List<int> = []; print(a.pop()); print(a.shift()) }"#),
         vec!["null", "null"]
     );
 }
@@ -1778,9 +1773,7 @@ fn list_clear() {
 #[test]
 fn list_slice() {
     assert_eq!(
-        run_ok(
-            r#"fn main() { let a = [1, 2, 3, 4, 5]; print(a.slice(1, 4)); print(a.slice(1)) }"#
-        ),
+        run_ok(r#"fn main() { let a = [1, 2, 3, 4, 5]; print(a.slice(1, 4)); print(a.slice(1)) }"#),
         vec!["[2, 3, 4]", "[2, 3, 4, 5]"]
     );
 }
@@ -1795,7 +1788,7 @@ fn list_slice_out_of_bounds_fails() {
 fn list_index_of_last_index_of_includes() {
     assert_eq!(
         run_ok(
-            r#"fn main() { let a = [10, 20, 10]; print(a.indexOf(10)); print(a.lastIndexOf(10)); print(a.includes(20)); print(a.includes(99)) }"#
+            r#"fn main() { let a = [10, 20, 10]; print(a.index_of(10)); print(a.last_index_of(10)); print(a.includes(20)); print(a.includes(99)) }"#
         ),
         vec!["0", "2", "true", "false"]
     );
@@ -1828,9 +1821,7 @@ fn list_entries() {
 #[test]
 fn list_map_receives_element_only() {
     assert_eq!(
-        run_ok(
-            r#"fn main() { let a = [1, 2, 3]; print(a.map(fn(v) { v * 2 })) }"#
-        ),
+        run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.map(fn(v) { v * 2 })) }"#),
         vec!["[2, 4, 6]"]
     );
 }
@@ -1838,9 +1829,7 @@ fn list_map_receives_element_only() {
 #[test]
 fn list_filter() {
     assert_eq!(
-        run_ok(
-            r#"fn main() { let a = [1, 2, 3, 4]; print(a.filter(fn(v) { v % 2 == 0 })) }"#
-        ),
+        run_ok(r#"fn main() { let a = [1, 2, 3, 4]; print(a.filter(fn(v) { v % 2 == 0 })) }"#),
         vec!["[2, 4]"]
     );
 }
@@ -1849,7 +1838,7 @@ fn list_filter() {
 fn list_find_and_find_index() {
     assert_eq!(
         run_ok(
-            r#"fn main() { let a = [1, 2, 3]; print(a.find(fn(v) { v > 1 })); print(a.findIndex(fn(v) { v > 1 })); print(a.find(fn(v) { v > 9 })); print(a.findIndex(fn(v) { v > 9 })) }"#
+            r#"fn main() { let a = [1, 2, 3]; print(a.find(fn(v) { v > 1 })); print(a.find_index(fn(v) { v > 1 })); print(a.find(fn(v) { v > 9 })); print(a.find_index(fn(v) { v > 9 })) }"#
         ),
         vec!["2", "1", "null", "-1"]
     );
@@ -1868,22 +1857,17 @@ fn list_some_and_every() {
 #[test]
 fn list_reduce_requires_initial() {
     assert_eq!(
-        run_ok(
-            r#"fn main() { let a = [1, 2, 3]; print(a.reduce(fn(acc, v) { acc + v }, 10)) }"#
-        ),
+        run_ok(r#"fn main() { let a = [1, 2, 3]; print(a.reduce(fn(acc, v) { acc + v }, 10)) }"#),
         vec!["16"]
     );
-    let err = run(r#"fn main() { let a = [1, 2]; a.reduce(fn(acc, v) { acc + v }) }"#)
-        .unwrap_err();
+    let err = run(r#"fn main() { let a = [1, 2]; a.reduce(fn(acc, v) { acc + v }) }"#).unwrap_err();
     assert!(err.message.contains("2 arguments"), "{}", err.message);
 }
 
 #[test]
 fn list_sort_with_comparator() {
     assert_eq!(
-        run_ok(
-            r#"fn main() { let a = [3, 1, 2]; a.sort(fn(x, y) { x - y }); print(a) }"#
-        ),
+        run_ok(r#"fn main() { let a = [3, 1, 2]; a.sort(fn(x, y) { x - y }); print(a) }"#),
         vec!["[1, 2, 3]"]
     );
 }
@@ -1892,7 +1876,7 @@ fn list_sort_with_comparator() {
 fn list_for_each_receives_element_only() {
     assert_eq!(
         run_ok(
-            r#"fn main() { let a = [10, 20]; let mut s = 0; a.forEach(fn(v) { s = s + v }); print(s) }"#
+            r#"fn main() { let a = [10, 20]; let mut s = 0; a.for_each(fn(v) { s = s + v }); print(s) }"#
         ),
         vec!["30"]
     );
@@ -1905,7 +1889,7 @@ fn list_for_each_receives_element_only() {
 #[test]
 fn string_len_and_byte_len() {
     assert_eq!(
-        run_ok(r#"fn main() { let s = "héllo"; print(s.len); print(s.byteLen) }"#),
+        run_ok(r#"fn main() { let s = "héllo"; print(s.len); print(s.byte_len) }"#),
         vec!["5", "6"]
     );
 }
@@ -1913,7 +1897,7 @@ fn string_len_and_byte_len() {
 #[test]
 fn string_code_at() {
     assert_eq!(
-        run_ok(r#"fn main() { print("Aé".codeAt(0)); print("Aé".codeAt(1)) }"#),
+        run_ok(r#"fn main() { print("Aé".code_at(0)); print("Aé".code_at(1)) }"#),
         vec!["65", "233"]
     );
 }
@@ -1962,7 +1946,7 @@ fn map_keys_values_entries() {
 fn map_from_entries() {
     assert_eq!(
         run_ok(
-            r#"fn main() { let m = Map::fromEntries([("a", 1), ("a", 2)]); print(m.get("a")); print(m.size) }"#
+            r#"fn main() { let m = Map::from_entries([("a", 1), ("a", 2)]); print(m.get("a")); print(m.size) }"#
         ),
         vec!["2", "1"]
     );
@@ -1970,15 +1954,14 @@ fn map_from_entries() {
 
 #[test]
 fn map_subscript_is_rejected() {
-    let err = run(r#"fn main() { let m: Map<string, int> = { a: 1 }; print(m["a"]) }"#)
-        .unwrap_err();
+    let err =
+        run(r#"fn main() { let m: Map<string, int> = { a: 1 }; print(m["a"]) }"#).unwrap_err();
     assert!(err.message.contains("not subscriptable"), "{}", err.message);
 }
 
 #[test]
 fn map_member_access_is_rejected() {
-    let err = run(r#"fn main() { let m: Map<string, int> = { a: 1 }; print(m.a) }"#)
-        .unwrap_err();
+    let err = run(r#"fn main() { let m: Map<string, int> = { a: 1 }; print(m.a) }"#).unwrap_err();
     assert!(err.message.contains("no member"), "{}", err.message);
 }
 
@@ -1986,7 +1969,7 @@ fn map_member_access_is_rejected() {
 fn set_has_insert_remove_size() {
     assert_eq!(
         run_ok(
-            r#"fn main() { let mut s = Set::fromList([1, 2, 2]); print(s.size); print(s.has(2)); print(s.insert(2)); print(s.insert(3)); print(s.remove(1)); print(s.size) }"#
+            r#"fn main() { let mut s = Set::from_list([1, 2, 2]); print(s.size); print(s.has(2)); print(s.insert(2)); print(s.insert(3)); print(s.remove(1)); print(s.size) }"#
         ),
         vec!["2", "true", "false", "true", "true", "2"]
     );
@@ -2424,10 +2407,10 @@ fn math_to_fixed_spec_examples_run() {
     let out = run_ok(
         r#"
             fn main() {
-                print(std::math::toFixed(3.14159, 2))
-                print(std::math::toFixed(2.5, 0))
-                print(std::math::toFixed(-2.5, 0))
-                print(std::math::toFixed(3.1, 2))
+                print(std::math::to_fixed(3.14159, 2))
+                print(std::math::to_fixed(2.5, 0))
+                print(std::math::to_fixed(-2.5, 0))
+                print(std::math::to_fixed(3.1, 2))
             }
         "#,
     );
@@ -2439,11 +2422,11 @@ fn math_to_fixed_special_values_and_negative_zero() {
     let out = run_ok(
         r#"
             fn main() {
-                print(std::math::toFixed(std::math::NAN, 3))
-                print(std::math::toFixed(std::math::INFINITY, 3))
-                print(std::math::toFixed(-std::math::INFINITY, 3))
-                print(std::math::toFixed(0.0, 0))
-                print(std::math::toFixed(-0.0, 0))
+                print(std::math::to_fixed(std::math::NAN, 3))
+                print(std::math::to_fixed(std::math::INFINITY, 3))
+                print(std::math::to_fixed(-std::math::INFINITY, 3))
+                print(std::math::to_fixed(0.0, 0))
+                print(std::math::to_fixed(-0.0, 0))
             }
         "#,
     );
@@ -2456,7 +2439,7 @@ fn math_to_fixed_out_of_range_digits_is_a_runtime_failure() {
         let err = run(format!(
             r#"
             fn main() {{
-                print(std::math::toFixed(1.5, {digits}))
+                print(std::math::to_fixed(1.5, {digits}))
             }}
         "#
         )
@@ -2464,7 +2447,7 @@ fn math_to_fixed_out_of_range_digits_is_a_runtime_failure() {
         .unwrap_err();
         assert!(
             err.message
-                .contains("`std::math::toFixed` digits must be an integer in 0..=15"),
+                .contains("`std::math::to_fixed` digits must be an integer in 0..=15"),
             "digits {digits}: {}",
             err.message
         );
@@ -2491,9 +2474,9 @@ fn time_clocks_read_sane_values() {
             fn main() {
                 let wall = std::time::now()
                 let mono = std::time::monotonic()
-                let nanos = std::time::monotonicNanos()
+                let nanos = std::time::monotonic_nanos()
                 print(str(wall > 0 and mono >= 0 and nanos >= 0))
-                print(str(std::time::nowNanos() >= 0))
+                print(str(std::time::now_nanos() >= 0))
             }
         "#,
     );
@@ -2506,7 +2489,7 @@ fn time_clocks_read_sane_values() {
 fn derived_struct_spec_example_all_string_forms() {
     // spec `types/traits.md`: `#Derive(Debug)` supplies the structural
     // form `print` consults; `Display` is written by hand and backs `str`,
-    // `${…}`, and the derived `toString` action.
+    // `${…}`, and the derived `to_string` action.
     let out = run_annotated(
         r#"
             #Derive(Debug)
@@ -2521,7 +2504,7 @@ fn derived_struct_spec_example_all_string_forms() {
                 print(u)
                 print(str(u))
                 print(`${u}`)
-                print(u.toString())
+                print(u.to_string())
                 print(Display::display(u, Format(precision: null, alternate: false)))
             }
         "#,
@@ -2600,7 +2583,7 @@ fn derived_enum_variants_render_spec_form() {
 fn derived_structs_do_not_cross_types() {
     // Regression: instance methods are dispatched through a weak
     // pointer-identity side table, so a second derived struct must not reuse
-    // the first struct's renderer (the bare `toString` member key matches
+    // the first struct's renderer (the bare `to_string` member key matches
     // across types otherwise).
     let out = run_annotated(
         r#"
@@ -2633,7 +2616,7 @@ fn derived_structs_do_not_cross_types() {
 #[test]
 fn manual_to_string_impl_runs_on_all_forms() {
     // A hand-written `impl Display` answers member, qualified, and `str`
-    // forms alike, and grants the derived `toString` action. A derived
+    // forms alike, and grants the derived `to_string` action. A derived
     // struct living in the same program must not steal the dispatch.
     let out = run_annotated(
         r#"
@@ -2647,7 +2630,7 @@ fn manual_to_string_impl_runs_on_all_forms() {
                 let h = Hand(v: 1)
                 let p = Plain(n: 9)
                 print(str(h))
-                print(h.toString())
+                print(h.to_string())
                 print(Display::display(h, Format(precision: null, alternate: false)))
                 print(p)
             }
@@ -2798,7 +2781,7 @@ fn map_and_set_iterate() {
     );
     assert_eq!(
         run_ok(
-            r#"fn main() { let s = Set::fromList([1, 2, 2]); let mut total = 0; for v in s { total = total + v } print(total) }"#
+            r#"fn main() { let s = Set::from_list([1, 2, 2]); let mut total = 0; for v in s { total = total + v } print(total) }"#
         ),
         vec!["3"]
     );
@@ -2869,7 +2852,7 @@ fn array_literal_members_and_iteration_run() {
                 print(a[1])
                 print(a.map(fn(x) { x * 2 }))
                 print(a.slice(0, 2))
-                print(a.indexOf(2))
+                print(a.index_of(2))
                 let mut total = 0
                 for x in a { total = total + x }
                 print(total)
@@ -2883,9 +2866,7 @@ fn array_literal_members_and_iteration_run() {
 #[test]
 fn array_filled_runs() {
     assert_eq!(
-        run_ok(
-            r#"fn main() { let a = Array::filled<int, 4>(7); print(a); print(a.len) }"#
-        ),
+        run_ok(r#"fn main() { let a = Array::filled<int, 4>(7); print(a); print(a.len) }"#),
         vec!["[7, 7, 7, 7]", "4"]
     );
 }
@@ -2906,11 +2887,11 @@ fn display_receives_format_and_backs_to_string() {
                     return `${self.cents}:${p}:${format.alternate}`
                 }
             }
-            fn show<T: Display>(x: T): string { return x.toString() }
+            fn show<T: Display>(x: T): string { return x.to_string() }
             fn main() {
                 let m = Money(cents: 5)
                 print(m.display(Format(precision: 2, alternate: true)))
-                print(m.toString())
+                print(m.to_string())
                 print(str(m))
                 print(`${m}`)
                 print(show(m))
@@ -2920,7 +2901,13 @@ fn display_receives_format_and_backs_to_string() {
     .unwrap_or_else(|e| panic!("{}", e.message));
     assert_eq!(
         out,
-        vec!["5:2:true", "5:0:false", "5:0:false", "5:0:false", "5:0:false"]
+        vec![
+            "5:2:true",
+            "5:0:false",
+            "5:0:false",
+            "5:0:false",
+            "5:0:false"
+        ]
     );
 }
 
@@ -2949,12 +2936,7 @@ fn print_prefers_display_then_debug_then_table() {
     .unwrap_or_else(|e| panic!("{}", e.message));
     assert_eq!(
         out,
-        vec![
-            "DebugOnly(v: 1)",
-            "shown",
-            "Plain.A",
-            "Plain.B(3)",
-        ]
+        vec!["DebugOnly(v: 1)", "shown", "Plain.A", "Plain.B(3)",]
     );
 }
 
@@ -2984,9 +2966,7 @@ fn derive_debug_reaches_structural_positions() {
     .unwrap_or_else(|e| panic!("{}", e.message));
     assert_eq!(
         out,
-        vec![
-            "Wrap(xs: [User(name: A)], maybe: User(name: A), r: Result::Ok(User(name: A)))"
-        ]
+        vec!["Wrap(xs: [User(name: A)], maybe: User(name: A), r: Result::Ok(User(name: A)))"]
     );
 }
 

@@ -3,8 +3,8 @@
 // 只是 Err。本例在系统临时目录下自建一个干净沙箱，输出全部由自己写的
 // 文件推导，宿主无关。
 fn main() {
-    // 沙箱：tempDir 建唯一空目录，结尾 removeDir 清场
-    match std::fs::tempDir() {
+    // 沙箱：temp_dir 建唯一空目录，结尾 remove_dir 清场
+    match std::fs::temp_dir() {
         Result::Ok(dir) => {
             let a = std::path::join(dir, "a.txt")
             let b = std::path::join(std::path::join(dir, "sub"), "b.txt")
@@ -31,11 +31,11 @@ fn main() {
             }
 
             // 字节读写：List<u8> 往返
-            match std::fs::writeBytes(a, [104, 105]) {
+            match std::fs::write_bytes(a, [104, 105]) {
                 Result::Ok(_) => print("bytes written") // bytes written
                 Result::Err(e) => print(e.message)
             }
-            match std::fs::readBytes(a) {
+            match std::fs::read_bytes(a) {
                 Result::Ok(bs) => {
                     print(bs.len) // 2
                     print(bs[0]) // 104 —— 'h'
@@ -43,7 +43,7 @@ fn main() {
                 Result::Err(e) => print(e.message)
             }
 
-            // 目录：mkdir / readDir（排序裸名）/ walk（递归相对路径）
+            // 目录：mkdir / read_dir（排序裸名）/ walk（递归相对路径）
             match std::fs::mkdir(std::path::join(dir, "sub")) {
                 Result::Ok(_) => print("mkdir") // mkdir
                 Result::Err(e) => print(e.message)
@@ -52,7 +52,7 @@ fn main() {
                 Result::Ok(_) => print("nested written") // nested written
                 Result::Err(e) => print(e.message)
             }
-            match std::fs::readDir(dir) {
+            match std::fs::read_dir(dir) {
                 Result::Ok(names) => print(names) // [a.txt, sub]
                 Result::Err(e) => print(e.message)
             }
@@ -78,7 +78,7 @@ fn main() {
             }
 
             // 临时文件：唯一未用的路径，立刻是空文件
-            match std::fs::tempFile("xulo-demo-") {
+            match std::fs::temp_file("xulo-demo-") {
                 Result::Ok(tmp) => {
                     match std::fs::read(tmp) {
                         Result::Ok(text) => print(text == "") // true —— 空文件
@@ -92,7 +92,7 @@ fn main() {
                 Result::Err(e) => print(e.message)
             }
 
-            // 清场：先 remove 全部文件，空目录再 removeDir
+            // 清场：先 remove 全部文件，空目录再 remove_dir
             match std::fs::remove(b) {
                 Result::Ok(_) => print("file removed") // file removed
                 Result::Err(e) => print(e.message)
@@ -105,11 +105,11 @@ fn main() {
                 Result::Ok(_) => print("d removed") // d removed
                 Result::Err(e) => print(e.message)
             }
-            match std::fs::removeDir(std::path::join(dir, "sub")) {
+            match std::fs::remove_dir(std::path::join(dir, "sub")) {
                 Result::Ok(_) => print("sub removed") // sub removed
                 Result::Err(e) => print(e.message)
             }
-            match std::fs::removeDir(dir) {
+            match std::fs::remove_dir(dir) {
                 Result::Ok(_) => print("dir removed") // dir removed
                 Result::Err(e) => print(e.message)
             }

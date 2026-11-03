@@ -50,7 +50,7 @@ pub type Result<T> = {
 ## `stores/app.xulo`
 
 ```xulo
-import { createStore } from "@xulo/store"
+import { create_store } from "@xulo/store"
 import type { User, Theme } from "../types"
 
 type AppState = {
@@ -62,28 +62,28 @@ type AppState = {
 }
 
 // ✅ 对象字面量用括号包裹
-fn setUser(state: AppState, user: User?): AppState {
+fn set_user(state: AppState, user: User?): AppState {
   ({ ...state, user: user, loading: false })
 }
 
-fn setTheme(state: AppState, theme: Theme): AppState {
+fn set_theme(state: AppState, theme: Theme): AppState {
   ({ ...state, theme: theme })
 }
 
-fn setLoading(state: AppState, loading: bool): AppState {
+fn set_loading(state: AppState, loading: bool): AppState {
   ({ ...state, loading: loading })
 }
 
-fn setError(state: AppState, error: string): AppState {
+fn set_error(state: AppState, error: string): AppState {
   ({ ...state, error: error, loading: false })
 }
 
-fn addNotification(state: AppState, message: string): AppState {
+fn add_notification(state: AppState, message: string): AppState {
   ({ ...state, notifications: state.notifications + [message] })
 }
 
-// 注意：当前实现暂不支持显式泛型调用（`createStore<AppState>`），故省略类型实参。
-pub const useAppStore = createStore(
+// 注意：当前实现暂不支持显式泛型调用（`create_store<AppState>`），故省略类型实参。
+pub const use_app_store = create_store(
   {
     user: null,
     theme: Theme::Light,
@@ -92,26 +92,26 @@ pub const useAppStore = createStore(
     error: null
   },
   {
-    setUser: setUser,
-    setTheme: setTheme,
-    setLoading: setLoading,
-    setError: setError,
-    addNotification: addNotification
+    set_user: set_user,
+    set_theme: set_theme,
+    set_loading: set_loading,
+    set_error: set_error,
+    add_notification: add_notification
   }
 )
 
-// ✅ 异步函数直接调用 useAppStore()，不使用 @Store
-pub fn fetchUser(id: string): async {
-  const store = useAppStore()
+// ✅ 异步函数直接调用 use_app_store()，不使用 @Store
+pub fn fetch_user(id: string): async {
+  const store = use_app_store()
 
-  store.actions.setLoading(true)
+  store.actions.set_loading(true)
   try {
     let response = await fetch("/api/users/" + id)
     let data = await response.json()
-    store.actions.setUser(data)
-    store.actions.addNotification("User loaded: " + data.name)
+    store.actions.set_user(data)
+    store.actions.add_notification("User loaded: " + data.name)
   } catch (e) {
-    store.actions.setError(e.message)
+    store.actions.set_error(e.message)
   }
 }
 ```
@@ -156,7 +156,7 @@ pub fn OutlineButton(
 ## `pages/profile.xulo`
 
 ```xulo
-import { useAppStore, fetchUser } from "../stores/app"
+import { use_app_store, fetch_user } from "../stores/app"
 import { PrimaryButton, OutlineButton } from "../components/button"
 import type { User, Theme, Status } from "../types"
 
@@ -167,18 +167,18 @@ type Props = {
 pub fn UserProfile(props: Props): View {
   // ✅ @State/@Store/@Effect 只能在返回 View 的函数顶层使用
   @State let editing: bool = false
-  @State let editName: string = ""
-  @Store const { user, theme, loading, error } = useAppStore()
-  @Store const { setTheme, addNotification } = useAppStore()
+  @State let edit_name: string = ""
+  @Store const { user, theme, loading, error } = use_app_store()
+  @Store const { set_theme, add_notification } = use_app_store()
 
   @Effect fn() {
-    fetchUser(props.id)
+    fetch_user(props.id)
   }
 
   // 当 user 变化时更新编辑字段
   @Effect fn() {
     if user != null {
-      editName = user.name
+      edit_name = user.name
     }
   }, [user]
 
@@ -188,12 +188,12 @@ pub fn UserProfile(props: Props): View {
         Text("User Profile", weight: "bold", size: 24)
         Spacer()
         Button(onClick: fn() {
-          let newTheme = match theme {
+          let new_theme = match theme {
             Theme::Light => Theme::Dark
             Theme::Dark => Theme::Light
             Theme::System => Theme::Light
           }
-          setTheme(newTheme)
+          set_theme(new_theme)
         }) {
           Text(match theme {
             Theme::Light => "🌙"
@@ -210,16 +210,16 @@ pub fn UserProfile(props: Props): View {
       } else if user != null {
         VStack(spacing: 8) {
           if editing {
-            Input(value: $editName)
+            Input(value: $edit_name)
             HStack(spacing: 12) {
               PrimaryButton(label: "Save", onClick: fn() {
                 // 保存逻辑
                 editing = false
-                addNotification("Name updated to: " + editName)
+                add_notification("Name updated to: " + edit_name)
               })
               OutlineButton(label: "Cancel", onClick: fn() {
                 editing = false
-                editName = user?.name ?? ""
+                edit_name = user?.name ?? ""
               })
             }
           } else {
@@ -248,11 +248,11 @@ pub fn UserProfile(props: Props): View {
 ```xulo
 import { Screen, VStack, Center } from "@xulo/ui"
 import { UserProfile } from "./pages/profile"
-import { useAppStore } from "./stores/app"
+import { use_app_store } from "./stores/app"
 import type { Theme } from "./types"
 
 fn main(): View {
-  @Store const { theme } = useAppStore()
+  @Store const { theme } = use_app_store()
 
   Screen(
     background: match theme {

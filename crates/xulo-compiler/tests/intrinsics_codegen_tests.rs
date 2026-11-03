@@ -106,14 +106,14 @@ fn test_math_constants_print() {
 
 #[test]
 fn test_tofixed_string_result() {
-    // toFixed 返回字符串槽（tag=0）；特殊值忽略 digits 的规则与解释器一致
+    // to_fixed 返回字符串槽（tag=0）；特殊值忽略 digits 的规则与解释器一致
     let out = compile_and_run(
         r#"fn main() {
-    print(std::math::toFixed(3.14159, 2))
-    print(std::math::toFixed(2.5, 0))
-    print(std::math::toFixed(-1.05, 1))
-    print(std::math::toFixed(0.5, 3))
-    print(std::math::toFixed(std::math::INFINITY, 2))
+    print(std::math::to_fixed(3.14159, 2))
+    print(std::math::to_fixed(2.5, 0))
+    print(std::math::to_fixed(-1.05, 1))
+    print(std::math::to_fixed(0.5, 3))
+    print(std::math::to_fixed(std::math::INFINITY, 2))
 }"#,
     );
     let expected: Vec<String> = ["3.14", "3", "-1.1", "0.500", "Infinity"]
@@ -128,9 +128,9 @@ fn test_time_clock_comparisons() {
     let out = compile_and_run(
         r#"fn main() {
     print(std::time::now() >= 0)
-    print(std::time::nowNanos() > 0)
+    print(std::time::now_nanos() > 0)
     print(std::time::monotonic() >= 0)
-    print(std::time::monotonicNanos() >= 0)
+    print(std::time::monotonic_nanos() >= 0)
 }"#,
     );
     let expected: Vec<String> = ["true", "true", "true", "true"]
@@ -305,7 +305,7 @@ fn main() {
     std::io::eprint("")
     std::io::eprintln("")
     std::io::flush()
-    std::io::readLine()
+    std::io::read_line()
     std::io::read()
 }
 "#,
@@ -551,33 +551,33 @@ fn test_std_net_loopback_echo_round_trip() {
     let out = compile_and_run(
         r#"
 fn main() {
-    match std::net::tcpListen("127.0.0.1:0") {
+    match std::net::tcp_listen("127.0.0.1:0") {
         Result::Ok(server) => {
-            match std::net::sockLocalAddr(server) {
+            match std::net::sock_local_addr(server) {
                 Result::Ok(addr) => {
-                    match std::net::tcpConnect(addr) {
+                    match std::net::tcp_connect(addr) {
                         Result::Ok(client) => {
-                            match std::net::tcpAccept(server) {
+                            match std::net::tcp_accept(server) {
                                 Result::Ok(accepted) => {
-                                    match std::net::sockWrite(client, "ping") {
+                                    match std::net::sock_write(client, "ping") {
                                         Result::Ok(n) => print(n)
                                         Result::Err(e) => print(e.message)
                                     }
-                                    match std::net::sockRead(accepted, 64) {
+                                    match std::net::sock_read(accepted, 64) {
                                         Result::Ok(text) => print(text ?? "eof")
                                         Result::Err(e) => print(e.message)
                                     }
-                                    match std::net::sockWrite(accepted, "pong") {
+                                    match std::net::sock_write(accepted, "pong") {
                                         Result::Ok(n) => print(n)
                                         Result::Err(e) => print(e.message)
                                     }
-                                    match std::net::sockRead(client, 64) {
+                                    match std::net::sock_read(client, 64) {
                                         Result::Ok(text) => print(text ?? "eof")
                                         Result::Err(e) => print(e.message)
                                     }
-                                    std::net::sockClose(client)
-                                    std::net::sockClose(accepted)
-                                    std::net::sockClose(server)
+                                    std::net::sock_close(client)
+                                    std::net::sock_close(accepted)
+                                    std::net::sock_close(server)
                                 }
                                 Result::Err(e) => print(e.message)
                             }
@@ -603,17 +603,17 @@ fn test_std_net_error_payloads_surface_messages() {
     let out = compile_and_run(
         r#"
 fn main() {
-    match std::net::tcpListen("127.0.0.1:0") {
+    match std::net::tcp_listen("127.0.0.1:0") {
         Result::Ok(server) => {
-            match std::net::sockWrite(server, "x") {
+            match std::net::sock_write(server, "x") {
                 Result::Ok(_) => print("wrote")
                 Result::Err(e) => print(e.message)
             }
-            match std::net::sockRead(999999, 8) {
+            match std::net::sock_read(999999, 8) {
                 Result::Ok(_) => print("read")
                 Result::Err(e) => print(e.message)
             }
-            std::net::sockClose(server)
+            std::net::sock_close(server)
         }
         Result::Err(e) => print(e.message)
     }
@@ -632,16 +632,16 @@ fn test_aot_object_references_net_symbols() {
     let bytes = object_bytes(
         r#"
 fn main() {
-    std::net::tcpListen("127.0.0.1:0")
-    std::net::tcpConnect("127.0.0.1:1")
-    std::net::tcpAccept(1)
-    std::net::sockRead(1, 8)
-    std::net::sockWrite(1, "x")
-    std::net::sockShutdown(1)
-    std::net::sockShutdownWrite(1)
-    std::net::sockClose(1)
-    std::net::sockLocalAddr(1)
-    std::net::sockPeerAddr(1)
+    std::net::tcp_listen("127.0.0.1:0")
+    std::net::tcp_connect("127.0.0.1:1")
+    std::net::tcp_accept(1)
+    std::net::sock_read(1, 8)
+    std::net::sock_write(1, "x")
+    std::net::sock_shutdown(1)
+    std::net::sock_shutdown_write(1)
+    std::net::sock_close(1)
+    std::net::sock_local_addr(1)
+    std::net::sock_peer_addr(1)
 }
 "#,
     );
@@ -670,13 +670,13 @@ fn test_std_net_bare_import_lowers_like_the_qualified_form() {
 use std::net::*;
 
 fn main() {
-    match tcpListen("127.0.0.1:0") {
+    match tcp_listen("127.0.0.1:0") {
         Result::Ok(server) => {
-            match sockLocalAddr(server) {
+            match sock_local_addr(server) {
                 Result::Ok(addr) => print(addr)
                 Result::Err(e) => print(e.message)
             }
-            sockClose(server)
+            sock_close(server)
         }
         Result::Err(e) => print(e.message)
     }
@@ -809,7 +809,10 @@ fn main() {
 "#,
     );
     assert_eq!(out.len(), 2, "unexpected: {out:?}");
-    assert!(out[0].contains("timed out after 300 ms"), "unexpected: {out:?}");
+    assert!(
+        out[0].contains("timed out after 300 ms"),
+        "unexpected: {out:?}"
+    );
     assert_eq!(out[1], "edge\n");
 }
 
@@ -1236,7 +1239,11 @@ fn main() {{
     ));
     assert_eq!(
         out,
-        vec!["200".to_string(), "from aot".to_string(), "from aot".to_string()],
+        vec![
+            "200".to_string(),
+            "from aot".to_string(),
+            "from aot".to_string()
+        ],
         "unexpected: {out:?}"
     );
 }
@@ -1306,11 +1313,7 @@ fn test_aot_gap_http_server_needs_the_interpreter() {
     ] {
         let err = compile_to_ir(src, Path::new("test.xulo"))
             .expect_err("server/object members have no AOT lowering");
-        assert!(
-            err.message.contains(needle),
-            "{src}: {}",
-            err.message
-        );
+        assert!(err.message.contains(needle), "{src}: {}", err.message);
     }
 }
 
@@ -1323,7 +1326,7 @@ fn main() {
     std::time::format(0)
     std::time::parse("1970-01-01T00:00:00.000Z")
     std::time::parts(0)
-    std::time::fromParts(2026, 10, 26)
+    std::time::from_parts(2026, 10, 26)
     std::time::weekday(0)
 }
 "#,
@@ -1340,13 +1343,13 @@ fn main() {
 }
 
 /// `std::time` 日历的编译路径：format/parse 交换、parts 字段读取、
-/// fromParts 的可选时间字段补齐（缺省 0.0），与解释器同构。
+/// from_parts 的可选时间字段补齐（缺省 0.0），与解释器同构。
 #[test]
 fn test_std_time_calendar_roundtrips_in_the_aot_path() {
     let out = compile_and_run(
         r#"
 fn main() {
-    let noon = std::time::fromParts(2026, 10, 26, 12)
+    let noon = std::time::from_parts(2026, 10, 26, 12)
     print(std::time::format(noon))
     match std::time::parse("2026-10-26T12:00:00.000Z") {
         Result::Ok(ms) => print(ms == noon)
@@ -1356,7 +1359,7 @@ fn main() {
     print(f.year)
     print(f.day)
     print(str(std::time::weekday(noon)))
-    print(std::time::format(std::time::fromParts(2026, 10, 26)))
+    print(std::time::format(std::time::from_parts(2026, 10, 26)))
 }
 "#,
     );

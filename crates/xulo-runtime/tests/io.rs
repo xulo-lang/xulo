@@ -5,7 +5,7 @@
 //! These members write the *real* process streams, which the interpreter's
 //! captured `print` buffer never sees — so a test observes them through the
 //! `Result` it returns, and writes an empty payload whenever it must not
-//! disturb the harness. End-of-input behaviour (`readLine`/`read`) needs a
+//! disturb the harness. End-of-input behaviour (`read_line`/`read`) needs a
 //! controlled stdin and lives in the CLI integration tests instead.
 
 use xulo_core::error::XuloError;

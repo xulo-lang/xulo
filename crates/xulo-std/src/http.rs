@@ -42,13 +42,13 @@ impl Request {
         find_header(&self.headers, name).map(|h| h.value.clone())
     }
 
-    /// `Request::queryValue(name)`: the first query pair of that exact name,
+    /// `Request::query_value(name)`: the first query pair of that exact name,
     /// `None` when absent.
     pub fn query_value(&self, name: &str) -> Option<String> {
         find_pair(&self.query, name).cloned()
     }
 
-    /// `Request::formValue(name)`: the first form part of that exact name —
+    /// `Request::form_value(name)`: the first form part of that exact name —
     /// decoded only for a form body — `None` when absent.
     pub fn form_value(&self, name: &str) -> Option<String> {
         find_pair(&self.form, name).cloned()
@@ -177,14 +177,14 @@ pub fn parse_url(url: &str) -> Result<Url, String> {
         return Err("unsupported scheme `https` (version 0.1 is plain `http://` only)".to_string());
     } else if url.contains("://") {
         let scheme = url.split("://").next().unwrap_or("");
-        return Err(format!("unsupported scheme `{scheme}` (only `http` is accepted)"));
+        return Err(format!(
+            "unsupported scheme `{scheme}` (only `http` is accepted)"
+        ));
     } else {
         return Err(format!("URL must start with `http://`: `{url}`"));
     };
     // The authority runs until the path, query, or fragment begins.
-    let cut = rest
-        .find(['/', '?', '#'])
-        .unwrap_or(rest.len());
+    let cut = rest.find(['/', '?', '#']).unwrap_or(rest.len());
     let authority = &rest[..cut];
     let remainder = &rest[cut..];
     if authority.is_empty() {
@@ -207,9 +207,8 @@ pub fn parse_url(url: &str) -> Result<Url, String> {
         if host.is_empty() {
             return Err(format!("URL has an empty host: `{url}`"));
         }
-        let port = parse_port(&format!(":{port}"), url)?.ok_or_else(|| {
-            format!("URL is missing a port after `:`: `{url}`")
-        })?;
+        let port = parse_port(&format!(":{port}"), url)?
+            .ok_or_else(|| format!("URL is missing a port after `:`: `{url}`"))?;
         (host.to_string(), port)
     } else {
         (authority.to_string(), 80)
@@ -318,12 +317,10 @@ pub fn request(
     timeout: Option<u64>,
 ) -> Result<Response, String> {
     let budget = Budget::new(timeout, url.to_string());
-    if method.is_empty()
-        || method
-            .bytes()
-            .any(|b| b <= 0x20 || b >= 0x7f)
-    {
-        return Err(format!("method contains a space, a control character, or a non-ASCII byte: `{method}`"));
+    if method.is_empty() || method.bytes().any(|b| b <= 0x20 || b >= 0x7f) {
+        return Err(format!(
+            "method contains a space, a control character, or a non-ASCII byte: `{method}`"
+        ));
     }
     let headers = headers.unwrap_or_default();
     for h in &headers {
@@ -397,7 +394,10 @@ fn connect(host: &str, port: u16, budget: &Budget) -> Result<TcpStream, String> 
         match attempt {
             Ok(s) => return Ok(s),
             Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
-                return Err(format!("`{}` timed out after {} ms", budget.what, budget.ms));
+                return Err(format!(
+                    "`{}` timed out after {} ms",
+                    budget.what, budget.ms
+                ));
             }
             Err(e) => last = format!("cannot connect to `{host}:{port}`: {e}"),
         }
@@ -484,11 +484,7 @@ fn read_head_lines<R: BufRead>(reader: &mut R, budget: &Budget) -> Result<Vec<St
 }
 
 /// Read exactly `n` more bytes.
-fn read_exact_bytes<R: Read>(
-    reader: &mut R,
-    n: usize,
-    budget: &Budget,
-) -> Result<Vec<u8>, String> {
+fn read_exact_bytes<R: Read>(reader: &mut R, n: usize, budget: &Budget) -> Result<Vec<u8>, String> {
     let mut buf = vec![0u8; n];
     let mut got = 0;
     while got < n {
@@ -586,7 +582,9 @@ fn read_response(stream: TcpStream, is_head: bool, budget: &Budget) -> Result<Re
     }
     let status: i64 = code.parse().unwrap();
     if (100..=199).contains(&status) {
-        return Err(format!("informational status `{status}` is a protocol violation"));
+        return Err(format!(
+            "informational status `{status}` is a protocol violation"
+        ));
     }
     let lines = read_head_lines(&mut reader, budget)?;
     let headers = parse_header_lines(&lines)?;
@@ -672,7 +670,11 @@ fn split_host_port(addr: &str) -> Result<(String, u16), String> {
             .ok_or_else(|| format!("`{addr}` is missing a port"))?;
         (host.to_string(), port.to_string())
     };
-    if host.trim_start_matches('[').trim_end_matches(']').is_empty() {
+    if host
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .is_empty()
+    {
         return Err(format!("`{addr}` has an empty host"));
     }
     if port_text.is_empty() || !port_text.bytes().all(|b| b.is_ascii_digit()) {
@@ -711,9 +713,8 @@ impl Server {
 /// Any request bytes still unread are drained first: closing over them would
 /// reset the connection out from under the answer.
 fn write_status_only(writer: &mut TcpStream, status: i64) {
-    let _ = writer.write_all(
-        format!("HTTP/1.1 {} {}\r\n\r\n", status, reason_phrase(status)).as_bytes(),
-    );
+    let _ = writer
+        .write_all(format!("HTTP/1.1 {} {}\r\n\r\n", status, reason_phrase(status)).as_bytes());
     let _ = writer.flush();
     let _ = writer.shutdown(std::net::Shutdown::Write);
     let _ = writer.set_read_timeout(Some(Duration::from_millis(100)));

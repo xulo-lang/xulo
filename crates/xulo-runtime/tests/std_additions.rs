@@ -29,7 +29,7 @@ fn math_helpers() {
                 print(std::math::clamp(12, 0, 10))
                 print(std::math::log1p(0))
                 print(std::math::expm1(0))
-                let r = std::math::randomInt(1, 6)
+                let r = std::math::random_int(1, 6)
                 print(r >= 1 and r <= 6)
             }
             "#
@@ -40,7 +40,7 @@ fn math_helpers() {
 
 #[test]
 fn math_random_int_empty_range_is_a_runtime_failure() {
-    let err = run(r#"fn main() { std::math::randomInt(6, 1) }"#).unwrap_err();
+    let err = run(r#"fn main() { std::math::random_int(6, 1) }"#).unwrap_err();
     assert!(err.message.contains("empty"), "{}", err.message);
 }
 
@@ -50,15 +50,15 @@ fn path_inspection_members() {
         run_ok(
             r#"
             fn main() {
-                print(std::path::isAbsolute("/a"))
-                print(std::path::isAbsolute("a"))
+                print(std::path::is_absolute("/a"))
+                print(std::path::is_absolute("a"))
                 let s = std::path::split("/var/log/app.log")
                 print(s.dir)
                 print(s.base)
                 print(s.ext)
                 print(std::path::stem("archive.tar.gz"))
-                print(std::path::withExt("report.txt", ".md"))
-                print(std::path::withExt("report.txt", ""))
+                print(std::path::with_ext("report.txt", ".md"))
+                print(std::path::with_ext("report.txt", ""))
                 print(std::path::relative("/var/log", "/etc"))
                 print(std::path::relative("a/b", "a/c"))
                 print(std::path::relative("/a", "b"))
@@ -66,8 +66,17 @@ fn path_inspection_members() {
             "#
         ),
         vec![
-            "true", "false", "/var/log", "app.log", ".log", "archive.tar", "report.md", "report",
-            "../../etc", "../c", "null",
+            "true",
+            "false",
+            "/var/log",
+            "app.log",
+            ".log",
+            "archive.tar",
+            "report.md",
+            "report",
+            "../../etc",
+            "../c",
+            "null",
         ]
     );
 }
@@ -78,9 +87,9 @@ fn os_host_surface() {
         run_ok(
             r#"
             fn main() {
-                print(std::os::tmpDir().len > 0)
-                print(std::os::cpuCount() >= 1)
-                match std::os::homeDir() {
+                print(std::os::tmp_dir().len > 0)
+                print(std::os::cpu_count() >= 1)
+                match std::os::home_dir() {
                     Result::Ok(h) => print(h.len > 0)
                     Result::Err(e) => print(e.message)
                 }
@@ -103,9 +112,8 @@ fn os_host_surface() {
 
 #[test]
 fn io_terminal_probes_are_bools() {
-    let out = run_ok(
-        r#"fn main() { print(std::io::stdinIsTTY()); print(std::io::stdoutIsTTY()) }"#,
-    );
+    let out =
+        run_ok(r#"fn main() { print(std::io::stdin_is_tty()); print(std::io::stdout_is_tty()) }"#);
     assert_eq!(out.len(), 2);
     assert!(out.iter().all(|v| v == "true" || v == "false"), "{out:?}");
 }

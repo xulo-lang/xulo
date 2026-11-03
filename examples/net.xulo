@@ -3,65 +3,65 @@
 // 的顺序握手（connect 经监听队列完成，不等 accept），回环收发就是完整
 // 的客户端与服务器。返回句柄是数字，可失败操作都是 Result。
 fn main() {
-    match std::net::tcpListen("127.0.0.1:0") {
+    match std::net::tcp_listen("127.0.0.1:0") {
         Result::Ok(server) => {
-            // 端口 0 让系统分配：sockLocalAddr 读回真实地址（不打印——
+            // 端口 0 让系统分配：sock_local_addr 读回真实地址（不打印——
             // 端口号宿主相关，示例输出保持稳定）
-            match std::net::sockLocalAddr(server) {
+            match std::net::sock_local_addr(server) {
                 Result::Ok(addr) => {
                     print(addr != "") // true
-                    match std::net::tcpConnect(addr) {
+                    match std::net::tcp_connect(addr) {
                         Result::Ok(client) => {
-                            match std::net::tcpAccept(server) {
+                            match std::net::tcp_accept(server) {
                                 Result::Ok(peer) => {
                                     // 双向往返：write 报字节数，read 停在到达的字节
-                                    match std::net::sockWrite(client, "ping") {
+                                    match std::net::sock_write(client, "ping") {
                                         Result::Ok(n) => print(n) // 4
                                         Result::Err(e) => print(e.message)
                                     }
-                                    match std::net::sockRead(peer, 64) {
+                                    match std::net::sock_read(peer, 64) {
                                         Result::Ok(text) => print(text ?? "eof") // ping
                                         Result::Err(e) => print(e.message)
                                     }
-                                    match std::net::sockWrite(peer, "pong") {
+                                    match std::net::sock_write(peer, "pong") {
                                         Result::Ok(n) => print(n) // 4
                                         Result::Err(e) => print(e.message)
                                     }
-                                    match std::net::sockRead(client, 64) {
+                                    match std::net::sock_read(client, 64) {
                                         Result::Ok(text) => print(text ?? "eof") // pong
                                         Result::Err(e) => print(e.message)
                                     }
 
                                     // 带毫秒预算的读：没有数据时到点返回 Err
-                                    match std::net::sockRead(client, 64, 25) {
+                                    match std::net::sock_read(client, 64, 25) {
                                         Result::Ok(text) => print(text ?? "eof")
                                         Result::Err(e) => print("read timed out") // 预算到期
                                     }
 
                                     // 半关闭写端：对端读到 EOF（null）
-                                    match std::net::sockShutdownWrite(client) {
+                                    match std::net::sock_shutdown_write(client) {
                                         Result::Ok(_) => print("write side closed")
                                         Result::Err(e) => print(e.message)
                                     }
-                                    match std::net::sockRead(peer, 64) {
+                                    match std::net::sock_read(peer, 64) {
                                         Result::Ok(text) => print(text ?? "eof") // eof
                                         Result::Err(e) => print(e.message)
                                     }
 
                                     // 对端地址也能查
-                                    match std::net::sockPeerAddr(peer) {
-                                        Result::Ok(peerAddr) => print(peerAddr != "") // true
+                                    match std::net::sock_peer_addr(peer) {
+                                        Result::Ok(peer_addr) => print(peer_addr != "") // true
                                         Result::Err(e) => print(e.message)
                                     }
-                                    match std::net::sockClose(client) {
+                                    match std::net::sock_close(client) {
                                         Result::Ok(_) => print("client closed")
                                         Result::Err(e) => print(e.message)
                                     }
-                                    match std::net::sockClose(peer) {
+                                    match std::net::sock_close(peer) {
                                         Result::Ok(_) => print("peer closed")
                                         Result::Err(e) => print(e.message)
                                     }
-                                    match std::net::sockClose(server) {
+                                    match std::net::sock_close(server) {
                                         Result::Ok(_) => print("server closed")
                                         Result::Err(e) => print(e.message)
                                     }

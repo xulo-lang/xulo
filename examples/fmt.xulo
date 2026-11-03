@@ -36,7 +36,7 @@ fn main() {
     print(std::fmt::format("%d", [-42])) // -42
 
     // 浮点指令：%f 定点（缺省 6 位）、%e 科学（缺省 6 位）、%g 取较短形
-    // 式；舍入是 toFixed 规则（中值远离零）
+    // 式；舍入是 to_fixed 规则（中值远离零）
     print(std::fmt::format("%f", [2.5])) // 2.500000
     print(std::fmt::format("%.2f", [3.14159])) // 3.14
     print(std::fmt::format("%e", [1234.5])) // 1.234500e+03

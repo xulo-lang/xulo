@@ -4,7 +4,7 @@
 // 是一份完整往返：把自己再拉起一份当服务器（XUL_HTTP_ROLE=serve），父进程
 // 当客户端取三个响应后收掉它。`xulo run examples/http.xulo` 即可复现。
 use std::http::{Request, Response};
-use std::os::execPath;
+use std::os::exec_path;
 use std::process::{args, Command};
 
 // 路由：按 method + path 分派（普通函数，不经 socket 也能直接调用测试）
@@ -14,9 +14,9 @@ fn route(req: Request): Response {
     } else if req.method == "POST" and req.path == "/echo" {
         Response.text(req.body, 201)
     } else if req.method == "GET" and req.path == "/greet" {
-        Response.text("hello, " + (req.queryValue("name") ?? "stranger"))
+        Response.text("hello, " + (req.query_value("name") ?? "stranger"))
     } else if req.method == "POST" and req.path == "/greet" {
-        Response.text("hello, " + (req.formValue("name") ?? "stranger"))
+        Response.text("hello, " + (req.form_value("name") ?? "stranger"))
     } else {
         Response.text("not found", 404)
     }
@@ -56,9 +56,9 @@ async fn main() {
         headers: [{ name: "user-agent", value: "demo" }],
         body: "",
         version: "HTTP/1.1",
-        remoteAddr: "127.0.0.1:50000"
+        remote_addr: "127.0.0.1:50000"
     )
-    print(req.queryValue("name")) // xulo
+    print(req.query_value("name")) // xulo
     print(req.header("user-agent")) // demo —— 大小写不敏感
     print(req.header("x-none")) // null —— 查不到
     let direct = route(req)
@@ -75,7 +75,7 @@ async fn main() {
     print(bare.status, bare.header("content-type") ?? "none", bare.body) // 404 none gone
 
     // ── 回环：拉起自身当服务器，然后取三个响应 ──
-    let exe = match execPath() {
+    let exe = match exec_path() {
         Result::Ok(p) => p
         Result::Err(e) => ""
     }
@@ -107,7 +107,7 @@ async fn main() {
         }
         let nap = await std::time::sleep(100)
     }
-    // 表单 POST：Content-Type 决定 formValue 的解码
+    // 表单 POST：Content-Type 决定 form_value 的解码
     match std::http::request(
         "POST",
         "http://127.0.0.1:8080/greet",

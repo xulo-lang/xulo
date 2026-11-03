@@ -90,7 +90,7 @@ fn apply(f: fn(number): number, x: number): number {
   f(x)
 }
 
-fn makeAdder(n: number): fn(number): number {
+fn make_adder(n: number): fn(number): number {
   fn(v: number): number { v + n }   // ✅ 捕获 n
 }
 
@@ -99,7 +99,7 @@ fn main() {
     x * 2
   }
 
-  let add5 = makeAdder(5)
+  let add5 = make_adder(5)
   print(apply(double, 3))   // 6
   print(add5(10))           // 15
 
@@ -114,6 +114,6 @@ fn main() {
 - 匿名函数类型为 `fn(参数类型): 返回类型`（`Type::FnSig`），可赋值给带该类型的参数/变量
 - 通过捕获自动访问外层局部变量，可变捕获可直接修改外层 `let` 绑定
 - 调用函数值时只用位置实参，数量必须精确匹配；具名实参不支持
-- 函数值可从任意表达式中调用：`xs[0](10)`、`getFn()(x)`、`(f)(5)`
+- 函数值可从任意表达式中调用：`xs[0](10)`、`get_fn()(x)`、`(f)(5)`
 - `fn(...)` 出现在语句位置（如块末用于隐式返回）时按匿名函数表达式解析
 - 异步闭包写作 `fn(): async [类型]`，调用返回 Promise，可用 `await`

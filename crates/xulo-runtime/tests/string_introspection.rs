@@ -24,9 +24,9 @@ fn string_members_use_scalar_indices() {
             print("".len)
             print("hello".len)
             print("héllo".len)
-            print("héllo".byteLen)
-            print("héllo".codeAt(1))
-            print("abc".codeAt(0))
+            print("héllo".byte_len)
+            print("héllo".code_at(1))
+            print("abc".code_at(0))
             print("héllo".slice(1, 4))
             print("abc".slice(1, 1))
             print("hé".bytes())
@@ -53,7 +53,7 @@ fn string_members_use_scalar_indices() {
 fn out_of_range_string_indices_fail_at_runtime() {
     let err = run(r#"
         fn main() {
-            print("abc".codeAt(3))
+            print("abc".code_at(3))
         }
         "#)
     .expect_err("index 3 is out of range");
@@ -73,16 +73,16 @@ fn wrapping_and_bit_intrinsics_follow_64_bit_semantics() {
     let out = run_ok(
         r#"
         fn main() {
-            print(std::math::wrappingAdd(1, 2))
-            print(std::math::wrappingSub(1, 2))
-            print(std::math::wrappingMul(3, 4))
-            print(std::math::popCount(255))
-            print(std::math::popCount(-1))
-            print(std::math::countLeadingZeros(1))
-            print(std::math::countTrailingZeros(8))
-            print(std::math::rotateLeft(1, 1))
-            print(std::math::rotateLeft(1, 64))
-            print(std::math::rotateRight(2, 1))
+            print(std::math::wrapping_add(1, 2))
+            print(std::math::wrapping_sub(1, 2))
+            print(std::math::wrapping_mul(3, 4))
+            print(std::math::pop_count(255))
+            print(std::math::pop_count(-1))
+            print(std::math::count_leading_zeros(1))
+            print(std::math::count_trailing_zeros(8))
+            print(std::math::rotate_left(1, 1))
+            print(std::math::rotate_left(1, 64))
+            print(std::math::rotate_right(2, 1))
         }
         "#,
     );

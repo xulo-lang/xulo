@@ -395,7 +395,7 @@ fn main() {
 fn test_codegen_generic_prepend_all() {
     let out = compile_and_run(
         r#"
-fn prependAll<T>(prefix: T, list: List<T>): List<T> {
+fn prepend_all<T>(prefix: T, list: List<T>): List<T> {
     let mut out = []
     for x in list {
         out = out + [prefix, x]
@@ -403,8 +403,8 @@ fn prependAll<T>(prefix: T, list: List<T>): List<T> {
     out
 }
 fn main() {
-    print(prependAll(0, [1, 2, 3]))
-    print(prependAll("p", ["a", "b"]))
+    print(prepend_all(0, [1, 2, 3]))
+    print(prepend_all("p", ["a", "b"]))
 }
 "#,
     );

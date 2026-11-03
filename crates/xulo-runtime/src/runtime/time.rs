@@ -1,8 +1,8 @@
 use super::*;
 
 // `std::time` 日历里需要运行时堆的 AOT 落地：`parse` 返回内置 Result
-// 枚举，`parts` 返回字段对象。`format`/`fromParts`/`weekday` 是标量，
-// 在 `xulo-std` 的 ffi 里（域失败与 `Math::toFixed` 一样终止进程）。
+// 枚举，`parts` 返回字段对象。`format`/`from_parts`/`weekday` 是标量，
+// 在 `xulo-std` 的 ffi 里（域失败与 `Math::to_fixed` 一样终止进程）。
 
 /// `std::time::parse(text)` -> `Result<u64, Error>`（内置 Error：畸形文本
 /// 或域外日期都是 Err，绝不 panic）
@@ -25,7 +25,9 @@ pub extern "C" fn xulo_time_parse(text: *const c_char) -> *mut XuloEnum {
 #[unsafe(no_mangle)]
 pub extern "C" fn xulo_time_parts(ms: f64) -> *mut XuloObject {
     if !(ms.is_finite() && ms.fract() == 0.0 && ms >= 0.0) {
-        eprintln!("`std::time::parts` expects a non-negative integer millisecond count, found {ms}");
+        eprintln!(
+            "`std::time::parts` expects a non-negative integer millisecond count, found {ms}"
+        );
         std::process::exit(1);
     }
     let p = xulo_std::time::parts(ms as u64);

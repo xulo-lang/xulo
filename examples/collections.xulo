@@ -9,9 +9,9 @@ fn main() {
     let head = [1, 2]
     let tail = [3, 4]
     let all = [...head, ...tail]   // 展开合并
-    let withExtra = [...all, 9]    // 展开 + 追加
+    let with_extra = [...all, 9]    // 展开 + 追加
     print(all)
-    print(withExtra)
+    print(with_extra)
 
     // 对象
     let base = { a: 1 }

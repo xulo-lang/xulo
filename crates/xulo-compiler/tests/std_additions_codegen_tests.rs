@@ -37,10 +37,10 @@ fn path_inspection_runs_on_the_compiled_path() {
     let out = compile_and_run(
         r#"
 fn main() {
-    print(std::path::isAbsolute("/a"))
-    print(std::path::isAbsolute("a"))
+    print(std::path::is_absolute("/a"))
+    print(std::path::is_absolute("a"))
     print(std::path::stem("archive.tar.gz"))
-    print(std::path::withExt("report.txt", ".md"))
+    print(std::path::with_ext("report.txt", ".md"))
 }
 "#,
     );
@@ -52,8 +52,8 @@ fn io_terminal_probes_run_on_the_compiled_path() {
     let out = compile_and_run(
         r#"
 fn main() {
-    let a = std::io::stdinIsTTY()
-    let b = std::io::stdoutIsTTY()
+    let a = std::io::stdin_is_tty()
+    let b = std::io::stdout_is_tty()
     print(a == a)
     print(b == b)
 }

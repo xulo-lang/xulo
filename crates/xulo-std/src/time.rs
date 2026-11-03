@@ -11,7 +11,7 @@ pub fn now_millis() -> i64 {
         .unwrap_or(0)
 }
 
-/// `Time::nowNanos`: nanoseconds since the Unix epoch (wall clock).
+/// `Time::now_nanos`: nanoseconds since the Unix epoch (wall clock).
 pub fn now_nanos() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -31,7 +31,7 @@ pub fn monotonic_millis() -> i64 {
     monotonic_start().elapsed().as_millis() as i64
 }
 
-/// `Time::monotonicNanos`: nanoseconds on the monotonic clock.
+/// `Time::monotonic_nanos`: nanoseconds on the monotonic clock.
 pub fn monotonic_nanos() -> i64 {
     monotonic_start().elapsed().as_nanos() as i64
 }
@@ -140,7 +140,7 @@ pub fn format(ms: u64) -> Result<String, String> {
     ))
 }
 
-/// `Time::fromParts`: the timestamp those UTC fields denote. The fields
+/// `Time::from_parts`: the timestamp those UTC fields denote. The fields
 /// must name a real instant inside the domain — any other field set is a
 /// runtime failure (`Err` here; the caller stops the program).
 pub fn from_parts(
@@ -154,7 +154,7 @@ pub fn from_parts(
 ) -> Result<u64, String> {
     let bad = |why: &str| {
         Err(format!(
-            "`std::time::fromParts` fields must name a real instant in the calendar domain: {why} ({year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}.{millisecond:03})"
+            "`std::time::from_parts` fields must name a real instant in the calendar domain: {why} ({year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}.{millisecond:03})"
         ))
     };
     if !(1..=12).contains(&month) {
@@ -179,11 +179,7 @@ pub fn from_parts(
     if days < 0 {
         return bad("before the Unix epoch");
     }
-    let ms = days * 86_400_000
-        + hour * 3_600_000
-        + minute * 60_000
-        + second * 1_000
-        + millisecond;
+    let ms = days * 86_400_000 + hour * 3_600_000 + minute * 60_000 + second * 1_000 + millisecond;
     if ms < 0 || ms as u64 > MAX_TIME_MS {
         return bad("past 9999-12-31T23:59:59.999Z");
     }

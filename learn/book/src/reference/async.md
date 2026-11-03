@@ -5,7 +5,7 @@
 ## `async` / `await`（TypeScript 风格）
 
 ```xulo
-fn fetchUser(id: string): async {
+fn fetch_user(id: string): async {
   let response = await fetch("/api/users/" + id)
   let data = await response.json()
   return data
@@ -19,7 +19,7 @@ fn fetchUser(id: string): async {
 ## `try` / `catch`
 
 ```xulo
-fn fetchUser(id: string): async {
+fn fetch_user(id: string): async {
   try {
     let response = await fetch("/api/users/" + id)
     return await response.json()
@@ -46,16 +46,16 @@ fn main(): async {
 异步函数**不能**使用 `@State`、`@Store`、`@Effect`、`@Environment`。异步操作应通过**直接调用 Store API**：
 
 ```xulo
-// ✅ 正确：直接调用 useAppStore()
-pub fn fetchUser(id: string): async {
-  const store = useAppStore()
-  store.actions.setLoading(true)
+// ✅ 正确：直接调用 use_app_store()
+pub fn fetch_user(id: string): async {
+  const store = use_app_store()
+  store.actions.set_loading(true)
   let data = await fetch("/api/users/" + id).json()
-  store.actions.setUser(data)
+  store.actions.set_user(data)
 }
 
 // ❌ 错误：在异步函数里使用 @Store 装饰器
-pub fn fetchUser(id: string): async {
-  @Store const { setUser } = useAppStore()  // ❌ 禁止
+pub fn fetch_user(id: string): async {
+  @Store const { set_user } = use_app_store()  // ❌ 禁止
 }
 ```

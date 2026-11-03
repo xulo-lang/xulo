@@ -225,7 +225,7 @@ fn main() {
 fn closure_mutates_captured_let() {
     let out = compile_and_run(
         r#"
-fn makeCounter(): fn(): number {
+fn make_counter(): fn(): number {
     let mut count = 0
     fn(): number {
         count = count + 1
@@ -234,7 +234,7 @@ fn makeCounter(): fn(): number {
 }
 
 fn main() {
-    let c = makeCounter()
+    let c = make_counter()
     print(c())
     print(c())
 }

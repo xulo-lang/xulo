@@ -1,6 +1,6 @@
 //! The `std::fs` expansion on the compiled path: append, exclusive create,
 //! touch, times/mode, realpath, stat, copy, rename, listing, walking,
-//! removeDir, and the temporary creators. Byte members stay off the compiled
+//! remove_dir, and the temporary creators. Byte members stay off the compiled
 //! path (list literals have no compiled representation yet).
 
 use std::fs;
@@ -20,8 +20,11 @@ fn compile_and_run(source: &str) -> Vec<String> {
 }
 
 fn scratch(label: &str) -> PathBuf {
-    let dir =
-        std::env::temp_dir().join(format!("xulo-compiler-fs4b-{}-{}", std::process::id(), label));
+    let dir = std::env::temp_dir().join(format!(
+        "xulo-compiler-fs4b-{}-{}",
+        std::process::id(),
+        label
+    ));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).expect("scratch dir");
     dir
@@ -42,7 +45,7 @@ fn main() {{
     let a = std::fs::append(path, "one")
     let b = std::fs::append(path, " two")
     match std::fs::read(path) {{ Result::Ok(t) => print(t) Result::Err(e) => print(e.message) }}
-    match std::fs::createNew(path, "x") {{ Result::Ok(_) => print("bad") Result::Err(_) => print("exclusive") }}
+    match std::fs::create_new(path, "x") {{ Result::Ok(_) => print("bad") Result::Err(_) => print("exclusive") }}
 }}
 "#,
         file = p(&file)
@@ -61,12 +64,12 @@ fn main() {{
     let path = "{file}"
     let w = std::fs::write(path, "hello")
     let t = std::fs::touch(path)
-    let st = std::fs::setTimes(path, 0)
+    let st = std::fs::set_times(path, 0)
     match std::fs::stat(path) {{
         Result::Ok(i) => {{ print(i.kind); print(i.size); print(i.modified) }}
         Result::Err(e) => print(e.message)
     }}
-    let m = std::fs::setMode(path, 0o644)
+    let m = std::fs::set_mode(path, 0o644)
 }}
 "#,
         file = p(&file)
@@ -91,7 +94,7 @@ fn main() {{
     let c = std::fs::copy("{a}", "{b}")
     let rn = std::fs::rename("{b}", "{dir}/moved.txt")
     match std::fs::read("{dir}/moved.txt") {{ Result::Ok(t) => print(t) Result::Err(e) => print(e.message) }}
-    let rd = std::fs::removeDir("{sub}")
+    let rd = std::fs::remove_dir("{sub}")
     print(std::fs::exists("{sub}"))
 }}
 "#,
@@ -113,7 +116,7 @@ fn read_dir_and_walk_on_the_compiled_path() {
     let out = compile_and_run(&format!(
         r#"
 fn main() {{
-    match std::fs::readDir("{dir}") {{ Result::Ok(names) => {{ print(names.len); print(names[0]) }} Result::Err(e) => print(e.message) }}
+    match std::fs::read_dir("{dir}") {{ Result::Ok(names) => {{ print(names.len); print(names[0]) }} Result::Err(e) => print(e.message) }}
     match std::fs::walk("{dir}") {{ Result::Ok(paths) => print(paths.len) Result::Err(e) => print(e.message) }}
 }}
 "#,
@@ -129,12 +132,12 @@ fn temp_file_optional_prefix_on_the_compiled_path() {
     let out = compile_and_run(&format!(
         r#"
 fn main() {{
-    match std::fs::tempFileIn("{dir}", "aot_") {{
+    match std::fs::temp_file_in("{dir}", "aot_") {{
         Result::Ok(tp) => {{ print(tp.split("aot_").len == 2); let rm = std::fs::remove(tp) }}
         Result::Err(e) => print(e.message)
     }}
-    match std::fs::tempDirIn("{dir}", "d_") {{
-        Result::Ok(td) => {{ let rm = std::fs::removeDir(td) }}
+    match std::fs::temp_dir_in("{dir}", "d_") {{
+        Result::Ok(td) => {{ let rm = std::fs::remove_dir(td) }}
         Result::Err(e) => print(e.message)
     }}
 }}

@@ -6,10 +6,10 @@ use corosensei::stack::DefaultStack;
 use corosensei::{Coroutine, Yielder};
 
 use xulo_core::ast::{
-    AssignTarget, AssignValue, Attribute, BinaryOp, BinaryOperator, BindingPattern, Block, Call, ComponentStmt,
-    EffectStmt, EnumDef, Expression, FnDef, ForStmt, IfExpr, ImplDecl, LetBinding, Literal,
-    MatchExpr, ObjectField, Param, Program, ReturnStmt, Statement, StoreStmt, StructDef, TryStmt,
-    Type, UiElement, UnaryOperator, impl_fn_name,
+    AssignTarget, AssignValue, Attribute, BinaryOp, BinaryOperator, BindingPattern, Block, Call,
+    ComponentStmt, EffectStmt, EnumDef, Expression, FnDef, ForStmt, IfExpr, ImplDecl, LetBinding,
+    Literal, MatchExpr, ObjectField, Param, Program, ReturnStmt, Statement, StoreStmt, StructDef,
+    TryStmt, Type, UiElement, UnaryOperator, impl_fn_name,
 };
 use xulo_core::error::{ErrorKind, XuloError};
 
@@ -306,12 +306,24 @@ impl Interpreter {
             ("min".to_string(), Value::Native(Rc::new(native_math_min))),
             ("max".to_string(), Value::Native(Rc::new(native_math_max))),
             ("sign".to_string(), Value::Native(Rc::new(native_math_sign))),
-            ("hypot".to_string(), Value::Native(Rc::new(native_math_hypot))),
-            ("clamp".to_string(), Value::Native(Rc::new(native_math_clamp))),
-            ("log1p".to_string(), Value::Native(Rc::new(native_math_log1p))),
-            ("expm1".to_string(), Value::Native(Rc::new(native_math_expm1))),
             (
-                "randomInt".to_string(),
+                "hypot".to_string(),
+                Value::Native(Rc::new(native_math_hypot)),
+            ),
+            (
+                "clamp".to_string(),
+                Value::Native(Rc::new(native_math_clamp)),
+            ),
+            (
+                "log1p".to_string(),
+                Value::Native(Rc::new(native_math_log1p)),
+            ),
+            (
+                "expm1".to_string(),
+                Value::Native(Rc::new(native_math_expm1)),
+            ),
+            (
+                "random_int".to_string(),
                 Value::Native(Rc::new(native_math_random_int)),
             ),
             ("sqrt".to_string(), Value::Native(Rc::new(native_math_sqrt))),
@@ -335,7 +347,7 @@ impl Interpreter {
                 Value::Native(Rc::new(native_math_trunc)),
             ),
             (
-                "toFixed".to_string(),
+                "to_fixed".to_string(),
                 Value::Native(Rc::new(native_math_to_fixed)),
             ),
             (
@@ -392,35 +404,35 @@ impl Interpreter {
             ),
             ("exp".to_string(), Value::Native(Rc::new(native_math_exp))),
             (
-                "wrappingAdd".to_string(),
+                "wrapping_add".to_string(),
                 Value::Native(Rc::new(native_math_wrapping_add)),
             ),
             (
-                "wrappingSub".to_string(),
+                "wrapping_sub".to_string(),
                 Value::Native(Rc::new(native_math_wrapping_sub)),
             ),
             (
-                "wrappingMul".to_string(),
+                "wrapping_mul".to_string(),
                 Value::Native(Rc::new(native_math_wrapping_mul)),
             ),
             (
-                "popCount".to_string(),
+                "pop_count".to_string(),
                 Value::Native(Rc::new(native_math_pop_count)),
             ),
             (
-                "countLeadingZeros".to_string(),
+                "count_leading_zeros".to_string(),
                 Value::Native(Rc::new(native_math_count_leading_zeros)),
             ),
             (
-                "countTrailingZeros".to_string(),
+                "count_trailing_zeros".to_string(),
                 Value::Native(Rc::new(native_math_count_trailing_zeros)),
             ),
             (
-                "rotateLeft".to_string(),
+                "rotate_left".to_string(),
                 Value::Native(Rc::new(native_math_rotate_left)),
             ),
             (
-                "rotateRight".to_string(),
+                "rotate_right".to_string(),
                 Value::Native(Rc::new(native_math_rotate_right)),
             ),
         ];
@@ -431,7 +443,7 @@ impl Interpreter {
         let time_members: Vec<(String, Value)> = vec![
             ("now".to_string(), Value::Native(Rc::new(native_time_now))),
             (
-                "nowNanos".to_string(),
+                "now_nanos".to_string(),
                 Value::Native(Rc::new(native_time_now_nanos)),
             ),
             (
@@ -439,7 +451,7 @@ impl Interpreter {
                 Value::Native(Rc::new(native_time_monotonic)),
             ),
             (
-                "monotonicNanos".to_string(),
+                "monotonic_nanos".to_string(),
                 Value::Native(Rc::new(native_time_monotonic_nanos)),
             ),
             (
@@ -447,7 +459,7 @@ impl Interpreter {
                 Value::Native(Rc::new(native_time_sleep)),
             ),
             // 日历（spec `modules/time.md`）：UTC 单域的 format/parse 与
-            // parts/fromParts/weekday
+            // parts/from_parts/weekday
             (
                 "format".to_string(),
                 Value::Native(Rc::new(native_time_format)),
@@ -461,7 +473,7 @@ impl Interpreter {
                 Value::Native(Rc::new(native_time_parts)),
             ),
             (
-                "fromParts".to_string(),
+                "from_parts".to_string(),
                 Value::Native(Rc::new(native_time_from_parts)),
             ),
             (
@@ -491,16 +503,16 @@ impl Interpreter {
                 Value::Native(Rc::new(native_fs_append)),
             ),
             (
-                "createNew".to_string(),
+                "create_new".to_string(),
                 Value::Native(Rc::new(native_fs_create_new)),
             ),
             ("touch".to_string(), Value::Native(Rc::new(native_fs_touch))),
             (
-                "setTimes".to_string(),
+                "set_times".to_string(),
                 Value::Native(Rc::new(native_fs_set_times)),
             ),
             (
-                "setMode".to_string(),
+                "set_mode".to_string(),
                 Value::Native(Rc::new(native_fs_set_mode)),
             ),
             (
@@ -514,47 +526,47 @@ impl Interpreter {
                 Value::Native(Rc::new(native_fs_rename)),
             ),
             (
-                "removeDir".to_string(),
+                "remove_dir".to_string(),
                 Value::Native(Rc::new(native_fs_remove_dir)),
             ),
             (
-                "readDir".to_string(),
+                "read_dir".to_string(),
                 Value::Native(Rc::new(native_fs_read_dir)),
             ),
             ("walk".to_string(), Value::Native(Rc::new(native_fs_walk))),
             (
-                "readBytes".to_string(),
+                "read_bytes".to_string(),
                 Value::Native(Rc::new(native_fs_read_bytes)),
             ),
             (
-                "writeBytes".to_string(),
+                "write_bytes".to_string(),
                 Value::Native(Rc::new(native_fs_write_bytes)),
             ),
             (
-                "appendBytes".to_string(),
+                "append_bytes".to_string(),
                 Value::Native(Rc::new(native_fs_append_bytes)),
             ),
             (
-                "tempFile".to_string(),
+                "temp_file".to_string(),
                 Value::Native(Rc::new(native_fs_temp_file)),
             ),
             (
-                "tempDir".to_string(),
+                "temp_dir".to_string(),
                 Value::Native(Rc::new(native_fs_temp_dir)),
             ),
             (
-                "tempFileIn".to_string(),
+                "temp_file_in".to_string(),
                 Value::Native(Rc::new(native_fs_temp_file_in)),
             ),
             (
-                "tempDirIn".to_string(),
+                "temp_dir_in".to_string(),
                 Value::Native(Rc::new(native_fs_temp_dir_in)),
             ),
         ];
         let fs_obj = Value::Object(Rc::new(RefCell::new(fs_members)));
         // The `std::io` namespace of the host's standard streams
         // (implementation-first, like `std::fs`): reached as
-        // `std::io::println(…)` / `std::io::readLine(…)`. Each member writes
+        // `std::io::println(…)` / `std::io::read_line(…)`. Each member writes
         // the real stdout/stderr or reads stdin — the interpreter's captured
         // `print` buffer is a different thing entirely — and every one of them
         // is fallible, returning the built-in `Result`.
@@ -574,20 +586,20 @@ impl Interpreter {
             ),
             ("flush".to_string(), Value::Native(Rc::new(native_io_flush))),
             (
-                "readLine".to_string(),
+                "read_line".to_string(),
                 Value::Native(Rc::new(native_io_read_line)),
             ),
             ("read".to_string(), Value::Native(Rc::new(native_io_read))),
             (
-                "readN".to_string(),
+                "read_n".to_string(),
                 Value::Native(Rc::new(native_io_read_n)),
             ),
             (
-                "stdinIsTTY".to_string(),
+                "stdin_is_tty".to_string(),
                 Value::Native(Rc::new(native_io_stdin_is_tty)),
             ),
             (
-                "stdoutIsTTY".to_string(),
+                "stdout_is_tty".to_string(),
                 Value::Native(Rc::new(native_io_stdout_is_tty)),
             ),
         ];
@@ -619,39 +631,39 @@ impl Interpreter {
                 Value::Native(Rc::new(native_os_unsetenv)),
             ),
             (
-                "tmpDir".to_string(),
+                "tmp_dir".to_string(),
                 Value::Native(Rc::new(native_os_tmp_dir)),
             ),
             (
-                "homeDir".to_string(),
+                "home_dir".to_string(),
                 Value::Native(Rc::new(native_os_string_result(
-                    "std::os::homeDir",
+                    "std::os::home_dir",
                     xulo_std::os::home_dir,
                 ))),
             ),
             (
-                "hostName".to_string(),
+                "host_name".to_string(),
                 Value::Native(Rc::new(native_os_string_result(
-                    "std::os::hostName",
+                    "std::os::host_name",
                     xulo_std::os::host_name,
                 ))),
             ),
             (
-                "userName".to_string(),
+                "user_name".to_string(),
                 Value::Native(Rc::new(native_os_string_result(
-                    "std::os::userName",
+                    "std::os::user_name",
                     xulo_std::os::user_name,
                 ))),
             ),
             (
-                "execPath".to_string(),
+                "exec_path".to_string(),
                 Value::Native(Rc::new(native_os_string_result(
-                    "std::os::execPath",
+                    "std::os::exec_path",
                     xulo_std::os::exec_path,
                 ))),
             ),
             (
-                "cpuCount".to_string(),
+                "cpu_count".to_string(),
                 Value::Native(Rc::new(native_os_cpu_count)),
             ),
         ];
@@ -676,13 +688,16 @@ impl Interpreter {
                 Value::Native(Rc::new(native_path_normalize)),
             ),
             (
-                "isAbsolute".to_string(),
+                "is_absolute".to_string(),
                 Value::Native(Rc::new(native_path_is_absolute)),
             ),
-            ("split".to_string(), Value::Native(Rc::new(native_path_split))),
+            (
+                "split".to_string(),
+                Value::Native(Rc::new(native_path_split)),
+            ),
             ("stem".to_string(), Value::Native(Rc::new(native_path_stem))),
             (
-                "withExt".to_string(),
+                "with_ext".to_string(),
                 Value::Native(Rc::new(native_path_with_ext)),
             ),
             (
@@ -696,44 +711,45 @@ impl Interpreter {
         // never-opened number is a clean `Result::Err`, never a crash.
         // v1 is synchronous: `tcp_accept` / `sock_read` block the calling
         // task (cooperative scheduling freezes until they return).
-        let net_members: Vec<(String, Value)> = vec![(
-                "tcpListen".to_string(),
+        let net_members: Vec<(String, Value)> = vec![
+            (
+                "tcp_listen".to_string(),
                 Value::Native(Rc::new(native_net_tcp_listen)),
             ),
             (
-                "tcpAccept".to_string(),
+                "tcp_accept".to_string(),
                 Value::Native(Rc::new(native_net_tcp_accept)),
             ),
             (
-                "tcpConnect".to_string(),
+                "tcp_connect".to_string(),
                 Value::Native(Rc::new(native_net_tcp_connect)),
             ),
             (
-                "sockRead".to_string(),
+                "sock_read".to_string(),
                 Value::Native(Rc::new(native_net_sock_read)),
             ),
             (
-                "sockWrite".to_string(),
+                "sock_write".to_string(),
                 Value::Native(Rc::new(native_net_sock_write)),
             ),
             (
-                "sockShutdown".to_string(),
+                "sock_shutdown".to_string(),
                 Value::Native(Rc::new(native_net_sock_shutdown)),
             ),
             (
-                "sockShutdownWrite".to_string(),
+                "sock_shutdown_write".to_string(),
                 Value::Native(Rc::new(native_net_sock_shutdown_write)),
             ),
             (
-                "sockClose".to_string(),
+                "sock_close".to_string(),
                 Value::Native(Rc::new(native_net_sock_close)),
             ),
             (
-                "sockLocalAddr".to_string(),
+                "sock_local_addr".to_string(),
                 Value::Native(Rc::new(native_net_sock_local_addr)),
             ),
             (
-                "sockPeerAddr".to_string(),
+                "sock_peer_addr".to_string(),
                 Value::Native(Rc::new(native_net_sock_peer_addr)),
             ),
         ];
@@ -779,7 +795,10 @@ impl Interpreter {
                 "stringify".to_string(),
                 Value::Native(Rc::new(native_json_stringify)),
             ),
-            ("valid".to_string(), Value::Native(Rc::new(native_json_valid))),
+            (
+                "valid".to_string(),
+                Value::Native(Rc::new(native_json_valid)),
+            ),
         ];
         let json_obj = Value::Object(Rc::new(RefCell::new(json_members)));
         // The `std::fmt` surface (spec `std-spec/modules/fmt.md`): one
@@ -825,9 +844,15 @@ impl Interpreter {
         // The data type objects live in the root scope too: a constructed
         // `Response` finds its methods on the type under its own name however
         // the value reached the program (spec `modules/http.md`, "Types").
-        global.borrow_mut().define("Request", http_request_type_object(), false);
-        global.borrow_mut().define("Response", http_response_type_object(), false);
-        global.borrow_mut().define("Server", http_server_type_object(), false);
+        global
+            .borrow_mut()
+            .define("Request", http_request_type_object(), false);
+        global
+            .borrow_mut()
+            .define("Response", http_response_type_object(), false);
+        global
+            .borrow_mut()
+            .define("Server", http_server_type_object(), false);
         // The whole built-in tree hangs off a single `std` namespace object:
         // `std::math::floor(…)` walks `std` → `math` → `floor` through the
         // generic namespace dispatch, and `setup_module` copies members out
@@ -888,7 +913,7 @@ impl Interpreter {
                     ("headers".to_string(), None),
                     ("body".to_string(), None),
                     ("version".to_string(), None),
-                    ("remoteAddr".to_string(), None),
+                    ("remote_addr".to_string(), None),
                 ],
             },
         );

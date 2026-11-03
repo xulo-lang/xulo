@@ -135,7 +135,7 @@ fn subscript_and_result_callees_take_no_list_but_still_parse() {
     // comparison chain the alternative reading would produce.
     for src in [
         "fn main() { xs[0]<number>(1) }",
-        "fn main() { getFn()<number>(1) }",
+        "fn main() { get_fn()<number>(1) }",
     ] {
         let p = parse_ok(src);
         let Statement::Fn(f) = &p.statements[0] else {

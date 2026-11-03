@@ -33,9 +33,9 @@ fn main() {
 
     // 嵌套 if
     let age = 20
-    let hasTicket = true
+    let has_ticket = true
     if age >= 18 {
-        if hasTicket {
+        if has_ticket {
             print("admitted")
         } else {
             print("ticket required")

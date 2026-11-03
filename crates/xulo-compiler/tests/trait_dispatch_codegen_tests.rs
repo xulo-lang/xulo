@@ -55,7 +55,7 @@ fn explicit_trait_dispatch_matches_interpreter() {
 }
 
 /// 手写 `impl Display for T`：`str(v)`、模板与 `Trait::method` 三条派发
-/// 路径与成员调用 `v.toString()` 都走同一个实现。
+/// 路径与成员调用 `v.to_string()` 都走同一个实现。
 #[test]
 fn handwritten_display_dispatch_matches_interpreter() {
     let out = compile_and_run(
@@ -67,7 +67,7 @@ impl Display for Point {
 fn main() {
     let p = Point(x: 1.5, y: 2)
     print(str(p))
-    print(p.toString())
+    print(p.to_string())
     print(Display::display(p, Format(precision: null, alternate: false)))
     print(`${p}`)
 }

@@ -210,7 +210,7 @@ pub extern "C" fn xulo_string_size(s: *const c_char) -> i64 {
     s.chars().count() as i64
 }
 
-/// `s.byteLen`: the number of UTF-8 bytes in `s` (spec
+/// `s.byte_len`: the number of UTF-8 bytes in `s` (spec
 /// `types/primitive-types.md`).
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]

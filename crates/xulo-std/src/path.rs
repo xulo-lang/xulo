@@ -96,7 +96,7 @@ pub fn normalize(path: &str) -> String {
     }
 }
 
-/// `Path::isAbsolute(path)`: whether the path starts with `/` — the one
+/// `Path::is_absolute(path)`: whether the path starts with `/` — the one
 /// separator this module recognizes. Nothing else (a drive letter, `..`, an
 /// empty string) is absolute (spec `modules/path.md`).
 pub fn is_absolute(path: &str) -> bool {
@@ -120,7 +120,7 @@ pub fn stem(path: &str) -> String {
     }
 }
 
-/// `Path::withExt(path, ext)`: replace the final component's extension. The
+/// `Path::with_ext(path, ext)`: replace the final component's extension. The
 /// argument may carry one leading dot; an empty argument removes the
 /// extension (spec `modules/path.md`).
 pub fn with_ext(path: &str, ext: &str) -> String {
@@ -169,7 +169,11 @@ pub fn relative(from: &str, to: &str) -> Option<String> {
     let mut out: Vec<String> = vec!["..".to_string(); from_rest.len()];
     out.extend(b[common..].iter().cloned());
     if out.is_empty() {
-        Some(if from_abs { "/".to_string() } else { ".".to_string() })
+        Some(if from_abs {
+            "/".to_string()
+        } else {
+            ".".to_string()
+        })
     } else {
         Some(out.join("/"))
     }

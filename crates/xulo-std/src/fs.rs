@@ -59,7 +59,7 @@ pub fn exists(path: &str) -> bool {
     Path::new(path).exists()
 }
 
-/// `Fs::createNew(path, contents)`: create a new file containing `contents`,
+/// `Fs::create_new(path, contents)`: create a new file containing `contents`,
 /// failing when anything already exists at `path`. The check and the creation
 /// are one host operation, so a concurrent creator cannot slip between them.
 pub fn create_new(path: &str, contents: &str) -> Result<(), String> {
@@ -103,13 +103,13 @@ pub fn touch(path: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// `Fs::setTimes(path, modified)`: stamp `path`'s modification time to
+/// `Fs::set_times(path, modified)`: stamp `path`'s modification time to
 /// `modified` milliseconds since the Unix epoch; never creates.
 pub fn set_times(path: &str, modified: u64) -> Result<(), String> {
     set_modified(path, ms_to_system_time(modified))
 }
 
-/// `Fs::setMode(path, mode)`: set the entry's permission bits to the low 12
+/// `Fs::set_mode(path, mode)`: set the entry's permission bits to the low 12
 /// bits of a POSIX mode; the domain `0 …= 4095` is checked before the host.
 pub fn set_mode(path: &str, mode: u64) -> Result<(), String> {
     if mode > 4095 {
@@ -157,10 +157,7 @@ pub fn stat(path: &str) -> Result<Stat, String> {
     Ok(Stat {
         kind: kind.to_string(),
         size: meta.len(),
-        modified: meta
-            .modified()
-            .map(system_time_to_ms)
-            .unwrap_or(0),
+        modified: meta.modified().map(system_time_to_ms).unwrap_or(0),
         mode: if cfg!(unix) {
             (meta.permissions().mode() as u64) & 0o7777
         } else {
@@ -204,7 +201,7 @@ pub fn rename(from: &str, to: &str) -> Result<(), String> {
     fs::rename(from, to).map_err(|e| fail("rename", from, e))
 }
 
-/// `Fs::removeDir(path)`: delete the directory and everything in it. A
+/// `Fs::remove_dir(path)`: delete the directory and everything in it. A
 /// symlink at `path` is not a directory — it is removed as a link's target is
 /// never deleted here, so the call fails instead.
 pub fn remove_dir(path: &str) -> Result<(), String> {
@@ -221,7 +218,7 @@ fn file_name_of(entry: &fs::DirEntry) -> String {
     entry.file_name().to_string_lossy().into_owned()
 }
 
-/// `Fs::readDir(path)`: the bare names of everything in the directory, sorted
+/// `Fs::read_dir(path)`: the bare names of everything in the directory, sorted
 /// so the answer is stable across hosts.
 pub fn read_dir(path: &str) -> Result<Vec<String>, String> {
     let mut names: Vec<String> = fs::read_dir(path)
@@ -269,19 +266,19 @@ pub fn walk(path: &str) -> Result<Vec<String>, String> {
     Ok(out)
 }
 
-/// `Fs::readBytes(path)`: the whole file as raw bytes, one element per byte;
+/// `Fs::read_bytes(path)`: the whole file as raw bytes, one element per byte;
 /// any content is `Ok`, only path failures are `Err`.
 pub fn read_bytes(path: &str) -> Result<Vec<u8>, String> {
     fs::read(path).map_err(|e| fail("read", path, e))
 }
 
-/// `Fs::writeBytes(path, bytes)`: create or truncate the file, then write the
+/// `Fs::write_bytes(path, bytes)`: create or truncate the file, then write the
 /// bytes; no decoding in either direction.
 pub fn write_bytes(path: &str, bytes: &[u8]) -> Result<(), String> {
     fs::write(path, bytes).map_err(|e| fail("write", path, e))
 }
 
-/// `Fs::appendBytes(path, bytes)`: grow the file by the bytes, creating it
+/// `Fs::append_bytes(path, bytes)`: grow the file by the bytes, creating it
 /// when absent; never truncates.
 pub fn append_bytes(path: &str, bytes: &[u8]) -> Result<(), String> {
     let mut file = fs::OpenOptions::new()
@@ -290,8 +287,7 @@ pub fn append_bytes(path: &str, bytes: &[u8]) -> Result<(), String> {
         .truncate(false)
         .open(path)
         .map_err(|e| fail("append", path, e))?;
-    file.write_all(bytes)
-        .map_err(|e| fail("append", path, e))
+    file.write_all(bytes).map_err(|e| fail("append", path, e))
 }
 
 fn unique_path(dir: &Path, prefix: &str, is_dir: bool) -> Result<String, String> {
@@ -320,36 +316,37 @@ fn unique_path(dir: &Path, prefix: &str, is_dir: bool) -> Result<String, String>
     Err("cannot create temporary entry: too many collisions".to_string())
 }
 
-/// `Fs::tempFile(prefix)`: create a unique empty file in the host's temporary
+/// `Fs::temp_file(prefix)`: create a unique empty file in the host's temporary
 /// directory and yield its path.
 pub fn temp_file(prefix: Option<&str>) -> Result<String, String> {
-    temp_file_in(
-        &std::env::temp_dir().to_string_lossy(),
-        prefix,
-    )
+    temp_file_in(&std::env::temp_dir().to_string_lossy(), prefix)
 }
 
-/// `Fs::tempDir(prefix)`: create a unique empty directory in the host's
+/// `Fs::temp_dir(prefix)`: create a unique empty directory in the host's
 /// temporary directory and yield its path.
 pub fn temp_dir(prefix: Option<&str>) -> Result<String, String> {
     temp_dir_in(&std::env::temp_dir().to_string_lossy(), prefix)
 }
 
-/// `Fs::tempFileIn(dir, prefix)`: create a unique empty file inside `dir`;
+/// `Fs::temp_file_in(dir, prefix)`: create a unique empty file inside `dir`;
 /// `dir` must already exist and be a directory.
 pub fn temp_file_in(dir: &str, prefix: Option<&str>) -> Result<String, String> {
     let dir_path = Path::new(dir);
     if !dir_path.is_dir() {
-        return Err(format!("cannot create temporary file in '{dir}': not a directory"));
+        return Err(format!(
+            "cannot create temporary file in '{dir}': not a directory"
+        ));
     }
     unique_path(dir_path, prefix.unwrap_or(""), false)
 }
 
-/// `Fs::tempDirIn(dir, prefix)`: create a unique empty directory inside `dir`.
+/// `Fs::temp_dir_in(dir, prefix)`: create a unique empty directory inside `dir`.
 pub fn temp_dir_in(dir: &str, prefix: Option<&str>) -> Result<String, String> {
     let dir_path = Path::new(dir);
     if !dir_path.is_dir() {
-        return Err(format!("cannot create temporary directory in '{dir}': not a directory"));
+        return Err(format!(
+            "cannot create temporary directory in '{dir}': not a directory"
+        ));
     }
     unique_path(dir_path, prefix.unwrap_or(""), true)
 }

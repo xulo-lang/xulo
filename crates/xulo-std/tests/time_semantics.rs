@@ -6,13 +6,13 @@ use xulo_std::time;
 
 #[test]
 fn format_emits_one_fixed_layout() {
-    assert_eq!(
-        time::format(0).expect("epoch"),
-        "1970-01-01T00:00:00.000Z"
-    );
-    // The spec's own example: `fromParts(2026, 10, 26, 12)`.
+    assert_eq!(time::format(0).expect("epoch"), "1970-01-01T00:00:00.000Z");
+    // The spec's own example: `from_parts(2026, 10, 26, 12)`.
     let noon = time::from_parts(2026, 10, 26, 12, 0, 0, 0).expect("in domain");
-    assert_eq!(time::format(noon).expect("in domain"), "2026-10-26T12:00:00.000Z");
+    assert_eq!(
+        time::format(noon).expect("in domain"),
+        "2026-10-26T12:00:00.000Z"
+    );
     // Exactly three fractional digits and the `Z` suffix.
     assert_eq!(
         time::format(1_761_480_000_123).expect("in domain"),
@@ -65,13 +65,13 @@ fn parse_rejects_everything_else_as_an_error() {
     for text in [
         "",
         "2026-10-26",
-        "2026-10-26T12:00:00",         // no Z
-        "2026-10-26T12:00:00+08:00",   // an offset is not in this version
-        "2026-02-30T00:00:00Z",        // no such date
-        "2026-10-26T23:59:60Z",        // leap seconds are not represented
-        "2026-10-26T24:00:00Z",        // hour out of range
-        "1969-12-31T23:59:59Z",        // before the Unix epoch
-        "2026-10-26T12:00:00.Z",       // fraction with no digits
+        "2026-10-26T12:00:00",       // no Z
+        "2026-10-26T12:00:00+08:00", // an offset is not in this version
+        "2026-02-30T00:00:00Z",      // no such date
+        "2026-10-26T23:59:60Z",      // leap seconds are not represented
+        "2026-10-26T24:00:00Z",      // hour out of range
+        "1969-12-31T23:59:59Z",      // before the Unix epoch
+        "2026-10-26T12:00:00.Z",     // fraction with no digits
         "2026-10-26T12:00:00.abcdefghiZ",
         "2026x10-26T12:00:00Z",
     ] {
@@ -85,27 +85,54 @@ fn parts_decomposes_even_past_the_domain() {
     let noon = time::from_parts(2026, 10, 26, 12, 0, 0, 0).expect("in domain");
     let p = time::parts(noon);
     assert_eq!(
-        (p.year, p.month, p.day, p.hour, p.minute, p.second, p.millisecond),
+        (
+            p.year,
+            p.month,
+            p.day,
+            p.hour,
+            p.minute,
+            p.second,
+            p.millisecond
+        ),
         (2026, 10, 26, 12, 0, 0, 0)
     );
     // Total for every u64: a timestamp `format` refuses still decomposes.
     let p = time::parts(time::MAX_TIME_MS + 1);
     assert_eq!(
-        (p.year, p.month, p.day, p.hour, p.minute, p.second, p.millisecond),
+        (
+            p.year,
+            p.month,
+            p.day,
+            p.hour,
+            p.minute,
+            p.second,
+            p.millisecond
+        ),
         (10000, 1, 1, 0, 0, 0, 0)
     );
 }
 
 #[test]
 fn from_parts_inverts_parts_and_defaults_the_time_fields() {
-    // `fromParts(2026, 10, 26)` is midnight UTC.
+    // `from_parts(2026, 10, 26)` is midnight UTC.
     let midnight = time::from_parts(2026, 10, 26, 0, 0, 0, 0).expect("in domain");
-    assert_eq!(time::from_parts(2026, 10, 26, 0, 0, 0, 0).unwrap(), midnight);
+    assert_eq!(
+        time::from_parts(2026, 10, 26, 0, 0, 0, 0).unwrap(),
+        midnight
+    );
     for ms in [0u64, 86_399_999, 1_761_480_000_123, time::MAX_TIME_MS] {
         let p = time::parts(ms);
         assert_eq!(
-            time::from_parts(p.year, p.month, p.day, p.hour, p.minute, p.second, p.millisecond)
-                .expect("roundtrip"),
+            time::from_parts(
+                p.year,
+                p.month,
+                p.day,
+                p.hour,
+                p.minute,
+                p.second,
+                p.millisecond
+            )
+            .expect("roundtrip"),
             ms
         );
     }
@@ -114,17 +141,17 @@ fn from_parts_inverts_parts_and_defaults_the_time_fields() {
 #[test]
 fn from_parts_rejects_fields_outside_the_calendar() {
     for (y, mo, d, h, mi, s, ms) in [
-        (2026, 2, 30, 0, 0, 0, 0),   // the calendar has no such date
-        (2026, 13, 1, 0, 0, 0, 0),   // month outside 1..=12
+        (2026, 2, 30, 0, 0, 0, 0), // the calendar has no such date
+        (2026, 13, 1, 0, 0, 0, 0), // month outside 1..=12
         (2026, 0, 1, 0, 0, 0, 0),
-        (2026, 1, 0, 0, 0, 0, 0),    // day outside the month
+        (2026, 1, 0, 0, 0, 0, 0), // day outside the month
         (2026, 4, 31, 0, 0, 0, 0),
         (2023, 2, 29, 0, 0, 0, 0),   // not a leap year
         (2026, 10, 26, 24, 0, 0, 0), // hour outside 0..=23
         (2026, 10, 26, 0, 60, 0, 0),
         (2026, 10, 26, 0, 0, 60, 0), // a leap second does not parse
         (2026, 10, 26, 0, 0, 0, 1000),
-        (1969, 12, 31, 0, 0, 0, 0),  // before the Unix epoch
+        (1969, 12, 31, 0, 0, 0, 0), // before the Unix epoch
     ] {
         let err = time::from_parts(y, mo, d, h, mi, s, ms).expect_err("field set refused");
         assert!(err.contains("real instant"), "{err}");

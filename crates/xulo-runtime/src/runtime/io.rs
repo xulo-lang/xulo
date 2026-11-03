@@ -59,7 +59,7 @@ pub extern "C" fn xulo_io_flush() -> *mut XuloEnum {
     }
 }
 
-/// `std::io::readLine()` -> `Result<string?, Error>`：成功载荷是字符串
+/// `std::io::read_line()` -> `Result<string?, Error>`：成功载荷是字符串
 /// （tag 0），输入结束是 null（tag 6）——程序据此终止逐行读取。
 #[unsafe(no_mangle)]
 pub extern "C" fn xulo_io_read_line() -> *mut XuloEnum {
@@ -80,7 +80,7 @@ pub extern "C" fn xulo_io_read() -> *mut XuloEnum {
     }
 }
 
-/// `std::io::readN(max)` -> `Result<string?, Error>`
+/// `std::io::read_n(max)` -> `Result<string?, Error>`
 #[unsafe(no_mangle)]
 pub extern "C" fn xulo_io_read_n(max: i64) -> *mut XuloEnum {
     match xulo_std::io::read_n(max) {
@@ -90,13 +90,13 @@ pub extern "C" fn xulo_io_read_n(max: i64) -> *mut XuloEnum {
     }
 }
 
-/// `std::io::stdinIsTTY()` -> bool（总谓词）
+/// `std::io::stdin_is_tty()` -> bool（总谓词）
 #[unsafe(no_mangle)]
 pub extern "C" fn xulo_io_stdin_is_tty() -> i64 {
     i64::from(xulo_std::io::stdin_is_tty())
 }
 
-/// `std::io::stdoutIsTTY()` -> bool（总谓词）
+/// `std::io::stdout_is_tty()` -> bool（总谓词）
 #[unsafe(no_mangle)]
 pub extern "C" fn xulo_io_stdout_is_tty() -> i64 {
     i64::from(xulo_std::io::stdout_is_tty())

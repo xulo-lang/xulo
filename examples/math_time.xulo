@@ -12,7 +12,7 @@ fn main() {
     print(std::math::sqrt(2.0))
 
     // 定点小数格式化
-    print(std::math::toFixed(3.14159, 2))
+    print(std::math::to_fixed(3.14159, 2))
 
     // 三角函数与对数
     print(std::math::sin(0.0), std::math::cos(0.0))
@@ -20,12 +20,12 @@ fn main() {
 
     // 时钟
     print(std::time::now() >= 0)
-    let start = std::time::monotonicNanos()
+    let start = std::time::monotonic_nanos()
     print(std::time::monotonic() >= 0)
     print(start >= 0)
 
     // 日历（UTC）：字段 ↔ ISO 8601 时间戳，格式固定
-    let noon = std::time::fromParts(2026, 10, 26, 12)
+    let noon = std::time::from_parts(2026, 10, 26, 12)
     print(std::time::format(noon)) // 2026-10-26T12:00:00.000Z
     match std::time::parse("2026-10-26T12:00:00.000Z") {
         Result::Ok(ms) => print(ms == noon) // true

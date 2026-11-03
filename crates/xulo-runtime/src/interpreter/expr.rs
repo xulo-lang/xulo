@@ -796,15 +796,9 @@ impl Interpreter {
             Value::List(list) if m.property == "len" => {
                 Ok(Value::Number(list.borrow().len() as f64))
             }
-            Value::String(s) if m.property == "len" => {
-                Ok(Value::Number(s.chars().count() as f64))
-            }
-            Value::String(s) if m.property == "byteLen" => {
-                Ok(Value::Number(s.len() as f64))
-            }
-            Value::Set(set) if m.property == "size" => {
-                Ok(Value::Number(set.borrow().len() as f64))
-            }
+            Value::String(s) if m.property == "len" => Ok(Value::Number(s.chars().count() as f64)),
+            Value::String(s) if m.property == "byte_len" => Ok(Value::Number(s.len() as f64)),
+            Value::Set(set) if m.property == "size" => Ok(Value::Number(set.borrow().len() as f64)),
             other => Err(RunError::err(
                 format!(
                     "cannot access member `{}` of {}",

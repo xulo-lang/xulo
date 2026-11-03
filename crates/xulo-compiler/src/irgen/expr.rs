@@ -799,7 +799,7 @@ impl IrGenerator {
                     format!("undefined impl function `{impl_name}`"),
                 ));
             };
-            // `str(v)` / `${v}` / `v.toString()` dispatch to `display` at the
+            // `str(v)` / `${v}` / `v.to_string()` dispatch to `display` at the
             // default `Format`; a written `Display::display(v, fmt)` already
             // carries one (spec `types/traits.md`).
             if args.len() == 1
@@ -866,19 +866,19 @@ impl IrGenerator {
                     args.push(Operand::Const(IrValue::F64(-1.0)));
                 }
             }
-            // `std::fs::tempFile([prefix])` / `tempDir([prefix])` 的可选前缀
-            // 与 `tempFileIn`/`tempDirIn` 的可选第二参缺席时补 NULL 指针
+            // `std::fs::temp_file([prefix])` / `temp_dir([prefix])` 的可选前缀
+            // 与 `temp_file_in`/`temp_dir_in` 的可选第二参缺席时补 NULL 指针
             //（FFI 判空 → 无前缀），与 process::run 的可选 input 同一种补齐
             if matches!(
                 call.callee.as_str(),
-                "std::fs::tempFile" | "std::fs::tempDir"
+                "std::fs::temp_file" | "std::fs::temp_dir"
             ) && args.is_empty()
             {
                 args.push(Operand::Const(IrValue::Null));
             }
             if matches!(
                 call.callee.as_str(),
-                "std::fs::tempFileIn" | "std::fs::tempDirIn"
+                "std::fs::temp_file_in" | "std::fs::temp_dir_in"
             ) && args.len() == 1
             {
                 args.push(Operand::Const(IrValue::Null));
@@ -887,19 +887,21 @@ impl IrGenerator {
             // -1.0（FFI 把负数/NaN 读作无预算），f64 形参不能收 NULL
             if matches!(
                 call.callee.as_str(),
-                "std::net::tcpConnect" | "std::net::tcpAccept"
+                "std::net::tcp_connect" | "std::net::tcp_accept"
             ) && args.len() == 1
             {
                 args.push(Operand::Const(IrValue::F64(-1.0)));
             }
-            if matches!(call.callee.as_str(), "std::net::sockRead" | "std::net::sockWrite")
-                && args.len() == 2
+            if matches!(
+                call.callee.as_str(),
+                "std::net::sock_read" | "std::net::sock_write"
+            ) && args.len() == 2
             {
                 args.push(Operand::Const(IrValue::F64(-1.0)));
             }
-            // `std::time::fromParts(year, month, day[, hour[, minute[,
+            // `std::time::from_parts(year, month, day[, hour[, minute[,
             // second[, millisecond]]]])` 的四个可选时间字段缺席时补 0.0
-            if call.callee == "std::time::fromParts" {
+            if call.callee == "std::time::from_parts" {
                 while args.len() < 7 {
                     args.push(Operand::Const(IrValue::F64(0.0)));
                 }
@@ -926,16 +928,13 @@ impl IrGenerator {
                 if args.len() == 1 {
                     args.push(Operand::Const(IrValue::Null));
                 }
-                let elements = call
-                    .arguments
-                    .get(1)
-                    .and_then(|a| match &a.value {
-                        Expression::Literal {
-                            value: Literal::List(elems),
-                            ..
-                        } => Some(elems.as_slice()),
-                        _ => None,
-                    });
+                let elements = call.arguments.get(1).and_then(|a| match &a.value {
+                    Expression::Literal {
+                        value: Literal::List(elems),
+                        ..
+                    } => Some(elems.as_slice()),
+                    _ => None,
+                });
                 let meta = self.fmt_meta_operand(elements);
                 args.push(meta);
             }
@@ -1042,7 +1041,7 @@ impl IrGenerator {
                 "pad_end" => Some(RuntimeFn::StringPadEnd),
                 "repeat" => Some(RuntimeFn::StringRepeat),
                 // Built-in `string` members (spec `types/primitive-types.md`).
-                "codeAt" => Some(RuntimeFn::StringCodeAt),
+                "code_at" => Some(RuntimeFn::StringCodeAt),
                 "bytes" => Some(RuntimeFn::StringBytes),
                 "slice" if !self.expr_is_list_receiver(&call.object) => {
                     Some(RuntimeFn::StringSlice)
@@ -1609,7 +1608,7 @@ impl IrGenerator {
                             self.locals.insert(bind.clone(), raw);
                         }
                         self.dyn_tag_of.insert(bind.clone(), Operand::Local(tag));
-                        // `readDir`/`walk`/`process::args` 的 Ok 载荷是
+                        // `read_dir`/`walk`/`process::args` 的 Ok 载荷是
                         // List<string>：绑定注册元素类型，`.len`/索引才会走
                         // 数组 lowering（否则 `.len` 误入 StringSize）
                         if matches!(
@@ -1618,15 +1617,13 @@ impl IrGenerator {
                                 if call.object.is_none()
                                     && matches!(
                                         call.callee.as_str(),
-                                        "std::fs::readDir"
+                                        "std::fs::read_dir"
                                             | "std::fs::walk"
                                             | "std::process::args"
                                     )
                         ) {
-                            self.source_types.insert(
-                                bind.clone(),
-                                Type::List(Box::new(Type::String)),
-                            );
+                            self.source_types
+                                .insert(bind.clone(), Type::List(Box::new(Type::String)));
                         }
                     }
                     self.generate_match_arm_body(arm, result_local)?;
@@ -1856,14 +1853,14 @@ impl IrGenerator {
         let func_idx = self.current_func.unwrap();
         let object = self.generate_expression(&member.object)?;
         // Read-only collection properties (spec `types/composite-types.md`,
-        // `types/primitive-types.md`): `.len` on a `List`, `.byteLen` on a
+        // `types/primitive-types.md`): `.len` on a `List`, `.byte_len` on a
         // `string`. `.size` on a map has no compiled representation yet.
         let prop_fn = match member.property.as_str() {
             "len" if self.expr_is_list_receiver(&Some(Box::new(member.object.clone()))) => {
                 Some(RuntimeFn::ArrayLen)
             }
             "len" => Some(RuntimeFn::StringSize),
-            "byteLen" => Some(RuntimeFn::StringByteLen),
+            "byte_len" => Some(RuntimeFn::StringByteLen),
             _ => None,
         };
         if let Some(func) = prop_fn {

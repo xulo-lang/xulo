@@ -43,7 +43,7 @@ pub fn flush_to(out: &mut impl Write, stream: &str) -> Result<(), String> {
     out.flush().map_err(|e| fail(&format!("flush {stream}"), e))
 }
 
-/// The read core behind `std::io::readLine()`: the next line without its
+/// The read core behind `std::io::read_line()`: the next line without its
 /// line ending (`\n`, or `\r\n`), or `None` at end of input — the `null` a
 /// program loops on. An empty line is `Some("")`, so it never passes for EOF.
 pub fn read_line_from(input: &mut impl BufRead) -> Result<Option<String>, String> {
@@ -113,7 +113,7 @@ pub fn flush() -> Result<(), String> {
     flush_to(&mut io::stdout().lock(), "stdout")
 }
 
-/// `std::io::readLine()`: the next line of stdin without its terminator, or
+/// `std::io::read_line()`: the next line of stdin without its terminator, or
 /// `Ok(null)` at end of input — an empty line reads as `Ok("")`. Bytes that
 /// are not valid UTF-8 are a failure.
 pub fn read_line() -> Result<Option<String>, String> {
@@ -126,8 +126,7 @@ pub fn read() -> Result<String, String> {
     read_from(&mut io::stdin().lock())
 }
 
-
-/// The maximum byte count a single `readN` accepts (spec `modules/io.md`).
+/// The maximum byte count a single `read_n` accepts (spec `modules/io.md`).
 pub const MAX_READ_N: i64 = 16 * 1024 * 1024;
 
 thread_local! {
@@ -136,14 +135,14 @@ thread_local! {
     static PENDING: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
 }
 
-/// `std::io::readN(max)`: up to `max` bytes of stdin decoded as UTF-8, or
+/// `std::io::read_n(max)`: up to `max` bytes of stdin decoded as UTF-8, or
 /// `Ok(null)` at end of input. The read stops at a character boundary; an
 /// incomplete trailing sequence is kept for the next call. A `max` outside
 /// `1 …= 16777216` is an error (spec `modules/io.md`).
 pub fn read_n(max: i64) -> Result<Option<String>, String> {
     if !(1..=MAX_READ_N).contains(&max) {
         return Err(format!(
-            "std::io::readN: max must be in 1..=16777216, found {max}"
+            "std::io::read_n: max must be in 1..=16777216, found {max}"
         ));
     }
     let max = max as usize;
@@ -173,8 +172,12 @@ pub fn read_n(max: i64) -> Result<Option<String>, String> {
                         .to_string(),
                 );
             }
-            let text = String::from_utf8(out[..valid].to_vec())
-                .map_err(|e| format!("cannot read from stdin: invalid UTF-8 at byte {}", e.utf8_error().valid_up_to()))?;
+            let text = String::from_utf8(out[..valid].to_vec()).map_err(|e| {
+                format!(
+                    "cannot read from stdin: invalid UTF-8 at byte {}",
+                    e.utf8_error().valid_up_to()
+                )
+            })?;
             PENDING.with(|p| *p.borrow_mut() = out[valid..].to_vec());
             Ok(Some(text))
         }
@@ -185,12 +188,12 @@ pub fn read_n(max: i64) -> Result<Option<String>, String> {
     }
 }
 
-/// `std::io::stdinIsTTY()`: whether stdin is a terminal. Total.
+/// `std::io::stdin_is_tty()`: whether stdin is a terminal. Total.
 pub fn stdin_is_tty() -> bool {
     io::stdin().is_terminal()
 }
 
-/// `std::io::stdoutIsTTY()`: whether stdout is a terminal. Total.
+/// `std::io::stdout_is_tty()`: whether stdout is a terminal. Total.
 pub fn stdout_is_tty() -> bool {
     io::stdout().is_terminal()
 }

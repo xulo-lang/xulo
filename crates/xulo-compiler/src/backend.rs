@@ -676,7 +676,7 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
         params: &[],
         returns: &[I64],
     },
-    // Time 日历（spec `modules/time.md`）：format/weekday/fromParts 是标量
+    // Time 日历（spec `modules/time.md`）：format/weekday/from_parts 是标量
     // （域失败在 `xulo-std` 的 ffi 里终止进程），parse 返回 Result 枚举，
     // parts 返回字段对象
     RuntimeFnDesc {

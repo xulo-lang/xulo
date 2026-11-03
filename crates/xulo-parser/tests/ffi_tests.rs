@@ -114,10 +114,10 @@ fn extern_items_accept_spec_examples_without_semicolons() {
     // Every example in spec/ffi.md omits the item terminator; grammar.md's
     // ExternItem includes it. Both spellings parse.
     let b = extern_block(
-        "extern \"C\" {\n  fn abs(x: i32): i32\n  fn getpid(): i32\n  fn malloc(size: usize): Ptr? as cMalloc\n  fn free(p: Ptr?) as cFree\n}",
+        "extern \"C\" {\n  fn abs(x: i32): i32\n  fn getpid(): i32\n  fn malloc(size: usize): Ptr? as c_malloc\n  fn free(p: Ptr?) as c_free\n}",
     );
     assert_eq!(b.items.len(), 4);
-    assert_eq!(b.items[2].local_name, "cMalloc");
+    assert_eq!(b.items[2].local_name, "c_malloc");
     let mixed = extern_block(r#"extern "C" { fn abs(x: i32): i32; fn getpid(): i32 }"#);
     assert_eq!(mixed.items.len(), 2);
 }

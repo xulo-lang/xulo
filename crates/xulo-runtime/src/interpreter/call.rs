@@ -22,8 +22,10 @@ impl Interpreter {
                     args.push(self.eval(object, env)?);
                 }
                 args.extend(self.eval_args(&call.arguments, env)?);
-                if matches!((trait_name, method), ("Display", "display") | ("Debug", "debug"))
-                    && args.len() == 1
+                if matches!(
+                    (trait_name, method),
+                    ("Display", "display") | ("Debug", "debug")
+                ) && args.len() == 1
                 {
                     args.push(self.default_format());
                 }
@@ -66,7 +68,7 @@ impl Interpreter {
                 values.push(self.eval(object, env)?);
             }
             values.extend(self.eval_args(&call.arguments, env)?);
-            // `str(v)` / `${v}` / `v.toString()` dispatch to `display` at the
+            // `str(v)` / `${v}` / `v.to_string()` dispatch to `display` at the
             // default `Format`; a written `Display::display(v, fmt)` already
             // carries one.
             if values.len() == 1
@@ -77,7 +79,7 @@ impl Interpreter {
             }
             return self.call_value_with_values(&callee, &values);
         }
-        // `Map::fromEntries` and `Set::fromList` are the static constructors
+        // `Map::from_entries` and `Set::from_list` are the static constructors
         // of the two built-in container types (spec
         // `types/composite-types.md`); they are not enum variants.
         if call.object.is_none()
@@ -87,10 +89,10 @@ impl Interpreter {
                 .iter()
                 .any(|n| n == "Map" || n == "Set")
         {
-            if call.callee == "Map::fromEntries" {
+            if call.callee == "Map::from_entries" {
                 return self.map_from_entries(call, env);
             }
-            if call.callee == "Set::fromList" {
+            if call.callee == "Set::from_list" {
                 return self.set_from_list(call, env);
             }
             if call.callee == "Array::filled" {
@@ -313,11 +315,7 @@ impl Interpreter {
     /// Record a built instance's type — the same bookkeeping
     /// `construct_struct` does — so method dispatch finds that type's
     /// methods on it (`Response.text`'s output answers `.header`).
-    pub(super) fn register_instance(
-        &self,
-        obj: &Rc<RefCell<Vec<(String, Value)>>>,
-        name: &str,
-    ) {
+    pub(super) fn register_instance(&self, obj: &Rc<RefCell<Vec<(String, Value)>>>, name: &str) {
         self.instance_types.borrow_mut().insert(
             Rc::as_ptr(obj) as usize,
             (Rc::downgrade(obj), name.to_string()),
@@ -371,7 +369,7 @@ impl Interpreter {
             None => {
                 // A constructed instance knows its struct type: the method
                 // resolves on that type's object (inherent methods, a derived
-                // `toString`) with the receiver bound as `self`, so two
+                // `to_string`) with the receiver bound as `self`, so two
                 // structs declaring the same method name never cross-fire.
                 if let Value::Object(obj) = &receiver
                     && let Some(struct_name) = self.instance_type(obj)
@@ -415,11 +413,11 @@ impl Interpreter {
                         env,
                     );
                 }
-                // `toString` is the derived action of `Display`: when no
+                // `to_string` is the derived action of `Display`: when no
                 // inherent or declared member claimed it, a `Display`
                 // implementor answers through `display` at the default
                 // `Format` (spec `types/traits.md`, "Member calls").
-                if method == "toString"
+                if method == "to_string"
                     && call.arguments.is_empty()
                     && let Some(out) = self.call_trait_impl(
                         "Display",
@@ -494,7 +492,7 @@ impl Interpreter {
         env: &Rc<RefCell<crate::env::Env>>,
     ) -> Result<Value, RunError> {
         match method {
-            "codeAt" => {
+            "code_at" => {
                 expect_args(method, args, 1, 1, span)?;
                 let n = self.eval_number_arg(&args[0], env)?;
                 let i = non_negative_index(n, span)?;
@@ -573,8 +571,7 @@ impl Interpreter {
                         .find(|(k, _)| k == "__split")
                         .map(|(_, v)| v.clone())
                 {
-                    return self
-                        .call_value_with_values(&split_fn, &[Value::String(receiver)]);
+                    return self.call_value_with_values(&split_fn, &[Value::String(receiver)]);
                 }
                 let Value::String(sep) = arg else {
                     return Err(RunError::err(
@@ -658,18 +655,14 @@ impl Interpreter {
         Ok(Value::List(Rc::new(RefCell::new(vec![value; n as usize]))))
     }
 
-    /// `Map::fromEntries(entries)`: build a map from `(K, V)` pairs in list
+    /// `Map::from_entries(entries)`: build a map from `(K, V)` pairs in list
     /// order, with a later duplicate key replacing the earlier one.
-    fn map_from_entries(
-        &self,
-        call: &Call,
-        env: &Rc<RefCell<Env>>,
-    ) -> Result<Value, RunError> {
-        expect_args("Map::fromEntries", &call.arguments, 1, 1, &call.span)?;
+    fn map_from_entries(&self, call: &Call, env: &Rc<RefCell<Env>>) -> Result<Value, RunError> {
+        expect_args("Map::from_entries", &call.arguments, 1, 1, &call.span)?;
         let entries = self.eval(&call.arguments[0].value, env)?;
         let Value::List(entries) = entries else {
             return Err(RunError::err(
-                "`Map::fromEntries` expects a List of (key, value) pairs",
+                "`Map::from_entries` expects a List of (key, value) pairs",
                 call.arguments[0].value.span().clone(),
             ));
         };
@@ -678,14 +671,14 @@ impl Interpreter {
         for entry in entries {
             let Value::List(pair) = entry else {
                 return Err(RunError::err(
-                    "`Map::fromEntries` expects each entry to be a (key, value) pair",
+                    "`Map::from_entries` expects each entry to be a (key, value) pair",
                     call.span.clone(),
                 ));
             };
             let pair = pair.borrow();
             if pair.len() != 2 {
                 return Err(RunError::err(
-                    "`Map::fromEntries` expects each entry to be a (key, value) pair",
+                    "`Map::from_entries` expects each entry to be a (key, value) pair",
                     call.span.clone(),
                 ));
             }
@@ -699,17 +692,13 @@ impl Interpreter {
         Ok(Value::Object(Rc::new(RefCell::new(fields))))
     }
 
-    /// `Set::fromList(values)`: build a set holding each distinct value once.
-    fn set_from_list(
-        &self,
-        call: &Call,
-        env: &Rc<RefCell<Env>>,
-    ) -> Result<Value, RunError> {
-        expect_args("Set::fromList", &call.arguments, 1, 1, &call.span)?;
+    /// `Set::from_list(values)`: build a set holding each distinct value once.
+    fn set_from_list(&self, call: &Call, env: &Rc<RefCell<Env>>) -> Result<Value, RunError> {
+        expect_args("Set::from_list", &call.arguments, 1, 1, &call.span)?;
         let values = self.eval(&call.arguments[0].value, env)?;
         let Value::List(values) = values else {
             return Err(RunError::err(
-                "`Set::fromList` expects a List",
+                "`Set::from_list` expects a List",
                 call.arguments[0].value.span().clone(),
             ));
         };
@@ -739,9 +728,7 @@ impl Interpreter {
                 match method {
                     "get" => Ok(found.map(|i| fields[i].1.clone()).unwrap_or(Value::Null)),
                     "has" => Ok(Value::Boolean(found.is_some())),
-                    _ => Ok(found
-                        .map(|i| fields.remove(i).1)
-                        .unwrap_or(Value::Null)),
+                    _ => Ok(found.map(|i| fields.remove(i).1).unwrap_or(Value::Null)),
                 }
             }
             "set" => {
@@ -898,7 +885,7 @@ impl Interpreter {
                 if delete > len - start {
                     return Err(RunError::err(
                         format!(
-                            "splice deleteCount {delete} out of bounds at index {start} for a list of length {len}"
+                            "splice delete_count {delete} out of bounds at index {start} for a list of length {len}"
                         ),
                         span.clone(),
                     ));
@@ -942,18 +929,18 @@ impl Interpreter {
                 let out = list.borrow()[s..e].to_vec();
                 Ok(Value::List(Rc::new(RefCell::new(out))))
             }
-            "indexOf" | "lastIndexOf" | "includes" => {
+            "index_of" | "last_index_of" | "includes" => {
                 expect_args(method, args, 1, 1, span)?;
                 let val = self.eval(&args[0].value, env)?;
                 let l = list.borrow();
                 match method {
-                    "indexOf" => Ok(Value::Number(
+                    "index_of" => Ok(Value::Number(
                         l.iter()
                             .position(|v| equal(v, &val))
                             .map(|i| i as f64)
                             .unwrap_or(-1.0),
                     )),
-                    "lastIndexOf" => Ok(Value::Number(
+                    "last_index_of" => Ok(Value::Number(
                         l.iter()
                             .rposition(|v| equal(v, &val))
                             .map(|i| i as f64)
@@ -999,7 +986,7 @@ impl Interpreter {
                     .collect();
                 Ok(Value::List(Rc::new(RefCell::new(out))))
             }
-            "forEach" => {
+            "for_each" => {
                 expect_args(method, args, 1, 1, span)?;
                 let f = self.eval(&args[0].value, env)?;
                 let snapshot = list.borrow().clone();
@@ -1041,7 +1028,7 @@ impl Interpreter {
                 }
                 Ok(Value::Null)
             }
-            "findIndex" => {
+            "find_index" => {
                 expect_args(method, args, 1, 1, span)?;
                 let f = self.eval(&args[0].value, env)?;
                 let snapshot = list.borrow().clone();

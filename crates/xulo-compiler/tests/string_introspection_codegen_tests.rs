@@ -42,13 +42,13 @@ fn string_inspection_runs_on_the_compiled_path() {
 fn main() {
     print("hello".len)
     print("héllo".len)
-    print("héllo".byteLen)
-    print("héllo".codeAt(1))
+    print("héllo".byte_len)
+    print("héllo".code_at(1))
     print("héllo".slice(1, 4))
     print("abc".slice(1, 1))
     let n = "abc".len
     print(n + 1)
-    print("abc".codeAt(0) + 1)
+    print("abc".code_at(0) + 1)
     let bytes = "hé".bytes()
     print(bytes[0])
     print(bytes[1])
@@ -79,15 +79,15 @@ fn wrapping_and_bit_intrinsics_run_on_the_compiled_path() {
     let out = compile_and_run(
         r#"
 fn main() {
-    print(std::math::wrappingAdd(1, 2))
-    print(std::math::wrappingSub(1, 2))
-    print(std::math::wrappingMul(3, 4))
-    print(std::math::popCount(255))
-    print(std::math::popCount(-1))
-    print(std::math::countLeadingZeros(1))
-    print(std::math::countTrailingZeros(8))
-    print(std::math::rotateLeft(1, 1))
-    print(std::math::rotateRight(2, 1))
+    print(std::math::wrapping_add(1, 2))
+    print(std::math::wrapping_sub(1, 2))
+    print(std::math::wrapping_mul(3, 4))
+    print(std::math::pop_count(255))
+    print(std::math::pop_count(-1))
+    print(std::math::count_leading_zeros(1))
+    print(std::math::count_trailing_zeros(8))
+    print(std::math::rotate_left(1, 1))
+    print(std::math::rotate_right(2, 1))
 }
 "#,
     );
@@ -162,18 +162,18 @@ fn aot_object_references_the_new_runtime_symbols() {
         r#"
 fn main() {
     "x".len
-    "x".byteLen
-    "x".codeAt(0)
+    "x".byte_len
+    "x".code_at(0)
     "x".slice(0, 1)
     "x".bytes()
-    std::math::wrappingAdd(1, 2)
-    std::math::wrappingSub(1, 2)
-    std::math::wrappingMul(1, 2)
-    std::math::popCount(1)
-    std::math::countLeadingZeros(1)
-    std::math::countTrailingZeros(1)
-    std::math::rotateLeft(1, 1)
-    std::math::rotateRight(1, 1)
+    std::math::wrapping_add(1, 2)
+    std::math::wrapping_sub(1, 2)
+    std::math::wrapping_mul(1, 2)
+    std::math::pop_count(1)
+    std::math::count_leading_zeros(1)
+    std::math::count_trailing_zeros(1)
+    std::math::rotate_left(1, 1)
+    std::math::rotate_right(1, 1)
     let n = 2
     print(1 << n)
 }

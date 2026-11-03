@@ -135,16 +135,14 @@ fn rejects_let_type_mismatch_on_assignment() {
 
 #[test]
 fn chained_assignment_checks_both_targets() {
-    analyze_src(
-        r#"fn main() { let mut a = 1 let mut b = 2 a = b = 3 print(a, b) }"#,
-    )
-    .unwrap_or_else(|e| panic!("{}: {}", e.code(), e.message));
-    let err = analyze_src(
-        r#"fn main() { let mut a: number = 1 let mut b: string = "s" a = b = 3 }"#,
-    )
-    .unwrap_err();
+    analyze_src(r#"fn main() { let mut a = 1 let mut b = 2 a = b = 3 print(a, b) }"#)
+        .unwrap_or_else(|e| panic!("{}: {}", e.code(), e.message));
+    let err =
+        analyze_src(r#"fn main() { let mut a: number = 1 let mut b: string = "s" a = b = 3 }"#)
+            .unwrap_err();
     assert!(
-        err.message.contains("cannot assign a value of type `number` to `b: string`"),
+        err.message
+            .contains("cannot assign a value of type `number` to `b: string`"),
         "unexpected: {}",
         err.message
     );
@@ -567,12 +565,12 @@ fn awaits_sync_call_is_ok_but_non_promise_is_an_error() {
 fn closures_and_higher_order_functions_analyze() {
     let src = r#"
         fn apply(f: fn(number): number, x: number): number { f(x) }
-        fn makeAdder(n: number): fn(number): number {
+        fn make_adder(n: number): fn(number): number {
             return fn(v: number): number { v + n }
         }
         fn main() {
             let double = fn(x: number): number { x * 2 }
-            let add5 = makeAdder(5)
+            let add5 = make_adder(5)
             print(apply(double, 3))
             print(add5(10))
         }
@@ -803,10 +801,10 @@ fn decorators_rejected_in_nested_block() {
 #[test]
 fn effect_and_store_and_environment_in_component() {
     let src = r#"
-        fn useAppStore(): Map<string, unknown> { return { user: null } }
+        fn use_app_store(): Map<string, unknown> { return { user: null } }
         fn main(): View {
             @State let editing: bool = false
-            @Store let { user } = useAppStore()
+            @Store let { user } = use_app_store()
             @Environment let router: Map<string, unknown>
             @Effect fn() { print(user) }
             @Effect fn() { }, [editing]
@@ -1018,10 +1016,10 @@ fn effect_cannot_call_render_local_function() {
 #[test]
 fn effect_can_capture_state_store_and_env() {
     let src = r#"
-        fn useAppStore(): Map<string, unknown> { return { user: null } }
+        fn use_app_store(): Map<string, unknown> { return { user: null } }
         fn main(): View {
             @State let count: number = 0
-            @Store let { user } = useAppStore()
+            @Store let { user } = use_app_store()
             @Environment let router: Map<string, unknown>
             @Effect fn() {
                 let u = user
@@ -1334,8 +1332,8 @@ fn state_assignment_is_type_checked_inside_component() {
 #[test]
 fn store_destructure_is_immutable() {
     let src = r#"
-        fn makeStore(): Map<string, unknown> { let o = { theme: { x: 1 } } o }
-        fn main(): View { @Store let { theme } = makeStore() theme = { x: 2 } VStack { Text("x") } }
+        fn make_store(): Map<string, unknown> { let o = { theme: { x: 1 } } o }
+        fn main(): View { @Store let { theme } = make_store() theme = { x: 2 } VStack { Text("x") } }
     "#;
     let err = analyze_src(src).unwrap_err();
     assert!(err.message.contains("cannot assign to `theme`"));
@@ -2656,8 +2654,8 @@ fn list_index_of_and_includes() {
     let src = r#"
         fn f() {
             let a = [1, 2, 3]
-            let n: number = a.indexOf(2)
-            let m: number = a.lastIndexOf(2)
+            let n: number = a.index_of(2)
+            let m: number = a.last_index_of(2)
             let b: bool = a.includes(2)
         }
     "#;
@@ -2713,11 +2711,11 @@ fn list_callback_member_types() {
             let b: List<number> = a.map(fn(x) { x * 2 })
             let c: List<number> = a.filter(fn(x) { x > 2 })
             let d: number? = a.find(fn(x) { x > 2 })
-            let e: number = a.findIndex(fn(x) { x > 2 })
+            let e: number = a.find_index(fn(x) { x > 2 })
             let g: bool = a.some(fn(x) { x > 2 })
             let h: bool = a.every(fn(x) { x > 0 })
             let i: number = a.reduce(fn(acc, x) { acc + x }, 0)
-            a.forEach(fn(x) { x + 1 })
+            a.for_each(fn(x) { x + 1 })
         }
     "#;
     assert!(analyze_src(src).is_ok());
@@ -2742,8 +2740,8 @@ fn string_members_typecheck() {
         fn f() {
             let s = "hello"
             let n: number = s.len
-            let m: number = s.byteLen
-            let c: number = s.codeAt(0)
+            let m: number = s.byte_len
+            let c: number = s.code_at(0)
             let t: string = s.slice(0, 2)
             let b: List<u8> = s.bytes()
         }
@@ -2781,8 +2779,8 @@ fn map_subscript_and_member_are_rejected() {
 fn statics_typecheck() {
     let src = r#"
         fn f() {
-            let m: Map<string, number> = Map::fromEntries([("a", 1)])
-            let s: Set<number> = Set::fromList([1, 2, 2])
+            let m: Map<string, number> = Map::from_entries([("a", 1)])
+            let s: Set<number> = Set::from_list([1, 2, 2])
             let n: number = s.size
             let b: bool = s.has(1)
             s.insert(3)
@@ -4730,7 +4728,7 @@ fn math_namespace_constant_and_calls_typecheck() {
             let hypotenuse = std::math::sqrt(3.0 * 3.0 + 4.0 * 4.0)
             let clamped = std::math::min(std::math::max(120, 0), 100)
             let whole = std::math::floor(3.7)
-            let fixed = std::math::toFixed(3.14159, 2)
+            let fixed = std::math::to_fixed(3.14159, 2)
             print(str(circumference + hypotenuse + clamped + whole))
             print(fixed)
         }
@@ -4971,7 +4969,7 @@ fn io_namespace_signatures_typecheck() {
             let err: Result<unit, Error> = std::io::eprint("a")
             let err_line: Result<unit, Error> = std::io::eprintln("a")
             let flushed: Result<unit, Error> = std::io::flush()
-            let line: Result<string?, Error> = std::io::readLine()
+            let line: Result<string?, Error> = std::io::read_line()
             let all: Result<string, Error> = std::io::read()
             match wrote {
                 Result::Ok(_) => print("ok")
@@ -5068,10 +5066,10 @@ fn io_namespace_alias_reaches_members() {
 #[test]
 fn io_group_and_glob_imports_typecheck() {
     let src = r#"
-        use std::io::{eprint, flush, readLine, read};
+        use std::io::{eprint, flush, read_line, read};
 
         fn main() {
-            let line: Result<string?, Error> = readLine()
+            let line: Result<string?, Error> = read_line()
             let all: Result<string, Error> = read()
             match flush() {
                 Result::Ok(_) => print("ok")
@@ -5278,10 +5276,7 @@ fn referencing_a_test_fn_is_e0107() {
 
 #[test]
 fn derive_struct_field_without_debug_is_e0801() {
-    let err = analyze_src(
-        "struct W { a: number }\n#Derive(Debug)\nstruct S { w: W }",
-    )
-    .unwrap_err();
+    let err = analyze_src("struct W { a: number }\n#Derive(Debug)\nstruct S { w: W }").unwrap_err();
     assert_eq!(err.code(), "E0801", "unexpected: {}", err.message);
     assert!(
         err.message.contains("`W` does not implement `Debug`"),
@@ -5305,8 +5300,7 @@ fn derive_accepts_containers_and_enums() {
 
 #[test]
 fn second_derive_is_e0805() {
-    let err =
-        analyze_src("#Derive(Debug)\n#Derive(Debug)\nstruct S { a: string }").unwrap_err();
+    let err = analyze_src("#Derive(Debug)\n#Derive(Debug)\nstruct S { a: string }").unwrap_err();
     assert_eq!(err.code(), "E0805", "unexpected: {}", err.message);
 }
 
@@ -5352,7 +5346,7 @@ fn well_formed_attributes_and_derive_are_accepted() {
         impl Named for User { fn name(self): string { return self.name } }
         fn main() {
             let u = User(name: "Alice", age: 30)
-            let s: string = u.toString()
+            let s: string = u.to_string()
             let t: string = Display::display(u, Format(precision: null, alternate: false))
             let b: string = str(u)
             let c: string = str(Tagged(inner: u))
@@ -5571,8 +5565,8 @@ fn e0807_reaches_every_non_generic_call_path() {
 #[test]
 fn written_list_on_a_value_callee_is_e0807() {
     let src = "\
-fn getFn(): fn(number): number { return fn(x: number): number { x * 2 } }
-fn main() { let n = getFn()<number>(1) print(str(n)) }";
+fn get_fn(): fn(number): number { return fn(x: number): number { x * 2 } }
+fn main() { let n = get_fn()<number>(1) print(str(n)) }";
     let err = analyze_src(src).unwrap_err();
     assert_eq!(err.code(), "E0807", "unexpected: {}", err.message);
     assert!(
@@ -6545,7 +6539,7 @@ fn array_literal_and_members_typecheck() {
             let n: number = a.len
             let x: int = a[0]
             let b: List<int> = a.slice(0, 2)
-            let c: int = a.indexOf(2)
+            let c: int = a.index_of(2)
             let d: bool = a.includes(2)
             let e = a.map(fn(v) { v * 2 })
             let f: List<int> = a.filter(fn(v) { v > 1 })
@@ -6600,7 +6594,7 @@ fn math_expansion_typechecks() {
             let c: number = std::math::clamp(12, 0, 10)
             let d: number = std::math::log1p(0)
             let e: number = std::math::expm1(0)
-            let f: number = std::math::randomInt(1, 6)
+            let f: number = std::math::random_int(1, 6)
         }
     "#;
     assert!(analyze_src(src).is_ok());
@@ -6610,13 +6604,13 @@ fn math_expansion_typechecks() {
 fn path_expansion_typechecks() {
     let src = r#"
         fn main() {
-            let a: bool = std::path::isAbsolute("/a")
+            let a: bool = std::path::is_absolute("/a")
             let s = std::path::split("/a/b.txt")
             let d: string = s.dir
             let b: string = s.base
             let e: string = s.ext
             let c: string = std::path::stem("a.txt")
-            let f: string = std::path::withExt("a.txt", ".md")
+            let f: string = std::path::with_ext("a.txt", ".md")
             let g: string? = std::path::relative("/a", "/b")
         }
     "#;
@@ -6627,13 +6621,13 @@ fn path_expansion_typechecks() {
 fn os_io_json_expansion_typechecks() {
     let src = r#"
         fn main() {
-            let t: string = std::os::tmpDir()
-            let n: number = std::os::cpuCount()
+            let t: string = std::os::tmp_dir()
+            let n: number = std::os::cpu_count()
             let u = std::os::unsetenv("X")
-            let h = std::os::homeDir()
-            let i: bool = std::io::stdinIsTTY()
-            let o: bool = std::io::stdoutIsTTY()
-            let r = std::io::readN(16)
+            let h = std::os::home_dir()
+            let i: bool = std::io::stdin_is_tty()
+            let o: bool = std::io::stdout_is_tty()
+            let r = std::io::read_n(16)
             let v: bool = std::json::valid("{}")
             let s = std::json::stringify(1, 2)
         }
@@ -6656,15 +6650,15 @@ fn fs_expansion_signatures_typecheck() {
     let src = r#"
         fn main() {
             let r: Result<string, Error> = std::fs::read("f")
-            let b: Result<List<u8>, Error> = std::fs::readBytes("f")
+            let b: Result<List<u8>, Error> = std::fs::read_bytes("f")
             let w: Result<unit, Error> = std::fs::write("f", "x")
-            let wb: Result<unit, Error> = std::fs::writeBytes("f", [1, 2])
+            let wb: Result<unit, Error> = std::fs::write_bytes("f", [1, 2])
             let a: Result<unit, Error> = std::fs::append("f", "x")
-            let ab: Result<unit, Error> = std::fs::appendBytes("f", [])
-            let c: Result<unit, Error> = std::fs::createNew("f", "x")
+            let ab: Result<unit, Error> = std::fs::append_bytes("f", [])
+            let c: Result<unit, Error> = std::fs::create_new("f", "x")
             let t: Result<unit, Error> = std::fs::touch("f")
-            let st: Result<unit, Error> = std::fs::setTimes("f", 0)
-            let sm: Result<unit, Error> = std::fs::setMode("f", 0o755)
+            let st: Result<unit, Error> = std::fs::set_times("f", 0)
+            let sm: Result<unit, Error> = std::fs::set_mode("f", 0o755)
             let e: bool = std::fs::exists("f")
             let rp: Result<string, Error> = std::fs::realpath("f")
             let info = std::fs::stat("f")
@@ -6681,16 +6675,16 @@ fn fs_expansion_signatures_typecheck() {
             let rn: Result<unit, Error> = std::fs::rename("a", "b")
             let rm: Result<unit, Error> = std::fs::remove("f")
             let mk: Result<unit, Error> = std::fs::mkdir("d")
-            let rd: Result<List<string>, Error> = std::fs::readDir("d")
+            let rd: Result<List<string>, Error> = std::fs::read_dir("d")
             let wk: Result<List<string>, Error> = std::fs::walk("d")
-            let rmd: Result<unit, Error> = std::fs::removeDir("d")
-            let tf: Result<string, Error> = std::fs::tempFile()
-            let tf2: Result<string, Error> = std::fs::tempFile("p_")
-            let td: Result<string, Error> = std::fs::tempDir()
-            let tfi: Result<string, Error> = std::fs::tempFileIn("d")
-            let tfi2: Result<string, Error> = std::fs::tempFileIn("d", "p_")
-            let tdi: Result<string, Error> = std::fs::tempDirIn("d")
-            let tdi2: Result<string, Error> = std::fs::tempDirIn("d", "p_")
+            let rmd: Result<unit, Error> = std::fs::remove_dir("d")
+            let tf: Result<string, Error> = std::fs::temp_file()
+            let tf2: Result<string, Error> = std::fs::temp_file("p_")
+            let td: Result<string, Error> = std::fs::temp_dir()
+            let tfi: Result<string, Error> = std::fs::temp_file_in("d")
+            let tfi2: Result<string, Error> = std::fs::temp_file_in("d", "p_")
+            let tdi: Result<string, Error> = std::fs::temp_dir_in("d")
+            let tdi2: Result<string, Error> = std::fs::temp_dir_in("d", "p_")
         }
     "#;
     assert!(analyze_src(src).is_ok());
@@ -6702,15 +6696,15 @@ fn fs_expansion_glob_face_is_the_twenty_four() {
         use std::fs::*;
         fn main() {
             read("a")
-            readBytes("a")
+            read_bytes("a")
             write("a", "x")
-            writeBytes("a", [1])
+            write_bytes("a", [1])
             append("a", "x")
-            appendBytes("a", [1])
-            createNew("a", "x")
+            append_bytes("a", [1])
+            create_new("a", "x")
             touch("a")
-            setTimes("a", 0)
-            setMode("a", 0o644)
+            set_times("a", 0)
+            set_mode("a", 0o644)
             exists("a")
             realpath("a")
             stat("a")
@@ -6718,13 +6712,13 @@ fn fs_expansion_glob_face_is_the_twenty_four() {
             rename("a", "b")
             remove("a")
             mkdir("d")
-            readDir("d")
+            read_dir("d")
             walk("d")
-            removeDir("d")
-            tempFile()
-            tempDir()
-            tempFileIn("d")
-            tempDirIn("d")
+            remove_dir("d")
+            temp_file()
+            temp_dir()
+            temp_file_in("d")
+            temp_dir_in("d")
         }
     "#;
     assert!(analyze_src(src).is_ok());
@@ -6732,24 +6726,24 @@ fn fs_expansion_glob_face_is_the_twenty_four() {
 
 #[test]
 fn fs_expansion_arity_errors() {
-    let zero = analyze_src(r#"fn main() { std::fs::tempFile("a", "b") }"#)
-        .expect_err("tempFile takes at most one argument");
+    let zero = analyze_src(r#"fn main() { std::fs::temp_file("a", "b") }"#)
+        .expect_err("temp_file takes at most one argument");
     assert!(
         zero.message.contains("expected 0 to 1 argument"),
         "{}",
         zero.message
     );
-    let one = analyze_src(r#"fn main() { std::fs::tempFileIn() }"#)
-        .expect_err("tempFileIn needs the directory");
+    let one = analyze_src(r#"fn main() { std::fs::temp_file_in() }"#)
+        .expect_err("temp_file_in needs the directory");
     assert!(
         one.message.contains("expected 1 to 2 argument"),
         "{}",
         one.message
     );
-    let wb = analyze_src(r#"fn main() { std::fs::writeBytes("a", "not a list") }"#)
-        .expect_err("writeBytes wants bytes");
+    let wb = analyze_src(r#"fn main() { std::fs::write_bytes("a", "not a list") }"#)
+        .expect_err("write_bytes wants bytes");
     assert!(
-        wb.message.contains("argument to `std::fs::writeBytes`"),
+        wb.message.contains("argument to `std::fs::write_bytes`"),
         "{}",
         wb.message
     );
@@ -6758,7 +6752,11 @@ fn fs_expansion_arity_errors() {
 #[test]
 fn fs_unknown_member_still_errors() {
     let err = analyze_src(r#"fn main() { std::fs::scan(".") }"#).expect_err("no member scan");
-    assert!(err.message.contains("has no member `scan`"), "{}", err.message);
+    assert!(
+        err.message.contains("has no member `scan`"),
+        "{}",
+        err.message
+    );
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -6769,16 +6767,16 @@ fn fs_unknown_member_still_errors() {
 fn net_camel_case_surface_typechecks() {
     let src = r#"
         fn main() {
-            let l: Result<number, Error> = std::net::tcpListen("127.0.0.1:0")
-            let c: Result<number, Error> = std::net::tcpConnect("127.0.0.1:1", 100)
-            let a: Result<number, Error> = std::net::tcpAccept(1, 50)
-            let r: Result<string?, Error> = std::net::sockRead(1, 16, 25)
-            let w: Result<number, Error> = std::net::sockWrite(1, "x", 10)
-            let s: Result<unit, Error> = std::net::sockShutdown(1)
-            let sw: Result<unit, Error> = std::net::sockShutdownWrite(1)
-            let x: Result<unit, Error> = std::net::sockClose(1)
-            let la: Result<string, Error> = std::net::sockLocalAddr(1)
-            let pa: Result<string, Error> = std::net::sockPeerAddr(1)
+            let l: Result<number, Error> = std::net::tcp_listen("127.0.0.1:0")
+            let c: Result<number, Error> = std::net::tcp_connect("127.0.0.1:1", 100)
+            let a: Result<number, Error> = std::net::tcp_accept(1, 50)
+            let r: Result<string?, Error> = std::net::sock_read(1, 16, 25)
+            let w: Result<number, Error> = std::net::sock_write(1, "x", 10)
+            let s: Result<unit, Error> = std::net::sock_shutdown(1)
+            let sw: Result<unit, Error> = std::net::sock_shutdown_write(1)
+            let x: Result<unit, Error> = std::net::sock_close(1)
+            let la: Result<string, Error> = std::net::sock_local_addr(1)
+            let pa: Result<string, Error> = std::net::sock_peer_addr(1)
         }
     "#;
     assert!(analyze_src(src).is_ok());
@@ -6786,23 +6784,23 @@ fn net_camel_case_surface_typechecks() {
 
 #[test]
 fn net_timeout_arity_is_optional() {
-    let err = analyze_src(r#"fn main() { std::net::sockRead(1) }"#)
-        .expect_err("sockRead needs the max operand");
+    let err = analyze_src(r#"fn main() { std::net::sock_read(1) }"#)
+        .expect_err("sock_read needs the max operand");
     assert!(
         err.message.contains("expected 2 to 3 argument"),
         "{}",
         err.message
     );
-    let ok = analyze_src(r#"fn main() { std::net::sockRead(1, 8) }"#);
+    let ok = analyze_src(r#"fn main() { std::net::sock_read(1, 8) }"#);
     assert!(ok.is_ok());
 }
 
 #[test]
-fn net_rejects_old_snake_case_names() {
-    let err = analyze_src(r#"fn main() { std::net::tcp_listen("x") }"#)
-        .expect_err("snake_case members are gone");
+fn net_rejects_old_camel_case_names() {
+    let err = analyze_src(r#"fn main() { std::net::tcpListen("x") }"#)
+        .expect_err("camelCase members are gone");
     assert!(
-        err.message.contains("has no member `tcp_listen`"),
+        err.message.contains("has no member `tcpListen`"),
         "{}",
         err.message
     );
@@ -6830,7 +6828,11 @@ fn process_checked_call_examples_typecheck() {
         }
     "#;
     let checked = analyze_src(src);
-    assert!(checked.is_ok(), "{:?}", checked.err().map(|e| (e.code(), e.message)));
+    assert!(
+        checked.is_ok(),
+        "{:?}",
+        checked.err().map(|e| (e.code(), e.message))
+    );
 }
 
 #[test]
@@ -6855,10 +6857,7 @@ fn process_match_binding_answers_the_child_handle() {
 #[test]
 fn process_arity_errors_follow_the_spec_ranges() {
     let cases = [
-        (
-            "std::process::run()",
-            "expected 1 to 3 arguments, found 0",
-        ),
+        ("std::process::run()", "expected 1 to 3 arguments, found 0"),
         (
             "std::process::run(\"x\", \"y\", \"z\", \"w\")",
             "expected 1 to 3 arguments, found 4",
@@ -6886,7 +6885,8 @@ fn process_argument_types_are_enforced() {
     let one = analyze_src(r#"fn main() { std::process::run(1, "x") }"#).unwrap_err();
     assert_eq!(one.code(), "E0202", "{}", one.message);
     assert!(
-        one.message.contains("argument to `std::process::run` must be `string`"),
+        one.message
+            .contains("argument to `std::process::run` must be `string`"),
         "{}",
         one.message
     );
@@ -6894,7 +6894,8 @@ fn process_argument_types_are_enforced() {
     let two = analyze_src(r#"fn main() { std::process::exec("ls", "-a") }"#).unwrap_err();
     assert_eq!(two.code(), "E0202", "{}", two.message);
     assert!(
-        two.message.contains("must be `List<string>`, found `string`"),
+        two.message
+            .contains("must be `List<string>`, found `string`"),
         "{}",
         two.message
     );
@@ -6928,7 +6929,11 @@ fn process_optional_positions_accept_explicit_null() {
 fn process_unknown_member_is_e0601() {
     let err = analyze_src(r#"fn main() { std::process::signal("TERM") }"#).unwrap_err();
     assert_eq!(err.code(), "E0601", "{}", err.message);
-    assert!(err.message.contains("has no member `signal`"), "{}", err.message);
+    assert!(
+        err.message.contains("has no member `signal`"),
+        "{}",
+        err.message
+    );
 }
 
 #[test]
@@ -6945,8 +6950,7 @@ fn bare_process_head_is_e0607_with_a_migration_hint() {
 #[test]
 fn process_command_statics_reject_method_and_unknown_names() {
     // A setter or runner reached as a static: it is a method.
-    let method = analyze_src(r#"fn main() { std::process::Command::timeout(500) }"#)
-        .unwrap_err();
+    let method = analyze_src(r#"fn main() { std::process::Command::timeout(500) }"#).unwrap_err();
     assert!(
         method.message.contains("`Command::timeout` is a method"),
         "{}",
@@ -6979,13 +6983,15 @@ fn process_command_statics_reject_method_and_unknown_names() {
 fn process_types_without_import_are_guided() {
     let err = analyze_src(r#"fn main() { Command::shell("x") }"#).unwrap_err();
     assert!(
-        err.message.contains("`Command` belongs to the built-in `std::process` module"),
+        err.message
+            .contains("`Command` belongs to the built-in `std::process` module"),
         "{}",
         err.message
     );
     let err = analyze_src(r#"fn main() { Child::pid() }"#).unwrap_err();
     assert!(
-        err.message.contains("`Child` belongs to the built-in `std::process` module"),
+        err.message
+            .contains("`Child` belongs to the built-in `std::process` module"),
         "{}",
         err.message
     );
@@ -7042,12 +7048,12 @@ fn os_glob_exports_the_full_surface() {
             unsetenv("A")
             cwd()
             chdir("/tmp")
-            tmpDir()
-            homeDir()
-            hostName()
-            userName()
-            execPath()
-            cpuCount()
+            tmp_dir()
+            home_dir()
+            host_name()
+            user_name()
+            exec_path()
+            cpu_count()
             pid()
             platform()
             arch()
@@ -7086,7 +7092,7 @@ fn http_handler_shapes_typecheck() {
             } else if req.method == "POST" and req.path == "/echo" {
                 std::http::Response.text(req.body, 201)
             } else if req.method == "GET" and req.path == "/greet" {
-                std::http::Response.text("hello, " + (req.queryValue("name") ?? "stranger"))
+                std::http::Response.text("hello, " + (req.query_value("name") ?? "stranger"))
             } else if req.method == "GET" and req.path == "/json" {
                 match std::http::Response.json({ ok: true, path: req.path }) {
                     Result::Ok(res) => res
@@ -7132,16 +7138,15 @@ fn http_arity_errors_follow_the_spec_ranges() {
 
 #[test]
 fn http_argument_types_are_enforced() {
-    let one =
-        analyze_src(r#"fn main() { std::http::request("POST", 1) }"#).unwrap_err();
+    let one = analyze_src(r#"fn main() { std::http::request("POST", 1) }"#).unwrap_err();
     assert_eq!(one.code(), "E0202", "{}", one.message);
     assert!(
-        one.message.contains("argument to `std::http::request` must be `string`"),
+        one.message
+            .contains("argument to `std::http::request` must be `string`"),
         "{}",
         one.message
     );
-    let two =
-        analyze_src(r#"fn main() { std::http::Response.text(1) }"#).unwrap_err();
+    let two = analyze_src(r#"fn main() { std::http::Response.text(1) }"#).unwrap_err();
     assert_eq!(two.code(), "E0202", "{}", two.message);
     assert!(
         two.message.contains("must be `string`, found `number`"),
@@ -7166,7 +7171,11 @@ fn http_optional_positions_accept_explicit_null() {
 fn http_unknown_member_is_e0601() {
     let err = analyze_src(r#"fn main() { std::http::serve("x", 1) }"#).unwrap_err();
     assert_eq!(err.code(), "E0601", "{}", err.message);
-    assert!(err.message.contains("has no member `serve`"), "{}", err.message);
+    assert!(
+        err.message.contains("has no member `serve`"),
+        "{}",
+        err.message
+    );
 }
 
 #[test]
@@ -7184,8 +7193,7 @@ fn bare_http_head_is_e0607_with_a_migration_hint() {
 fn http_data_construction_checks_the_fields() {
     // The named-field constructor is a struct literal: missing is E0205,
     // unknown is E0206, positional is E0208.
-    let missing =
-        analyze_src(r#"fn main() { std::http::Response(status: 200) }"#).unwrap_err();
+    let missing = analyze_src(r#"fn main() { std::http::Response(status: 200) }"#).unwrap_err();
     assert_eq!(missing.code(), "E0205", "{}", missing.message);
     assert!(
         missing.message.contains("missing field `headers`"),
@@ -7197,30 +7205,23 @@ fn http_data_construction_checks_the_fields() {
     )
     .unwrap_err();
     assert_eq!(unknown.code(), "E0206", "{}", unknown.message);
-    let positional = analyze_src(r#"fn main() { std::http::Response(200, [], "x") }"#)
-        .unwrap_err();
+    let positional = analyze_src(r#"fn main() { std::http::Response(200, [], "x") }"#).unwrap_err();
     assert_eq!(positional.code(), "E0208", "{}", positional.message);
     // `Server` is opaque — no literal at all.
     let opaque = analyze_src(r#"fn main() { std::http::Server() }"#).unwrap_err();
-    assert!(
-        opaque.message.contains("opaque"),
-        "{}",
-        opaque.message
-    );
+    assert!(opaque.message.contains("opaque"), "{}", opaque.message);
 }
 
 #[test]
 fn http_statics_reject_method_and_unknown_names() {
     // A method reached as a static names the fix.
-    let method =
-        analyze_src(r#"fn main() { std::http::Response.header("x") }"#).unwrap_err();
+    let method = analyze_src(r#"fn main() { std::http::Response.header("x") }"#).unwrap_err();
     assert!(
         method.message.contains("`Response.header` is a method"),
         "{}",
         method.message
     );
-    let typo =
-        analyze_src(r#"fn main() { std::http::Response.typo() }"#).unwrap_err();
+    let typo = analyze_src(r#"fn main() { std::http::Response.typo() }"#).unwrap_err();
     assert!(
         typo.message.contains("`Response` has no member `typo`"),
         "{}",
@@ -7229,7 +7230,8 @@ fn http_statics_reject_method_and_unknown_names() {
     // Without the import, the bare head names where the type lives.
     let bare = analyze_src(r#"fn main() { Response.text("x") }"#).unwrap_err();
     assert!(
-        bare.message.contains("`Response` belongs to the built-in `std::http` module"),
+        bare.message
+            .contains("`Response` belongs to the built-in `std::http` module"),
         "{}",
         bare.message
     );
@@ -7253,7 +7255,7 @@ fn http_alias_and_import_forms_reach_the_surface() {
                 headers: [],
                 body: "",
                 version: "HTTP/1.1",
-                remoteAddr: "1.2.3.4:5"
+                remote_addr: "1.2.3.4:5"
             )
             print(r.header("x"))
             let s: Result<Server, Error> = h::listen("127.0.0.1:1")
@@ -7282,7 +7284,7 @@ fn http_unknown_type_export_is_e0601() {
 }
 
 // ──────────────────────────────────────────────────────────────────────
-//  std::time calendar: format/parse/parts/fromParts/weekday
+//  std::time calendar: format/parse/parts/from_parts/weekday
 // ──────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -7290,7 +7292,7 @@ fn time_calendar_members_typecheck() {
     // The spec's Calendar example shape.
     let src = r#"
         fn main() {
-            let noon = std::time::fromParts(2026, 10, 26, 12)
+            let noon = std::time::from_parts(2026, 10, 26, 12)
             print(std::time::format(noon))
             match std::time::parse("2026-10-26T12:00:00.000Z") {
                 Result::Ok(ms) => print(ms == noon)
@@ -7307,7 +7309,7 @@ fn time_calendar_members_typecheck() {
 #[test]
 fn time_from_parts_arity_is_three_to_seven() {
     // The spec's checked example.
-    let err = analyze_src(r#"fn main() { std::time::fromParts(2026, 10) }"#).unwrap_err();
+    let err = analyze_src(r#"fn main() { std::time::from_parts(2026, 10) }"#).unwrap_err();
     assert_eq!(err.code(), "E0207", "{}", err.message);
     assert!(
         err.message.contains("expected 3 to 7 arguments, found 2"),
@@ -7317,12 +7319,12 @@ fn time_from_parts_arity_is_three_to_seven() {
     // The time fields are optional — absent or explicitly `null`.
     let src = r#"
         fn main() {
-            std::time::fromParts(2026, 10, 26)
-            std::time::fromParts(2026, 10, 26, 12)
-            std::time::fromParts(2026, 10, 26, 12, 30)
-            std::time::fromParts(2026, 10, 26, 12, 30, 45)
-            std::time::fromParts(2026, 10, 26, 12, 30, 45, 500)
-            std::time::fromParts(2026, 10, 26, null, null, 45)
+            std::time::from_parts(2026, 10, 26)
+            std::time::from_parts(2026, 10, 26, 12)
+            std::time::from_parts(2026, 10, 26, 12, 30)
+            std::time::from_parts(2026, 10, 26, 12, 30, 45)
+            std::time::from_parts(2026, 10, 26, 12, 30, 45, 500)
+            std::time::from_parts(2026, 10, 26, null, null, 45)
         }
     "#;
     assert!(analyze_src(src).is_ok());
@@ -7333,7 +7335,8 @@ fn time_calendar_argument_types_are_enforced() {
     let one = analyze_src(r#"fn main() { std::time::parse(2026) }"#).unwrap_err();
     assert_eq!(one.code(), "E0202", "{}", one.message);
     assert!(
-        one.message.contains("argument to `std::time::parse` must be `string`"),
+        one.message
+            .contains("argument to `std::time::parse` must be `string`"),
         "{}",
         one.message
     );
@@ -7376,8 +7379,7 @@ fn fmt_arity_is_one_to_two() {
         "{}",
         zero.message
     );
-    let three =
-        analyze_src(r#"fn main() { std::fmt::format("%d", [1], [2]) }"#).unwrap_err();
+    let three = analyze_src(r#"fn main() { std::fmt::format("%d", [1], [2]) }"#).unwrap_err();
     assert_eq!(three.code(), "E0207", "{}", three.message);
     assert!(
         three.message.contains("expected 1 to 2 arguments, found 3"),
@@ -7412,7 +7414,8 @@ fn fmt_rejects_type_arguments() {
     let err = analyze_src(r#"fn main() { std::fmt::format<int>("%d", [1]) }"#).unwrap_err();
     assert_eq!(err.code(), "E0807", "{}", err.message);
     assert!(
-        err.message.contains("`std::fmt::format` accepts no type arguments"),
+        err.message
+            .contains("`std::fmt::format` accepts no type arguments"),
         "{}",
         err.message
     );
@@ -7422,14 +7425,22 @@ fn fmt_rejects_type_arguments() {
 fn fmt_unknown_member_is_e0601() {
     let err = analyze_src(r#"fn main() { std::fmt::spray("%d", [1]) }"#).unwrap_err();
     assert_eq!(err.code(), "E0601", "{}", err.message);
-    assert!(err.message.contains("has no member `spray`"), "{}", err.message);
+    assert!(
+        err.message.contains("has no member `spray`"),
+        "{}",
+        err.message
+    );
 }
 
 #[test]
 fn bare_fmt_head_is_e0607_with_a_migration_hint() {
     let err = analyze_src(r#"fn main() { Fmt::format("%d", [1]) }"#).unwrap_err();
     assert_eq!(err.code(), "E0607", "{}", err.message);
-    assert!(err.message.contains("`Fmt` lives under `std`"), "{}", err.message);
+    assert!(
+        err.message.contains("`Fmt` lives under `std`"),
+        "{}",
+        err.message
+    );
 }
 
 #[test]
@@ -7489,7 +7500,8 @@ fn print_rejects_a_struct_with_neither_display_nor_debug() {
     let err = analyze_src("struct S { v: number }\nfn main() { print(S(v: 1)) }").unwrap_err();
     assert_eq!(err.code(), "E0212", "unexpected: {}", err.message);
     assert!(
-        err.message.contains("`S` has no string form; implement `Display`"),
+        err.message
+            .contains("`S` has no string form; implement `Display`"),
         "unexpected: {}",
         err.message
     );
@@ -7511,10 +7523,9 @@ fn print_of_a_debug_only_type_is_well_formed() {
 
 #[test]
 fn str_of_a_debug_only_type_notes_print_still_accepts_it() {
-    let err = analyze_src(
-        "#Derive(Debug)\nstruct S { v: number }\nfn main() { print(str(S(v: 1))) }",
-    )
-    .unwrap_err();
+    let err =
+        analyze_src("#Derive(Debug)\nstruct S { v: number }\nfn main() { print(str(S(v: 1))) }")
+            .unwrap_err();
     assert_eq!(err.code(), "E0212", "unexpected: {}", err.message);
     let note = err.note.unwrap_or_default();
     assert!(
@@ -7525,10 +7536,7 @@ fn str_of_a_debug_only_type_notes_print_still_accepts_it() {
 
 #[test]
 fn print_rejects_unknown_in_a_structural_position() {
-    let err = analyze_src(
-        "fn main() { let xs: List<unknown> = [] print(xs) }",
-    )
-    .unwrap_err();
+    let err = analyze_src("fn main() { let xs: List<unknown> = [] print(xs) }").unwrap_err();
     assert_eq!(err.code(), "E0212", "unexpected: {}", err.message);
     assert!(
         err.message.contains("`unknown` has no string form"),
@@ -7557,14 +7565,16 @@ fn display_and_debug_are_builtin_traits_and_to_string_is_reserved() {
         }
         fn main() {
             let s = S(v: 1)
-            let a: string = s.toString()
+            let a: string = s.to_string()
             let b: string = Display::display(s, Format(precision: null, alternate: false))
             print(a, b)
         }
     "#;
     analyze_src(src).unwrap_or_else(|err| panic!("{}: {}", err.code(), err.message));
-    let err = analyze_src("struct S { v: number }\nimpl ToString for S { fn toString(self): string { \"\" } }")
-        .unwrap_err();
+    let err = analyze_src(
+        "struct S { v: number }\nimpl ToString for S { fn to_string(self): string { \"\" } }",
+    )
+    .unwrap_err();
     assert!(
         err.message.contains("unknown trait `ToString`"),
         "unexpected: {}",

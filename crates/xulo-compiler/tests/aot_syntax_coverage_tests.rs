@@ -355,8 +355,8 @@ fn optional_param_nullish_and_default() {
         r#"
         fn maybe(x: number?): number { if x == null { 0 } else { x } }
         fn main() {
-            let maybeN: number? = null
-            print(maybeN ?? 7)
+            let maybe_n: number? = null
+            print(maybe_n ?? 7)
             print(maybe(null))
             print(maybe(42))
         }

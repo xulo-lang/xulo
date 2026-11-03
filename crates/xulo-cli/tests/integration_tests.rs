@@ -68,7 +68,7 @@ fn run_os_example() {
 
 /// `examples/http.xulo` 经 `xulo run` 的完整往返：数据段 + 自拉起服务器
 /// 子进程的真实 fetch/request/404 + kill/wait。只能走 CLI——示例用
-/// argv/execPath 把自己再拉起一份当服务器（serve 会阻塞，客户端与服务端
+/// argv/exec_path 把自己再拉起一份当服务器（serve 会阻塞，客户端与服务端
 /// 必须分进程）。
 #[test]
 fn run_http_example() {
@@ -997,13 +997,13 @@ fn run_closures_and_higher_order_functions() {
         "closure.xulo",
         r#"
         fn apply(f: fn(number): number, x: number): number { return f(x) }
-        fn makeAdder(n: number): fn(number): number {
+        fn make_adder(n: number): fn(number): number {
             return fn(v: number): number { v + n }
         }
         fn main() {
             let double = fn(x: number): number { x * 2 }
             print(apply(double, 4))
-            let add5 = makeAdder(5)
+            let add5 = make_adder(5)
             print(add5(10))
             let mut count = 0
             let bump = fn() { count = count + 1 }
@@ -1156,7 +1156,7 @@ fn run_function_values_from_expressions() {
     let file = temp_file(
         "callval.xulo",
         r#"
-        fn makeAdder(n: number): fn(number): number {
+        fn make_adder(n: number): fn(number): number {
           fn(v: number): number { v + n }
         }
         fn main() {
@@ -1165,7 +1165,7 @@ fn run_function_values_from_expressions() {
           print(ops[1](3, 4))
           let get = fn(): fn(number): number { fn(x: number): number { x + 100 } }
           print(get()(1))
-          let add5 = makeAdder(5)
+          let add5 = make_adder(5)
           print(add5(10))
         }
         "#,
@@ -2729,10 +2729,7 @@ fn main() {
     let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        out.status.success(),
-        "stderr: {stderr}\nstdout: {stdout}"
-    );
+    assert!(out.status.success(), "stderr: {stderr}\nstdout: {stdout}");
     assert!(stdout.contains("io-print"), "missing write: {stdout}");
     assert!(stdout.contains("io-println"), "missing line: {stdout}");
     for marker in ["print ok", "println ok", "eprintln ok", "flush ok"] {
@@ -2745,7 +2742,7 @@ fn main() {
     let _ = std::fs::remove_file(&file);
 }
 
-/// `readLine` yields each line without its terminator (an empty line is
+/// `read_line` yields each line without its terminator (an empty line is
 /// `Ok("")`, not the end), `Ok(null)` ends the stream, and `read` takes
 /// everything that is left — driven by a piped stdin the test controls.
 #[test]
@@ -2754,11 +2751,11 @@ fn run_io_reads_a_piped_stdin() {
         "io_stdin.xulo",
         r#"
 fn main() {
-    match std::io::readLine() {
+    match std::io::read_line() {
         Result::Ok(line) => print(`first:${line}`)
         Result::Err(e) => print(e.message)
     }
-    match std::io::readLine() {
+    match std::io::read_line() {
         Result::Ok(line) => print(`second:[${line}]`)
         Result::Err(e) => print(e.message)
     }
@@ -2766,7 +2763,7 @@ fn main() {
         Result::Ok(rest) => print(`rest:${rest}`)
         Result::Err(e) => print(e.message)
     }
-    match std::io::readLine() {
+    match std::io::read_line() {
         Result::Ok(line) => if line == null { print("eof") } else { print("trailing") }
         Result::Err(e) => print(e.message)
     }
@@ -2817,13 +2814,13 @@ fn main() {
 }
 "#,
     );
-    let out = Command::new(BIN)
-        .arg("run")
-        .arg(&alias)
-        .output()
-        .unwrap();
+    let out = Command::new(BIN).arg("run").arg(&alias).output().unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert!(stdout.contains("aliased"), "stdout: {stdout}");
     assert!(stdout.contains("alias ok"), "stdout: {stdout}");
     let _ = std::fs::remove_file(&alias);
@@ -2845,12 +2842,12 @@ fn main() {
 }
 "#,
     );
-    let out = Command::new(BIN)
-        .arg("run")
-        .arg(&group)
-        .output()
-        .unwrap();
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(BIN).arg("run").arg(&group).output().unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("group flush"), "stdout: {stdout}");
     assert!(stdout.contains("group eprint"), "stdout: {stdout}");
@@ -2898,11 +2895,11 @@ fn main() {
         Result::Ok(_) => print("written")
         Result::Err(e) => print(e.message)
     }
-    match std::io::readLine() {
+    match std::io::read_line() {
         Result::Ok(line) => if line == null { print("eof") } else { print(`got:${line}`) }
         Result::Err(e) => print(e.message)
     }
-    match std::io::readLine() {
+    match std::io::read_line() {
         Result::Ok(line) => if line == null { print("eof") } else { print(`got:${line}`) }
         Result::Err(e) => print(e.message)
     }
