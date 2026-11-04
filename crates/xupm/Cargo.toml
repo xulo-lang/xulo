@@ -1,0 +1,15 @@
+[package]
+name = "xupm"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "xupm"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+toml = "0.8"
+xulo-cli = { workspace = true }
+xulo-compiler = { workspace = true }
+xulo-core = { workspace = true }

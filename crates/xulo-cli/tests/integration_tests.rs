@@ -41,6 +41,15 @@ fn temp_dir(files: &[(&str, &str)], entry: &str) -> (PathBuf, PathBuf) {
     (dir.clone(), dir.join(entry))
 }
 
+/// Build `entry` to `exe` through the compiler API. The `xulo` CLI no longer
+/// owns a `build` command; project builds live in `xupm`, so the AOT tests
+/// drive the compiler directly.
+fn build_executable(entry: &std::path::Path, exe: &std::path::Path) {
+    if let Err(err) = xulo_compiler::aot::build_executable(entry, exe) {
+        panic!("build failed: {err}");
+    }
+}
+
 /// `examples/os.xulo` 经 `xulo run` 的输出逐行固定。走子进程而不是
 /// 解释器内联跑：chdir/setenv 是进程全局状态，不该波及并行测试线程。
 #[test]
@@ -2346,22 +2355,16 @@ fn build_panic_program_prints_panic_and_exits_1() {
         r#"fn main() { print("before"); panic("boom") }"#,
     );
     let exe = file.with_extension("bin");
-    let out = Command::new(BIN)
-        .arg("build")
-        .arg(&file)
-        .arg("-o")
-        .arg(&exe)
-        .output()
-        .unwrap();
+    build_executable(&file, &exe);
+    let out = Command::new(&exe).output().unwrap();
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(out.status.success(), "build failed: {stderr}");
+    assert_eq!(out.status.code(), Some(1));
     assert!(
         String::from_utf8_lossy(&out.stdout).contains("before"),
         "stdout: {}",
         String::from_utf8_lossy(&out.stdout)
     );
     assert!(stderr.contains("panic: boom"), "stderr: {stderr}");
-    assert!(stderr.contains("exit status: 1"), "stderr: {stderr}");
     let _ = std::fs::remove_file(&file);
     let _ = std::fs::remove_file(&exe);
 }
@@ -2398,18 +2401,7 @@ fn build_control_flow_matches_interpreter_output() {
             .unwrap()
             .as_nanos()
     ));
-    let build = Command::new(BIN)
-        .arg("build")
-        .arg(&src)
-        .arg("-o")
-        .arg(&exe)
-        .output()
-        .unwrap();
-    assert!(
-        build.status.success(),
-        "build failed: {}",
-        String::from_utf8_lossy(&build.stderr)
-    );
+    build_executable(&src, &exe);
 
     let aot = Command::new(&exe).output().unwrap();
     assert!(
@@ -2455,18 +2447,7 @@ fn build_trait_shapes_matches_interpreter_output() {
             .unwrap()
             .as_nanos()
     ));
-    let build = Command::new(BIN)
-        .arg("build")
-        .arg(&src)
-        .arg("-o")
-        .arg(&exe)
-        .output()
-        .unwrap();
-    assert!(
-        build.status.success(),
-        "build failed: {}",
-        String::from_utf8_lossy(&build.stderr)
-    );
+    build_executable(&src, &exe);
 
     let aot = Command::new(&exe).output().unwrap();
     assert!(
@@ -2512,18 +2493,7 @@ fn build_modules_example_matches_interpreter_output() {
             .unwrap()
             .as_nanos()
     ));
-    let build = Command::new(BIN)
-        .arg("build")
-        .arg(&src)
-        .arg("-o")
-        .arg(&exe)
-        .output()
-        .unwrap();
-    assert!(
-        build.status.success(),
-        "build failed: {}",
-        String::from_utf8_lossy(&build.stderr)
-    );
+    build_executable(&src, &exe);
 
     let aot = Command::new(&exe).output().unwrap();
     assert!(
@@ -2606,18 +2576,7 @@ fn main() {
     );
 
     let exe = dir.join("main_aot");
-    let build = Command::new(BIN)
-        .arg("build")
-        .arg(&entry)
-        .arg("-o")
-        .arg(&exe)
-        .output()
-        .unwrap();
-    assert!(
-        build.status.success(),
-        "build failed: {}",
-        String::from_utf8_lossy(&build.stderr)
-    );
+    build_executable(&entry, &exe);
     let aot = Command::new(&exe).output().unwrap();
     assert!(
         aot.status.success(),
@@ -2670,18 +2629,7 @@ fn build_std_example_matches_interpreter_output() {
     );
 
     let exe = work.join("std_aot");
-    let build = Command::new(BIN)
-        .arg("build")
-        .arg(&src)
-        .arg("-o")
-        .arg(&exe)
-        .output()
-        .unwrap();
-    assert!(
-        build.status.success(),
-        "build failed: {}",
-        String::from_utf8_lossy(&build.stderr)
-    );
+    build_executable(&src, &exe);
 
     let aot = Command::new(&exe).current_dir(&work).output().unwrap();
     assert!(
@@ -2934,25 +2882,12 @@ fn main() {
         String::from_utf8_lossy(&interp.stderr)
     );
 
-    // AOT: build, then run the binary against the same stdin.
+    // AOT: build through the compiler API (`xulo` no longer owns a `build`
+    // command; project builds live in `xupm`), then run the binary.
     let exe = work.join("io_aot");
-    let build = Command::new(BIN)
-        .arg("build")
-        .arg(&file)
-        .arg("-o")
-        .arg(&exe)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .unwrap();
-    // `xulo build` runs the program it produced; give it EOF rather than the
-    // test harness's stdin, so the run inside the build exits promptly.
-    assert!(
-        build.status.success(),
-        "build failed: {}",
-        String::from_utf8_lossy(&build.stderr)
-    );
+    if let Err(err) = xulo_compiler::aot::build_executable(&file, &exe) {
+        panic!("build failed: {err}");
+    }
 
     let aot = Command::new(&exe)
         .current_dir(&work)

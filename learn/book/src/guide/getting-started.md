@@ -15,9 +15,6 @@ cargo build --release
 # 编译并运行
 xulo run examples/hello.xulo
 
-# 生成 JS 文件（有外部 ESM import 时自动用 .mjs 后缀）
-xulo build examples/hello.xulo -o hello.js
-
 # 仅做词法/语法/语义检查
 xulo check examples/fibonacci.xulo
 

@@ -40,14 +40,6 @@ pub enum Commands {
     Fmt { file: PathBuf },
     /// Start an interactive REPL
     Repl,
-    /// Build a .xulo file to a native executable
-    Build {
-        /// Source file to compile
-        file: PathBuf,
-        /// Output file path (default: same name without extension)
-        #[arg(short, long)]
-        output: Option<PathBuf>,
-    },
 }
 
 /// A renderer backend for `xulo run --render`.
@@ -83,13 +75,12 @@ fn run_command(command: Commands) -> ExitCode {
             Some(RenderBackend::Webview) => rendered_run(&file, xulo_framework::Backend::Webview),
             #[cfg(feature = "skia")]
             Some(RenderBackend::Skia) => rendered_run(&file, xulo_framework::Backend::Skia),
-            None => native_run(&file),
+            None => run_file(&file),
         },
         Commands::Check { file } => check_file(&file),
         Commands::Test { file } => test_file(&file),
         Commands::Fmt { file } => fmt_file(&file),
         Commands::Repl => repl(),
-        Commands::Build { file, output } => build_native(&file, output),
     }
 }
 
@@ -111,7 +102,7 @@ fn rendered_run(file: &Path, backend: xulo_framework::Backend) -> ExitCode {
 /// tree-walking interpreter. The package's module tree is loaded, analyzed
 /// in initialization order, and executed module by module; bindings of a
 /// dependency with no local sources are `null` placeholders.
-fn native_run(file: &Path) -> ExitCode {
+pub fn run_file(file: &Path) -> ExitCode {
     let mut loaded = match xulo_compiler::module::load(file) {
         Ok(l) => l,
         Err(err) => {
@@ -338,7 +329,7 @@ fn check_file(file: &Path) -> ExitCode {
 /// body completes (an async test: its task settles fulfilled) and fails on a
 /// panic, a failed `assert`, or a rejected async task. Prints one line per
 /// test and a summary; exits non-zero if any test failed.
-fn test_file(file: &Path) -> ExitCode {
+pub fn test_file(file: &Path) -> ExitCode {
     let mut loaded = match xulo_compiler::module::load(file) {
         Ok(l) => l,
         Err(err) => {
@@ -1002,109 +993,4 @@ fn write_file(path: &Path, content: &str) -> Result<(), String> {
         std::fs::File::create(path).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
     f.write_all(content.as_bytes())
         .map_err(|e| format!("cannot write {}: {e}", path.display()))
-}
-
-/// Build a .xulo file to a native executable using Cranelift AOT compilation
-fn build_native(file: &Path, output: Option<PathBuf>) -> ExitCode {
-    // 多模块：加载入口文件所在的模块树（单文件程序就是一个模块），
-    // 分析后把 `use`/`mod` 绑定与 trait 派发标注应用到各模块 AST。
-    let mut loaded = match xulo_compiler::module::load(file) {
-        Ok(loaded) => loaded,
-        Err(err) => {
-            let src_file = err.file.clone().unwrap_or_else(|| file.to_path_buf());
-            let source = std::fs::read_to_string(&src_file).unwrap_or_default();
-            print_compile_error(&err, &source, &src_file);
-            return ExitCode::from(1);
-        }
-    };
-    let warnings = match xulo_compiler::module::analyze(&mut loaded, true) {
-        Ok(warnings) => warnings,
-        Err(err) => {
-            let src_file = err.file.clone().unwrap_or_else(|| file.to_path_buf());
-            let source = std::fs::read_to_string(&src_file).unwrap_or_default();
-            print_compile_error(&err, &source, &src_file);
-            return ExitCode::from(1);
-        }
-    };
-    xulo_compiler::module::apply_trait_dispatch(&mut loaded);
-    // IR 后端只认限定的 `std::math::…` 键（解释器从 use 绑定解析裸名）
-    xulo_compiler::module::apply_std_calls(&mut loaded);
-    print_warnings(&warnings, None);
-
-    // 编译整棵模块树到 IR
-    let ir = match xulo_compiler::compile_modules_to_ir(&loaded) {
-        Ok(ir) => ir,
-        Err(err) => {
-            let src_file = err.file.clone().unwrap_or_else(|| file.to_path_buf());
-            let source = std::fs::read_to_string(&src_file).unwrap_or_default();
-            print_compile_error(&err, &source, &src_file);
-            return ExitCode::from(1);
-        }
-    };
-
-    // 使用 Cranelift AOT 生成目标文件
-    let codegen = match xulo_compiler::aot::AotCodeGen::new() {
-        Ok(cg) => cg,
-        Err(err) => {
-            eprintln!("error: failed to initialize AOT codegen: {}", err);
-            return ExitCode::from(1);
-        }
-    };
-
-    let product = match codegen.compile(&ir) {
-        Ok(p) => p,
-        Err(err) => {
-            eprintln!("error: code generation failed: {}", err);
-            return ExitCode::from(1);
-        }
-    };
-
-    // 确定输出路径
-    let output_path = output.unwrap_or_else(|| {
-        let stem = file.file_stem().unwrap_or_default();
-        PathBuf::from(stem).with_extension("")
-    });
-
-    // 获取输出目录
-    let output_dir = output_path.parent().unwrap_or(Path::new("."));
-    if let Err(e) = std::fs::create_dir_all(output_dir) {
-        eprintln!("error: cannot create output directory: {}", e);
-        return ExitCode::from(1);
-    }
-
-    // 写入 .o 文件
-    let obj_path = output_path.with_extension("o");
-    if let Err(e) = xulo_compiler::aot::write_object_file(&product, &obj_path) {
-        eprintln!("error: {}", e);
-        return ExitCode::from(1);
-    }
-
-    // 用 cc 与 libxulo_runtime.a 链接（链接参数与运行时库定位见 aot::link_executable）
-    let exe_path = output_path.with_extension("");
-    if let Err(e) = xulo_compiler::aot::link_executable(&obj_path, &exe_path) {
-        let _ = std::fs::remove_file(&obj_path);
-        eprintln!("error: {}", e);
-        return ExitCode::from(1);
-    }
-
-    // 清理 .o 文件
-    let _ = std::fs::remove_file(&obj_path);
-    println!("build successful: {}", exe_path.display());
-    println!("\nRunning compiled program:");
-    println!("-------------------------");
-
-    // 运行生成的可执行文件 (使用绝对路径)
-    let abs_exe = std::fs::canonicalize(&exe_path).unwrap_or(exe_path.clone());
-    match std::process::Command::new(&abs_exe).status() {
-        Ok(status) => {
-            if !status.success() {
-                eprintln!("program exited with status: {}", status);
-            }
-        }
-        Err(e) => {
-            eprintln!("error: failed to run {}: {}", abs_exe.display(), e);
-        }
-    }
-
-    ExitCode::SUCCESS
 }

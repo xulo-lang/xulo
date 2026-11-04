@@ -81,6 +81,47 @@ pub fn link_executable(obj_path: &Path, exe_path: &Path) -> Result<(), XuloError
     Ok(())
 }
 
+/// The result of building one entry module to a native executable.
+pub struct BuildOutput {
+    pub executable: PathBuf,
+    pub warnings: Vec<XuloError>,
+}
+
+/// Load, analyze, lower, and link `entry` into a native executable at
+/// `output`. The caller owns naming and diagnostics; the compiler only turns
+/// the program into a binary (the `rustc` half, with `xupm` playing `cargo`).
+pub fn build_executable(entry: &Path, output: &Path) -> Result<BuildOutput, XuloError> {
+    let mut loaded = crate::module::load(entry)?;
+    let warnings = crate::module::analyze(&mut loaded, true)?;
+    crate::module::apply_trait_dispatch(&mut loaded);
+    // IR 后端只认限定的 `std::math::…` 键（解释器从 use 绑定解析裸名）
+    crate::module::apply_std_calls(&mut loaded);
+    let ir = crate::compile_modules_to_ir(&loaded)?;
+
+    let codegen = AotCodeGen::new()?;
+    let product = codegen.compile(&ir)?;
+
+    if let Some(dir) = output.parent().filter(|dir| !dir.as_os_str().is_empty()) {
+        std::fs::create_dir_all(dir).map_err(|e| {
+            XuloError::new(
+                ErrorKind::Io,
+                format!("cannot create output directory {}: {e}", dir.display()),
+            )
+        })?;
+    }
+    let obj_path = output.with_extension("o");
+    write_object_file(&product, &obj_path)?;
+    if let Err(err) = link_executable(&obj_path, output) {
+        let _ = std::fs::remove_file(&obj_path);
+        return Err(err);
+    }
+    let _ = std::fs::remove_file(&obj_path);
+    Ok(BuildOutput {
+        executable: output.to_path_buf(),
+        warnings,
+    })
+}
+
 /// 定位工作区里的 libxulo_runtime.a（AOT 链接需要）
 fn runtime_library_path() -> Result<PathBuf, XuloError> {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
