@@ -11,7 +11,7 @@ impl Interpreter {
                 self.register_fn(f, env);
                 Ok(Flow::Continue)
             }
-            // A `#Test fn` body is inert (spec testing.md): the identifier
+            // A `#[test] fn` body is inert (spec testing.md): the identifier
             // binds no value and no execution reaches the body, so the
             // declaration is a no-op at run time.
             Statement::Test(_) => Ok(Flow::Continue),

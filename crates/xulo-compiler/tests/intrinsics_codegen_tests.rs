@@ -1052,7 +1052,7 @@ fn test_fmt_example_matches_interpreter() {
 fn test_fmt_text_verbs_consult_user_types() {
     let out = compile_and_run(
         r#"
-#Derive(Debug)
+#[derive(Debug)]
 struct Point { x: int, y: int }
 struct Money { cents: int }
 impl Display for Money {

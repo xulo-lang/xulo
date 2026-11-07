@@ -34,7 +34,7 @@ pub enum Commands {
     },
     /// Only run lexical + syntax + semantic checks
     Check { file: PathBuf },
-    /// Run the file's `#Test fn` declarations and report pass/fail per test
+    /// Run the file's `#[test] fn` declarations and report pass/fail per test
     Test { file: PathBuf },
     /// Format a .xulo file in place (comments are not preserved)
     Fmt { file: PathBuf },
@@ -322,7 +322,7 @@ fn check_file(file: &Path) -> ExitCode {
     }
 }
 
-/// Run the entry module's `#Test fn` declarations (spec testing.md).
+/// Run the entry module's `#[test] fn` declarations (spec testing.md).
 ///
 /// Each test runs in a fresh interpreter with its dependencies re-executed,
 /// so module-level state cannot leak between tests. A test passes when its
@@ -438,7 +438,7 @@ pub fn test_file(file: &Path) -> ExitCode {
 const REPL_CANDIDATES: &[&str] = &[
     "exit", "clear", "run", "fn", "let", "const", "return", "if", "else", "for", "in", "while",
     "match", "print", "type", "enum", "null", "true", "false", "and", "or", "await", "async",
-    "try", "catch", "throw", "import", "pub", "use", "from", "as", "#Test",
+    "try", "catch", "throw", "import", "pub", "use", "from", "as", "#[test]",
 ];
 
 /// Completion/history helper for the REPL line editor.

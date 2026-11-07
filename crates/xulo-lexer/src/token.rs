@@ -88,7 +88,7 @@ pub enum Token {
     /// token instead of an identifier so it can never be used as a name.
     Reserved,
     At,
-    /// `#`, the attribute sigil (`#Test`, `#Derive(Debug)`).
+    /// `#`, the attribute opener (`#[test]`, `#[derive(Debug)]`).
     Hash,
     Dollar,
     EOF,

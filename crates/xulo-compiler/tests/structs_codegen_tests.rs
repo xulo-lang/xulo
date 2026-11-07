@@ -47,7 +47,7 @@ impl Point {
     }
 }
 
-#Derive(Debug)
+#[derive(Debug)]
 struct User { name: string, age: number, nick: string? }
 
 fn describe(u: User): string {

@@ -38,14 +38,16 @@ fn tracks_byte_spans() {
 }
 
 #[test]
-fn hash_attribute_sigil_lexes() {
-    // `#` is the attribute sigil (spec `grammar.md` `Attribute`), a token of
-    // its own so the formatter can keep `#Test` glued.
-    let toks = tokenize("#Test fn t() {}").unwrap();
+fn hash_attribute_opener_lexes() {
+    // `#` is the attribute opener (spec `grammar.md` `Attribute`), a token of
+    // its own so the formatter can keep `#[name]` glued.
+    let toks = tokenize("#[test] fn t() {}").unwrap();
     let kinds: Vec<Token> = toks.iter().map(|t| t.kind).collect();
     assert_eq!(kinds[0], Hash);
-    assert_eq!(kinds[1], Ident);
-    assert!(matches!(kinds[2], Fn));
+    assert_eq!(kinds[1], LBracket);
+    assert_eq!(kinds[2], Ident);
+    assert_eq!(kinds[3], RBracket);
+    assert!(matches!(kinds[4], Fn));
 }
 
 #[test]

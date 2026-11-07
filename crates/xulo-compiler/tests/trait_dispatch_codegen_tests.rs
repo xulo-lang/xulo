@@ -1,6 +1,6 @@
 //! Trait 派发（`Trait::method(recv)` 与 `str(v)`）的 codegen 回归：
 //! 语义层把调用标注成派发名，AOT 须静态解析到 impl 函数；派生
-//! `#Derive(Debug)` 与 `Display` 须生成与解释器一致的渲染。JIT 输出逐行对齐解释器。
+//! `#[derive(Debug)]` 与 `Display` 须生成与解释器一致的渲染。JIT 输出逐行对齐解释器。
 use std::path::Path;
 use xulo_compiler::aot::AotCodeGen;
 use xulo_compiler::{codegen::CodeGen, compile_to_ir};
@@ -76,15 +76,15 @@ fn main() {
     assert_eq!(out, lines(&["Point(1.5, 2)"; 4]));
 }
 
-/// `#Derive(Debug)` struct：字段按声明序 `Type(name: v, …)`，小数字段
+/// `#[derive(Debug)]` struct：字段按声明序 `Type(name: v, …)`，小数字段
 /// 按对象里存的真实标签渲染，可选字段缺省为 null，Named 字段递归走派生。
 #[test]
 fn derived_struct_debug_matches_interpreter() {
     let out = compile_and_run(
         r#"
-#Derive(Debug)
+#[derive(Debug)]
 struct P { x: number }
-#Derive(Debug)
+#[derive(Debug)]
 struct User { name: string, age: number, nick: string?, home: P }
 fn main() {
     let u = User(name: "lyy", age: 30.5, home: P(x: 1))
@@ -99,15 +99,15 @@ fn main() {
     );
 }
 
-/// `#Derive(Debug)` enum：`Type::Variant` 与 `Type::Variant(p0, …)`，
+/// `#[derive(Debug)]` enum：`Type::Variant` 与 `Type::Variant(p0, …)`，
 /// payload 按各自声明类型（Named 递归）渲染。
 #[test]
 fn derived_enum_debug_matches_interpreter() {
     let out = compile_and_run(
         r#"
-#Derive(Debug)
+#[derive(Debug)]
 struct P { x: number }
-#Derive(Debug)
+#[derive(Debug)]
 enum Shape { Dot, Circle(number), Pair(string, number), Named(P) }
 fn main() {
     print(Shape::Dot)
@@ -135,7 +135,7 @@ fn main() {
 fn aot_object_references_object_get_tag() {
     let bytes = object_bytes(
         r#"
-#Derive(Debug)
+#[derive(Debug)]
 struct P { x: number }
 fn main() { print(P(x: 1)) }
 "#,
@@ -179,9 +179,9 @@ struct Shown { v: number }
 impl Display for Shown {
     fn display(self, format: Format): string { "shown" }
 }
-#Derive(Debug)
+#[derive(Debug)]
 struct DebugOnly { v: number }
-#Derive(Debug)
+#[derive(Debug)]
 enum Shape { Dot, Circle(number) }
 fn main() {
     print(Shown(v: 1))

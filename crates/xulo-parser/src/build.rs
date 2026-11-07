@@ -143,22 +143,18 @@ fn attribute_list(pair: Pair<'_, Rule>) -> R<Vec<xulo_core::ast::Attribute>> {
     Ok(out)
 }
 
-/// Build a single `#Name` or `#Name(arg, …)` attribute.
+/// Build a single `#[name]` or `#[name(arg, …)]` attribute.
 fn attribute(pair: Pair<'_, Rule>) -> R<xulo_core::ast::Attribute> {
     let pair_span = span_of(&pair);
-    // `into_inner` consumes the pair; keep the matched source for the
-    // `#Name` / `#Name()` distinction below.
     let pair_text = pair.as_str().to_string();
     let mut name = String::new();
     let mut name_span = 0..0;
     let mut args = Vec::new();
-    let mut seen_name = false;
     for p in pair.into_inner() {
         match p.as_rule() {
-            Rule::identifier if !seen_name => {
+            Rule::attribute_name => {
                 name = p.as_str().to_string();
                 name_span = span_of(&p);
-                seen_name = true;
             }
             Rule::attribute_args => {
                 for a in p.into_inner() {
@@ -173,22 +169,19 @@ fn attribute(pair: Pair<'_, Rule>) -> R<xulo_core::ast::Attribute> {
             _ => unreachable!("attribute child {:?}", p.as_rule()),
         }
     }
-    // `#Name` vs `#Name()`: the written text decides. Reading the matched
-    // source rather than comparing spans keeps pest's implicit-whitespace
-    // span tail (a bare attribute's pair swallows the gap before the next
-    // token) out of both the flag and the reported span — registry shape
-    // checks read both forms.
+    // `#[name]` vs `#[name()]`: the written text decides; an attribute's span
+    // covers `#` through the closing `]`, never the gap pest's implicit
+    // whitespace swallows after it.
     let has_parens = pair_text.contains('(');
-    let span = if has_parens {
-        pair_span
-    } else {
-        pair_span.start..name_span.end
-    };
+    let close = pair_text
+        .rfind(']')
+        .map(|i| pair_span.start + i + 1)
+        .unwrap_or(pair_span.end);
     Ok(xulo_core::ast::Attribute {
         name,
         name_span,
         args,
-        span,
+        span: pair_span.start..close,
         has_parens,
     })
 }
@@ -239,27 +232,23 @@ fn fn_decl(pair: Pair<'_, Rule>) -> R<FnDef> {
         body: body.expect("fn_decl has a body"),
         span,
         attributes,
-        title: None,
         abi: None,
     })
 }
 
-/// Build a `#Test [ "(" [ StringLiteral ] ")" ] [async] fn name() { … }` into
-/// the fixed-shape `FnDef` the `Statement::Test` variant carries: no
-/// parameters, no return type, no generics (the grammar already forbids them;
-/// the fields are filled empty) and `title` from the optional group.
+/// Build a `#[test] [async] fn name() { … }` into the fixed-shape `FnDef` the
+/// `Statement::Test` variant carries: no parameters, no return type, no
+/// generics (the grammar already forbids them; the fields are filled empty).
 fn test_decl(pair: Pair<'_, Rule>) -> R<FnDef> {
     let span = span_of(&pair);
     let mut is_async = false;
     let mut name = String::new();
     let mut name_span = 0..0;
     let mut body = None;
-    let mut title = None;
     for p in pair.into_inner() {
         match p.as_rule() {
             Rule::kw_fn => {}
             Rule::kw_async => is_async = true,
-            Rule::string_literal => title = Some(decode_string(p.as_str())),
             Rule::identifier => {
                 name = p.as_str().to_string();
                 name_span = span_of(&p);
@@ -280,7 +269,6 @@ fn test_decl(pair: Pair<'_, Rule>) -> R<FnDef> {
         body: body.expect("test_decl has a body"),
         span,
         attributes: Vec::new(),
-        title,
         abi: None,
     })
 }
@@ -322,7 +310,6 @@ fn extern_fn_decl(pair: Pair<'_, Rule>) -> R<FnDef> {
         body: body.expect("extern_fn_decl has a body"),
         span,
         attributes: Vec::new(),
-        title: None,
         abi: Some(abi.expect("extern_fn_decl has an AbiTag")),
     })
 }

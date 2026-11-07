@@ -121,7 +121,7 @@ fn test_runs_the_entry_modules_tests() {
         &dir,
         "[package]\nname = \"demo\"\nentry = \"main.xulo\"\n",
         "fn add(a: number, b: number): number { a + b }\n\n\
-         #Test(\"addition\")\nfn addition() {\n    assert(add(2, 3) == 5, \"sum\")\n}\n\n\
+         #[test]\nfn addition() {\n    assert(add(2, 3) == 5, \"sum\")\n}\n\n\
          fn main() {}\n",
     );
     let out = run(&["test"], &dir);

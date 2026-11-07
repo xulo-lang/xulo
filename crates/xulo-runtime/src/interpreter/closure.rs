@@ -23,7 +23,7 @@ pub(super) fn block_has_closure(block: &Block) -> bool {
 pub(super) fn stmt_has_closure(stmt: &Statement) -> bool {
     match stmt {
         Statement::Fn(_) => true,
-        // A `#Test fn` body is inert: nothing can reach it, so its closures
+        // A `#[test] fn` body is inert: nothing can reach it, so its closures
         // never exist at run time.
         Statement::Test(_) => false,
         Statement::Let(l) => {

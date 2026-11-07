@@ -70,7 +70,7 @@ xulo
 | `closures_hof.xulo` | 匿名函数 / 闭包（捕获、可变捕获）/ 高阶函数 / 函数值调用 |
 | `generics.xulo` | 泛型函数（调用处推断类型实参） |
 | `enums_match.xulo` | `enum`（含关联数据、泛型）+ `match` 表达式 |
-| `structs.xulo` | `struct` 字段与可省字段、固有 `impl` 方法、`#Derive(ToString)`、对象字面量类型标注 |
+| `structs.xulo` | `struct` 字段与可省字段、固有 `impl` 方法、`#[derive(Debug)]`、对象字面量类型标注 |
 | `trait_shapes.xulo` | `trait` + `impl Trait for T` 显式派发 `Trait::method(recv)` |
 | `templates.xulo` | 反引号模板字面量 `${...}`、转义、多行、嵌套、Unicode |
 | `collections.xulo` | 列表 / 对象：下标、`+` 拼接、`...` 展开、成员访问 |
@@ -89,7 +89,7 @@ xulo
 | `fmt.xulo` | `std::fmt::`：`format` 模板指令（`%v %s %q %t %c %d %x %X %o %b %f %e %E %g %G`、旗标/宽度/精度） |
 | `ffi.xulo` | `extern "C"` 导入 libc 符号与 `as` 别名、`Ptr` / `Ptr?` 与 `!= null` 收窄、具名参数与省略补 null、`pub extern fn` 导出 |
 | `async_tasks.xulo` | `async` / `await`、`Time::sleep`、`Task::resolve` / `all` / `race` / `timeout` |
-| `test_functions.xulo` | `#Test("标题") fn` 测试函数 + `assert` |
+| `test_functions.xulo` | `#[test] fn` 测试函数 + `assert` |
 | `layout.xulo` / `ui.xulo` | `main(): View` 返回值、渲染布局（`xulo run --render terminal`） |
 | `modules/main.xulo` | `mod` / `import` 跨文件模块（见 `examples/modules/`） |
 

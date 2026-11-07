@@ -29,8 +29,8 @@ fn main() {
     print(false or true)
     print(!false)
 
-    // 可选参数：调用时可省略
+    // 可选参数：调用时可省略；插值前先用 `??` 收窄
     let mut name: string? = null
     name = "set later"
-    print(`name=${name}`)
+    print(`name=${name ?? ""}`)
 }

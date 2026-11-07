@@ -2483,16 +2483,16 @@ fn time_clocks_read_sane_values() {
     assert_eq!(out, vec!["true", "true"]);
 }
 
-// --- P2: `#Derive(Debug)`, `Display`, `str` / template string forms, constructor calls
+// --- P2: `#[derive(Debug)]`, `Display`, `str` / template string forms, constructor calls
 
 #[test]
 fn derived_struct_spec_example_all_string_forms() {
-    // spec `types/traits.md`: `#Derive(Debug)` supplies the structural
+    // spec `types/traits.md`: `#[derive(Debug)]` supplies the structural
     // form `print` consults; `Display` is written by hand and backs `str`,
     // `${…}`, and the derived `to_string` action.
     let out = run_annotated(
         r#"
-            #Derive(Debug)
+            #[derive(Debug)]
             struct User { name: string, age: number }
             impl Display for User {
                 fn display(self, format: Format): string {
@@ -2526,11 +2526,11 @@ fn derived_struct_spec_example_all_string_forms() {
 fn derived_struct_nested_and_empty_render() {
     let out = run_annotated(
         r#"
-            #Derive(Debug)
+            #[derive(Debug)]
             struct User { name: string, age: number }
-            #Derive(Debug)
+            #[derive(Debug)]
             struct Tagged { inner: User, label: string }
-            #Derive(Debug)
+            #[derive(Debug)]
             struct Empty { }
             fn main() {
                 let t = Tagged(inner: User(name: "Alice", age: 30), label: "x")
@@ -2555,9 +2555,9 @@ fn derived_enum_variants_render_spec_form() {
     // slots through their declared type's string form.
     let out = run_annotated(
         r#"
-            #Derive(Debug)
+            #[derive(Debug)]
             enum Shape { Circle(number), Rect(number, number) }
-            #Derive(Debug)
+            #[derive(Debug)]
             enum Status { Active, Offline(string) }
             fn main() {
                 print(Shape::Circle(2.5))
@@ -2587,9 +2587,9 @@ fn derived_structs_do_not_cross_types() {
     // across types otherwise).
     let out = run_annotated(
         r#"
-            #Derive(Debug)
+            #[derive(Debug)]
             struct User { name: string, age: number }
-            #Derive(Debug)
+            #[derive(Debug)]
             struct Plain { n: number }
             fn main() {
                 let a = User(name: "A", age: 1)
@@ -2620,7 +2620,7 @@ fn manual_to_string_impl_runs_on_all_forms() {
     // struct living in the same program must not steal the dispatch.
     let out = run_annotated(
         r#"
-            #Derive(Debug)
+            #[derive(Debug)]
             struct Plain { n: number }
             struct Hand { v: number }
             impl Display for Hand {
@@ -2915,7 +2915,7 @@ fn display_receives_format_and_backs_to_string() {
 fn print_prefers_display_then_debug_then_table() {
     let out = run_annotated(
         r#"
-            #Derive(Debug)
+            #[derive(Debug)]
             struct DebugOnly { v: number }
             struct Both { v: number }
             impl Display for Both {
@@ -2944,10 +2944,10 @@ fn print_prefers_display_then_debug_then_table() {
 fn derive_debug_reaches_structural_positions() {
     let out = run_annotated(
         r#"
-            #Derive(Debug)
+            #[derive(Debug)]
             struct User { name: string }
             enum Color { Red }
-            #Derive(Debug)
+            #[derive(Debug)]
             struct Wrap {
                 xs: List<User>,
                 maybe: User?,

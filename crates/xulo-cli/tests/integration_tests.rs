@@ -2075,12 +2075,12 @@ fn test_command_reports_pass_and_fail() {
         r#"
 fn add(a: number, b: number): number { return a + b }
 
-#Test
+#[test]
 fn addition_works() {
     assert(add(2, 3) == 5, "2+3=5")
 }
 
-#Test
+#[test]
 fn failing_test() {
     assert(add(1, 1) == 3, "one plus one is three")
 }
@@ -2115,12 +2115,12 @@ fn test_command_all_pass_exits_zero() {
     let file = temp_file(
         "tests_pass.xulo",
         r#"
-#Test
+#[test]
 fn first() {
     assert(true, "ok")
 }
 
-#Test
+#[test]
 fn second() {
     assert(1 < 2, "ordering")
 }
@@ -2146,7 +2146,7 @@ fn test_command_async_test_runs() {
         r#"
 async fn double(x: number): number { return x * 2 }
 
-#Test
+#[test]
 async fn async_works() {
     let v = await double(21)
     assert(v == 42, "answer")
@@ -2172,7 +2172,7 @@ fn test_command_inert_under_run() {
     let file = temp_file(
         "tests_inert.xulo",
         r#"
-#Test
+#[test]
 fn never_runs() {
     print("SHOULD NOT PRINT")
 }
@@ -2510,7 +2510,7 @@ fn build_modules_example_matches_interpreter_output() {
 }
 
 /// 跨模块 AOT：命名空间/成员导入、`pub const`、`use type`、跨模块 trait
-/// 派发与 `Display`，以及入口模块里的 `#Derive(Debug)`。
+/// 派发与 `Display`，以及入口模块里的 `#[derive(Debug)]`。
 #[test]
 fn build_cross_module_trait_dispatch_matches_interpreter() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -2551,7 +2551,7 @@ use type shapes::{Shape, Rect};
 use shapes::{rect, PI};
 use shapes as sh;
 
-#Derive(Debug)
+#[derive(Debug)]
 struct Box2 { r: Rect, n: number }
 
 fn main() {

@@ -394,7 +394,7 @@ fn builtin_type_entries() -> HashMap<String, TypeEntry> {
     );
     // `Display` and `Debug` are the built-in formatting protocols (spec
     // `types/traits.md`, "Built-in formatting traits"). `str(v)` and `${v}`
-    // accept a base type or a type with a `Display` impl, `#Derive(Debug)`
+    // accept a base type or a type with a `Display` impl, `#[derive(Debug)]`
     // expands to the same impl an author would write, and `print` consults
     // a user type's `Display` first, then its `Debug`.
     for (trait_name, method) in [("Display", "display"), ("Debug", "debug")] {
@@ -1728,7 +1728,7 @@ pub struct Analyzer {
     /// derive field checks (E0801) are order-independent (spec
     /// `types/traits.md`, `builtins/intrinsic-functions.md`).
     displays: std::collections::HashSet<String>,
-    /// Every type with a `Debug` impl (hand-written or `#Derive(Debug)`),
+    /// Every type with a `Debug` impl (hand-written or `#[derive(Debug)]`),
     /// used by `print`'s fallback and by the derive's field rules.
     debug_forms: std::collections::HashSet<String>,
     /// Mangled dispatch function names already claimed by `impl` methods, plus
@@ -1824,7 +1824,7 @@ pub struct Analyzer {
     /// arms compile to a plain (non-`async`) function, so `await` is
     /// rejected there regardless of the enclosing `async_depth`.
     no_await_depth: usize,
-    /// Names of `#Test fn` declarations in this module (spec testing.md): the
+    /// Names of `#[test] fn` declarations in this module (spec testing.md): the
     /// identifier is declared but binds no value, so any reference to it is a
     /// compile-time error (E0107). Pre-scanned before checking so the ban is
     /// order-independent.
@@ -2133,7 +2133,7 @@ pub fn module_face(program: &Program, module_id: &str) -> ModuleFace {
     for statement in &program.statements {
         match statement {
             Statement::Fn(f) => set_face_name(&mut face, &f.name, false, FaceKind::Fn),
-            // `#Test` functions are entry points, not bindings.
+            // `#[test]` functions are entry points, not bindings.
             Statement::Test(_) => {}
             Statement::Let(b) => set_face_name(
                 &mut face,
@@ -2203,7 +2203,7 @@ fn set_face_name(face: &mut ModuleFace, name: &str, is_pub: bool, kind: FaceKind
     }
 }
 
-/// `#Derive(Debug)` on a non-generic struct/enum registers the derived
+/// `#[derive(Debug)]` on a non-generic struct/enum registers the derived
 /// method for dispatch, mirroring `validate_derive_decls`.
 fn face_derive_debug(face: &mut ModuleFace, attrs: &[Attribute], name: &str, non_generic: bool) {
     if !non_generic {
@@ -2211,7 +2211,7 @@ fn face_derive_debug(face: &mut ModuleFace, attrs: &[Attribute], name: &str, non
     }
     if attrs
         .iter()
-        .any(|a| a.name == "Derive" && a.args.iter().any(|(arg, _)| arg == "Debug"))
+        .any(|a| a.name == "derive" && a.args.iter().any(|(arg, _)| arg == "Debug"))
     {
         face.impls
             .push(("Debug".to_string(), name.to_string(), "debug".to_string()));
@@ -2675,7 +2675,7 @@ fn run_analysis(
             });
         }
     }
-    // Pre-scan `#Test` names so any reference to one — before or after its
+    // Pre-scan `#[test]` names so any reference to one — before or after its
     // declaration — fails with E0107 instead of "undefined variable".
     for statement in &program.statements {
         if let Statement::Test(f) = statement {
@@ -2754,7 +2754,7 @@ fn run_analysis(
             }
         }
     }
-    // 导入模块的 `impl Display for T` / `impl Debug for T` / `#Derive(Debug)`
+    // 导入模块的 `impl Display for T` / `impl Debug for T` / `#[derive(Debug)]`
     // 同样赋予 T 对应能力：跨模块 `str(v)`（E0212）、`print` 与派生字段
     // 检查（E0801）要能看到。
     for (trait_name, type_name, method) in imported_impls {
@@ -2885,7 +2885,7 @@ fn run_analysis(
             }
         }
     }
-    // The attribute registry runs before the check loop: `#Derive(Debug)`
+    // The attribute registry runs before the check loop: `#[derive(Debug)]`
     // registers its impl up front so a `str(s)` or `s.to_string()` use of the
     // derived type resolves no matter where it sits in the file (spec
     // `types/traits.md`, "Attributes").
@@ -3022,7 +3022,7 @@ fn run_analysis(
         list_concat: analyzer.list_concat.clone(),
         // `impls` 只含本模块自己声明的 impl（派生也在此列）。导入的 impl
         // 已经出现在声明模块的 face 里，每个模块都能看到，重复导出会让
-        // 后来者把「已导入的 impl」误当成重复声明（`#Derive` 的 E0805）。
+        // 后来者把「已导入的 impl」误当成重复声明（`#[derive]` 的 E0805）。
         impls: module_face(program, &analyzer.module_id).impls,
         expr_types: analyzer.expr_types.clone(),
         resolutions: analyzer.resolutions.clone(),
@@ -3587,7 +3587,7 @@ fn enum_field_forms(variants: &[EnumVariant]) -> Vec<(Type, Range<usize>)> {
 }
 
 /// A registry entry for the closed attribute registry (spec
-/// `types/traits.md`, "Attributes"): `#Test` and `#Derive`, nothing else.
+/// `types/traits.md`, "Attributes"): `#[test]` and `#[derive]`, nothing else.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum AttrKind {
     Test,
@@ -3598,14 +3598,14 @@ enum AttrKind {
 /// it is `E0108`. There are no inert attributes.
 fn attribute_registry(name: &str) -> Option<AttrKind> {
     match name {
-        "Test" => Some(AttrKind::Test),
-        "Derive" => Some(AttrKind::Derive),
+        "test" => Some(AttrKind::Test),
+        "derive" => Some(AttrKind::Derive),
         _ => None,
     }
 }
 
 /// The noun phrase a declaration kind answers with in `E0109`
-/// (`attribute `Derive` is not valid on a function`).
+/// (`attribute `derive` is not valid on a function`).
 const DECL_PHRASE_FN: &str = "a function";
 const DECL_PHRASE_STRUCT: &str = "a struct";
 const DECL_PHRASE_ENUM: &str = "an enum";
@@ -3690,7 +3690,7 @@ impl Analyzer {
     /// Resolve a name to its symbol, rejecting references from inside an
     /// `@Effect` closure to bindings that live only in the component's render
     /// code: those are hoisted above the render closure and are not in scope
-    /// when the effect runs. A `#Test fn`'s identifier is declared but binds no
+    /// when the effect runs. A `#[test] fn`'s identifier is declared but binds no
     /// value, so mentioning it is the E0107 reference ban (spec testing.md).
     fn lookup_symbol(&self, name: &str) -> SResult<Symbol> {
         let render_scoped = self
@@ -3741,7 +3741,7 @@ impl Analyzer {
     /// does not allow is `E0109`, and arguments that do not fit the
     /// registered shape are `E0110` (`E0111` for an unregistered derive
     /// target, `E0112` for a derive on a generic type, `E0805` for a
-    /// repeated or hand-conflicting `#Derive(Debug)`). A valid derive
+    /// repeated or hand-conflicting `#[derive(Debug)]`). A valid derive
     /// registers its impl up front — and its field types without a string
     /// form are `E0801` — so `str(s)` on the derived type resolves no
     /// matter where the use sits.
@@ -3752,7 +3752,7 @@ impl Analyzer {
         let mut derives: DeriveList = Vec::new();
 
         for statement in &program.statements {
-            // A `TestDecl`'s `#Test` is part of the production: no registry
+            // A `TestDecl`'s `#[test]` is part of the production: no registry
             // lookup runs for it (spec testing.md).
             if matches!(statement, Statement::Test(_)) {
                 continue;
@@ -3796,7 +3796,7 @@ impl Analyzer {
                     }
                 }
                 Statement::Export(ex) => match &ex.item {
-                    // `pub` is part of the test form's fixed shape: a `#Test`
+                    // `pub` is part of the test form's fixed shape: a `#[test]`
                     // fn that is exported is `E0110`, not a `TestDecl`.
                     ExportItem::Fn(f) => self.validate_fn_attrs(f, true, &mut first),
                     ExportItem::Struct(s) => self.validate_derive_decls(
@@ -3880,41 +3880,30 @@ impl Analyzer {
         Some(kind)
     }
 
-    /// Validate the attribute list of one function declaration: `#Test` on a
-    /// `fn` must be the test form — no title group beyond the optional
-    /// string, no parameters, no return type, no generics, no `where`
-    /// clause, no `pub` — or it is `E0110` (a correct sequence at file scope
-    /// became a `TestDecl` instead; a group holding an identifier is the same
-    /// error; anywhere else the form's file-scope requirement still fails
-    /// here).
-    fn validate_fn_attrs(&mut self, f: &FnDef, is_pub: bool, first: &mut Option<XuloError>) {
+    /// Validate the attribute list of one function declaration. A `#[test]`
+    /// that reaches here did not form a `TestDecl` — it carried an argument
+    /// group or the `fn` shape deviates (parameters, return type, generics,
+    /// `where`, `pub`, or a non-file-scope position) — so it is `E0110`.
+    fn validate_fn_attrs(&mut self, f: &FnDef, _is_pub: bool, first: &mut Option<XuloError>) {
         for attr in &f.attributes {
             let Some(kind) = self.attr_gate(attr, DECL_PHRASE_FN, first) else {
                 continue;
             };
             if kind == AttrKind::Test {
-                let shape_ok = attr.args.is_empty()
-                    && f.params.is_empty()
-                    && f.return_type.is_none()
-                    && f.type_params.is_empty()
-                    && f.bounds.is_empty()
-                    && !is_pub;
-                if !shape_ok {
-                    record_first!(
-                        *first,
-                        self.err_code(
-                            "E0110",
-                            "attribute `Test` takes the form `#Test (\"…\")? [async] fn name() { … }`"
-                        )
-                        .at(attr.name_span.clone())
-                    );
-                }
+                record_first!(
+                    *first,
+                    self.err_code(
+                        "E0110",
+                        "attribute `test` takes no arguments and is written `#[test]`, followed by `[async] fn name() { … }`"
+                    )
+                    .at(attr.name_span.clone())
+                );
             }
         }
     }
 
     /// Validate the attributes of a `struct`/`enum` declaration and register
-    /// every valid `#Derive(Debug)` for field checking. `fields` is
+    /// every valid `#[derive(Debug)]` for field checking. `fields` is
     /// deferred as a closure so the caller's borrows end first.
     #[allow(clippy::too_many_arguments)]
     fn validate_derive_decls(
@@ -3933,7 +3922,7 @@ impl Analyzer {
         else {
             // Still walk the rest for E0108/E0109 on other names.
             for a in attrs {
-                if a.name == "Derive" {
+                if a.name == "derive" {
                     continue;
                 }
                 self.attr_gate(a, target, first);
@@ -3946,8 +3935,8 @@ impl Analyzer {
                 continue;
             }
             if self.attr_gate(a, target, first) == Some(AttrKind::Derive) {
-                // A second `#Derive(Debug)` on the same declaration is the
-                // conflicting-impl error (spec: "a second `#Derive(Debug)`").
+                // A second `#[derive(Debug)]` on the same declaration is the
+                // conflicting-impl error (spec: "a second `#[derive(Debug)]`").
                 record_first!(
                     *first,
                     self.err_code(
@@ -3963,7 +3952,7 @@ impl Analyzer {
         }
     }
 
-    /// Shape-check and register one `#Derive(...)` attribute (spec
+    /// Shape-check and register one `#[derive(...)]` attribute (spec
     /// `types/traits.md`, "Derive"): a parenthesized list of registered
     /// targets (`E0110`/`E0111`), no type parameters (`E0112`), no
     /// conflicting impl (`E0805`), then the impl registrations that make
@@ -3982,7 +3971,7 @@ impl Analyzer {
                 *first,
                 self.err_code(
                     "E0110",
-                    "attribute `Derive` takes a parenthesized list of trait names"
+                    "attribute `derive` takes a parenthesized list of trait names"
                 )
                 .at(attr.name_span.clone())
             );
@@ -4081,7 +4070,7 @@ impl Analyzer {
         derives.push((attr.span.clone(), fields));
     }
 
-    /// Check every `#Derive(Debug)` field after the type table is complete:
+    /// Check every `#[derive(Debug)]` field after the type table is complete:
     /// a field or payload that cannot be rendered by the derive's rules
     /// fails it (spec `types/traits.md`, "Derive"). A `struct` needs its own
     /// `Debug` (`E0801`), an `enum` falls back to the output table, and
@@ -4090,7 +4079,7 @@ impl Analyzer {
         let check = |attrs: &[Attribute], fields: Vec<(Type, Range<usize>)>| -> SResult<()> {
             if !attrs
                 .iter()
-                .any(|a| a.name == "Derive" && a.args.iter().any(|(arg, _)| arg == "Debug"))
+                .any(|a| a.name == "derive" && a.args.iter().any(|(arg, _)| arg == "Debug"))
             {
                 return Ok(());
             }
@@ -4197,7 +4186,7 @@ impl Analyzer {
         }
     }
 
-    /// The first rendering error a `#Derive(Debug)` field or structural
+    /// The first rendering error a `#[derive(Debug)]` field or structural
     /// position produces: `E0801` for a `struct` with no `Debug`, `E0212`
     /// for `unknown`. `None` means the position renders.
     fn derive_field_error(&self, t: &Type) -> Option<(&'static str, String)> {

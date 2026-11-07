@@ -188,7 +188,6 @@ fn test_export_fn() {
             body: Block { statements: vec![] },
             span: 0..20,
             attributes: Vec::new(),
-            title: None,
             abi: None,
         }),
     };
@@ -292,7 +291,6 @@ fn test_impl_decl() {
             body: Block { statements: vec![] },
             span: 0..20,
             attributes: Vec::new(),
-            title: None,
             abi: None,
         }],
         span: 0..25,

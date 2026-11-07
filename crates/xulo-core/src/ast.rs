@@ -8,10 +8,11 @@ pub struct Program {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Statement {
     Fn(FnDef),
-    /// `#Test [ "(" [ StringLiteral ] ")" ] [async] fn name() { … }` — an
+    /// `#[test] [async] fn name() { … }` — an
     /// always-checked, inert test body (spec testing.md). The `FnDef` carries
     /// the fixed shape: empty params, no return type, no generics; `is_async`
-    /// is the optional marker and `title` the optional display title.
+    /// is the optional marker. The identifier is the test's identity for a
+    /// tool's reporting: not a name, never referenceable.
     Test(FnDef),
     Let(LetBinding),
     Return(ReturnStmt),
@@ -61,26 +62,26 @@ pub struct ExprStmt {
     pub span: Range<usize>,
 }
 
-/// One declaration attribute: `#Name` with an optional parenthesized,
-/// comma-separated list of identifier arguments (`#Derive(Debug)`,
-/// `#Test`). Attributes are written on the five item declarations — `fn`,
+/// One declaration attribute: `#[name]` with an optional parenthesized,
+/// comma-separated list of identifier arguments (`#[derive(Debug)]`,
+/// `#[test]`). Attributes are written on the five item declarations — `fn`,
 /// `struct`, `enum`, `trait`, `impl` — and on the test form; which names are
 /// defined and where they may appear is a checking rule (spec
 /// `types/traits.md`, "Attributes"), not a grammatical one.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Attribute {
-    /// The attribute name as written after `#` (`Test`, `Derive`).
+    /// The attribute name as written between the brackets (`test`, `derive`).
     pub name: String,
     /// Source span of the attribute name (diagnostics point here).
     pub name_span: Range<usize>,
-    /// Parenthesized argument names, in order; empty for `#Name` and for
-    /// `#Name()` alike (registry entries distinguish the two shapes, which is
-    /// `E0110` where a list is required).
+    /// Parenthesized argument names, in order; empty for `#[name]` and for
+    /// `#[name()]` alike (registry entries distinguish the two shapes, which
+    /// is `E0110` where a list is required).
     pub args: Vec<(String, Range<usize>)>,
-    /// Full span from `#` through the closing `)` (or the name when bare).
+    /// Full span from `#` through the closing `]` (or the name when bare).
     pub span: Range<usize>,
-    /// Whether the argument list was written at all — `#Derive` and
-    /// `#Derive()` are both an E0110 for `Derive`, but the registry reports
+    /// Whether the argument list was written at all — `#[derive]` and
+    /// `#[derive()]` are both an E0110 for `derive`, but the registry reports
     /// them uniformly from the list being empty.
     pub has_parens: bool,
 }
@@ -124,13 +125,8 @@ pub struct FnDef {
     pub span: Range<usize>,
     /// Declaration attributes written directly before the `fn` keyword
     /// (empty for methods, closures, and the fixed-shape test form, whose
-    /// `#Test` is part of the `TestDecl` production).
+    /// `#[test]` is part of the `TestDecl` production).
     pub attributes: Vec<Attribute>,
-    /// The `#Test` display title — `#Test("parse test")` — as written,
-    /// `None` when the group is absent or empty and for every declaration
-    /// that is not a test (spec testing.md, "The title"). It is metadata for
-    /// a tool's reporting: not a name, never referenceable.
-    pub title: Option<String>,
     /// The FFI ABI tag of a `pub extern "abi" fn` export (spec ffi.md) —
     /// `Some("C")` only on that form; `None` for every ordinary function.
     /// The exported symbol is the declared name and the compiler lays the

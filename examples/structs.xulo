@@ -1,4 +1,4 @@
-// 结构体：字段、可选字段、默认值、固有方法（impl）、#Derive(ToString)
+// 结构体：字段、可选字段、默认值、固有方法（impl）、#[derive(Debug)]
 struct Point { x: number, y: number }
 
 impl Point {
@@ -13,7 +13,7 @@ impl Point {
     }
 }
 
-#Derive(ToString)
+#[derive(Debug)]
 struct User { name: string, age: number, nick: string? }
 
 fn describe(u: User): string {
@@ -30,7 +30,7 @@ fn main() {
     let u = User(name: "lyy", age: 30)
     print(describe(u))
     print(u.nick ?? "no nick")
-    print(u)                       // #Derive(ToString) 生成的展示形式
+    print(u)                       // #[derive(Debug)] 生成的展示形式
 
     // 字段可变：用 let mut 绑定后直接写
     let mut q = Point(x: 0, y: 0)

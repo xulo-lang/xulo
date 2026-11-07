@@ -78,10 +78,10 @@ pub fn format(source: &str) -> Result<String, XuloError> {
         {
             break_before = true;
         }
-        // A declaration attribute is written on its own line: `#Name` /
-        // `#Name(...)` then the item keyword (`fn`, `pub`, `async`, `struct`,
+        // A declaration attribute is written on its own line: `#[name]` /
+        // `#[name(...)]` then the item keyword (`fn`, `pub`, `async`, `struct`,
         // ...) on the next. The break is forced, not hinted, so a one-line
-        // `#Test fn t() {}` is rewritten into the recommended form.
+        // `#[test] fn t() {}` is rewritten into the recommended form.
         if !break_before && is_item_keyword(cur) && closes_attribute(toks, i) {
             break_before = true;
         }
@@ -170,7 +170,11 @@ fn needs_space(
     if cur == Token::LParen
         && matches!(
             prev,
-            Some(Token::Ident) | Some(Token::Print) | Some(Token::Println) | Some(Token::Fn)
+            Some(Token::Ident)
+                | Some(Token::Reserved)
+                | Some(Token::Print)
+                | Some(Token::Println)
+                | Some(Token::Fn)
         )
     {
         return false;
@@ -345,40 +349,33 @@ fn is_item_keyword(t: Token) -> bool {
     )
 }
 
-/// True when the token before `i` completes a declaration attribute — `#Name`
-/// or `#Name(...)` — so the keyword at `i` starts the item the attribute
-/// decorates. Only a `#`-introduced group counts, so an ordinary call's
-/// argument list (`f(x)`) never reads as one.
+/// True when the token before `i` completes a declaration attribute — the
+/// `#[…]` form — so the keyword at `i` starts the item the attribute
+/// decorates. Only a `#`-introduced bracket group counts, so an ordinary
+/// index or list (`xs[i]`) never reads as one.
 fn closes_attribute(toks: &[xulo_lexer::token::LexedToken], i: usize) -> bool {
-    if i < 2 {
+    if i < 2 || toks[i - 1].kind != Token::RBracket {
         return false;
     }
-    match toks[i - 1].kind {
-        // `#Name` — a bare attribute with no argument group.
-        Token::Ident => toks[i - 2].kind == Token::Hash,
-        // `#Name(...)` — walk the paren group back to its open, then check
-        // the `Ident`/`Hash` that introduced it.
-        Token::RParen => {
-            let mut depth = 0usize;
-            let mut j = i - 1;
-            loop {
-                match toks[j].kind {
-                    Token::RParen => depth += 1,
-                    Token::LParen => {
-                        depth -= 1;
-                        if depth == 0 {
-                            break;
-                        }
-                    }
-                    _ => {}
+    // Walk the bracket group back to its opening `[`, then check the `#`
+    // that introduced it.
+    let mut depth = 0usize;
+    let mut j = i - 1;
+    loop {
+        match toks[j].kind {
+            Token::RBracket => depth += 1,
+            Token::LBracket => {
+                depth -= 1;
+                if depth == 0 {
+                    break;
                 }
-                if j == 0 {
-                    return false;
-                }
-                j -= 1;
             }
-            j >= 2 && toks[j - 1].kind == Token::Ident && toks[j - 2].kind == Token::Hash
+            _ => {}
         }
-        _ => false,
+        if j == 0 {
+            return false;
+        }
+        j -= 1;
     }
+    j >= 1 && toks[j - 1].kind == Token::Hash
 }

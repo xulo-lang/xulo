@@ -152,11 +152,11 @@ impl IrGenerator {
         Some(Operand::Local(dst))
     }
 
-    /// 声明是否带 `#Derive(Debug)`（与语义层/解释器同一判定）
+    /// 声明是否带 `#[derive(Debug)]`（与语义层/解释器同一判定）
     pub(super) fn derives_debug(attributes: &[Attribute]) -> bool {
         attributes
             .iter()
-            .any(|attr| attr.name == "Derive" && attr.args.iter().any(|(arg, _)| arg == "Debug"))
+            .any(|attr| attr.name == "derive" && attr.args.iter().any(|(arg, _)| arg == "Debug"))
     }
 
     /// 取出一条可派生声明的（类型名、属性、目标）
@@ -181,7 +181,7 @@ impl IrGenerator {
         }
     }
 
-    /// 注册 `#Derive(Debug)` 的派生函数：IR 名为派发名
+    /// 注册 `#[derive(Debug)]` 的派生函数：IR 名为派发名
     /// `impl_Debug_{Type}_debug`，签名 `(self: ptr, format: ptr) -> string`。
     /// 结构体的派生同时挂到 `Type::debug`（成员调用 `u.debug(fmt)`
     /// 走与手写 impl 相同的既有解析路径），枚举只有派发名——与解释器
@@ -466,7 +466,7 @@ impl IrGenerator {
             });
     }
 
-    /// 阶段 3：登记 `#Derive(Debug)` 的 trait 派发名（函数体留给
+    /// 阶段 3：登记 `#[derive(Debug)]` 的 trait 派发名（函数体留给
     /// [`Self::generate_derived_bodies`] 在所有注册完成后统一生成）。
     pub(super) fn register_derived_decls(&mut self, programs: &[(String, &Program)]) {
         for (id, program) in programs {
@@ -514,7 +514,7 @@ impl IrGenerator {
         Ok(())
     }
 
-    /// 阶段 8：生成 `#Derive(Debug)` 的函数正文（在所有目标注册完成后
+    /// 阶段 8：生成 `#[derive(Debug)]` 的函数正文（在所有目标注册完成后
     /// 进行，嵌套派生/手写 Debug 的互相引用都能解析）。
     pub(super) fn generate_derived_bodies(
         &mut self,

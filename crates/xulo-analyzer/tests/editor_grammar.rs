@@ -2,7 +2,7 @@
 //! hand-maintained copies of facts the compiler owns. These tests pin them to
 //! the sources of truth so a language change cannot silently drift them apart
 //! again — the TextMate grammar once listed retired keywords (`try`, `catch`,
-//! `throw`, `import`, `from`), used `@Name` for `#Name` attributes, and had no
+//! `throw`, `import`, `from`), used `@Name` for `#[name]` attributes, and had no
 //! template-literal rule at all.
 
 use std::collections::BTreeSet;
@@ -184,10 +184,10 @@ fn grammar_covers_the_syntax_the_lexer_defines() {
         raw.contains("punctuation.definition.template-expression.begin.xulo"),
         "template interpolation is not highlighted"
     );
-    // Declaration attributes are `#Name`, not `@Name`.
+    // Declaration attributes are `#[name]`, not `@Name`.
     assert!(
         raw.contains("punctuation.definition.attribute.xulo"),
-        "no `#Name` attribute rule"
+        "no `#[name]` attribute rule"
     );
     assert!(
         raw.contains("storage.modifier.component.xulo"),

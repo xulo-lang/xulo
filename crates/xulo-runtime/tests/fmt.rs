@@ -161,7 +161,7 @@ fn fmt_special_values_and_negative_zero_come_through() {
 fn fmt_text_verbs_consult_display_then_debug_with_the_directive_format() {
     let out = run_ok(
         r#"
-        #Derive(Debug)
+        #[derive(Debug)]
         struct Point { x: int, y: int }
         struct Money { cents: int }
         impl Display for Money {

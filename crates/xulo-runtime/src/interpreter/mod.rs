@@ -1316,7 +1316,7 @@ impl Interpreter {
     }
 
     /// Execute a module exactly like [`Interpreter::exec_module`] with
-    /// `run_main: false`, then invoke one `#Test fn` body. The test body sees
+    /// `run_main: false`, then invoke one `#[test] fn` body. The test body sees
     /// the module the same way a function body does (spec testing.md).
     ///
     /// Pass = the body completes; an async test passes when its task settles

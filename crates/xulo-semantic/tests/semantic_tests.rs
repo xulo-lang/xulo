@@ -2949,13 +2949,13 @@ fn object_destructuring_duplicate_binding_is_error() {
 }
 
 // ---------------------------------------------------------------------------
-// `#Test fn` (spec testing.md)
+// `#[test] fn` (spec testing.md)
 // ---------------------------------------------------------------------------
 
 #[test]
 fn test_fn_body_is_checked() {
     let src = r#"
-        #Test
+        #[test]
         fn checked() {
             let x: number = "not a number"
         }
@@ -2973,7 +2973,7 @@ fn test_fn_body_sees_module_declarations() {
     let src = r#"
         fn helper(): number { return 42 }
         const LIMIT = 10
-        #Test
+        #[test]
         fn sees_module() {
             let a = helper()
             let b = LIMIT
@@ -2987,7 +2987,7 @@ fn test_fn_body_sees_module_declarations() {
 #[test]
 fn test_fn_reference_is_forbidden() {
     let src = r#"
-        #Test
+        #[test]
         fn forbidden() {
             assert(true, "ok")
         }
@@ -3007,7 +3007,7 @@ fn test_fn_reference_is_forbidden() {
 #[test]
 fn test_fn_value_reference_is_forbidden() {
     let src = r#"
-        #Test
+        #[test]
         fn forbidden() {
             assert(true, "ok")
         }
@@ -3027,7 +3027,7 @@ fn test_fn_value_reference_is_forbidden() {
 #[test]
 fn test_fn_self_reference_is_forbidden() {
     let src = r#"
-        #Test
+        #[test]
         fn recursive() {
             recursive()
         }
@@ -3047,7 +3047,7 @@ fn test_fn_reference_before_declaration_is_forbidden() {
         fn main() {
             later()
         }
-        #Test
+        #[test]
         fn later() {
             assert(true, "ok")
         }
@@ -3064,7 +3064,7 @@ fn test_fn_reference_before_declaration_is_forbidden() {
 #[test]
 fn test_fn_await_needs_async_marker() {
     let src = r#"
-        #Test
+        #[test]
         fn sync_test() {
             await std::time::sleep(1)
         }
@@ -3081,7 +3081,7 @@ fn test_fn_await_needs_async_marker() {
 fn test_async_fn_await_is_allowed() {
     let src = r#"
         async fn load(): number { return 1 }
-        #Test
+        #[test]
         async fn async_test() {
             let v = await load()
             assert(v == 1, "loaded")
@@ -3093,11 +3093,11 @@ fn test_async_fn_await_is_allowed() {
 #[test]
 fn test_fn_duplicate_names_are_allowed() {
     let src = r#"
-        #Test
+        #[test]
         fn same_name() {
             assert(true, "first")
         }
-        #Test
+        #[test]
         fn same_name() {
             assert(true, "second")
         }
@@ -3112,7 +3112,7 @@ fn test_fn_trailing_expression_is_not_an_implicit_return() {
     // number-returning call in `return` position must fail.
     let src = r#"
         fn num(): number { return 1 }
-        #Test
+        #[test]
         fn t() {
             return num()
         }
@@ -5111,17 +5111,17 @@ fn bare_io_head_is_rejected_with_a_migration_hint() {
 }
 
 // ──────────────────────────────────────────────────────────────────────
-//  Declaration attributes: the closed registry (`#Test`, `#Derive`) and
+//  Declaration attributes: the closed registry (`#[test]`, `#[derive]`) and
 //  struct construction — spec `types/traits.md` "Attributes",
 //  `type-system/errors.md` E0107–E0112, `types/composite-types.md`.
 // ──────────────────────────────────────────────────────────────────────
 
 #[test]
 fn unknown_attribute_is_e0108() {
-    let err = analyze_src("#Inline\nfn f() {}").unwrap_err();
+    let err = analyze_src("#[inline]\nfn f() {}").unwrap_err();
     assert_eq!(err.code(), "E0108", "unexpected: {}", err.message);
     assert!(
-        err.message.contains("attribute `Inline` is not defined"),
+        err.message.contains("attribute `inline` is not defined"),
         "unexpected: {}",
         err.message
     );
@@ -5129,11 +5129,11 @@ fn unknown_attribute_is_e0108() {
 
 #[test]
 fn derive_on_a_function_is_e0109() {
-    let err = analyze_src("#Derive(Debug)\nfn f() {}").unwrap_err();
+    let err = analyze_src("#[derive(Debug)]\nfn f() {}").unwrap_err();
     assert_eq!(err.code(), "E0109", "unexpected: {}", err.message);
     assert!(
         err.message
-            .contains("attribute `Derive` is not valid on a function"),
+            .contains("attribute `derive` is not valid on a function"),
         "unexpected: {}",
         err.message
     );
@@ -5141,11 +5141,11 @@ fn derive_on_a_function_is_e0109() {
 
 #[test]
 fn test_on_a_struct_is_e0109() {
-    let err = analyze_src("#Test\nstruct S { a: string }").unwrap_err();
+    let err = analyze_src("#[test]\nstruct S { a: string }").unwrap_err();
     assert_eq!(err.code(), "E0109", "unexpected: {}", err.message);
     assert!(
         err.message
-            .contains("attribute `Test` is not valid on a struct"),
+            .contains("attribute `test` is not valid on a struct"),
         "unexpected: {}",
         err.message
     );
@@ -5155,14 +5155,14 @@ fn test_on_a_struct_is_e0109() {
 fn derive_shape_errors_are_e0110() {
     // Bare and empty-paren forms both lack the required list.
     for src in [
-        "#Derive\nstruct S { a: string }",
-        "#Derive()\nstruct S { a: string }",
+        "#[derive]\nstruct S { a: string }",
+        "#[derive()]\nstruct S { a: string }",
     ] {
         let err = analyze_src(src).unwrap_err();
         assert_eq!(err.code(), "E0110", "{src}: {}", err.message);
         assert!(
             err.message
-                .contains("attribute `Derive` takes a parenthesized list of trait names"),
+                .contains("attribute `derive` takes a parenthesized list of trait names"),
             "{src}: {}",
             err.message
         );
@@ -5171,21 +5171,21 @@ fn derive_shape_errors_are_e0110() {
 
 #[test]
 fn wrong_test_shape_is_e0110() {
-    // `#Test` is not a `TestDecl` — params, a return type, or generics send
+    // `#[test]` is not a `TestDecl` — params, a return type, or generics send
     // the parse through `fn_decl` with the attribute attached (spec
     // testing.md: no params, no return, no generics). Newlines are
-    // insignificant, so `#Test` + `fn t() {}` on separate lines stays a
+    // insignificant, so `#[test]` + `fn t() {}` on separate lines stays a
     // well-formed `TestDecl` and is not in this list.
     for src in [
-        "#Test fn t(x: number) {}",
-        "#Test fn t(): number { return 1 }",
-        "#Test fn t<T>() {}",
+        "#[test] fn t(x: number) {}",
+        "#[test] fn t(): number { return 1 }",
+        "#[test] fn t<T>() {}",
     ] {
         let err = analyze_src(src).unwrap_err();
         assert_eq!(err.code(), "E0110", "{src}: {}", err.message);
         assert!(
             err.message.contains(
-                "attribute `Test` takes the form `#Test (\"…\")? [async] fn name() { … }`"
+                "attribute `test` takes no arguments and is written `#[test]`, followed by `[async] fn name() { … }`"
             ),
             "{src}: {}",
             err.message
@@ -5194,35 +5194,16 @@ fn wrong_test_shape_is_e0110() {
 }
 
 #[test]
-fn titled_test_decl_is_accepted() {
-    // spec `testing.md` / `add-test-title`: the optional string group is a
-    // display title and changes nothing else about the fixed shape.
-    let src = r#"
-        #Test("adds two numbers")
-        fn passes() { let x: number = 1 }
-
-        #Test()
-        fn empty_group() { let y: number = 2 }
-
-        #Test("await works")
-        async fn also_passes() { await std::time::sleep(0) }
-    "#;
-    analyze_src(src).unwrap_or_else(|err| panic!("{}: {}", err.code(), err.message));
-}
-
-#[test]
-fn identifier_group_on_test_is_e0110() {
-    // `#Test(foo)` cannot match `TestDecl` (its group is a `StringLiteral`),
-    // so the sequence parses as an attribute on `fn` and the shape check
-    // rejects it (spec `add-test-title`).
-    let err = analyze_src("#Test(foo) fn t() {}").unwrap_err();
-    assert_eq!(err.code(), "E0110", "unexpected: {}", err.message);
-    assert!(
-        err.message
-            .contains("attribute `Test` takes the form `#Test (\"…\")? [async] fn name() { … }`"),
-        "unexpected: {}",
-        err.message
-    );
+fn test_attribute_takes_no_arguments() {
+    // `#[test]` takes no argument group, so `#[test()]` and `#[test(name)]`
+    // fall back to an ordinary attribute on the `fn` and are `E0110`. A
+    // string argument is outside the current `AttributeArg` grammar and is a
+    // syntax error outright (spec `testing.md`).
+    for src in ["#[test()] fn t() {}", "#[test(name)] fn t() {}"] {
+        let err = analyze_src(src).unwrap_err();
+        assert_eq!(err.code(), "E0110", "unexpected: {}", err.message);
+    }
+    assert!(analyze_src(r#"#[test("adds two numbers")] fn t() {}"#).is_err());
 }
 
 #[test]
@@ -5242,7 +5223,7 @@ fn primitive_type_names_are_keywords() {
 
 #[test]
 fn unregistered_derive_target_is_e0111_with_note() {
-    let err = analyze_src("#Derive(Display)\nstruct S { a: string }").unwrap_err();
+    let err = analyze_src("#[derive(Display)]\nstruct S { a: string }").unwrap_err();
     assert_eq!(err.code(), "E0111", "unexpected: {}", err.message);
     assert!(
         err.message
@@ -5256,7 +5237,7 @@ fn unregistered_derive_target_is_e0111_with_note() {
 
 #[test]
 fn derive_on_a_generic_type_is_e0112() {
-    let err = analyze_src("#Derive(Debug)\nstruct Box<T> { v: T }").unwrap_err();
+    let err = analyze_src("#[derive(Debug)]\nstruct Box<T> { v: T }").unwrap_err();
     assert_eq!(err.code(), "E0112", "unexpected: {}", err.message);
     assert!(
         err.message
@@ -5268,15 +5249,15 @@ fn derive_on_a_generic_type_is_e0112() {
 
 #[test]
 fn referencing_a_test_fn_is_e0107() {
-    let err = analyze_src("#Test fn t() {}\nfn main() { t() }").unwrap_err();
+    let err = analyze_src("#[test] fn t() {}\nfn main() { t() }").unwrap_err();
     assert_eq!(err.code(), "E0107", "unexpected: {}", err.message);
-    let err = analyze_src("#Test fn t() {}\nfn main() { let x = t }").unwrap_err();
+    let err = analyze_src("#[test] fn t() {}\nfn main() { let x = t }").unwrap_err();
     assert_eq!(err.code(), "E0107", "unexpected: {}", err.message);
 }
 
 #[test]
 fn derive_struct_field_without_debug_is_e0801() {
-    let err = analyze_src("struct W { a: number }\n#Derive(Debug)\nstruct S { w: W }").unwrap_err();
+    let err = analyze_src("struct W { a: number }\n#[derive(Debug)]\nstruct S { w: W }").unwrap_err();
     assert_eq!(err.code(), "E0801", "unexpected: {}", err.message);
     assert!(
         err.message.contains("`W` does not implement `Debug`"),
@@ -5291,7 +5272,7 @@ fn derive_accepts_containers_and_enums() {
     // so they are no longer E0801 (spec `types/traits.md`, "Derive").
     let src = r#"
         enum Color { Red, Green }
-        #Derive(Debug)
+        #[derive(Debug)]
         struct S { xs: List<number>, c: Color, pair: (number, string) }
         fn main() { print(S(xs: [1], c: Color::Red, pair: (1, "x"))) }
     "#;
@@ -5300,7 +5281,7 @@ fn derive_accepts_containers_and_enums() {
 
 #[test]
 fn second_derive_is_e0805() {
-    let err = analyze_src("#Derive(Debug)\n#Derive(Debug)\nstruct S { a: string }").unwrap_err();
+    let err = analyze_src("#[derive(Debug)]\n#[derive(Debug)]\nstruct S { a: string }").unwrap_err();
     assert_eq!(err.code(), "E0805", "unexpected: {}", err.message);
 }
 
@@ -5310,7 +5291,7 @@ fn derive_after_manual_impl_is_e0805() {
     // the same type collides however the two are ordered (spec
     // `types/traits.md`).
     let err = analyze_src(
-        "#Derive(Debug)\nstruct S { a: string }\n\
+        "#[derive(Debug)]\nstruct S { a: string }\n\
          impl Debug for S { fn debug(self, format: Format): string { return self.a } }",
     )
     .unwrap_err();
@@ -5319,28 +5300,28 @@ fn derive_after_manual_impl_is_e0805() {
 
 #[test]
 fn well_formed_attributes_and_derive_are_accepted() {
-    // Valid shapes across every attributed declaration, a `#Test fn` body,
+    // Valid shapes across every attributed declaration, a `#[test] fn` body,
     // and uses of the derived type (member call, explicit dispatch, `str`,
     // interpolation — spec `types/traits.md`).
     let src = r#"
-        #Derive(Debug)
+        #[derive(Debug)]
         struct User { name: string, age: number }
         impl Display for User {
             fn display(self, format: Format): string { return self.name }
         }
-        #Derive(Debug)
+        #[derive(Debug)]
         struct Tagged { inner: User }
         impl Display for Tagged {
             fn display(self, format: Format): string { return `Tagged(${self.inner})` }
         }
-        #Derive(Debug)
+        #[derive(Debug)]
         enum Shape { Circle(number) Rect(number, number) }
         impl Display for Shape {
             fn display(self, format: Format): string { return "Shape" }
         }
-        #Test
+        #[test]
         fn passes() { let x: number = 1 }
-        #Test
+        #[test]
         async fn also_passes() { await std::time::sleep(0) }
         trait Named { fn name(self): string }
         impl Named for User { fn name(self): string { return self.name } }
@@ -7514,7 +7495,7 @@ fn print_rejects_a_struct_with_neither_display_nor_debug() {
 #[test]
 fn print_of_a_debug_only_type_is_well_formed() {
     let src = r#"
-        #Derive(Debug)
+        #[derive(Debug)]
         struct S { v: number }
         fn main() { print(S(v: 1)) }
     "#;
@@ -7524,7 +7505,7 @@ fn print_of_a_debug_only_type_is_well_formed() {
 #[test]
 fn str_of_a_debug_only_type_notes_print_still_accepts_it() {
     let err =
-        analyze_src("#Derive(Debug)\nstruct S { v: number }\nfn main() { print(str(S(v: 1))) }")
+        analyze_src("#[derive(Debug)]\nstruct S { v: number }\nfn main() { print(str(S(v: 1))) }")
             .unwrap_err();
     assert_eq!(err.code(), "E0212", "unexpected: {}", err.message);
     let note = err.note.unwrap_or_default();
@@ -7547,7 +7528,7 @@ fn print_rejects_unknown_in_a_structural_position() {
 
 #[test]
 fn derive_debug_rejects_unknown_field() {
-    let err = analyze_src("#Derive(Debug)\nstruct S { v: unknown }").unwrap_err();
+    let err = analyze_src("#[derive(Debug)]\nstruct S { v: unknown }").unwrap_err();
     assert_eq!(err.code(), "E0212", "unexpected: {}", err.message);
     assert!(
         err.message.contains("`unknown` has no string form"),

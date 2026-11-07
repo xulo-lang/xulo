@@ -41,7 +41,7 @@ pub struct IrGenerator {
     methods: HashMap<String, FuncId>,
     /// 派发名 `impl_{Trait}_{Type}_{method}` -> impl 函数的 IR 函数。
     /// 语义层把 `Trait::method(recv)` 与 `str(v)` 标注成派发名；AOT 在此
-    /// 静态解析（派生 `#Derive(Debug)` 注册到同一张表）。
+    /// 静态解析（派生 `#[derive(Debug)]` 注册到同一张表）。
     trait_impls: HashMap<String, FuncId>,
     /// 方法名 -> 定义它的类型列表（唯一时可按方法名分派）
     method_types: HashMap<String, Vec<String>>,
@@ -114,7 +114,7 @@ impl Default for IrGenerator {
     }
 }
 
-/// 带 `#Derive` 声明的可派生目标
+/// 带 `#[derive]` 声明的可派生目标
 enum DerivedDecl<'a> {
     Struct(&'a [StructField]),
     Enum(&'a [EnumVariant]),
@@ -350,7 +350,7 @@ impl IrGenerator {
             ]
         });
 
-        // 3. `#Derive(Debug)`：语义层只登记派发名，不生成 AST impl；
+        // 3. `#[derive(Debug)]`：语义层只登记派发名，不生成 AST impl；
         //    这里先注册派生函数（正文在所有注册完成后统一生成，可互引）。
         //    先于 impl 方法注册：手写固有方法同名时覆盖派发表项，与解释器
         //    「派生只在未有 debug 时落到结构体对象」的优先级一致。
@@ -466,7 +466,7 @@ impl IrGenerator {
             self.generate_function_body(&func_def)?;
         }
 
-        // 8. 派生 `#Derive(Debug)` 正文：所有目标注册完成后生成，
+        // 8. 派生 `#[derive(Debug)]` 正文：所有目标注册完成后生成，
         //    嵌套派生/手写 Debug 的互相引用都能解析。
         self.generate_derived_bodies(programs)?;
 

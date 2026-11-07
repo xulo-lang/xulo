@@ -193,27 +193,29 @@ declaration = {
     | const_decl
 }
 
-// `AttributeList = { Attribute }`, `Attribute = "#" Identifier [
-// "(" [ AttributeArgs ] ")" ]` with identifier arguments only (spec
+// `AttributeList = { Attribute }`, `Attribute = "#" "[" AttributeName [
+// "(" [ AttributeArgs ] ")" ] "]"` with identifier arguments only (spec
 // grammar.md). Which names exist, and on which declaration they may appear,
 // is a checking rule (spec types/traits.md) — the grammar accepts an
 // attribute list on the five item declarations and lets the checker decide.
 attribute_list = { attribute+ }
-attribute = { "#" ~ identifier ~ ("(" ~ attribute_args? ~ ")")? }
+attribute = { "#" ~ "[" ~ attribute_name ~ ("(" ~ attribute_args? ~ ")")? ~ "]" }
+// `AttributeName = Identifier | "derive" | "macro"`: the two reserved words
+// are legal only in this position; `test` is an ordinary identifier.
+attribute_name = { identifier | "derive" | "macro" }
 attribute_args = { attribute_arg ~ ("," ~ attribute_arg)* ~ ","? }
 attribute_arg = { identifier }
 
 fn_decl = { attribute_list? ~ pub_marker? ~ kw_async? ~ kw_fn ~ identifier ~ generic_params?
     ~ "(" ~ parameter_list? ~ ")" ~ (":" ~ type_expr)? ~ where_clause? ~ block }
 
-// `TestDecl = "#Test" [ "(" [ StringLiteral ] ")" ] [ "async" ] "fn"
-// Identifier "(" ")" Block` (spec grammar.md) — fixed shape: no pub, no
-// parameters, no return type, no generics, no where. Written at file scope
-// (this rule exists only in `declaration`), so the exact sequence is a
-// TestDecl and runs no registry lookup; a `#Test` whose group holds an
-// identifier backtracks into `fn_decl` and is `E0110`, and one whose shape
-// deviates backtracks into `fn_decl` and is `E0110` too.
-test_decl = { "#Test" ~ ("(" ~ string_literal? ~ ")")? ~ kw_async? ~ kw_fn
+// `TestDecl = "#" "[" "test" "]" [ "async" ] "fn" Identifier "(" ")" Block`
+// (spec grammar.md) — fixed shape: no pub, no parameters, no return type, no
+// generics, no where, and no argument group. Written at file scope (this rule
+// exists only in `declaration`), so the exact sequence is a TestDecl and runs
+// no registry lookup. `#[test]` on a non-matching `fn`, `#[test()]`, and
+// `#[test(name)]` fall back to `fn_decl` and are `E0110` in the checker.
+test_decl = { "#" ~ "[" ~ "test" ~ "]" ~ kw_async? ~ kw_fn
     ~ identifier ~ "(" ~ ")" ~ block }
 
 // Extern FFI declarations (spec grammar.md): `ExternFnDecl` MUST carry

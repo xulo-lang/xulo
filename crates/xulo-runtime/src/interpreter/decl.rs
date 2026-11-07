@@ -5,7 +5,7 @@ use super::*;
 pub(super) enum RenderMode {
     /// `str`/`${…}`/`List.join`: a user type renders through `Display`.
     DisplayOnly,
-    /// A `#Derive(Debug)` field: a user type renders through `Debug`, an
+    /// A `#[derive(Debug)]` field: a user type renders through `Debug`, an
     /// enum without one falls back to the table's enum row.
     DebugField,
     /// `print`: a user type renders through `Display`, then `Debug`.
@@ -326,12 +326,12 @@ impl Interpreter {
         self.register_derived_struct(s, env);
     }
 
-    /// Whether a declaration carries `#Derive(Debug)` (spec
+    /// Whether a declaration carries `#[derive(Debug)]` (spec
     /// `types/traits.md` registers exactly one derive target).
     pub(super) fn derives_debug(attributes: &[Attribute]) -> bool {
         attributes
             .iter()
-            .any(|attr| attr.name == "Derive" && attr.args.iter().any(|(arg, _)| arg == "Debug"))
+            .any(|attr| attr.name == "derive" && attr.args.iter().any(|(arg, _)| arg == "Debug"))
     }
 
     /// Render one derived field/parameter through `Debug` rules: a user
@@ -350,7 +350,7 @@ impl Interpreter {
         )
     }
 
-    /// Register `#Derive(Debug)` for a struct (spec `types/traits.md`): the
+    /// Register `#[derive(Debug)]` for a struct (spec `types/traits.md`): the
     /// generated method sits on the struct's object so `user.debug(fmt)`
     /// resolves like a hand written member, and under its mangled name on the
     /// shared root so `Debug::debug(user, fmt)` dispatches through the same
@@ -412,7 +412,7 @@ impl Interpreter {
         Ok(format!("{type_name}({})", parts.join(", ")))
     }
 
-    /// Register `#Derive(Debug)` for an enum: enum instances carry no
+    /// Register `#[derive(Debug)]` for an enum: enum instances carry no
     /// object, so the generated method exists only under its mangled name —
     /// `variant.debug(fmt)` dispatches to it, as do `Debug::debug` calls and
     /// `print(v)`.

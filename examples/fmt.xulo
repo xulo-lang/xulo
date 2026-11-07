@@ -5,7 +5,7 @@
 use std::fmt::*;
 use std::fmt as f;
 
-#Derive(Debug)
+#[derive(Debug)]
 struct Point { x: int, y: int }
 
 struct Money { cents: int }
