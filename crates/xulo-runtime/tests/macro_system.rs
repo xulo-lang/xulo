@@ -26,8 +26,8 @@ fn err_code(src: &str) -> &'static str {
 fn function_macro_via_quote() {
     let out = run_ok(
         r#"
-#[macro(kind = "function", name = "answer")]
-fn answer_macro(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
+#[macro]
+fn answer(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
   return Result::Ok(ast::FunctionOutput(expr: (ast::quote! { 40 + 2 })[0]))
 }
 fn main() {
@@ -42,8 +42,8 @@ fn main() {
 fn function_macro_via_ast_node() {
     let out = run_ok(
         r#"
-#[macro(kind = "function", name = "hello")]
-fn hello_macro(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
+#[macro]
+fn hello(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
   return Result::Ok(ast::FunctionOutput(expr: ast::node("StringLiteral", { text: ast::Value::String("hi") })))
 }
 fn main() {
@@ -60,7 +60,7 @@ fn derive_macro_generates_an_impl() {
         r#"
 trait Model { fn model(self): int }
 
-#[macro(kind = "derive", target = Model)]
+#[macro_derive(Model)]
 fn derive_model(input: ast::DeriveInput): Result<ast::DeriveOutput, ast::MacroFailure> {
   return Result::Ok(ast::DeriveOutput(items: ast::quote! {
     impl Model for ${input.target.name} {
@@ -84,8 +84,8 @@ fn main() {
 fn attribute_macro_adds_an_item() {
     let out = run_ok(
         r#"
-#[macro(kind = "attribute", name = "adds")]
-fn adds_macro(input: ast::AttributeInput): Result<ast::AttributeOutput, ast::MacroFailure> {
+#[macro_attr]
+fn adds(input: ast::AttributeInput): Result<ast::AttributeOutput, ast::MacroFailure> {
   return Result::Ok(ast::AttributeOutput(
     item: input.target.node,
     extras: ast::quote! { fn added(): int { 5 } }
@@ -105,7 +105,7 @@ fn main() {
 fn derive_keeps_builtin_debug_and_runs_user_targets() {
     let out = run_ok(
         r#"
-#[macro(kind = "derive", target = Model)]
+#[macro_derive(Model)]
 fn derive_model(input: ast::DeriveInput): Result<ast::DeriveOutput, ast::MacroFailure> {
   return Result::Ok(ast::DeriveOutput(items: ast::quote! {
     impl Model for ${input.target.name} { fn model(self): int { 3 } }
@@ -128,8 +128,8 @@ fn macro_reported_failure_is_e1008() {
     assert_eq!(
         err_code(
             r#"
-#[macro(kind = "function", name = "no")]
-fn no_macro(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
+#[macro]
+fn no(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
   return Result::Err(ast::MacroFailure(message: "nope", span: null))
 }
 fn main() { print(no!()) }
@@ -144,7 +144,7 @@ fn malformed_definition_is_e1010() {
     assert_eq!(
         err_code(
             r#"
-#[macro(kind = "derive")]
+#[macro_derive]
 fn bad(input: ast::DeriveInput): Result<ast::DeriveOutput, ast::MacroFailure> {
   return Result::Err(ast::MacroFailure(message: "x", span: null))
 }
@@ -153,6 +153,20 @@ fn main() {}
         ),
         "E1010"
     );
+}
+
+#[test]
+fn removed_macro_kind_form_is_e1010() {
+    let err = expand_error(
+        r#"
+#[macro(kind = "function", name = "old")]
+fn old_macro(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
+  return Result::Ok(ast::FunctionOutput(expr: (ast::quote! { 1 })[0]))
+}
+fn main() {}
+"#,
+    );
+    assert_eq!(err.code(), "E1010", "{}", err.message);
 }
 
 #[test]
@@ -172,8 +186,8 @@ fn wrong_kind_is_e1006() {
     assert_eq!(
         err_code(
             r#"
-#[macro(kind = "function", name = "route")]
-fn route_macro(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
+#[macro]
+fn route(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
   return Result::Ok(ast::FunctionOutput(expr: ast::node("NumberLiteral", { text: ast::Value::Int(1) })))
 }
 #[route("/v1")]
@@ -189,8 +203,8 @@ fn unresolved_argument_name_is_e1009() {
     assert_eq!(
         err_code(
             r#"
-#[macro(kind = "function", name = "sql")]
-fn sql_macro(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
+#[macro]
+fn sql(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
   return Result::Ok(ast::FunctionOutput(expr: ast::node("NumberLiteral", { text: ast::Value::Int(1) })))
 }
 fn main() { print(sql!(user_name)) }
@@ -205,8 +219,8 @@ fn recursive_macro_call_is_e1003() {
     assert_eq!(
         err_code(
             r#"
-#[macro(kind = "function", name = "recur")]
-fn recur_macro(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
+#[macro]
+fn recur(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
   let out = ast::call_function("recur", input)?
   return out
 }
@@ -222,8 +236,8 @@ fn sandbox_violation_is_e1007() {
     assert_eq!(
         err_code(
             r#"
-#[macro(kind = "function", name = "leak")]
-fn leak_macro(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
+#[macro]
+fn leak(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
   let text = std::fs::read("secret")
   return Result::Err(ast::MacroFailure(message: "x", span: null))
 }
@@ -239,8 +253,8 @@ fn execution_trap_is_e1012() {
     assert_eq!(
         err_code(
             r#"
-#[macro(kind = "function", name = "trap")]
-fn trap_macro(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
+#[macro]
+fn trap(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
   let xs = [1]
   let y = xs[9]
   return Result::Ok(ast::FunctionOutput(expr: ast::node("NumberLiteral", { text: ast::Value::Int(y) })))
@@ -257,8 +271,8 @@ fn malformed_quote_is_e1011() {
     assert_eq!(
         err_code(
             r#"
-#[macro(kind = "function", name = "bad")]
-fn bad_macro(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
+#[macro]
+fn bad(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
   return Result::Ok(ast::FunctionOutput(expr: (ast::quote! { let ${1} = 2 })[0]))
 }
 fn main() { print(bad!()) }
@@ -273,7 +287,7 @@ fn unconvertible_call_input_is_e1002() {
     assert_eq!(
         err_code(
             r#"
-#[macro(kind = "derive", target = Model)]
+#[macro_derive(Model)]
 fn derive_model(input: ast::DeriveInput): Result<ast::DeriveOutput, ast::MacroFailure> {
   let out = ast::call_derive("Model", ast::node("StringLiteral", { text: ast::Value::String("x") }))?
   return out
@@ -293,8 +307,8 @@ fn step_quota_is_e1001() {
     assert_eq!(
         err_code(
             r#"
-#[macro(kind = "function", name = "spin", max_steps = 100)]
-fn spin_macro(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
+#[macro(max_steps = 100)]
+fn spin(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
   let mut i = 0
   while true { i = i + 1 }
   return Result::Ok(ast::FunctionOutput(expr: ast::node("NumberLiteral", { text: ast::Value::Int(i) })))
@@ -309,8 +323,8 @@ fn main() { print(spin!()) }
 #[test]
 fn implementation_function_is_runtime_testable() {
     let src = r#"
-#[macro(kind = "function", name = "answer")]
-fn answer_macro(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
+#[macro]
+fn answer(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
   return Result::Ok(ast::FunctionOutput(expr: (ast::quote! { 1 })[0]))
 }
 #[test]
@@ -323,7 +337,7 @@ fn implementation_test() {
     span: span
   )
   let input = ast::FunctionInput(args: [], target: target)
-  match answer_macro(input) {
+  match answer(input) {
     Result::Ok(_) => assert(true, "ok"),
     Result::Err(_) => assert(false, "unexpected failure")
   }
@@ -355,14 +369,14 @@ fn expand_error(src: &str) -> XuloError {
 #[test]
 fn nested_calls_share_the_root_step_budget() {
     let src = r#"
-#[macro(kind = "function", name = "inner", max_steps = 1000000)]
-fn inner_macro(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
+#[macro(max_steps = 1000000)]
+fn inner(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
   let mut i = 0
   while i < 1000 { i = i + 1 }
   return Result::Ok(ast::FunctionOutput(expr: (ast::quote! { 1 })[0]))
 }
-#[macro(kind = "function", name = "outer", max_steps = 40)]
-fn outer_macro(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
+#[macro(max_steps = 40)]
+fn outer(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
   let nested = ast::FunctionInput(args: [], target: input.target)
   match ast::call_function("inner", nested) {
     Result::Ok(out) => { return Result::Ok(out) },
@@ -382,8 +396,8 @@ fn call_depth_quota_is_e1001() {
 fn descend(n: int) {
   if n > 0 { descend(n - 1) }
 }
-#[macro(kind = "function", name = "deep", max_depth = 2)]
-fn deep_macro(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
+#[macro(max_depth = 2)]
+fn deep(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
   descend(5)
   return Result::Ok(ast::FunctionOutput(expr: (ast::quote! { 1 })[0]))
 }
@@ -398,8 +412,8 @@ fn main() { let _ = deep!() }
 fn sandbox_applies_through_helpers() {
     let src = r#"
 fn helper() { spawn async { } }
-#[macro(kind = "function", name = "bad")]
-fn bad_macro(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
+#[macro]
+fn bad(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
   helper()
   return Result::Ok(ast::FunctionOutput(expr: (ast::quote! { 1 })[0]))
 }
@@ -412,8 +426,8 @@ fn main() { let _ = bad!() }
 #[test]
 fn memory_quota_is_e1001() {
     let src = r#"
-#[macro(kind = "function", name = "big", max_memory = 8)]
-fn big_macro(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
+#[macro(max_memory = 8)]
+fn big(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
   let text = "0123456789abcdef"
   return Result::Ok(ast::FunctionOutput(expr: ast::node("StringLiteral", { text: ast::Value::String(text) })))
 }
@@ -427,13 +441,13 @@ fn main() { print(big!()) }
 #[test]
 fn nested_calls_share_the_root_memory_budget() {
     let src = r#"
-#[macro(kind = "function", name = "inner")]
-fn inner_macro(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
+#[macro]
+fn inner(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
   let text = "0123456789abcdef"
   return Result::Ok(ast::FunctionOutput(expr: ast::node("StringLiteral", { text: ast::Value::String(text) })))
 }
-#[macro(kind = "function", name = "outer", max_memory = 8)]
-fn outer_macro(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
+#[macro(max_memory = 8)]
+fn outer(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
   let nested = ast::FunctionInput(args: [], target: input.target)
   match ast::call_function("inner", nested) {
     Result::Ok(out) => { return Result::Ok(out) },
@@ -450,12 +464,12 @@ fn main() { let _ = outer!() }
 #[test]
 fn generated_macro_definition_is_e1010() {
     let src = r#"
-#[macro(kind = "attribute", name = "genmac")]
-fn genmac_macro(input: ast::AttributeInput): Result<ast::AttributeOutput, ast::MacroFailure> {
+#[macro_attr]
+fn genmac(input: ast::AttributeInput): Result<ast::AttributeOutput, ast::MacroFailure> {
   return Result::Ok(ast::AttributeOutput(
     item: (ast::quote! {
-      #[macro(kind = "function", name = "late")]
-      fn late_macro(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
+      #[macro]
+      fn late(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
         return Result::Ok(ast::FunctionOutput(expr: (ast::quote! { 1 })[0]))
       }
     })[0],
@@ -468,4 +482,138 @@ fn main() {}
 "#;
     let err = expand_error(src);
     assert_eq!(err.code(), "E1010", "{}", err.message);
+}
+
+#[test]
+fn legacy_macro_kind_note_names_the_new_attribute() {
+    let err = expand_error(
+        r#"
+#[macro(kind = "derive", target = Model)]
+fn derive_model(input: ast::DeriveInput): Result<ast::DeriveOutput, ast::MacroFailure> {
+  return Result::Err(ast::MacroFailure(message: "x", span: null))
+}
+fn main() {}
+"#,
+    );
+    assert_eq!(err.code(), "E1010", "{}", err.message);
+    let note = err.note.unwrap_or_default();
+    assert!(note.contains("#[macro_derive(Target)]"), "{note}");
+}
+
+#[test]
+fn macro_derive_target_shape_is_e1010() {
+    for attr in [
+        "#[macro_derive]",
+        "#[macro_derive(A, B)]",
+        "#[macro_derive(\"Serialize\")]",
+    ] {
+        let src = format!(
+            r#"
+{attr}
+fn derive_x(input: ast::DeriveInput): Result<ast::DeriveOutput, ast::MacroFailure> {{
+  return Result::Err(ast::MacroFailure(message: "x", span: null))
+}}
+fn main() {{}}
+"#
+        );
+        let err = expand_error(&src);
+        assert_eq!(err.code(), "E1010", "{attr}: {}", err.message);
+    }
+}
+
+#[test]
+fn multiple_definition_attributes_are_e1010() {
+    let err = expand_error(
+        r#"
+#[macro]
+#[macro_attr]
+fn w(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
+  return Result::Ok(ast::FunctionOutput(expr: (ast::quote! { 1 })[0]))
+}
+fn main() {}
+"#,
+    );
+    assert_eq!(err.code(), "E1010", "{}", err.message);
+}
+
+#[test]
+fn mismatched_signature_is_e1010_with_definition_note() {
+    let err = expand_error(
+        r#"
+#[macro_attr]
+fn w(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
+  return Result::Ok(ast::FunctionOutput(expr: (ast::quote! { 1 })[0]))
+}
+fn main() {}
+"#,
+    );
+    assert_eq!(err.code(), "E1010", "{}", err.message);
+    let note = err.note.unwrap_or_default();
+    assert!(note.contains("#[macro_attr]"), "{note}");
+}
+
+#[test]
+fn duplicate_derive_target_is_e1010() {
+    let err = expand_error(
+        r#"
+#[macro_derive(Serialize)]
+fn a(input: ast::DeriveInput): Result<ast::DeriveOutput, ast::MacroFailure> {
+  return Result::Err(ast::MacroFailure(message: "x", span: null))
+}
+#[macro_derive(Serialize)]
+fn b(input: ast::DeriveInput): Result<ast::DeriveOutput, ast::MacroFailure> {
+  return Result::Err(ast::MacroFailure(message: "x", span: null))
+}
+fn main() {}
+"#,
+    );
+    assert_eq!(err.code(), "E1010", "{}", err.message);
+}
+
+#[test]
+fn macro_name_may_not_shadow_a_definition_attribute() {
+    let err = expand_error(
+        r#"
+#[macro]
+fn macro_attr(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
+  return Result::Ok(ast::FunctionOutput(expr: (ast::quote! { 1 })[0]))
+}
+fn main() {}
+"#,
+    );
+    assert_eq!(err.code(), "E1010", "{}", err.message);
+}
+
+#[test]
+fn definition_attribute_on_non_function_is_e0109() {
+    assert_eq!(
+        err_code(
+            r#"
+#[macro]
+struct S { a: int }
+fn main() {}
+"#
+        ),
+        "E0109"
+    );
+}
+
+#[test]
+fn duplicate_function_identifier_is_the_ordinary_duplicate_error() {
+    assert_eq!(
+        err_code(
+            r#"
+#[macro]
+fn w(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
+  return Result::Ok(ast::FunctionOutput(expr: (ast::quote! { 1 })[0]))
+}
+#[macro_attr]
+fn w(input: ast::AttributeInput): Result<ast::AttributeOutput, ast::MacroFailure> {
+  return Result::Err(ast::MacroFailure(message: "x", span: null))
+}
+fn main() {}
+"#
+        ),
+        "E0003"
+    );
 }

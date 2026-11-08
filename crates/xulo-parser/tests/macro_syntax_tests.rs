@@ -85,7 +85,7 @@ fn quote_nested_braces_and_strings_are_balanced() {
 #[test]
 fn attribute_values_and_named_arguments_parse() {
     let program = parse_program(
-        "#[route(\"/v1/users\", 2)]\nfn get() {}\n#[macro(kind = \"derive\", target = Serialize)]\nfn m() {}",
+        "#[route(\"/v1/users\", 2)]\nfn get() {}\n#[macro_derive(Serialize, max_steps = 5)]\nfn m() {}",
     )
     .unwrap_or_else(|e| panic!("{}", e.message));
     let Statement::Fn(get) = &program.statements[0] else {
@@ -102,8 +102,13 @@ fn attribute_values_and_named_arguments_parse() {
         panic!("expected fn");
     };
     let mac = &m.attributes[0];
-    assert_eq!(mac.args[0].name.as_deref(), Some("kind"));
-    assert_eq!(mac.args[1].name.as_deref(), Some("target"));
+    assert_eq!(mac.name, "macro_derive");
+    assert_eq!(mac.args[0].name, None);
+    assert!(matches!(
+        mac.args[0].value,
+        xulo_core::ast::AttributeValue::Identifier(ref name) if name == "Serialize"
+    ));
+    assert_eq!(mac.args[1].name.as_deref(), Some("max_steps"));
 }
 
 #[test]
@@ -125,4 +130,29 @@ fn attributes_parse_on_type_let_and_const() {
     };
     assert!(c.is_const);
     assert_eq!(c.attributes[0].name, "note");
+}
+
+#[test]
+fn definition_attributes_take_quota_keys() {
+    let program = parse_program(
+        "#[macro(max_steps = 1)]\nfn f() {}\n#[macro_attr(max_memory = 2)]\nfn g() {}\n#[macro_derive(Serialize, max_depth = 3)]\nfn h() {}",
+    )
+    .unwrap_or_else(|e| panic!("{}", e.message));
+    let attrs: Vec<&xulo_core::ast::Attribute> = program
+        .statements
+        .iter()
+        .map(|s| {
+            let Statement::Fn(f) = s else {
+                panic!("expected fn");
+            };
+            &f.attributes[0]
+        })
+        .collect();
+    assert_eq!(attrs[0].name, "macro");
+    assert_eq!(attrs[0].args[0].name.as_deref(), Some("max_steps"));
+    assert_eq!(attrs[1].name, "macro_attr");
+    assert_eq!(attrs[1].args[0].name.as_deref(), Some("max_memory"));
+    assert_eq!(attrs[2].name, "macro_derive");
+    assert_eq!(attrs[2].args[0].name, None);
+    assert_eq!(attrs[2].args[1].name.as_deref(), Some("max_depth"));
 }

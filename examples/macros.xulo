@@ -1,8 +1,8 @@
 // 宏系统：函数宏 name!、派生宏 #[derive]、属性宏 #[name]
 // （spec builtins/execution.md；宏体是普通 Xulo 代码，编译期在沙箱中运行）
 
-#[macro(kind = "function", name = "answer")]
-fn answer_macro(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
+#[macro]
+fn answer(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
     return Result::Ok(ast::FunctionOutput(expr: (ast::quote! { 6 * 7 })[0]))
 }
 
@@ -10,7 +10,7 @@ trait Model {
     fn model(self): int
 }
 
-#[macro(kind = "derive", target = Model)]
+#[macro_derive(Model)]
 fn derive_model(input: ast::DeriveInput): Result<ast::DeriveOutput, ast::MacroFailure> {
     return Result::Ok(ast::DeriveOutput(items: ast::quote! {
         impl Model for ${input.target.name} {
@@ -24,8 +24,8 @@ struct Widget {
     id: int
 }
 
-#[macro(kind = "attribute", name = "with_banner")]
-fn banner_macro(input: ast::AttributeInput): Result<ast::AttributeOutput, ast::MacroFailure> {
+#[macro_attr]
+fn with_banner(input: ast::AttributeInput): Result<ast::AttributeOutput, ast::MacroFailure> {
     return Result::Ok(ast::AttributeOutput(
         item: input.target.node,
         extras: ast::quote! { fn banner(): string { "macro" } }

@@ -90,7 +90,7 @@ xulo
 | `ffi.xulo` | `extern "C"` 导入 libc 符号与 `as` 别名、`Ptr` / `Ptr?` 与 `!= null` 收窄、具名参数与省略补 null、`pub extern fn` 导出 |
 | `async_tasks.xulo` | `async` / `await`、`Time::sleep`、`Task::resolve` / `all` / `race` / `timeout` |
 | `test_functions.xulo` | `#[test] fn` 测试函数 + `assert` |
-| `macros.xulo` | `#[macro]` 过程宏：函数宏 `name!`、派生宏 `#[derive]`、属性宏 `#[name]`、`ast::quote!` 与 `${…}` 洞 |
+| `macros.xulo` | 过程宏：`#[macro]` / `#[macro_attr]` / `#[macro_derive(Target)]` 定义、函数宏 `name!`、派生宏 `#[derive]`、属性宏 `#[name]`、`ast::quote!` 与 `${…}` 洞 |
 | `layout.xulo` / `ui.xulo` | `main(): View` 返回值、渲染布局（`xulo run --render terminal`） |
 | `modules/main.xulo` | `mod` / `import` 跨文件模块（见 `examples/modules/`） |
 

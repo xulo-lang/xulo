@@ -212,11 +212,13 @@ struct ConstDef {
     ty: Option<Type>,
 }
 
-/// A `#[macro]` implementation is compile-time only: the AOT backend does
-/// not emit its body (`ast::` values and `ast::quote!` live in the macro
-/// expansion engine, not the runtime).
+/// A macro implementation is compile-time only: the AOT backend does not emit
+/// its body (`ast::` values and `ast::quote!` live in the macro expansion
+/// engine, not the runtime).
 fn is_macro_function(f: &FnDef) -> bool {
-    f.attributes.iter().any(|a| a.name == "macro")
+    f.attributes
+        .iter()
+        .any(|a| matches!(a.name.as_str(), "macro" | "macro_attr" | "macro_derive"))
 }
 
 impl IrGenerator {

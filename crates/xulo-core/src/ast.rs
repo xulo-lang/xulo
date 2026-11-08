@@ -64,7 +64,7 @@ pub struct ExprStmt {
 
 /// One declaration attribute: `#[name]` with an optional parenthesized,
 /// comma-separated list of arguments (`#[derive(Debug)]`, `#[test]`,
-/// `#[macro(kind = "derive", target = Serialize)]`). Attributes are written on
+/// `#[macro_derive(Serialize)]`). Attributes are written on
 /// the eight item declarations — `fn`, `struct`, `enum`, `trait`, `impl`,
 /// `type`, `let`, and `const` — and on the test form; which names are defined
 /// and where they may appear is a checking rule (spec `types/traits.md`,

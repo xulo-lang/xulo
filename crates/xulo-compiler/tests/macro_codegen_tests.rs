@@ -6,8 +6,8 @@ use std::path::Path;
 #[test]
 fn macro_program_compiles_to_ir() {
     let src = r#"
-#[macro(kind = "function", name = "answer")]
-fn answer_macro(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
+#[macro]
+fn answer(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
   return Result::Ok(ast::FunctionOutput(expr: (ast::quote! { 42 })[0]))
 }
 fn main() { print(answer!()) }

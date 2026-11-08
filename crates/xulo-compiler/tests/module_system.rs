@@ -328,7 +328,7 @@ fn cross_module_macros_expand_through_use() {
         r#"
         pub trait Model { fn model(self): int }
 
-        #[macro(kind = "derive", target = Model)]
+        #[macro_derive(Model)]
         pub fn derive_model(input: ast::DeriveInput): Result<ast::DeriveOutput, ast::MacroFailure> {
             return Result::Ok(ast::DeriveOutput(items: ast::quote! {
                 impl Model for ${input.target.name} {
@@ -337,8 +337,8 @@ fn cross_module_macros_expand_through_use() {
             }))
         }
 
-        #[macro(kind = "function", name = "answer")]
-        pub fn answer_macro(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
+        #[macro]
+        pub fn answer(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
             return Result::Ok(ast::FunctionOutput(expr: (ast::quote! { 42 })[0]))
         }
         "#,
@@ -386,8 +386,8 @@ fn private_macro_import_is_e0602() {
         &dir,
         "m.xulo",
         r#"
-        #[macro(kind = "function", name = "secret")]
-        fn secret_macro(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
+        #[macro]
+        fn secret(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
             return Result::Ok(ast::FunctionOutput(expr: (ast::quote! { 1 })[0]))
         }
         "#,
@@ -413,8 +413,8 @@ fn qualified_private_macro_call_is_e0602() {
         &dir,
         "m.xulo",
         r#"
-        #[macro(kind = "function", name = "secret")]
-        fn secret_macro(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
+        #[macro]
+        fn secret(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
             return Result::Ok(ast::FunctionOutput(expr: (ast::quote! { 1 })[0]))
         }
         "#,
@@ -441,8 +441,8 @@ fn pub_use_reexports_an_imported_macro() {
         "main.xulo",
         r#"
         pub mod m {
-            #[macro(kind = "function", name = "answer")]
-            pub fn answer_macro(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
+            #[macro]
+            pub fn answer(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
                 return Result::Ok(ast::FunctionOutput(expr: (ast::quote! { 42 })[0]))
             }
         }
@@ -452,6 +452,58 @@ fn pub_use_reexports_an_imported_macro() {
         }
         use lib::answer;
         fn main() { print(answer!()) }
+        "#,
+    );
+    let mut loaded = load_pkg(&dir).unwrap();
+    xulo_compiler::module::analyze(&mut loaded, false).unwrap();
+    let dump = format!("{:?}", loaded.modules[loaded.entry].program.statements);
+    assert!(!dump.contains("MacroCall"), "{dump}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn pub_implementation_exports_both_value_and_macro() {
+    let dir = temp_pkg("macro_pub_names");
+    write(
+        &dir,
+        "m.xulo",
+        r#"
+        #[macro]
+        pub fn sql(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
+            return Result::Ok(ast::FunctionOutput(expr: (ast::quote! { 1 })[0]))
+        }
+
+        #[macro_attr]
+        pub fn with_banner(input: ast::AttributeInput): Result<ast::AttributeOutput, ast::MacroFailure> {
+            return Result::Ok(ast::AttributeOutput(item: input.target.node, extras: []))
+        }
+
+        #[macro_derive(Serialize)]
+        pub fn derive_serialize(input: ast::DeriveInput): Result<ast::DeriveOutput, ast::MacroFailure> {
+            return Result::Ok(ast::DeriveOutput(items: []))
+        }
+        "#,
+    );
+    write(
+        &dir,
+        "main.xulo",
+        r#"
+        mod m;
+        use m::{sql, with_banner, Serialize, derive_serialize};
+
+        #[with_banner]
+        fn decorated() {}
+
+        #[derive(Serialize)]
+        struct Data { id: int }
+
+        fn main() {
+            print(sql!())
+            let d = derive_serialize
+            let s = sql
+            let b = with_banner
+            print(str(d) + str(s) + str(b))
+        }
         "#,
     );
     let mut loaded = load_pkg(&dir).unwrap();

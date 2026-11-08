@@ -608,7 +608,9 @@ fn pub_macro_fn_names(program: &Program) -> HashSet<String> {
     for statement in &program.statements {
         if let Statement::Export(export) = statement
             && let ExportItem::Fn(f) = &export.item
-            && f.attributes.iter().any(|a| a.name == "macro")
+            && f.attributes
+                .iter()
+                .any(|a| matches!(a.name.as_str(), "macro" | "macro_attr" | "macro_derive"))
         {
             out.insert(f.name.clone());
         }

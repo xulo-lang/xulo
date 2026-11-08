@@ -2375,7 +2375,7 @@ pub fn module_face(program: &Program, module_id: &str) -> ModuleFace {
         match statement {
             Statement::Fn(f) => {
                 set_face_name(&mut face, &f.name, false, FaceKind::Fn);
-                face_macro_name(&mut face, &f.attributes, false);
+                face_macro_name(&mut face, &f.name, &f.attributes, false);
             }
             // `#[test]` functions are entry points, not bindings.
             Statement::Test(_) => {}
@@ -2489,23 +2489,33 @@ fn mark_face_pub(face: &mut ModuleFace, name: &str) {
     }
 }
 
-/// Register the macro name in a `#[macro(…)]` attribute list, if present.
-fn face_macro_name(face: &mut ModuleFace, attrs: &[Attribute], is_pub: bool) {
-    let Some(attr) = attrs.iter().find(|a| a.name == "macro") else {
+/// Register the macro name a definition attribute declares, if present
+/// (spec `types/traits.md`, "Macro definitions"): the function identifier for
+/// `#[macro]`/`#[macro_attr]`, and the positional target for
+/// `#[macro_derive(Target)]`.
+fn face_macro_name(face: &mut ModuleFace, fn_name: &str, attrs: &[Attribute], is_pub: bool) {
+    let Some(attr) = attrs
+        .iter()
+        .find(|a| matches!(a.name.as_str(), "macro" | "macro_attr" | "macro_derive"))
+    else {
         return;
     };
-    for arg in &attr.args {
-        if matches!(arg.name.as_deref(), Some("name" | "target")) {
-            let name = match &arg.value {
-                AttributeValue::Identifier(name) | AttributeValue::String(name) => Some(name),
-                _ => None,
-            };
-            if let Some(name) = name {
-                let entry = face.macros.entry(name.clone()).or_insert(false);
-                *entry |= is_pub;
-            }
-            return;
+    let name = match attr.name.as_str() {
+        "macro" | "macro_attr" => Some(fn_name.to_string()),
+        "macro_derive" => {
+            attr.args
+                .iter()
+                .find(|a| a.name.is_none())
+                .and_then(|a| match &a.value {
+                    AttributeValue::Identifier(name) => Some(name.clone()),
+                    _ => None,
+                })
         }
+        _ => None,
+    };
+    if let Some(name) = name {
+        let entry = face.macros.entry(name).or_insert(false);
+        *entry |= is_pub;
     }
 }
 
@@ -2602,7 +2612,7 @@ fn face_export(face: &mut ModuleFace, item: &ExportItem) {
         ExportItem::Fn(f) => {
             set_face_name(face, &f.name, true, FaceKind::Fn);
             face.exports.push((f.name.clone(), face_fn_symbol(f)));
-            face_macro_name(face, &f.attributes, true);
+            face_macro_name(face, &f.name, &f.attributes, true);
         }
         ExportItem::Let(b) => {
             set_face_name(
@@ -3902,7 +3912,7 @@ fn attribute_registry(name: &str) -> Option<AttrKind> {
     match name {
         "test" => Some(AttrKind::Test),
         "derive" => Some(AttrKind::Derive),
-        "macro" => Some(AttrKind::Macro),
+        "macro" | "macro_attr" | "macro_derive" => Some(AttrKind::Macro),
         _ => None,
     }
 }

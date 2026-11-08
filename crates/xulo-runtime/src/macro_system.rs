@@ -81,7 +81,22 @@ impl MacroRegistry {
     }
 }
 
-/// Collect and validate the `#[macro]` definitions written in `program`.
+/// The macro kind a definition attribute selects, if `name` is one.
+fn definition_attr_kind(name: &str) -> Option<MacroKind> {
+    match name {
+        "macro" => Some(MacroKind::Function),
+        "macro_attr" => Some(MacroKind::Attribute),
+        "macro_derive" => Some(MacroKind::Derive),
+        _ => None,
+    }
+}
+
+fn is_definition_attr(name: &str) -> bool {
+    definition_attr_kind(name).is_some()
+}
+
+/// Collect and validate the macro definitions written in `program`
+/// (spec `type-system/checking-rules.md`, "Macro definitions").
 pub fn collect_macros(program: &Program) -> Result<MacroRegistry, XuloError> {
     let mut registry = MacroRegistry::default();
     for statement in &program.statements {
@@ -94,11 +109,30 @@ pub fn collect_macros(program: &Program) -> Result<MacroRegistry, XuloError> {
             _ => None,
         };
         let Some(f) = f else { continue };
-        let Some(attr) = f.attributes.iter().find(|a| a.name == "macro") else {
+        let defs: Vec<&Attribute> = f
+            .attributes
+            .iter()
+            .filter(|a| is_definition_attr(&a.name))
+            .collect();
+        let Some(attr) = defs.first().copied() else {
             continue;
         };
+        if defs.len() > 1 {
+            return Err(error(
+                "E1010",
+                "a function takes exactly one macro definition attribute",
+                defs[1].name_span.clone(),
+            )
+            .with_note("use one of `#[macro]`, `#[macro_attr]`, or `#[macro_derive(Target)]`"));
+        }
         let def = validate_macro_def(f, attr)?;
         if let Some(prev) = registry.defs.get(&def.name) {
+            // `#[macro]`/`#[macro_attr]` name the macro after the function
+            // identifier, so a duplicate identifier is the ordinary
+            // duplicate-declaration error, not a second macro-name error.
+            if def.kind != MacroKind::Derive && prev.kind != MacroKind::Derive {
+                continue;
+            }
             return Err(error(
                 "E1010",
                 format!("macro `{}` is already defined", def.name),
@@ -128,102 +162,106 @@ fn invalid(message: impl Into<String>, span: Range<usize>) -> XuloError {
     )
 }
 
+/// The repair note for the removed `#[macro(kind = …)]` spelling.
+fn legacy_kind_note(value: &AttributeValue) -> &'static str {
+    match value {
+        AttributeValue::String(kind) if kind == "derive" => {
+            "write `#[macro_derive(Target)]` on the implementation function"
+        }
+        AttributeValue::String(kind) if kind == "attribute" => {
+            "write `#[macro_attr]` on the implementation function"
+        }
+        AttributeValue::String(kind) if kind == "function" => {
+            "write `#[macro]` on the implementation function"
+        }
+        _ => "`#[macro]` takes no arguments; use `#[macro_derive(Target)]` for a derive macro",
+    }
+}
+
 fn validate_macro_def(f: &FnDef, attr: &Attribute) -> Result<MacroDef, XuloError> {
-    let mut kind = None;
+    let kind = definition_attr_kind(&attr.name).expect("definition attribute");
     let mut target = None;
-    let mut name = None;
+    let mut target_span = None;
     let mut max_steps = None;
     let mut max_memory = None;
     let mut max_depth = None;
     for arg in &attr.args {
-        let Some(key) = arg.name.as_deref() else {
-            return Err(invalid(
-                "`#[macro]` takes `name = value` keys only",
-                arg.span.clone(),
-            ));
-        };
-        match key {
-            "kind" => {
-                let AttributeValue::String(text) = &arg.value else {
-                    return Err(invalid(
-                        "`kind` must be a string (\"derive\", \"attribute\", or \"function\")",
-                        arg.span.clone(),
-                    ));
-                };
-                kind = Some(match text.as_str() {
-                    "derive" => MacroKind::Derive,
-                    "attribute" => MacroKind::Attribute,
-                    "function" => MacroKind::Function,
-                    other => {
-                        return Err(invalid(
-                            format!("unknown macro kind `{other}`"),
-                            arg.span.clone(),
-                        ));
-                    }
-                });
-            }
-            "target" => {
-                let AttributeValue::Identifier(text) = &arg.value else {
-                    return Err(invalid("`target` must be an identifier", arg.span.clone()));
-                };
-                target = Some(text.clone());
-            }
-            "name" => {
-                let AttributeValue::String(text) = &arg.value else {
-                    return Err(invalid("`name` must be a string", arg.span.clone()));
-                };
-                name = Some(text.clone());
-            }
-            "max_steps" => max_steps = Some(quota_value(arg, key)?),
-            "max_memory" => max_memory = Some(quota_value(arg, key)?),
-            "max_depth" => max_depth = Some(quota_value(arg, key)?),
-            other => {
+        match arg.name.as_deref() {
+            Some("max_steps") => max_steps = Some(quota_value(arg, "max_steps")?),
+            Some("max_memory") => max_memory = Some(quota_value(arg, "max_memory")?),
+            Some("max_depth") => max_depth = Some(quota_value(arg, "max_depth")?),
+            Some("kind") if attr.name == "macro" => {
                 return Err(invalid(
-                    format!("unknown `#[macro]` key `{other}`"),
+                    "`#[macro]` takes no arguments; the `kind` key was removed",
+                    arg.span.clone(),
+                )
+                .with_note(legacy_kind_note(&arg.value)));
+            }
+            Some("target") if attr.name == "macro_derive" => {
+                return Err(invalid(
+                    "`#[macro_derive]` takes one positional target",
+                    arg.span.clone(),
+                )
+                .with_note("write `#[macro_derive(Target)]`"));
+            }
+            Some(other) => {
+                return Err(invalid(
+                    format!("`#[{}]` does not accept the argument `{other}`", attr.name),
                     arg.span.clone(),
                 ));
             }
+            None => {
+                if attr.name != "macro_derive" {
+                    return Err(invalid(
+                        format!("`#[{}]` takes no positional arguments", attr.name),
+                        arg.span.clone(),
+                    )
+                    .with_note(if attr.name == "macro" {
+                        "write `#[macro_derive(Target)]` for a derive macro"
+                    } else {
+                        "write `#[macro_attr]` for an attribute macro"
+                    }));
+                }
+                if target.is_some() {
+                    return Err(invalid(
+                        "`#[macro_derive]` takes exactly one target",
+                        arg.span.clone(),
+                    ));
+                }
+                let AttributeValue::Identifier(text) = &arg.value else {
+                    return Err(invalid(
+                        "`#[macro_derive]` target must be an identifier",
+                        arg.span.clone(),
+                    ));
+                };
+                target = Some(text.clone());
+                target_span = Some(arg.span.clone());
+            }
         }
     }
-    let kind = kind.ok_or_else(|| {
-        invalid("`#[macro]` requires `kind`", attr.span.clone())
-            .with_note("write `#[macro(kind = \"derive\", target = Model)]`")
-    })?;
-    let name = match kind {
+    let (name, name_span) = match kind {
         MacroKind::Derive => {
-            if name.is_some() {
+            let Some(target) = target else {
                 return Err(invalid(
-                    "a derive macro takes `target`, not `name`",
-                    attr.span.clone(),
-                ));
-            }
-            target.clone().ok_or_else(|| {
-                invalid("derive macro requires `target`", attr.span.clone())
-                    .with_note("write `#[macro(kind = \"derive\", target = Model)]`")
-            })?
-        }
-        MacroKind::Attribute | MacroKind::Function => {
-            if target.is_some() {
-                return Err(invalid(
-                    "an attribute or function macro takes `name`, not `target`",
-                    attr.span.clone(),
-                ));
-            }
-            name.ok_or_else(|| {
-                invalid(
-                    "attribute and function macros require `name`",
-                    attr.span.clone(),
+                    "`#[macro_derive]` requires a target",
+                    attr.name_span.clone(),
                 )
-            })?
+                .with_note("write `#[macro_derive(Target)]`"));
+            };
+            (target, target_span.unwrap_or_else(|| attr.span.clone()))
         }
+        MacroKind::Attribute | MacroKind::Function => (f.name.clone(), f.name_span.clone()),
     };
     if !is_legal_macro_name(&name) {
         return Err(invalid(
             format!("`{name}` is not a legal macro name"),
-            attr.span.clone(),
+            name_span,
         ));
     }
-    if matches!(name.as_str(), "derive" | "test" | "macro") {
+    if matches!(
+        name.as_str(),
+        "derive" | "test" | "macro" | "macro_attr" | "macro_derive"
+    ) {
         return Err(invalid(
             format!("`{name}` is a built-in attribute name and cannot be a macro"),
             attr.name_span.clone(),
@@ -235,8 +273,7 @@ fn validate_macro_def(f: &FnDef, attr: &Attribute) -> Result<MacroDef, XuloError
             attr.name_span.clone(),
         ));
     }
-    // Function shape (spec type-system/checking-rules.md, `#[macro]`
-    // definitions).
+    // Function shape (spec type-system/checking-rules.md, "Macro definitions").
     if f.is_async || f.abi.is_some() {
         return Err(invalid(
             "a macro implementation must not be `async` or `extern`",
@@ -270,7 +307,11 @@ fn validate_macro_def(f: &FnDef, attr: &Attribute) -> Result<MacroDef, XuloError
         return Err(invalid(
             format!("the macro parameter must be `{expect_param}`"),
             f.params[0].span.clone(),
-        ));
+        )
+        .with_note(format!(
+            "`#[{}]` takes `{expect_param}` and returns `Result<{expect_output}, ast::MacroFailure>`",
+            attr.name
+        )));
     }
     let ok_return = matches!(
         &f.return_type,
@@ -287,11 +328,15 @@ fn validate_macro_def(f: &FnDef, attr: &Attribute) -> Result<MacroDef, XuloError
                 .as_ref()
                 .map(|_| f.span.clone())
                 .unwrap_or(f.name_span.clone()),
-        ));
+        )
+        .with_note(format!(
+            "`#[{}]` takes `{expect_param}` and returns `Result<{expect_output}, ast::MacroFailure>`",
+            attr.name
+        )));
     }
-    if has_user_attribute_macro(&f.attributes, attr) {
+    if has_user_attribute_macro(&f.attributes) {
         return Err(invalid(
-            "a `#[macro]` function must not carry a user attribute macro",
+            "a macro implementation must not carry a user attribute macro",
             attr.span.clone(),
         ));
     }
@@ -352,10 +397,10 @@ fn type_is(ty: &Type, expected: &str) -> bool {
     matches!(ty, Type::Named(name, args) if name == expected && args.is_empty())
 }
 
-fn has_user_attribute_macro(attrs: &[Attribute], macro_attr: &Attribute) -> bool {
-    attrs.iter().any(|a| {
-        !std::ptr::eq(a, macro_attr) && !matches!(a.name.as_str(), "test" | "derive" | "macro")
-    })
+fn has_user_attribute_macro(attrs: &[Attribute]) -> bool {
+    attrs
+        .iter()
+        .any(|a| !is_definition_attr(&a.name) && !matches!(a.name.as_str(), "test" | "derive"))
 }
 
 /// Runtime context shared by every interpreter that executes a macro in one
@@ -533,7 +578,7 @@ fn macro_definition_spans(program: &Program) -> std::collections::HashSet<(usize
     let mut spans = std::collections::HashSet::new();
     for statement in &program.statements {
         if let Some(attrs) = statement_attrs(statement)
-            && let Some(attr) = attrs.iter().find(|a| a.name == "macro")
+            && let Some(attr) = attrs.iter().find(|a| is_definition_attr(&a.name))
         {
             spans.insert((attr.span.start, attr.span.end));
         }
@@ -556,7 +601,10 @@ fn program_has_macro_usage(program: &Program) -> bool {
                 if a.name == "derive" && a.identifier_args().iter().any(|(n, _)| *n != "Debug") {
                     found = true;
                 }
-                if !matches!(a.name.as_str(), "test" | "derive" | "macro") {
+                if !matches!(
+                    a.name.as_str(),
+                    "test" | "derive" | "macro" | "macro_attr" | "macro_derive"
+                ) {
                     found = true;
                 }
             }
@@ -655,10 +703,12 @@ fn expand_attributes(
             )
             .with_note("the macro keeps re-attaching its own attribute"));
         }
-        let Some(pos) = attrs
-            .iter()
-            .position(|a| !matches!(a.name.as_str(), "test" | "derive" | "macro"))
-        else {
+        let Some(pos) = attrs.iter().position(|a| {
+            !matches!(
+                a.name.as_str(),
+                "test" | "derive" | "macro" | "macro_attr" | "macro_derive"
+            )
+        }) else {
             break;
         };
         let name = attrs[pos].name.clone();
