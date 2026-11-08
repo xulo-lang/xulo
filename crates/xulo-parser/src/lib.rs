@@ -146,3 +146,32 @@ pub(crate) fn span_of(pair: &pest::iterators::Pair<Rule>) -> Range<usize> {
 pub(crate) fn err(message: impl Into<String>, span: Range<usize>) -> XuloError {
     XuloError::new(ErrorKind::Parse, message).at(span)
 }
+
+/// The parsed form of a substituted `ast::quote!` body: a declaration
+/// sequence or one expression, whichever the fragment parses as.
+pub enum QuoteFragment {
+    Program(Program),
+    Expression(xulo_core::ast::Expression),
+}
+
+/// Parse a raw (already hole-substituted) `ast::quote!` body. Declarations win
+/// when the text parses as a program; otherwise a single expression is tried.
+/// The caller reports `E1011` when both fail (spec `expressions/calls.md`).
+pub fn parse_quote_fragment(source: &str) -> Result<QuoteFragment, XuloError> {
+    match parse_program(source) {
+        Ok(program) => Ok(QuoteFragment::Program(program)),
+        Err(program_err) => {
+            let pairs = XuloParser::parse(Rule::expression_input, source)
+                .map_err(|_| program_err.clone())?;
+            let root = pairs
+                .into_iter()
+                .next()
+                .ok_or_else(|| XuloError::new(ErrorKind::Parse, "empty quote"))?;
+            let expr_pair = root
+                .into_inner()
+                .find(|p| p.as_rule() == Rule::expression)
+                .ok_or_else(|| XuloError::new(ErrorKind::Parse, "empty quote"))?;
+            crate::expr::expression(expr_pair).map(QuoteFragment::Expression)
+        }
+    }
+}

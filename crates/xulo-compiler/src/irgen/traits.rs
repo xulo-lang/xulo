@@ -156,7 +156,13 @@ impl IrGenerator {
     pub(super) fn derives_debug(attributes: &[Attribute]) -> bool {
         attributes
             .iter()
-            .any(|attr| attr.name == "derive" && attr.args.iter().any(|(arg, _)| arg == "Debug"))
+            .any(|attr| {
+                attr.name == "derive"
+                    && attr
+                        .identifier_args()
+                        .iter()
+                        .any(|(arg, _)| *arg == "Debug")
+            })
     }
 
     /// 取出一条可派生声明的（类型名、属性、目标）

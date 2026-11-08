@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
-use xulo_core::ast::{Block, GenericParam, Param, Type};
+use xulo_core::ast::{Block, Expression, GenericParam, Param, Statement, Type};
 
 use crate::env::Env;
 use crate::interpreter::{NativeFn, RunError};
@@ -53,6 +53,52 @@ pub enum Value {
     /// tasks register themselves in `Promise.awaiters` and the scheduler
     /// resumes them in FIFO order once the promise settles.
     Promise(Rc<RefCell<Promise>>),
+    /// An `ast::AstNode` value (spec memory-and-runtime.md): opaque beyond
+    /// its kind and span, carrying the original node or a constructed field
+    /// map for the macro surface.
+    AstNode(Rc<AstNodeValue>),
+}
+
+/// An `ast::Span` value (spec memory-and-runtime.md).
+#[derive(Clone, Debug, PartialEq)]
+pub struct SpanValue {
+    pub file: String,
+    pub start: usize,
+    pub end: usize,
+    pub line: usize,
+    pub column: usize,
+}
+
+impl SpanValue {
+    pub fn empty() -> Self {
+        SpanValue {
+            file: String::new(),
+            start: 0,
+            end: 0,
+            line: 1,
+            column: 1,
+        }
+    }
+}
+
+/// An `ast::AstNode` value: its kind string, span, optional source text, field
+/// map, and the original node when the compiler produced it.
+#[derive(Clone)]
+pub struct AstNodeValue {
+    pub kind: String,
+    pub span: SpanValue,
+    pub text: Option<String>,
+    pub fields: Vec<(String, Value)>,
+    pub repr: AstNodeRepr,
+}
+
+/// The payload of an [`AstNodeValue`].
+#[derive(Clone)]
+pub enum AstNodeRepr {
+    Statement(Box<Statement>),
+    Expression(Box<Expression>),
+    /// A node built by `ast::node`, with only its field map.
+    Constructed,
 }
 
 /// The pending computation of an async call, shared with every `await`er.
@@ -101,6 +147,7 @@ impl Value {
             Value::Signal(_) => "a signal".into(),
             Value::Enum { .. } => "an enum value".into(),
             Value::Promise(_) => "a promise".into(),
+            Value::AstNode(_) => "an `ast::AstNode`".into(),
         }
     }
 
@@ -170,6 +217,7 @@ impl Value {
                 Some(p) => format!("{enum_name}.{tag}({})", p.format_seen(seen)),
             },
             Value::Promise(_) => "Promise".into(),
+            Value::AstNode(node) => format!("AstNode({})", node.kind),
         }
     }
 }
@@ -198,6 +246,7 @@ pub fn equal(a: &Value, b: &Value) -> bool {
         (Value::Object(x), Value::Object(y)) => Rc::ptr_eq(x, y),
         (Value::Promise(x), Value::Promise(y)) => Rc::ptr_eq(x, y),
         (Value::Signal(x), Value::Signal(y)) => Rc::ptr_eq(x, y),
+        (Value::AstNode(x), Value::AstNode(y)) => Rc::ptr_eq(x, y),
         (
             Value::Enum {
                 enum_name: n1,
@@ -229,6 +278,7 @@ pub fn is_truthy(v: &Value) -> bool {
         Value::Boolean(b) => *b,
         Value::Number(n) => *n != 0.0 && !n.is_nan(),
         Value::String(s) => !s.is_empty(),
+        Value::AstNode(_) => true,
         Value::Null => false,
         _ => true,
     }

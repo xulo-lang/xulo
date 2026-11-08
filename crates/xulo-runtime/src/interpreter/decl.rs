@@ -331,7 +331,13 @@ impl Interpreter {
     pub(super) fn derives_debug(attributes: &[Attribute]) -> bool {
         attributes
             .iter()
-            .any(|attr| attr.name == "derive" && attr.args.iter().any(|(arg, _)| arg == "Debug"))
+            .any(|attr| {
+                attr.name == "derive"
+                    && attr
+                        .identifier_args()
+                        .iter()
+                        .any(|(arg, _)| *arg == "Debug")
+            })
     }
 
     /// Render one derived field/parameter through `Debug` rules: a user

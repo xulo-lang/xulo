@@ -149,6 +149,11 @@ pub(super) fn expr_has_closure(expr: &Expression) -> bool {
             }
         },
         Expression::Lock(l) => block_has_closure(&l.body),
+        Expression::MacroCall(m) => m.args.iter().any(expr_has_closure),
+        Expression::Quote(q) => q.pieces.iter().any(|p| match p {
+            xulo_core::ast::QuotePiece::Hole { expr, .. } => expr_has_closure(expr),
+            xulo_core::ast::QuotePiece::Tokens { .. } => false,
+        }),
     }
 }
 

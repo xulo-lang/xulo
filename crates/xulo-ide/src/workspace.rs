@@ -241,8 +241,14 @@ impl Builder<'_> {
                 format!("no such file in workspace: {}", file.display()),
             )
         })?;
-        let program =
+        let mut program =
             xulo_parser::parse_program(&source).map_err(|e| e.with_file(file.to_path_buf()))?;
+        xulo_runtime::macro_system::expand_program(
+            &mut program,
+            &source,
+            &file.display().to_string(),
+        )
+        .map_err(|e| e.with_file(file.to_path_buf()))?;
 
         let mut imports: Vec<(UseDecl, Vec<Option<PathBuf>>)> = Vec::new();
         self.visiting.insert(file.to_path_buf());

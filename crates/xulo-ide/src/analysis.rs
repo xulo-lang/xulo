@@ -61,7 +61,7 @@ impl Analysis {
 /// (cross-module seeding is the workspace layer's job).
 pub fn analyze_source(source: &str) -> Analysis {
     let line_index = LineIndex::new(source);
-    let program = match xulo_parser::parse_program(source) {
+    let mut program = match xulo_parser::parse_program(source) {
         Err(err) => {
             return Analysis {
                 source: source.to_string(),
@@ -73,6 +73,15 @@ pub fn analyze_source(source: &str) -> Analysis {
         }
         Ok(program) => program,
     };
+    if let Err(err) = xulo_runtime::macro_system::expand_program(&mut program, source, "<buffer>") {
+        return Analysis {
+            source: source.to_string(),
+            program: Some(program),
+            result: None,
+            error: Some(err),
+            line_index,
+        };
+    }
     // Partial analysis: a single failing statement keeps the resolutions/types
     // gathered around it, so hover / go-to-definition survive error files.
     let (result, error) = analyze_partial(&program, &[], &[], &[]);

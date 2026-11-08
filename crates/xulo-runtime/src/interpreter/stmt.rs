@@ -6,6 +6,7 @@ impl Interpreter {
         stmt: &Statement,
         env: &Rc<RefCell<Env>>,
     ) -> Result<Flow, RunError> {
+        self.bump_step(&(0..0))?;
         match stmt {
             Statement::Fn(f) => {
                 self.register_fn(f, env);
@@ -482,6 +483,9 @@ impl Interpreter {
                     0..0,
                 ));
             }
+            if let Some(err) = self.depth_quota_error(&(0..0)) {
+                return Err(err);
+            }
             self.call_depth.set(depth + 1);
             let result = self.run_function(&func, bound);
             self.call_depth.set(depth);
@@ -583,9 +587,7 @@ impl Interpreter {
                         .map(|(k, _)| Value::String(k.clone().into()))
                         .collect(),
                 ))),
-                Value::Set(set) => {
-                    Value::List(Rc::new(RefCell::new(set.borrow().clone())))
-                }
+                Value::Set(set) => Value::List(Rc::new(RefCell::new(set.borrow().clone()))),
                 other => other,
             };
             let list = match iterable {

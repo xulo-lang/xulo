@@ -63,27 +63,67 @@ pub struct ExprStmt {
 }
 
 /// One declaration attribute: `#[name]` with an optional parenthesized,
-/// comma-separated list of identifier arguments (`#[derive(Debug)]`,
-/// `#[test]`). Attributes are written on the five item declarations — `fn`,
-/// `struct`, `enum`, `trait`, `impl` — and on the test form; which names are
-/// defined and where they may appear is a checking rule (spec
-/// `types/traits.md`, "Attributes"), not a grammatical one.
+/// comma-separated list of arguments (`#[derive(Debug)]`, `#[test]`,
+/// `#[macro(kind = "derive", target = Serialize)]`). Attributes are written on
+/// the eight item declarations — `fn`, `struct`, `enum`, `trait`, `impl`,
+/// `type`, `let`, and `const` — and on the test form; which names are defined
+/// and where they may appear is a checking rule (spec `types/traits.md`,
+/// "Attributes"), not a grammatical one.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Attribute {
     /// The attribute name as written between the brackets (`test`, `derive`).
     pub name: String,
     /// Source span of the attribute name (diagnostics point here).
     pub name_span: Range<usize>,
-    /// Parenthesized argument names, in order; empty for `#[name]` and for
+    /// Parenthesized arguments, in order; empty for `#[name]` and for
     /// `#[name()]` alike (registry entries distinguish the two shapes, which
     /// is `E0110` where a list is required).
-    pub args: Vec<(String, Range<usize>)>,
+    pub args: Vec<AttributeArg>,
     /// Full span from `#` through the closing `]` (or the name when bare).
     pub span: Range<usize>,
     /// Whether the argument list was written at all — `#[derive]` and
     /// `#[derive()]` are both an E0110 for `derive`, but the registry reports
     /// them uniformly from the list being empty.
     pub has_parens: bool,
+}
+
+impl Attribute {
+    /// The bare-identifier arguments, in written order (spec grammar.md
+    /// `AttributeArg = [ Identifier "=" ] AttributeValue`). Used by the
+    /// `#[derive(...)]` registry, which accepts identifiers only.
+    pub fn identifier_args(&self) -> Vec<(&str, Range<usize>)> {
+        self.args
+            .iter()
+            .filter_map(|a| match (&a.name, &a.value) {
+                (None, AttributeValue::Identifier(name)) => Some((name.as_str(), a.span.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+}
+
+/// One parenthesized attribute argument: a positional value or a
+/// `name = value` entry (spec grammar.md).
+#[derive(Debug, Clone, PartialEq)]
+pub struct AttributeArg {
+    /// The written name for the `name = value` form; `None` for positional.
+    pub name: Option<String>,
+    /// Source span of the written name (diagnostics point here).
+    pub name_span: Option<Range<usize>>,
+    /// The value.
+    pub value: AttributeValue,
+    /// Source span of the whole argument.
+    pub span: Range<usize>,
+}
+
+/// The value of an attribute argument (spec grammar.md `AttributeValue`).
+#[derive(Debug, Clone, PartialEq)]
+pub enum AttributeValue {
+    Identifier(String),
+    String(String),
+    Integer(i64),
+    Float(f64),
+    Boolean(bool),
 }
 
 /// The kind of one entry in a generic parameter list: a type parameter `T`, or
@@ -216,6 +256,8 @@ pub struct LetBinding {
     /// `(field_name, alias)`: `None` alias means the variable name matches the
     /// field name.
     pub object_destructuring: Option<Vec<(String, Option<String>)>>,
+    /// Declaration attributes written before `pub`/`let`/`const`.
+    pub attributes: Vec<Attribute>,
 }
 
 /// A `@State` declaration: reactive local state inside a `View` function.
@@ -344,6 +386,8 @@ pub struct TypeAlias {
     /// (`type Params` has no `where` clause; spec `types/generics.md`).
     pub type_bounds: Vec<FnBound>,
     pub type_: Type,
+    /// Declaration attributes written before `pub`/`type`.
+    pub attributes: Vec<Attribute>,
 }
 
 /// A generic bound on one type parameter: `T: Area & Comparable` becomes
@@ -688,6 +732,12 @@ pub enum Expression {
     Spawn(Box<SpawnExpr>),
     /// A `lock` expression: runs a block over a shared binding.
     Lock(Box<LockExpr>),
+    /// `path!(args)` — a compile-time function macro invocation (spec
+    /// `expressions/calls.md`, "Macro calls"). Expanded before checking.
+    MacroCall(Box<MacroCallExpr>),
+    /// `ast::quote! { … }` — the quasi-quote (spec `expressions/calls.md`,
+    /// "Quasi-quote").
+    Quote(Box<QuoteExpr>),
 }
 
 impl Expression {
@@ -721,8 +771,41 @@ impl Expression {
             Expression::Arrow(a) => &a.span,
             Expression::Spawn(s) => &s.span,
             Expression::Lock(l) => &l.span,
+            Expression::MacroCall(m) => &m.span,
+            Expression::Quote(q) => &q.span,
         }
     }
+}
+
+/// `Path "!" "(" [ Expression { "," Expression } [ "," ] ] ")"` — a function
+/// macro call (spec grammar.md `MacroCall`). `path` is the written path split
+/// into its segments (`["sql"]`, `["m", "json"]`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct MacroCallExpr {
+    pub path: Vec<String>,
+    pub args: Vec<Expression>,
+    pub span: Range<usize>,
+}
+
+/// `ast::quote! { … }` — a balanced token body with `${ Expression }` holes
+/// (spec grammar.md `QuoteCall`). `pieces` alternates raw token text and
+/// holes in written order.
+#[derive(Debug, Clone, PartialEq)]
+pub struct QuoteExpr {
+    pub pieces: Vec<QuotePiece>,
+    pub span: Range<usize>,
+}
+
+/// One piece of a quote body.
+#[derive(Debug, Clone, PartialEq)]
+pub enum QuotePiece {
+    /// A raw balanced token run, preserved exactly as written.
+    Tokens { text: String, span: Range<usize> },
+    /// A `${ Expression }` hole.
+    Hole {
+        expr: Expression,
+        span: Range<usize>,
+    },
 }
 
 /// An anonymous function expression (`fn(a, b) { ... }`), usable wherever a

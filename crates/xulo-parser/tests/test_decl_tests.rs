@@ -100,9 +100,15 @@ fn body_works() {
 
 #[test]
 fn test_attribute_takes_no_arguments() {
-    // The test marker has no argument group: `#[test()]` and `#[test(name)]`
-    // do not form a `TestDecl` and fall back to `fn_decl`.
-    for src in ["#[test()] fn t() {}", "#[test(name)] fn t() {}"] {
+    // The test marker has no argument group: `#[test()]`, `#[test(name)]`,
+    // and every value the widened `AttributeArg` admits do not form a
+    // `TestDecl` and fall back to `fn_decl` (a checker `E0110`).
+    for src in [
+        "#[test()] fn t() {}",
+        "#[test(name)] fn t() {}",
+        r#"#[test("adds two numbers")] fn t() {}"#,
+        "#[test(1)] fn t() {}",
+    ] {
         let program = parse_program(src).unwrap_or_else(|e| panic!("{src}: {e}"));
         assert!(
             matches!(&program.statements[0], Statement::Fn(f)
@@ -110,8 +116,6 @@ fn test_attribute_takes_no_arguments() {
             "{src}"
         );
     }
-    // A string argument is not in `AttributeArg` and is a syntax error.
-    assert!(parse_program(r#"#[test("adds two numbers")] fn t() {}"#).is_err());
 }
 
 #[test]

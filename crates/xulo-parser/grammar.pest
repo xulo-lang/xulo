@@ -194,17 +194,21 @@ declaration = {
 }
 
 // `AttributeList = { Attribute }`, `Attribute = "#" "[" AttributeName [
-// "(" [ AttributeArgs ] ")" ] "]"` with identifier arguments only (spec
-// grammar.md). Which names exist, and on which declaration they may appear,
-// is a checking rule (spec types/traits.md) — the grammar accepts an
-// attribute list on the five item declarations and lets the checker decide.
+// "(" [ AttributeArgs ] ")" ] "]"` (spec grammar.md). An argument is a
+// positional value or a `name = value` entry; the registry entry decides the
+// shape a built-in attribute accepts, and a user attribute macro receives the
+// values and validates them itself. Which names exist, and on which
+// declaration they may appear, is a checking rule (spec types/traits.md) —
+// the grammar accepts an attribute list on the eight item declarations and
+// lets the checker decide.
 attribute_list = { attribute+ }
 attribute = { "#" ~ "[" ~ attribute_name ~ ("(" ~ attribute_args? ~ ")")? ~ "]" }
 // `AttributeName = Identifier | "derive" | "macro"`: the two reserved words
 // are legal only in this position; `test` is an ordinary identifier.
 attribute_name = { identifier | "derive" | "macro" }
 attribute_args = { attribute_arg ~ ("," ~ attribute_arg)* ~ ","? }
-attribute_arg = { identifier }
+attribute_arg = { (identifier ~ "=")? ~ attribute_value }
+attribute_value = { identifier | string_literal | number_literal | boolean_literal }
 
 fn_decl = { attribute_list? ~ pub_marker? ~ kw_async? ~ kw_fn ~ identifier ~ generic_params?
     ~ "(" ~ parameter_list? ~ ")" ~ (":" ~ type_expr)? ~ where_clause? ~ block }
@@ -259,16 +263,16 @@ trait_method = { kw_async? ~ kw_fn ~ identifier ~ "(" ~ parameter_list? ~ ")" ~ 
 impl_decl = { attribute_list? ~ kw_impl ~ generic_params? ~ (identifier ~ kw_for)? ~ type_expr
     ~ "{" ~ fn_decl* ~ "}" }
 
-type_alias = { pub_marker? ~ kw_type ~ identifier ~ generic_params? ~ "=" ~ type_expr }
+type_alias = { attribute_list? ~ pub_marker? ~ kw_type ~ identifier ~ generic_params? ~ "=" ~ type_expr }
 
-let_decl = { pub_marker? ~ kw_let ~ (mut_binding | simple_binding | destructuring_binding) }
+let_decl = { attribute_list? ~ pub_marker? ~ kw_let ~ (mut_binding | simple_binding | destructuring_binding) }
 mut_binding = { kw_mut ~ identifier ~ (":" ~ type_expr)? ~ "=" ~ kw_shared? ~ expression }
 simple_binding = { identifier ~ (":" ~ type_expr)? ~
     ( ("=" ~ kw_shared? ~ expression) | (":=" ~ expression) ) }
 destructuring_binding = { ("{" ~ identifier_list ~ "}" | "(" ~ identifier_list ~ ")") ~ "=" ~ expression }
 identifier_list = { identifier ~ ("," ~ identifier)* ~ ","? }
 
-const_decl = { pub_marker? ~ kw_const ~ identifier ~ (":" ~ type_expr)? ~ "=" ~ expression }
+const_decl = { attribute_list? ~ pub_marker? ~ kw_const ~ identifier ~ (":" ~ type_expr)? ~ "=" ~ expression }
 
 // Component declarations (meaningful only at the top level of a component
 // body; the checker enforces that).
@@ -367,6 +371,7 @@ while_stmt = { kw_while ~ expression ~ block }
 // ============================================================
 
 expression = { ternary_expression }
+expression_input = { SOI ~ expression ~ EOI }
 
 ternary_expression = { logical_or_expression
     ~ ("?" ~ !"?" ~ !"." ~ expression ~ ":" ~ ternary_expression)? }
@@ -428,7 +433,9 @@ place_primary = { ident_raw | "(" ~ place ~ ")" }
 place_op = { "." ~ (ident_raw | integer_literal) | "[" ~ expression ~ "]" }
 
 primary_expression = {
-      literal_expression
+      quote_call
+    | macro_call
+    | literal_expression
     | template_literal
     | variant_path
     | function_expression
@@ -447,6 +454,25 @@ primary_expression = {
 }
 
 literal_expression = { number_literal | string_literal | boolean_literal | null_literal }
+
+// `MacroCall = Path "!" "(" [ MacroArgumentList ] ")"` (spec grammar.md).
+// `QuoteCall` is tried first: its head is the literal path `ast::quote` and
+// its delimiter is `{`, while `MacroCall` requires `(`.
+macro_call = { macro_path ~ "!" ~ "(" ~ (expression ~ ("," ~ expression)* ~ ","?)? ~ ")" }
+macro_path = { path_head ~ ("::" ~ path_member)* }
+
+// `QuoteCall = "ast" "::" "quote" "!" "{" { QuotePiece } "}"` (spec
+// grammar.md). The body is a balanced token fragment, not a block; holes are
+// `${ Expression }`. The builder reconstructs the raw body by source slicing
+// between the hole spans, so whitespace and comments survive exactly.
+quote_call = { "ast" ~ "::" ~ "quote" ~ "!" ~ quote_body }
+quote_body = { "{" ~ quote_inside ~ "}" }
+quote_inside = _{ (quote_hole | quote_string | quote_nested | quote_char)* }
+quote_hole = { "${" ~ expression ~ "}" }
+quote_string = { string_literal | template_literal }
+quote_nested = { "{" ~ quote_inside ~ "}" | "(" ~ quote_inside ~ ")"
+    | "[" ~ quote_inside ~ "]" }
+quote_char = _{ !("${" | "{" | "}" | "(" | ")" | "[" | "]" | "\"" | "'" | "`") ~ ANY }
 // A `::`-separated member segment in expression position: an identifier, or
 // the `copy` keyword so `std::fs::copy(a, b)` (spec `modules/fs.md`) parses.
 // A bare `copy` never starts a path, so `copy expr` stays the unary operator.

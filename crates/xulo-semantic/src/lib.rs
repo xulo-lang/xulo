@@ -5,8 +5,8 @@ use std::ops::Range;
 
 use symbol_table::{Symbol, SymbolKind, SymbolTable};
 use xulo_core::ast::{
-    AssignStmt, AssignTarget, AssignValue, Attribute, BinaryOperator, Block, Call, CallArg,
-    EnumPayloadParam, EnumVariant, ExportItem, Expression, FnBound, FnDef, GenericParam,
+    AssignStmt, AssignTarget, AssignValue, Attribute, AttributeValue, BinaryOperator, Block, Call,
+    CallArg, EnumPayloadParam, EnumVariant, ExportItem, Expression, FnBound, FnDef, GenericParam,
     GenericParamKind, IfExpr, ImplDecl, LetBinding, Literal, ObjectField, PathHead, Program,
     Statement, TraitDecl, Type, TypeAlias, UiElement, UseDecl, UseTarget, impl_fn_name,
 };
@@ -439,6 +439,238 @@ fn builtin_type_entries() -> HashMap<String, TypeEntry> {
             },
         );
     }
+    // The compile-time macro surface (spec memory-and-runtime.md,
+    // "Compile-time macro values"). The records live under the `ast` namespace
+    // and are members of the prelude, not new reserved words.
+    let ast = |n: &str| Type::Named(format!("ast::{n}"), Vec::new());
+    let list = |t: Type| Type::List(Box::new(t));
+    let opt = |t: Type| Type::Optional(Box::new(t));
+    let field = |name: &str, ty: Type| (name.to_string(), ty, None);
+    let struct_entry = |fields: Vec<(String, Type, Option<Expression>)>| TypeEntry {
+        type_params: Vec::new(),
+        type_bounds: Vec::new(),
+        kind: TypeEntryKind::Struct(fields),
+    };
+    builtins.insert(
+        "ast::Span".to_string(),
+        struct_entry(vec![
+            field("file", Type::String),
+            field("start", Type::Number),
+            field("end", Type::Number),
+            field("line", Type::Number),
+            field("column", Type::Number),
+        ]),
+    );
+    builtins.insert(
+        "ast::AstNode".to_string(),
+        struct_entry(vec![
+            field("kind", Type::String),
+            field("span", ast("Span")),
+        ]),
+    );
+    builtins.insert(
+        "ast::MacroFailure".to_string(),
+        struct_entry(vec![
+            field("message", Type::String),
+            field("span", opt(ast("Span"))),
+        ]),
+    );
+    builtins.insert(
+        "ast::AttributeArgInfo".to_string(),
+        struct_entry(vec![
+            field("name", opt(Type::String)),
+            field("value", ast("Value")),
+        ]),
+    );
+    builtins.insert(
+        "ast::AttributeInfo".to_string(),
+        struct_entry(vec![
+            field("name", Type::String),
+            field("args", list(ast("AttributeArgInfo"))),
+            field("span", ast("Span")),
+        ]),
+    );
+    builtins.insert(
+        "ast::FieldInfo".to_string(),
+        struct_entry(vec![
+            field("name", Type::String),
+            field("ty", Type::String),
+            field("attrs", list(ast("AttributeInfo"))),
+            field("span", ast("Span")),
+        ]),
+    );
+    builtins.insert(
+        "ast::VariantInfo".to_string(),
+        struct_entry(vec![
+            field("name", Type::String),
+            field("fields", list(ast("FieldInfo"))),
+            field("attrs", list(ast("AttributeInfo"))),
+            field("span", ast("Span")),
+        ]),
+    );
+    builtins.insert(
+        "ast::GenericParam".to_string(),
+        struct_entry(vec![
+            field("kind", Type::String),
+            field("name", Type::String),
+            field("bounds", list(Type::String)),
+            field("ty", opt(Type::String)),
+            field("span", ast("Span")),
+        ]),
+    );
+    builtins.insert(
+        "ast::TypeInfo".to_string(),
+        struct_entry(vec![
+            field("kind", Type::String),
+            field("name", Type::String),
+            field("fields", list(ast("FieldInfo"))),
+            field("variants", list(ast("VariantInfo"))),
+            field("generics", list(ast("GenericParam"))),
+            field("attrs", list(ast("AttributeInfo"))),
+            field("span", ast("Span")),
+        ]),
+    );
+    builtins.insert(
+        "ast::ParamInfo".to_string(),
+        struct_entry(vec![
+            field("name", Type::String),
+            field("ty", Type::String),
+            field("mode", Type::String),
+            field("has_default", Type::Boolean),
+            field("span", ast("Span")),
+        ]),
+    );
+    builtins.insert(
+        "ast::DeclarationInfo".to_string(),
+        struct_entry(vec![
+            field("kind", Type::String),
+            field("name", Type::String),
+            field("node", ast("AstNode")),
+            field("params", list(ast("ParamInfo"))),
+            field("return_type", opt(Type::String)),
+            field("attrs", list(ast("AttributeInfo"))),
+            field("trait_ref", opt(Type::String)),
+            field("self_type", opt(Type::String)),
+            field("span", ast("Span")),
+        ]),
+    );
+    builtins.insert(
+        "ast::ExpressionInfo".to_string(),
+        struct_entry(vec![
+            field("kind", Type::String),
+            field("text", Type::String),
+            field("node", ast("AstNode")),
+            field("span", ast("Span")),
+        ]),
+    );
+    builtins.insert(
+        "ast::DeriveInput".to_string(),
+        struct_entry(vec![field("target", ast("TypeInfo"))]),
+    );
+    builtins.insert(
+        "ast::AttributeInput".to_string(),
+        struct_entry(vec![
+            field("args", list(ast("Value"))),
+            field(
+                "named_args",
+                Type::Named("Map".to_string(), vec![Type::String, ast("Value")]),
+            ),
+            field("target", ast("DeclarationInfo")),
+        ]),
+    );
+    builtins.insert(
+        "ast::FunctionInput".to_string(),
+        struct_entry(vec![
+            field("args", list(ast("Value"))),
+            field("target", ast("ExpressionInfo")),
+        ]),
+    );
+    builtins.insert(
+        "ast::DeriveOutput".to_string(),
+        struct_entry(vec![field("items", list(ast("AstNode")))]),
+    );
+    builtins.insert(
+        "ast::AttributeOutput".to_string(),
+        struct_entry(vec![
+            field("item", ast("AstNode")),
+            field("extras", list(ast("AstNode"))),
+        ]),
+    );
+    builtins.insert(
+        "ast::FunctionOutput".to_string(),
+        struct_entry(vec![field("expr", ast("AstNode"))]),
+    );
+    builtins.insert(
+        "ast::Value".to_string(),
+        TypeEntry {
+            type_params: Vec::new(),
+            type_bounds: Vec::new(),
+            kind: TypeEntryKind::Enum(vec![
+                EnumVariant {
+                    name: "Unit".to_string(),
+                    name_span: 0..0,
+                    payload: None,
+                },
+                EnumVariant {
+                    name: "Bool".to_string(),
+                    name_span: 0..0,
+                    payload: Some(vec![EnumPayloadParam {
+                        name: None,
+                        type_: Type::Boolean,
+                    }]),
+                },
+                EnumVariant {
+                    name: "Int".to_string(),
+                    name_span: 0..0,
+                    payload: Some(vec![EnumPayloadParam {
+                        name: None,
+                        type_: Type::Number,
+                    }]),
+                },
+                EnumVariant {
+                    name: "Float".to_string(),
+                    name_span: 0..0,
+                    payload: Some(vec![EnumPayloadParam {
+                        name: None,
+                        type_: Type::Number,
+                    }]),
+                },
+                EnumVariant {
+                    name: "String".to_string(),
+                    name_span: 0..0,
+                    payload: Some(vec![EnumPayloadParam {
+                        name: None,
+                        type_: Type::String,
+                    }]),
+                },
+                EnumVariant {
+                    name: "List".to_string(),
+                    name_span: 0..0,
+                    payload: Some(vec![EnumPayloadParam {
+                        name: None,
+                        type_: list(ast("Value")),
+                    }]),
+                },
+                EnumVariant {
+                    name: "Map".to_string(),
+                    name_span: 0..0,
+                    payload: Some(vec![EnumPayloadParam {
+                        name: None,
+                        type_: Type::Named("Map".to_string(), vec![Type::String, ast("Value")]),
+                    }]),
+                },
+                EnumVariant {
+                    name: "AstNode".to_string(),
+                    name_span: 0..0,
+                    payload: Some(vec![EnumPayloadParam {
+                        name: None,
+                        type_: ast("AstNode"),
+                    }]),
+                },
+            ]),
+        },
+    );
+
     builtins
 }
 
@@ -1695,6 +1927,11 @@ pub struct Analyzer {
     /// replaces them when the declaration is checked, and E0113 is decided
     /// after the whole module is registered.
     provisional_types: HashMap<String, TypeEntry>,
+    /// Module-level functions pre-registered before the declaration pass, so
+    /// a call may forward-reference a function declared later (spec
+    /// `expressions/calls.md`, "Recursion and forward references"). The real
+    /// declaration replaces the provisional symbol when checked.
+    predeclared_fns: std::collections::HashSet<String>,
     /// The built-in `Result`/`Error` entries, consulted only when
     /// `type_table` (and the imports) do not declare the name, so a program's
     /// own declaration of either name shadows the builtin (see
@@ -2104,6 +2341,10 @@ pub struct ModuleFace {
     /// present for private names too, so an inaccessible name is `E0602`
     /// rather than "does not export".
     pub names: HashMap<String, FaceName>,
+    /// Macro names in this module's macro namespace -> whether `pub`
+    /// (spec `modules/visibility.md`, "a `pub` exports two names"). Kept
+    /// apart from `names` because a macro name may equal a type or value name.
+    pub macros: HashMap<String, bool>,
     /// `pub` value symbols: what a `use` binding receives.
     pub exports: Vec<(String, Symbol)>,
     /// `pub` type entries.
@@ -2132,7 +2373,10 @@ pub fn module_face(program: &Program, module_id: &str) -> ModuleFace {
     let mut face = ModuleFace::default();
     for statement in &program.statements {
         match statement {
-            Statement::Fn(f) => set_face_name(&mut face, &f.name, false, FaceKind::Fn),
+            Statement::Fn(f) => {
+                set_face_name(&mut face, &f.name, false, FaceKind::Fn);
+                face_macro_name(&mut face, &f.attributes, false);
+            }
             // `#[test]` functions are entry points, not bindings.
             Statement::Test(_) => {}
             Statement::Let(b) => set_face_name(
@@ -2211,7 +2455,7 @@ fn face_derive_debug(face: &mut ModuleFace, attrs: &[Attribute], name: &str, non
     }
     if attrs
         .iter()
-        .any(|a| a.name == "derive" && a.args.iter().any(|(arg, _)| arg == "Debug"))
+        .any(|a| a.name == "derive" && a.identifier_args().iter().any(|(arg, _)| *arg == "Debug"))
     {
         face.impls
             .push(("Debug".to_string(), name.to_string(), "debug".to_string()));
@@ -2241,6 +2485,26 @@ fn mark_face_pub(face: &mut ModuleFace, name: &str) {
                     kind: FaceKind::Value,
                 },
             );
+        }
+    }
+}
+
+/// Register the macro name in a `#[macro(…)]` attribute list, if present.
+fn face_macro_name(face: &mut ModuleFace, attrs: &[Attribute], is_pub: bool) {
+    let Some(attr) = attrs.iter().find(|a| a.name == "macro") else {
+        return;
+    };
+    for arg in &attr.args {
+        if matches!(arg.name.as_deref(), Some("name" | "target")) {
+            let name = match &arg.value {
+                AttributeValue::Identifier(name) | AttributeValue::String(name) => Some(name),
+                _ => None,
+            };
+            if let Some(name) = name {
+                let entry = face.macros.entry(name.clone()).or_insert(false);
+                *entry |= is_pub;
+            }
+            return;
         }
     }
 }
@@ -2338,6 +2602,7 @@ fn face_export(face: &mut ModuleFace, item: &ExportItem) {
         ExportItem::Fn(f) => {
             set_face_name(face, &f.name, true, FaceKind::Fn);
             face.exports.push((f.name.clone(), face_fn_symbol(f)));
+            face_macro_name(face, &f.attributes, true);
         }
         ExportItem::Let(b) => {
             set_face_name(
@@ -2569,6 +2834,7 @@ fn run_analysis(
         std_fns: HashMap::new(),
         type_table: HashMap::new(),
         provisional_types: HashMap::new(),
+        predeclared_fns: std::collections::HashSet::new(),
         builtins: builtin_type_entries(),
         generics: Vec::new(),
         const_generics: Vec::new(),
@@ -2673,6 +2939,29 @@ fn run_analysis(
                 type_bounds,
                 kind: TypeEntryKind::Enum(Vec::new()),
             });
+        }
+    }
+    // Pre-register module-level functions so a call may forward-reference a
+    // declaration that appears later (spec `expressions/calls.md`, "Recursion
+    // and forward references"). The body and annotations are checked when the
+    // declaration is visited; the provisional symbol gives earlier calls the
+    // written signature.
+    for statement in &program.statements {
+        let f = match statement {
+            Statement::Fn(f) => Some(f),
+            Statement::Export(xulo_core::ast::ExportStmt {
+                item: ExportItem::Fn(f),
+                ..
+            }) => Some(f),
+            _ => None,
+        };
+        let Some(f) = f else { continue };
+        let provisional = face_fn_symbol(f);
+        if analyzer
+            .table
+            .declare_with_def(provisional, Some(f.name_span.clone()))
+        {
+            analyzer.predeclared_fns.insert(f.name.clone());
         }
     }
     // Pre-scan `#[test]` names so any reference to one — before or after its
@@ -3365,6 +3654,18 @@ fn walk_expr(expr: &mut Expression, f: &mut dyn FnMut(&mut Expression)) {
             }
         },
         Expression::Lock(lock) => walk_block(&mut lock.body, f),
+        Expression::MacroCall(m) => {
+            for arg in &mut m.args {
+                walk_expr(arg, f);
+            }
+        }
+        Expression::Quote(q) => {
+            for piece in &mut q.pieces {
+                if let xulo_core::ast::QuotePiece::Hole { expr, .. } = piece {
+                    walk_expr(expr, f);
+                }
+            }
+        }
         Expression::Identifier { .. } | Expression::EnumRef(_) | Expression::Binding { .. } => {}
     }
 }
@@ -3592,6 +3893,7 @@ fn enum_field_forms(variants: &[EnumVariant]) -> Vec<(Type, Range<usize>)> {
 enum AttrKind {
     Test,
     Derive,
+    Macro,
 }
 
 /// The closed registry: every written attribute name must resolve here or
@@ -3600,6 +3902,7 @@ fn attribute_registry(name: &str) -> Option<AttrKind> {
     match name {
         "test" => Some(AttrKind::Test),
         "derive" => Some(AttrKind::Derive),
+        "macro" => Some(AttrKind::Macro),
         _ => None,
     }
 }
@@ -3611,6 +3914,9 @@ const DECL_PHRASE_STRUCT: &str = "a struct";
 const DECL_PHRASE_ENUM: &str = "an enum";
 const DECL_PHRASE_TRAIT: &str = "a trait";
 const DECL_PHRASE_IMPL: &str = "an impl";
+const DECL_PHRASE_TYPE: &str = "a type alias";
+const DECL_PHRASE_LET: &str = "a let binding";
+const DECL_PHRASE_CONST: &str = "a const binding";
 
 /// Record `err` unless an earlier one already stands: registry validation
 /// keeps walking after a failure so later declarations still register their
@@ -3795,6 +4101,21 @@ impl Analyzer {
                         self.validate_fn_attrs(m, false, &mut first);
                     }
                 }
+                Statement::TypeAlias(t) => {
+                    for attr in &t.attributes {
+                        self.attr_gate(attr, DECL_PHRASE_TYPE, &mut first);
+                    }
+                }
+                Statement::Let(b) => {
+                    let target = if b.is_const {
+                        DECL_PHRASE_CONST
+                    } else {
+                        DECL_PHRASE_LET
+                    };
+                    for attr in &b.attributes {
+                        self.attr_gate(attr, target, &mut first);
+                    }
+                }
                 Statement::Export(ex) => match &ex.item {
                     // `pub` is part of the test form's fixed shape: a `#[test]`
                     // fn that is exported is `E0110`, not a `TestDecl`.
@@ -3825,6 +4146,21 @@ impl Analyzer {
                     ExportItem::Trait(t) => {
                         for attr in &t.attributes {
                             self.attr_gate(attr, DECL_PHRASE_TRAIT, &mut first);
+                        }
+                    }
+                    ExportItem::Type(t) => {
+                        for attr in &t.attributes {
+                            self.attr_gate(attr, DECL_PHRASE_TYPE, &mut first);
+                        }
+                    }
+                    ExportItem::Let(b) => {
+                        let target = if b.is_const {
+                            DECL_PHRASE_CONST
+                        } else {
+                            DECL_PHRASE_LET
+                        };
+                        for attr in &b.attributes {
+                            self.attr_gate(attr, target, &mut first);
                         }
                     }
                     _ => {}
@@ -3865,6 +4201,7 @@ impl Analyzer {
         let allowed = match kind {
             AttrKind::Test => target == DECL_PHRASE_FN,
             AttrKind::Derive => target == DECL_PHRASE_STRUCT || target == DECL_PHRASE_ENUM,
+            AttrKind::Macro => target == DECL_PHRASE_FN,
         };
         if !allowed {
             record_first!(
@@ -3978,8 +4315,8 @@ impl Analyzer {
             return;
         }
         let mut targets_ok = true;
-        for (arg, arg_span) in &attr.args {
-            if attribute_registry(arg) != Some(AttrKind::Derive) && arg.as_str() != "Debug" {
+        for (arg, arg_span) in attr.identifier_args() {
+            if attribute_registry(arg) != Some(AttrKind::Derive) && arg != "Debug" {
                 record_first!(
                     *first,
                     self.err_code(
@@ -4000,7 +4337,13 @@ impl Analyzer {
                 *first,
                 self.err_code(
                     "E0112",
-                    format!("cannot derive `{}` for a generic type", attr.args[0].0)
+                    format!(
+                        "cannot derive `{}` for a generic type",
+                        attr.identifier_args()
+                            .first()
+                            .map(|(n, _)| *n)
+                            .unwrap_or("")
+                    )
                 )
                 .at(attr.name_span.clone())
             );
@@ -4077,10 +4420,9 @@ impl Analyzer {
     /// `unknown` is `E0212`.
     fn check_derive_fields(&self, program: &Program) -> SResult<()> {
         let check = |attrs: &[Attribute], fields: Vec<(Type, Range<usize>)>| -> SResult<()> {
-            if !attrs
-                .iter()
-                .any(|a| a.name == "derive" && a.args.iter().any(|(arg, _)| arg == "Debug"))
-            {
+            if !attrs.iter().any(|a| {
+                a.name == "derive" && a.identifier_args().iter().any(|(arg, _)| *arg == "Debug")
+            }) {
                 return Ok(());
             }
             for (ty, label_span) in fields {
@@ -4994,9 +5336,17 @@ impl Analyzer {
         };
         if !self
             .table
-            .declare_with_def(symbol, Some(f.name_span.clone()))
+            .declare_with_def(symbol.clone(), Some(f.name_span.clone()))
         {
-            return Err(self.err(format!("function `{}` is already defined", f.name)));
+            // The pre-declaration pass registered this function's symbol so
+            // earlier calls could resolve; replace it with the checked one.
+            if self.predeclared_fns.remove(&f.name) {
+                self.table.replace_symbol(&f.name, symbol);
+            } else {
+                return Err(self.err(format!("function `{}` is already defined", f.name)));
+            }
+        } else {
+            self.predeclared_fns.remove(&f.name);
         }
         // A user function must not collide with a trait-dispatch name
         // (`impl_{Trait}_{Type}_{method}`). `impl` registration checks this
@@ -5373,6 +5723,7 @@ impl Analyzer {
                         .err_code("E0607", format!("cannot resolve `{}`", head_display(head)))
                         .at(u.span.clone()));
                 };
+                let has_macros = !face.macros.is_empty();
                 let members: Vec<(String, FaceKind, bool)> = face
                     .names
                     .iter()
@@ -5394,14 +5745,29 @@ impl Analyzer {
                         }
                     }
                 }
-                self.glob_unused
-                    .borrow_mut()
-                    .push((u.span.clone(), contributed));
+                // A module with macros exports names in a second namespace
+                // that this analyzer does not track for W0102; warning here
+                // would fire even when a macro is the only thing used.
+                if !has_macros {
+                    self.glob_unused
+                        .borrow_mut()
+                        .push((u.span.clone(), contributed));
+                }
                 Ok(())
             }
             xulo_core::ast::UseTarget::Local(names) => {
                 // `pub use { a, b }` — re-export names already bound here.
                 for name in names {
+                    // A macro binding lives in the macro namespace; the
+                    // loader's face fixpoint already copied its visibility.
+                    let is_macro = self
+                        .world
+                        .as_ref()
+                        .and_then(|w| w.modules.get(&self.module_id))
+                        .is_some_and(|f| f.macros.contains_key(name));
+                    if is_macro {
+                        continue;
+                    }
                     let is_enum = matches!(
                         self.type_table.get(name).map(|e| &e.kind),
                         Some(TypeEntryKind::Enum(_))
@@ -5614,6 +5980,25 @@ impl Analyzer {
                 continue;
             }
             let Some(info) = info else {
+                // A path that resolves only to a macro is a valid `use`; it
+                // binds the macro namespace and no value
+                // (spec `modules/import-export.md`).
+                if let Some(face) = self.world.as_ref().and_then(|w| w.modules.get(&current))
+                    && let Some(&is_pub) = face.macros.get(seg)
+                {
+                    if current != self.module_id && !is_pub {
+                        return Err(self
+                            .err_code(
+                                "E0602",
+                                format!(
+                                    "macro `{seg}` is private to `{}`",
+                                    module_display(&current)
+                                ),
+                            )
+                            .at(u.span.clone()));
+                    }
+                    return Ok(());
+                }
                 return Err(self
                     .err_code(
                         "E0601",
@@ -8870,6 +9255,21 @@ impl Analyzer {
                 result?;
                 Ok(Type::Named("Lock".to_string(), Vec::new()))
             }
+            Expression::MacroCall(_) => Err(self.err_code(
+                "E1005",
+                "macro call was not expanded; macros expand at compile time",
+            )),
+            Expression::Quote(q) => {
+                for piece in &q.pieces {
+                    if let xulo_core::ast::QuotePiece::Hole { expr, .. } = piece {
+                        self.check_expression(expr)?;
+                    }
+                }
+                Ok(Type::List(Box::new(Type::Named(
+                    "ast::AstNode".to_string(),
+                    Vec::new(),
+                ))))
+            }
         }
     }
 
@@ -10636,6 +11036,16 @@ impl Analyzer {
                 return self.check_std_call(rest, call);
             }
             let (enum_name, variant) = call.enum_parts().unwrap();
+            // The `ast` macro namespace (spec builtins/context.md,
+            // builtins/execution.md): its record constructors and its
+            // compile-time operations are prelude members, not values.
+            if enum_name == "ast" && self.type_entry("ast").is_none() {
+                self.no_type_args(call)?;
+                if let Some(value_variant) = variant.strip_prefix("Value::") {
+                    return self.check_ast_value_variant(value_variant, call);
+                }
+                return self.check_ast_call(variant, call);
+            }
             // Trait dispatch, built-in namespace members, and enum
             // construction alike declare no type parameters, so a written
             // list anywhere on a `Head::member` call is `E0807` — except the
@@ -11752,6 +12162,123 @@ impl Analyzer {
     /// non-optional field without a default supplied (`E0205`), and every
     /// value fitting its field's type (`E0202`). The call's type is the
     /// struct with its type arguments inferred from the field values.
+    /// Check a call into the `ast` macro namespace (spec builtins/context.md,
+    /// builtins/execution.md). Record constructors use named arguments; the
+    /// operations have fixed signatures.
+    fn check_ast_call(&mut self, member: &str, call: &Call) -> SResult<Type> {
+        let ast = |n: &str| Type::Named(format!("ast::{n}"), Vec::new());
+        let list = |t: Type| Type::List(Box::new(t));
+        let opt = |t: Type| Type::Optional(Box::new(t));
+        let records = [
+            "Span",
+            "AstNode",
+            "MacroFailure",
+            "AttributeArgInfo",
+            "AttributeInfo",
+            "FieldInfo",
+            "VariantInfo",
+            "GenericParam",
+            "TypeInfo",
+            "ParamInfo",
+            "DeclarationInfo",
+            "ExpressionInfo",
+            "DeriveInput",
+            "AttributeInput",
+            "FunctionInput",
+            "DeriveOutput",
+            "AttributeOutput",
+            "FunctionOutput",
+        ];
+        if records.contains(&member) {
+            return self.check_struct_ctor_call(call, &format!("ast::{member}"));
+        }
+        let arity = match member {
+            "call_derive" | "call_attribute" | "call_function" | "node" | "field" => 2,
+            "span_of" | "lookup_type" | "lookup_function" | "lookup_variable" | "fields_of" => 1,
+            "current_span" | "compile_date" => 0,
+            _ => {
+                return Err(self
+                    .err(format!("`ast` has no member `{member}`"))
+                    .at(call.span.clone()));
+            }
+        };
+        if call.arguments.len() != arity {
+            return Err(self
+                .err_code(
+                    "E0207",
+                    format!(
+                        "`ast::{member}` expects {arity} argument{}, found {}",
+                        if arity == 1 { "" } else { "s" },
+                        call.arguments.len()
+                    ),
+                )
+                .at(call.span.clone()));
+        }
+        for arg in &call.arguments {
+            if arg.name.is_some() {
+                return Err(self
+                    .err_code(
+                        "E0208",
+                        format!("`ast::{member}` takes positional arguments"),
+                    )
+                    .at(arg.value.span().clone()));
+            }
+            self.check_expression(&arg.value)?;
+        }
+        Ok(match member {
+            "call_derive" => Type::Named(
+                "Result".to_string(),
+                vec![ast("DeriveOutput"), ast("MacroFailure")],
+            ),
+            "call_attribute" => Type::Named(
+                "Result".to_string(),
+                vec![ast("AttributeOutput"), ast("MacroFailure")],
+            ),
+            "call_function" => Type::Named(
+                "Result".to_string(),
+                vec![ast("FunctionOutput"), ast("MacroFailure")],
+            ),
+            "node" => ast("AstNode"),
+            "field" => opt(ast("Value")),
+            "current_span" | "span_of" => ast("Span"),
+            "compile_date" => Type::String,
+            "lookup_type" => opt(ast("TypeInfo")),
+            "lookup_function" | "lookup_variable" => opt(Type::String),
+            "fields_of" => list(ast("FieldInfo")),
+            _ => unreachable!(),
+        })
+    }
+
+    /// Check a construction of one `ast::Value` variant (spec
+    /// memory-and-runtime.md).
+    fn check_ast_value_variant(&mut self, variant: &str, call: &Call) -> SResult<Type> {
+        let arity = match variant {
+            "Unit" => 0,
+            "Bool" | "Int" | "Float" | "String" | "List" | "Map" | "AstNode" => 1,
+            _ => {
+                return Err(self
+                    .err(format!("`ast::Value` has no variant `{variant}`"))
+                    .at(call.span.clone()));
+            }
+        };
+        if call.arguments.len() != arity {
+            return Err(self
+                .err_code(
+                    "E0207",
+                    format!(
+                        "`ast::Value::{variant}` expects {arity} argument{}, found {}",
+                        if arity == 1 { "" } else { "s" },
+                        call.arguments.len()
+                    ),
+                )
+                .at(call.span.clone()));
+        }
+        for arg in &call.arguments {
+            self.check_expression(&arg.value)?;
+        }
+        Ok(Type::Named("ast::Value".to_string(), Vec::new()))
+    }
+
     fn check_struct_ctor_call(&mut self, call: &Call, name: &str) -> SResult<Type> {
         let entry = self
             .type_entry(name)

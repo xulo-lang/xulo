@@ -212,6 +212,13 @@ struct ConstDef {
     ty: Option<Type>,
 }
 
+/// A `#[macro]` implementation is compile-time only: the AOT backend does
+/// not emit its body (`ast::` values and `ast::quote!` live in the macro
+/// expansion engine, not the runtime).
+fn is_macro_function(f: &FnDef) -> bool {
+    f.attributes.iter().any(|a| a.name == "macro")
+}
+
 impl IrGenerator {
     pub fn new() -> Self {
         IrGenerator {
@@ -291,11 +298,13 @@ impl IrGenerator {
             self.current_module = id.clone();
             for stmt in &program.statements {
                 match stmt {
-                    Statement::Fn(f) => {
+                    Statement::Fn(f) if !is_macro_function(f) => {
                         self.register_function(f)?;
                     }
                     Statement::Export(export) => {
-                        if let ExportItem::Fn(f) = &export.item {
+                        if let ExportItem::Fn(f) = &export.item
+                            && !is_macro_function(f)
+                        {
                             self.register_function(f)?;
                         }
                     }
@@ -409,6 +418,9 @@ impl IrGenerator {
             for stmt in &program.statements {
                 match stmt {
                     Statement::Fn(f) => {
+                        if is_macro_function(f) {
+                            continue;
+                        }
                         let name = self.resolve_value(&f.name);
                         if let Some(idx) = self
                             .module

@@ -8,3 +8,4 @@ xulo-core = { workspace = true }
 xulo-lexer = { workspace = true }
 xulo-parser = { workspace = true }
 xulo-semantic = { workspace = true }
+xulo-runtime = { workspace = true }

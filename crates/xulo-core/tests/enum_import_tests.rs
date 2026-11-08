@@ -226,6 +226,7 @@ fn test_type_alias() {
         generic_params: vec![],
         type_bounds: Vec::new(),
         type_: Type::Number,
+        attributes: Vec::new(),
     };
     assert_eq!(alias.name, "UserID");
 }
@@ -242,6 +243,7 @@ fn test_type_alias_generic() {
             params: vec![Type::Named("T".to_string(), Vec::new())],
             ret: Some(Box::new(Type::Boolean)),
         },
+        attributes: Vec::new(),
     };
     assert_eq!(alias.type_params, vec!["T".to_string()]);
 }

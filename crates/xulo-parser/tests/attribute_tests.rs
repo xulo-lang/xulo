@@ -36,7 +36,10 @@ impl Named for S { fn name(self): string { return self.a } }
             .map(|a| {
                 (
                     a.name.clone(),
-                    a.args.iter().map(|(n, _)| n.clone()).collect(),
+                    a.identifier_args()
+                        .into_iter()
+                        .map(|(n, _)| n.to_string())
+                        .collect(),
                     a.has_parens,
                 )
             })
@@ -65,9 +68,9 @@ fn derive_argument_lists_carry_every_name() {
         panic!("expected struct");
     };
     let args: Vec<&str> = s.attributes[0]
-        .args
-        .iter()
-        .map(|(n, _)| n.as_str())
+        .identifier_args()
+        .into_iter()
+        .map(|(n, _)| n)
         .collect();
     assert_eq!(args, vec!["Debug", "Display"]);
     assert!(s.attributes[0].has_parens);

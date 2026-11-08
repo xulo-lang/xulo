@@ -3,12 +3,12 @@ use std::ops::Range;
 use pest::iterators::Pair;
 
 use xulo_core::ast::{
-    AssignStmt, AssignValue, BindingPattern, Block, ComponentStmt, DeferBody, DeferStmt, EffectStmt, EnumDef,
-    EnumPayloadParam, EnumVariant, EnvStmt, ExportItem, ExportStmt, ExprStmt, Expression,
-    ExternBlockDecl, ExternItem, FnBound, FnDef, ForStmt, GenericParam,
-    GenericParamKind, ImplDecl, LetBinding, ModDecl, Param,
-    ParamMode, PathHead, ReturnStmt, StateStmt, Statement, StoreStmt, StructDef, StructField,
-    TraitDecl, TraitMethod, Type, TypeAlias, UiElement, UseDecl, UseEntry, UseTarget, WhileStmt,
+    AssignStmt, AssignValue, AttributeArg, AttributeValue, BindingPattern, Block, ComponentStmt,
+    DeferBody, DeferStmt, EffectStmt, EnumDef, EnumPayloadParam, EnumVariant, EnvStmt, ExportItem,
+    ExportStmt, ExprStmt, Expression, ExternBlockDecl, ExternItem, FnBound, FnDef, ForStmt,
+    GenericParam, GenericParamKind, ImplDecl, LetBinding, ModDecl, Param, ParamMode, PathHead,
+    ReturnStmt, StateStmt, Statement, StoreStmt, StructDef, StructField, TraitDecl, TraitMethod,
+    Type, TypeAlias, UiElement, UseDecl, UseEntry, UseTarget, WhileStmt,
 };
 use xulo_core::error::XuloError;
 
@@ -159,11 +159,7 @@ fn attribute(pair: Pair<'_, Rule>) -> R<xulo_core::ast::Attribute> {
             Rule::attribute_args => {
                 for a in p.into_inner() {
                     check_rule(&a, Rule::attribute_arg)?;
-                    let id = a
-                        .into_inner()
-                        .next()
-                        .expect("attribute_arg has an identifier");
-                    args.push((id.as_str().to_string(), span_of(&id)));
+                    args.push(attribute_arg(a)?);
                 }
             }
             _ => unreachable!("attribute child {:?}", p.as_rule()),
@@ -184,6 +180,58 @@ fn attribute(pair: Pair<'_, Rule>) -> R<xulo_core::ast::Attribute> {
         span: pair_span.start..close,
         has_parens,
     })
+}
+
+/// Build one `[ Identifier "=" ] AttributeValue` argument (spec grammar.md).
+fn attribute_arg(pair: Pair<'_, Rule>) -> R<AttributeArg> {
+    let span = span_of(&pair);
+    let mut name = None;
+    let mut name_span = None;
+    let mut value = None;
+    for p in pair.into_inner() {
+        match p.as_rule() {
+            Rule::identifier => {
+                name = Some(p.as_str().to_string());
+                name_span = Some(span_of(&p));
+            }
+            Rule::attribute_value => {
+                let v = single(p);
+                let val = match v.as_rule() {
+                    Rule::identifier => AttributeValue::Identifier(v.as_str().to_string()),
+                    Rule::string_literal => AttributeValue::String(decode_string(v.as_str())),
+                    Rule::number_literal => match literal_number(v.as_str()) {
+                        Some(n) if n.fract() == 0.0 => AttributeValue::Integer(n as i64),
+                        Some(n) => AttributeValue::Float(n),
+                        None => AttributeValue::Integer(0),
+                    },
+                    Rule::boolean_literal => AttributeValue::Boolean(v.as_str() == "true"),
+                    other => unreachable!("attribute_value child {other:?}"),
+                };
+                value = Some(val);
+            }
+            other => unreachable!("attribute_arg child {other:?}"),
+        }
+    }
+    Ok(AttributeArg {
+        name,
+        name_span,
+        value: value.expect("attribute_arg has a value"),
+        span,
+    })
+}
+
+/// Decode a `number_literal` spelling into an `f64` (hex/bin/oct/dec).
+fn literal_number(text: &str) -> Option<f64> {
+    let t = text.replace('_', "");
+    if let Some(hex) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
+        i64::from_str_radix(hex, 16).ok().map(|n| n as f64)
+    } else if let Some(bin) = t.strip_prefix("0b").or_else(|| t.strip_prefix("0B")) {
+        i64::from_str_radix(bin, 2).ok().map(|n| n as f64)
+    } else if let Some(oct) = t.strip_prefix("0o").or_else(|| t.strip_prefix("0O")) {
+        i64::from_str_radix(oct, 8).ok().map(|n| n as f64)
+    } else {
+        t.parse::<f64>().ok()
+    }
 }
 
 fn fn_decl(pair: Pair<'_, Rule>) -> R<FnDef> {
@@ -465,9 +513,7 @@ fn parameter(pair: Pair<'_, Rule>) -> R<Param> {
     })
 }
 
-fn generic_params_of(
-    pair: Pair<'_, Rule>,
-) -> R<(Vec<String>, Vec<FnBound>, Vec<GenericParam>)> {
+fn generic_params_of(pair: Pair<'_, Rule>) -> R<(Vec<String>, Vec<FnBound>, Vec<GenericParam>)> {
     let mut params = Vec::new();
     let mut bounds = Vec::new();
     let mut all = Vec::new();
@@ -839,6 +885,7 @@ fn impl_decl(pair: Pair<'_, Rule>) -> R<ImplDecl> {
 }
 
 fn type_alias(pair: Pair<'_, Rule>) -> R<TypeAlias> {
+    let mut attributes = Vec::new();
     let mut name = String::new();
     let mut name_span = 0..0;
     let mut type_params = Vec::new();
@@ -847,6 +894,7 @@ fn type_alias(pair: Pair<'_, Rule>) -> R<TypeAlias> {
     let mut type_ = None;
     for p in pair.into_inner() {
         match p.as_rule() {
+            Rule::attribute_list => attributes = attribute_list(p)?,
             Rule::pub_marker | Rule::kw_type => {}
             Rule::identifier => {
                 name = p.as_str().to_string();
@@ -869,13 +917,16 @@ fn type_alias(pair: Pair<'_, Rule>) -> R<TypeAlias> {
         generic_params,
         type_bounds,
         type_: type_.expect("type_alias has a type"),
+        attributes,
     })
 }
 
 fn let_decl(pair: Pair<'_, Rule>) -> R<LetBinding> {
     let mut binding = None;
+    let mut attributes = Vec::new();
     for p in pair.into_inner() {
         match p.as_rule() {
+            Rule::attribute_list => attributes = attribute_list(p)?,
             Rule::pub_marker | Rule::kw_let => {}
             Rule::mut_binding | Rule::simple_binding | Rule::destructuring_binding => {
                 binding = Some(p);
@@ -884,12 +935,14 @@ fn let_decl(pair: Pair<'_, Rule>) -> R<LetBinding> {
         }
     }
     let binding = binding.expect("let_decl has a binding");
-    match binding.as_rule() {
+    let mut out = match binding.as_rule() {
         Rule::mut_binding => mut_binding(binding),
         Rule::simple_binding => simple_binding(binding),
         Rule::destructuring_binding => destructuring_binding(binding),
         _ => unreachable!("let_decl alternative {:?}", binding.as_rule()),
-    }
+    }?;
+    out.attributes = attributes;
+    Ok(out)
 }
 
 fn mut_binding(pair: Pair<'_, Rule>) -> R<LetBinding> {
@@ -926,6 +979,7 @@ fn mut_binding(pair: Pair<'_, Rule>) -> R<LetBinding> {
         memo_deps: None,
         tuple_names: None,
         object_destructuring: None,
+        attributes: Vec::new(),
     })
 }
 
@@ -970,6 +1024,7 @@ fn simple_binding(pair: Pair<'_, Rule>) -> R<LetBinding> {
         memo_deps: None,
         tuple_names: None,
         object_destructuring: None,
+        attributes: Vec::new(),
     })
 }
 
@@ -1000,16 +1055,19 @@ fn destructuring_binding(pair: Pair<'_, Rule>) -> R<LetBinding> {
         memo_deps: None,
         tuple_names,
         object_destructuring,
+        attributes: Vec::new(),
     })
 }
 
 fn const_decl(pair: Pair<'_, Rule>) -> R<LetBinding> {
+    let mut attributes = Vec::new();
     let mut name = String::new();
     let mut name_span = 0..0;
     let mut type_annotation = None;
     let mut value = None;
     for p in pair.into_inner() {
         match p.as_rule() {
+            Rule::attribute_list => attributes = attribute_list(p)?,
             Rule::pub_marker | Rule::kw_const => {}
             Rule::identifier => {
                 name = p.as_str().to_string();
@@ -1032,6 +1090,7 @@ fn const_decl(pair: Pair<'_, Rule>) -> R<LetBinding> {
         memo_deps: None,
         tuple_names: None,
         object_destructuring: None,
+        attributes,
     })
 }
 
@@ -1099,6 +1158,7 @@ fn state_decl(pair: Pair<'_, Rule>) -> R<Statement> {
         memo_deps: None,
         tuple_names: None,
         object_destructuring: None,
+        attributes: Vec::new(),
     };
     Ok(Statement::State(StateStmt { binding }))
 }

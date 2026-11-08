@@ -5,9 +5,10 @@ use pest::iterators::Pair;
 use xulo_core::ast::{
     ArrowBody, ArrowClosure, AssignTarget, BinaryOp, BinaryOperator, Block, Call, CallArg,
     CallValue, ComponentStmt, EnumRef, ExprStmt, Expression, FnExpr, IfExpr, IndexExpr, IsExpr,
-    Literal, LockExpr, MatchArm, MatchBody, MatchExpr, MatchPattern, MemberAccess, NullishExpr,
-    ObjectField, Param, PatternBinder, RangeExpr, SpawnBody, SpawnExpr, SpawnField, SpawnTarget,
-    Statement, TernaryExpr, Type, TypedMap, TypedMapEntry, UnaryOp, UnaryOperator,
+    Literal, LockExpr, MacroCallExpr, MatchArm, MatchBody, MatchExpr, MatchPattern, MemberAccess,
+    NullishExpr, ObjectField, Param, PatternBinder, QuoteExpr, QuotePiece, RangeExpr, SpawnBody,
+    SpawnExpr, SpawnField, SpawnTarget, Statement, TernaryExpr, Type, TypedMap, TypedMapEntry,
+    UnaryOp, UnaryOperator,
 };
 use xulo_core::error::{ErrorKind, XuloError};
 
@@ -423,6 +424,8 @@ fn call_type_args(pair: Pair<'_, Rule>) -> R<Vec<Type>> {
 fn primary_expression(pair: Pair<'_, Rule>) -> R<Expression> {
     let inner = single(pair);
     match inner.as_rule() {
+        Rule::quote_call => quote_call(inner),
+        Rule::macro_call => macro_call(inner),
         Rule::literal_expression => literal_expression(inner),
         Rule::template_literal => template_literal(inner),
         Rule::variant_path => variant_path(inner),
@@ -455,6 +458,92 @@ fn primary_expression(pair: Pair<'_, Rule>) -> R<Expression> {
         }
         _ => unreachable!("primary alternative {:?}", inner.as_rule()),
     }
+}
+
+/// `Path "!" "(" [ Expression { "," Expression } [ "," ] ] ")"` — a function
+/// macro call (spec grammar.md `MacroCall`).
+fn macro_call(pair: Pair<'_, Rule>) -> R<Expression> {
+    let span = span_of(&pair);
+    let mut path = Vec::new();
+    let mut args = Vec::new();
+    for p in pair.into_inner() {
+        match p.as_rule() {
+            Rule::macro_path => {
+                for seg in p.into_inner() {
+                    match seg.as_rule() {
+                        Rule::path_head | Rule::path_member => path.push(seg.as_str().to_string()),
+                        other => unreachable!("macro_path child {other:?}"),
+                    }
+                }
+            }
+            Rule::expression => args.push(expression(p)?),
+            other => unreachable!("macro_call child {other:?}"),
+        }
+    }
+    Ok(Expression::MacroCall(Box::new(MacroCallExpr {
+        path,
+        args,
+        span,
+    })))
+}
+
+/// `ast::quote! { … }` — a balanced token body with `${ Expression }` holes
+/// (spec grammar.md `QuoteCall`). The raw body is recovered by source slicing
+/// between the hole spans, so whitespace, comments, and punctuation survive.
+fn quote_call(pair: Pair<'_, Rule>) -> R<Expression> {
+    let span = span_of(&pair);
+    let text = pair.as_str().to_string();
+    let base = span.start;
+    let mut holes = Vec::new();
+    for child in pair.into_inner() {
+        collect_quote_holes(child, &mut holes)?;
+    }
+    let body_open = text.find('{').map(|i| i + 1).unwrap_or(text.len());
+    let body_close = text.rfind('}').unwrap_or(text.len());
+    let mut pieces = Vec::new();
+    let mut cursor = body_open;
+    for (hole_span, expr) in holes {
+        let start = hole_span.start.saturating_sub(base).min(text.len());
+        let end = hole_span.end.saturating_sub(base).min(text.len());
+        if start > cursor {
+            pieces.push(QuotePiece::Tokens {
+                text: text[cursor..start].to_string(),
+                span: base + cursor..base + start,
+            });
+        }
+        pieces.push(QuotePiece::Hole {
+            expr,
+            span: hole_span,
+        });
+        cursor = end;
+    }
+    if body_close > cursor {
+        pieces.push(QuotePiece::Tokens {
+            text: text[cursor..body_close].to_string(),
+            span: base + cursor..base + body_close,
+        });
+    }
+    Ok(Expression::Quote(Box::new(QuoteExpr { pieces, span })))
+}
+
+fn collect_quote_holes(pair: Pair<'_, Rule>, out: &mut Vec<(Range<usize>, Expression)>) -> R<()> {
+    match pair.as_rule() {
+        Rule::quote_hole => {
+            let span = span_of(&pair);
+            for inner in pair.into_inner() {
+                if inner.as_rule() == Rule::expression {
+                    out.push((span.clone(), expression(inner)?));
+                }
+            }
+        }
+        Rule::quote_nested | Rule::quote_body => {
+            for child in pair.into_inner() {
+                collect_quote_holes(child, out)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 fn literal_expression(pair: Pair<'_, Rule>) -> R<Expression> {

@@ -318,3 +318,145 @@ fn manifest_path_name_shadowing_root_module_is_e0104() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn cross_module_macros_expand_through_use() {
+    let dir = temp_pkg("macro_import");
+    write(
+        &dir,
+        "m.xulo",
+        r#"
+        pub trait Model { fn model(self): int }
+
+        #[macro(kind = "derive", target = Model)]
+        pub fn derive_model(input: ast::DeriveInput): Result<ast::DeriveOutput, ast::MacroFailure> {
+            return Result::Ok(ast::DeriveOutput(items: ast::quote! {
+                impl Model for ${input.target.name} {
+                    fn model(self): int { 7 }
+                }
+            }))
+        }
+
+        #[macro(kind = "function", name = "answer")]
+        pub fn answer_macro(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
+            return Result::Ok(ast::FunctionOutput(expr: (ast::quote! { 42 })[0]))
+        }
+        "#,
+    );
+    write(
+        &dir,
+        "main.xulo",
+        r#"
+        mod m;
+        use m::{Model, answer};
+
+        #[derive(Model)]
+        struct Gadget { id: int }
+
+        fn main() {
+            print(answer!())
+            print(m::answer!())
+            print(Gadget(id: 1).model())
+        }
+        "#,
+    );
+    let mut loaded = load_pkg(&dir).unwrap();
+    xulo_compiler::module::analyze(&mut loaded, false).unwrap();
+    let root = &loaded.modules[loaded.entry].program;
+    let dump = format!("{:?}", root.statements);
+    assert!(
+        !dump.contains("MacroCall"),
+        "function macros must be expanded"
+    );
+    assert!(
+        dump.contains("Widget") || dump.contains("Gadget"),
+        "derive output missing: {dump}"
+    );
+    assert!(
+        dump.contains("model"),
+        "derive-generated impl missing: {dump}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn private_macro_import_is_e0602() {
+    let dir = temp_pkg("macro_private");
+    write(
+        &dir,
+        "m.xulo",
+        r#"
+        #[macro(kind = "function", name = "secret")]
+        fn secret_macro(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
+            return Result::Ok(ast::FunctionOutput(expr: (ast::quote! { 1 })[0]))
+        }
+        "#,
+    );
+    write(
+        &dir,
+        "main.xulo",
+        r#"
+        mod m;
+        use m::secret;
+        fn main() { print(secret!()) }
+        "#,
+    );
+    let err = load_err(&dir);
+    assert_eq!(err.code(), "E0602", "{}", err.message);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn qualified_private_macro_call_is_e0602() {
+    let dir = temp_pkg("macro_private_qualified");
+    write(
+        &dir,
+        "m.xulo",
+        r#"
+        #[macro(kind = "function", name = "secret")]
+        fn secret_macro(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
+            return Result::Ok(ast::FunctionOutput(expr: (ast::quote! { 1 })[0]))
+        }
+        "#,
+    );
+    write(
+        &dir,
+        "main.xulo",
+        r#"
+        mod m;
+        use m as mm;
+        fn main() { print(mm::secret!()) }
+        "#,
+    );
+    let err = load_err(&dir);
+    assert_eq!(err.code(), "E0602", "{}", err.message);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn pub_use_reexports_an_imported_macro() {
+    let dir = temp_pkg("macro_reexport_local");
+    write(
+        &dir,
+        "main.xulo",
+        r#"
+        pub mod m {
+            #[macro(kind = "function", name = "answer")]
+            pub fn answer_macro(input: ast::FunctionInput): Result<ast::FunctionOutput, ast::MacroFailure> {
+                return Result::Ok(ast::FunctionOutput(expr: (ast::quote! { 42 })[0]))
+            }
+        }
+        mod lib {
+            use super::m::answer;
+            pub use { answer };
+        }
+        use lib::answer;
+        fn main() { print(answer!()) }
+        "#,
+    );
+    let mut loaded = load_pkg(&dir).unwrap();
+    xulo_compiler::module::analyze(&mut loaded, false).unwrap();
+    let dump = format!("{:?}", loaded.modules[loaded.entry].program.statements);
+    assert!(!dump.contains("MacroCall"), "{dump}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

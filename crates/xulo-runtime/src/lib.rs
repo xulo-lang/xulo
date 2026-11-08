@@ -9,5 +9,6 @@
 
 pub mod env;
 pub mod interpreter;
+pub mod macro_system;
 pub mod runtime;
 pub mod value;

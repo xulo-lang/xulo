@@ -14,7 +14,7 @@ use xulo_core::ast::{
 use xulo_core::error::{ErrorKind, XuloError};
 
 use crate::env::Env;
-use crate::value::{FunctionValue, Value, equal, is_truthy};
+use crate::value::{AstNodeRepr, AstNodeValue, FunctionValue, SpanValue, Value, equal, is_truthy};
 
 pub use xulo_core::ast::CallArg;
 
@@ -119,6 +119,18 @@ pub struct Interpreter {
     task_free: RefCell<Vec<usize>>,
     /// Active call depth (see [`MAX_CALL_DEPTH`]).
     call_depth: Cell<usize>,
+    /// Compile-time macro step budget (spec `builtins/quota.md`): `None` for
+    /// ordinary execution, `Some(limit)` while a macro expands.
+    step_quota: Rc<Cell<Option<u64>>>,
+    step_used: Rc<Cell<u64>>,
+    /// Compile-time macro memory budget in bytes (spec `builtins/quota.md`):
+    /// `None` for ordinary execution, `Some(limit)` while a macro expands.
+    mem_quota: Rc<Cell<Option<u64>>>,
+    mem_used: Rc<Cell<u64>>,
+    mem_seen: Rc<RefCell<std::collections::HashSet<usize>>>,
+    /// Compile-time macro call-depth budget (spec `builtins/quota.md`);
+    /// shared by nested `ast::call_*` invocations.
+    depth_quota: Rc<Cell<Option<usize>>>,
     /// Names of `struct` types registered in this interpreter. `method_call`
     /// falls back to these objects (which hold inherent impl methods) when a
     /// method is not found directly on a receiver instance.
@@ -886,6 +898,12 @@ impl Interpreter {
             task_yielder: RefCell::new(Vec::new()),
             task_free: RefCell::new(Vec::new()),
             call_depth: Cell::new(0),
+            step_quota: Rc::new(Cell::new(None)),
+            step_used: Rc::new(Cell::new(0)),
+            mem_quota: Rc::new(Cell::new(None)),
+            mem_used: Rc::new(Cell::new(0)),
+            mem_seen: Rc::new(RefCell::new(std::collections::HashSet::new())),
+            depth_quota: Rc::new(Cell::new(None)),
             memo_cache: RefCell::new(std::collections::HashMap::new()),
             struct_names: RefCell::new(Vec::new()),
             enum_names: RefCell::new(Vec::new()),
@@ -946,7 +964,37 @@ impl Interpreter {
                 ],
             },
         );
+        // The macro surface's records are ordinary values at runtime too, so
+        // a `#[test]` can construct an input and call the implementation
+        // function (spec testing.md, "Implementation tests").
+        crate::macro_system::install_runtime_ast(&interp);
         interp
+    }
+
+    /// Register one macro-surface record as a constructible struct type.
+    #[doc(hidden)]
+    pub fn register_macro_struct(&self, name: &str, fields: &[&str]) {
+        self.struct_names.borrow_mut().push(name.to_string());
+        self.global.borrow_mut().define(
+            name,
+            Value::Object(Rc::new(RefCell::new(Vec::new()))),
+            false,
+        );
+        self.struct_fields.borrow_mut().insert(
+            name.to_string(),
+            StructCtorDecl {
+                env: self.global.clone(),
+                fields: fields.iter().map(|f| (f.to_string(), None)).collect(),
+            },
+        );
+    }
+
+    /// Register one macro-surface enum name (`ast::Value`) for construction.
+    #[doc(hidden)]
+    pub fn register_macro_enum(&self, name: &str) {
+        if !self.enum_names.borrow().iter().any(|n| n == name) {
+            self.enum_names.borrow_mut().push(name.to_string());
+        }
     }
 
     /// Run a whole program: register functions/enums, execute top-level
@@ -1406,6 +1454,120 @@ impl Interpreter {
         self.out.borrow_mut().push(line);
     }
 
+    /// Install a compile-time step quota (spec `builtins/quota.md`). The
+    /// counter is checked before each evaluated expression and statement;
+    /// exceeding it stops the expansion with `E1001`.
+    pub fn set_step_quota(&self, limit: u64) {
+        self.step_quota.set(Some(limit));
+        self.step_used.set(0);
+    }
+
+    /// Adopt a shared step/memory/depth budget for a nested macro call. The
+    /// counters are the same cells the parent expansion charges (spec
+    /// `builtins/quota.md`, "Scope of a budget").
+    pub(crate) fn share_quota(
+        &mut self,
+        step_limit: Rc<Cell<Option<u64>>>,
+        step_used: Rc<Cell<u64>>,
+        mem_limit: Rc<Cell<Option<u64>>>,
+        mem_used: Rc<Cell<u64>>,
+        mem_seen: Rc<RefCell<std::collections::HashSet<usize>>>,
+        depth_limit: Rc<Cell<Option<usize>>>,
+    ) {
+        self.step_quota = step_limit;
+        self.step_used = step_used;
+        self.mem_quota = mem_limit;
+        self.mem_used = mem_used;
+        self.mem_seen = mem_seen;
+        self.depth_quota = depth_limit;
+    }
+
+    /// The call-depth quota failure, when the shared budget is exhausted.
+    pub(super) fn depth_quota_error(&self, span: &std::ops::Range<usize>) -> Option<RunError> {
+        let limit = self.depth_quota.get()?;
+        let depth = self.call_depth.get();
+        if depth < limit {
+            return None;
+        }
+        Some(RunError::Err(
+            XuloError::new(
+                ErrorKind::Semantic,
+                format!(
+                    "macro exceeded its call-depth quota: used {} of {limit} calls",
+                    depth.saturating_add(1)
+                ),
+            )
+            .with_code("E1001")
+            .with_note("quota source: macro or global default")
+            .at(span.clone()),
+        ))
+    }
+
+    /// Charge one abstract execution step. Returns `E1001` when the budget is
+    /// exhausted; ordinary execution (`step_quota == None`) is never charged.
+    pub(super) fn bump_step(&self, span: &std::ops::Range<usize>) -> Result<(), RunError> {
+        let Some(limit) = self.step_quota.get() else {
+            return Ok(());
+        };
+        let used = self.step_used.get().saturating_add(1);
+        self.step_used.set(used);
+        if used > limit {
+            return Err(RunError::Err(
+                XuloError::new(
+                    ErrorKind::Semantic,
+                    format!("macro exceeded its step quota: used {used} of {limit} steps"),
+                )
+                .with_code("E1001")
+                .with_note("quota source: macro or global default")
+                .at(span.clone()),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Charge the deterministic byte size of a newly constructed value against
+    /// the shared memory budget. A no-op during ordinary execution; when the
+    /// budget is exhausted this returns `E1001` and the caller aborts the
+    /// expansion without exposing the partially built value.
+    pub(super) fn bump_memory_value(
+        &self,
+        value: &Value,
+        span: &std::ops::Range<usize>,
+    ) -> Result<(), RunError> {
+        if self.mem_quota.get().is_none() {
+            return Ok(());
+        }
+        let mut bytes = 0u64;
+        novel_value_bytes(value, 32, &mut self.mem_seen.borrow_mut(), &mut bytes);
+        self.bump_memory(bytes, span)
+    }
+
+    /// Charge `bytes` against the shared memory budget. Returns `E1001` when the
+    /// budget is exhausted (spec `builtins/quota.md`).
+    pub(super) fn bump_memory(
+        &self,
+        bytes: u64,
+        span: &std::ops::Range<usize>,
+    ) -> Result<(), RunError> {
+        let Some(limit) = self.mem_quota.get() else {
+            return Ok(());
+        };
+        let used = self.mem_used.get().saturating_add(bytes);
+        self.mem_used.set(used);
+        if used > limit {
+            return Err(RunError::Err(
+                XuloError::new(
+                    ErrorKind::Semantic,
+                    format!("macro exceeded its memory quota: used {used} of {limit} bytes"),
+                )
+                .with_code("E1001")
+                .with_note("quota source: macro or global default")
+                .at(span.clone()),
+            ));
+        }
+        Ok(())
+    }
+
     /// The shared root environment backing all top-level bindings (`print`,
     /// `str`, and every `fn`/`impl` registered via [`Interpreter::run`]).
     ///
@@ -1566,4 +1728,97 @@ fn enum_value(e: &xulo_core::ast::EnumDef) -> Value {
         })
         .collect();
     Value::Object(Rc::new(RefCell::new(fields)))
+}
+
+/// Add the deterministic heap bytes of a value that have not been charged
+/// before (spec `builtins/quota.md`). Shared buffers (`Rc` strings, lists,
+/// objects, signals, AST nodes) are counted once, so wrapping an existing
+/// value in an AST node or returning it from a builtin does not double-count.
+/// The walk is depth-bounded and deduplicated by pointer, so cyclic graphs
+/// terminate. Scalars are treated as stack values and not charged.
+fn novel_value_bytes(
+    value: &Value,
+    depth: usize,
+    seen: &mut std::collections::HashSet<usize>,
+    bytes: &mut u64,
+) {
+    if depth == 0 {
+        return;
+    }
+    match value {
+        Value::Number(_) | Value::Boolean(_) | Value::Null => {}
+        Value::String(s) => {
+            if seen.insert(Rc::as_ptr(s) as *const () as usize) {
+                *bytes = bytes.saturating_add(16u64.saturating_add(s.len() as u64));
+            }
+        }
+        Value::Ptr(_) => {
+            *bytes = bytes.saturating_add(96);
+        }
+        Value::List(items) | Value::Set(items) => {
+            if seen.insert(Rc::as_ptr(items) as usize) {
+                let borrowed = items.borrow();
+                *bytes = bytes
+                    .saturating_add(24u64)
+                    .saturating_add((borrowed.len() as u64).saturating_mul(8));
+                for item in borrowed.iter() {
+                    novel_value_bytes(item, depth - 1, seen, bytes);
+                }
+            }
+        }
+        Value::Object(fields) => {
+            if seen.insert(Rc::as_ptr(fields) as usize) {
+                let borrowed = fields.borrow();
+                *bytes = bytes.saturating_add(24u64);
+                for (key, item) in borrowed.iter() {
+                    *bytes = bytes.saturating_add(16u64.saturating_add(key.len() as u64));
+                    novel_value_bytes(item, depth - 1, seen, bytes);
+                }
+            }
+        }
+        Value::Function(func) => {
+            if seen.insert(Rc::as_ptr(func) as *const () as usize) {
+                *bytes = bytes.saturating_add(128);
+            }
+        }
+        Value::Enum {
+            enum_name,
+            tag,
+            payload,
+        } => {
+            *bytes = bytes
+                .saturating_add(32u64)
+                .saturating_add((enum_name.len() + tag.len()) as u64);
+            if let Some(payload) = payload.as_deref() {
+                novel_value_bytes(payload, depth - 1, seen, bytes);
+            }
+        }
+        Value::Native(_) => {
+            *bytes = bytes.saturating_add(64);
+        }
+        Value::Signal(cell) => {
+            if seen.insert(Rc::as_ptr(cell) as usize) {
+                *bytes = bytes.saturating_add(32);
+                novel_value_bytes(&cell.borrow(), depth - 1, seen, bytes);
+            }
+        }
+        Value::Promise(promise) => {
+            if seen.insert(Rc::as_ptr(promise) as usize) {
+                *bytes = bytes.saturating_add(96);
+            }
+        }
+        Value::AstNode(node) => {
+            if seen.insert(Rc::as_ptr(node) as *const () as usize) {
+                *bytes = bytes
+                    .saturating_add(64u64)
+                    .saturating_add(node.kind.len() as u64)
+                    .saturating_add(node.text.as_ref().map(|t| t.len() as u64).unwrap_or(0))
+                    .saturating_add(node.span.file.len() as u64);
+                for (key, item) in &node.fields {
+                    *bytes = bytes.saturating_add(16u64.saturating_add(key.len() as u64));
+                    novel_value_bytes(item, depth - 1, seen, bytes);
+                }
+            }
+        }
+    }
 }

@@ -123,6 +123,7 @@ fn test_let_binding_basic() {
         memo_deps: None,
         tuple_names: None,
         object_destructuring: None,
+        attributes: Vec::new(),
     };
     assert_eq!(binding.name, "x");
     assert!(!binding.is_const);
@@ -146,6 +147,7 @@ fn test_let_binding_const() {
         memo_deps: None,
         tuple_names: None,
         object_destructuring: None,
+        attributes: Vec::new(),
     };
     assert!(binding.is_const);
 }
@@ -176,6 +178,7 @@ fn test_let_binding_memo() {
         ]),
         tuple_names: None,
         object_destructuring: None,
+        attributes: Vec::new(),
     };
     assert!(binding.memo);
     assert_eq!(binding.memo_deps.as_ref().unwrap().len(), 2);

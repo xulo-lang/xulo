@@ -4125,6 +4125,7 @@ dependencies = [
  "xulo-core",
  "xulo-lexer",
  "xulo-parser",
+ "xulo-runtime",
  "xulo-semantic",
 ]
 

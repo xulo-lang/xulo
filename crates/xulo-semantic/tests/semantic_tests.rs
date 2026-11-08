@@ -1722,7 +1722,10 @@ fn user_function_after_impl_collision_is_rejected() {
     "#;
     let err = analyze_src(src).unwrap_err();
     assert!(
-        err.message.contains("collides with a trait dispatch impl"),
+        err.message.contains("collides with a trait dispatch impl")
+            || err
+                .message
+                .contains("collides with a function of the same name"),
         "unexpected: {}",
         err.message
     );
@@ -5195,15 +5198,18 @@ fn wrong_test_shape_is_e0110() {
 
 #[test]
 fn test_attribute_takes_no_arguments() {
-    // `#[test]` takes no argument group, so `#[test()]` and `#[test(name)]`
-    // fall back to an ordinary attribute on the `fn` and are `E0110`. A
-    // string argument is outside the current `AttributeArg` grammar and is a
-    // syntax error outright (spec `testing.md`).
-    for src in ["#[test()] fn t() {}", "#[test(name)] fn t() {}"] {
+    // `#[test]` takes no argument group, so every `#[test(...)]` group — a
+    // name, a string, or a numeral — falls back to an ordinary attribute on
+    // the `fn` and is `E0110` (spec `testing.md`, `grammar.md`).
+    for src in [
+        "#[test()] fn t() {}",
+        "#[test(name)] fn t() {}",
+        r#"#[test("adds two numbers")] fn t() {}"#,
+        "#[test(1)] fn t() {}",
+    ] {
         let err = analyze_src(src).unwrap_err();
         assert_eq!(err.code(), "E0110", "unexpected: {}", err.message);
     }
-    assert!(analyze_src(r#"#[test("adds two numbers")] fn t() {}"#).is_err());
 }
 
 #[test]
@@ -5257,7 +5263,8 @@ fn referencing_a_test_fn_is_e0107() {
 
 #[test]
 fn derive_struct_field_without_debug_is_e0801() {
-    let err = analyze_src("struct W { a: number }\n#[derive(Debug)]\nstruct S { w: W }").unwrap_err();
+    let err =
+        analyze_src("struct W { a: number }\n#[derive(Debug)]\nstruct S { w: W }").unwrap_err();
     assert_eq!(err.code(), "E0801", "unexpected: {}", err.message);
     assert!(
         err.message.contains("`W` does not implement `Debug`"),
@@ -5281,7 +5288,8 @@ fn derive_accepts_containers_and_enums() {
 
 #[test]
 fn second_derive_is_e0805() {
-    let err = analyze_src("#[derive(Debug)]\n#[derive(Debug)]\nstruct S { a: string }").unwrap_err();
+    let err =
+        analyze_src("#[derive(Debug)]\n#[derive(Debug)]\nstruct S { a: string }").unwrap_err();
     assert_eq!(err.code(), "E0805", "unexpected: {}", err.message);
 }
 

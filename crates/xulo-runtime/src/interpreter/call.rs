@@ -2,6 +2,36 @@ use super::*;
 
 impl Interpreter {
     pub(super) fn call(&self, call: &Call, env: &Rc<RefCell<Env>>) -> Result<Value, RunError> {
+        // During compile-time execution, a forbidden resource reached through
+        // any helper is `E1007` (spec builtins/sandbox.md).
+        if self.step_quota.get().is_some()
+            && let Some(resource) = forbidden_callee(&call.callee)
+        {
+            return Err(RunError::Err(
+                XuloError::new(
+                    ErrorKind::Semantic,
+                    format!("macro cannot access {resource}"),
+                )
+                .with_code("E1007")
+                .with_note(
+                    "compile-time macros may not access the filesystem, network, environment, processes, concurrency, wall-clock time, or randomness",
+                )
+                .at(call.span.clone()),
+            ));
+        }
+        // The macro surface's qualified record constructors and `ast::Value`
+        // variants resolve before the generic namespace walk would read the
+        // `ast` namespace object.
+        if let Some(rest) = call.callee.strip_prefix("ast::") {
+            if self.struct_fields.borrow().contains_key(&call.callee)
+                && env.borrow().get(&call.callee).is_some()
+            {
+                return self.construct_struct(&call.callee, call, env);
+            }
+            if let Some(variant) = rest.strip_prefix("Value::") {
+                return self.enum_construct("ast::Value", variant, &call.arguments, env);
+            }
+        }
         // Trait dispatch: call the mangled `impl_{Trait}_{Type}_{method}` free
         // function with the receiver as its first argument.
         if let Some(impl_name) = &call.trait_impl {
@@ -169,7 +199,21 @@ impl Interpreter {
                 }
             }
         }
+        // A registered struct type constructs before the enum fallback: the
+        // macro surface's `ast::DeriveOutput(…)` is a struct call with a
+        // qualified name, not an enum variant.
+        if env.borrow().get(&call.callee).is_some()
+            && self.struct_fields.borrow().contains_key(&call.callee)
+        {
+            return self.construct_struct(&call.callee, call, env);
+        }
         if let Some((enum_name, variant)) = call.enum_parts() {
+            // `ast::Value::String(s)` keeps the macro enum's qualified name.
+            if enum_name == "ast"
+                && let Some(rest) = variant.strip_prefix("Value::")
+            {
+                return self.enum_construct("ast::Value", rest, &call.arguments, env);
+            }
             return self.enum_construct(enum_name, variant, &call.arguments, env);
         }
         if let Some(object) = &call.object {
@@ -289,7 +333,9 @@ impl Interpreter {
             Rc::as_ptr(&obj) as usize,
             (Rc::downgrade(&obj), name.to_string()),
         );
-        Ok(Value::Object(obj))
+        let value = Value::Object(obj);
+        self.bump_memory_value(&value, &call.span)?;
+        Ok(value)
     }
 
     /// The struct type a constructed instance was built from, while its
@@ -1184,7 +1230,9 @@ impl Interpreter {
                 // so the native runtime must ignore names too — erroring here
                 // made valid checked programs fail only on the native path.
                 let values = self.eval_args(args, call_env)?;
-                native(self, &values)
+                let value = native(self, &values)?;
+                self.bump_memory_value(&value, &(0..0))?;
+                Ok(value)
             }
             Value::Function(func) => {
                 let depth = self.call_depth.get();
@@ -1193,6 +1241,11 @@ impl Interpreter {
                         format!("call depth exceeded: recursion limit of {MAX_CALL_DEPTH} reached"),
                         args.first().map(|a| a.value.span().clone()).unwrap_or(0..0),
                     ));
+                }
+                if let Some(err) = self.depth_quota_error(
+                    &args.first().map(|a| a.value.span().clone()).unwrap_or(0..0),
+                ) {
+                    return Err(err);
                 }
                 self.call_depth.set(depth + 1);
                 let result = (|| {
@@ -1218,7 +1271,11 @@ impl Interpreter {
         values: &[Value],
     ) -> Result<Value, RunError> {
         match callee {
-            Value::Native(native) => native(self, values),
+            Value::Native(native) => {
+                let value = native(self, values)?;
+                self.bump_memory_value(&value, &(0..0))?;
+                Ok(value)
+            }
             Value::Function(func) => {
                 let depth = self.call_depth.get();
                 if depth >= MAX_CALL_DEPTH {
@@ -1226,6 +1283,9 @@ impl Interpreter {
                         format!("call depth exceeded: recursion limit of {MAX_CALL_DEPTH} reached"),
                         0..0,
                     ));
+                }
+                if let Some(err) = self.depth_quota_error(&(0..0)) {
+                    return Err(err);
                 }
                 self.call_depth.set(depth + 1);
                 let empty_env = crate::env::Env::root();
@@ -1430,6 +1490,9 @@ impl Interpreter {
                 0..0,
             ));
         }
+        if let Some(err) = self.depth_quota_error(&(0..0)) {
+            return Err(err);
+        }
         self.call_depth.set(depth + 1);
         let result = (|| {
             let bound = self.bind_args(&func.params, args, call_env)?;
@@ -1520,6 +1583,9 @@ impl Interpreter {
                 format!("call depth exceeded: recursion limit of {MAX_CALL_DEPTH} reached"),
                 0..0,
             ));
+        }
+        if let Some(err) = self.depth_quota_error(&(0..0)) {
+            return Err(err);
         }
         self.call_depth.set(depth + 1);
         let result = (|| {
@@ -1680,5 +1746,28 @@ fn map_key_string(value: &Value) -> String {
         Value::Number(n) => n.to_string(),
         Value::Boolean(b) => b.to_string(),
         other => other.format(),
+    }
+}
+
+/// The sandbox resource a callee name reaches, if any (spec
+/// `builtins/sandbox.md`).
+fn forbidden_callee(callee: &str) -> Option<&'static str> {
+    if callee.starts_with("std::fs") {
+        Some("the filesystem")
+    } else if callee.starts_with("std::net") || callee.starts_with("std::http") {
+        Some("the network")
+    } else if callee.starts_with("std::os") {
+        Some("the environment")
+    } else if callee.starts_with("std::process") {
+        Some("processes")
+    } else if callee.starts_with("std::time")
+        || callee.starts_with("Time::")
+        || callee.starts_with("Task::")
+    {
+        Some("wall-clock time or concurrency")
+    } else if matches!(callee, "Math::random" | "Math::random_int") {
+        Some("randomness")
+    } else {
+        None
     }
 }
