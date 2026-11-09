@@ -7,8 +7,8 @@ use xulo_core::ast::{
     DeferBody, DeferStmt, EffectStmt, EnumDef, EnumPayloadParam, EnumVariant, EnvStmt, ExportItem,
     ExportStmt, ExprStmt, Expression, ExternBlockDecl, ExternItem, FnBound, FnDef, ForStmt,
     GenericParam, GenericParamKind, ImplDecl, LetBinding, ModDecl, Param, ParamMode, PathHead,
-    ReturnStmt, StateStmt, Statement, StoreStmt, StructDef, StructField, TraitDecl, TraitMethod,
-    Type, TypeAlias, UiElement, UseDecl, UseEntry, UseTarget, WhileStmt,
+    ReturnStmt, StateStmt, Statement, StoreStmt, StructDef, StructField, TestDef, TestOption,
+    TraitDecl, TraitMethod, Type, TypeAlias, UiElement, UseDecl, UseEntry, UseTarget, WhileStmt,
 };
 use xulo_core::error::XuloError;
 
@@ -284,19 +284,23 @@ fn fn_decl(pair: Pair<'_, Rule>) -> R<FnDef> {
     })
 }
 
-/// Build a `#[test] [async] fn name() { … }` into the fixed-shape `FnDef` the
-/// `Statement::Test` variant carries: no parameters, no return type, no
-/// generics (the grammar already forbids them; the fields are filled empty).
-fn test_decl(pair: Pair<'_, Rule>) -> R<FnDef> {
+/// Build a `#[test(options)] [async] fn name() { … }` into the fixed-shape
+/// `TestDef` the `Statement::Test` variant carries: no parameters, no return
+/// type, no generics (the grammar already forbids them; the fields are filled
+/// empty). Option validity is a checking rule, so the options are recorded as
+/// written.
+fn test_decl(pair: Pair<'_, Rule>) -> R<TestDef> {
     let span = span_of(&pair);
     let mut is_async = false;
     let mut name = String::new();
     let mut name_span = 0..0;
     let mut body = None;
+    let mut options = Vec::new();
     for p in pair.into_inner() {
         match p.as_rule() {
             Rule::kw_fn => {}
             Rule::kw_async => is_async = true,
+            Rule::test_options => options = test_options(p),
             Rule::identifier => {
                 name = p.as_str().to_string();
                 name_span = span_of(&p);
@@ -305,20 +309,95 @@ fn test_decl(pair: Pair<'_, Rule>) -> R<FnDef> {
             _ => unreachable!("test_decl child {:?}", p.as_rule()),
         }
     }
-    Ok(FnDef {
-        name,
-        name_span,
-        params: Vec::new(),
-        return_type: None,
-        type_params: Vec::new(),
-        generic_params: Vec::new(),
-        bounds: Vec::new(),
-        is_async,
-        body: body.expect("test_decl has a body"),
-        span,
-        attributes: Vec::new(),
-        abi: None,
+    Ok(TestDef {
+        func: FnDef {
+            name,
+            name_span,
+            params: Vec::new(),
+            return_type: None,
+            type_params: Vec::new(),
+            generic_params: Vec::new(),
+            bounds: Vec::new(),
+            is_async,
+            body: body.expect("test_decl has a body"),
+            span,
+            attributes: Vec::new(),
+            abi: None,
+        },
+        options,
     })
+}
+
+/// Build the options of a `TestOptions` group, in written order.
+fn test_options(pair: Pair<'_, Rule>) -> Vec<TestOption> {
+    let mut options = Vec::new();
+    for option in pair.into_inner() {
+        if option.as_rule() != Rule::test_option {
+            continue;
+        }
+        let option_span = span_of(&option);
+        let inner = single(option);
+        let mut strings = Vec::new();
+        let mut integers = Vec::new();
+        for child in inner.clone().into_inner() {
+            let child_span = span_of(&child);
+            match child.as_rule() {
+                Rule::string_literal => strings.push((decode_string(child.as_str()), child_span)),
+                Rule::integer_literal => {
+                    let value = child
+                        .as_str()
+                        .parse::<u64>()
+                        .ok()
+                        .filter(|n| *n > 0)
+                        .unwrap_or(0);
+                    integers.push((value, child_span));
+                }
+                _ => {}
+            }
+        }
+        let text = inner.as_str();
+        match inner.as_rule() {
+            Rule::test_expectation => {
+                if text.starts_with("should_fail") {
+                    options.push(TestOption::ShouldFail { span: option_span });
+                } else {
+                    let (message, message_span) = match strings.into_iter().next() {
+                        Some((message, span)) => (Some(message), Some(span)),
+                        None => (None, None),
+                    };
+                    options.push(TestOption::ShouldPanic {
+                        message,
+                        span: option_span,
+                        message_span,
+                    });
+                }
+            }
+            Rule::test_skip => {
+                let (reason, reason_span) = match strings.into_iter().next() {
+                    Some((reason, span)) => (Some(reason), Some(span)),
+                    None => (None, None),
+                };
+                options.push(TestOption::Skip {
+                    reason,
+                    span: option_span,
+                    reason_span,
+                });
+            }
+            Rule::test_timeout => {
+                let (value, value_span) = integers
+                    .into_iter()
+                    .next()
+                    .unwrap_or((0, option_span.clone()));
+                options.push(TestOption::Timeout {
+                    value,
+                    span: option_span,
+                    value_span,
+                });
+            }
+            other => unreachable!("test_option child {other:?}"),
+        }
+    }
+    options
 }
 
 /// `ExternFnDecl = "pub" "extern" AbiTag "fn" Identifier "("

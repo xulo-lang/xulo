@@ -858,7 +858,7 @@ fn collect_stmt_names(stmt: &Statement, set: &mut std::collections::HashSet<Stri
             }
             collect_block_names(&f.body, set);
         }
-        Statement::Test(f) => collect_block_names(&f.body, set),
+        Statement::Test(t) => collect_block_names(&t.func.body, set),
         Statement::Let(b) => {
             if !b.name.is_empty() {
                 set.insert(b.name.clone());
@@ -2728,7 +2728,7 @@ fn map_statement(
 ) -> Result<(), XuloError> {
     match stmt {
         Statement::Fn(fd) => map_block(&mut fd.body, f)?,
-        Statement::Test(fd) => map_block(&mut fd.body, f)?,
+        Statement::Test(t) => map_block(&mut t.func.body, f)?,
         Statement::Let(b) => {
             if let Some(v) = &mut b.value {
                 map_expr(v, f)?;

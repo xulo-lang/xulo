@@ -328,19 +328,62 @@ impl Interpreter {
     /// until the next one (`Task::timeout` deadlines), and end when neither
     /// has work left.
     pub(super) fn drive(&self) {
+        self.drive_until(None);
+    }
+
+    /// Drive like [`Interpreter::drive`], but stop as soon as `target`
+    /// settles. A test run uses this so a settled task is not kept alive by
+    /// its deadline (spec testing.md, "Timeout").
+    pub(super) fn drive_until(&self, target: Option<&Rc<RefCell<crate::value::Promise>>>) {
         loop {
+            if let Some(promise) = target
+                && !matches!(promise.borrow().state, crate::value::PromiseState::Pending)
+            {
+                break;
+            }
             let next = self.ready.borrow_mut().pop_front();
             let Some((id, control)) = next else {
                 if self.fire_due_timers() {
                     continue;
                 }
+                // A test deadline that passed while the body was pending is a
+                // `timedOut` outcome, not a panic (spec testing.md, "Timeout").
+                if self.test_deadline_expired() {
+                    self.test_timed_out.set(true);
+                    break;
+                }
                 if !self.sleep_to_next_timer() {
+                    // Nothing left to wake the loop; a pending async body with
+                    // a deadline still ends when that deadline passes.
+                    if self.sleep_to_test_deadline() {
+                        self.test_timed_out.set(true);
+                    }
                     break;
                 }
                 continue;
             };
             self.resume_task(id, control);
         }
+    }
+
+    /// Whether the running test's deadline has passed.
+    fn test_deadline_expired(&self) -> bool {
+        self.test_deadline
+            .get()
+            .is_some_and(|deadline| std::time::Instant::now() >= deadline)
+    }
+
+    /// Sleep until the running test's deadline, returning `true` when a
+    /// deadline exists (the caller then reports `timedOut`).
+    fn sleep_to_test_deadline(&self) -> bool {
+        let Some(deadline) = self.test_deadline.get() else {
+            return false;
+        };
+        let wait = deadline.saturating_duration_since(std::time::Instant::now());
+        if !wait.is_zero() {
+            std::thread::sleep(wait);
+        }
+        true
     }
 
     /// Settle every timer whose deadline has passed. Returns whether any
@@ -381,6 +424,13 @@ impl Interpreter {
                 matches!(promise.borrow().state, crate::value::PromiseState::Pending)
             });
             timers.iter().map(|(deadline, _, _)| *deadline).min()
+        };
+        // A test deadline is itself a wake-up point: never sleep past it, so
+        // the next `drive` round observes it (spec testing.md, "Timeout").
+        let next = match (next, self.test_deadline.get()) {
+            (Some(timer), Some(deadline)) => Some(timer.min(deadline)),
+            (timer, None) => timer,
+            (None, deadline) => deadline,
         };
         let Some(next) = next else {
             return false;

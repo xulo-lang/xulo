@@ -213,14 +213,22 @@ attribute_value = { identifier | string_literal | number_literal | boolean_liter
 fn_decl = { attribute_list? ~ pub_marker? ~ kw_async? ~ kw_fn ~ identifier ~ generic_params?
     ~ "(" ~ parameter_list? ~ ")" ~ (":" ~ type_expr)? ~ where_clause? ~ block }
 
-// `TestDecl = "#" "[" "test" "]" [ "async" ] "fn" Identifier "(" ")" Block`
-// (spec grammar.md) — fixed shape: no pub, no parameters, no return type, no
-// generics, no where, and no argument group. Written at file scope (this rule
-// exists only in `declaration`), so the exact sequence is a TestDecl and runs
-// no registry lookup. `#[test]` on a non-matching `fn`, `#[test()]`, and
-// `#[test(name)]` fall back to `fn_decl` and are `E0110` in the checker.
-test_decl = { "#" ~ "[" ~ "test" ~ "]" ~ kw_async? ~ kw_fn
+// `TestDecl = "#" "[" "test" [ "(" TestOptions ")" ] "]" [ "async" ] "fn"
+// Identifier "(" ")" Block` (spec grammar.md) — fixed shape: no pub, no
+// parameters, no return type, no generics, no where. Written at file scope
+// (this rule exists only in `declaration`), so the exact sequence is a
+// TestDecl and runs no registry lookup. A group that does not match
+// `TestOptions` (including `#[test()]` and unknown option names) falls back
+// to `fn_decl` and is `E0110` in the checker; a syntactically valid group
+// with invalid combinations is checked by the semantic pass.
+test_decl = { "#" ~ "[" ~ "test" ~ test_options? ~ "]" ~ kw_async? ~ kw_fn
     ~ identifier ~ "(" ~ ")" ~ block }
+test_options = { "(" ~ test_option ~ ("," ~ test_option)* ~ ","? ~ ")" }
+test_option = { test_expectation | test_skip | test_timeout }
+test_expectation = { "should_fail" ~ !ident_part
+    | "should_panic" ~ !ident_part ~ ("=" ~ string_literal)? }
+test_skip = { "skip" ~ !ident_part ~ ("=" ~ string_literal)? }
+test_timeout = { "timeout" ~ !ident_part ~ "=" ~ integer_literal }
 
 // Extern FFI declarations (spec grammar.md): `ExternFnDecl` MUST carry
 // `pub` and never `async`/attributes/generics; an `ExternItem` has no

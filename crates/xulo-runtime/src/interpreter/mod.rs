@@ -71,6 +71,29 @@ impl RunError {
     }
 }
 
+/// How a test body's run ended (spec testing.md, "Running"). The declared
+/// expectation decides which outcome passes.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TestOutcome {
+    /// The body ran to completion (an async test: its task settled fulfilled).
+    Completed,
+    /// A panic or runtime failure stopped the body. `message` is the raw
+    /// failure message a `should_panic = "…"` rule matches as a substring.
+    Panicked { message: String },
+    /// An async test's task settled as cancelled.
+    Cancelled,
+    /// A configured deadline expired before the body settled.
+    TimedOut,
+}
+
+/// One test run's outcome, the lines it printed, and the error to report when
+/// it failed.
+pub struct TestRun {
+    pub outcome: TestOutcome,
+    pub printed: Vec<String>,
+    pub error: Option<XuloError>,
+}
+
 /// What a block in value position evaluates to: a trailing expression or a
 /// trailing `return`.
 enum Tail<'a> {
@@ -119,6 +142,14 @@ pub struct Interpreter {
     task_free: RefCell<Vec<usize>>,
     /// Active call depth (see [`MAX_CALL_DEPTH`]).
     call_depth: Cell<usize>,
+    /// Wall-clock deadline for the test body currently running (spec
+    /// testing.md, "Timeout"). `None` outside a test run; checked at statement
+    /// boundaries and between async tasks.
+    test_deadline: Cell<Option<std::time::Instant>>,
+    /// Whether the current test run hit its deadline. The run's error is an
+    /// ordinary runtime failure; this flag lets the runner report `timedOut`
+    /// instead of a panic.
+    test_timed_out: Cell<bool>,
     /// Compile-time macro step budget (spec `builtins/quota.md`): `None` for
     /// ordinary execution, `Some(limit)` while a macro expands.
     step_quota: Rc<Cell<Option<u64>>>,
@@ -898,6 +929,8 @@ impl Interpreter {
             task_yielder: RefCell::new(Vec::new()),
             task_free: RefCell::new(Vec::new()),
             call_depth: Cell::new(0),
+            test_deadline: Cell::new(None),
+            test_timed_out: Cell::new(false),
             step_quota: Rc::new(Cell::new(None)),
             step_used: Rc::new(Cell::new(0)),
             mem_quota: Rc::new(Cell::new(None)),
@@ -1367,44 +1400,121 @@ impl Interpreter {
     /// `run_main: false`, then invoke one `#[test] fn` body. The test body sees
     /// the module the same way a function body does (spec testing.md).
     ///
-    /// Pass = the body completes; an async test passes when its task settles
-    /// fulfilled. Fail = the body panics/throws/`assert`s or the task settles
-    /// rejected. Returns the lines the test printed.
+    /// Returns the run's outcome (completed, panicked, cancelled, or timed
+    /// out), the lines the body printed, and the error to display when the
+    /// outcome is a failure. The mode/expectation is applied by the caller;
+    /// this reports what happened.
     pub fn run_test(
         &self,
         program: &Program,
         imports: &[(String, Value)],
-        test: &FnDef,
-    ) -> Result<Vec<String>, XuloError> {
-        let global = self.setup_module(program, imports).map_err(|e| match e {
-            RunError::Err(e) => e,
-            RunError::Propagate(v) => stray_propagate(&v),
-            RunError::Throw(v) => self.uncaught(&v),
-        })?;
+        test: &xulo_core::ast::TestDef,
+    ) -> TestRun {
+        let global = match self.setup_module(program, imports) {
+            Ok(global) => global,
+            Err(e) => return self.failed_run(e),
+        };
         *self.entry_env.borrow_mut() = Some(global.clone());
-        let result = self.call_fn(test, &[], &global);
-        self.drive();
+        self.test_timed_out.set(false);
+        self.test_deadline.set(
+            test.timeout_ms()
+                .map(|ms| std::time::Instant::now() + std::time::Duration::from_millis(ms)),
+        );
+        let result = self.call_fn(&test.func, &[], &global);
+        // Drive only until the test's own task settles: a settled run must not
+        // wait out the deadline for detached work (spec testing.md, "Timeout").
+        // A body that completed synchronously is already settled, so its
+        // deadline is cleared before draining unrelated tasks.
+        match &result {
+            Ok(Value::Promise(promise)) => self.drive_until(Some(promise)),
+            _ => {
+                self.test_deadline.set(None);
+                self.drive();
+            }
+        }
+        self.test_deadline.set(None);
+        let printed = self.out.take();
+        if self.test_timed_out.get() {
+            return TestRun {
+                outcome: TestOutcome::TimedOut,
+                printed,
+                error: None,
+            };
+        }
         match result {
             Ok(Value::Promise(promise)) => {
                 let state = promise.borrow();
                 match &state.state {
-                    crate::value::PromiseState::Fulfilled(_) => Ok(self.out.take()),
-                    crate::value::PromiseState::Rejected(e) => Err(match e {
-                        RunError::Err(e) => e.clone(),
-                        RunError::Propagate(v) => stray_propagate(v),
-                        RunError::Throw(v) => self.uncaught(v),
-                    }),
-                    crate::value::PromiseState::Pending => Err(XuloError::new(
-                        ErrorKind::Runtime,
-                        format!("async test `{}` did not complete", test.name),
-                    )),
+                    crate::value::PromiseState::Fulfilled(_) => TestRun {
+                        outcome: TestOutcome::Completed,
+                        printed,
+                        error: None,
+                    },
+                    crate::value::PromiseState::Rejected(e) => {
+                        let e = e.clone();
+                        let (outcome, error) = self.panicked_run(e);
+                        TestRun {
+                            outcome,
+                            printed,
+                            error: Some(error),
+                        }
+                    }
+                    crate::value::PromiseState::Pending => {
+                        let error = XuloError::new(
+                            ErrorKind::Runtime,
+                            format!("async test `{}` did not complete", test.func.name),
+                        );
+                        TestRun {
+                            outcome: TestOutcome::Panicked {
+                                message: error.message.clone(),
+                            },
+                            printed,
+                            error: Some(error),
+                        }
+                    }
                 }
             }
-            Ok(_) => Ok(self.out.take()),
-            Err(RunError::Err(e)) => Err(e),
-            Err(RunError::Propagate(v)) => Err(stray_propagate(&v)),
-            Err(RunError::Throw(v)) => Err(self.uncaught(&v)),
+            Ok(_) => TestRun {
+                outcome: TestOutcome::Completed,
+                printed,
+                error: None,
+            },
+            Err(e) => {
+                let (outcome, error) = self.panicked_run(e);
+                TestRun {
+                    outcome,
+                    printed,
+                    error: Some(error),
+                }
+            }
         }
+    }
+
+    /// Turn a setup failure into a panicked run with no test output.
+    fn failed_run(&self, e: RunError) -> TestRun {
+        let (outcome, error) = self.panicked_run(e);
+        TestRun {
+            outcome,
+            printed: self.out.take(),
+            error: Some(error),
+        }
+    }
+
+    /// Classify a run error as a panic and return the raw failure message the
+    /// `should_panic = "…"` substring rule matches (spec testing.md).
+    fn panicked_run(&self, e: RunError) -> (TestOutcome, XuloError) {
+        let (message, error) = match e {
+            RunError::Err(e) => (e.message.clone(), e),
+            RunError::Propagate(v) => {
+                let error = stray_propagate(&v);
+                (error.message.clone(), error)
+            }
+            RunError::Throw(v) => {
+                let message = v.format();
+                (message, self.uncaught(&v))
+            }
+        };
+        (TestOutcome::Panicked { message }, error)
     }
 
     /// Take the collected `print` lines so far (e.g. across executed modules).
@@ -1506,6 +1616,17 @@ impl Interpreter {
     /// Charge one abstract execution step. Returns `E1001` when the budget is
     /// exhausted; ordinary execution (`step_quota == None`) is never charged.
     pub(super) fn bump_step(&self, span: &std::ops::Range<usize>) -> Result<(), RunError> {
+        // A test deadline is checked at every statement boundary so a running
+        // (including synchronous) body can still be interrupted cooperatively
+        // (spec testing.md, "Timeout"). Ordinary execution has no deadline.
+        if let Some(deadline) = self.test_deadline.get()
+            && std::time::Instant::now() >= deadline
+        {
+            self.test_timed_out.set(true);
+            return Err(RunError::Err(
+                XuloError::new(ErrorKind::Runtime, "test timed out").at(span.clone()),
+            ));
+        }
         let Some(limit) = self.step_quota.get() else {
             return Ok(());
         };

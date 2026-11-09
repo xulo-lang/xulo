@@ -3,7 +3,8 @@
 // - `#[test]` 属性独占一行，`fn` / `async fn` 从下一行开始（推荐写法；
 //   换行在语法上不显著）
 // - 声明固定：无参数、无返回类型，文件作用域
-// - 属性不接受参数：`#[test()]`、`#[test("…")]` 都不是测试声明
+// - 可选选项组：`should_fail`、`should_panic[= "文本"]`、`skip[= "原因"]`、
+//   `timeout = 毫秒`；`should_fail` 与 `should_panic` 至多一个，`skip` 必须单独出现
 // - 测试体总是被检查（和 `fn(): unit` 一样），但惰性：`xulo run` 不会执行它，
 //   名字也不绑定任何值（引用它会报 E0107）
 // - `assert(cond, msg)` 是内建断言：条件为假时以 `panic(msg)` 终止
@@ -40,6 +41,30 @@ fn addition_works_sometimes() {
 async fn double_works() {
     let v = await double(21)
     assert(v == 42, "the answer")
+}
+
+// `should_fail`：主体以任何方式失败（断言、panic、超时）才通过
+#[test(should_fail)]
+fn rejects_bad_input() {
+    assert(add(1, 1) == 3, "one plus one is not three")
+}
+
+// `should_panic = "文本"`：失败信息必须包含给定子串（区分大小写）
+#[test(should_panic = "one plus one is three")]
+fn reports_the_reason() {
+    assert(add(1, 1) == 3, "one plus one is three")
+}
+
+// `skip`：不执行、报告为 skipped，既不算通过也不算失败
+#[test(skip = "not implemented yet")]
+fn future_feature() {
+    assert(false, "must not run")
+}
+
+// `timeout`：主体必须在毫秒期限内结束，否则报告 timedOut 失败
+#[test(timeout = 1000)]
+fn finishes_quickly() {
+    assert(add(2, 2) == 4, "2 + 2 = 4")
 }
 
 fn main() {

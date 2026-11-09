@@ -343,11 +343,11 @@ fn find_fn<'a>(
                     return Some(found);
                 }
             }
-            xulo_core::ast::Statement::Test(f) => {
-                if &f.name_span == span {
-                    return Some(f);
+            xulo_core::ast::Statement::Test(t) => {
+                if &t.func.name_span == span {
+                    return Some(&t.func);
                 }
-                if let Some(found) = find_fn(&f.body.statements, span) {
+                if let Some(found) = find_fn(&t.func.body.statements, span) {
                     return Some(found);
                 }
             }
@@ -425,11 +425,11 @@ fn find_fn_covering(
                     return Some(found);
                 }
             }
-            xulo_core::ast::Statement::Test(f) => {
-                if f.name_span.contains(&byte) {
-                    return Some(f);
+            xulo_core::ast::Statement::Test(t) => {
+                if t.func.name_span.contains(&byte) {
+                    return Some(&t.func);
                 }
-                if let Some(found) = find_fn_covering(&f.body.statements, byte) {
+                if let Some(found) = find_fn_covering(&t.func.body.statements, byte) {
                     return Some(found);
                 }
             }

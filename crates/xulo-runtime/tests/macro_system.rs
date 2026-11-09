@@ -351,14 +351,15 @@ fn main() {}
         .statements
         .iter()
         .find_map(|s| match s {
-            xulo_core::ast::Statement::Test(f) => Some(f),
+            xulo_core::ast::Statement::Test(t) => Some(t),
             _ => None,
         })
         .expect("test declaration");
     let interp = Interpreter::new();
-    interp
-        .run_test(&program, &[], test)
-        .unwrap_or_else(|e| panic!("{}: {}", e.code(), e.message));
+    let run = interp.run_test(&program, &[], test);
+    if let Some(e) = run.error {
+        panic!("{}: {}", e.code(), e.message);
+    }
 }
 
 fn expand_error(src: &str) -> XuloError {

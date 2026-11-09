@@ -1,17 +1,33 @@
-use xulo_core::ast::{FnDef, Statement};
+use xulo_core::ast::{Statement, TestDef, TestMode};
 use xulo_parser::parse_program;
-use xulo_runtime::interpreter::Interpreter;
+use xulo_runtime::interpreter::{Interpreter, TestOutcome};
+
+/// Whether a run outcome satisfies a test's declared expectation (spec
+/// testing.md, "Running").
+fn passes(test: &TestDef, outcome: &TestOutcome) -> bool {
+    match test.mode() {
+        TestMode::Normal => matches!(outcome, TestOutcome::Completed),
+        TestMode::ShouldFail => !matches!(outcome, TestOutcome::Completed),
+        TestMode::ShouldPanic => match outcome {
+            TestOutcome::Panicked { message } => match test.expected_message() {
+                Some(expected) => message.contains(expected),
+                None => true,
+            },
+            _ => false,
+        },
+    }
+}
 
 /// Full pipeline, then run every `#[test] fn` in the program. Returns the
 /// per-test outcomes `(name, error message)`; a `None` error means pass.
 fn run_all_tests(src: &str) -> Vec<(String, Option<String>)> {
     let program = parse_program(src).expect("parse failed");
     xulo_semantic::analyze(&program).expect("semantic check failed");
-    let tests: Vec<&FnDef> = program
+    let tests: Vec<&TestDef> = program
         .statements
         .iter()
         .filter_map(|s| match s {
-            Statement::Test(f) => Some(f),
+            Statement::Test(t) => Some(t),
             _ => None,
         })
         .collect();
@@ -19,13 +35,22 @@ fn run_all_tests(src: &str) -> Vec<(String, Option<String>)> {
     tests
         .into_iter()
         .map(|test| {
+            if test.is_skipped() {
+                return (test.func.name.clone(), None);
+            }
             let interp = Interpreter::new();
-            let result = interp.run_test(&program, &[], test);
-            let outcome = match result {
-                Ok(_) => None,
-                Err(e) => Some(e.message),
+            let run = interp.run_test(&program, &[], test);
+            let outcome = if passes(test, &run.outcome) {
+                None
+            } else {
+                Some(match &run.outcome {
+                    TestOutcome::Panicked { message } => message.clone(),
+                    TestOutcome::TimedOut => "timed out".to_string(),
+                    TestOutcome::Cancelled => "cancelled".to_string(),
+                    TestOutcome::Completed => "completed unexpectedly".to_string(),
+                })
             };
-            (test.name.clone(), outcome)
+            (test.func.name.clone(), outcome)
         })
         .collect()
 }
@@ -56,7 +81,7 @@ fn failed_assert_surfaces_as_error() {
     );
     let (name, err) = &outcomes[0];
     assert_eq!(name, "fails");
-    assert_eq!(err.as_deref(), Some("uncaught exception: one is not two"));
+    assert_eq!(err.as_deref(), Some("one is not two"));
 }
 
 #[test]
@@ -69,7 +94,7 @@ fn panic_fails_the_test() {
         }
         "#,
     );
-    assert_eq!(outcomes[0].1.as_deref(), Some("uncaught exception: boom"));
+    assert_eq!(outcomes[0].1.as_deref(), Some("boom"));
 }
 
 #[test]
@@ -123,7 +148,7 @@ fn async_test_fails_when_body_asserts() {
     );
     let (name, err) = &outcomes[0];
     assert_eq!(name, "async_fails");
-    assert_eq!(err.as_deref(), Some("uncaught exception: one is not two"));
+    assert_eq!(err.as_deref(), Some("one is not two"));
 }
 
 #[test]
@@ -202,4 +227,154 @@ fn assert_true_is_a_no_op() {
     let interp = Interpreter::new();
     let out = interp.run(&program).unwrap();
     assert_eq!(out, vec!["after assert".to_string()]);
+}
+
+#[test]
+fn should_fail_passes_on_panic_and_assertion() {
+    let outcomes = run_all_tests(
+        r#"
+        #[test(should_fail)]
+        fn panics() { panic("boom") }
+        #[test(should_fail)]
+        fn asserts() { assert(false, "nope") }
+        "#,
+    );
+    assert_eq!(
+        outcomes,
+        vec![("panics".to_string(), None), ("asserts".to_string(), None),]
+    );
+}
+
+#[test]
+fn should_fail_fails_when_body_completes() {
+    let outcomes = run_all_tests(
+        r#"
+        #[test(should_fail)]
+        fn completes() { assert(true, "ok") }
+        "#,
+    );
+    assert_eq!(outcomes[0].1.as_deref(), Some("completed unexpectedly"));
+}
+
+#[test]
+fn should_panic_passes_only_on_panic() {
+    let outcomes = run_all_tests(
+        r#"
+        #[test(should_panic)]
+        fn panics() { panic("boom") }
+        #[test(should_panic)]
+        fn completes() { }
+        "#,
+    );
+    assert_eq!(outcomes[0].1, None);
+    assert_eq!(outcomes[1].1.as_deref(), Some("completed unexpectedly"));
+}
+
+#[test]
+fn should_panic_message_is_a_case_sensitive_substring() {
+    let outcomes = run_all_tests(
+        r#"
+        #[test(should_panic = "division by zero")]
+        fn matches() { panic("error: division by zero here") }
+        #[test(should_panic = "Division By Zero")]
+        fn wrong_case() { panic("error: division by zero here") }
+        "#,
+    );
+    assert_eq!(outcomes[0].1, None);
+    assert!(outcomes[1].1.is_some(), "case must match exactly");
+}
+
+#[test]
+fn should_panic_matches_empty_message() {
+    let outcomes = run_all_tests(
+        r#"
+        #[test(should_panic = "")]
+        fn any_panic() { panic("anything") }
+        "#,
+    );
+    assert_eq!(outcomes[0].1, None);
+}
+
+#[test]
+fn skipped_test_is_not_executed() {
+    let outcomes = run_all_tests(
+        r#"
+        #[test(skip)]
+        fn skipped() { panic("must not run") }
+        "#,
+    );
+    assert_eq!(outcomes, vec![("skipped".to_string(), None)]);
+}
+
+#[test]
+fn timeout_reports_timed_out() {
+    let outcomes = run_all_tests(
+        r#"
+        #[test(timeout = 1)]
+        fn too_slow() {
+            let mut i = 0
+            while i < 100000000 {
+                i = i + 1
+            }
+        }
+        "#,
+    );
+    assert_eq!(outcomes[0].1.as_deref(), Some("timed out"));
+}
+
+#[test]
+fn fast_test_keeps_its_normal_outcome_under_a_deadline() {
+    let outcomes = run_all_tests(
+        r#"
+        #[test(timeout = 10000)]
+        fn quick() { assert(true, "ok") }
+        "#,
+    );
+    assert_eq!(outcomes[0].1, None);
+}
+
+#[test]
+fn timeout_passes_should_fail_but_not_should_panic() {
+    let outcomes = run_all_tests(
+        r#"
+        #[test(should_fail, timeout = 1)]
+        fn fails_by_timeout() {
+            let mut i = 0
+            while i < 100000000 { i = i + 1 }
+        }
+        #[test(should_panic, timeout = 1)]
+        fn panics_by_timeout() {
+            let mut i = 0
+            while i < 100000000 { i = i + 1 }
+        }
+        "#,
+    );
+    assert_eq!(outcomes[0].1, None);
+    assert_eq!(outcomes[1].1.as_deref(), Some("timed out"));
+}
+
+#[test]
+fn async_panic_under_a_deadline_keeps_the_panic_outcome() {
+    // A settled async body must not wait out its deadline: the run is a
+    // panic, not a timeout.
+    let outcomes = run_all_tests(
+        r#"
+        async fn explode() { panic("boom") }
+        #[test(should_panic = "boom", timeout = 10000)]
+        async fn fast_panic() { await explode() }
+        "#,
+    );
+    assert_eq!(outcomes[0].1, None);
+}
+
+#[test]
+fn async_completion_under_a_deadline_completes() {
+    let outcomes = run_all_tests(
+        r#"
+        async fn value(): number { return 1 }
+        #[test(timeout = 10000)]
+        async fn quick() { assert(await value() == 1, "one") }
+        "#,
+    );
+    assert_eq!(outcomes[0].1, None);
 }

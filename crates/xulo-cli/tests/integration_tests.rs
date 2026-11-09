@@ -2168,6 +2168,60 @@ async fn async_works() {
 }
 
 #[test]
+fn test_command_applies_options() {
+    let file = temp_file(
+        "tests_options.xulo",
+        r#"
+#[test(should_fail)]
+fn expected_failure() {
+    panic("boom")
+}
+
+#[test(should_panic = "boom")]
+fn expected_message() {
+    panic("bang boom bang")
+}
+
+#[test(skip = "not yet")]
+fn skipped_test() {
+    panic("must not run")
+}
+
+#[test(timeout = 1)]
+fn slow() {
+    let mut i = 0
+    while i < 100000000 {
+        i = i + 1
+    }
+}
+"#,
+    );
+    let out = Command::new(BIN).arg("test").arg(&file).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stdout.contains("test expected_failure ... ok"),
+        "stdout: {stdout}"
+    );
+    assert!(
+        stdout.contains("test expected_message ... ok"),
+        "stdout: {stdout}"
+    );
+    assert!(
+        stdout.contains("test skipped_test ... skipped (not yet)"),
+        "stdout: {stdout}"
+    );
+    assert!(!stderr.contains("must not run"), "stderr: {stderr}");
+    assert!(stderr.contains("test slow ... FAILED"), "stderr: {stderr}");
+    assert!(
+        stdout.contains("2 passed, 1 failed, 1 skipped"),
+        "stdout: {stdout}"
+    );
+    assert_eq!(out.status.code(), Some(1), "stderr: {stderr}");
+    let _ = std::fs::remove_file(&file);
+}
+
+#[test]
 fn test_command_inert_under_run() {
     let file = temp_file(
         "tests_inert.xulo",

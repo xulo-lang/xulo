@@ -23,7 +23,7 @@ impl Named for S { fn name(self): string { return self.a } }
     .unwrap_or_else(|e| panic!("{}", e.message));
     let attrs_of = |i: usize| -> Vec<(String, Vec<String>, bool)> {
         let attrs = match &program.statements[i] {
-            Statement::Test(f) => &f.attributes,
+            Statement::Test(t) => &t.func.attributes,
             Statement::Fn(f) => &f.attributes,
             Statement::Struct(s) => &s.attributes,
             Statement::Enum(e) => &e.attributes,

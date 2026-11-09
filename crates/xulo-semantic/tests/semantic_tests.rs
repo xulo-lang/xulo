@@ -5188,7 +5188,7 @@ fn wrong_test_shape_is_e0110() {
         assert_eq!(err.code(), "E0110", "{src}: {}", err.message);
         assert!(
             err.message.contains(
-                "attribute `test` takes no arguments and is written `#[test]`, followed by `[async] fn name() { … }`"
+                "attribute `test` takes `should_fail`, `should_panic`, `should_panic = \"…\"`, `skip`, `skip = \"…\"`, or `timeout = N`"
             ),
             "{src}: {}",
             err.message
@@ -5197,19 +5197,63 @@ fn wrong_test_shape_is_e0110() {
 }
 
 #[test]
-fn test_attribute_takes_no_arguments() {
-    // `#[test]` takes no argument group, so every `#[test(...)]` group — a
-    // name, a string, or a numeral — falls back to an ordinary attribute on
-    // the `fn` and is `E0110` (spec `testing.md`, `grammar.md`).
+fn malformed_test_group_is_e0110() {
+    // A group that is not a `TestOptions` list — an empty group, a name, a
+    // positional value, an unknown option, or a wrong value type — falls back
+    // to an ordinary attribute on the `fn` and is `E0110` (spec `testing.md`,
+    // `grammar.md`).
     for src in [
         "#[test()] fn t() {}",
         "#[test(name)] fn t() {}",
         r#"#[test("adds two numbers")] fn t() {}"#,
         "#[test(1)] fn t() {}",
+        r#"#[test(category = "slow")] fn t() {}"#,
+        "#[test(focus)] fn t() {}",
+        r#"#[test(should_fail = "msg")] fn t() {}"#,
+        r#"#[test(timeout = "100")] fn t() {}"#,
+        "#[test(timeout = 1.5)] fn t() {}",
     ] {
         let err = analyze_src(src).unwrap_err();
         assert_eq!(err.code(), "E0110", "unexpected: {}", err.message);
     }
+}
+
+#[test]
+fn invalid_test_option_combinations_are_e0110() {
+    // These parse as `TestDecl` option lists, so the combination rules are a
+    // checking rule: at most one expectation, at most one timeout, `skip`
+    // alone, and a positive timeout (spec testing.md, "Options").
+    for src in [
+        "#[test(should_fail, should_panic)] fn t() {}",
+        "#[test(should_panic, should_fail)] fn t() {}",
+        "#[test(timeout = 0)] fn t() {}",
+        "#[test(timeout = 1, timeout = 2)] fn t() {}",
+        "#[test(skip, timeout = 1)] fn t() {}",
+        "#[test(skip, should_fail)] fn t() {}",
+        "#[test(skip, skip)] fn t() {}",
+    ] {
+        let err = analyze_src(src).unwrap_err();
+        assert_eq!(err.code(), "E0110", "{src}: {}", err.message);
+    }
+    // Valid combinations stay accepted.
+    for src in [
+        "#[test(timeout = 1)] fn t() {}",
+        "#[test(should_fail, timeout = 1)] fn t() {}",
+        "#[test(should_panic = \"x\", timeout = 1)] fn t() {}",
+        "#[test(skip = \"later\")] fn t() {}",
+    ] {
+        analyze_src(src).unwrap_or_else(|e| panic!("{src}: {}", e.message));
+    }
+}
+
+#[test]
+fn test_options_do_not_change_the_name_or_placement_rules() {
+    // The marker's identifier still binds no value (E0107), even when the
+    // declaration is skipped, and the fixed shape still applies.
+    let err = analyze_src("#[test(skip)]\nfn t() {}\nfn main() { t() }").unwrap_err();
+    assert_eq!(err.code(), "E0107", "unexpected: {}", err.message);
+    let err = analyze_src("#[test(timeout = 1)] fn t(x: number) {}").unwrap_err();
+    assert_eq!(err.code(), "E0110", "unexpected: {}", err.message);
 }
 
 #[test]

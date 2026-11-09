@@ -112,23 +112,46 @@
     },
     "attributes": {
       "patterns": [
+        { "include": "#test-attribute" },
+        { "include": "#attribute" }
+      ]
+    },
+    "test-attribute": {
+      "name": "meta.attribute.test.xulo",
+      "begin": "(#\\[)\\s*(test)\\b",
+      "beginCaptures": {
+        "1": { "name": "punctuation.definition.attribute.xulo" },
+        "2": { "name": "entity.name.function.attribute.xulo" }
+      },
+      "end": "\\]",
+      "endCaptures": { "0": { "name": "punctuation.definition.attribute.xulo" } },
+      "patterns": [
+        { "include": "#comments" },
+        { "include": "#strings" },
+        { "include": "#templates" },
         {
-          "name": "meta.attribute.xulo",
-          "begin": "(#\\[)\\s*([A-Za-z_][A-Za-z0-9_]*)",
-          "beginCaptures": {
-            "1": { "name": "punctuation.definition.attribute.xulo" },
-            "2": { "name": "entity.name.function.attribute.xulo" }
-          },
-          "end": "\\]",
-          "endCaptures": { "0": { "name": "punctuation.definition.attribute.xulo" } },
-          "patterns": [
-            { "include": "#comments" },
-            { "include": "#strings" },
-            { "include": "#templates" },
-            { "include": "#numbers" },
-            { "include": "#types" }
-          ]
-        }
+          "match": "\\b(?:should_fail|should_panic|skip|timeout)\\b",
+          "name": "support.constant.test-option.xulo"
+        },
+        { "match": "=", "name": "keyword.operator.assignment.xulo" },
+        { "include": "#numbers" }
+      ]
+    },
+    "attribute": {
+      "name": "meta.attribute.xulo",
+      "begin": "(#\\[)\\s*([A-Za-z_][A-Za-z0-9_]*)",
+      "beginCaptures": {
+        "1": { "name": "punctuation.definition.attribute.xulo" },
+        "2": { "name": "entity.name.function.attribute.xulo" }
+      },
+      "end": "\\]",
+      "endCaptures": { "0": { "name": "punctuation.definition.attribute.xulo" } },
+      "patterns": [
+        { "include": "#comments" },
+        { "include": "#strings" },
+        { "include": "#templates" },
+        { "include": "#numbers" },
+        { "include": "#types" }
       ]
     },
     "component-annotations": {

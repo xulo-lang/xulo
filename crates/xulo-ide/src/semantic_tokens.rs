@@ -100,8 +100,8 @@ fn collect_decls(statements: &[Statement], tokens: &mut Vec<SemanticToken>) {
                 collect_decls(&fn_def.body.statements, tokens);
             }
             Statement::Test(test_def) => {
-                decl(tokens, test_def.name_span.clone(), TokenType::Function);
-                collect_decls(&test_def.body.statements, tokens);
+                decl(tokens, test_def.func.name_span.clone(), TokenType::Function);
+                collect_decls(&test_def.func.body.statements, tokens);
             }
             Statement::Let(binding) => decl(
                 tokens,

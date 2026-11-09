@@ -8,12 +8,14 @@ pub struct Program {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Statement {
     Fn(FnDef),
-    /// `#[test] [async] fn name() { … }` — an
+    /// `#[test(options)] [async] fn name() { … }` — an
     /// always-checked, inert test body (spec testing.md). The `FnDef` carries
     /// the fixed shape: empty params, no return type, no generics; `is_async`
     /// is the optional marker. The identifier is the test's identity for a
-    /// tool's reporting: not a name, never referenceable.
-    Test(FnDef),
+    /// tool's reporting: not a name, never referenceable. `options` carries
+    /// the parsed option group in written order; the mode, expected message,
+    /// skip reason, and deadline are read from it.
+    Test(TestDef),
     Let(LetBinding),
     Return(ReturnStmt),
     For(ForStmt),
@@ -172,6 +174,99 @@ pub struct FnDef {
     /// The exported symbol is the declared name and the compiler lays the
     /// function out under the registered ABI's calling convention.
     pub abi: Option<String>,
+}
+
+/// The expectation a `#[test]` marker declares (spec testing.md, "Options").
+/// `Normal` is the absent expectation; `should_fail` and `should_panic` are
+/// the two expectations. A timeout combines with either expectation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TestMode {
+    Normal,
+    ShouldFail,
+    ShouldPanic,
+}
+
+/// One option in a `#[test(...)]` group, with the spans a diagnostic needs.
+/// The order is preserved; validity rules (at most one expectation, at most
+/// one timeout, `skip` alone, positive timeout) are checking rules, not
+/// grammatical ones (spec testing.md).
+#[derive(Debug, Clone, PartialEq)]
+pub enum TestOption {
+    ShouldFail {
+        span: Range<usize>,
+    },
+    ShouldPanic {
+        /// The cooked expected substring for `should_panic = "text"`.
+        message: Option<String>,
+        span: Range<usize>,
+        message_span: Option<Range<usize>>,
+    },
+    Skip {
+        /// The cooked reason for `skip = "reason"`.
+        reason: Option<String>,
+        span: Range<usize>,
+        reason_span: Option<Range<usize>>,
+    },
+    Timeout {
+        /// The millisecond deadline; zero marks an invalid `timeout = 0` so
+        /// checking can report `E0110`.
+        value: u64,
+        span: Range<usize>,
+        value_span: Range<usize>,
+    },
+}
+
+/// `#[test(options)] [async] fn name() { … }` — the fixed-shape test form
+/// (spec testing.md). `func` carries the declaration shape shared with an
+/// ordinary function; `options` is the option group in written order (empty
+/// for a bare `#[test]`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct TestDef {
+    pub func: FnDef,
+    pub options: Vec<TestOption>,
+}
+
+impl TestDef {
+    /// The declared expectation. A duplicated expectation is invalid and
+    /// rejected before execution; the first one is reported here.
+    pub fn mode(&self) -> TestMode {
+        for option in &self.options {
+            match option {
+                TestOption::ShouldFail { .. } => return TestMode::ShouldFail,
+                TestOption::ShouldPanic { .. } => return TestMode::ShouldPanic,
+                _ => {}
+            }
+        }
+        TestMode::Normal
+    }
+
+    /// The expected panic substring, when `should_panic = "text"` was written.
+    pub fn expected_message(&self) -> Option<&str> {
+        self.options.iter().find_map(|option| match option {
+            TestOption::ShouldPanic { message, .. } => message.as_deref(),
+            _ => None,
+        })
+    }
+
+    pub fn is_skipped(&self) -> bool {
+        self.options
+            .iter()
+            .any(|option| matches!(option, TestOption::Skip { .. }))
+    }
+
+    pub fn skip_reason(&self) -> Option<&str> {
+        self.options.iter().find_map(|option| match option {
+            TestOption::Skip { reason, .. } => reason.as_deref(),
+            _ => None,
+        })
+    }
+
+    pub fn timeout_ms(&self) -> Option<u64> {
+        self.options.iter().find_map(|option| match option {
+            TestOption::Timeout { value, .. } => Some(*value),
+            _ => None,
+        })
+    }
 }
 
 /// `[pub] extern "abi" { ExternItem* }` — an FFI import block (spec ffi.md).

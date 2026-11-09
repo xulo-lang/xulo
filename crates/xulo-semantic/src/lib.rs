@@ -2977,8 +2977,8 @@ fn run_analysis(
     // Pre-scan `#[test]` names so any reference to one — before or after its
     // declaration — fails with E0107 instead of "undefined variable".
     for statement in &program.statements {
-        if let Statement::Test(f) = statement {
-            analyzer.test_names.insert(f.name.clone());
+        if let Statement::Test(t) = statement {
+            analyzer.test_names.insert(t.func.name.clone());
         }
     }
     // Pre-scan `impl` methods so `spawn.process Tally { … }` can ask whether
@@ -3429,7 +3429,8 @@ fn walk_assign(assign: &mut AssignStmt, f: &mut dyn FnMut(&mut Expression)) {
 
 fn walk_stmt(stmt: &mut Statement, f: &mut dyn FnMut(&mut Expression)) {
     match stmt {
-        Statement::Fn(fd) | Statement::Test(fd) => walk_block(&mut fd.body, f),
+        Statement::Fn(fd) => walk_block(&mut fd.body, f),
+        Statement::Test(t) => walk_block(&mut t.func.body, f),
         Statement::Let(l) => {
             if let Some(value) = &mut l.value {
                 walk_expr(value, f);
@@ -3928,6 +3929,10 @@ const DECL_PHRASE_TYPE: &str = "a type alias";
 const DECL_PHRASE_LET: &str = "a let binding";
 const DECL_PHRASE_CONST: &str = "a const binding";
 
+/// The registry message for `#[test]` with a malformed or non-matching option
+/// group (spec `types/traits.md`, "Test"; `E0110`).
+const TEST_ATTR_SHAPE: &str = "attribute `test` takes `should_fail`, `should_panic`, `should_panic = \"…\"`, `skip`, `skip = \"…\"`, or `timeout = N`";
+
 /// Record `err` unless an earlier one already stands: registry validation
 /// keeps walking after a failure so later declarations still register their
 /// derives, but only the first error is reported (fail-fast contract).
@@ -4069,8 +4074,10 @@ impl Analyzer {
 
         for statement in &program.statements {
             // A `TestDecl`'s `#[test]` is part of the production: no registry
-            // lookup runs for it (spec testing.md).
-            if matches!(statement, Statement::Test(_)) {
+            // lookup runs for it (spec testing.md). Its option group still
+            // has validity rules, checked here.
+            if let Statement::Test(t) = statement {
+                self.validate_test_options(t, &mut first);
                 continue;
             }
             match statement {
@@ -4239,13 +4246,71 @@ impl Analyzer {
             if kind == AttrKind::Test {
                 record_first!(
                     *first,
-                    self.err_code(
-                        "E0110",
-                        "attribute `test` takes no arguments and is written `#[test]`, followed by `[async] fn name() { … }`"
-                    )
-                    .at(attr.name_span.clone())
+                    self.err_code("E0110", TEST_ATTR_SHAPE)
+                        .at(attr.name_span.clone())
                 );
             }
+        }
+    }
+
+    /// Validate a `TestDecl`'s option group (spec testing.md, "Options"):
+    /// at most one expectation, at most one `timeout`, `skip` alone, and a
+    /// positive integer timeout. A violation is `E0110`, the same diagnostic
+    /// a group that did not form a `TestDecl` gets.
+    fn validate_test_options(
+        &mut self,
+        t: &xulo_core::ast::TestDef,
+        first: &mut Option<XuloError>,
+    ) {
+        use xulo_core::ast::TestOption;
+        let mut expectations = 0usize;
+        let mut timeouts = 0usize;
+        let mut skips = 0usize;
+        let mut invalid_span: Option<Range<usize>> = None;
+        for option in &t.options {
+            match option {
+                TestOption::ShouldFail { span } => {
+                    expectations += 1;
+                    if expectations > 1 && invalid_span.is_none() {
+                        invalid_span = Some(span.clone());
+                    }
+                }
+                TestOption::ShouldPanic { span, .. } => {
+                    expectations += 1;
+                    if expectations > 1 && invalid_span.is_none() {
+                        invalid_span = Some(span.clone());
+                    }
+                }
+                TestOption::Skip { span, .. } => {
+                    skips += 1;
+                    if skips > 1 && invalid_span.is_none() {
+                        invalid_span = Some(span.clone());
+                    }
+                }
+                TestOption::Timeout {
+                    value,
+                    span,
+                    value_span,
+                } => {
+                    timeouts += 1;
+                    if *value == 0 {
+                        invalid_span = invalid_span.or_else(|| Some(value_span.clone()));
+                    }
+                    if timeouts > 1 && invalid_span.is_none() {
+                        invalid_span = Some(span.clone());
+                    }
+                }
+            }
+        }
+        // `skip` describes a run that will not happen, so it stands alone.
+        if skips > 0 && t.options.len() > 1 && invalid_span.is_none() {
+            invalid_span = t.options.iter().find_map(|option| match option {
+                TestOption::Skip { span, .. } => Some(span.clone()),
+                _ => None,
+            });
+        }
+        if let Some(span) = invalid_span {
+            record_first!(*first, self.err_code("E0110", TEST_ATTR_SHAPE).at(span));
         }
     }
 
@@ -4707,7 +4772,7 @@ impl Analyzer {
                 self.pop_const_params(consts);
                 result
             }
-            Statement::Test(f) => self.check_test(f),
+            Statement::Test(t) => self.check_test(&t.func),
             Statement::Let(binding) => {
                 if binding.memo {
                     self.require_fn_body_top_level("@Memo")?;

@@ -6,10 +6,12 @@ use std::rc::Rc;
 
 use clap::{Parser, Subcommand};
 
-use xulo_core::ast::{FnDef, Statement};
+use xulo_core::ast::{Statement, TestDef, TestMode};
 use xulo_core::diagnostics;
 use xulo_core::error::{ErrorKind, XuloError};
-use xulo_runtime::interpreter::{Interpreter, ModuleExports, NativeFn, RunError};
+use xulo_runtime::interpreter::{
+    Interpreter, ModuleExports, NativeFn, RunError, TestOutcome, TestRun,
+};
 use xulo_runtime::value::Value;
 
 #[derive(Parser)]
@@ -352,12 +354,12 @@ pub fn test_file(file: &Path) -> ExitCode {
     print_warnings(&warnings, None);
 
     let entry = &loaded.modules[loaded.entry];
-    let tests: Vec<&FnDef> = entry
+    let tests: Vec<&TestDef> = entry
         .program
         .statements
         .iter()
         .filter_map(|s| match s {
-            Statement::Test(f) => Some(f),
+            Statement::Test(t) => Some(t),
             _ => None,
         })
         .collect();
@@ -368,12 +370,25 @@ pub fn test_file(file: &Path) -> ExitCode {
 
     let mut passed = 0usize;
     let mut failed = 0usize;
+    let mut skipped = 0usize;
     for test in tests {
+        let name = &test.func.name;
+        // `skip` prevents the run: report it with its reason and count it
+        // neither as a pass nor a failure (spec testing.md, "Skip").
+        if test.is_skipped() {
+            match test.skip_reason() {
+                Some(reason) => println!("test {name} ... skipped ({reason})"),
+                None => println!("test {name} ... skipped"),
+            }
+            skipped += 1;
+            continue;
+        }
+
         // Fresh interpreter per test: re-execute dependencies (never `main`),
         // then run the entry module and invoke this one test body.
         let interp = Interpreter::new();
         let mut export_maps: Vec<HashMap<String, Value>> = Vec::with_capacity(loaded.modules.len());
-        let mut setup_err: Option<XuloError> = None;
+        let mut setup_err: Option<TestRun> = None;
         for (idx, module) in loaded.modules.iter().enumerate() {
             if idx == loaded.entry {
                 break;
@@ -388,49 +403,103 @@ pub fn test_file(file: &Path) -> ExitCode {
                     export_maps.push(map);
                 }
                 Err(err) => {
-                    setup_err = Some(match err {
-                        RunError::Err(e) => e,
-                        RunError::Throw(v) => XuloError::new(
-                            ErrorKind::Runtime,
-                            format!("uncaught exception: {}", v.format()),
+                    let (message, error) = match err {
+                        RunError::Err(e) => (e.message.clone(), e),
+                        RunError::Throw(v) => (
+                            v.format(),
+                            XuloError::new(
+                                ErrorKind::Runtime,
+                                format!("uncaught exception: {}", v.format()),
+                            ),
                         ),
-                        RunError::Propagate(v) => XuloError::new(
-                            ErrorKind::Runtime,
+                        RunError::Propagate(v) => (
                             format!("`?` propagated with no enclosing function: {}", v.format()),
+                            XuloError::new(
+                                ErrorKind::Runtime,
+                                format!(
+                                    "`?` propagated with no enclosing function: {}",
+                                    v.format()
+                                ),
+                            ),
                         ),
+                    };
+                    setup_err = Some(TestRun {
+                        outcome: TestOutcome::Panicked { message },
+                        printed: Vec::new(),
+                        error: Some(error),
                     });
                     break;
                 }
             }
         }
-        if let Some(err) = setup_err {
-            eprintln!("test {} ... FAILED", test.name);
-            let src_file = err.file.clone().unwrap_or_else(|| entry.file.clone());
-            let source = std::fs::read_to_string(&src_file).unwrap_or_default();
-            print_compile_error(&err, &source, &src_file);
+        let run = match setup_err {
+            Some(run) => run,
+            None => {
+                let imports = module_imports(entry, &export_maps, &loaded);
+                interp.run_test(&entry.program, &imports, test)
+            }
+        };
+        if test_passes(test, &run.outcome) {
+            println!("test {name} ... ok");
+            passed += 1;
+        } else {
+            eprintln!("test {name} ... FAILED");
+            match &run.error {
+                Some(err) => {
+                    let src_file = err.file.clone().unwrap_or_else(|| entry.file.clone());
+                    let source = std::fs::read_to_string(&src_file).unwrap_or_default();
+                    print_compile_error(err, &source, &src_file);
+                }
+                None => eprintln!("  {}", failure_note(test, &run.outcome)),
+            }
             failed += 1;
-            continue;
-        }
-        let imports = module_imports(entry, &export_maps, &loaded);
-        match interp.run_test(&entry.program, &imports, test) {
-            Ok(_printed) => {
-                println!("test {} ... ok", test.name);
-                passed += 1;
-            }
-            Err(err) => {
-                eprintln!("test {} ... FAILED", test.name);
-                let src_file = err.file.clone().unwrap_or_else(|| entry.file.clone());
-                let source = std::fs::read_to_string(&src_file).unwrap_or_default();
-                print_compile_error(&err, &source, &src_file);
-                failed += 1;
-            }
         }
     }
-    println!("{passed} passed, {failed} failed");
+    if skipped > 0 {
+        println!("{passed} passed, {failed} failed, {skipped} skipped");
+    } else {
+        println!("{passed} passed, {failed} failed");
+    }
     if failed > 0 {
         ExitCode::from(1)
     } else {
         ExitCode::SUCCESS
+    }
+}
+
+/// Whether a run outcome satisfies the test's declared expectation (spec
+/// testing.md, "Running"). `should_panic = "text"` additionally requires the
+/// failure message to contain `text` as a case-sensitive substring.
+fn test_passes(test: &TestDef, outcome: &TestOutcome) -> bool {
+    match test.mode() {
+        TestMode::Normal => matches!(outcome, TestOutcome::Completed),
+        TestMode::ShouldFail => !matches!(outcome, TestOutcome::Completed),
+        TestMode::ShouldPanic => match outcome {
+            TestOutcome::Panicked { message } => match test.expected_message() {
+                Some(expected) => message.contains(expected),
+                None => true,
+            },
+            _ => false,
+        },
+    }
+}
+
+/// A human-readable reason a run did not satisfy its expectation, used when
+/// the failure has no `XuloError` to print (a completed `should_fail`, a
+/// non-matching panic message, or a timeout).
+fn failure_note(test: &TestDef, outcome: &TestOutcome) -> String {
+    match outcome {
+        TestOutcome::Completed => match test.mode() {
+            TestMode::ShouldFail => "test completed but was expected to fail".to_string(),
+            TestMode::ShouldPanic => "test completed but was expected to panic".to_string(),
+            TestMode::Normal => "test completed".to_string(),
+        },
+        TestOutcome::Panicked { message } => match test.expected_message() {
+            Some(expected) => format!("panic message did not contain `{expected}`: {message}"),
+            None => format!("test panicked: {message}"),
+        },
+        TestOutcome::Cancelled => "test was cancelled".to_string(),
+        TestOutcome::TimedOut => "test timed out".to_string(),
     }
 }
 
