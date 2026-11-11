@@ -200,10 +200,8 @@ fn attribute_arg(pair: Pair<'_, Rule>) -> R<AttributeArg> {
                     Rule::identifier => AttributeValue::Identifier(v.as_str().to_string()),
                     Rule::string_literal => AttributeValue::String(decode_string(v.as_str())),
                     Rule::number_literal => match literal_number(v.as_str()) {
-                        // The decimal point, not the value, decides int vs
-                        // float: `3.0` is a float literal, `3` is an integer.
-                        Some(n) if v.as_str().contains('.') => AttributeValue::Float(n),
-                        Some(n) => AttributeValue::Integer(n as i64),
+                        Some(n) if n.fract() == 0.0 => AttributeValue::Integer(n as i64),
+                        Some(n) => AttributeValue::Float(n),
                         None => AttributeValue::Integer(0),
                     },
                     Rule::boolean_literal => AttributeValue::Boolean(v.as_str() == "true"),

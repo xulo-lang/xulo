@@ -312,13 +312,13 @@ fn is_ptr_type(ty: &Type) -> bool {
 fn numeric_literal_of(expr: &Expression) -> Option<f64> {
     match expr {
         Expression::Literal {
-            value: Literal::Number(v) | Literal::Float(v),
+            value: Literal::Number(v),
             ..
         } => Some(*v),
         Expression::Unary(un) if matches!(un.operator, xulo_core::ast::UnaryOperator::Neg) => {
             match &un.operand {
                 Expression::Literal {
-                    value: Literal::Number(v) | Literal::Float(v),
+                    value: Literal::Number(v),
                     ..
                 } => Some(-*v),
                 _ => None,
@@ -3717,8 +3717,7 @@ fn place_of(expr: &Expression) -> Option<Place> {
             Expression::Index(i) => {
                 let index = match &*i.index {
                     Expression::Literal {
-                        value: xulo_core::ast::Literal::Number(n)
-                        | xulo_core::ast::Literal::Float(n),
+                        value: xulo_core::ast::Literal::Number(n),
                         ..
                     } if n.fract() == 0.0 && n.is_finite() => Some(*n as i64),
                     _ => None,
@@ -3799,7 +3798,7 @@ fn assign_target_place(target: &AssignTarget) -> Option<Place> {
             let mut place = place_of(object)?;
             let idx = match &**index {
                 Expression::Literal {
-                    value: xulo_core::ast::Literal::Number(n) | xulo_core::ast::Literal::Float(n),
+                    value: xulo_core::ast::Literal::Number(n),
                     ..
                 } if n.fract() == 0.0 && n.is_finite() => Some(*n as i64),
                 _ => None,
@@ -13920,7 +13919,7 @@ fn type_same(a: &Type, b: &Type) -> bool {
 fn literal_type(lit: &Literal) -> Type {
     match lit {
         Literal::String(_) => Type::String,
-        Literal::Number(_) | Literal::Float(_) => Type::Number,
+        Literal::Number(_) => Type::Number,
         Literal::Boolean(_) => Type::Boolean,
         Literal::Null => Type::Null,
         Literal::List(items) => {
@@ -13972,9 +13971,7 @@ fn union_join(a: &Type, b: &Type) -> Type {
 fn pattern_name(arm: &xulo_core::ast::MatchArm) -> String {
     match &arm.pattern {
         xulo_core::ast::MatchPattern::Literal(Literal::String(s)) => format!("\"{s}\""),
-        xulo_core::ast::MatchPattern::Literal(Literal::Number(n) | Literal::Float(n)) => {
-            n.to_string()
-        }
+        xulo_core::ast::MatchPattern::Literal(Literal::Number(n)) => n.to_string(),
         xulo_core::ast::MatchPattern::Literal(Literal::Boolean(b)) => b.to_string(),
         xulo_core::ast::MatchPattern::Literal(Literal::Null) => "null".into(),
         xulo_core::ast::MatchPattern::Literal(Literal::List(_)) => "[...]".into(),

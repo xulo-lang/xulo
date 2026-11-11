@@ -295,11 +295,13 @@ impl IrGenerator {
     pub(super) fn generate_literal(&mut self, lit: &Literal) -> Result<Operand, XuloError> {
         let func_idx = self.current_func.unwrap();
         let (value, ty) = match lit {
-            // Integer spelling (`42`, `0xff`) stays in an I64 slot; any literal
-            // written with a decimal point (`3.0`) is a float and must use an
-            // F64 slot even when integral, so `a / 1.0` is float division.
-            Literal::Number(n) => (IrValue::I64(*n as i64), IrType::I64),
-            Literal::Float(n) => (IrValue::F64(*n), IrType::F64),
+            Literal::Number(n) => {
+                if n.fract() == 0.0 {
+                    (IrValue::I64(*n as i64), IrType::I64)
+                } else {
+                    (IrValue::F64(*n), IrType::F64)
+                }
+            }
             Literal::Boolean(b) => (IrValue::Bool(*b), IrType::Bool),
             Literal::String(s) => {
                 let idx = self.module.add_string(s.clone());
@@ -1736,16 +1738,12 @@ impl IrGenerator {
         Ok(match lit {
             Literal::Number(n) => {
                 // i64 槽只承载精确可表示的整数，其余按 f64 位模式比对
-                if n.fract() == 0.0
-                    && n.is_finite()
-                    && n.abs() <= 9.007_199_254_740_992e15
-                {
+                if n.fract() == 0.0 && n.is_finite() && n.abs() <= 9.007_199_254_740_992e15 {
                     (Operand::Const(IrValue::I64(*n as i64)), 1)
                 } else {
                     (Operand::Const(IrValue::F64(*n)), 2)
                 }
             }
-            Literal::Float(n) => (Operand::Const(IrValue::F64(*n)), 2),
             Literal::String(s) => {
                 let idx = self.module.add_string(s.clone());
                 let local = self.module.functions[func_idx].add_local(IrType::Pointer);

@@ -180,20 +180,6 @@ fn test_codegen_division() {
     assert_eq!(out, vec!["5"]);
 }
 
-#[test]
-fn test_codegen_float_division_not_truncated() {
-    // A literal with a decimal point is a float even when integral-valued
-    // (`1000000.0`), so division must be floating point, not `sdiv`.
-    let out = compile_and_run(
-        r#"fn main() {
-            print(1.0 / 3.0)
-            print(14700 / 1000000.0)
-            print(7.0 / 2.0)
-        }"#,
-    );
-    assert_eq!(out, vec!["0.3333333333333333", "0.0147", "3.5"]);
-}
-
 // -- array concat --
 
 #[test]

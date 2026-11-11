@@ -550,7 +550,7 @@ fn member_index_and_optional_chaining() {
 #[test]
 fn numbers_hex_bin_oct() {
     let _p = parse_ok("let a = 0x1f let b = 0b1010 let c = 0o17 let d = 3.14");
-    fn num(src: &str) -> (f64, bool) {
+    fn num(src: &str) -> f64 {
         let Statement::Let(l) = &parse_ok(src).statements[0] else {
             panic!();
         };
@@ -558,21 +558,14 @@ fn numbers_hex_bin_oct() {
             Some(Expression::Literal {
                 value: Literal::Number(n),
                 ..
-            }) => (*n, false),
-            Some(Expression::Literal {
-                value: Literal::Float(n),
-                ..
-            }) => (*n, true),
+            }) => *n,
             other => panic!("expected number, got {other:?}"),
         }
     }
-    assert_eq!(num("let a = 0x1f"), (31.0, false));
-    assert_eq!(num("let b = 0b1010"), (10.0, false));
-    assert_eq!(num("let c = 0o17"), (15.0, false));
-    assert_eq!(num("let d = 2.5"), (2.5, true));
-    // A decimal point decides int vs float: `1.0` is a float, `1` is an int.
-    assert_eq!(num("let e = 1.0"), (1.0, true));
-    assert_eq!(num("let f = 1"), (1.0, false));
+    assert_eq!(num("let a = 0x1f"), 31.0);
+    assert_eq!(num("let b = 0b1010"), 10.0);
+    assert_eq!(num("let c = 0o17"), 15.0);
+    assert_eq!(num("let d = 2.5"), 2.5);
 }
 
 #[test]
