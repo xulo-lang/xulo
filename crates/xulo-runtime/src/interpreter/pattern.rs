@@ -10,7 +10,7 @@ pub(super) fn literal_matches(lit: &Literal, value: &Value) -> bool {
             Value::String(v) => v.as_ref() == s.as_str(),
             _ => false,
         },
-        Literal::Number(n) => matches!(value, Value::Number(v) if v == n),
+        Literal::Number(n) | Literal::Float(n) => matches!(value, Value::Number(v) if v == n),
         Literal::Boolean(b) => matches!(value, Value::Boolean(v) if v == b),
         Literal::Null => matches!(value, Value::Null),
         Literal::List(_) | Literal::Object(_) => false,

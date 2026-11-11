@@ -557,7 +557,18 @@ fn literal_expression(pair: Pair<'_, Rule>) -> R<Expression> {
 
 pub(crate) fn literal_of(pair: Pair<'_, Rule>) -> R<Literal> {
     match pair.as_rule() {
-        Rule::number_literal => Ok(Literal::Number(decode_number(pair.as_str()))),
+        Rule::number_literal => {
+            // `number_literal` is atomic, so the raw spelling is the only way
+            // to tell a float literal (`3.0`) from an integer one (`3`). The
+            // grammar's float form is the only numeric spelling with a `.`.
+            let raw = pair.as_str();
+            let value = decode_number(raw);
+            Ok(if raw.contains('.') {
+                Literal::Float(value)
+            } else {
+                Literal::Number(value)
+            })
+        }
         Rule::string_literal => Ok(Literal::String(decode_string(pair.as_str()))),
         Rule::boolean_literal => Ok(Literal::Boolean(pair.as_str() == "true")),
         Rule::null_literal => Ok(Literal::Null),
