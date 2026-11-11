@@ -100,7 +100,7 @@ fn same_file_claimed_by_two_packages_is_e0610() {
     let dir = temp_pkg("dup_claim");
     write(
         &dir,
-        "xulo.toml",
+        "xupm.toml",
         "[dependencies]\n\
          dep1 = { version = \"0.1\", path = \"./dep\" }\n\
          dep2 = { version = \"0.1\", path = \"./dep\" }\n",
@@ -202,7 +202,7 @@ fn manifest_alias_resolves_package_head() {
     let dir = temp_pkg("manifest_alias");
     write(
         &dir,
-        "xulo.toml",
+        "xupm.toml",
         "[dependencies]\n\"@xulo/ui\" = { version = \"1.2\", alias = \"ui\" }\n",
     );
     write(&dir, "main.xulo", "use ui::{widget};\nfn main() {}\n");
@@ -222,7 +222,7 @@ fn manifest_quoted_key_without_alias_is_error() {
     let dir = temp_pkg("manifest_noalias");
     write(
         &dir,
-        "xulo.toml",
+        "xupm.toml",
         "[dependencies]\n\"@xulo/ui\" = \"1.2\"\n",
     );
     write(&dir, "main.xulo", "fn main() {}\n");
@@ -240,7 +240,7 @@ fn manifest_duplicate_path_name_is_error() {
     let dir = temp_pkg("manifest_dup");
     write(
         &dir,
-        "xulo.toml",
+        "xupm.toml",
         "[dependencies]\n\
          clap = \"4.0\"\n\
          \"@x/ui\" = { version = \"1.0\", alias = \"clap\" }\n",
@@ -260,7 +260,7 @@ fn path_dependency_initializes_first() {
     let dir = temp_pkg("path_dep");
     write(
         &dir,
-        "xulo.toml",
+        "xupm.toml",
         "[dependencies]\ndep = { version = \"0.1\", path = \"./dep\" }\n",
     );
     write(&dir, "dep/main.xulo", "pub fn helper(): number { 7 }\n");
@@ -283,7 +283,7 @@ fn path_dependency_without_main_is_error() {
     let dir = temp_pkg("path_dep_nomain");
     write(
         &dir,
-        "xulo.toml",
+        "xupm.toml",
         "[dependencies]\ndep = { version = \"0.1\", path = \"./dep\" }\n",
     );
     write(&dir, "dep/lib.xulo", "pub fn helper(): number { 7 }\n");
@@ -304,7 +304,7 @@ fn manifest_path_name_shadowing_root_module_is_e0104() {
     let dir = temp_pkg("name_collide");
     write(
         &dir,
-        "xulo.toml",
+        "xupm.toml",
         "[dependencies]\n\"@xulo/ui\" = { version = \"1.2\", alias = \"ui\" }\n",
     );
     write(&dir, "ui.xulo", "pub fn f() {}\n");

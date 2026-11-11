@@ -1846,7 +1846,7 @@ fn native_run_external_import_binds_placeholder() {
     let (ok, stdout, stderr) = native_run(
         &[
             (
-                "xulo.toml",
+                "xupm.toml",
                 "[dependencies]\n\"@xulo/ui\" = { version = \"1.2\", alias = \"ui\" }\n",
             ),
             (
@@ -1904,7 +1904,7 @@ fn native_run_ui_component_headless() {
     let (ok, stdout, stderr) = native_run(
         &[
             (
-                "xulo.toml",
+                "xupm.toml",
                 "[dependencies]\n\"@xulo/ui\" = { version = \"1.2\", alias = \"ui\" }\n",
             ),
             (
@@ -2421,6 +2421,41 @@ fn build_panic_program_prints_panic_and_exits_1() {
     assert!(stderr.contains("panic: boom"), "stderr: {stderr}");
     let _ = std::fs::remove_file(&file);
     let _ = std::fs::remove_file(&exe);
+}
+
+#[test]
+fn build_path_dependency_executable() {
+    let staticlib = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap()
+        .join("target/release/libxulo_runtime.a");
+    if !staticlib.exists() {
+        eprintln!("skipping: {} not built", staticlib.display());
+        return;
+    }
+
+    let (dir, entry) = temp_dir(
+        &[
+            ("xupm.toml", "[dependencies]\ndep = { path = \"./dep\" }\n"),
+            ("dep/main.xulo", "pub fn helper(): number { 7 }\n"),
+            (
+                "main.xulo",
+                "use dep::helper;\nfn main() { print(helper()) }\n",
+            ),
+        ],
+        "main.xulo",
+    );
+    let exe = dir.join("main_aot");
+    build_executable(&entry, &exe);
+    let out = Command::new(&exe).output().unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "7\n");
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// AOT 编译 `examples/control_flow.xulo` 并直接执行产物，输出须与解释器

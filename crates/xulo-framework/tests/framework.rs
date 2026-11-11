@@ -20,7 +20,7 @@ fn temp_program(src: &str) -> PathBuf {
         DIR_COUNTER.fetch_add(1, Ordering::Relaxed)
     ));
     std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("xulo.toml"), MANIFEST_SRC).unwrap();
+    std::fs::write(dir.join("xupm.toml"), MANIFEST_SRC).unwrap();
     let path = dir.join("main.xulo");
     std::fs::write(&path, src).unwrap();
     path

@@ -299,7 +299,7 @@ fn fmt_file(file: &Path) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn check_file(file: &Path) -> ExitCode {
+pub fn check_file(file: &Path) -> ExitCode {
     let mut loaded = match xulo_compiler::module::load(file) {
         Ok(l) => l,
         Err(err) => {

@@ -6,7 +6,7 @@
 //! completed by a `pub use` fixpoint so `use` cycles are ordinary, and
 //! analysis runs in structural initialization order — children before
 //! parents, siblings in declaration order, declared dependencies before the
-//! package's own tree. Manifest dependencies (`xulo.toml`) load as their own
+//! package's own tree. Manifest dependencies (`xupm.toml`) load as their own
 //! packages rooted at `@path_name`; a version-only dependency gets an
 //! external face its members resolve against opaquely.
 
@@ -110,7 +110,7 @@ pub fn load(entry: &Path) -> Result<LoadedModules, XuloError> {
         match &dep.source {
             Some(src) => {
                 let root_file =
-                    dep_root_file(src).map_err(|e| e.with_file(package_dir.join("xulo.toml")))?;
+                    dep_root_file(src).map_err(|e| e.with_file(package_dir.join("xupm.toml")))?;
                 let canonical = root_file.canonicalize().map_err(|e| {
                     XuloError::new(
                         ErrorKind::Io,
@@ -806,11 +806,11 @@ struct ManifestDep {
 }
 
 /// The package's dependency mapping (spec `modules/import-export.md`,
-/// "Package names and the manifest"): `[dependencies]` in `xulo.toml` beside
+/// "Package names and the manifest"): `[dependencies]` in `xupm.toml` beside
 /// the entry file, each key mapped to its path name (`alias` replaces the
 /// key) with an optional `path` for local sources.
 fn parse_manifest(package_dir: &Path) -> Result<Vec<ManifestDep>, XuloError> {
-    let manifest = package_dir.join("xulo.toml");
+    let manifest = package_dir.join("xupm.toml");
     if !manifest.is_file() {
         return Ok(Vec::new());
     }

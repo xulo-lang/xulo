@@ -21,6 +21,26 @@ use xulo_core::ir::*;
 
 use crate::backend::{BackendMode, CompilerModule, RUNTIME_FNS};
 
+fn aot_symbol_name(name: &str) -> String {
+    let mut symbol: String = name
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '_' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if symbol.is_empty() {
+        symbol.push_str("func");
+    }
+    if symbol.as_bytes()[0].is_ascii_digit() {
+        symbol.insert(0, '_');
+    }
+    symbol
+}
+
 fn block_has_terminator(func: &cranelift::codegen::ir::Function, block: Block) -> bool {
     if let Some(inst) = func.layout.last_inst(block) {
         func.dfg.insts[inst].opcode().is_terminator()
@@ -102,11 +122,28 @@ impl CodeGen {
 
         // 1. 声明所有用户函数
         let mut func_ids = Vec::new();
+        let aot = self.backend.mode() == BackendMode::Aot;
+        let mut used_symbols: HashMap<String, usize> = HashMap::new();
         for func in &ir_module.functions {
             let sig = self.create_signature(func);
+            let symbol = if aot {
+                let base = aot_symbol_name(&func.name);
+                let count = {
+                    let count = used_symbols.entry(base.clone()).or_insert(0);
+                    *count += 1;
+                    *count
+                };
+                if count == 1 {
+                    base
+                } else {
+                    format!("{base}_{count}")
+                }
+            } else {
+                func.name.clone()
+            };
             let func_id = self
                 .backend
-                .declare_function(&func.name, Linkage::Export, &sig)?;
+                .declare_function(&symbol, Linkage::Export, &sig)?;
             func_ids.push(func_id);
         }
 
