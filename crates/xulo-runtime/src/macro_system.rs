@@ -1585,7 +1585,9 @@ fn scalar_or_node(expr: &Expression, ctx: &MacroCtx) -> Value {
     match expr {
         Expression::Literal { value, .. } => match value {
             xulo_core::ast::Literal::String(s) => Value::String(s.clone().into()),
-            xulo_core::ast::Literal::Number(n) => Value::Number(*n),
+            xulo_core::ast::Literal::Number(n) | xulo_core::ast::Literal::Float(n) => {
+                Value::Number(*n)
+            }
             xulo_core::ast::Literal::Boolean(b) => Value::Boolean(*b),
             xulo_core::ast::Literal::Null => Value::Enum {
                 enum_name: "ast::Value".to_string(),
@@ -1794,7 +1796,13 @@ fn constructed_expression(node: &AstNodeValue) -> Option<Expression> {
     match node.kind.as_str() {
         "StringLiteral" | "String" => literal(xulo_core::ast::Literal::String(text("text")?)),
         "NumberLiteral" | "IntLiteral" | "FloatLiteral" => {
-            literal(xulo_core::ast::Literal::Number(text("text")?.parse().ok()?))
+            let raw = text("text")?;
+            let value = raw.parse().ok()?;
+            literal(if raw.contains('.') {
+                xulo_core::ast::Literal::Float(value)
+            } else {
+                xulo_core::ast::Literal::Number(value)
+            })
         }
         "BooleanLiteral" | "Bool" => literal(xulo_core::ast::Literal::Boolean(matches!(
             field("text"),

@@ -25,12 +25,16 @@ impl IrGenerator {
             Expression::Literal { value, .. } => match value {
                 Literal::String(_) => 0,
                 Literal::Number(n) => {
-                    if n.fract() == 0.0 {
+                    if n.fract() == 0.0
+                        && n.is_finite()
+                        && n.abs() <= 9.007_199_254_740_992e15
+                    {
                         1
                     } else {
                         2
                     }
                 }
+                Literal::Float(_) => 2,
                 Literal::Boolean(_) => 5,
                 Literal::Null => 6,
                 Literal::List(_) => 3,
@@ -53,7 +57,7 @@ impl IrGenerator {
         match expr {
             Expression::Literal { value, .. } => Some(match value {
                 Literal::String(_) => Type::String,
-                Literal::Number(_) => Type::Number,
+                Literal::Number(_) | Literal::Float(_) => Type::Number,
                 Literal::Boolean(_) => Type::Boolean,
                 Literal::Null => Type::Null,
                 Literal::List(_) => Type::List(Box::new(Type::Any)),

@@ -647,7 +647,7 @@ impl IrGenerator {
         match expr {
             Expression::Literal { value, .. } => {
                 match value {
-                    Literal::Number(_) => Some(Type::Number),
+                    Literal::Number(_) | Literal::Float(_) => Some(Type::Number),
                     Literal::Boolean(_) => Some(Type::Boolean),
                     Literal::String(_) => Some(Type::String),
                     Literal::Null => Some(Type::Null),
@@ -887,12 +887,16 @@ impl IrGenerator {
             Expression::Literal { value, .. } => match value {
                 Literal::String(_) => 0,
                 Literal::Number(n) => {
-                    if n.fract() == 0.0 {
+                    if n.fract() == 0.0
+                        && n.is_finite()
+                        && n.abs() <= 9.007_199_254_740_992e15
+                    {
                         1
                     } else {
                         2
                     }
                 }
+                Literal::Float(_) => 2,
                 Literal::Boolean(_) => 5,
                 Literal::Null => 6,
                 Literal::List(_) => 3,
@@ -1273,9 +1277,13 @@ impl IrGenerator {
 
     fn has_float_operand(&self, expr: &Expression) -> bool {
         match expr {
-            Expression::Literal { value, .. } => {
-                matches!(value, Literal::Number(n) if n.fract() != 0.0)
-            }
+            Expression::Literal { value, .. } => match value {
+                Literal::Float(_) => true,
+                // Integer-spelled literals are ints even when integral-valued
+                // (`1`), but keep the fractional fallback for synthesized ASTs.
+                Literal::Number(n) => n.fract() != 0.0,
+                _ => false,
+            },
             Expression::Identifier { name, .. } => {
                 // F64 槽承载的变量（装箱逻辑类型或本地槽）参与算术走浮点
                 if self.boxed_logical.get(name) == Some(&IrType::F64) {

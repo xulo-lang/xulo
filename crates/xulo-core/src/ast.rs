@@ -1143,7 +1143,10 @@ pub struct UnaryOp {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
     String(String),
+    /// Integer literal (`42`, `0xff`, `0b1010`, `0o17`), stored as `f64`.
     Number(f64),
+    /// Float literal containing a decimal point (`3.14`, `1.0`), stored as `f64`.
+    Float(f64),
     Boolean(bool),
     Null,
     List(Vec<Expression>),

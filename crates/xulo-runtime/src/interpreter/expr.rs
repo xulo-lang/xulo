@@ -466,7 +466,7 @@ impl Interpreter {
     ) -> Result<Value, RunError> {
         let value = match lit {
             Literal::String(s) => Value::String(Rc::from(s.as_str())),
-            Literal::Number(n) => Value::Number(*n),
+            Literal::Number(n) | Literal::Float(n) => Value::Number(*n),
             Literal::Boolean(b) => Value::Boolean(*b),
             Literal::Null => Value::Null,
             Literal::List(items) => {
