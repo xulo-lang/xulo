@@ -170,6 +170,7 @@ fn control_flow_example_matches_interpreter() {
             "big",
             "pos",
             "many",
+            "running",
             "true",
             "true",
             "true",
