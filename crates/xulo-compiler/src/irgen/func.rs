@@ -371,9 +371,23 @@ impl IrGenerator {
             self.source_types.insert(p.name.clone(), Type::Number);
         }
 
-        // 生成函数体语句（含内嵌 fn：在声明点生成闭包值）
+        // 生成函数体语句（含内嵌 fn：在声明点生成闭包值）。
+        // 非 void 函数的尾表达式只在这里之后求值一次；若先按语句生成，
+        // 再为隐式 return 重新生成，会让尾表达式的副作用执行两遍。
         let last_stmt_is_return = matches!(f.body.statements.last(), Some(Statement::Return(_)));
-        for stmt in &f.body.statements {
+        let returns_value = !self.type_to_ir(f.return_type.as_ref()).is_void();
+        let tail_expr_index = if !last_stmt_is_return
+            && returns_value
+            && matches!(f.body.statements.last(), Some(Statement::Expr(_)))
+        {
+            Some(f.body.statements.len() - 1)
+        } else {
+            None
+        };
+        for (i, stmt) in f.body.statements.iter().enumerate() {
+            if Some(i) == tail_expr_index {
+                continue;
+            }
             self.generate_statement(stmt)?;
         }
 

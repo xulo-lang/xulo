@@ -172,7 +172,7 @@ impl CodeGen {
 
         // 4. 编译所有函数体
         for (i, func) in ir_module.functions.iter().enumerate() {
-            self.compile_function(func, func_ids[i], &func_ids)?;
+            self.compile_function(func, func_ids[i], &func_ids, i == ir_module.entry_point.0)?;
         }
 
         Ok(func_ids[ir_module.entry_point.0])
@@ -244,6 +244,7 @@ impl CodeGen {
         ir_func: &IrFunction,
         func_id: FuncId,
         all_func_ids: &[FuncId],
+        is_entry: bool,
     ) -> Result<(), XuloError> {
         let sig = self.create_signature(ir_func);
         let mut ctx = self.backend.make_context();
@@ -279,8 +280,10 @@ impl CodeGen {
         builder.append_block_params_for_function_params(entry_block);
         builder.switch_to_block(entry_block);
 
-        // 注册所有字符串指针到运行时（用于自动类型检测）
-        if let Some(&reg_id) = self.runtime_func_ids.get("xulo_register_string") {
+        // 注册所有字符串指针到运行时（用于自动类型检测）；只需在入口执行一次。
+        if is_entry
+            && let Some(&reg_id) = self.runtime_func_ids.get("xulo_register_string")
+        {
             let fref = self.backend.declare_func_in_func(reg_id, builder.func);
             for s in &self.strings {
                 let ptr_val = self.backend.string_value(s, &mut builder);

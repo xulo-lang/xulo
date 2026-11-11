@@ -57,6 +57,27 @@ fn mod_and_pow_operators() {
 }
 
 #[test]
+fn tail_expression_evaluated_once() {
+    let out = compile_and_run(
+        r#"
+        fn tick(): number {
+            print("tick")
+            1
+        }
+        fn via_call(): number { tick() }
+        fn via_if(n: number): number {
+            if n > 0 { tick() } else { 0 }
+        }
+        fn main() {
+            print(via_call())
+            print(via_if(1))
+        }
+        "#,
+    );
+    assert_eq!(out, vec!["tick", "1", "tick", "1"]);
+}
+
+#[test]
 fn bitwise_and_shift_operators() {
     let out = compile_and_run(
         r#"

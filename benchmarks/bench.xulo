@@ -1,0 +1,65 @@
+// Xulo 运行时基准：递归调用、整数循环、列表 push、字符串拼接。
+// 解释器：xulo run benchmarks/bench.xulo
+// AOT：cd benchmarks && xupm build && ./.xupm/build/xulo-benchmarks
+fn fib(n: number): number {
+    if n < 2 {
+        n
+    } else {
+        fib(n - 1) + fib(n - 2)
+    }
+}
+
+fn sum_loop(n: number): number {
+    let mut sum = 0
+    let mut i = 0
+    while i < n {
+        sum = sum + i
+        i = i + 1
+    }
+    sum
+}
+
+fn list_work(n: number): number {
+    let mut xs = []
+    let mut i = 0
+    while i < n {
+        xs.push(i)
+        i = i + 1
+    }
+    xs.len
+}
+
+fn string_work(n: number): number {
+    let mut s = ""
+    let mut i = 0
+    while i < n {
+        s = s + "x"
+        i = i + 1
+    }
+    s.len
+}
+
+fn report(name: string, start: number, result: number) {
+    let elapsed_ms = (std::time::monotonic_nanos() - start) / 1000000.0
+    print(`${name}: ${elapsed_ms} ms (${result})`)
+}
+
+fn main() {
+    print("xulo benchmark")
+
+    let fib_start = std::time::monotonic_nanos()
+    let fib_result = fib(18)
+    report("fib(18)", fib_start, fib_result)
+
+    let sum_start = std::time::monotonic_nanos()
+    let sum_result = sum_loop(5000000)
+    report("sum_loop(5M)", sum_start, sum_result)
+
+    let list_start = std::time::monotonic_nanos()
+    let list_result = list_work(1000000)
+    report("list_work(1M)", list_start, list_result)
+
+    let string_start = std::time::monotonic_nanos()
+    let string_result = string_work(5000)
+    report("string_work(5000)", string_start, string_result)
+}

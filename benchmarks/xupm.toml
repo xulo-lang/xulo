@@ -1,0 +1,5 @@
+[package]
+name = "xulo-benchmarks"
+version = "0.1.0"
+edition = "2024"
+entry = "bench.xulo"

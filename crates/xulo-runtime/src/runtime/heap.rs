@@ -171,26 +171,18 @@ pub extern "C" fn xulo_array_concat(a: *const XuloArray, b: *const XuloArray) ->
         let result = xulo_alloc_array(len_a + len_b);
         if !result.is_null() {
             if !a.is_null() {
-                for i in 0..len_a {
-                    let val = (&(*a).elements)[i];
-                    let tag = if i < (*a).tags.len() {
-                        (&(*a).tags)[i]
-                    } else {
-                        1
-                    };
-                    xulo_array_push(result, val, tag);
-                }
+                let elems = &(*a).elements;
+                (*result).elements.extend_from_slice(elems);
+                (*result).tags.extend_from_slice(&(*a).tags);
+                // 保持 tags 与 elements 对齐；缺失的标签按 int 处理。
+                (*result).tags.resize(elems.len(), 1);
             }
             if !b.is_null() {
-                for i in 0..len_b {
-                    let val = (&(*b).elements)[i];
-                    let tag = if i < (*b).tags.len() {
-                        (&(*b).tags)[i]
-                    } else {
-                        1
-                    };
-                    xulo_array_push(result, val, tag);
-                }
+                let elems = &(*b).elements;
+                let start = (*result).elements.len();
+                (*result).elements.extend_from_slice(elems);
+                (*result).tags.extend_from_slice(&(*b).tags);
+                (*result).tags.resize(start + elems.len(), 1);
             }
         }
         result

@@ -17,8 +17,12 @@ pub extern "C" fn xulo_string_concat(a: *const c_char, b: *const c_char) -> *con
             CStr::from_ptr(b).to_str().unwrap_or("")
         };
 
-        let result = format!("{}{}", str_a, str_b);
-        let c_str = CString::new(result).unwrap();
+        // 直接按字节拼接后交给 CString，避免 format! 的 String 再被
+        // CString::new 复制一次。两个输入来自 CStr，不可能含内部 NUL。
+        let mut bytes = Vec::with_capacity(str_a.len() + str_b.len());
+        bytes.extend_from_slice(str_a.as_bytes());
+        bytes.extend_from_slice(str_b.as_bytes());
+        let c_str = CString::from_vec_unchecked(bytes);
         let ptr = c_str.as_ptr();
 
         STRINGS.with(|strings| {
