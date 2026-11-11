@@ -300,7 +300,7 @@ impl Token {
             Token::Dot => "`.`",
             Token::QuestionDot => "`?.`",
             Token::Nullish => "`??`",
-            Token::RangeOp => "`..<`",
+            Token::RangeOp => "`..<` / `..=`",
             Token::Ellipsis => "`...`",
             Token::ColonAssign => "`:=`",
             Token::EOF => "end of file",

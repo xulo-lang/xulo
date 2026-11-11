@@ -136,7 +136,7 @@ pub enum RuntimeFn {
     StringBytes,
     /// match 字面量 pattern 判定（返回 1/0）
     LiteralMatch,
-    /// 区间表达式 `0..<3` / `1...4` 求值为列表
+    /// 区间表达式 `0..<3` / `1..=4` 求值为列表
     RangeList,
     /// 命名空间内建（`std::math::*` / `std::time::*`）：携带已映射好的运行时符号名
     Intrinsic(&'static str),

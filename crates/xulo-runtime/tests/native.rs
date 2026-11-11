@@ -436,6 +436,21 @@ fn for_over_range() {
 }
 
 #[test]
+fn for_over_closed_range() {
+    let out = run_ok(
+        r#"
+        fn main() {
+            for i in 1..=3 {
+                print(i)
+            }
+            print(0..=2)
+        }
+        "#,
+    );
+    assert_eq!(out, vec!["1", "2", "3", "[0, 1, 2]"]);
+}
+
+#[test]
 fn while_loop() {
     let out = run_ok(
         r#"

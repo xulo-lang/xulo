@@ -27,6 +27,7 @@ type Input<'i> = &'i str;
 /// reads the grammar file and fails if the two ever drift apart.
 pub const OPERATORS: &[(&str, Token)] = &[
     ("..<", Token::RangeOp),
+    ("..=", Token::RangeOp),
     ("...", Token::Ellipsis),
     ("**", Token::Power),
     ("==", Token::Eq),

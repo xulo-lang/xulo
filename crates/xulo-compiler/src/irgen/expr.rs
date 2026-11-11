@@ -212,7 +212,7 @@ impl IrGenerator {
                 let local = self.module.functions[func_idx].add_local(IrType::Pointer);
                 Ok(Operand::Local(local))
             }
-            // 区间表达式 `0..<3` / `1...4` 求值为列表（for 循环已在
+            // 区间表达式 `0..<3` / `1..=4` 求值为列表（for 循环已在
             // generate_for 单独降级，不会走到这里）
             Expression::Range(r) => {
                 let start = self.generate_expression(&r.start)?;

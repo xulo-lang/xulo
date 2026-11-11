@@ -392,7 +392,7 @@ is_expression = { relational_expression ~ (kw_is ~ kw_not? ~ type_expr)? }
 relational_expression = { range_expression ~ (rel_op ~ range_expression)? }
 rel_op = { "<=" | ">=" | "<" ~ !"<" | ">" ~ !">" }
 range_expression = { bit_or_expression ~ (range_op ~ bit_or_expression)? }
-range_op = { "..<" | "..." }
+range_op = { "..<" | "..=" }
 bit_or_expression = { bit_xor_expression ~ ("|" ~ bit_xor_expression)* }
 bit_xor_expression = { bit_and_expression ~ ("^" ~ bit_and_expression)* }
 bit_and_expression = { shift_expression ~ ("&" ~ shift_expression)* }
@@ -562,7 +562,7 @@ pattern_alt = {
     | wildcard_binding
 }
 range_pattern = { number_literal ~ range_pat_op ~ number_literal }
-range_pat_op = @{ "..<" | "..." }
+range_pat_op = @{ "..<" | "..=" }
 literal_pattern = { number_literal | string_literal | boolean_literal | null_literal }
 variant_pattern = { path_head ~ ("::" ~ identifier)+ ~ ("(" ~ pattern_list? ~ ")")? }
 struct_pattern = { identifier ~ "(" ~ pattern_list? ~ ")" }
@@ -595,11 +595,11 @@ trivia = @{ (whitespace_char | comment)+ }
 token_ident = @{ ident_raw }
 
 // PEG choice is ordered, not longest-match, so the multi-character spellings
-// come first: `..<` is tried before `...`, and both before the bare `.`.
+// come first: `..<`, `..=`, and `...` are tried before the bare `.`.
 // The `OPERATORS` table in `src/tokenize.rs` carries the same list paired with
 // its token; `operator_table_matches_the_grammar` fails if they drift apart.
 token_operator = @{
-    "..<" | "..." | "**" | "==" | "!=" | "<=" | ">=" | "=>" | ":=" | "::"
+    "..<" | "..=" | "..." | "**" | "==" | "!=" | "<=" | ">=" | "=>" | ":=" | "::"
     | "?." | "??" | "=" | "+" | "-" | "*" | "/" | "%" | "^" | "~" | "<"
     | ">" | "|" | "&" | "?" | "!" | "." | ":" | "@" | "#" | "$" | ";"
     | "," | "(" | ")" | "{" | "}" | "[" | "]"

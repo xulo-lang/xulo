@@ -252,7 +252,7 @@
     "operators": {
       "patterns": [
         {
-          "match": ":=|\\.\\.<|\\.\\.\\.|\\?\\?|\\?\\.|\\*\\*|==|!=|<=|>=|=>|<<|>>",
+          "match": ":=|\\.\\.<|\\.\\.=|\\.\\.\\.|\\?\\?|\\?\\.|\\*\\*|==|!=|<=|>=|=>|<<|>>",
           "name": "keyword.operator.xulo"
         },
         { "match": "::", "name": "punctuation.separator.path.xulo" },

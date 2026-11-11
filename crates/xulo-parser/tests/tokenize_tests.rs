@@ -196,8 +196,16 @@ fn tokenizes_phase2_symbols() {
 
 #[test]
 fn tokenizes_closed_range_after_number() {
-    // `0...9` is `0` + `...` + `9` (the third dot must not be re-read as a
+    // `0..=9` is `0` + `..=` + `9` (the third mark must not be re-read as a
     // member access, and the number lexer must not swallow `..` as a fraction).
+    let tokens = tokenize("0..=9").unwrap();
+    let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
+    assert_eq!(kinds, vec![Number, RangeOp, Number, EOF]);
+}
+
+#[test]
+fn spread_ellipsis_after_number_stays_ellipsis() {
+    // `...` is only the spread prefix now; lexically it stays one token.
     let tokens = tokenize("0...9").unwrap();
     let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
     assert_eq!(kinds, vec![Number, Ellipsis, Number, EOF]);

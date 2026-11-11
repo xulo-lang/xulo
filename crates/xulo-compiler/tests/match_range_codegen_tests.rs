@@ -101,8 +101,8 @@ fn range_expression_prints_lists_like_interpreter() {
         r#"
 fn main() {
     print(0..<3)
-    print(0...3)
-    print(5...7)
+    print(0..=3)
+    print(5..=7)
     let r = 0..<3
     print(r)
     print(r + [9])

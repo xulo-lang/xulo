@@ -151,7 +151,7 @@ fn range_expression(pair: Pair<'_, Rule>) -> R<Expression> {
     let Some(op_pair) = inner.next() else {
         return Ok(lhs);
     };
-    let end_inclusive = op_pair.as_str().trim() == "...";
+    let end_inclusive = op_pair.as_str().trim() == "..=";
     let rhs = bit_or_expression(next(&mut inner, Rule::bit_or_expression))?;
     Ok(Expression::Range(Box::new(RangeExpr {
         start: Box::new(lhs),
@@ -1264,7 +1264,7 @@ fn pattern_alt(pair: Pair<'_, Rule>) -> R<MatchPattern> {
 fn range_pattern(pair: Pair<'_, Rule>, span: Range<usize>) -> R<MatchPattern> {
     let mut inner = pair.into_inner();
     let start = decode_number(next(&mut inner, Rule::number_literal).as_str());
-    let end_inclusive = next(&mut inner, Rule::range_pat_op).as_str() == "...";
+    let end_inclusive = next(&mut inner, Rule::range_pat_op).as_str() == "..=";
     let end = decode_number(next(&mut inner, Rule::number_literal).as_str());
     Ok(MatchPattern::Range {
         start,

@@ -1031,7 +1031,7 @@ pub struct IndexExpr {
     pub span: Range<usize>,
 }
 
-/// A range literal `start..<end` (exclusive upper bound) or `start...end`
+/// A range literal `start..<end` (exclusive upper bound) or `start..=end`
 /// (inclusive upper bound, `end_inclusive`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct RangeExpr {
@@ -1091,7 +1091,7 @@ pub enum MatchPattern {
         bindings: Vec<String>,
         span: Range<usize>,
     },
-    /// A numeric range pattern: `0..<5` or `1...3`.
+    /// A numeric range pattern: `0..<5` or `1..=3`.
     Range {
         start: f64,
         end: f64,

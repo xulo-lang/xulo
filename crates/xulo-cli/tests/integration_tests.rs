@@ -433,16 +433,16 @@ fn run_phase2_control_flow_and_expressions() {
 
 #[test]
 fn run_closed_range_loops() {
-    // `a...b` is a Swift-style closed range (inclusive upper bound), while
+    // `a..=b` is a closed range (inclusive upper bound), while
     // `a..<b` stays half-open. Both drive `for` iteration and evaluate to a
     // list of numbers when used as an expression.
     let file = temp_file(
         "range.xulo",
         r#"
         fn main() {
-            for i in 0...2 { print(i) }
+            for i in 0..=2 { print(i) }
             for i in 3..<6 { print(i) }
-            let closed = 0...3
+            let closed = 0..=3
             let half = 0..<3
             print(closed)
             print(half)
@@ -1977,7 +1977,7 @@ fn run_closed_range_loop_with_interpolation() {
     // prints a JS-style template literal.
     let file = temp_file(
         "times.xulo",
-        "fn main() { for i in 1...5 { print(`${i} times 5 is ${i * 5}`) } }",
+        "fn main() { for i in 1..=5 { print(`${i} times 5 is ${i * 5}`) } }",
     );
     let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
     assert!(

@@ -714,7 +714,7 @@ impl Interpreter {
     }
 
     /// Whether `i` is still inside a range with upper bound `end`:
-    /// `..<` is half-open (i < end), `...` is closed (i <= end).
+    /// `..<` is half-open (i < end), `..=` is closed (i <= end).
     pub(super) fn range_has_next(&self, i: f64, end: f64, end_inclusive: bool) -> bool {
         if end_inclusive { i <= end } else { i < end }
     }

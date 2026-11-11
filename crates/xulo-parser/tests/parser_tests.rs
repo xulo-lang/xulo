@@ -395,6 +395,34 @@ fn defer_expr_and_block() {
 }
 
 #[test]
+fn closed_range_spells_dot_dot_eq() {
+    let p = parse_ok("fn f() { let closed = 0..=3 let half = 0..<3 }");
+    let Statement::Fn(f) = &p.statements[0] else {
+        panic!();
+    };
+    let Statement::Let(closed) = &f.body.statements[0] else {
+        panic!();
+    };
+    let Expression::Range(closed) = closed.value.as_ref().expect("closed initializer") else {
+        panic!("expected range, got {:?}", closed.value);
+    };
+    assert!(closed.end_inclusive);
+    let Statement::Let(half) = &f.body.statements[1] else {
+        panic!();
+    };
+    let Expression::Range(half) = half.value.as_ref().expect("half-open initializer") else {
+        panic!("expected range, got {:?}", half.value);
+    };
+    assert!(!half.end_inclusive);
+}
+
+#[test]
+fn ellipsis_is_not_a_range_operator() {
+    // `...` is only the spread prefix; `a...b` no longer parses as a range.
+    parse_err("fn f() { let r = 0...3 }");
+}
+
+#[test]
 fn if_else_if_chain() {
     let p = parse_ok("fn f() { if a { x() } else if b { y() } else { z() } }");
     let Statement::Fn(f) = &p.statements[0] else {
@@ -701,7 +729,7 @@ fn optional_and_fn_and_literal_types() {
 #[test]
 fn match_arms_or_guard_wildcard() {
     let p = parse_ok(
-        "fn f(x: number): number { match x { 0 | 1 => 2, 2...5 => 3, n if n > 5 => 4, _ => 5 } }",
+        "fn f(x: number): number { match x { 0 | 1 => 2, 2..=5 => 3, n if n > 5 => 4, _ => 5 } }",
     );
     let Statement::Fn(f) = &p.statements[0] else {
         panic!();

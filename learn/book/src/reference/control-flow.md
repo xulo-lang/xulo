@@ -28,6 +28,10 @@ for item in items {
 for i in 0..<10 {     // 范围（左闭右开）
   print(i)
 }
+
+for i in 1..=10 {     // 范围（闭区间，含右端）
+  print(i)
+}
 ```
 
 ## `while` 循环

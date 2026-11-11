@@ -64,7 +64,7 @@ xulo
 | `hello.xulo` | 最小程序：函数、`print`、字符串字面量 |
 | `operators.xulo` | 全部运算符：算术 / 比较 / 逻辑 / 位与移位 / 一元 / 优先级结合性 / 三目与 `??` |
 | `if_else.xulo` | `if` / `else if` / `else`、嵌套分支、`if` 表达式 |
-| `for.xulo` | `for` 迭代：闭合 `1...5` 与半开 `0..<3` 区间、列表、嵌套、`break` / `continue` |
+| `for.xulo` | `for` 迭代：闭合 `1..=5` 与半开 `0..<3` 区间、列表、嵌套、`break` / `continue` |
 | `control_flow.xulo` | `while`、`if` 表达式、`match`、区间 |
 | `fibonacci.xulo` | 递归 + `for` 列表迭代 |
 | `closures_hof.xulo` | 匿名函数 / 闭包（捕获、可变捕获）/ 高阶函数 / 函数值调用 |
@@ -126,7 +126,7 @@ fn main() {
 - 变量绑定：`let` / `const`，可选类型注解；赋值语句
 - 函数：`fn name(p: number): number { ... }`，隐式/显式返回、递归、泛型（调用处推断）、可选/默认/命名参数、匿名函数（闭包）
 - 类型：`string` `number` `bool` `int` `float` `List<T>` `Map<K, V>` `null` `T?` `T | U` `T & U`、字符串字面量联合、函数类型 `fn(...): T`、类型别名 `type`、枚举 `enum`（含关联数据、泛型）
-- 控制流：`if` / `else if` / `else`（表达式与语句）、`for x in list`、`for i in 0..<n` / `for i in 0...n`（区间：`..<` 排他上界、`...` 闭合含上界，Swift 语义）、`while`、`match`、`and`/`or`/`!`、三目、`throw`/`try`/`catch`
+- 控制流：`if` / `else if` / `else`（表达式与语句）、`for x in list`、`for i in 0..<n` / `for i in 0..=n`（区间：`..<` 排他上界、`..=` 闭合含上界）、`while`、`match`、`and`/`or`/`!`、三目、`throw`/`try`/`catch`
 - 表达式：成员访问、下标、`?.`、`??`、列表/对象展开 `...`、`$name` 双向绑定
 - 异步：`: async` 返回标注、`await`
 - 模块系统：`import` / `pub`（named/namespace/type-only/bare；`pub` 声明、`pub use { a, b }` 两种导出形态），按依赖拓扑序加载，循环检测、导出符号/类型跨模块校验

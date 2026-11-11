@@ -1,7 +1,7 @@
-// 控制流：区间（半开 ..< / 闭合 ...）、while、if 表达式、match、return
+// 控制流：区间（半开 ..< / 闭合 ..=）、while、if 表达式、match、return
 fn sum_to(n: number): number {
     let mut acc = 0
-    for i in 1...n {        // 闭合区间 1..n，含上界
+    for i in 1..=n {        // 闭合区间 1..=n，含上界
         acc = acc + i
     }
     acc
@@ -10,11 +10,11 @@ fn sum_to(n: number): number {
 fn main() {
     // 区间表达式本身求值为列表
     print(0..<3)            // 半开：0,1,2
-    print(0...3)            // 闭合：0,1,2,3
-    print(5...7)
+    print(0..=3)            // 闭合：0,1,2,3
+    print(5..=7)
 
     // for 遍历区间
-    for i in 0...4 {
+    for i in 0..=4 {
         print(`i=${i}`)
     }
     for ch in ["a", "b", "c"] {
@@ -37,8 +37,22 @@ fn main() {
     let sign = if x > 0 { "pos" } else if x < 0 { "neg" } else { "zero" }
     print(sign)
 
-    // match 匹配数字
-    print(match x { 0 => "zero" 1 => "one" _ => "many" })
+    // match 匹配数字：字面量 / 区间 / guard / 通配
+    let score = 87
+    let grade = match score {
+        90..=100 => "A"
+        80..<90 => "B"
+        _ => "F"
+    }
+    print(grade)
+
+    let label = match x {
+        0 => "zero"
+        1 | 2 => "small"
+        n if n > 5 => "many"
+        _ => "other"
+    }
+    print(label)
 
     // 条件/比较
     print(3 == 3)
