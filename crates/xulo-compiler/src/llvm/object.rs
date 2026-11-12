@@ -7,6 +7,7 @@ use std::path::Path;
 
 use inkwell::OptimizationLevel;
 use inkwell::module::Module;
+use inkwell::passes::PassBuilderOptions;
 use inkwell::targets::{
     CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine,
 };
@@ -27,7 +28,7 @@ pub fn write_object(module: &Module, obj_path: &Path, optimize: bool) -> Result<
     let target = Target::from_triple(&triple)
         .map_err(|e| codegen_err(format!("failed to get LLVM target: {e}")))?;
     let level = if optimize {
-        OptimizationLevel::Default
+        OptimizationLevel::Aggressive
     } else {
         OptimizationLevel::None
     };
@@ -43,6 +44,17 @@ pub fn write_object(module: &Module, obj_path: &Path, optimize: bool) -> Result<
         .ok_or_else(|| codegen_err("failed to create LLVM target machine"))?;
 
     module.set_data_layout(&machine.get_target_data().get_data_layout());
+
+    // `create_target_machine` 的优化等级只影响指令选择，不会运行 IR 优化管线；
+    // 若不显式 run_passes，`alloca`/`load`/`store` 不会被 mem2reg 提升成 SSA，
+    // 循环和递归的性能会明显落后于 Cranelift。release profile 跑 default<O3>。
+    if optimize {
+        let options = PassBuilderOptions::create();
+        options.set_verify_each(false);
+        module
+            .run_passes("default<O3>", &machine, options)
+            .map_err(|e| codegen_err(format!("LLVM optimization pipeline failed: {e}")))?;
+    }
 
     if std::env::var_os("XULO_DUMP_LLVM").is_some() {
         let dump_path = obj_path.with_extension("ll");
