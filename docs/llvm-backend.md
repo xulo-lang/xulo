@@ -1,6 +1,6 @@
 # Xulo LLVM Backend Integration Design
 
-- **Status**: Draft
+- **Status**: Accepted
 - **Date**: 2026-11-12
 - **Audience**: language implementers, toolchain maintainers
 - **Scope**: the native AOT backend of `xulo-compiler` / `xupm`
