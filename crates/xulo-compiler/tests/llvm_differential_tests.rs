@@ -124,6 +124,20 @@ const CORPUS: &[(&str, &str)] = &[
         "#,
     ),
     (
+        "string_builder",
+        r#"
+        fn main() {
+            let mut b = StringBuilder::create()
+            b.append("hello")
+            b.append(", ")
+            b.append("builder")
+            let s = b.build()
+            print(s)
+            print(s.len)
+        }
+        "#,
+    ),
+    (
         "closures",
         r#"
         fn main() {

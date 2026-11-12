@@ -57,6 +57,22 @@ fn mod_and_pow_operators() {
 }
 
 #[test]
+fn string_builder_appends_and_builds() {
+    let out = compile_and_run(
+        r#"
+        fn main() {
+            let mut b = StringBuilder::create()
+            b.append("ab")
+            b.append("cd")
+            print(b.build())
+            print(b.build().len)
+        }
+        "#,
+    );
+    assert_eq!(out, vec!["abcd", "4"]);
+}
+
+#[test]
 fn tail_expression_evaluated_once() {
     let out = compile_and_run(
         r#"

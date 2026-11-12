@@ -295,6 +295,11 @@ impl Interpreter {
         global
             .borrow_mut()
             .define("Error", Value::Native(Rc::new(native_error)), false);
+        // `StringBuilder` is a prelude builtin type: `create()` returns a
+        // mutable builder whose `append`/`build` methods are native.
+        global
+            .borrow_mut()
+            .define("StringBuilder", string_builder_static_object(), false);
         // Array global: Array.new(size, fill?), Array.fill(n, v), Array.clone(iter)
         let array_methods = vec![
             (

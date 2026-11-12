@@ -405,6 +405,25 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
         params: &[I64],
         returns: &[I64],
     },
+    // StringBuilder：句柄 + 追加文本 + 取出字符串
+    RuntimeFnDesc {
+        name: "xulo_string_builder_new",
+        addr: xulo_runtime::runtime::xulo_string_builder_new as *const u8,
+        params: &[],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_string_builder_append",
+        addr: xulo_runtime::runtime::xulo_string_builder_append as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_string_builder_build",
+        addr: xulo_runtime::runtime::xulo_string_builder_build as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
     // match 字面量 pattern / 区间表达式求值
     RuntimeFnDesc {
         name: "xulo_literal_match",

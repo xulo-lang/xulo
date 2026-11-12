@@ -1116,7 +1116,7 @@ impl IrGenerator {
                     match key.as_str() {
                         "test" | "contains" | "starts_with" | "ends_with" => return 5,
                         "group" | "replace" | "to_uppercase" | "to_lowercase" | "trim"
-                        | "pad_start" | "pad_end" | "repeat" => return 0,
+                        | "pad_start" | "pad_end" | "repeat" | "build" => return 0,
                         "length" | "code_at" => return 1,
                         "bytes" => return 3,
                         "slice" if !self.expr_is_list_receiver(&call.object) => return 0,

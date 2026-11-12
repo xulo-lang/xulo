@@ -1,4 +1,4 @@
-// Xulo 运行时基准：递归调用、整数循环、列表 push、字符串拼接。
+// Xulo 运行时基准：递归调用、整数循环、列表 push、StringBuilder 追加。
 // 解释器：xulo run benchmarks/bench.xulo
 // AOT：cd benchmarks && xupm build && ./.xupm/build/xulo-benchmarks
 fn fib(n: number): number {
@@ -30,13 +30,13 @@ fn list_work(n: number): number {
 }
 
 fn string_work(n: number): number {
-    let mut s = ""
+    let mut b = StringBuilder::create()
     let mut i = 0
     while i < n {
-        s = s + "x"
+        b.append("x")
         i = i + 1
     }
-    s.len
+    b.build().len
 }
 
 fn report(name: string, start: number, result: number) {
@@ -48,8 +48,8 @@ fn main() {
     print("xulo benchmark")
 
     let fib_start = std::time::monotonic_nanos()
-    let fib_result = fib(18)
-    report("fib(18)", fib_start, fib_result)
+    let fib_result = fib(30)
+    report("fib(30)", fib_start, fib_result)
 
     let sum_start = std::time::monotonic_nanos()
     let sum_result = sum_loop(5000000)

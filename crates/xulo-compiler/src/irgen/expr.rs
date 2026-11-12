@@ -1032,6 +1032,9 @@ impl IrGenerator {
                 "to_uppercase" => Some(RuntimeFn::StringToUppercase),
                 "to_lowercase" => Some(RuntimeFn::StringToLowercase),
                 "trim" => Some(RuntimeFn::StringTrim),
+                // StringBuilder 实例方法（名字与列表 push 区分，避免误派发）
+                "append" if !receiver_is_struct => Some(RuntimeFn::StringBuilderAppend),
+                "build" if !receiver_is_struct => Some(RuntimeFn::StringBuilderBuild),
                 "starts_with" => Some(RuntimeFn::StringStartsWith),
                 "ends_with" => Some(RuntimeFn::StringEndsWith),
                 "split" => Some(RuntimeFn::StringSplit),
@@ -1057,6 +1060,7 @@ impl IrGenerator {
         } else {
             // 普通函数调用
             match call.callee.as_str() {
+                "StringBuilder::create" => Some(RuntimeFn::StringBuilderNew),
                 "print" | "println" => {
                     // 使用 PrintValue 带类型标签
                     if args.is_empty() {

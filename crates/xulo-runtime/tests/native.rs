@@ -129,6 +129,22 @@ fn arithmetic() {
 }
 
 #[test]
+fn string_builder_appends_and_builds() {
+    let out = run_ok(
+        r#"
+        fn main() {
+            let mut b = StringBuilder::create()
+            b.append("ab")
+            b.append("cd")
+            print(b.build())
+            print(b.build().len)
+        }
+        "#,
+    );
+    assert_eq!(out, vec!["abcd", "4"]);
+}
+
+#[test]
 fn string_concat_and_print() {
     assert_eq!(
         run_ok(r#"fn main() { print("Hello, " + "world!") }"#),

@@ -418,6 +418,9 @@ fn builtin_type_entries() -> HashMap<String, TypeEntry> {
     // `RegexMatch` needs no import: an annotation of the name answers from
     // here, while `use regex::RegexMatch` binds the same shape locally.
     builtins.insert("RegexMatch".to_string(), regex_match_type_entry());
+    // `StringBuilder` is a prelude builtin type (no import required): its
+    // only static is `create`, and instances expose `append`/`build`.
+    builtins.insert("StringBuilder".to_string(), string_builder_type_entry());
     // The `std::http` data types answer annotations and named-field
     // construction without an import (`Response(status: 200, …)`); the
     // qualified annotation spelling resolves through an alias to the same
@@ -731,6 +734,34 @@ fn regex_error_type_entry() -> TypeEntry {
         type_params: Vec::new(),
         type_bounds: Vec::new(),
         kind: TypeEntryKind::Struct(vec![("message".to_string(), Type::String, None)]),
+    }
+}
+
+/// The `StringBuilder` type entry: `append(text)` returns the same builder
+/// (so calls can chain), `build()` snapshots its contents as a string.
+fn string_builder_type_entry() -> TypeEntry {
+    let builder = || Type::Named("StringBuilder".to_string(), Vec::new());
+    TypeEntry {
+        type_params: Vec::new(),
+        type_bounds: Vec::new(),
+        kind: TypeEntryKind::Struct(vec![
+            (
+                "append".to_string(),
+                Type::FnSig {
+                    params: vec![Type::String],
+                    ret: Some(Box::new(builder())),
+                },
+                None,
+            ),
+            (
+                "build".to_string(),
+                Type::FnSig {
+                    params: Vec::new(),
+                    ret: Some(Box::new(Type::String)),
+                },
+                None,
+            ),
+        ]),
     }
 }
 
@@ -10581,6 +10612,31 @@ impl Analyzer {
         }
     }
 
+    /// `StringBuilder::create()` — allocate an empty builder. Arity is E0207;
+    /// named arguments are rejected like other constructors.
+    fn check_string_builder_static_call(&mut self, call: &Call, variant: &str) -> SResult<Type> {
+        if variant != "create" {
+            return Err(self
+                .err(format!("`StringBuilder` has no member `{variant}`"))
+                .at(call.span.clone()));
+        }
+        self.no_type_args(call)?;
+        if call.arguments.iter().any(|a| a.name.is_some()) {
+            return Err(self
+                .err("`StringBuilder::create` takes positional arguments")
+                .at(call.span.clone()));
+        }
+        if !call.arguments.is_empty() {
+            return Err(self
+                .err_code(
+                    "E0207",
+                    format!("expected 0 arguments, found {}", call.arguments.len()),
+                )
+                .at(call.span.clone()));
+        }
+        Ok(Type::Named("StringBuilder".to_string(), Vec::new()))
+    }
+
     /// `RegExp::compile(pattern, flags)` — the regex module's only static
     /// member (spec `regular-expressions.mdx`): one or two string arguments,
     /// a `Result<RegExp, RegexError>` back. Arity is `E0207`, an
@@ -11129,6 +11185,11 @@ impl Analyzer {
             // a full generic-argument list.
             if call.callee != "Array::filled" {
                 self.no_type_args(call)?;
+            }
+            // `StringBuilder::create()` — the builder's only static. A
+            // program-declared type of the same name shadows the builtin.
+            if enum_name == "StringBuilder" && !self.type_table.contains_key(enum_name) {
+                return self.check_string_builder_static_call(call, variant);
             }
             // `Map::from_entries` and `Set::from_list` are the static
             // constructors of the two built-in container types (spec
@@ -12480,6 +12541,19 @@ impl Analyzer {
         if self.process_type_names.contains(&enum_name) && !self.type_table.contains_key(&enum_name)
         {
             return self.process_static_member_sig(&enum_name, variant);
+        }
+        // `StringBuilder::create` as a value (`let f = StringBuilder::create`).
+        if enum_name == "StringBuilder" && !self.type_table.contains_key(&enum_name) {
+            return match variant {
+                "create" => Ok(Type::FnSig {
+                    params: Vec::new(),
+                    ret: Some(Box::new(Type::Named(
+                        "StringBuilder".to_string(),
+                        Vec::new(),
+                    ))),
+                }),
+                _ => Err(self.err(format!("`StringBuilder` has no member `{variant}`"))),
+            };
         }
         // A built-in namespace's members are constants (`Math::PI`) or
         // functions reached by call (`Math::max(...)`); a bare function

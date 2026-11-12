@@ -274,3 +274,52 @@ pub extern "C" fn xulo_string_bytes(s: *const c_char) -> *mut XuloArray {
     }
     arr
 }
+
+thread_local! {
+    /// 编译路径的 StringBuilder 句柄表：句柄是下标，build 不消耗内容。
+    static BUILDERS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+}
+
+/// `StringBuilder::new()`：分配一个空 builder，返回其 i64 句柄。
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_string_builder_new() -> i64 {
+    BUILDERS.with(|builders| {
+        let mut builders = builders.borrow_mut();
+        builders.push(String::new());
+        (builders.len() - 1) as i64
+    })
+}
+
+/// `builder.append(text)`：把文本追加到 builder，返回同一句柄。
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_string_builder_append(handle: i64, text: *const c_char) -> i64 {
+    let text = if text.is_null() {
+        ""
+    } else {
+        unsafe { CStr::from_ptr(text).to_str().unwrap_or("") }
+    };
+    BUILDERS.with(|builders| {
+        if let Some(buffer) = builders.borrow_mut().get_mut(handle as usize) {
+            buffer.push_str(text);
+        }
+    });
+    handle
+}
+
+/// `builder.build()`：取出当前内容作为新字符串（builder 仍可继续追加）。
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_string_builder_build(handle: i64) -> *const c_char {
+    let text = BUILDERS.with(|builders| {
+        builders
+            .borrow()
+            .get(handle as usize)
+            .cloned()
+            .unwrap_or_default()
+    });
+    intern_string(text)
+}
+
+pub(super) fn clear_builders() {
+    BUILDERS.with(|builders| builders.borrow_mut().clear());
+}

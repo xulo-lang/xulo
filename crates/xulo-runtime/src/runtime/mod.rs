@@ -298,6 +298,7 @@ pub extern "C" fn xulo_cleanup() {
     STRINGS.with(|strings| {
         strings.borrow_mut().clear();
     });
+    string::clear_builders();
 
     // std::math::to_fixed 交给编译产物的字符串由 xulo-std 持有，一并释放。
     xulo_std::ffi::release_strings();
