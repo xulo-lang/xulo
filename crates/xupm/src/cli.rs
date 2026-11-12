@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{CommandFactory, Parser, Subcommand};
+use xulo_compiler::aot::{AotBackend, BuildProfile};
 use xulo_core::error::XuloError;
 
 use crate::manifest;
@@ -38,6 +39,9 @@ pub enum Commands {
         /// Build every package in the workspace
         #[arg(long = "workspace")]
         workspace: bool,
+        /// Build with the release optimization profile
+        #[arg(long = "release")]
+        release: bool,
     },
     /// Run the project's entry module
     Run {
@@ -97,7 +101,8 @@ fn execute(command: Commands) -> Result<ExitCode, String> {
             file,
             package,
             workspace,
-        } => build(file.as_deref(), package.as_deref(), workspace),
+            release,
+        } => build(file.as_deref(), package.as_deref(), workspace, release),
         Commands::Run { file, package } => run_project(file.as_deref(), package.as_deref()),
         Commands::Test {
             file,
@@ -309,19 +314,42 @@ fn new_project(path: &Path) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn build(file: Option<&Path>, package: Option<&str>, all: bool) -> Result<ExitCode, String> {
+fn build(
+    file: Option<&Path>,
+    package: Option<&str>,
+    all: bool,
+    release: bool,
+) -> Result<ExitCode, String> {
     let targets = resolve_targets(file, package, Mode::All { all })?;
     let mut failed = false;
+    // The product path always asks for LLVM; without the feature the compiler
+    // falls back to Cranelift and records an "LLVM not enabled" warning.
+    let backend = AotBackend::Llvm;
+    let profile = if release {
+        BuildProfile::Release
+    } else {
+        BuildProfile::Debug
+    };
     for target in &targets {
         let output = target
             .root
             .join(".xupm")
             .join("build")
             .join(artifact_name(target));
-        match xulo_compiler::aot::build_executable(&target.entry, &output) {
+        match xulo_compiler::aot::build_executable_with_profile(
+            &target.entry,
+            &output,
+            backend,
+            profile,
+        ) {
             Ok(build) => {
                 print_warnings(&build.warnings);
-                println!("build successful: {}", build.executable.display());
+                println!(
+                    "build successful: {} (backend: {}, profile: {})",
+                    build.executable.display(),
+                    build.backend.name(),
+                    if release { "release" } else { "debug" },
+                );
             }
             Err(err) => {
                 print_compile_error(&err, &target.entry);

@@ -17,6 +17,28 @@ cargo build --release
 
 原生解释器与 `xulo repl` 不依赖 Node.js。
 
+### 原生 AOT 构建（xupm）
+
+`xupm build` 通过内置 LLVM 后端生成原生可执行文件。源码构建需要 LLVM 15
+开发库；未启用 `llvm` feature 时会回退到 Cranelift 并给出警告。
+
+```bash
+# 动态链接 LLVM（开发用）
+LLVM_SYS_150_PREFIX=/usr/lib/llvm-15 \
+  cargo build --release -p xupm --features llvm
+
+# 静态链接 LLVM（分发用；需先构建运行时静态库）
+cargo build -p xulo-runtime --release
+LLVM_SYS_150_PREFIX=/usr/lib/llvm-15 \
+  cargo build --release -p xupm --features distribution
+
+target/release/xupm build examples/hello.xulo --release
+```
+
+构建时可用 `XULO_RUNTIME_LIB=/path/to/libxulo_runtime.a` 指定运行时静态库；
+未指定时按可执行文件旁的 `lib/xulo/`、`lib/` 与源码树 `target/release/`
+依次查找。
+
 ## 编辑器支持（LSP）
 
 `xulo-analyzer`（`crates/xulo-analyzer`）是基于 `xulo-ide`（编辑器分析库）的 LSP 语言服务器，提供跨文件 go-to-definition、hover、find-references、文档大纲、诊断（UTF-16 坐标、增量同步）、整文档格式化，以及语义高亮（`textDocument/semanticTokens/full` + TextMate 静态语法兜底，参考 rust-analyzer 双层做法）。直接运行二进制可用任意 LSP 客户端挂载：

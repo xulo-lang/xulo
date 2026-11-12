@@ -7,6 +7,15 @@ edition.workspace = true
 name = "xupm"
 path = "src/main.rs"
 
+[features]
+default = []
+# LLVM AOT backend (the product build path). Requires LLVM 15 dev libraries.
+llvm = ["xulo-compiler/llvm"]
+# Statically link LLVM (distribution artifacts).
+llvm-static = ["llvm", "xulo-compiler/llvm-static"]
+# Distribution builds must never silently ship the Cranelift fallback.
+distribution = ["llvm-static"]
+
 [dependencies]
 clap = { workspace = true }
 toml = "0.8"

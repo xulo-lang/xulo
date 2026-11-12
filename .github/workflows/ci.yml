@@ -43,3 +43,43 @@ jobs:
         run: |
           set -e
           target/release/xulo run examples/modules/main.xulo > /dev/null
+
+  llvm-backend:
+    runs-on: ubuntu-22.04
+    env:
+      LLVM_SYS_150_PREFIX: /usr/lib/llvm-15
+      XULO_RUNTIME_LIB: ${{ github.workspace }}/target/release/libxulo_runtime.a
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Install LLVM 15
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm-15-dev clang-15 zlib1g-dev libzstd-dev \
+            libffi-dev libxml2-dev libedit-dev libncurses5-dev
+
+      - name: Build runtime static library
+        run: cargo build -p xulo-runtime --release
+
+      - name: Clippy (LLVM feature)
+        run: |
+          cargo clippy -p xulo-compiler --all-targets --features llvm -- -D warnings
+          cargo clippy -p xupm --all-targets --features llvm -- -D warnings
+
+      - name: Golden and differential tests
+        run: |
+          XULO_LLVM=1 cargo test -p xulo-compiler --features llvm \
+            --test llvm_golden_tests --test llvm_differential_tests
+
+      - name: Build distribution binary (static LLVM)
+        run: cargo build -p xupm --release --features distribution
+
+      - name: Build and run an LLVM executable
+        run: |
+          target/release/xupm build examples/hello.xulo --release
+          test "$(examples/.xupm/build/hello)" = "Hello, world!"

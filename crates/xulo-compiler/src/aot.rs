@@ -2,6 +2,10 @@
 //!
 //! 函数体 lowering 与 JIT 共用 `codegen`（见 `backend` 的后端分层说明）；
 //! 本文件只关心“输出成文件”：目标文件落盘、运行时库定位、cc 链接参数。
+//!
+//! IR -> 目标文件这一步是可替换的：默认走 Cranelift（语言开发/测试），
+//! 启用 `llvm` feature 后 `xupm build` 走 LLVM。两条路径共用同一套
+//! load -> analyze -> IR -> link 流程，避免出现两套会漂移的流水线。
 
 use std::path::{Path, PathBuf};
 
@@ -12,6 +16,34 @@ use xulo_core::ir::IrModule;
 
 use crate::backend::BackendMode;
 use crate::codegen::CodeGen;
+
+/// IR -> 目标文件使用的后端。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AotBackend {
+    /// Cranelift（默认；语言开发与测试路径）
+    Cranelift,
+    /// LLVM（`llvm` feature；`xupm build` 的产品路径）
+    Llvm,
+}
+
+impl AotBackend {
+    pub fn name(self) -> &'static str {
+        match self {
+            AotBackend::Cranelift => "cranelift",
+            AotBackend::Llvm => "llvm",
+        }
+    }
+}
+
+/// 优化档位（只影响 IR -> 目标文件的优化级别，不切换后端）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum BuildProfile {
+    /// `xupm build`：低优化
+    #[default]
+    Debug,
+    /// `xupm build --release`：高优化
+    Release,
+}
 
 /// AOT codegen 入口：内部复用 codegen 的统一 lowering，收尾走 .o 产物
 pub struct AotCodeGen {
@@ -85,21 +117,40 @@ pub fn link_executable(obj_path: &Path, exe_path: &Path) -> Result<(), XuloError
 pub struct BuildOutput {
     pub executable: PathBuf,
     pub warnings: Vec<XuloError>,
+    /// 实际使用的后端（用于构建日志/排障）。
+    pub backend: AotBackend,
 }
 
 /// Load, analyze, lower, and link `entry` into a native executable at
-/// `output`. The caller owns naming and diagnostics; the compiler only turns
-/// the program into a binary (the `rustc` half, with `xupm` playing `cargo`).
+/// `output`. Compatibility entry point: Cranelift + debug profile, used by
+/// the existing tests.
 pub fn build_executable(entry: &Path, output: &Path) -> Result<BuildOutput, XuloError> {
+    build_executable_with_profile(entry, output, AotBackend::Cranelift, BuildProfile::Debug)
+}
+
+/// 指定后端（debug profile）构建。
+pub fn build_executable_with(
+    entry: &Path,
+    output: &Path,
+    backend: AotBackend,
+) -> Result<BuildOutput, XuloError> {
+    build_executable_with_profile(entry, output, backend, BuildProfile::Debug)
+}
+
+/// 共享构建流水线：load -> analyze -> dispatch/builtin rewriting -> IR ->
+/// `emit_object(backend)` -> link。唯一的分支点是 IR -> 目标文件。
+pub fn build_executable_with_profile(
+    entry: &Path,
+    output: &Path,
+    backend: AotBackend,
+    profile: BuildProfile,
+) -> Result<BuildOutput, XuloError> {
     let mut loaded = crate::module::load(entry)?;
-    let warnings = crate::module::analyze(&mut loaded, true)?;
+    let mut warnings = crate::module::analyze(&mut loaded, true)?;
     crate::module::apply_trait_dispatch(&mut loaded);
     // IR 后端只认限定的 `std::math::…` 键（解释器从 use 绑定解析裸名）
     crate::module::apply_std_calls(&mut loaded);
     let ir = crate::compile_modules_to_ir(&loaded)?;
-
-    let codegen = AotCodeGen::new()?;
-    let product = codegen.compile(&ir)?;
 
     if let Some(dir) = output.parent().filter(|dir| !dir.as_os_str().is_empty()) {
         std::fs::create_dir_all(dir).map_err(|e| {
@@ -109,35 +160,120 @@ pub fn build_executable(entry: &Path, output: &Path) -> Result<BuildOutput, Xulo
             )
         })?;
     }
+
+    let backend = resolve_backend(backend, &mut warnings);
     let obj_path = output.with_extension("o");
-    write_object_file(&product, &obj_path)?;
-    if let Err(err) = link_executable(&obj_path, output) {
-        let _ = std::fs::remove_file(&obj_path);
-        return Err(err);
-    }
+    emit_object(backend, &ir, &obj_path, profile)?;
+    let link_result = link_executable(&obj_path, output);
     let _ = std::fs::remove_file(&obj_path);
+    link_result?;
     Ok(BuildOutput {
         executable: output.to_path_buf(),
         warnings,
+        backend,
     })
 }
 
-/// 定位工作区里的 libxulo_runtime.a（AOT 链接需要）
+/// 未启用 `llvm` feature 时回退到 Cranelift 并记录警告（仅语言开发用途；
+/// 发行构建必须启用 `llvm`，不应发布回退后的二进制）。
+fn resolve_backend(backend: AotBackend, _warnings: &mut Vec<XuloError>) -> AotBackend {
+    match backend {
+        AotBackend::Cranelift => AotBackend::Cranelift,
+        #[cfg(feature = "llvm")]
+        AotBackend::Llvm => AotBackend::Llvm,
+        #[cfg(not(feature = "llvm"))]
+        AotBackend::Llvm => {
+            _warnings.push(XuloError::new(
+                ErrorKind::Warning,
+                "LLVM not enabled; falling back to Cranelift (development only)",
+            ));
+            AotBackend::Cranelift
+        }
+    }
+}
+
+/// IR -> 目标文件（后端唯一分支点）。
+fn emit_object(
+    backend: AotBackend,
+    ir: &IrModule,
+    obj_path: &Path,
+    _profile: BuildProfile,
+) -> Result<(), XuloError> {
+    match backend {
+        AotBackend::Cranelift => {
+            let codegen = AotCodeGen::new()?;
+            let product = codegen.compile(ir)?;
+            write_object_file(&product, obj_path)
+        }
+        #[cfg(feature = "llvm")]
+        AotBackend::Llvm => {
+            crate::llvm::emit_object(ir, obj_path, matches!(_profile, BuildProfile::Release))
+        }
+        #[cfg(not(feature = "llvm"))]
+        AotBackend::Llvm => unreachable!("LLVM backend resolved to Cranelift without the feature"),
+    }
+}
+
+fn runtime_library_name() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "xulo_runtime.lib"
+    } else {
+        "libxulo_runtime.a"
+    }
+}
+
+fn existing(path: PathBuf) -> Option<PathBuf> {
+    path.exists().then_some(path)
+}
+
+/// 定位 AOT 链接所需的运行时静态库。
+///
+/// 查找顺序（7.5）：`XULO_RUNTIME_LIB` -> 可执行文件旁的 `lib/xulo/` 或
+/// 安装前缀 `<exe>/../lib/xulo/` -> 源码树 `target/release`（仅开发）。
 fn runtime_library_path() -> Result<PathBuf, XuloError> {
+    let name = runtime_library_name();
+    if let Some(path) = std::env::var_os("XULO_RUNTIME_LIB").map(PathBuf::from) {
+        return existing(path).ok_or_else(|| {
+            XuloError::new(
+                ErrorKind::Codegen,
+                format!(
+                    "XULO_RUNTIME_LIB points to a missing runtime library: {}",
+                    std::env::var("XULO_RUNTIME_LIB").unwrap_or_default()
+                ),
+            )
+        });
+    }
+
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        let candidates = [
+            dir.join("lib").join("xulo").join(name),
+            dir.join(name),
+            dir.join("../lib").join("xulo").join(name),
+            dir.join("../lib").join(name),
+        ];
+        for candidate in candidates {
+            if let Some(path) = existing(candidate) {
+                return Ok(path);
+            }
+        }
+    }
+
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let workspace_root = manifest_dir
         .parent()
         .and_then(|p| p.parent())
         .unwrap_or(Path::new("."));
-    let runtime_lib = workspace_root.join("target/release/libxulo_runtime.a");
-    if !runtime_lib.exists() {
-        return Err(XuloError::new(
+    let runtime_lib = workspace_root.join("target/release").join(name);
+    existing(runtime_lib.clone()).ok_or_else(|| {
+        XuloError::new(
             ErrorKind::Codegen,
             format!(
-                "runtime library not found at {}（请先运行 cargo build --release -p xulo-runtime）",
+                "runtime library not found at {}（请先运行 cargo build --release -p xulo-runtime，\
+                 或设置 XULO_RUNTIME_LIB）",
                 runtime_lib.display()
             ),
-        ));
-    }
-    Ok(runtime_lib)
+        )
+    })
 }

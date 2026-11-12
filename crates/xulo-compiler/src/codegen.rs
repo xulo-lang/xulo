@@ -21,7 +21,7 @@ use xulo_core::ir::*;
 
 use crate::backend::{BackendMode, CompilerModule, RUNTIME_FNS};
 
-fn aot_symbol_name(name: &str) -> String {
+pub(crate) fn aot_symbol_name(name: &str) -> String {
     let mut symbol: String = name
         .chars()
         .map(|ch| {
@@ -39,6 +39,74 @@ fn aot_symbol_name(name: &str) -> String {
         symbol.insert(0, '_');
     }
     symbol
+}
+
+/// RuntimeFn -> 运行时符号名（JIT/AOT/LLVM 后端共用一份映射）。
+pub(crate) fn runtime_fn_name(func: &RuntimeFn) -> &'static str {
+    match func {
+        RuntimeFn::Print => "xulo_print",
+        RuntimeFn::PrintInt => "xulo_print_int",
+        RuntimeFn::PrintFloat => "xulo_print_float",
+        RuntimeFn::PrintValue => "xulo_print_value",
+        RuntimeFn::Panic => "xulo_panic",
+        RuntimeFn::StringConcat => "xulo_string_concat",
+        RuntimeFn::Stringify => "xulo_stringify",
+        RuntimeFn::AllocObject => "xulo_alloc_object",
+        RuntimeFn::AllocArray => "xulo_alloc_array",
+        RuntimeFn::ArrayPush => "xulo_array_push",
+        RuntimeFn::ArrayLen => "xulo_array_len",
+        RuntimeFn::ArrayGet => "xulo_array_get",
+        RuntimeFn::ArrayGetTag => "xulo_array_get_tag",
+        RuntimeFn::ArraySet => "xulo_array_set",
+        RuntimeFn::ArrayConcat => "xulo_array_concat",
+        RuntimeFn::ObjectGet => "xulo_object_get",
+        RuntimeFn::ObjectGetTag => "xulo_object_get_tag",
+        RuntimeFn::ObjectSet => "xulo_object_set",
+        RuntimeFn::AllocEnum => "xulo_alloc_enum",
+        RuntimeFn::EnumSet => "xulo_enum_set",
+        RuntimeFn::EnumVariant => "xulo_enum_variant",
+        RuntimeFn::EnumGet => "xulo_enum_get",
+        RuntimeFn::EnumGetTag => "xulo_enum_get_tag",
+        RuntimeFn::AsF64 => "xulo_as_f64",
+        RuntimeFn::RegisterFloat => "xulo_register_float",
+        RuntimeFn::AllocCell => "xulo_alloc_cell",
+        RuntimeFn::CellGet => "xulo_cell_get",
+        RuntimeFn::CellGetF64 => "xulo_cell_get_f64",
+        RuntimeFn::CellSet => "xulo_cell_set",
+        RuntimeFn::AllocEnv => "xulo_alloc_env",
+        RuntimeFn::EnvSet => "xulo_env_set",
+        RuntimeFn::EnvGet => "xulo_env_get",
+        RuntimeFn::AllocClosure => "xulo_alloc_closure",
+        RuntimeFn::ClosureFunc => "xulo_closure_func",
+        RuntimeFn::ClosureEnv => "xulo_closure_env",
+        RuntimeFn::CheckCallable => "xulo_check_callable",
+        RuntimeFn::RegexCompile => "xulo_regex_compile",
+        RuntimeFn::RegexTest => "xulo_regex_test",
+        RuntimeFn::RegexFind => "xulo_regex_find",
+        RuntimeFn::RegexFindAll => "xulo_regex_find_all",
+        RuntimeFn::RegexMatchGroup => "xulo_regex_match_group",
+        RuntimeFn::RegexReplace => "xulo_regex_replace",
+        RuntimeFn::RegexReplaceWith => "xulo_regex_replace_with",
+        RuntimeFn::StringToUppercase => "xulo_string_to_uppercase",
+        RuntimeFn::StringToLowercase => "xulo_string_to_lowercase",
+        RuntimeFn::StringTrim => "xulo_string_trim",
+        RuntimeFn::StringLength => "xulo_string_length",
+        RuntimeFn::StringContains => "xulo_string_contains",
+        RuntimeFn::StringStartsWith => "xulo_string_starts_with",
+        RuntimeFn::StringEndsWith => "xulo_string_ends_with",
+        RuntimeFn::StringSplit => "xulo_string_split",
+        RuntimeFn::StringPadStart => "xulo_string_pad_start",
+        RuntimeFn::StringPadEnd => "xulo_string_pad_end",
+        RuntimeFn::StringRepeat => "xulo_string_repeat",
+        RuntimeFn::StringSize => "xulo_string_size",
+        RuntimeFn::StringByteLen => "xulo_string_byte_len",
+        RuntimeFn::StringCodeAt => "xulo_string_code_at",
+        RuntimeFn::StringSlice => "xulo_string_slice",
+        RuntimeFn::StringBytes => "xulo_string_bytes",
+        RuntimeFn::LiteralMatch => "xulo_literal_match",
+        RuntimeFn::RangeList => "xulo_range_list",
+        RuntimeFn::Intrinsic(name) => name,
+    }
 }
 
 fn block_has_terminator(func: &cranelift::codegen::ir::Function, block: Block) -> bool {
@@ -715,70 +783,7 @@ impl CodeGen {
                         .map(|a| resolve_operand(&mut builder, a, &vars))
                         .collect();
 
-                    let fn_name = match func {
-                        RuntimeFn::Print => "xulo_print",
-                        RuntimeFn::PrintInt => "xulo_print_int",
-                        RuntimeFn::PrintFloat => "xulo_print_float",
-                        RuntimeFn::PrintValue => "xulo_print_value",
-                        RuntimeFn::Panic => "xulo_panic",
-                        RuntimeFn::StringConcat => "xulo_string_concat",
-                        RuntimeFn::Stringify => "xulo_stringify",
-                        RuntimeFn::AllocObject => "xulo_alloc_object",
-                        RuntimeFn::AllocArray => "xulo_alloc_array",
-                        RuntimeFn::ArrayPush => "xulo_array_push",
-                        RuntimeFn::ArrayLen => "xulo_array_len",
-                        RuntimeFn::ArrayGet => "xulo_array_get",
-                        RuntimeFn::ArrayGetTag => "xulo_array_get_tag",
-                        RuntimeFn::ArraySet => "xulo_array_set",
-                        RuntimeFn::ArrayConcat => "xulo_array_concat",
-                        RuntimeFn::ObjectGet => "xulo_object_get",
-                        RuntimeFn::ObjectGetTag => "xulo_object_get_tag",
-                        RuntimeFn::ObjectSet => "xulo_object_set",
-                        RuntimeFn::AllocEnum => "xulo_alloc_enum",
-                        RuntimeFn::EnumSet => "xulo_enum_set",
-                        RuntimeFn::EnumVariant => "xulo_enum_variant",
-                        RuntimeFn::EnumGet => "xulo_enum_get",
-                        RuntimeFn::EnumGetTag => "xulo_enum_get_tag",
-                        RuntimeFn::AsF64 => "xulo_as_f64",
-                        RuntimeFn::RegisterFloat => "xulo_register_float",
-                        RuntimeFn::AllocCell => "xulo_alloc_cell",
-                        RuntimeFn::CellGet => "xulo_cell_get",
-                        RuntimeFn::CellGetF64 => "xulo_cell_get_f64",
-                        RuntimeFn::CellSet => "xulo_cell_set",
-                        RuntimeFn::AllocEnv => "xulo_alloc_env",
-                        RuntimeFn::EnvSet => "xulo_env_set",
-                        RuntimeFn::EnvGet => "xulo_env_get",
-                        RuntimeFn::AllocClosure => "xulo_alloc_closure",
-                        RuntimeFn::ClosureFunc => "xulo_closure_func",
-                        RuntimeFn::ClosureEnv => "xulo_closure_env",
-                        RuntimeFn::CheckCallable => "xulo_check_callable",
-                        RuntimeFn::RegexCompile => "xulo_regex_compile",
-                        RuntimeFn::RegexTest => "xulo_regex_test",
-                        RuntimeFn::RegexFind => "xulo_regex_find",
-                        RuntimeFn::RegexFindAll => "xulo_regex_find_all",
-                        RuntimeFn::RegexMatchGroup => "xulo_regex_match_group",
-                        RuntimeFn::RegexReplace => "xulo_regex_replace",
-                        RuntimeFn::RegexReplaceWith => "xulo_regex_replace_with",
-                        RuntimeFn::StringToUppercase => "xulo_string_to_uppercase",
-                        RuntimeFn::StringToLowercase => "xulo_string_to_lowercase",
-                        RuntimeFn::StringTrim => "xulo_string_trim",
-                        RuntimeFn::StringLength => "xulo_string_length",
-                        RuntimeFn::StringContains => "xulo_string_contains",
-                        RuntimeFn::StringStartsWith => "xulo_string_starts_with",
-                        RuntimeFn::StringEndsWith => "xulo_string_ends_with",
-                        RuntimeFn::StringSplit => "xulo_string_split",
-                        RuntimeFn::StringPadStart => "xulo_string_pad_start",
-                        RuntimeFn::StringPadEnd => "xulo_string_pad_end",
-                        RuntimeFn::StringRepeat => "xulo_string_repeat",
-                        RuntimeFn::StringSize => "xulo_string_size",
-                        RuntimeFn::StringByteLen => "xulo_string_byte_len",
-                        RuntimeFn::StringCodeAt => "xulo_string_code_at",
-                        RuntimeFn::StringSlice => "xulo_string_slice",
-                        RuntimeFn::StringBytes => "xulo_string_bytes",
-                        RuntimeFn::LiteralMatch => "xulo_literal_match",
-                        RuntimeFn::RangeList => "xulo_range_list",
-                        RuntimeFn::Intrinsic(name) => name,
-                    };
+                    let fn_name = runtime_fn_name(func);
 
                     if let Some(&func_id) = self.runtime_func_ids.get(fn_name) {
                         let (decl_params, decl_returns) =

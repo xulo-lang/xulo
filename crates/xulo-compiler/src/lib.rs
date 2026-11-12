@@ -2,6 +2,8 @@ pub mod aot;
 pub mod backend;
 pub mod codegen;
 pub mod irgen;
+#[cfg(feature = "llvm")]
+pub mod llvm;
 /// JavaScript generation has been retired: programs run on the native
 /// interpreter (`xulo_runtime`). This crate handles the front end
 /// (tokenize -> parse -> semantic check) and multi-file module loading for the
