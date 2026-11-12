@@ -30,7 +30,7 @@ fn list_work(n: number): number {
 }
 
 fn string_work(n: number): number {
-    let mut b = StringBuilder::create()
+    let mut b = StringBuilder::new()
     let mut i = 0
     while i < n {
         b.append("x")

@@ -127,7 +127,7 @@ const CORPUS: &[(&str, &str)] = &[
         "string_builder",
         r#"
         fn main() {
-            let mut b = StringBuilder::create()
+            let mut b = StringBuilder::new()
             b.append("hello")
             b.append(", ")
             b.append("builder")

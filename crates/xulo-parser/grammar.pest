@@ -482,9 +482,11 @@ quote_nested = { "{" ~ quote_inside ~ "}" | "(" ~ quote_inside ~ ")"
     | "[" ~ quote_inside ~ "]" }
 quote_char = _{ !("${" | "{" | "}" | "(" | ")" | "[" | "]" | "\"" | "'" | "`") ~ ANY }
 // A `::`-separated member segment in expression position: an identifier, or
-// the `copy` keyword so `std::fs::copy(a, b)` (spec `modules/fs.md`) parses.
-// A bare `copy` never starts a path, so `copy expr` stays the unary operator.
-path_member = { identifier | kw_copy }
+// the `copy` keyword so `std::fs::copy(a, b)` (spec `modules/fs.md`) parses,
+// or the reserved word `new` so the built-in `StringBuilder::new()` (spec
+// `types/composite-types.md`) parses. A bare `copy` never starts a path, so
+// `copy expr` stays the unary operator; the same holds for `new`.
+path_member = { identifier | kw_copy | ("new" ~ !ident_part) }
 
 // A qualified path in expression position: `Theme::Dark`, `form::validate`,
 // `lsp-server::router::run()`, `self::cache`, `super::fields::Field`. The

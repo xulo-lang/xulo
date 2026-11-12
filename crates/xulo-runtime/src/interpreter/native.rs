@@ -2596,34 +2596,16 @@ pub(super) fn http_server_type_object() -> Value {
 }
 
 /// `StringBuilder` statics (semantic exposes the type without an import):
-/// `create()` allocates an empty builder value.
+/// `new()` allocates an empty builder value. Instances answer their own
+/// `append`/`clear`/`build` members in `string_builder_method`.
 pub(super) fn string_builder_static_object() -> Value {
     Value::Object(Rc::new(RefCell::new(vec![(
-        "create".to_string(),
+        "new".to_string(),
         Value::Native(Rc::new(|_interp, args| {
-            no_arg_guard(args, "StringBuilder::create")?;
-            Ok(string_builder_object(Rc::new(RefCell::new(String::new()))))
+            no_arg_guard(args, "StringBuilder::new")?;
+            Ok(Value::StringBuilder(Rc::new(RefCell::new(
+                crate::value::StringBuilderValue::new(),
+            ))))
         })),
     )])))
-}
-
-/// One mutable builder value: `append(text)` returns the same object so calls
-/// can chain, `build()` snapshots the contents as an immutable string.
-pub(super) fn string_builder_object(buffer: Rc<RefCell<String>>) -> Value {
-    let append_buffer = buffer.clone();
-    let build_buffer = buffer;
-    let object: Rc<RefCell<Vec<(String, Value)>>> = Rc::new(RefCell::new(Vec::new()));
-    let append_object = object.clone();
-    let append = Value::Native(Rc::new(move |_interp, args| {
-        let text = builtin_str_arg(args, 0, "StringBuilder::append")?;
-        append_buffer.borrow_mut().push_str(&text);
-        Ok(Value::Object(append_object.clone()))
-    }));
-    let build = Value::Native(Rc::new(move |_interp, args| {
-        no_arg_guard(args, "StringBuilder::build")?;
-        Ok(Value::String(Rc::from(build_buffer.borrow().as_str())))
-    }));
-    object.borrow_mut().push(("append".to_string(), append));
-    object.borrow_mut().push(("build".to_string(), build));
-    Value::Object(object)
 }

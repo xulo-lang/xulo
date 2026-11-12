@@ -61,15 +61,25 @@ fn string_builder_appends_and_builds() {
     let out = compile_and_run(
         r#"
         fn main() {
-            let mut b = StringBuilder::create()
+            let mut b = StringBuilder::new()
+            b.append("héllo")
+            print(b.len)
+            print(b.byte_len)
+            print(b)
+            b.clear()
+            print(b.len)
+            print(b == StringBuilder::new())
             b.append("ab")
             b.append("cd")
-            print(b.build())
+            println(b.build())
             print(b.build().len)
+            let mut same = StringBuilder::new()
+            same.append("abcd")
+            print(b == same)
         }
         "#,
     );
-    assert_eq!(out, vec!["abcd", "4"]);
+    assert_eq!(out, vec!["5", "6", "héllo", "0", "true", "abcd", "4", "true"]);
 }
 
 #[test]

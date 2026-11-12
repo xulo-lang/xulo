@@ -819,6 +819,12 @@ impl Interpreter {
             }
             Value::String(s) if m.property == "len" => Ok(Value::Number(s.chars().count() as f64)),
             Value::String(s) if m.property == "byte_len" => Ok(Value::Number(s.len() as f64)),
+            Value::StringBuilder(builder) if m.property == "len" => {
+                Ok(Value::Number(builder.borrow().len() as f64))
+            }
+            Value::StringBuilder(builder) if m.property == "byte_len" => {
+                Ok(Value::Number(builder.borrow().byte_len() as f64))
+            }
             Value::Set(set) if m.property == "size" => Ok(Value::Number(set.borrow().len() as f64)),
             other => Err(RunError::err(
                 format!(

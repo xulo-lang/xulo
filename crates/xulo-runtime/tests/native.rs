@@ -133,7 +133,7 @@ fn string_builder_appends_and_builds() {
     let out = run_ok(
         r#"
         fn main() {
-            let mut b = StringBuilder::create()
+            let mut b = StringBuilder::new()
             b.append("ab")
             b.append("cd")
             print(b.build())
@@ -142,6 +142,39 @@ fn string_builder_appends_and_builds() {
         "#,
     );
     assert_eq!(out, vec!["abcd", "4"]);
+}
+
+#[test]
+fn string_builder_lengths_clear_output_and_reference_semantics() {
+    let out = run_ok(
+        r#"
+        fn main() {
+            let mut b = StringBuilder::new()
+            b.append("héllo")
+            print(b.len)
+            print(b.byte_len)
+            print(b)
+            b.clear()
+            print(b.len)
+            print(b == StringBuilder::new())
+
+            let mut a = StringBuilder::new()
+            a.append("x")
+            let mut alias = a
+            alias.append("y")
+            print(a.build())
+
+            let mut detached = copy a
+            detached.append("z")
+            print(a.build())
+            print(detached.build())
+        }
+        "#,
+    );
+    assert_eq!(
+        out,
+        vec!["5", "6", "héllo", "0", "true", "xy", "xy", "xyz"]
+    );
 }
 
 #[test]

@@ -408,6 +408,15 @@ impl Interpreter {
             Value::Set(set) => {
                 return self.set_method(method, set.clone(), &call.arguments, &call.span, env);
             }
+            Value::StringBuilder(builder) => {
+                return self.string_builder_method(
+                    method,
+                    builder.clone(),
+                    &call.arguments,
+                    &call.span,
+                    env,
+                );
+            }
             _ => None,
         };
         match callee {
@@ -522,6 +531,51 @@ impl Interpreter {
     // ──────────────────────────────────────────────────────────────────
     //  Built-in list methods
     // ──────────────────────────────────────────────────────────────────
+
+    /// The members of a `StringBuilder` (spec `types/composite-types.md`):
+    /// `append` and `clear` mutate the shared buffer and return `unit`;
+    /// `build` snapshots the current text as a new immutable `string`.
+    pub(super) fn string_builder_method(
+        &self,
+        method: &str,
+        builder: Rc<RefCell<crate::value::StringBuilderValue>>,
+        args: &[CallArg],
+        span: &std::ops::Range<usize>,
+        env: &Rc<RefCell<crate::env::Env>>,
+    ) -> Result<Value, RunError> {
+        match method {
+            "append" => {
+                expect_args(method, args, 1, 1, span)?;
+                match self.eval(&args[0].value, env)? {
+                    Value::String(text) => builder.borrow_mut().append(&text),
+                    other => {
+                        return Err(RunError::err(
+                            format!(
+                                "`append()` expects a `string`, found {}",
+                                other.kind_name()
+                            ),
+                            args[0].value.span().clone(),
+                        ));
+                    }
+                }
+                Ok(Value::Null)
+            }
+            "clear" => {
+                expect_args(method, args, 0, 0, span)?;
+                builder.borrow_mut().clear();
+                Ok(Value::Null)
+            }
+            "build" => {
+                expect_args(method, args, 0, 0, span)?;
+                let text = builder.borrow().text().to_string();
+                Ok(Value::String(text.into()))
+            }
+            _ => Err(RunError::err(
+                format!("`{method}` is not a method of StringBuilder"),
+                span.clone(),
+            )),
+        }
+    }
 
     /// The methods a `string` receiver carries. `replace` consumes a compiled
     /// `RegExp` and a template or replacement function; the rest reshape or

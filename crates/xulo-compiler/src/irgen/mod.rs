@@ -706,6 +706,9 @@ impl IrGenerator {
                     if call.callee == "str" {
                         return Some(Type::String);
                     }
+                    if call.callee == "StringBuilder::new" {
+                        return Some(Type::Named("StringBuilder".to_string(), Vec::new()));
+                    }
                     // String inspection prelude functions.
                     match call.callee.as_str() {
                         "stringSize" | "stringCodeAt" => return Some(Type::Number),
@@ -809,6 +812,22 @@ impl IrGenerator {
                         Some("code_at") => return Some(Type::Number),
                         Some("slice") if !self.expr_is_list_receiver(&call.object) => {
                             return Some(Type::String);
+                        }
+                        Some("build")
+                            if call
+                                .object
+                                .as_ref()
+                                .is_some_and(|o| self.expr_is_string_builder(o)) =>
+                        {
+                            return Some(Type::String);
+                        }
+                        Some("append") | Some("clear")
+                            if call
+                                .object
+                                .as_ref()
+                                .is_some_and(|o| self.expr_is_string_builder(o)) =>
+                        {
+                            return Some(Type::Named("unit".to_string(), Vec::new()));
                         }
                         Some("bytes") => {
                             return Some(Type::List(Box::new(Type::Named(
@@ -1043,6 +1062,17 @@ impl IrGenerator {
                 // 经局部变量的间接调用：返回标签运行时才知道
                 if call.object.is_none() && self.locals.contains_key(&call.callee) {
                     return -1;
+                }
+                // StringBuilder 成员：`build` 产出字符串，`append`/`clear`
+                // 返回 `unit`（null 标签）。
+                if let Some(object) = &call.object
+                    && self.expr_is_string_builder(object)
+                {
+                    match call.method.as_deref().unwrap_or(&call.callee) {
+                        "build" => return 0,
+                        "append" | "clear" => return 6,
+                        _ => {}
+                    }
                 }
                 // 方法调用用 `Type::method` 作键查找返回类型注解
                 let key = if call.object.is_some() {
@@ -1342,9 +1372,17 @@ impl IrGenerator {
         })
     }
 
+    /// 表达式是否是 `StringBuilder`（`print`/`.len`/`.byte_len` 需要区分
+    /// 句柄与字符串指针）。
+    pub(super) fn expr_is_string_builder(&self, expr: &Expression) -> bool {
+        matches!(
+            self.infer_source_type_from_expr(expr),
+            Some(Type::Named(name, _)) if name == "StringBuilder"
+        )
+    }
+
     /// 表达式是否是字符串（用于 `+` 拼接与 str() 直通的 tag 判断）
-    fn is_string_like(&self, expr: &Expression) -> bool {
-        if matches!(self.infer_source_type_from_expr(expr), Some(Type::String)) {
+    fn is_string_like(&self, expr: &Expression) -> bool {        if matches!(self.infer_source_type_from_expr(expr), Some(Type::String)) {
             return true;
         }
         // str() 的返回值

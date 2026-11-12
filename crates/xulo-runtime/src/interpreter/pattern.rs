@@ -246,6 +246,9 @@ pub(super) fn deep_copy_value(value: &Value) -> Value {
                 .collect();
             Value::Object(Rc::new(RefCell::new(items)))
         }
+        Value::StringBuilder(builder) => {
+            Value::StringBuilder(Rc::new(RefCell::new(builder.borrow().clone())))
+        }
         other => other.clone(),
     }
 }

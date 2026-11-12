@@ -420,6 +420,9 @@ fn closed_range_spells_dot_dot_eq() {
 fn ellipsis_is_not_a_range_operator() {
     // `...` is only the spread prefix; `a...b` no longer parses as a range.
     parse_err("fn f() { let r = 0...3 }");
+    parse_err("fn f() { for i in 1...5 { } }");
+    // A match range pattern spells the closed bound `..=`, never `...`.
+    parse_err("fn f(x: number) { match x { 0...3 => 1, _ => 2 } }");
 }
 
 #[test]
@@ -903,6 +906,12 @@ fn legacy_syntax_rejected() {
 fn reserved_words_are_not_identifiers() {
     parse_err("let class = 1");
     parse_err("let protocol = 1");
+    parse_err("let new = 1");
+}
+
+#[test]
+fn reserved_new_is_accepted_as_a_qualified_member() {
+    parse_ok("fn f() { let b = StringBuilder::new() }");
 }
 
 #[test]

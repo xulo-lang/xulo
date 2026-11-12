@@ -134,10 +134,15 @@ pub enum RuntimeFn {
     StringCodeAt,
     StringSlice,
     StringBytes,
-    /// StringBuilder：分配 / 追加 / 取出字符串（句柄为 i64）
+    /// StringBuilder：分配 / 追加 / 清空 / 取出字符串 / 长度（句柄为 i64）
     StringBuilderNew,
     StringBuilderAppend,
+    StringBuilderClear,
     StringBuilderBuild,
+    StringBuilderLen,
+    StringBuilderByteLen,
+    /// 两个 builder 的当前文本相等（内容判等）
+    StringBuilderEq,
     /// match 字面量 pattern 判定（返回 1/0）
     LiteralMatch,
     /// 区间表达式 `0..<3` / `1..=4` 求值为列表

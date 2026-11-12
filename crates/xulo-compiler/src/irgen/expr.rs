@@ -421,6 +421,33 @@ impl IrGenerator {
             return Ok(Operand::Local(local));
         }
 
+        // `StringBuilder == StringBuilder` compares the current text, not the
+        // handle identity (spec `types/composite-types.md`).
+        if matches!(binop.operator, BinaryOperator::Eq | BinaryOperator::Neq)
+            && (self.expr_is_string_builder(&binop.left)
+                || self.expr_is_string_builder(&binop.right))
+        {
+            let eq = self.module.functions[func_idx].add_local(IrType::Bool);
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::RuntimeCall {
+                    dst: Some(eq),
+                    func: RuntimeFn::StringBuilderEq,
+                    args: vec![left, right],
+                });
+            if matches!(binop.operator, BinaryOperator::Neq) {
+                let negated = self.module.functions[func_idx].add_local(IrType::Bool);
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::Not {
+                        dst: negated,
+                        operand: Operand::Local(eq),
+                    });
+                return Ok(Operand::Local(negated));
+            }
+            return Ok(Operand::Local(eq));
+        }
+
         let ty = match binop.operator {
             BinaryOperator::Add
             | BinaryOperator::Sub
@@ -985,11 +1012,16 @@ impl IrGenerator {
         }
 
         // 检查是否是内置函数或内置方法
-        // receiver 是用户结构体时不抢方法名（用户 impl 方法优先）
-        let receiver_is_struct = call
+        // receiver 是用户结构体时不抢方法名（用户 impl 方法优先）；内置
+        // Named 类型（StringBuilder 等）不是结构体，仍需走内建 lowering。
+        let receiver_is_struct = call.object.as_ref().is_some_and(|o| {
+            self.struct_name_of_expr(o)
+                .is_some_and(|name| self.structs.contains_key(&name))
+        });
+        let receiver_is_builder = call
             .object
             .as_ref()
-            .is_some_and(|o| self.struct_name_of_expr(o).is_some());
+            .is_some_and(|o| self.expr_is_string_builder(o));
         let runtime_fn = if call.object.is_some() {
             // 方法调用：根据方法名匹配
             match call.method.as_deref().unwrap_or(&call.callee) {
@@ -1032,9 +1064,11 @@ impl IrGenerator {
                 "to_uppercase" => Some(RuntimeFn::StringToUppercase),
                 "to_lowercase" => Some(RuntimeFn::StringToLowercase),
                 "trim" => Some(RuntimeFn::StringTrim),
-                // StringBuilder 实例方法（名字与列表 push 区分，避免误派发）
-                "append" if !receiver_is_struct => Some(RuntimeFn::StringBuilderAppend),
-                "build" if !receiver_is_struct => Some(RuntimeFn::StringBuilderBuild),
+                // StringBuilder 实例方法：只按静态类型派发，避免与列表/
+                // 用户方法的同名成员冲突。
+                "append" if receiver_is_builder => Some(RuntimeFn::StringBuilderAppend),
+                "clear" if receiver_is_builder => Some(RuntimeFn::StringBuilderClear),
+                "build" if receiver_is_builder => Some(RuntimeFn::StringBuilderBuild),
                 "starts_with" => Some(RuntimeFn::StringStartsWith),
                 "ends_with" => Some(RuntimeFn::StringEndsWith),
                 "split" => Some(RuntimeFn::StringSplit),
@@ -1060,7 +1094,7 @@ impl IrGenerator {
         } else {
             // 普通函数调用
             match call.callee.as_str() {
-                "StringBuilder::create" => Some(RuntimeFn::StringBuilderNew),
+                "StringBuilder::new" => Some(RuntimeFn::StringBuilderNew),
                 "print" | "println" => {
                     // 使用 PrintValue 带类型标签
                     if args.is_empty() {
@@ -1073,8 +1107,24 @@ impl IrGenerator {
                         // `Display`/`Debug` 先于输出表咨询（spec
                         // `builtins/intrinsic-functions.md`, "Output"）。
                         let arg_expr = &call.arguments[0].value;
-                        let value = args[0].clone();
-                        if let Some(rendered) = self.user_print_operand(arg_expr, value) {
+                        if self.expr_is_string_builder(arg_expr) {
+                            // `print(sb)` renders the builder's current text,
+                            // exactly the `string` row (spec
+                            // `builtins/intrinsic-functions.md`).
+                            let func_idx = self.current_func.unwrap();
+                            let local =
+                                self.module.functions[func_idx].add_local(IrType::Pointer);
+                            self.module.functions[func_idx].instructions.push(
+                                Instruction::RuntimeCall {
+                                    dst: Some(local),
+                                    func: RuntimeFn::StringBuilderBuild,
+                                    args: vec![args[0].clone()],
+                                },
+                            );
+                            args = vec![Operand::Local(local), Operand::Const(IrValue::I64(0))];
+                        } else if let Some(rendered) =
+                            self.user_print_operand(arg_expr, args[0].clone())
+                        {
                             args = vec![rendered, Operand::Const(IrValue::I64(0))];
                         } else if let Expression::Identifier { name, .. } = arg_expr
                             && let Some(tag_op) = self.dyn_tag_of.get(name).cloned()
@@ -1861,7 +1911,13 @@ impl IrGenerator {
         // Read-only collection properties (spec `types/composite-types.md`,
         // `types/primitive-types.md`): `.len` on a `List`, `.byte_len` on a
         // `string`. `.size` on a map has no compiled representation yet.
+        let is_builder = matches!(
+            self.infer_source_type_from_expr(&member.object),
+            Some(Type::Named(name, _)) if name == "StringBuilder"
+        );
         let prop_fn = match member.property.as_str() {
+            "len" if is_builder => Some(RuntimeFn::StringBuilderLen),
+            "byte_len" if is_builder => Some(RuntimeFn::StringBuilderByteLen),
             "len" if self.expr_is_list_receiver(&Some(Box::new(member.object.clone()))) => {
                 Some(RuntimeFn::ArrayLen)
             }

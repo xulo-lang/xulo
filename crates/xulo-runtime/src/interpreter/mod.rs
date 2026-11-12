@@ -295,8 +295,8 @@ impl Interpreter {
         global
             .borrow_mut()
             .define("Error", Value::Native(Rc::new(native_error)), false);
-        // `StringBuilder` is a prelude builtin type: `create()` returns a
-        // mutable builder whose `append`/`build` methods are native.
+        // `StringBuilder` is a prelude builtin type: `new()` returns a mutable
+        // builder whose members are `append`/`clear`/`build`/`len`/`byte_len`.
         global
             .borrow_mut()
             .define("StringBuilder", string_builder_static_object(), false);
@@ -1900,6 +1900,13 @@ fn novel_value_bytes(
                     *bytes = bytes.saturating_add(16u64.saturating_add(key.len() as u64));
                     novel_value_bytes(item, depth - 1, seen, bytes);
                 }
+            }
+        }
+        Value::StringBuilder(builder) => {
+            if seen.insert(Rc::as_ptr(builder) as usize) {
+                *bytes = bytes
+                    .saturating_add(32u64)
+                    .saturating_add(builder.borrow().byte_len() as u64);
             }
         }
         Value::Function(func) => {

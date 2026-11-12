@@ -163,6 +163,7 @@ impl Interpreter {
                     Some(p) => Ok(format!("{enum_name}{sep}{tag}({})", render(p, seen)?)),
                 }
             }
+            Value::StringBuilder(builder) => Ok(builder.borrow().text().to_string()),
             Value::List(list) => {
                 let id = Rc::as_ptr(list) as usize;
                 if !seen.insert(id) {

@@ -14,6 +14,47 @@ use crate::interpreter::{NativeFn, RunError};
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct PtrValue(pub usize);
 
+/// A `StringBuilder`'s shared state: the current text plus the running scalar
+/// count, so `.len` stays O(1) as text is appended and cleared. Every appended
+/// value is a valid `string`, so the buffer is always valid UTF-8.
+#[derive(Clone, Default)]
+pub struct StringBuilderValue {
+    text: String,
+    scalars: usize,
+}
+
+impl StringBuilderValue {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn append(&mut self, s: &str) {
+        self.scalars += s.chars().count();
+        self.text.push_str(s);
+    }
+
+    pub fn clear(&mut self) {
+        self.text.clear();
+        self.scalars = 0;
+    }
+
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    pub fn len(&self) -> usize {
+        self.scalars
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.text.is_empty()
+    }
+
+    pub fn byte_len(&self) -> usize {
+        self.text.len()
+    }
+}
+
 /// A run-time value. Lists and objects are shared `Rc<RefCell<>>` handles so
 /// assignment mutates in place and aliasing follows JavaScript reference
 /// semantics (`b = a; b[0] = 9` also changes `a`).
@@ -33,6 +74,10 @@ pub enum Value {
     /// A `Set<T>`: an unordered collection of unique values, constructed by
     /// `Set::from_list` (spec `types/composite-types.md`).
     Set(Rc<RefCell<Vec<Value>>>),
+    /// A `StringBuilder`: a shared, mutable UTF-8 text buffer (spec
+    /// `types/composite-types.md`). Binding and assignment share the one
+    /// buffer, like the other reference types.
+    StringBuilder(Rc<RefCell<StringBuilderValue>>),
     Object(Rc<RefCell<Vec<(String, Value)>>>),
     /// A user function or closure, capturing its defining environment.
     Function(Rc<FunctionValue>),
@@ -142,6 +187,7 @@ impl Value {
             Value::Ptr(_) => "a `Ptr`".into(),
             Value::List(_) => "a `List`".into(),
             Value::Set(_) => "a `Set`".into(),
+            Value::StringBuilder(_) => "a `StringBuilder`".into(),
             Value::Object(_) => "an `object`".into(),
             Value::Function(_) | Value::Native(_) => "a function".into(),
             Value::Signal(_) => "a signal".into(),
@@ -194,6 +240,7 @@ impl Value {
                 format!("Set([{}])", parts.join(", "))
             }
             Value::Signal(cell) => cell.borrow().format_seen(seen),
+            Value::StringBuilder(builder) => builder.borrow().text().to_string(),
             Value::Object(fields) => {
                 let id = Rc::as_ptr(fields) as usize;
                 if !seen.insert(id) {
@@ -243,6 +290,11 @@ pub fn equal(a: &Value, b: &Value) -> bool {
         (Value::Ptr(x), Value::Ptr(y)) => x == y,
         (Value::List(x), Value::List(y)) => Rc::ptr_eq(x, y),
         (Value::Set(x), Value::Set(y)) => Rc::ptr_eq(x, y),
+        // A builder compares by its current text, like `string`
+        // (spec `types/composite-types.md`).
+        (Value::StringBuilder(x), Value::StringBuilder(y)) => {
+            x.borrow().text() == y.borrow().text()
+        }
         (Value::Object(x), Value::Object(y)) => Rc::ptr_eq(x, y),
         (Value::Promise(x), Value::Promise(y)) => Rc::ptr_eq(x, y),
         (Value::Signal(x), Value::Signal(y)) => Rc::ptr_eq(x, y),

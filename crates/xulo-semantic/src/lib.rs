@@ -737,10 +737,11 @@ fn regex_error_type_entry() -> TypeEntry {
     }
 }
 
-/// The `StringBuilder` type entry: `append(text)` returns the same builder
-/// (so calls can chain), `build()` snapshots its contents as a string.
+/// The `StringBuilder` type entry: `append(text)` and `clear()` mutate the
+/// buffer and return `unit`, `build()` snapshots the current text as a string,
+/// and `len`/`byte_len` are read-only `int` properties (spec
+/// `types/composite-types.md`).
 fn string_builder_type_entry() -> TypeEntry {
-    let builder = || Type::Named("StringBuilder".to_string(), Vec::new());
     TypeEntry {
         type_params: Vec::new(),
         type_bounds: Vec::new(),
@@ -749,7 +750,15 @@ fn string_builder_type_entry() -> TypeEntry {
                 "append".to_string(),
                 Type::FnSig {
                     params: vec![Type::String],
-                    ret: Some(Box::new(builder())),
+                    ret: Some(Box::new(unit_type())),
+                },
+                None,
+            ),
+            (
+                "clear".to_string(),
+                Type::FnSig {
+                    params: Vec::new(),
+                    ret: Some(Box::new(unit_type())),
                 },
                 None,
             ),
@@ -761,6 +770,8 @@ fn string_builder_type_entry() -> TypeEntry {
                 },
                 None,
             ),
+            ("len".to_string(), Type::Number, None),
+            ("byte_len".to_string(), Type::Number, None),
         ]),
     }
 }
@@ -1321,6 +1332,9 @@ fn builtin_property(recv: &Type, member: &str) -> Option<Type> {
         (Type::List(_), "len") => Some(Type::Number),
         (Type::Named(name, _), "len") if name == "Array" => Some(Type::Number),
         (Type::String, "len" | "byte_len") => Some(Type::Number),
+        (Type::Named(name, _), "len" | "byte_len") if name == "StringBuilder" => {
+            Some(Type::Number)
+        }
         (Type::Named(name, _), "size") if name == "Map" || name == "Set" => Some(Type::Number),
         // The brace form of a map literal currently types as the loose
         // `object`; it still answers the Map members.
@@ -1440,6 +1454,12 @@ fn builtin_inherent_sig(recv: &Type, member: &str) -> Option<InherentSig> {
                 _ => None,
             }
         }
+        Type::Named(name, _) if name == "StringBuilder" => match member {
+            "append" => sig(vec![Type::String], 0, unit_type()),
+            "clear" => sig(vec![], 0, unit_type()),
+            "build" => sig(vec![], 0, Type::String),
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -5144,6 +5164,12 @@ impl Analyzer {
                     Type::Named(name, args) if name == "Array" => {
                         args.first().cloned().unwrap_or(Type::Any)
                     }
+                    Type::Named(name, _) if name == "StringBuilder" => {
+                        return Err(self.err_code(
+                            "E0213",
+                            "a `StringBuilder` is not iterable",
+                        ));
+                    }
                     other => {
                         return Err(self.err(format!(
                             "for loop must iterate over a `List`, `Map`, or `Set`, found `{}`",
@@ -7501,6 +7527,10 @@ impl Analyzer {
                             "E0102",
                             format!("no member `{property}` on `{}`", resolved.name()),
                         )),
+                    Type::Named(ref name, _) if name == "StringBuilder" => Err(self.err_code(
+                        "E0402",
+                        format!("cannot assign member `{property}`: the target is not a place"),
+                    )),
                     Type::Object | Type::Any | Type::Named(_, _) => Ok(Type::Any),
                     Type::ObjectType(fields) => fields
                         .iter()
@@ -7522,6 +7552,11 @@ impl Analyzer {
                 match resolved {
                     Type::List(inner) => Ok(*inner),
                     Type::Named(ref name, _) if name == "Map" || name == "Set" => Err(self
+                        .err_code(
+                            "E0215",
+                            format!("`{}` is not subscriptable", resolved.name()),
+                        )),
+                    Type::Named(ref name, _) if name == "StringBuilder" => Err(self
                         .err_code(
                             "E0215",
                             format!("`{}` is not subscriptable", resolved.name()),
@@ -7826,6 +7861,12 @@ impl Analyzer {
                 match iterable_type {
                     Type::List(_) | Type::Any | Type::Object => {}
                     Type::Named(name, _) if name == "Map" || name == "Set" || name == "Array" => {}
+                    Type::Named(name, _) if name == "StringBuilder" => {
+                        return Err(self.err_code(
+                            "E0213",
+                            "a `StringBuilder` is not iterable",
+                        ));
+                    }
                     other => {
                         return Err(self.err(format!(
                             "for loop must iterate over a `List`, `Map`, or `Set`, found `{}`",
@@ -9835,6 +9876,16 @@ impl Analyzer {
     ) -> SResult<Option<Type>> {
         let member = call.method.as_deref().unwrap_or("");
         let recv = self.resolve_alias(receiver, 0);
+        // `StringBuilder.append` and `.clear` mutate the shared buffer, so the
+        // receiver must be a mutable place (spec `types/composite-types.md`,
+        // E0404). `build`/`len`/`byte_len` only read it.
+        if let Type::Named(name, _) = &recv
+            && name == "StringBuilder"
+            && matches!(member, "append" | "clear")
+            && let Some(object) = &call.object
+        {
+            self.require_mutable_place(object)?;
+        }
         // `List.join`/`Array.join` render their elements through the `str`
         // domain: a base type or a `Display` implementor (spec
         // `types/composite-types.md`).
@@ -10092,6 +10143,12 @@ impl Analyzer {
         match resolved {
             Type::List(inner) => Ok(*inner),
             Type::Named(ref name, _) if name == "Map" || name == "Set" => Err(self
+                .err_code(
+                    "E0215",
+                    format!("`{}` is not subscriptable", resolved.name()),
+                )
+                .at(idx.span.clone())),
+            Type::Named(ref name, _) if name == "StringBuilder" => Err(self
                 .err_code(
                     "E0215",
                     format!("`{}` is not subscriptable", resolved.name()),
@@ -10539,11 +10596,14 @@ impl Analyzer {
                     Ok(Type::Boolean)
                 } else {
                     Err(self
-                        .err(format!(
-                            "cannot compare `{}` with `{}`",
-                            left.name(),
-                            right.name()
-                        ))
+                        .err_code(
+                            "E0211",
+                            format!(
+                                "cannot compare `{}` with `{}`",
+                                left.name(),
+                                right.name()
+                            ),
+                        )
                         .at(bin.span.clone()))
                 }
             }
@@ -10612,10 +10672,10 @@ impl Analyzer {
         }
     }
 
-    /// `StringBuilder::create()` — allocate an empty builder. Arity is E0207;
+    /// `StringBuilder::new()` — allocate an empty builder. Arity is E0207;
     /// named arguments are rejected like other constructors.
     fn check_string_builder_static_call(&mut self, call: &Call, variant: &str) -> SResult<Type> {
-        if variant != "create" {
+        if variant != "new" {
             return Err(self
                 .err(format!("`StringBuilder` has no member `{variant}`"))
                 .at(call.span.clone()));
@@ -10623,7 +10683,7 @@ impl Analyzer {
         self.no_type_args(call)?;
         if call.arguments.iter().any(|a| a.name.is_some()) {
             return Err(self
-                .err("`StringBuilder::create` takes positional arguments")
+                .err("`StringBuilder::new` takes positional arguments")
                 .at(call.span.clone()));
         }
         if !call.arguments.is_empty() {
@@ -11186,7 +11246,7 @@ impl Analyzer {
             if call.callee != "Array::filled" {
                 self.no_type_args(call)?;
             }
-            // `StringBuilder::create()` — the builder's only static. A
+            // `StringBuilder::new()` — the builder's only static. A
             // program-declared type of the same name shadows the builtin.
             if enum_name == "StringBuilder" && !self.type_table.contains_key(enum_name) {
                 return self.check_string_builder_static_call(call, variant);
@@ -12542,10 +12602,10 @@ impl Analyzer {
         {
             return self.process_static_member_sig(&enum_name, variant);
         }
-        // `StringBuilder::create` as a value (`let f = StringBuilder::create`).
+        // `StringBuilder::new` as a value (`let f = StringBuilder::new`).
         if enum_name == "StringBuilder" && !self.type_table.contains_key(&enum_name) {
             return match variant {
-                "create" => Ok(Type::FnSig {
+                "new" => Ok(Type::FnSig {
                     params: Vec::new(),
                     ret: Some(Box::new(Type::Named(
                         "StringBuilder".to_string(),
