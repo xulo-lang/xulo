@@ -276,106 +276,136 @@ pub extern "C" fn xulo_string_bytes(s: *const c_char) -> *mut XuloArray {
 }
 
 /// 编译路径的一个 builder：文本 + 运行中的标量计数，使 `.len` 保持 O(1)。
-#[derive(Default)]
 struct BuilderBuffer {
     text: String,
     scalars: usize,
 }
 
 thread_local! {
-    /// 编译路径的 StringBuilder 句柄表：句柄是下标，build 不消耗内容。
-    static BUILDERS: RefCell<Vec<BuilderBuffer>> = const { RefCell::new(Vec::new()) };
+    /// 编译路径的 builder 句柄就是 `Box<BuilderBuffer>` 的地址；这里只登记
+    /// 指针，供测试重置运行时统一释放，热路径不经过 TLS。
+    static BUILDER_REGISTRY: RefCell<Vec<*mut BuilderBuffer>> =
+        const { RefCell::new(Vec::new()) };
 }
 
-/// `StringBuilder::new()`：分配一个空 builder，返回其 i64 句柄。
+fn builder(handle: i64) -> *mut BuilderBuffer {
+    handle as *mut BuilderBuffer
+}
+
+/// `StringBuilder::new()`：分配一个空 builder，返回其地址作为句柄。
 #[unsafe(no_mangle)]
 pub extern "C" fn xulo_string_builder_new() -> i64 {
-    BUILDERS.with(|builders| {
-        let mut builders = builders.borrow_mut();
-        builders.push(BuilderBuffer::default());
-        (builders.len() - 1) as i64
-    })
+    let buffer = Box::new(BuilderBuffer {
+        text: String::with_capacity(64),
+        scalars: 0,
+    });
+    let ptr = Box::into_raw(buffer);
+    BUILDER_REGISTRY.with(|registry| registry.borrow_mut().push(ptr));
+    ptr as i64
 }
 
 /// `builder.append(text)`：把文本追加到 builder（返回 `unit`，值忽略）。
+///
+/// 一次扫描同时完成 NUL 查找和标量计数。xulo 的字符串都由 `String` /
+/// `CString` 产生（FFI 也不允许直接传 `string`），因此这里跳过重复的
+/// UTF-8 校验。
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn xulo_string_builder_append(handle: i64, text: *const c_char) -> i64 {
-    let text = if text.is_null() {
-        ""
+    if handle == 0 {
+        return 0;
+    }
+    let (bytes, scalars) = if text.is_null() {
+        (&[][..], 0)
     } else {
-        unsafe { CStr::from_ptr(text).to_str().unwrap_or("") }
-    };
-    BUILDERS.with(|builders| {
-        if let Some(buffer) = builders.borrow_mut().get_mut(handle as usize) {
-            buffer.scalars += text.chars().count();
-            buffer.text.push_str(text);
+        let mut len = 0usize;
+        let mut scalars = 0usize;
+        unsafe {
+            loop {
+                let byte = *text.add(len) as u8;
+                if byte == 0 {
+                    break;
+                }
+                scalars += ((byte & 0xC0) != 0x80) as usize;
+                len += 1;
+            }
+            (std::slice::from_raw_parts(text as *const u8, len), scalars)
         }
-    });
+    };
+    let text = unsafe { std::str::from_utf8_unchecked(bytes) };
+    unsafe {
+        let buffer = &mut *builder(handle);
+        buffer.scalars += scalars;
+        buffer.text.push_str(text);
+    }
     0
 }
 
 /// `builder.clear()`：清空文本（返回 `unit`，值忽略）。
 #[unsafe(no_mangle)]
 pub extern "C" fn xulo_string_builder_clear(handle: i64) -> i64 {
-    BUILDERS.with(|builders| {
-        if let Some(buffer) = builders.borrow_mut().get_mut(handle as usize) {
+    if handle != 0 {
+        unsafe {
+            let buffer = &mut *builder(handle);
             buffer.text.clear();
             buffer.scalars = 0;
         }
-    });
+    }
     0
 }
 
 /// `builder.build()`：取出当前内容作为新字符串（builder 仍可继续追加）。
 #[unsafe(no_mangle)]
 pub extern "C" fn xulo_string_builder_build(handle: i64) -> *const c_char {
-    let text = BUILDERS.with(|builders| {
-        builders
-            .borrow()
-            .get(handle as usize)
-            .map(|buffer| buffer.text.clone())
-            .unwrap_or_default()
-    });
+    let text = if handle == 0 {
+        String::new()
+    } else {
+        let buffer = unsafe { &*builder(handle) };
+        buffer.text.clone()
+    };
     intern_string(text)
 }
 
 /// `builder.len`：当前文本的标量个数（O(1)）。
 #[unsafe(no_mangle)]
 pub extern "C" fn xulo_string_builder_len(handle: i64) -> i64 {
-    BUILDERS.with(|builders| {
-        builders
-            .borrow()
-            .get(handle as usize)
-            .map(|buffer| buffer.scalars as i64)
-            .unwrap_or(0)
-    })
+    if handle == 0 {
+        0
+    } else {
+        unsafe { (*builder(handle)).scalars as i64 }
+    }
 }
 
 /// `builder.byte_len`：当前文本的 UTF-8 字节数（O(1)）。
 #[unsafe(no_mangle)]
 pub extern "C" fn xulo_string_builder_byte_len(handle: i64) -> i64 {
-    BUILDERS.with(|builders| {
-        builders
-            .borrow()
-            .get(handle as usize)
-            .map(|buffer| buffer.text.len() as i64)
-            .unwrap_or(0)
-    })
+    if handle == 0 {
+        0
+    } else {
+        let buffer = unsafe { &*builder(handle) };
+        buffer.text.len() as i64
+    }
 }
 
 /// `a == b`：两个 builder 的当前文本按内容比较。
 #[unsafe(no_mangle)]
 pub extern "C" fn xulo_string_builder_eq(a: i64, b: i64) -> i64 {
-    BUILDERS.with(|builders| {
-        let builders = builders.borrow();
-        match (builders.get(a as usize), builders.get(b as usize)) {
-            (Some(x), Some(y)) => (x.text == y.text) as i64,
-            _ => (a == b) as i64,
-        }
-    })
+    if a == 0 || b == 0 {
+        return (a == b) as i64;
+    }
+    unsafe {
+        let a_text = &(*builder(a)).text;
+        let b_text = &(*builder(b)).text;
+        (a_text.as_bytes() == b_text.as_bytes()) as i64
+    }
 }
 
 pub(super) fn clear_builders() {
-    BUILDERS.with(|builders| builders.borrow_mut().clear());
+    BUILDER_REGISTRY.with(|registry| {
+        for ptr in registry.borrow_mut().drain(..) {
+            unsafe {
+                let _ = Box::from_raw(ptr);
+            }
+        }
+    });
 }

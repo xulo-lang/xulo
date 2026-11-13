@@ -76,10 +76,18 @@ fn string_builder_appends_and_builds() {
             let mut same = StringBuilder::new()
             same.append("abcd")
             print(b == same)
+            let dynamic = "a" + "é"
+            b.append(dynamic)
+            print(b.len)
+            print(b.byte_len)
+            print(b.build())
         }
         "#,
     );
-    assert_eq!(out, vec!["5", "6", "héllo", "0", "true", "abcd", "4", "true"]);
+    assert_eq!(
+        out,
+        vec!["5", "6", "héllo", "0", "true", "abcd", "4", "true", "6", "7", "abcdaé"]
+    );
 }
 
 #[test]
