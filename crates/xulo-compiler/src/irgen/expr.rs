@@ -870,7 +870,8 @@ impl IrGenerator {
                 || call.callee.starts_with("std::process::")
                 || call.callee.starts_with("std::json::")
                 || call.callee.starts_with("std::fmt::")
-                || call.callee.starts_with("std::http::"))
+                || call.callee.starts_with("std::http::")
+                || call.callee.starts_with("std::hint::"))
         {
             // `std::process::run`/`exec` 的可选 `input`/`timeout` 缺席时补
             // NULL 指针与 -1.0（FFI 判空 → 不接管 stdin / 不限时）——顺序
@@ -983,6 +984,9 @@ impl IrGenerator {
                     Some(indent) => args.push(indent),
                     None => args.push(Operand::Const(IrValue::I64(-1))),
                 }
+            }
+            if call.callee == "std::hint::black_box" {
+                return self.generate_black_box_call(call, args);
             }
             return self.generate_intrinsic_call(&call.callee, &args);
         }
@@ -1328,6 +1332,36 @@ impl IrGenerator {
             let name = self.resolve_callee_name(&call.callee);
             self.module.functions.iter().position(|f| f.name == name)
         }
+    }
+
+    /// `std::hint::black_box`：把实参交给运行时的优化屏障再返回。float 槽走
+    /// f64 入口，其余槽（整数/字符串/列表/对象/枚举）走 i64 入口；结果槽
+    /// 与实参同域，后续算术/打印沿用原标签。
+    pub(super) fn generate_black_box_call(
+        &mut self,
+        call: &Call,
+        mut args: Vec<Operand>,
+    ) -> Result<Operand, XuloError> {
+        let float = call
+            .arguments
+            .first()
+            .is_some_and(|a| self.has_float_operand(&a.value));
+        let (sym, ty) = if float {
+            ("xulo_hint_black_box_f64", IrType::F64)
+        } else {
+            ("xulo_hint_black_box", IrType::I64)
+        };
+        let func_idx = self.current_func.unwrap();
+        let local = self.module.functions[func_idx].add_local(ty);
+        let arg = args.remove(0);
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::RuntimeCall {
+                dst: Some(local),
+                func: RuntimeFn::Intrinsic(sym),
+                args: vec![arg],
+            });
+        Ok(Operand::Local(local))
     }
 
     /// Math::/Time:: 内建调用：RuntimeCall 落到对应运行时符号

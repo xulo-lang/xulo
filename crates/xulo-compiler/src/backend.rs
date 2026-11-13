@@ -644,6 +644,19 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
         params: &[F64, I64],
         returns: &[I64],
     },
+    // `std::hint::black_box`：编译屏障，整型槽与浮点槽各一个入口
+    RuntimeFnDesc {
+        name: "xulo_hint_black_box",
+        addr: xulo_std::ffi::xulo_hint_black_box as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_hint_black_box_f64",
+        addr: xulo_std::ffi::xulo_hint_black_box_f64 as *const u8,
+        params: &[F64],
+        returns: &[F64],
+    },
     // Math integer functions (spec `builtins/intrinsic-functions.md`):
     // wrapping arithmetic and the 64-bit bit operations.
     RuntimeFnDesc {

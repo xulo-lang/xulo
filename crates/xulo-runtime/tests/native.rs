@@ -3052,3 +3052,17 @@ fn chained_assignment_assigns_inner_then_outer() {
     );
     assert_eq!(out, vec!["5 5", "3 3"]);
 }
+
+#[test]
+fn hint_black_box_returns_its_operand_unchanged() {
+    let out = run_ok(
+        r#"
+            fn main() {
+                print(std::hint::black_box(7))
+                print(std::hint::black_box("x"))
+                print(std::hint::black_box(true))
+            }
+        "#,
+    );
+    assert_eq!(out, vec!["7", "x", "true"]);
+}

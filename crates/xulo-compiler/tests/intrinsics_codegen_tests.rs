@@ -1376,3 +1376,15 @@ fn main() {
         "unexpected: {out:?}"
     );
 }
+
+#[test]
+fn hint_black_box_returns_its_operand_across_slots() {
+    let out = compile_and_run(
+        r#"fn main() {
+            print(std::hint::black_box(7))
+            print(std::hint::black_box(2.5))
+            print(std::hint::black_box("x"))
+        }"#,
+    );
+    assert_eq!(out, vec!["7", "2.5", "x"]);
+}

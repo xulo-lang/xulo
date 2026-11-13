@@ -19,6 +19,14 @@ impl Interpreter {
                 .at(call.span.clone()),
             ));
         }
+        // `std::hint::black_box` is the identity; the interpreter has no
+        // optimizer to fool, so evaluate the operand directly instead of
+        // paying a native-call round trip in hot benchmark loops.
+        if call.callee == "std::hint::black_box"
+            && let Some(arg) = call.arguments.first()
+        {
+            return self.eval(&arg.value, env);
+        }
         // The macro surface's qualified record constructors and `ast::Value`
         // variants resolve before the generic namespace walk would read the
         // `ast` namespace object.

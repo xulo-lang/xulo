@@ -2000,6 +2000,13 @@ pub(super) fn native_assert(_interp: &Interpreter, args: &[Value]) -> Result<Val
     Err(RunError::Throw(message))
 }
 
+/// `std::hint::black_box(value)`: the identity (implementation-first,
+/// mirroring Rust's `std::hint::black_box`). The interpreter has no optimizer
+/// to fool, so returning the operand unchanged is the whole contract.
+pub(super) fn native_black_box(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    Ok(args.first().cloned().unwrap_or(Value::Null))
+}
+
 pub(super) fn native_array_new(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     let size = match args.first() {
         Some(Value::Number(n)) => {

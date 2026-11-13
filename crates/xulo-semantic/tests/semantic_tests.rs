@@ -7690,3 +7690,47 @@ fn comparing_a_string_builder_with_a_string_has_no_common_type_is_e0211() {
         err.message
     );
 }
+
+#[test]
+fn hint_black_box_is_identity_and_keeps_the_operand_type() {
+    assert!(
+        analyze_src(
+            r#"
+                fn main() {
+                    let n = std::hint::black_box(3)
+                    let x = n + 1
+                    let s = std::hint::black_box("hi")
+                    print(x)
+                    print(s + "!")
+                }
+            "#
+        )
+        .is_ok()
+    );
+}
+
+#[test]
+fn hint_black_box_imports_bare_and_alias_heads() {
+    analyze_src(
+        r#"
+            use std::hint::black_box;
+            use std::hint as h;
+            fn main() {
+                print(black_box(1))
+                print(h::black_box(2))
+            }
+        "#,
+    )
+    .unwrap_or_else(|e| panic!("{}", e.message));
+}
+
+#[test]
+fn hint_black_box_requires_exactly_one_argument_is_e0207() {
+    let err = analyze_src("fn main() { print(std::hint::black_box()) }").unwrap_err();
+    assert_eq!(err.code(), "E0207");
+    assert!(
+        err.message.contains("expected 1 argument, found 0"),
+        "unexpected: {}",
+        err.message
+    );
+}

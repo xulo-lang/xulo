@@ -199,6 +199,63 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         }
     }
 
+    /// `std::hint::black_box`: `"" : "=r,0"` / `"" : "=x,0"` — an empty
+    /// side-effecting asm block whose output is tied to its input. The value
+    /// is copied through an opaque register, so the optimizer cannot see
+    /// through it, and the machine code is just a register move.
+    fn lower_black_box(
+        &mut self,
+        dst: &Option<LocalId>,
+        args: &[Operand],
+    ) -> Result<(), XuloError> {
+        let arg = self.resolve(&args[0])?;
+        let kind = dst
+            .as_ref()
+            .and_then(|d| self.local_slot_kind(d))
+            .unwrap_or_else(|| {
+                if self.is_f64(arg) {
+                    SlotKind::F64
+                } else {
+                    SlotKind::I64
+                }
+            });
+        let (ty, constraints) = match kind {
+            SlotKind::F64 => (
+                self.context
+                    .f64_type()
+                    .fn_type(&[self.context.f64_type().into()], false),
+                "=x,0",
+            ),
+            SlotKind::I64 => (
+                self.context
+                    .i64_type()
+                    .fn_type(&[self.context.i64_type().into()], false),
+                "=r,0",
+            ),
+        };
+        let value = self.coerce_to(arg, kind)?;
+        let asm = self.context.create_inline_asm(
+            ty,
+            String::new(),
+            constraints.to_string(),
+            true,
+            false,
+            None,
+            false,
+        );
+        let call = cg(self
+            .builder
+            .build_indirect_call(ty, asm, &[value.into()], "black_box"))?;
+        let result = call
+            .try_as_basic_value()
+            .left()
+            .ok_or_else(|| codegen_err("inline asm produced no value"))?;
+        if let Some(dst) = dst {
+            self.store(dst, result, StoreMode::Coerce)?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn lower_runtime_call(
         &mut self,
         dst: &Option<LocalId>,
@@ -206,6 +263,12 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         args: &[Operand],
     ) -> Result<(), XuloError> {
         let name = runtime_fn_name(func);
+        // `std::hint::black_box` lowers to an inline-asm identity barrier
+        // (the same trick Rust's `black_box` uses) instead of a runtime call:
+        // no call overhead, but the optimizer can never fold the value.
+        if matches!(name, "xulo_hint_black_box" | "xulo_hint_black_box_f64") {
+            return self.lower_black_box(dst, args);
+        }
         let mut arg_vals = Vec::with_capacity(args.len());
         for arg in args {
             arg_vals.push(self.resolve(arg)?);

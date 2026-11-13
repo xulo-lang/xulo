@@ -40,6 +40,21 @@ pub fn release_strings() {
     KEPT_STRINGS.with(|kept| kept.borrow_mut().clear());
 }
 
+/// `std::hint::black_box` compiled entry point for every `i64` slot (integer
+/// numbers, booleans, strings, lists, objects, enums). `std::hint::black_box`
+/// is an optimization barrier: the AOT caller cannot treat the result as a
+/// constant, which keeps benchmark loops from being folded away.
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_hint_black_box(value: i64) -> i64 {
+    std::hint::black_box(value)
+}
+
+/// `std::hint::black_box` for true `f64` slots (float operands).
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_hint_black_box_f64(value: f64) -> f64 {
+    std::hint::black_box(value)
+}
+
 /// `Math::abs` compiled entry point.
 #[unsafe(no_mangle)]
 pub extern "C" fn xulo_math_abs(x: f64) -> f64 {

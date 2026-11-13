@@ -778,6 +778,13 @@ impl IrGenerator {
                             _ => Some(Type::String),
                         };
                     }
+                    // `std::hint::black_box` 的返回类型就是实参类型
+                    if call.callee == "std::hint::black_box" {
+                        return call
+                            .arguments
+                            .first()
+                            .and_then(|a| self.infer_source_type_from_expr(&a.value));
+                    }
                     // Math::/Time:: 内建：按 lowering 表的 tag 映射返回类型
                     if let Some((_, _, tag)) = Self::intrinsic_lowering(&call.callee) {
                         return Some(if tag == 0 { Type::String } else { Type::Number });
@@ -1059,6 +1066,14 @@ impl IrGenerator {
                 }
             },
             Expression::Call(call) => {
+                // `std::hint::black_box` 的标签跟随实参
+                if call.object.is_none() && call.callee == "std::hint::black_box" {
+                    return call
+                        .arguments
+                        .first()
+                        .map(|a| self.determine_element_tag(&a.value))
+                        .unwrap_or(-1);
+                }
                 // 经局部变量的间接调用：返回标签运行时才知道
                 if call.object.is_none() && self.locals.contains_key(&call.callee) {
                     return -1;
@@ -1343,6 +1358,12 @@ impl IrGenerator {
             // extern 返回 f32/f64。float_bit_returns（f64 位模式）与返回
             // number 的用户函数仍在 I64 槽，算术必须留在整数域。
             Expression::Call(call) if call.object.is_none() => {
+                if call.callee == "std::hint::black_box" {
+                    return call
+                        .arguments
+                        .first()
+                        .is_some_and(|a| self.has_float_operand(&a.value));
+                }
                 let key = self.resolve_callee_name(&call.callee);
                 if let Some((_, ty, _)) = Self::intrinsic_lowering(&key) {
                     return matches!(ty, IrType::F64);

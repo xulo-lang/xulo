@@ -71,6 +71,7 @@ fn std_ns_key(enum_name: &str) -> Option<&str> {
             | "std::json"
             | "std::fmt"
             | "std::http"
+            | "std::hint"
     )
     .then_some(enum_name)
 }
@@ -1128,6 +1129,9 @@ enum BuiltinRet {
     Int,
     String,
     Bool,
+    /// `any` — `std::hint::black_box` reports its operand's type at the call,
+    /// so only its bare-reference shape uses this.
+    Any,
     TaskUnit,
     /// `Result<string, Error>` — a fallible operation whose success payload is
     /// a string (`Fs::read`).
@@ -1187,6 +1191,7 @@ impl BuiltinRet {
             BuiltinRet::Number | BuiltinRet::Float | BuiltinRet::Int => Type::Number,
             BuiltinRet::String => Type::String,
             BuiltinRet::Bool => Type::Boolean,
+            BuiltinRet::Any => Type::Any,
             BuiltinRet::TaskUnit => Type::Named(
                 "Task".to_string(),
                 vec![Type::Named("unit".to_string(), Vec::new())],
@@ -1692,6 +1697,13 @@ fn builtin_member(ns: &str, member: &str) -> Option<BuiltinMember> {
             "format" => f1(&[T::String, T::ListAny], R::String),
             _ => None,
         },
+        // 编译器屏障（implementation-first，对齐 Rust 的
+        // `std::hint::black_box`）：把值原样返回，但 AOT 不把它当常量。
+        // 实际返回类型取实参类型，见 `check_builtin_fn_call`。
+        "std::hint" => match member {
+            "black_box" => f(&[T::Any], R::Any),
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -1857,6 +1869,7 @@ fn std_face_members(module: &str) -> Option<Vec<(String, FaceKind)>> {
         .concat(),
         "json" => fns(&["parse", "stringify", "valid"]),
         "fmt" => fns(&["format"]),
+        "hint" => fns(&["black_box"]),
         "http" => [
             fns(&["fetch", "request", "listen"]),
             ["Request", "Response", "Server"]
@@ -10935,6 +10948,23 @@ impl Analyzer {
         // parameters; the `Head::member` dispatch already guards this, kept
         // here so any future entry point is covered too.
         self.no_type_args(call)?;
+        // `std::hint::black_box(value)` is the identity, but its type is the
+        // operand's type: the static `any` entry only keeps the bare
+        // reference's shape, so the call is checked here.
+        if ns == "std::hint" && member == "black_box" {
+            if call.arguments.len() != 1 {
+                return Err(self
+                    .err_code(
+                        "E0207",
+                        format!(
+                            "expected 1 argument, found {}",
+                            call.arguments.len()
+                        ),
+                    )
+                    .at(call.span.clone()));
+            }
+            return self.check_arg_value(&call.arguments[0].value);
+        }
         let registered = builtin_member(ns, member);
         let sig = match &registered {
             Some(BuiltinMember::Fn(sig)) => sig,
@@ -11076,6 +11106,7 @@ impl Analyzer {
                 | "json"
                 | "fmt"
                 | "http"
+                | "hint"
         ) {
             return Err(self
                 .err_code("E0607", format!("cannot resolve `std::{module}`"))

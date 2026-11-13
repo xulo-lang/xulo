@@ -901,6 +901,14 @@ impl Interpreter {
         global
             .borrow_mut()
             .define("Server", http_server_type_object(), false);
+        // `std::hint`（implementation-first，对齐 Rust 的
+        // `std::hint::black_box`）：唯一的成员把值原样返回；AOT 侧由运行时
+        // 屏障阻止常量折叠。
+        let hint_members: Vec<(String, Value)> = vec![(
+            "black_box".to_string(),
+            Value::Native(Rc::new(native_black_box)),
+        )];
+        let hint_obj = Value::Object(Rc::new(RefCell::new(hint_members)));
         // The whole built-in tree hangs off a single `std` namespace object:
         // `std::math::floor(…)` walks `std` → `math` → `floor` through the
         // generic namespace dispatch, and `setup_module` copies members out
@@ -918,6 +926,7 @@ impl Interpreter {
             ("fmt".to_string(), fmt_obj),
             ("regex".to_string(), regex_obj),
             ("http".to_string(), http_obj),
+            ("hint".to_string(), hint_obj),
         ];
         global.borrow_mut().define(
             "std",
