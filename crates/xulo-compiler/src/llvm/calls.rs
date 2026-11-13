@@ -193,7 +193,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             arg_vals.push(coerced.into());
         }
         let call = cg(self.builder.build_call(sig.fv, &arg_vals, "rt"))?;
-        match (sig.ret, call.try_as_basic_value().left()) {
+        match (sig.ret, call.try_as_basic_value().basic()) {
             (Some(_), Some(value)) => Ok(Some(value)),
             _ => Ok(None),
         }
@@ -248,7 +248,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             .build_indirect_call(ty, asm, &[value.into()], "black_box"))?;
         let result = call
             .try_as_basic_value()
-            .left()
+            .basic()
             .ok_or_else(|| codegen_err("inline asm produced no value"))?;
         if let Some(dst) = dst {
             self.store(dst, result, StoreMode::Coerce)?;
@@ -294,7 +294,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             arg_vals.push(coerced.into());
         }
         let call = cg(self.builder.build_call(callee, &arg_vals, "call"))?;
-        if let (Some(dst), Some(result)) = (dst, call.try_as_basic_value().left()) {
+        if let (Some(dst), Some(result)) = (dst, call.try_as_basic_value().basic()) {
             self.store(dst, result, StoreMode::Coerce)?;
         }
         Ok(())
@@ -347,9 +347,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         let i64_ty = self.context.i64_type();
         let fn_ptr = cg(self.builder.build_int_to_ptr(
             func_addr.into_int_value(),
-            self.context
-                .i8_type()
-                .ptr_type(inkwell::AddressSpace::default()),
+            self.context.ptr_type(inkwell::AddressSpace::default()),
             "fnptr",
         ))?;
 
@@ -368,7 +366,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         let call = cg(self
             .builder
             .build_indirect_call(fn_ty, fn_ptr, &call_args, "closure"))?;
-        if let (Some(dst), Some(result)) = (dst, call.try_as_basic_value().left()) {
+        if let (Some(dst), Some(result)) = (dst, call.try_as_basic_value().basic()) {
             self.store(dst, result, StoreMode::Coerce)?;
         }
         Ok(())
@@ -394,7 +392,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             arg_vals.push(coerced.into());
         }
         let call = cg(self.builder.build_call(callee, &arg_vals, "extern"))?;
-        if let (Some(dst), Some(result)) = (dst, call.try_as_basic_value().left()) {
+        if let (Some(dst), Some(result)) = (dst, call.try_as_basic_value().basic()) {
             let coerced = match ext.return_type {
                 Some(p) => self.coerce_extern_ret(result, p)?,
                 None => result,

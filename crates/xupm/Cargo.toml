@@ -9,8 +9,10 @@ path = "src/main.rs"
 
 [features]
 default = []
-# LLVM AOT backend (the product build path). Requires LLVM 15 dev libraries.
+# LLVM AOT backend (the product build path). Requires LLVM 22 dev libraries.
 llvm = ["xulo-compiler/llvm"]
+# Prefer the shared libLLVM (faster local builds/tests).
+llvm-dynamic = ["llvm", "xulo-compiler/llvm-dynamic"]
 # Statically link LLVM (distribution artifacts).
 llvm-static = ["llvm", "xulo-compiler/llvm-static"]
 # Distribution builds must never silently ship the Cranelift fallback.

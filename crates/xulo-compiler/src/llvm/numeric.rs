@@ -158,7 +158,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             .build_call(self.trunc_f64, &[value.into()], "trunc"))?;
         let result = call
             .try_as_basic_value()
-            .left()
+            .basic()
             .ok_or_else(|| codegen_err("llvm.trunc produced no value"))?;
         Ok(result.into_float_value())
     }

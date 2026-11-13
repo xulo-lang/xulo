@@ -19,17 +19,17 @@ cargo build --release
 
 ### 原生 AOT 构建（xupm）
 
-`xupm build` 通过内置 LLVM 后端生成原生可执行文件。源码构建需要 LLVM 15
+`xupm build` 通过内置 LLVM 后端生成原生可执行文件。源码构建需要 LLVM 22
 开发库；未启用 `llvm` feature 时会回退到 Cranelift 并给出警告。
 
 ```bash
 # 动态链接 LLVM（开发用）
-LLVM_SYS_150_PREFIX=/usr/lib/llvm-15 \
-  cargo build --release -p xupm --features llvm
+LLVM_SYS_221_PREFIX=/usr/lib/llvm-22 \
+  cargo build --release -p xupm --features llvm-dynamic
 
 # 静态链接 LLVM（分发用；需先构建运行时静态库）
 cargo build -p xulo-runtime --release
-LLVM_SYS_150_PREFIX=/usr/lib/llvm-15 \
+LLVM_SYS_221_PREFIX=/usr/lib/llvm-22 \
   cargo build --release -p xupm --features distribution
 
 target/release/xupm build examples/hello.xulo --release

@@ -16,14 +16,16 @@ cranelift-jit = "0.110"
 cranelift-object = "0.110"
 cranelift-native = "0.110"
 target-lexicon = "0.13"
-inkwell = { version = "0.4", optional = true, default-features = false, features = ["llvm15-0"] }
+inkwell = { version = "0.11", optional = true, default-features = false, features = ["llvm22-1"] }
 
 [features]
 default = []
-# LLVM AOT backend. Requires an LLVM 15 development installation
-# (`llvm-config-15`); disabled by default so plain `cargo test` needs no LLVM.
+# LLVM AOT backend. Requires an LLVM 22 development installation
+# (`llvm-config-22`); disabled by default so plain `cargo test` needs no LLVM.
 llvm = ["dep:inkwell"]
+# Prefer the shared libLLVM (faster local builds/tests). Implies `llvm`.
+llvm-dynamic = ["llvm", "inkwell/llvm22-1-prefer-dynamic"]
 # Link LLVM statically (distribution builds). Implies `llvm`.
-llvm-static = ["llvm", "inkwell/llvm15-0-force-static"]
+llvm-static = ["llvm", "inkwell/llvm22-1-force-static"]
 
 [dev-dependencies]

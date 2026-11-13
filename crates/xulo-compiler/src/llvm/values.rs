@@ -91,7 +91,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             .build_call(self.fptosi_sat, &[f.into()], "fptosi"))?;
         let result = call
             .try_as_basic_value()
-            .left()
+            .basic()
             .ok_or_else(|| codegen_err("llvm.fptosi.sat produced no value"))?;
         Ok(result.into_int_value())
     }
@@ -129,7 +129,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 } else if self.is_f64(value) || self.is_f32(value) {
                     cg(self
                         .builder
-                        .build_bitcast(value, self.context.i64_type(), "bits"))
+                        .build_bit_cast(value, self.context.i64_type(), "bits"))
                 } else {
                     Ok(value)
                 }
