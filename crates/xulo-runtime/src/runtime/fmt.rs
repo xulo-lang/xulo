@@ -41,7 +41,7 @@ pub extern "C" fn xulo_fmt_format(
             .iter()
             .enumerate()
             .map(|(i, payload)| {
-                let tag = arr.tags.get(i).copied().unwrap_or(6);
+                let tag = arr.tags.get(i).copied().unwrap_or(6) as i64;
                 let entry = |slot: usize| -> i64 {
                     meta.as_ref()
                         .and_then(|m| m.elements.get(i * 4 + slot))

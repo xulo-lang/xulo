@@ -154,7 +154,7 @@ fn payload_to_json(value: i64, tag: i64, depth: usize) -> Result<Json, String> {
             let arr = unsafe { &*arr };
             let mut out = Vec::with_capacity(arr.elements.len());
             for (i, payload) in arr.elements.iter().enumerate() {
-                let t = arr.tags.get(i).copied().unwrap_or(1);
+                let t = arr.tags.get(i).copied().unwrap_or(1) as i64;
                 out.push(payload_to_json(*payload, t, depth + 1)?);
             }
             Ok(Json::Array(out))

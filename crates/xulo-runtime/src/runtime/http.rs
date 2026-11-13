@@ -89,7 +89,7 @@ fn header_list(headers: *mut XuloArray) -> Result<Vec<xulo_std::http::Header>, S
     let arr = unsafe { &*headers };
     let mut out = Vec::with_capacity(arr.elements.len());
     for (i, &elem) in arr.elements.iter().enumerate() {
-        if arr.tags.get(i).copied().unwrap_or(-1) != 4 {
+        if arr.tags.get(i).copied().map(i64::from).unwrap_or(-1) != 4 {
             return Err(
                 "expects `{{ name, value }}` records in the headers list".to_string()
             );

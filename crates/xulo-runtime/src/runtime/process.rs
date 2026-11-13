@@ -110,7 +110,7 @@ fn string_list(args: *mut XuloArray) -> Result<Vec<String>, String> {
     let arr = unsafe { &*args };
     let mut strings = Vec::with_capacity(arr.elements.len());
     for (i, &elem) in arr.elements.iter().enumerate() {
-        match arr.tags.get(i).copied().unwrap_or(-1) {
+        match arr.tags.get(i).copied().map(i64::from).unwrap_or(-1) {
             0 | -1 => {
                 let s = if elem == 0 {
                     String::new()

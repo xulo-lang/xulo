@@ -143,7 +143,7 @@ pub extern "C" fn xulo_array_push(arr: *mut XuloArray, value: i64, tag: i64) {
                 tag
             };
             (*arr).elements.push(value);
-            (*arr).tags.push(tag);
+            (*arr).tags.push(tag as u8);
         }
     }
 }
@@ -156,7 +156,7 @@ pub extern "C" fn xulo_array_get_tag(arr: *const XuloArray, index: usize) -> i64
         if arr.is_null() || index >= (*arr).tags.len() {
             1
         } else {
-            (&(*arr).tags)[index]
+            (&(*arr).tags)[index] as i64
         }
     }
 }
@@ -228,7 +228,7 @@ pub extern "C" fn xulo_array_set(arr: *mut XuloArray, index: usize, value: i64, 
             };
             (&mut (*arr).elements)[index] = value;
             if index < (*arr).tags.len() {
-                (&mut (*arr).tags)[index] = tag;
+                (&mut (*arr).tags)[index] = tag as u8;
             }
         }
     }

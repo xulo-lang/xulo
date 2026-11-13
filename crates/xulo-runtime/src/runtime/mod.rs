@@ -49,7 +49,7 @@ pub struct XuloObject {
 #[repr(C)]
 pub struct XuloArray {
     pub elements: Vec<i64>,
-    pub tags: Vec<i64>,
+    pub tags: Vec<u8>,
 }
 
 /// xulo 枚举值：变体序号 + 供打印的名字 + payload 槽（值与类型标签）。
@@ -149,7 +149,7 @@ fn format_value(value: i64, tag: i64) -> String {
                         .iter()
                         .enumerate()
                         .map(|(i, v)| {
-                            let t = if i < tags.len() { tags[i] } else { 1 };
+                            let t = if i < tags.len() { tags[i] as i64 } else { 1 };
                             format_value(*v, t)
                         })
                         .collect();
