@@ -1,6 +1,9 @@
 //! 运行时/外部函数声明与调用边界转换。
 
 use xulo_core::ir::{FuncId, RuntimeFn};
+use xulo_runtime::runtime::{
+    BUILDER_CAP_OFFSET, BUILDER_LEN_OFFSET, BUILDER_PTR_OFFSET, BUILDER_SCALARS_OFFSET,
+};
 
 use crate::codegen::runtime_fn_name;
 
@@ -263,6 +266,9 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         args: &[Operand],
     ) -> Result<(), XuloError> {
         let name = runtime_fn_name(func);
+        if matches!(func, RuntimeFn::StringBuilderAppendKnown) {
+            return self.lower_string_builder_append_known(dst, args);
+        }
         // `std::hint::black_box` lowers to an inline-asm identity barrier
         // (the same trick Rust's `black_box` uses) instead of a runtime call:
         // no call overhead, but the optimizer can never fold the value.
@@ -276,6 +282,130 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         let result = self.call_runtime(name, &arg_vals)?;
         if let (Some(dst), Some(result)) = (dst, result) {
             self.store(dst, result, StoreMode::Coerce)?;
+        }
+        Ok(())
+    }
+
+    /// `StringBuilder::append` 的 AOT 快路径：容量足够时在调用点直接写入
+    /// builder 的裸缓冲区，避免 AOT -> runtime 的函数调用；容量不足或句柄/
+    /// 文本为空时回落到 `xulo_string_builder_append_known`。
+    fn lower_string_builder_append_known(
+        &mut self,
+        dst: &Option<LocalId>,
+        args: &[Operand],
+    ) -> Result<(), XuloError> {
+        let handle = self.resolve_i64(&args[0])?;
+        let text = self.resolve_i64(&args[1])?;
+        let byte_len = self.resolve_i64(&args[2])?;
+        let scalars = self.resolve_i64(&args[3])?;
+
+        let i64_ty = self.context.i64_type();
+        let i8_ty = self.context.i8_type();
+        let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+        let zero = i64_ty.const_zero();
+
+        let fv = self
+            .cur_fn
+            .ok_or_else(|| codegen_err("StringBuilder append outside a function"))?;
+        let check_bb = self.context.append_basic_block(fv, "sb.check");
+        let fast_bb = self.context.append_basic_block(fv, "sb.fast");
+        let slow_bb = self.context.append_basic_block(fv, "sb.slow");
+        let done_bb = self.context.append_basic_block(fv, "sb.done");
+
+        let handle_ptr = cg(self.builder.build_int_to_ptr(handle, ptr_ty, "sb.handle"))?;
+        let text_ptr = cg(self.builder.build_int_to_ptr(text, ptr_ty, "sb.text"))?;
+
+        // 空句柄/空文本直接走运行时；字段访问必须放在这个检查之后。
+        let handle_ok =
+            cg(self
+                .builder
+                .build_int_compare(IntPredicate::NE, handle, zero, "sb.handle_ok"))?;
+        let text_ok =
+            cg(self
+                .builder
+                .build_int_compare(IntPredicate::NE, text, zero, "sb.text_ok"))?;
+        let len_ok =
+            cg(self
+                .builder
+                .build_int_compare(IntPredicate::SGT, byte_len, zero, "sb.len_ok"))?;
+        let scalars_ok =
+            cg(self
+                .builder
+                .build_int_compare(IntPredicate::SGE, scalars, zero, "sb.scalars_ok"))?;
+        let safe = cg(self.builder.build_and(handle_ok, text_ok, "sb.safe"))?;
+        let safe = cg(self.builder.build_and(safe, len_ok, "sb.safe"))?;
+        let safe = cg(self.builder.build_and(safe, scalars_ok, "sb.safe"))?;
+        cg(self
+            .builder
+            .build_conditional_branch(safe, check_bb, slow_bb))?;
+
+        self.builder.position_at_end(check_bb);
+        let len_ptr = unsafe {
+            cg(self.builder.build_gep(
+                i8_ty,
+                handle_ptr,
+                &[self.int_const(BUILDER_LEN_OFFSET as i64)],
+                "sb.len.ptr",
+            ))
+        }?;
+        let cap_ptr = unsafe {
+            cg(self.builder.build_gep(
+                i8_ty,
+                handle_ptr,
+                &[self.int_const(BUILDER_CAP_OFFSET as i64)],
+                "sb.cap.ptr",
+            ))
+        }?;
+        let len = cg(self.builder.build_load(i64_ty, len_ptr, "sb.len"))?.into_int_value();
+        let cap = cg(self.builder.build_load(i64_ty, cap_ptr, "sb.cap"))?.into_int_value();
+        let new_len = cg(self.builder.build_int_add(len, byte_len, "sb.newlen"))?;
+        let has_cap =
+            cg(self
+                .builder
+                .build_int_compare(IntPredicate::ULE, new_len, cap, "sb.has_cap"))?;
+        cg(self
+            .builder
+            .build_conditional_branch(has_cap, fast_bb, slow_bb))?;
+
+        self.builder.position_at_end(fast_bb);
+        let data_ptr = unsafe {
+            cg(self.builder.build_gep(
+                i8_ty,
+                handle_ptr,
+                &[self.int_const(BUILDER_PTR_OFFSET as i64)],
+                "sb.data.ptr",
+            ))
+        }?;
+        let data = cg(self.builder.build_load(ptr_ty, data_ptr, "sb.data"))?.into_pointer_value();
+        let dest = unsafe { cg(self.builder.build_gep(i8_ty, data, &[len], "sb.dest"))? };
+        cg(self.builder.build_memcpy(dest, 1, text_ptr, 1, byte_len))?;
+        cg(self.builder.build_store(len_ptr, new_len))?;
+        let scalars_ptr = unsafe {
+            cg(self.builder.build_gep(
+                i8_ty,
+                handle_ptr,
+                &[self.int_const(BUILDER_SCALARS_OFFSET as i64)],
+                "sb.scalars.ptr",
+            ))
+        }?;
+        let old_scalars =
+            cg(self.builder.build_load(i64_ty, scalars_ptr, "sb.scalars"))?.into_int_value();
+        let new_scalars = cg(self
+            .builder
+            .build_int_add(old_scalars, scalars, "sb.newscalars"))?;
+        cg(self.builder.build_store(scalars_ptr, new_scalars))?;
+        cg(self.builder.build_unconditional_branch(done_bb))?;
+
+        self.builder.position_at_end(slow_bb);
+        self.call_runtime(
+            "xulo_string_builder_append_known",
+            &[handle.into(), text.into(), byte_len.into(), scalars.into()],
+        )?;
+        cg(self.builder.build_unconditional_branch(done_bb))?;
+
+        self.builder.position_at_end(done_bb);
+        if let Some(dst) = dst {
+            self.store(dst, zero.into(), StoreMode::Coerce)?;
         }
         Ok(())
     }

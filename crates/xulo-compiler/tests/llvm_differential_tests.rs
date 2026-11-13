@@ -134,6 +134,17 @@ const CORPUS: &[(&str, &str)] = &[
             let s = b.build()
             print(s)
             print(s.len)
+            b.append("0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*()_+-=[]{}|;:,.<>?/")
+            print(b.len)
+            print(b.byte_len)
+            b.clear()
+            b.append("hé")
+            print(b.build())
+            print(b.len)
+            print(b.byte_len)
+            let mut c = StringBuilder::new()
+            c.append("hé")
+            print(b == c)
         }
         "#,
     ),

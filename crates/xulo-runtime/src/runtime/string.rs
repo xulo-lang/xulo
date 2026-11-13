@@ -275,10 +275,93 @@ pub extern "C" fn xulo_string_bytes(s: *const c_char) -> *mut XuloArray {
     arr
 }
 
-/// 编译路径的一个 builder：文本 + 运行中的标量计数，使 `.len` 保持 O(1)。
+/// 编译路径的一个 builder：稳定 ABI 的裸缓冲区 + 运行中的标量计数。
+///
+/// AOT 会在 LLVM IR 里直接读写这些字段（容量足够时走内联快路径），因此
+/// 字段顺序和偏移是 compiler/runtime 之间的 ABI，不能随意调整。
+#[repr(C)]
 struct BuilderBuffer {
-    text: String,
+    ptr: *mut u8,
+    len: usize,
+    cap: usize,
     scalars: usize,
+}
+
+/// AOT IR 快路径使用的字段偏移（字节）。
+pub const BUILDER_PTR_OFFSET: u64 = std::mem::offset_of!(BuilderBuffer, ptr) as u64;
+pub const BUILDER_LEN_OFFSET: u64 = std::mem::offset_of!(BuilderBuffer, len) as u64;
+pub const BUILDER_CAP_OFFSET: u64 = std::mem::offset_of!(BuilderBuffer, cap) as u64;
+pub const BUILDER_SCALARS_OFFSET: u64 = std::mem::offset_of!(BuilderBuffer, scalars) as u64;
+
+impl BuilderBuffer {
+    fn with_capacity(cap: usize) -> Self {
+        let ptr = if cap == 0 {
+            std::ptr::null_mut()
+        } else {
+            let layout = std::alloc::Layout::array::<u8>(cap).expect("builder capacity overflow");
+            let ptr = unsafe { std::alloc::alloc(layout) };
+            if ptr.is_null() {
+                std::alloc::handle_alloc_error(layout);
+            }
+            ptr
+        };
+        Self {
+            ptr,
+            len: 0,
+            cap,
+            scalars: 0,
+        }
+    }
+
+    fn grow(&mut self, needed: usize) {
+        let new_cap = needed.max(self.cap.saturating_mul(2)).max(64);
+        let new_layout =
+            std::alloc::Layout::array::<u8>(new_cap).expect("builder capacity overflow");
+        let new_ptr = if self.cap == 0 {
+            unsafe { std::alloc::alloc(new_layout) }
+        } else {
+            let old_layout =
+                std::alloc::Layout::array::<u8>(self.cap).expect("builder capacity overflow");
+            unsafe { std::alloc::realloc(self.ptr, old_layout, new_cap) }
+        };
+        if new_ptr.is_null() {
+            std::alloc::handle_alloc_error(new_layout);
+        }
+        self.ptr = new_ptr;
+        self.cap = new_cap;
+    }
+
+    fn push_bytes(&mut self, bytes: &[u8], scalars: usize) {
+        let needed = self.len + bytes.len();
+        if needed > self.cap {
+            self.grow(needed);
+        }
+        if !bytes.is_empty() {
+            unsafe {
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), self.ptr.add(self.len), bytes.len());
+            }
+        }
+        self.len = needed;
+        self.scalars += scalars;
+    }
+
+    fn as_slice(&self) -> &[u8] {
+        if self.len == 0 {
+            &[]
+        } else {
+            unsafe { std::slice::from_raw_parts(self.ptr, self.len) }
+        }
+    }
+}
+
+impl Drop for BuilderBuffer {
+    fn drop(&mut self) {
+        if self.cap > 0 && !self.ptr.is_null() {
+            let layout =
+                std::alloc::Layout::array::<u8>(self.cap).expect("builder capacity overflow");
+            unsafe { std::alloc::dealloc(self.ptr, layout) };
+        }
+    }
 }
 
 thread_local! {
@@ -295,10 +378,7 @@ fn builder(handle: i64) -> *mut BuilderBuffer {
 /// `StringBuilder::new()`：分配一个空 builder，返回其地址作为句柄。
 #[unsafe(no_mangle)]
 pub extern "C" fn xulo_string_builder_new() -> i64 {
-    let buffer = Box::new(BuilderBuffer {
-        text: String::with_capacity(64),
-        scalars: 0,
-    });
+    let buffer = Box::new(BuilderBuffer::with_capacity(64));
     let ptr = Box::into_raw(buffer);
     BUILDER_REGISTRY.with(|registry| registry.borrow_mut().push(ptr));
     ptr as i64
@@ -332,11 +412,9 @@ pub extern "C" fn xulo_string_builder_append(handle: i64, text: *const c_char) -
             (std::slice::from_raw_parts(text as *const u8, len), scalars)
         }
     };
-    let text = unsafe { std::str::from_utf8_unchecked(bytes) };
     unsafe {
         let buffer = &mut *builder(handle);
-        buffer.scalars += scalars;
-        buffer.text.push_str(text);
+        buffer.push_bytes(bytes, scalars);
     }
     0
 }
@@ -355,11 +433,9 @@ pub extern "C" fn xulo_string_builder_append_known(
         return 0;
     }
     let bytes = unsafe { std::slice::from_raw_parts(text as *const u8, byte_len as usize) };
-    let text = unsafe { std::str::from_utf8_unchecked(bytes) };
     unsafe {
         let buffer = &mut *builder(handle);
-        buffer.scalars += scalars.max(0) as usize;
-        buffer.text.push_str(text);
+        buffer.push_bytes(bytes, scalars.max(0) as usize);
     }
     0
 }
@@ -370,7 +446,7 @@ pub extern "C" fn xulo_string_builder_clear(handle: i64) -> i64 {
     if handle != 0 {
         unsafe {
             let buffer = &mut *builder(handle);
-            buffer.text.clear();
+            buffer.len = 0;
             buffer.scalars = 0;
         }
     }
@@ -384,7 +460,7 @@ pub extern "C" fn xulo_string_builder_build(handle: i64) -> *const c_char {
         String::new()
     } else {
         let buffer = unsafe { &*builder(handle) };
-        buffer.text.clone()
+        String::from_utf8_lossy(buffer.as_slice()).into_owned()
     };
     intern_string(text)
 }
@@ -406,7 +482,7 @@ pub extern "C" fn xulo_string_builder_byte_len(handle: i64) -> i64 {
         0
     } else {
         let buffer = unsafe { &*builder(handle) };
-        buffer.text.len() as i64
+        buffer.len as i64
     }
 }
 
@@ -417,9 +493,9 @@ pub extern "C" fn xulo_string_builder_eq(a: i64, b: i64) -> i64 {
         return (a == b) as i64;
     }
     unsafe {
-        let a_text = &(*builder(a)).text;
-        let b_text = &(*builder(b)).text;
-        (a_text.as_bytes() == b_text.as_bytes()) as i64
+        let a_text = (*builder(a)).as_slice();
+        let b_text = (*builder(b)).as_slice();
+        (a_text == b_text) as i64
     }
 }
 
