@@ -83,8 +83,9 @@ pub fn write_object_file(product: &ObjectProduct, obj_path: &Path) -> Result<(),
 ///
 /// - `--gc-sections`：归档成员整块进链接，不 gc 会把 addr2line/gimli 回溯和用不到的
 ///   std 全拉进来（.text 1.54MB -> 0.33MB）
-/// - `--strip-debug`：staticlib 内含工具链预编译 std 的 DWARF，实测占产物 66%
-pub fn link_executable(obj_path: &Path, exe_path: &Path) -> Result<(), XuloError> {
+/// - release 用 `--strip-all` 去掉符号表（约 -24%）；debug 只 `--strip-debug`，
+///   保留符号便于诊断
+pub fn link_executable(obj_path: &Path, exe_path: &Path, strip_all: bool) -> Result<(), XuloError> {
     let runtime_lib = runtime_library_path()?;
     let status = std::process::Command::new("cc")
         .arg("-no-pie")
@@ -96,7 +97,11 @@ pub fn link_executable(obj_path: &Path, exe_path: &Path) -> Result<(), XuloError
         .arg("-lm")
         .arg("-ldl")
         .arg("-Wl,--gc-sections")
-        .arg("-Wl,--strip-debug")
+        .arg(if strip_all {
+            "-Wl,--strip-all"
+        } else {
+            "-Wl,--strip-debug"
+        })
         .status()
         .map_err(|e| {
             XuloError::new(
@@ -164,7 +169,7 @@ pub fn build_executable_with_profile(
     let backend = resolve_backend(backend, &mut warnings);
     let obj_path = output.with_extension("o");
     emit_object(backend, &ir, &obj_path, profile)?;
-    let link_result = link_executable(&obj_path, output);
+    let link_result = link_executable(&obj_path, output, profile == BuildProfile::Release);
     let _ = std::fs::remove_file(&obj_path);
     link_result?;
     Ok(BuildOutput {
