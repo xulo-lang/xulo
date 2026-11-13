@@ -1,7 +1,7 @@
 // Xulo 运行时基准：递归调用、整数循环、列表 push、StringBuilder 追加。
 // 解释器：xulo run benchmarks/bench.xulo
 // AOT：cd benchmarks && xupm build --release && ./.xupm/build/xulo-benchmarks
-// 与 Rust 版一致用 std::hint::black_box 阻止 AOT 把纯计算循环常量折叠。
+// 普通代码路径：不使用 black_box；加大工作量并使用不可闭式优化的递推。
 fn fib(n: number): number {
     if n < 2 {
         n
@@ -14,7 +14,7 @@ fn sum_loop(n: number): number {
     let mut sum = 0
     let mut i = 0
     while i < n {
-        sum = sum + std::hint::black_box(i)
+        sum = (sum * 31 + i) % 1000000007
         i = i + 1
     }
     sum
@@ -24,7 +24,7 @@ fn list_work(n: number): number {
     let mut xs = []
     let mut i = 0
     while i < n {
-        xs.push(std::hint::black_box(i))
+        xs.push(i)
         i = i + 1
     }
     xs.len
@@ -37,7 +37,7 @@ fn string_work(n: number): number {
         b.append("x")
         i = i + 1
     }
-    b.build().len
+    b.byte_len
 }
 
 fn report(name: string, start: number, result: number) {
@@ -49,18 +49,18 @@ fn main() {
     print("xulo benchmark")
 
     let fib_start = std::time::monotonic_nanos()
-    let fib_result = fib(std::hint::black_box(30))
-    report("fib(30)", fib_start, fib_result)
+    let fib_result = fib(32)
+    report("fib(32)", fib_start, fib_result)
 
     let sum_start = std::time::monotonic_nanos()
-    let sum_result = sum_loop(std::hint::black_box(5000000))
-    report("sum_loop(5M)", sum_start, sum_result)
+    let sum_result = sum_loop(10000000)
+    report("sum_loop(10M)", sum_start, sum_result)
 
     let list_start = std::time::monotonic_nanos()
-    let list_result = list_work(std::hint::black_box(1000000))
-    report("list_work(1M)", list_start, list_result)
+    let list_result = list_work(5000000)
+    report("list_work(5M)", list_start, list_result)
 
     let string_start = std::time::monotonic_nanos()
-    let string_result = string_work(std::hint::black_box(5000))
-    report("string_work(5000)", string_start, string_result)
+    let string_result = string_work(5000000)
+    report("string_work(5M)", string_start, string_result)
 }
