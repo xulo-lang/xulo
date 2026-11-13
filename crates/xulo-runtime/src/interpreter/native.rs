@@ -2007,6 +2007,23 @@ pub(super) fn native_black_box(_interp: &Interpreter, args: &[Value]) -> Result<
     Ok(args.first().cloned().unwrap_or(Value::Null))
 }
 
+/// `std::hint::likely(condition)` / `std::hint::unlikely(condition)`: the
+/// identity on a `bool`. The interpreter has no branch predictor to advise,
+/// so returning the condition unchanged is the whole contract.
+pub(super) fn native_likely(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    Ok(args.first().cloned().unwrap_or(Value::Null))
+}
+
+pub(super) fn native_unlikely(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+    Ok(args.first().cloned().unwrap_or(Value::Null))
+}
+
+/// `std::hint::spin_loop()`: emit the host's spin-wait hint and return `unit`.
+pub(super) fn native_spin_loop(_interp: &Interpreter, _args: &[Value]) -> Result<Value, RunError> {
+    std::hint::spin_loop();
+    Ok(Value::Null)
+}
+
 pub(super) fn native_array_new(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     let size = match args.first() {
         Some(Value::Number(n)) => {

@@ -1388,3 +1388,18 @@ fn hint_black_box_returns_its_operand_across_slots() {
     );
     assert_eq!(out, vec!["7", "2.5", "x"]);
 }
+
+#[test]
+fn hint_likely_unlikely_and_spin_loop_lower_to_runtime_calls() {
+    let source = r#"fn main() {
+        print(std::hint::likely(true))
+        print(std::hint::unlikely(false))
+        print(std::hint::spin_loop())
+    }"#;
+    let out = compile_and_run(source);
+    assert_eq!(out, vec!["true", "false", "null"]);
+    let bytes = object_bytes(source);
+    for symbol in ["xulo_hint_likely", "xulo_hint_unlikely", "xulo_hint_spin_loop"] {
+        assert!(references_symbol(&bytes, symbol), "object missing {symbol}");
+    }
+}

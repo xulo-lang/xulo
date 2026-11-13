@@ -55,6 +55,27 @@ pub extern "C" fn xulo_hint_black_box_f64(value: f64) -> f64 {
     std::hint::black_box(value)
 }
 
+/// `std::hint::likely`: the identity on a boolean condition. The hint the
+/// optimizer may use is advisory; the result is the operand's value.
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_hint_likely(condition: i64) -> i64 {
+    condition
+}
+
+/// `std::hint::unlikely`: the identity on a boolean condition.
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_hint_unlikely(condition: i64) -> i64 {
+    condition
+}
+
+/// `std::hint::spin_loop`: emit the target's spin-wait hint and report `unit`
+/// as the null slot value.
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_hint_spin_loop() -> i64 {
+    std::hint::spin_loop();
+    0
+}
+
 /// `Math::abs` compiled entry point.
 #[unsafe(no_mangle)]
 pub extern "C" fn xulo_math_abs(x: f64) -> f64 {

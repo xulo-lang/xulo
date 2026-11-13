@@ -901,13 +901,24 @@ impl Interpreter {
         global
             .borrow_mut()
             .define("Server", http_server_type_object(), false);
-        // `std::hint`（implementation-first，对齐 Rust 的
-        // `std::hint::black_box`）：唯一的成员把值原样返回；AOT 侧由运行时
-        // 屏障阻止常量折叠。
-        let hint_members: Vec<(String, Value)> = vec![(
-            "black_box".to_string(),
-            Value::Native(Rc::new(native_black_box)),
-        )];
+        // `std::hint`（spec `std-spec/modules/hint.md`）：`black_box` 把值
+        // 原样返回（AOT 侧由运行时屏障阻止常量折叠），`likely`/`unlikely`
+        // 是 `bool` 恒等，`spin_loop` 发出处理器的忙等提示并返回 `unit`。
+        let hint_members: Vec<(String, Value)> = vec![
+            (
+                "black_box".to_string(),
+                Value::Native(Rc::new(native_black_box)),
+            ),
+            ("likely".to_string(), Value::Native(Rc::new(native_likely))),
+            (
+                "unlikely".to_string(),
+                Value::Native(Rc::new(native_unlikely)),
+            ),
+            (
+                "spin_loop".to_string(),
+                Value::Native(Rc::new(native_spin_loop)),
+            ),
+        ];
         let hint_obj = Value::Object(Rc::new(RefCell::new(hint_members)));
         // The whole built-in tree hangs off a single `std` namespace object:
         // `std::math::floor(…)` walks `std` → `math` → `floor` through the

@@ -7734,3 +7734,59 @@ fn hint_black_box_requires_exactly_one_argument_is_e0207() {
         err.message
     );
 }
+
+#[test]
+fn hint_likely_and_unlikely_are_bool_identities() {
+    analyze_src(
+        r#"
+            use std::hint::{likely, unlikely};
+            use std::hint as h;
+            fn main() {
+                let a: bool = likely(1 < 2)
+                let b: bool = h::unlikely(false)
+                if a and b {
+                    print("both")
+                }
+            }
+        "#,
+    )
+    .unwrap_or_else(|e| panic!("{}", e.message));
+}
+
+#[test]
+fn hint_likely_with_non_bool_condition_is_e0202() {
+    let err = analyze_src("fn main() { print(std::hint::likely(1)) }").unwrap_err();
+    assert_eq!(err.code(), "E0202");
+    assert!(
+        err.message.contains("must be `bool`"),
+        "unexpected: {}",
+        err.message
+    );
+}
+
+#[test]
+fn hint_spin_loop_takes_no_arguments_is_e0207() {
+    let err = analyze_src("fn main() { std::hint::spin_loop(1) }").unwrap_err();
+    assert_eq!(err.code(), "E0207");
+    assert!(
+        err.message.contains("expected 0 arguments, found 1"),
+        "unexpected: {}",
+        err.message
+    );
+}
+
+#[test]
+fn hint_glob_import_binds_all_four_members() {
+    analyze_src(
+        r#"
+            use std::hint::*;
+            fn main() {
+                print(black_box(1))
+                print(likely(true))
+                print(unlikely(false))
+                spin_loop()
+            }
+        "#,
+    )
+    .unwrap_or_else(|e| panic!("{}", e.message));
+}

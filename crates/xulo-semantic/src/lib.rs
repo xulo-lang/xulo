@@ -1090,6 +1090,8 @@ enum BuiltinTy {
     /// whose element types are decided per verb at run time; spec
     /// `std-spec/modules/fmt.md`).
     ListAny,
+    /// `bool` — `std::hint::likely`/`unlikely`'s condition.
+    Bool,
 }
 
 impl BuiltinTy {
@@ -1105,6 +1107,7 @@ impl BuiltinTy {
             BuiltinTy::ListStr => "List<string>",
             BuiltinTy::ListHeaders => "List<{ name: string, value: string }>",
             BuiltinTy::ListAny => "List<any>",
+            BuiltinTy::Bool => "bool",
         }
     }
 
@@ -1116,6 +1119,7 @@ impl BuiltinTy {
             BuiltinTy::ListStr => Type::List(Box::new(Type::String)),
             BuiltinTy::ListHeaders => header_list_ty(),
             BuiltinTy::ListAny => Type::List(Box::new(Type::Any)),
+            BuiltinTy::Bool => Type::Boolean,
             _ => Type::Number,
         }
     }
@@ -1149,6 +1153,8 @@ enum BuiltinRet {
     /// The never-returning result of `std::process::exit`: typed `null` so it
     /// composes in statement position; nothing can ever observe a value.
     Never,
+    /// `unit` — a total function with no value (`std::hint::spin_loop`).
+    Unit,
     /// `List<string>` — `std::process::args()`, the process's argv.
     ListStr,
     /// `Result<{stdout: string, stderr: string, code: number}, Error>` — the
@@ -1219,6 +1225,7 @@ impl BuiltinRet {
                 vec![Type::Number, Type::Named("Error".to_string(), Vec::new())],
             ),
             BuiltinRet::Never => Type::Null,
+            BuiltinRet::Unit => unit_type(),
             BuiltinRet::ListStr => Type::List(Box::new(Type::String)),
             BuiltinRet::ResultRunOutErr => Type::Named(
                 "Result".to_string(),
@@ -1697,11 +1704,14 @@ fn builtin_member(ns: &str, member: &str) -> Option<BuiltinMember> {
             "format" => f1(&[T::String, T::ListAny], R::String),
             _ => None,
         },
-        // 编译器屏障（implementation-first，对齐 Rust 的
-        // `std::hint::black_box`）：把值原样返回，但 AOT 不把它当常量。
-        // 实际返回类型取实参类型，见 `check_builtin_fn_call`。
+        // 程序提示（spec `std-spec/modules/hint.md`）：`black_box` 是返回实参
+        // 类型的优化屏障（实际返回类型取实参类型，见
+        // `check_builtin_fn_call`），`likely`/`unlikely` 是 `bool` 恒等，
+        // `spin_loop` 无参返回 `unit`。
         "std::hint" => match member {
             "black_box" => f(&[T::Any], R::Any),
+            "likely" | "unlikely" => f(&[T::Bool], R::Bool),
+            "spin_loop" => f(&[], R::Unit),
             _ => None,
         },
         _ => None,
@@ -1869,7 +1879,7 @@ fn std_face_members(module: &str) -> Option<Vec<(String, FaceKind)>> {
         .concat(),
         "json" => fns(&["parse", "stringify", "valid"]),
         "fmt" => fns(&["format"]),
-        "hint" => fns(&["black_box"]),
+        "hint" => fns(&["black_box", "likely", "spin_loop", "unlikely"]),
         "http" => [
             fns(&["fetch", "request", "listen"]),
             ["Request", "Response", "Server"]

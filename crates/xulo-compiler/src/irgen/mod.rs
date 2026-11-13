@@ -785,6 +785,17 @@ impl IrGenerator {
                             .first()
                             .and_then(|a| self.infer_source_type_from_expr(&a.value));
                     }
+                    // `std::hint::likely`/`unlikely` 是 bool 恒等，
+                    // `spin_loop` 返回 unit（按 null 记录标签）
+                    if matches!(
+                        call.callee.as_str(),
+                        "std::hint::likely" | "std::hint::unlikely"
+                    ) {
+                        return Some(Type::Boolean);
+                    }
+                    if call.callee == "std::hint::spin_loop" {
+                        return Some(Type::Null);
+                    }
                     // Math::/Time:: 内建：按 lowering 表的 tag 映射返回类型
                     if let Some((_, _, tag)) = Self::intrinsic_lowering(&call.callee) {
                         return Some(if tag == 0 { Type::String } else { Type::Number });
@@ -1473,6 +1484,8 @@ impl IrGenerator {
                 std::borrow::Cow::Owned(format!("Fmt::{rest}"))
             } else if let Some(rest) = callee.strip_prefix("std::http::") {
                 std::borrow::Cow::Owned(format!("Http::{rest}"))
+            } else if let Some(rest) = callee.strip_prefix("std::hint::") {
+                std::borrow::Cow::Owned(format!("Hint::{rest}"))
             } else {
                 std::borrow::Cow::Borrowed(callee)
             };
@@ -1616,6 +1629,11 @@ impl IrGenerator {
             // 构造器没有 AOT 落地（走解释器）
             "Http::fetch" => ("xulo_http_fetch", IrType::Pointer, 7),
             "Http::request" => ("xulo_http_request", IrType::Pointer, 7),
+            // `std::hint`：likely/unlikely 是 bool 恒等（tag=5），spin_loop
+            // 返回 unit（null 槽，tag=6）；black_box 在调用点单独 lower
+            "Hint::likely" => ("xulo_hint_likely", IrType::I64, 5),
+            "Hint::unlikely" => ("xulo_hint_unlikely", IrType::I64, 5),
+            "Hint::spin_loop" => ("xulo_hint_spin_loop", IrType::I64, 6),
             _ => return None,
         };
         Some(lowering)

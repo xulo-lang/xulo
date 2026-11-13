@@ -3066,3 +3066,24 @@ fn hint_black_box_returns_its_operand_unchanged() {
     );
     assert_eq!(out, vec!["7", "x", "true"]);
 }
+
+#[test]
+fn hint_likely_and_unlikely_return_their_condition() {
+    let out = run_ok(
+        r#"
+            use std::hint::{likely, unlikely};
+            fn main() {
+                print(likely(true))
+                print(unlikely(false))
+                print(likely(2 > 1))
+            }
+        "#,
+    );
+    assert_eq!(out, vec!["true", "false", "true"]);
+}
+
+#[test]
+fn hint_spin_loop_returns_unit() {
+    let out = run_ok(r#"fn main() { print(std::hint::spin_loop()) }"#);
+    assert_eq!(out, vec!["null"]);
+}
