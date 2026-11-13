@@ -419,6 +419,12 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
         returns: &[I64],
     },
     RuntimeFnDesc {
+        name: "xulo_string_builder_append_known",
+        addr: xulo_runtime::runtime::xulo_string_builder_append_known as *const u8,
+        params: &[I64, I64, I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
         name: "xulo_string_builder_clear",
         addr: xulo_runtime::runtime::xulo_string_builder_clear as *const u8,
         params: &[I64],

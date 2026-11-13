@@ -522,3 +522,36 @@ fn test_compile_panic_keeps_prior_statements() {
         func.instructions
     );
 }
+
+#[test]
+fn test_string_builder_literal_append_uses_known_length() {
+    let module = compile_to_ir_helper(
+        r#"
+fn main() {
+    let mut b = StringBuilder::new()
+    b.append("héllo")
+}
+"#,
+    );
+    let args = module.functions[0]
+        .instructions
+        .iter()
+        .find_map(|i| match i {
+            Instruction::RuntimeCall {
+                func: RuntimeFn::StringBuilderAppendKnown,
+                args,
+                ..
+            } => Some(args),
+            _ => None,
+        })
+        .expect("literal append should use the known-length runtime entry");
+    assert_eq!(args.len(), 4, "{args:#?}");
+    assert!(
+        matches!(args[2], Operand::Const(IrValue::I64(6))),
+        "{args:#?}"
+    );
+    assert!(
+        matches!(args[3], Operand::Const(IrValue::I64(5))),
+        "{args:#?}"
+    );
+}

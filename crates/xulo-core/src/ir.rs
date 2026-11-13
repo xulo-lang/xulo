@@ -137,6 +137,8 @@ pub enum RuntimeFn {
     /// StringBuilder：分配 / 追加 / 清空 / 取出字符串 / 长度（句柄为 i64）
     StringBuilderNew,
     StringBuilderAppend,
+    /// 追加编译期已知字节长度/标量个数的文本（字面量快路径）
+    StringBuilderAppendKnown,
     StringBuilderClear,
     StringBuilderBuild,
     StringBuilderLen,

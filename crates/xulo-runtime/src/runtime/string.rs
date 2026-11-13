@@ -341,6 +341,29 @@ pub extern "C" fn xulo_string_builder_append(handle: i64, text: *const c_char) -
     0
 }
 
+/// `builder.append(text)` 的字面量快路径：字节长度与标量个数由编译期给出，
+/// 省去运行时扫描 NUL 和重新计数 UTF-8 标量。
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_string_builder_append_known(
+    handle: i64,
+    text: *const c_char,
+    byte_len: i64,
+    scalars: i64,
+) -> i64 {
+    if handle == 0 || text.is_null() || byte_len <= 0 {
+        return 0;
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(text as *const u8, byte_len as usize) };
+    let text = unsafe { std::str::from_utf8_unchecked(bytes) };
+    unsafe {
+        let buffer = &mut *builder(handle);
+        buffer.scalars += scalars.max(0) as usize;
+        buffer.text.push_str(text);
+    }
+    0
+}
+
 /// `builder.clear()`：清空文本（返回 `unit`，值忽略）。
 #[unsafe(no_mangle)]
 pub extern "C" fn xulo_string_builder_clear(handle: i64) -> i64 {

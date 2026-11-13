@@ -105,6 +105,7 @@ pub(crate) fn runtime_fn_name(func: &RuntimeFn) -> &'static str {
         RuntimeFn::StringBytes => "xulo_string_bytes",
         RuntimeFn::StringBuilderNew => "xulo_string_builder_new",
         RuntimeFn::StringBuilderAppend => "xulo_string_builder_append",
+        RuntimeFn::StringBuilderAppendKnown => "xulo_string_builder_append_known",
         RuntimeFn::StringBuilderClear => "xulo_string_builder_clear",
         RuntimeFn::StringBuilderBuild => "xulo_string_builder_build",
         RuntimeFn::StringBuilderLen => "xulo_string_builder_len",

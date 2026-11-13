@@ -1026,7 +1026,7 @@ impl IrGenerator {
             .object
             .as_ref()
             .is_some_and(|o| self.expr_is_string_builder(o));
-        let runtime_fn = if call.object.is_some() {
+        let mut runtime_fn = if call.object.is_some() {
             // 方法调用：根据方法名匹配
             match call.method.as_deref().unwrap_or(&call.callee) {
                 "push" => {
@@ -1164,6 +1164,20 @@ impl IrGenerator {
                 _ => None,
             }
         };
+
+        // 字面量 append 的字节长度和标量个数在编译期已知，交给运行时快路径，
+        // 避免每次追加都扫描 NUL 并重新统计 UTF-8 标量。
+        if runtime_fn == Some(RuntimeFn::StringBuilderAppend)
+            && call.arguments.len() == 1
+            && let Expression::Literal {
+                value: Literal::String(text),
+                ..
+            } = &call.arguments[0].value
+        {
+            args.push(Operand::Const(IrValue::I64(text.len() as i64)));
+            args.push(Operand::Const(IrValue::I64(text.chars().count() as i64)));
+            runtime_fn = Some(RuntimeFn::StringBuilderAppendKnown);
+        }
 
         if let Some(rf) = runtime_fn {
             // PrintValue 和 Print 不返回值，不需要 dst
