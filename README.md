@@ -57,12 +57,12 @@ VSCode：用 F5 或「Run Extension」调试启动 `editors/vscode/`（见 `.vsc
 # 编译并运行（Rust 原生解释器，不经过 Node.js）
 xulo run examples/hello.xulo
 
-# 渲染运行：把 main(): View 布局并绘制到 ANSI 终端（示例见 examples/ui.xulo）
-xulo run --render terminal examples/ui.xulo
+# 渲染运行：把 main(): View 布局并绘制到 ANSI 终端
+xulo run --render terminal <file.xulo>
 
 # 渲染运行：原生 webview 窗口（需要 webview feature；Linux 需 webkit2gtk-4.1 + X11/XWayland）
 # 布局/绘制引擎（xulo-ui）编译为 WASM 并在页面内运行，如同 egui/eframe 的 web 后端
-cargo run --bin xulo --features webview -- run --render webview examples/ui.xulo
+cargo run --bin xulo --features webview -- run --render webview <file.xulo>
 
 # 仅做词法/语法/语义检查
 xulo check examples/fibonacci.xulo
@@ -113,7 +113,6 @@ xulo
 | `async_tasks.xulo` | `async` / `await`、`Time::sleep`、`Task::resolve` / `all` / `race` / `timeout` |
 | `test_functions.xulo` | `#[test] fn` 测试函数 + `assert` |
 | `macros.xulo` | 过程宏：`#[macro]` / `#[macro_attr]` / `#[macro_derive(Target)]` 定义、函数宏 `name!`、派生宏 `#[derive]`、属性宏 `#[name]`、`ast::quote!` 与 `${…}` 洞 |
-| `layout.xulo` / `ui.xulo` | `main(): View` 返回值、渲染布局（`xulo run --render terminal`） |
 | `modules/main.xulo` | `mod` / `import` 跨文件模块（见 `examples/modules/`） |
 
 ## 语言速览
@@ -158,7 +157,7 @@ fn main() {
 
 - `@State` / `@Store` / `@Effect` / `@Environment` 只能在返回类型为 `View` 的函数顶层使用（嵌套块/普通函数内报语义错误）。术语：**组件**（component）指构造 UI 的语法/函数形态，**`View`** 是组件函数返回的类型（渲染树值）。
 - 组件块内允许「表达式子元素」（`string` / `View` / `List<View>`，列表渲染为嵌套数组）。外部组件调用（`@xulo/ui` 包，原生无实现）按位置实参构造成 `Name({ key: value, children: [...] })` 形状的 props 对象。
-- 渲染：`xulo run --render terminal examples/ui.xulo` 把入口 `main` 返回的 `View` 布局并绘制到 ANSI 终端（字符单元、边框按钮、true-color 背景）；`--render webview`（`--features webview`）用 wry 打开原生窗口——布局/绘制引擎 `xulo-ui` 编译为 **WASM**（`xulo-ui-wasm`，原始 ABI：`xulo_layout`/`xulo_hit_test`），页面实例化后在浏览器内完成布局，JS 只做最后的画布栅格化，如同 egui/eframe 的 web 后端。Linux 下窗口走 GTK 原生主循环（`build_gtk`，wry 官方推荐路径），并把 `Screen.bg` 同时设为窗口与页面的即时背景——打开即有主题色、无黑屏过渡。渲染管线按 crate 分层：`xulo-ui`（widget 树 + 布局 + 绘制命令，零依赖）、`xulo-renderer-terminal`（字符网格后端，零外部依赖）、`xulo-ui-wasm`（同引擎的 wasm32 产物，框架构建时经 `build.rs` 编译内嵌）、`xulo-renderer-webview`（wry 窗口后端，feature 化）、`xulo-framework`（统一 `run()`：编译 → 执行 → 取渲染树 → 转换 → 布局 → 绘制 → 后端输出）。
+- 渲染：`xulo run --render terminal <file.xulo>` 把入口 `main` 返回的 `View` 布局并绘制到 ANSI 终端（字符单元、边框按钮、true-color 背景）；`--render webview`（`--features webview`）用 wry 打开原生窗口——布局/绘制引擎 `xulo-ui` 编译为 **WASM**（`xulo-ui-wasm`，原始 ABI：`xulo_layout`/`xulo_hit_test`），页面实例化后在浏览器内完成布局，JS 只做最后的画布栅格化，如同 egui/eframe 的 web 后端。Linux 下窗口走 GTK 原生主循环（`build_gtk`，wry 官方推荐路径），并把 `Screen.bg` 同时设为窗口与页面的即时背景——打开即有主题色、无黑屏过渡。渲染管线按 crate 分层：`xulo-ui`（widget 树 + 布局 + 绘制命令，零依赖）、`xulo-renderer-terminal`（字符网格后端，零外部依赖）、`xulo-ui-wasm`（同引擎的 wasm32 产物，框架构建时经 `build.rs` 编译内嵌）、`xulo-renderer-webview`（wry 窗口后端，feature 化）、`xulo-framework`（统一 `run()`：编译 → 执行 → 取渲染树 → 转换 → 布局 → 绘制 → 后端输出）。
 - 交互：`--render` 为交互式会话。终端后端每帧渲染后输入 `1..N` 点击对应按钮、`r`/回车刷新、`q` 退出；webview 后端在页面上真实响应鼠标点击（wasm 内命中测试）。点击执行 `Button.onClick`（闭包在解释器内运行、改写 `@State` 信号），随后 `main` 被重新调用以重渲染——解释器按绑定位置复用 `@State` 单元，因此状态跨帧存活。`@Effect` 每次重渲染都会重跑。已知限制：同一组件多次实例化会共享 `@State`（尚未跟踪实例身份）。
 
 ### 未实现 / 限制
