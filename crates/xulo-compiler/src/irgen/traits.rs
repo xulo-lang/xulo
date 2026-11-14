@@ -31,10 +31,9 @@ impl IrGenerator {
                 rows.push((0, None, None));
                 continue;
             }
-            let is_enum = self.enums.contains_key(&resolved)
-                || self.enums.contains_key(&decl_name);
-            let is_struct = self.structs.contains_key(&resolved)
-                || self.structs.contains_key(&decl_name);
+            let is_enum = self.enums.contains_key(&resolved) || self.enums.contains_key(&decl_name);
+            let is_struct =
+                self.structs.contains_key(&resolved) || self.structs.contains_key(&decl_name);
             if !is_enum && !is_struct {
                 rows.push((0, None, None));
                 continue;
@@ -62,19 +61,28 @@ impl IrGenerator {
                 args: vec![Operand::Const(IrValue::I64((rows.len() * 4) as i64))],
             });
         for (kind, display, debug) in rows {
-            let mut values = vec![Operand::Const(IrValue::I64(kind)), Operand::Const(IrValue::I64(0))];
+            let mut values = vec![
+                Operand::Const(IrValue::I64(kind)),
+                Operand::Const(IrValue::I64(0)),
+            ];
             if let Some(fid) = display {
                 let addr = self.module.functions[func_idx].add_local(IrType::I64);
                 self.module.functions[func_idx]
                     .instructions
-                    .push(Instruction::FuncAddr { dst: addr, func: fid });
+                    .push(Instruction::FuncAddr {
+                        dst: addr,
+                        func: fid,
+                    });
                 values[1] = Operand::Local(addr);
             }
             let debug_op = if let Some(fid) = debug {
                 let addr = self.module.functions[func_idx].add_local(IrType::I64);
                 self.module.functions[func_idx]
                     .instructions
-                    .push(Instruction::FuncAddr { dst: addr, func: fid });
+                    .push(Instruction::FuncAddr {
+                        dst: addr,
+                        func: fid,
+                    });
                 Operand::Local(addr)
             } else {
                 Operand::Const(IrValue::I64(0))
@@ -82,13 +90,13 @@ impl IrGenerator {
             values.insert(2, debug_op);
             values.push(Operand::Const(IrValue::I64(0)));
             for value in values {
-                self.module.functions[func_idx].instructions.push(
-                    Instruction::RuntimeCall {
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::RuntimeCall {
                         dst: None,
                         func: RuntimeFn::ArrayPush,
                         args: vec![Operand::Local(arr), value, Operand::Const(IrValue::I64(1))],
-                    },
-                );
+                    });
             }
         }
         Operand::Local(arr)
@@ -154,15 +162,13 @@ impl IrGenerator {
 
     /// 声明是否带 `#[derive(Debug)]`（与语义层/解释器同一判定）
     pub(super) fn derives_debug(attributes: &[Attribute]) -> bool {
-        attributes
-            .iter()
-            .any(|attr| {
-                attr.name == "derive"
-                    && attr
-                        .identifier_args()
-                        .iter()
-                        .any(|(arg, _)| *arg == "Debug")
-            })
+        attributes.iter().any(|attr| {
+            attr.name == "derive"
+                && attr
+                    .identifier_args()
+                    .iter()
+                    .any(|(arg, _)| *arg == "Debug")
+        })
     }
 
     /// 取出一条可派生声明的（类型名、属性、目标）

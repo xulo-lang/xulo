@@ -10,7 +10,18 @@ env:
 
 jobs:
   check-build-test:
-    runs-on: ubuntu-latest
+    name: Check, build, and test (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux
+            os: ubuntu-latest
+          - name: macos
+            os: macos-14
+          - name: windows
+            os: windows-latest
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -18,6 +29,10 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+
+      - name: Set up MSVC environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
 
       - name: Format check
         run: cargo fmt --check
@@ -31,6 +46,36 @@ jobs:
       - name: Build release binary
         run: cargo build --release --workspace
 
+      - name: AOT smoke test (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          XULO_RUNTIME_LIB="$PWD/target/release/libxulo_runtime.a" \
+            target/release/xupm build examples/hello.xulo --release
+          test "$(examples/.xupm/build/hello)" = "Hello, world!"
+
+      - name: AOT smoke test (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $env:XULO_RUNTIME_LIB = "$PWD\target\release\xulo_runtime.lib"
+          & target\release\xupm.exe build examples\hello.xulo --release
+          $out = & examples\.xupm\build\hello.exe
+          if ($out -ne "Hello, world!") { throw "AOT smoke test failed: $out" }
+
+  examples:
+    name: Run examples
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build CLI
+        run: cargo build --release -p xulo-cli
+
       - name: Run all examples
         run: |
           set -e
@@ -40,9 +85,7 @@ jobs:
           done
 
       - name: Run module example
-        run: |
-          set -e
-          target/release/xulo run examples/modules/main.xulo > /dev/null
+        run: target/release/xulo run examples/modules/main.xulo > /dev/null
 
   llvm-backend:
     runs-on: ubuntu-22.04

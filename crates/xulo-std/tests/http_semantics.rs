@@ -43,13 +43,7 @@ fn request_carries_method_headers_and_body_both_ways() {
         let greeting = req.form_value("name").unwrap_or("stranger".to_string());
         let who = req.query_value("who").unwrap_or("nobody".to_string());
         Response::text(
-            &format!(
-                "{} {} {} {}",
-                req.method,
-                req.path,
-                who,
-                greeting
-            ),
+            &format!("{} {} {} {}", req.method, req.path, who, greeting),
             201,
         )
     });
@@ -210,8 +204,8 @@ fn head_and_no_body_statuses_carry_no_body() {
             Response::text("hidden", 200)
         }
     });
-    let head = http::request("HEAD", &format!("http://{addr}/x"), None, None, Some(5000))
-        .expect("head");
+    let head =
+        http::request("HEAD", &format!("http://{addr}/x"), None, None, Some(5000)).expect("head");
     assert_eq!(head.status, 200);
     assert_eq!(head.body, "", "a HEAD answer carries no body");
     assert_eq!(

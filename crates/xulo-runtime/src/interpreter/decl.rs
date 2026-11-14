@@ -114,8 +114,12 @@ impl Interpreter {
                         return self.impl_string(out);
                     }
                     if mode != RenderMode::DisplayOnly
-                        && let Some(out) =
-                            self.call_trait_impl("Debug", "debug", value, std::slice::from_ref(format))
+                        && let Some(out) = self.call_trait_impl(
+                            "Debug",
+                            "debug",
+                            value,
+                            std::slice::from_ref(format),
+                        )
                     {
                         return self.impl_string(out);
                     }
@@ -197,11 +201,7 @@ impl Interpreter {
 
     /// A `Format` value built for `std::fmt` from a directive's precision
     /// and `#` flag (spec `types/traits.md`).
-    pub(super) fn format_value_for(
-        &self,
-        precision: Option<usize>,
-        alternate: bool,
-    ) -> Value {
+    pub(super) fn format_value_for(&self, precision: Option<usize>, alternate: bool) -> Value {
         let precision = match precision {
             Some(p) => Value::Number(p as f64),
             None => Value::Null,
@@ -221,7 +221,10 @@ impl Interpreter {
             Value::Enum { .. } => Some("an enum"),
             Value::Object(obj) => {
                 let name = self.instance_type(obj)?;
-                self.struct_names.borrow().contains(&name).then_some("a struct")
+                self.struct_names
+                    .borrow()
+                    .contains(&name)
+                    .then_some("a struct")
             }
             _ => None,
         }
@@ -240,12 +243,9 @@ impl Interpreter {
         use xulo_std::fmt::FmtText;
         let format = self.format_value_for(precision, alternate);
         if let Some(kind) = self.fmt_user_kind(value) {
-            if let Some(out) = self.call_trait_impl(
-                "Display",
-                "display",
-                value,
-                std::slice::from_ref(&format),
-            ) {
+            if let Some(out) =
+                self.call_trait_impl("Display", "display", value, std::slice::from_ref(&format))
+            {
                 return self
                     .impl_string(out)
                     .map(FmtText::Consulted)
@@ -330,25 +330,19 @@ impl Interpreter {
     /// Whether a declaration carries `#[derive(Debug)]` (spec
     /// `types/traits.md` registers exactly one derive target).
     pub(super) fn derives_debug(attributes: &[Attribute]) -> bool {
-        attributes
-            .iter()
-            .any(|attr| {
-                attr.name == "derive"
-                    && attr
-                        .identifier_args()
-                        .iter()
-                        .any(|(arg, _)| *arg == "Debug")
-            })
+        attributes.iter().any(|attr| {
+            attr.name == "derive"
+                && attr
+                    .identifier_args()
+                    .iter()
+                    .any(|(arg, _)| *arg == "Debug")
+        })
     }
 
     /// Render one derived field/parameter through `Debug` rules: a user
     /// type uses its own `debug`, an enum without one falls back to the
     /// table's enum row, and everything else renders directly.
-    pub(super) fn derived_debug(
-        &self,
-        value: &Value,
-        format: &Value,
-    ) -> Result<String, RunError> {
+    pub(super) fn derived_debug(&self, value: &Value, format: &Value) -> Result<String, RunError> {
         self.render_in_mode(
             value,
             RenderMode::DebugField,
@@ -370,7 +364,10 @@ impl Interpreter {
         let fields: Vec<String> = s.fields.iter().map(|f| f.name.clone()).collect();
         let renderer: Value = Value::Native(Rc::new(move |interp, args| {
             let receiver = args.first().cloned().unwrap_or(Value::Null);
-            let format = args.get(1).cloned().unwrap_or_else(|| interp.default_format());
+            let format = args
+                .get(1)
+                .cloned()
+                .unwrap_or_else(|| interp.default_format());
             let out = interp.render_derived_struct(&type_name, &fields, &receiver, &format)?;
             Ok(Value::String(out.into()))
         }));
@@ -387,11 +384,9 @@ impl Interpreter {
                 obj.push((qualified, renderer.clone()));
             }
         }
-        self.global.borrow_mut().define(
-            &impl_fn_name("Debug", &s.name, "debug"),
-            renderer,
-            false,
-        );
+        self.global
+            .borrow_mut()
+            .define(&impl_fn_name("Debug", &s.name, "debug"), renderer, false);
     }
 
     /// Render a struct instance as `Type(field: value, …)` in declaration
@@ -435,15 +430,16 @@ impl Interpreter {
             .collect();
         let renderer: Value = Value::Native(Rc::new(move |interp, args| {
             let receiver = args.first().cloned().unwrap_or(Value::Null);
-            let format = args.get(1).cloned().unwrap_or_else(|| interp.default_format());
+            let format = args
+                .get(1)
+                .cloned()
+                .unwrap_or_else(|| interp.default_format());
             let out = interp.render_derived_enum(&type_name, &variants, &receiver, &format)?;
             Ok(Value::String(out.into()))
         }));
-        self.global.borrow_mut().define(
-            &impl_fn_name("Debug", &e.name, "debug"),
-            renderer,
-            false,
-        );
+        self.global
+            .borrow_mut()
+            .define(&impl_fn_name("Debug", &e.name, "debug"), renderer, false);
     }
 
     /// Render an enum instance as `Enum::Variant` or `Enum::Variant(p, …)`,

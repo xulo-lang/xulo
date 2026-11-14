@@ -1,6 +1,8 @@
 //! FFI 执行链路：JIT 经 dlsym 解析 C 符号、AOT 把符号留成 undefined 交链接器。
 //! 覆盖边界类（i32/usize/u32/f64/Ptr/unit）、`as` 别名与 `pub extern fn` 导出。
 
+#![cfg(unix)]
+
 use std::path::Path;
 
 use xulo_compiler::aot::AotCodeGen;

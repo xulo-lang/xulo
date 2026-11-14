@@ -1,6 +1,7 @@
 //! LLVM 目标文件输出。
 //!
-//! 使用宿主 target triple 生成非 PIC 目标文件（与 `cc -no-pie` 链接方式一致）；
+//! 使用宿主 target triple 生成目标文件；macOS 使用 PIC（ld64 默认 PIE），
+//! 其他平台沿用非 PIC 并与各自的链接参数配合；
 //! `XULO_DUMP_LLVM=1` 时把 `.ll` 文本写到目标文件旁边，供语言开发者调试。
 
 use std::path::Path;
@@ -38,7 +39,11 @@ pub fn write_object(module: &Module, obj_path: &Path, optimize: bool) -> Result<
             "",
             "",
             level,
-            RelocMode::Static,
+            if cfg!(target_os = "macos") {
+                RelocMode::PIC
+            } else {
+                RelocMode::Static
+            },
             CodeModel::Default,
         )
         .ok_or_else(|| codegen_err("failed to create LLVM target machine"))?;

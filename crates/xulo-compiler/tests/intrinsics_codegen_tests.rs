@@ -693,6 +693,7 @@ fn main() {
 
 /// `std::process::run` 编译路径：子进程捕获的 Result 对象载荷（stdout/
 /// stderr/code 字段）经 match 绑定与字段访问打印，与解释器同构。
+#[cfg(unix)]
 #[test]
 fn test_std_process_run_captures_object_payload() {
     let out = compile_and_run(
@@ -765,6 +766,7 @@ fn main() {
 
 /// `std::process::exec` 编译路径：直接执行（不经 shell）、可选 input/
 /// timeout 的 IR 补齐，与解释器同构。
+#[cfg(unix)]
 #[test]
 fn test_std_process_exec_runs_directly_and_pads_optionals() {
     let out = compile_and_run(
@@ -792,6 +794,7 @@ fn main() {
 }
 
 /// `run` 的可选 `timeout` 也在编译路径生效（-1 → 不限时，数值预算按毫秒）。
+#[cfg(unix)]
 #[test]
 fn test_std_process_run_timeout_budget_in_the_aot_path() {
     let out = compile_and_run(
@@ -1399,7 +1402,11 @@ fn hint_likely_unlikely_and_spin_loop_lower_to_runtime_calls() {
     let out = compile_and_run(source);
     assert_eq!(out, vec!["true", "false", "null"]);
     let bytes = object_bytes(source);
-    for symbol in ["xulo_hint_likely", "xulo_hint_unlikely", "xulo_hint_spin_loop"] {
+    for symbol in [
+        "xulo_hint_likely",
+        "xulo_hint_unlikely",
+        "xulo_hint_spin_loop",
+    ] {
         assert!(references_symbol(&bytes, symbol), "object missing {symbol}");
     }
 }

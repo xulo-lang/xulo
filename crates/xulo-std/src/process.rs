@@ -65,9 +65,9 @@ fn read_capped<R: Read>(mut src: R) -> (Vec<u8>, bool) {
     (buf, over)
 }
 
-/// How a child starts: through the POSIX shell (the `run`/`launch` form, so
-/// shell syntax is part of the command's meaning), or a program with its own
-/// argument vector (the `exec` form — no shell, nothing to quote).
+/// How a child starts: through the platform shell (the `run`/`launch` form,
+/// so shell syntax is part of the command's meaning), or a program with its
+/// own argument vector (the `exec` form — no shell, nothing to quote).
 #[derive(Clone, Debug)]
 pub enum CommandKind {
     Shell(String),
@@ -87,9 +87,23 @@ pub struct CommandSpec {
     pub timeout: Option<u64>,
 }
 
+#[cfg(windows)]
+fn shell_command(line: &str) -> StdCommand {
+    let mut c = StdCommand::new("cmd");
+    c.arg("/C").arg(line);
+    c
+}
+
+#[cfg(not(windows))]
+fn shell_command(line: &str) -> StdCommand {
+    let mut c = StdCommand::new("sh");
+    c.arg("-c").arg(line);
+    c
+}
+
 impl CommandSpec {
     /// `Command::shell(cmd)`: the spec behind `run(cmd)` — `cmd` runs through
-    /// `sh -c`.
+    /// `sh -c` on Unix and `cmd /C` on Windows.
     pub fn shell(cmd: &str) -> Self {
         Self {
             kind: CommandKind::Shell(cmd.to_string()),
@@ -168,11 +182,7 @@ impl CommandSpec {
     fn spawn(&self) -> Result<StdChild, String> {
         let display = self.display();
         let mut cmd = match &self.kind {
-            CommandKind::Shell(line) => {
-                let mut c = StdCommand::new("sh");
-                c.arg("-c").arg(line);
-                c
-            }
+            CommandKind::Shell(line) => shell_command(line),
             CommandKind::Direct { program, args } => {
                 let mut c = StdCommand::new(program);
                 c.args(args);
@@ -211,7 +221,10 @@ impl CommandSpec {
         let out_pipe = child.stdout.take().expect("stdout is piped");
         let err_pipe = child.stderr.take().expect("stderr is piped");
         if let Some(data) = &self.input {
-            let pipe = child.stdin.take().expect("stdin is piped when input is set");
+            let pipe = child
+                .stdin
+                .take()
+                .expect("stdin is piped when input is set");
             write_stdin(pipe, data.clone().into_bytes());
         }
         Ok(ChildHandle {
@@ -228,15 +241,12 @@ impl CommandSpec {
     }
 }
 
-/// `std::process::run(cmd[, input[, timeout]])`: run `cmd` through `sh -c`
+/// `std::process::run(cmd[, input[, timeout]])`: run `cmd` through the
+/// platform shell (`sh -c` on Unix, `cmd /C` on Windows)
 /// to completion and capture both streams. `Ok` even when the command fails
 /// (a non-zero exit is data); `Err` for a shell that cannot start, an
 /// over-cap stream, or an expired budget.
-pub fn run(
-    cmd: &str,
-    input: Option<&str>,
-    timeout: Option<u64>,
-) -> Result<RunOutput, String> {
+pub fn run(cmd: &str, input: Option<&str>, timeout: Option<u64>) -> Result<RunOutput, String> {
     CommandSpec::shell(cmd)
         .apply_input(input)
         .apply_timeout(timeout)
@@ -262,11 +272,7 @@ pub fn exec(
 /// shell without waiting — `Ok` of the [`ChildHandle`] to collect or stop it
 /// later (the `Command::launch` full form reaches the same path with cwd,
 /// env overlay, and its own budget).
-pub fn launch(
-    cmd: &str,
-    input: Option<&str>,
-    timeout: Option<u64>,
-) -> Result<ChildHandle, String> {
+pub fn launch(cmd: &str, input: Option<&str>, timeout: Option<u64>) -> Result<ChildHandle, String> {
     CommandSpec::shell(cmd)
         .apply_input(input)
         .apply_timeout(timeout)

@@ -129,7 +129,7 @@ async fn main() {
     }
     match server.wait() {
         Result::Ok(run) => {
-            print(run.code) // -1 —— 被信号带走，没有 exit code
+            print(run.code != 0) // true —— 被 kill 的子进程没有 0 exit code
             print(run.stdout) // 中间件的实时日志
         }
         Result::Err(e) => print(e.message)

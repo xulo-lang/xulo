@@ -171,10 +171,7 @@ fn string_builder_lengths_clear_output_and_reference_semantics() {
         }
         "#,
     );
-    assert_eq!(
-        out,
-        vec!["5", "6", "héllo", "0", "true", "xy", "xy", "xyz"]
-    );
+    assert_eq!(out, vec!["5", "6", "héllo", "0", "true", "xy", "xy", "xyz"]);
 }
 
 #[test]

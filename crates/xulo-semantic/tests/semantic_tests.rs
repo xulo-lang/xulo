@@ -7634,10 +7634,14 @@ fn string_builder_members_and_static_constructor_type_check() {
 
 #[test]
 fn string_builder_mutating_members_require_a_mutable_receiver_is_e0404() {
-    let err = analyze_src("fn main() { let sb = StringBuilder::new() sb.append(\"x\") }")
-        .unwrap_err();
+    let err =
+        analyze_src("fn main() { let sb = StringBuilder::new() sb.append(\"x\") }").unwrap_err();
     assert_eq!(err.code(), "E0404");
-    assert!(err.message.contains("mutable"), "unexpected: {}", err.message);
+    assert!(
+        err.message.contains("mutable"),
+        "unexpected: {}",
+        err.message
+    );
 
     let err = analyze_src("fn main() { let sb = StringBuilder::new() sb.clear() }").unwrap_err();
     assert_eq!(err.code(), "E0404");
@@ -7645,19 +7649,19 @@ fn string_builder_mutating_members_require_a_mutable_receiver_is_e0404() {
 
 #[test]
 fn string_builder_has_no_string_form_is_e0212() {
-    let err = analyze_src("fn main() { let mut sb = StringBuilder::new() print(str(sb)) }")
-        .unwrap_err();
+    let err =
+        analyze_src("fn main() { let mut sb = StringBuilder::new() print(str(sb)) }").unwrap_err();
     assert_eq!(err.code(), "E0212");
 
-    let err = analyze_src("fn main() { let mut sb = StringBuilder::new() print(`${sb}`) }")
-        .unwrap_err();
+    let err =
+        analyze_src("fn main() { let mut sb = StringBuilder::new() print(`${sb}`) }").unwrap_err();
     assert_eq!(err.code(), "E0212");
 }
 
 #[test]
 fn string_builder_append_takes_only_a_string_is_e0202() {
-    let err = analyze_src("fn main() { let mut sb = StringBuilder::new() sb.append(3) }")
-        .unwrap_err();
+    let err =
+        analyze_src("fn main() { let mut sb = StringBuilder::new() sb.append(3) }").unwrap_err();
     assert_eq!(err.code(), "E0202");
     assert!(
         err.message.contains("must be `string`"),
@@ -7668,14 +7672,13 @@ fn string_builder_append_takes_only_a_string_is_e0202() {
 
 #[test]
 fn string_builder_is_not_iterable_or_subscriptable() {
-    let err = analyze_src(
-        "fn main() { let mut sb = StringBuilder::new() for ch in sb { print(ch) } }",
-    )
-    .unwrap_err();
+    let err =
+        analyze_src("fn main() { let mut sb = StringBuilder::new() for ch in sb { print(ch) } }")
+            .unwrap_err();
     assert_eq!(err.code(), "E0213");
 
-    let err = analyze_src("fn main() { let mut sb = StringBuilder::new() print(sb[0]) }")
-        .unwrap_err();
+    let err =
+        analyze_src("fn main() { let mut sb = StringBuilder::new() print(sb[0]) }").unwrap_err();
     assert_eq!(err.code(), "E0215");
 }
 

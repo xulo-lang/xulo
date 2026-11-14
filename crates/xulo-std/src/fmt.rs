@@ -58,7 +58,10 @@ enum Piece {
 
 /// The verbs that take a numeric operand (where `+`, ` `, and `0` are legal).
 fn is_numeric_verb(verb: char) -> bool {
-    matches!(verb, 'd' | 'x' | 'X' | 'o' | 'b' | 'f' | 'e' | 'E' | 'g' | 'G')
+    matches!(
+        verb,
+        'd' | 'x' | 'X' | 'o' | 'b' | 'f' | 'e' | 'E' | 'g' | 'G'
+    )
 }
 
 /// The verbs that take `#` (alternate form).
@@ -243,7 +246,8 @@ fn int_of(arg: &FmtArg<'_>) -> Option<i64> {
     match arg {
         FmtArg::Int(n) => Some(*n),
         FmtArg::Float(f) => {
-            if f.fract() == 0.0 && f.is_finite() && (i64::MIN as f64..=i64::MAX as f64).contains(f) {
+            if f.fract() == 0.0 && f.is_finite() && (i64::MIN as f64..=i64::MAX as f64).contains(f)
+            {
                 Some(*f as i64)
             } else {
                 None
@@ -416,7 +420,11 @@ fn trim_frac(text: String) -> String {
 fn sci_form(digits: &[u8], exp: i32, upper: bool) -> String {
     let mut out = String::new();
     out.push((b'0' + digits[0]) as char);
-    let frac = if digits.len() > 1 { &digits[1..] } else { &[][..] };
+    let frac = if digits.len() > 1 {
+        &digits[1..]
+    } else {
+        &[][..]
+    };
     if !frac.is_empty() {
         out.push('.');
         for d in frac {
@@ -631,10 +639,7 @@ fn render_dir(dir: &Directive, arg: &FmtArg<'_>) -> Result<String, String> {
 /// that does not suit its verb is an `Err` — a runtime failure.
 pub fn format(template: &str, args: &[FmtArg<'_>]) -> Result<String, String> {
     let pieces = parse(template)?;
-    let directives = pieces
-        .iter()
-        .filter(|p| matches!(p, Piece::Dir(_)))
-        .count();
+    let directives = pieces.iter().filter(|p| matches!(p, Piece::Dir(_))).count();
     if directives != args.len() {
         return Err(err(format!(
             "expects {directives} argument{}, found {}",

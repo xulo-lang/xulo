@@ -75,12 +75,27 @@ fn response_object(res: xulo_std::http::Response) -> *mut XuloEnum {
     let list = xulo_alloc_array(res.headers.len());
     for h in &res.headers {
         let entry = xulo_alloc_object(2);
-        xulo_object_set(entry, c"name".as_ptr(), intern_string(h.name.clone()) as i64, 0);
-        xulo_object_set(entry, c"value".as_ptr(), intern_string(h.value.clone()) as i64, 0);
+        xulo_object_set(
+            entry,
+            c"name".as_ptr(),
+            intern_string(h.name.clone()) as i64,
+            0,
+        );
+        xulo_object_set(
+            entry,
+            c"value".as_ptr(),
+            intern_string(h.value.clone()) as i64,
+            0,
+        );
         xulo_array_push(list, entry as i64, 4);
     }
     xulo_object_set(obj, c"headers".as_ptr(), list as i64, 3);
-    xulo_object_set(obj, c"body".as_ptr(), intern_string(res.body.clone()) as i64, 0);
+    xulo_object_set(
+        obj,
+        c"body".as_ptr(),
+        intern_string(res.body.clone()) as i64,
+        0,
+    );
     fs_ok(obj as i64, 4)
 }
 
@@ -90,9 +105,7 @@ fn header_list(headers: *mut XuloArray) -> Result<Vec<xulo_std::http::Header>, S
     let mut out = Vec::with_capacity(arr.elements.len());
     for (i, &elem) in arr.elements.iter().enumerate() {
         if arr.tags.get(i).copied().map(i64::from).unwrap_or(-1) != 4 {
-            return Err(
-                "expects `{{ name, value }}` records in the headers list".to_string()
-            );
+            return Err("expects `{{ name, value }}` records in the headers list".to_string());
         }
         let obj = unsafe { &*(elem as *const XuloObject) };
         let field = |key: &str| -> Result<String, String> {

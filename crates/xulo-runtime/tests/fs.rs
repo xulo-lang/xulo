@@ -93,7 +93,7 @@ fn read_missing_file_surfaces_the_error_message() {
         "unexpected message: {line}"
     );
     assert!(
-        line.contains("No such file or directory"),
+        line.contains("os error"),
         "the OS error rides along: {line}"
     );
     let _ = fs::remove_dir_all(&dir);

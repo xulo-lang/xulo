@@ -21,6 +21,23 @@ use xulo_core::ir::*;
 
 use crate::backend::{BackendMode, CompilerModule, RUNTIME_FNS};
 
+/// 目标平台的 C ABI 调用约定。内部函数与运行时/FFI 调用都使用它，
+/// 这样 AOT 产物在 macOS aarch64（AppleAarch64）和 Windows x64
+/// （WindowsFastcall）上才能与 Rust `extern "C"` 符号对接。
+fn target_call_conv() -> CallConv {
+    #[cfg(target_os = "macos")]
+    let conv = if cfg!(target_arch = "aarch64") {
+        CallConv::AppleAarch64
+    } else {
+        CallConv::SystemV
+    };
+    #[cfg(target_os = "windows")]
+    let conv = CallConv::WindowsFastcall;
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let conv = CallConv::SystemV;
+    conv
+}
+
 pub(crate) fn aot_symbol_name(name: &str) -> String {
     let mut symbol: String = name
         .chars()
@@ -230,7 +247,7 @@ impl CodeGen {
         //    AOT 留成 undefined 交系统链接器）
         self.extern_calls.clear();
         for e in &ir_module.externs {
-            let mut sig = Signature::new(CallConv::SystemV);
+            let mut sig = Signature::new(target_call_conv());
             for p in &e.params {
                 sig.params
                     .push(cranelift::codegen::ir::AbiParam::new(abi_clift_type(*p)));
@@ -256,7 +273,7 @@ impl CodeGen {
 
     fn declare_runtime_functions(&mut self) -> Result<(), XuloError> {
         for desc in RUNTIME_FNS {
-            let mut sig = Signature::new(CallConv::SystemV);
+            let mut sig = Signature::new(target_call_conv());
             for pt in desc.params {
                 sig.params.push(cranelift::codegen::ir::AbiParam::new(*pt));
             }
@@ -296,7 +313,7 @@ impl CodeGen {
     }
 
     fn create_signature(&self, func: &IrFunction) -> Signature {
-        let mut sig = Signature::new(CallConv::SystemV);
+        let mut sig = Signature::new(target_call_conv());
         if func.closure_entry {
             // 闭包入口固定 `(env, a0..a7) -> i64`：CallIndirect 总是传满 9 个
             // I64 实参（缺省补 0），无返回值也返回 0
@@ -357,9 +374,7 @@ impl CodeGen {
         builder.switch_to_block(entry_block);
 
         // 注册所有字符串指针到运行时（用于自动类型检测）；只需在入口执行一次。
-        if is_entry
-            && let Some(&reg_id) = self.runtime_func_ids.get("xulo_register_string")
-        {
+        if is_entry && let Some(&reg_id) = self.runtime_func_ids.get("xulo_register_string") {
             let fref = self.backend.declare_func_in_func(reg_id, builder.func);
             for s in &self.strings {
                 let ptr_val = self.backend.string_value(s, &mut builder);
@@ -1014,7 +1029,7 @@ impl CodeGen {
                     while cl_args.len() < 9 {
                         cl_args.push(builder.ins().iconst(I64, 0));
                     }
-                    let mut sig = Signature::new(CallConv::SystemV);
+                    let mut sig = Signature::new(target_call_conv());
                     for _ in 0..9 {
                         sig.params.push(cranelift::codegen::ir::AbiParam::new(I64));
                     }

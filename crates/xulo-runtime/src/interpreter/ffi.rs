@@ -9,7 +9,6 @@
 //! - `Ptr` 零地址表示为 `Null`（只有 `Ptr?` 可空），`Ptr` 结果非零。
 
 use std::cell::RefCell;
-use std::ffi::{CString, c_char, c_void};
 use std::rc::Rc;
 
 use xulo_core::ast::{ExternBlockDecl, Type};
@@ -18,6 +17,11 @@ use xulo_core::error::{ErrorKind, XuloError};
 use crate::env::Env;
 use crate::interpreter::{Interpreter, NativeFn, RunError};
 use crate::value::{PtrValue, Value};
+
+#[cfg(unix)]
+use std::ffi::CString;
+#[cfg(unix)]
+use std::ffi::{c_char, c_void};
 
 /// 解释器支持的最大 extern 参数个数（与 build.rs 的生成上限同步）
 const MAX_PARAMS: usize = 6;
@@ -62,14 +66,20 @@ pub(crate) fn arg_f64(args: &[FfiArg], i: usize) -> Option<f64> {
 // build.rs 按 (参数类, 个数, 返回类) 穷举生成的 trampoline 表
 include!(concat!(env!("OUT_DIR"), "/ffi_trampolines.rs"));
 
-/// glibc：在进程全局符号表里查符号（`RTLD_DEFAULT = (void *) -1`）。
-/// xulo 运行在 Linux/glibc；符号在链接期已可见（libc/libm 与所依赖的动态库）。
+/// 进程全局符号表的 `RTLD_DEFAULT`：Linux/glibc 是 `(void *) -1`，
+/// macOS/dyld 是 `(void *) -2`。符号在链接期已可见（libc/libm 与
+/// 所依赖的动态库）。
+#[cfg(all(unix, not(target_os = "macos")))]
 const RTLD_DEFAULT: *const c_void = usize::MAX as *const c_void;
+#[cfg(target_os = "macos")]
+const RTLD_DEFAULT: *const c_void = (usize::MAX - 1) as *const c_void;
 
+#[cfg(unix)]
 unsafe extern "C" {
     fn dlsym(handle: *const c_void, symbol: *const c_char) -> *mut c_void;
 }
 
+#[cfg(unix)]
 fn lookup_symbol(symbol: &str) -> Result<usize, XuloError> {
     let c = CString::new(symbol).map_err(|_| {
         XuloError::new(
@@ -85,6 +95,14 @@ fn lookup_symbol(symbol: &str) -> Result<usize, XuloError> {
         ));
     }
     Ok(addr)
+}
+
+#[cfg(not(unix))]
+fn lookup_symbol(symbol: &str) -> Result<usize, XuloError> {
+    Err(XuloError::new(
+        ErrorKind::Runtime,
+        format!("FFI symbol lookup is not supported on Windows yet: `{symbol}`"),
+    ))
 }
 
 /// 边界类型的参数寄存器类：0 = i64（整/布尔/Ptr），1 = f32，2 = f64。

@@ -86,7 +86,9 @@ fn string_builder_appends_and_builds() {
     );
     assert_eq!(
         out,
-        vec!["5", "6", "héllo", "0", "true", "abcd", "4", "true", "6", "7", "abcdaé"]
+        vec![
+            "5", "6", "héllo", "0", "true", "abcd", "4", "true", "6", "7", "abcdaé"
+        ]
     );
 }
 

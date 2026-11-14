@@ -79,20 +79,62 @@ pub fn write_object_file(product: &ObjectProduct, obj_path: &Path) -> Result<(),
     })
 }
 
-/// 用系统 cc 把 .o 与 libxulo_runtime.a 链接成可执行文件。
+/// 用平台链接器把 `.o` 与运行时静态库链接成可执行文件。
 ///
-/// - `--gc-sections`：归档成员整块进链接，不 gc 会把 addr2line/gimli 回溯和用不到的
-///   std 全拉进来（.text 1.54MB -> 0.33MB）
-/// - release 用 `--strip-all` 去掉符号表（约 -24%）；debug 只 `--strip-debug`，
-///   保留符号便于诊断
+/// Linux 走 `cc` + GNU ld 参数；macOS 走 `cc` + ld64 参数；Windows 走
+/// MSVC `link.exe`。`XULO_LINKER` 可覆盖链接器路径（Unix 上也接受
+/// `XULO_CC`）。
 pub fn link_executable(obj_path: &Path, exe_path: &Path, strip_all: bool) -> Result<(), XuloError> {
     let runtime_lib = runtime_library_path()?;
-    let status = std::process::Command::new("cc")
-        .arg("-no-pie")
+    let mut cmd = linker_command();
+    configure_linker(&mut cmd, obj_path, exe_path, &runtime_lib, strip_all);
+    let status = cmd.status().map_err(|e| {
+        XuloError::new(
+            ErrorKind::Codegen,
+            format!(
+                "failed to run linker `{}`: {}（可通过 XULO_LINKER 指定链接器）",
+                cmd.get_program().to_string_lossy(),
+                e
+            ),
+        )
+    })?;
+    if !status.success() {
+        return Err(XuloError::new(
+            ErrorKind::Codegen,
+            format!("linker failed with status: {}", status),
+        ));
+    }
+    Ok(())
+}
+
+fn linker_command() -> std::process::Command {
+    #[cfg(target_os = "windows")]
+    {
+        let program = std::env::var_os("XULO_LINKER").unwrap_or_else(|| "link.exe".into());
+        std::process::Command::new(program)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let program = std::env::var_os("XULO_LINKER")
+            .or_else(|| std::env::var_os("XULO_CC"))
+            .unwrap_or_else(|| "cc".into());
+        std::process::Command::new(program)
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn configure_linker(
+    cmd: &mut std::process::Command,
+    obj_path: &Path,
+    exe_path: &Path,
+    runtime_lib: &Path,
+    strip_all: bool,
+) {
+    cmd.arg("-no-pie")
         .arg("-o")
         .arg(exe_path)
         .arg(obj_path)
-        .arg(&runtime_lib)
+        .arg(runtime_lib)
         .arg("-lpthread")
         .arg("-lm")
         .arg("-ldl")
@@ -101,21 +143,70 @@ pub fn link_executable(obj_path: &Path, exe_path: &Path, strip_all: bool) -> Res
             "-Wl,--strip-all"
         } else {
             "-Wl,--strip-debug"
+        });
+}
+
+#[cfg(target_os = "macos")]
+fn configure_linker(
+    cmd: &mut std::process::Command,
+    obj_path: &Path,
+    exe_path: &Path,
+    runtime_lib: &Path,
+    strip_all: bool,
+) {
+    // ld64 没有 GNU ld 的 --gc-sections/--strip-*；用 dead_strip 与 -x/-S。
+    // 显式传 -arch，保证在 Apple Silicon 上交叉链接 x86_64 产物。
+    cmd.arg("-arch")
+        .arg(if cfg!(target_arch = "aarch64") {
+            "arm64"
+        } else {
+            "x86_64"
         })
-        .status()
-        .map_err(|e| {
-            XuloError::new(
-                ErrorKind::Codegen,
-                format!("failed to run linker: {}（请确认已安装 cc/gcc/clang）", e),
-            )
-        })?;
-    if !status.success() {
-        return Err(XuloError::new(
-            ErrorKind::Codegen,
-            format!("linker failed with status: {}", status),
-        ));
-    }
-    Ok(())
+        .arg("-o")
+        .arg(exe_path)
+        .arg(obj_path)
+        .arg(runtime_lib)
+        .arg("-lpthread")
+        .arg("-lm")
+        .arg("-Wl,-dead_strip")
+        .arg(if strip_all { "-Wl,-x" } else { "-Wl,-S" });
+}
+
+#[cfg(target_os = "windows")]
+fn configure_linker(
+    cmd: &mut std::process::Command,
+    obj_path: &Path,
+    exe_path: &Path,
+    runtime_lib: &Path,
+    _strip_all: bool,
+) {
+    // MSVC link.exe：对象与静态库直接作为输入；/OPT:REF 去掉未引用段。
+    cmd.arg("/NOLOGO")
+        .arg("/SUBSYSTEM:CONSOLE")
+        .arg("/OPT:REF")
+        .arg("/OPT:ICF")
+        .arg(format!("/OUT:{}", exe_path.display()))
+        .arg(obj_path)
+        .arg(runtime_lib);
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+fn configure_linker(
+    cmd: &mut std::process::Command,
+    obj_path: &Path,
+    exe_path: &Path,
+    runtime_lib: &Path,
+    strip_all: bool,
+) {
+    cmd.arg("-o")
+        .arg(exe_path)
+        .arg(obj_path)
+        .arg(runtime_lib)
+        .arg(if strip_all {
+            "-Wl,--strip-all"
+        } else {
+            "-Wl,--strip-debug"
+        });
 }
 
 /// The result of building one entry module to a native executable.
@@ -167,7 +258,7 @@ pub fn build_executable_with_profile(
     }
 
     let backend = resolve_backend(backend, &mut warnings);
-    let obj_path = output.with_extension("o");
+    let obj_path = output.with_extension(if cfg!(windows) { "obj" } else { "o" });
     emit_object(backend, &ir, &obj_path, profile)?;
     let link_result = link_executable(&obj_path, output, profile == BuildProfile::Release);
     let _ = std::fs::remove_file(&obj_path);

@@ -98,7 +98,7 @@ fn run_http_example() {
     );
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
-        "xulo\ndemo\nnull\n200 hello, xulo\n201 text/plain; charset=utf-8 done\napplication/json {\"ok\":true}\n404 none gone\n200\nok\n200 hello, xulo\n404 not found\nserver stopped\n-1\nGET /health\nPOST /greet\nGET /missing\n\n"
+        "xulo\ndemo\nnull\n200 hello, xulo\n201 text/plain; charset=utf-8 done\napplication/json {\"ok\":true}\n404 none gone\n200\nok\n200 hello, xulo\n404 not found\nserver stopped\ntrue\nGET /health\nPOST /greet\nGET /missing\n\n"
     );
 }
 

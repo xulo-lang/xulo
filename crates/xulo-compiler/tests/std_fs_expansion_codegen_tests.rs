@@ -54,6 +54,7 @@ fn main() {{
     let _ = fs::remove_dir_all(&dir);
 }
 
+#[cfg(unix)]
 #[test]
 fn stat_touch_times_mode_on_the_compiled_path() {
     let dir = scratch("stat");

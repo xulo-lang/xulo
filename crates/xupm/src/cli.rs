@@ -322,9 +322,13 @@ fn build(
 ) -> Result<ExitCode, String> {
     let targets = resolve_targets(file, package, Mode::All { all })?;
     let mut failed = false;
-    // The product path always asks for LLVM; without the feature the compiler
-    // falls back to Cranelift and records an "LLVM not enabled" warning.
+    // Product builds use LLVM. Hosts without static LLVM (the stage-0 macOS
+    // and Windows previews) select Cranelift explicitly instead of relying on
+    // the warning-producing fallback.
+    #[cfg(feature = "llvm")]
     let backend = AotBackend::Llvm;
+    #[cfg(not(feature = "llvm"))]
+    let backend = AotBackend::Cranelift;
     let profile = if release {
         BuildProfile::Release
     } else {
@@ -434,10 +438,15 @@ fn artifact_name(target: &Target) -> String {
             }
         })
         .collect();
-    if sanitized.is_empty() {
+    let name = if sanitized.is_empty() {
         "program".to_string()
     } else {
         sanitized
+    };
+    if cfg!(windows) {
+        format!("{name}.exe")
+    } else {
+        name
     }
 }
 

@@ -1300,6 +1300,15 @@ impl CompilerModule {
                     )
                 })?;
                 let flag_builder = settings::builder();
+                // macOS links PIE by default; Cranelift must emit PIC there.
+                #[cfg(target_os = "macos")]
+                let flag_builder = {
+                    let mut builder = flag_builder;
+                    builder.set("is_pic", "true").map_err(|e| {
+                        XuloError::new(ErrorKind::Codegen, format!("failed to enable PIC: {e}"))
+                    })?;
+                    builder
+                };
                 let isa = isa_builder
                     .finish(settings::Flags::new(flag_builder))
                     .map_err(|e| {

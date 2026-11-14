@@ -5,4 +5,4 @@ language = "zh"
 src = "src"
 
 [output.html]
-git-repository-url = "https://github.com/anomalyco/xulo"
+git-repository-url = "https://github.com/xulo-lang/xulo"

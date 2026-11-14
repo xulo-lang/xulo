@@ -99,6 +99,7 @@ fn touch_and_set_times() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+#[cfg(unix)]
 #[test]
 fn set_mode_domain_and_bits() {
     let dir = scratch("mode");
@@ -154,7 +155,7 @@ fn realpath_is_absolute_and_missing_fails() {
         "#,
         file = p(&file)
     ));
-    assert!(out[0].starts_with("/"), "{}", out[0]);
+    assert!(Path::new(&out[0]).is_absolute(), "{}", out[0]);
     assert_eq!(out[1], "missing");
     let _ = fs::remove_dir_all(&dir);
 }

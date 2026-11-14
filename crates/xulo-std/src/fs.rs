@@ -7,8 +7,10 @@
 
 use std::fs;
 use std::io::Write;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// The failure message of an operation: which operation, on which path, and
@@ -119,8 +121,48 @@ pub fn set_mode(path: &str, mode: u64) -> Result<(), String> {
     }
     let meta = fs::metadata(path).map_err(|e| fail("set mode", path, e))?;
     let mut perms = meta.permissions();
-    perms.set_mode(mode as u32);
+    set_permissions_mode(&mut perms, mode)?;
     fs::set_permissions(path, perms).map_err(|e| fail("set mode", path, e))
+}
+
+#[cfg(unix)]
+fn set_permissions_mode(perms: &mut fs::Permissions, mode: u64) -> Result<(), String> {
+    perms.set_mode(mode as u32);
+    Ok(())
+}
+
+#[cfg(windows)]
+fn set_permissions_mode(perms: &mut fs::Permissions, mode: u64) -> Result<(), String> {
+    // Windows has no POSIX mode bits; map the owner write bit to the
+    // read-only attribute and ignore the rest.
+    perms.set_readonly(mode & 0o200 == 0);
+    Ok(())
+}
+
+#[cfg(not(any(unix, windows)))]
+fn set_permissions_mode(_perms: &mut fs::Permissions, _mode: u64) -> Result<(), String> {
+    Err("permission modes are not supported on this platform".to_string())
+}
+
+#[cfg(unix)]
+fn stat_mode(meta: &fs::Metadata) -> u64 {
+    (meta.permissions().mode() as u64) & 0o7777
+}
+
+#[cfg(windows)]
+fn stat_mode(meta: &fs::Metadata) -> u64 {
+    let writable = !meta.permissions().readonly();
+    match (meta.is_dir(), writable) {
+        (true, true) => 0o777,
+        (true, false) => 0o555,
+        (false, true) => 0o666,
+        (false, false) => 0o444,
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+fn stat_mode(_meta: &fs::Metadata) -> u64 {
+    0
 }
 
 /// `Fs::remove(path)`: delete one file; a directory path is a failure.
@@ -158,11 +200,7 @@ pub fn stat(path: &str) -> Result<Stat, String> {
         kind: kind.to_string(),
         size: meta.len(),
         modified: meta.modified().map(system_time_to_ms).unwrap_or(0),
-        mode: if cfg!(unix) {
-            (meta.permissions().mode() as u64) & 0o7777
-        } else {
-            0
-        },
+        mode: stat_mode(&meta),
     })
 }
 

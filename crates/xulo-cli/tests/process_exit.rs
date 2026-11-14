@@ -3,6 +3,8 @@
 //! lines must reach stdout *before* the process dies with the requested
 //! code (the interpreter drains them exactly as a normal end would).
 
+#![cfg(unix)]
+
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;

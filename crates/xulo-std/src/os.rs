@@ -100,12 +100,14 @@ pub fn unsetenv(name: &str) -> Result<(), String> {
 }
 
 /// `Os::tmp_dir()`: the host's temporary directory (`TMPDIR` when set and
-/// non-empty, else the platform default). Total; it does not probe existence.
+/// non-empty on Unix; the platform default on Windows). Total; it does not
+/// probe existence.
 pub fn tmp_dir() -> String {
-    match env::var_os("TMPDIR") {
-        Some(value) if !value.is_empty() => value.to_string_lossy().into_owned(),
-        _ => env::temp_dir().to_string_lossy().into_owned(),
+    #[cfg(not(windows))]
+    if let Some(value) = env::var_os("TMPDIR").filter(|value| !value.is_empty()) {
+        return value.to_string_lossy().into_owned();
     }
+    env::temp_dir().to_string_lossy().into_owned()
 }
 
 /// `Os::home_dir()`: the current user's home directory; an unset or empty
@@ -128,17 +130,29 @@ pub fn host_name() -> Result<String, String> {
             _ => Err("cannot determine the host name".to_string()),
         }
     } else {
-        std::fs::read_to_string("/etc/hostname")
-            .map(|name| name.trim().to_string())
-            .map_err(|e| format!("cannot determine the host name: {e}"))
-            .and_then(|name| {
-                if name.is_empty() {
-                    Err("cannot determine the host name: it is empty".to_string())
-                } else {
-                    Ok(name)
-                }
-            })
+        unix_host_name().ok_or_else(|| "cannot determine the host name".to_string())
     }
+}
+
+#[cfg(not(windows))]
+fn unix_host_name() -> Option<String> {
+    // Linux keeps it in /etc/hostname; macOS usually has no such file, so
+    // fall back to the hostname command and then the environment.
+    if let Ok(name) = std::fs::read_to_string("/etc/hostname") {
+        let name = name.trim();
+        if !name.is_empty() {
+            return Some(name.to_string());
+        }
+    }
+    if let Ok(out) = std::process::Command::new("hostname").output()
+        && out.status.success()
+    {
+        let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if !name.is_empty() {
+            return Some(name);
+        }
+    }
+    env::var("HOSTNAME").ok().filter(|name| !name.is_empty())
 }
 
 /// `Os::user_name()`: the account the process runs as, or `Err`.

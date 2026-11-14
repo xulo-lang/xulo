@@ -1,0 +1,212 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux:
+    name: Linux x86_64
+    runs-on: ubuntu-22.04
+    env:
+      LLVM_SYS_221_PREFIX: /usr/lib/llvm-22
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install LLVM 22
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | \
+            sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
+          sudo add-apt-repository -y \
+            "deb https://apt.llvm.org/jammy/ llvm-toolchain-jammy-22 main"
+          sudo apt-get update
+          sudo apt-get install -y llvm-22-dev clang-22 lld-22 libpolly-22-dev \
+            zlib1g-dev libzstd-dev libffi-dev libxml2-dev libedit-dev libncurses5-dev
+
+      - name: Build runtime static library
+        run: cargo build -p xulo-runtime --release
+
+      - name: Build CLI and language server
+        run: |
+          cargo build --release -p xulo-cli
+          cargo build --release -p xulo-analyzer
+
+      - name: Build xupm (static LLVM)
+        run: cargo build --release -p xupm --features distribution
+
+      - name: Smoke test
+        run: |
+          set -e
+          target/release/xulo --version
+          target/release/xupm --version
+          test "$(target/release/xulo run examples/hello.xulo)" = "Hello, world!"
+          target/release/xupm build examples/hello.xulo --release
+          test "$(examples/.xupm/build/hello)" = "Hello, world!"
+
+      - name: Package release
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          triple="x86_64-unknown-linux-gnu"
+          name="xulo-${version}-${triple}"
+          root="dist/${name}"
+
+          mkdir -p "${root}/bin" "${root}/lib/xulo"
+          cp target/release/xulo target/release/xupm target/release/xulo-analyzer "${root}/bin/"
+          cp target/release/libxulo_runtime.a "${root}/lib/xulo/"
+          cp LICENSE README.md CHANGELOG.md install.sh install.ps1 "${root}/"
+
+          tar -C dist -czf "dist/${name}.tar.gz" "${name}"
+          (cd dist && sha256sum "${name}.tar.gz" > "SHA256SUMS.${triple}")
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-linux
+          path: |
+            dist/*.tar.gz
+            dist/SHA256SUMS.*
+
+  macos:
+    name: macOS (Intel + Apple Silicon)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Build both architectures
+        run: |
+          set -euo pipefail
+          for triple in aarch64-apple-darwin x86_64-apple-darwin; do
+            cargo build --release --target "$triple" \
+              -p xulo-runtime -p xulo-cli -p xulo-analyzer
+            cargo build --release --target "$triple" -p xupm --features cranelift
+          done
+
+      - name: Smoke test (native Apple Silicon)
+        run: |
+          set -euo pipefail
+          target/aarch64-apple-darwin/release/xulo --version
+          target/aarch64-apple-darwin/release/xupm --version
+          test "$(target/aarch64-apple-darwin/release/xulo run examples/hello.xulo)" = "Hello, world!"
+          XULO_RUNTIME_LIB="$PWD/target/aarch64-apple-darwin/release/libxulo_runtime.a" \
+            target/aarch64-apple-darwin/release/xupm build examples/hello.xulo --release
+          test "$(examples/.xupm/build/hello)" = "Hello, world!"
+
+      - name: Package release
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          for triple in aarch64-apple-darwin x86_64-apple-darwin; do
+            name="xulo-${version}-${triple}"
+            root="dist/${name}"
+            mkdir -p "${root}/bin" "${root}/lib/xulo"
+            cp "target/${triple}/release/xulo" \
+               "target/${triple}/release/xupm" \
+               "target/${triple}/release/xulo-analyzer" "${root}/bin/"
+            cp "target/${triple}/release/libxulo_runtime.a" "${root}/lib/xulo/"
+            cp LICENSE README.md CHANGELOG.md install.sh install.ps1 "${root}/"
+            tar -C dist -czf "dist/${name}.tar.gz" "${name}"
+            (cd dist && shasum -a 256 "${name}.tar.gz" > "SHA256SUMS.${triple}")
+          done
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-macos
+          path: |
+            dist/*.tar.gz
+            dist/SHA256SUMS.*
+
+  windows:
+    name: Windows x86_64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Build
+        run: |
+          cargo build --release -p xulo-runtime -p xulo-cli -p xulo-analyzer
+          cargo build --release -p xupm --features cranelift
+
+      - name: Smoke test
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          & target\release\xulo.exe --version
+          & target\release\xupm.exe --version
+          $out = & target\release\xulo.exe run examples\hello.xulo
+          if ($out -ne "Hello, world!") { throw "xulo run failed: $out" }
+          $env:XULO_RUNTIME_LIB = "$PWD\target\release\xulo_runtime.lib"
+          & target\release\xupm.exe build examples\hello.xulo --release
+          $out = & examples\.xupm\build\hello.exe
+          if ($out -ne "Hello, world!") { throw "xupm build failed: $out" }
+
+      - name: Package release
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = $env:GITHUB_REF_NAME.TrimStart("v")
+          $triple = "x86_64-pc-windows-msvc"
+          $name = "xulo-$version-$triple"
+          $root = "dist/$name"
+          New-Item -ItemType Directory -Force -Path "$root/bin", "$root/lib/xulo" | Out-Null
+          Copy-Item target/release/xulo.exe, target/release/xupm.exe, target/release/xulo-analyzer.exe "$root/bin/"
+          Copy-Item target/release/xulo_runtime.lib "$root/lib/xulo/"
+          Copy-Item LICENSE, README.md, CHANGELOG.md, install.sh, install.ps1 "$root/"
+          Compress-Archive -Path $root -DestinationPath "dist/$name.zip" -Force
+          $hash = (Get-FileHash "dist/$name.zip" -Algorithm SHA256).Hash.ToLower()
+          "$hash  $name.zip" | Out-File -Encoding ascii "dist/SHA256SUMS.$triple"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          path: |
+            dist/*.zip
+            dist/SHA256SUMS.*
+
+  publish:
+    name: Publish GitHub release
+    needs: [linux, macos, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Combine checksums
+        run: cat artifacts/SHA256SUMS.* | tr -d '\r' > SHA256SUMS
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            artifacts/*.tar.gz artifacts/*.zip SHA256SUMS install.sh install.ps1 \
+            --verify-tag \
+            --title "Xulo ${GITHUB_REF_NAME} (stage 0)" \
+            --generate-notes

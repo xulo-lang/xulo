@@ -99,20 +99,22 @@ fn fmt_renders_containers_numbers_and_booleans_through_v_and_s() {
         }
         "#,
     );
-    assert_eq!(
-        out,
-        vec!["[1, 2]", "{ a: 1 }", "3", "2.5", "true", "2"]
-    );
+    assert_eq!(out, vec!["[1, 2]", "{ a: 1 }", "3", "2.5", "true", "2"]);
 }
 
 #[test]
 fn fmt_runtime_failures_stop_the_program() {
     let template = run(r#"fn main() { print(std::fmt::format("%z", [1])) }"#).unwrap_err();
-    assert!(template.message.contains("unknown verb `z`"), "{}", template.message);
+    assert!(
+        template.message.contains("unknown verb `z`"),
+        "{}",
+        template.message
+    );
 
     let kind = run(r#"fn main() { print(std::fmt::format("%d", ["a"])) }"#).unwrap_err();
     assert!(
-        kind.message.contains("`%d` takes an int value, found a string"),
+        kind.message
+            .contains("`%d` takes an int value, found a string"),
         "{}",
         kind.message
     );
@@ -156,7 +158,6 @@ fn fmt_special_values_and_negative_zero_come_through() {
     assert_eq!(out, vec!["NaN", "Infinity", "-Infinity", "-0"]);
 }
 
-
 #[test]
 fn fmt_text_verbs_consult_display_then_debug_with_the_directive_format() {
     let out = run_ok(
@@ -193,15 +194,14 @@ fn fmt_text_verbs_consult_display_then_debug_with_the_directive_format() {
 
 #[test]
 fn fmt_text_verb_rejects_a_bare_struct_at_run_time() {
-    let err = run(
-        r#"
+    let err = run(r#"
         struct Bare { x: int }
         fn main() { print(std::fmt::format("%v", [Bare(x: 1)])) }
-        "#,
-    )
+        "#)
     .unwrap_err();
     assert!(
-        err.message.contains("need `Display` or `Debug` for a struct"),
+        err.message
+            .contains("need `Display` or `Debug` for a struct"),
         "{}",
         err.message
     );

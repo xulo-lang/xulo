@@ -63,7 +63,7 @@ fn read_missing_file_reports_path_and_os_error() {
         "message should name the operation and path: {err}"
     );
     assert!(
-        err.contains("No such file or directory"),
+        err.contains("os error"),
         "message should carry the OS error: {err}"
     );
 
@@ -99,7 +99,7 @@ fn write_into_a_missing_parent_fails_but_names_the_path() {
 
     let err = fs::write(&path_string(&file), "x").expect_err("parent missing");
     assert!(
-        err.starts_with("cannot write '") && err.contains("No such file or directory"),
+        err.starts_with("cannot write '") && err.contains("os error"),
         "unexpected: {err}"
     );
 
@@ -130,7 +130,7 @@ fn remove_deletes_a_file_and_a_missing_path_fails() {
 
     let err = fs::remove(&path_string(&file)).expect_err("already gone");
     assert!(
-        err.starts_with("cannot remove '") && err.contains("No such file or directory"),
+        err.starts_with("cannot remove '") && err.contains("os error"),
         "unexpected: {err}"
     );
 

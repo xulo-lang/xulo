@@ -24,14 +24,26 @@ fn loopback_echo_round_trip_in_program_order() {
 
     // Client → server, then server → client: a request/response echo.
     assert_eq!(net::sock_write(client, "ping", None).unwrap(), 4);
-    assert_eq!(net::sock_read(accepted, 64, None).unwrap(), Some("ping".into()));
+    assert_eq!(
+        net::sock_read(accepted, 64, None).unwrap(),
+        Some("ping".into())
+    );
     assert_eq!(net::sock_write(accepted, "pong", None).unwrap(), 4);
-    assert_eq!(net::sock_read(client, 64, None).unwrap(), Some("pong".into()));
+    assert_eq!(
+        net::sock_read(client, 64, None).unwrap(),
+        Some("pong".into())
+    );
 
     // A shorter read than offered still returns exactly what arrived.
     assert_eq!(net::sock_write(client, "abcdef", None).unwrap(), 6);
-    assert_eq!(net::sock_read(accepted, 3, None).unwrap(), Some("abc".into()));
-    assert_eq!(net::sock_read(accepted, 3, None).unwrap(), Some("def".into()));
+    assert_eq!(
+        net::sock_read(accepted, 3, None).unwrap(),
+        Some("abc".into())
+    );
+    assert_eq!(
+        net::sock_read(accepted, 3, None).unwrap(),
+        Some("def".into())
+    );
 
     net::sock_close(client).unwrap();
     net::sock_close(accepted).unwrap();
@@ -46,8 +58,14 @@ fn utf8_byte_counts_and_lossy_chunk_reads() {
 
     // `sock_write` reports bytes, not characters.
     let msg = "héllo, 世界";
-    assert_eq!(net::sock_write(client, msg, None).unwrap(), msg.len() as i64);
-    assert_eq!(net::sock_read(accepted, 1024, None).unwrap(), Some(msg.into()));
+    assert_eq!(
+        net::sock_write(client, msg, None).unwrap(),
+        msg.len() as i64
+    );
+    assert_eq!(
+        net::sock_read(accepted, 1024, None).unwrap(),
+        Some(msg.into())
+    );
 
     // A read that slices a multi-byte character surfaces replacement bytes
     // (documented v1 behaviour: TCP is byte-oriented).
@@ -85,14 +103,22 @@ fn closed_and_foreign_handles_are_clean_errors() {
 
     // A handle the registry never issued (or a closed one) never crashes.
     let foreign = 999_999;
-    assert!(net::sock_read(foreign, 8, None).unwrap_err().contains("not open"));
+    assert!(
+        net::sock_read(foreign, 8, None)
+            .unwrap_err()
+            .contains("not open")
+    );
     assert!(
         net::sock_write(foreign, "x", None)
             .unwrap_err()
             .contains("not open")
     );
     assert!(net::sock_close(foreign).unwrap_err().contains("not open"));
-    assert!(net::tcp_accept(foreign, None).unwrap_err().contains("not open"));
+    assert!(
+        net::tcp_accept(foreign, None)
+            .unwrap_err()
+            .contains("not open")
+    );
     assert!(
         net::sock_local_addr(foreign)
             .unwrap_err()
@@ -107,7 +133,11 @@ fn closed_and_foreign_handles_are_clean_errors() {
     // Close is idempotent in intent but the second call sees no handle.
     net::sock_close(client).unwrap();
     assert!(net::sock_close(client).unwrap_err().contains("not open"));
-    assert!(net::sock_read(client, 8, None).unwrap_err().contains("not open"));
+    assert!(
+        net::sock_read(client, 8, None)
+            .unwrap_err()
+            .contains("not open")
+    );
 
     // Kind mismatches say so instead of misbehaving.
     assert!(

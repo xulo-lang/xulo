@@ -924,10 +924,7 @@ impl IrGenerator {
             Expression::Literal { value, .. } => match value {
                 Literal::String(_) => 0,
                 Literal::Number(n) => {
-                    if n.fract() == 0.0
-                        && n.is_finite()
-                        && n.abs() <= 9.007_199_254_740_992e15
-                    {
+                    if n.fract() == 0.0 && n.is_finite() && n.abs() <= 9.007_199_254_740_992e15 {
                         1
                     } else {
                         2
@@ -1414,7 +1411,8 @@ impl IrGenerator {
     }
 
     /// 表达式是否是字符串（用于 `+` 拼接与 str() 直通的 tag 判断）
-    fn is_string_like(&self, expr: &Expression) -> bool {        if matches!(self.infer_source_type_from_expr(expr), Some(Type::String)) {
+    fn is_string_like(&self, expr: &Expression) -> bool {
+        if matches!(self.infer_source_type_from_expr(expr), Some(Type::String)) {
             return true;
         }
         // str() 的返回值

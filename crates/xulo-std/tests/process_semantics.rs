@@ -4,6 +4,8 @@
 //! called here (it would take the test process with it); its end-to-end
 //! behaviour lives in the CLI and codegen exit tests.
 
+#![cfg(unix)]
+
 use std::thread;
 use std::time::Duration;
 
@@ -57,8 +59,7 @@ fn run_reports_a_timeout_when_the_budget_expires() {
     // A child far past its budget is killed and the call fails in the
     // timeout class; a non-zero exit would have been data, so this Err is
     // specifically the budget.
-    let err = process::run("sleep 10", None, Some(300))
-        .expect_err("budget should kill the child");
+    let err = process::run("sleep 10", None, Some(300)).expect_err("budget should kill the child");
     assert!(err.contains("timed out after 300 ms"), "{err}");
     // The budget is a bound, not an expectation: a child that finishes
     // first returns Ok even when it had a timeout set.

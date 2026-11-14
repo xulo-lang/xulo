@@ -1116,8 +1116,7 @@ impl IrGenerator {
                             // exactly the `string` row (spec
                             // `builtins/intrinsic-functions.md`).
                             let func_idx = self.current_func.unwrap();
-                            let local =
-                                self.module.functions[func_idx].add_local(IrType::Pointer);
+                            let local = self.module.functions[func_idx].add_local(IrType::Pointer);
                             self.module.functions[func_idx].instructions.push(
                                 Instruction::RuntimeCall {
                                     dst: Some(local),
@@ -1838,10 +1837,7 @@ impl IrGenerator {
         Ok(match lit {
             Literal::Number(n) => {
                 // i64 槽只承载精确可表示的整数，其余按 f64 位模式比对
-                if n.fract() == 0.0
-                    && n.is_finite()
-                    && n.abs() <= 9.007_199_254_740_992e15
-                {
+                if n.fract() == 0.0 && n.is_finite() && n.abs() <= 9.007_199_254_740_992e15 {
                     (Operand::Const(IrValue::I64(*n as i64)), 1)
                 } else {
                     (Operand::Const(IrValue::F64(*n)), 2)

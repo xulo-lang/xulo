@@ -64,17 +64,29 @@ fn text_verbs_render_the_str_table() {
     assert_eq!(ok("%v", vec![FmtArg::Bool(true)]), "true");
     assert_eq!(ok("%v", vec![FmtArg::Null]), "null");
     assert_eq!(ok("%s", vec![FmtArg::Rendered("[1, 2]".into())]), "[1, 2]");
-    assert_eq!(ok("%t / %v", vec![FmtArg::Bool(true), FmtArg::Null]), "true / null");
+    assert_eq!(
+        ok("%t / %v", vec![FmtArg::Bool(true), FmtArg::Null]),
+        "true / null"
+    );
     // A written precision cuts a table rendering for both text verbs.
-    assert_eq!(ok("%.3v", vec![FmtArg::Rendered("[1, 2, 3]".into())]), "[1,");
-    assert_eq!(ok("%.3s", vec![FmtArg::Rendered("[1, 2, 3]".into())]), "[1,");
+    assert_eq!(
+        ok("%.3v", vec![FmtArg::Rendered("[1, 2, 3]".into())]),
+        "[1,"
+    );
+    assert_eq!(
+        ok("%.3s", vec![FmtArg::Rendered("[1, 2, 3]".into())]),
+        "[1,"
+    );
 }
 
 #[test]
 fn text_verbs_consult_user_values_under_the_directive_format() {
     // An implementation's return is used as returned: precision is handed
     // over, never re-applied as a cut.
-    assert_eq!(ok("%.1s", vec![consulted("123.45")]), "123.45:Some(1):false");
+    assert_eq!(
+        ok("%.1s", vec![consulted("123.45")]),
+        "123.45:Some(1):false"
+    );
     assert_eq!(ok("%#v", vec![consulted("x")]), "x:None:true");
     assert_eq!(ok("%.2s", vec![table("abcdef")]), "ab");
 }
@@ -95,17 +107,29 @@ fn c_takes_one_scalar_and_checks_its_range() {
     assert_eq!(ok("%c", vec![i(8364)]), "€");
     assert_eq!(ok("%c", vec![i(65)]), "A");
     assert_eq!(ok("%c", vec![i(0)]), "\u{0}");
-    assert_eq!(bad("%c", vec![i(0x110000)]), "`std::fmt::format` `%c` scalar out of range: 1114112 is not in 0 …= 0x10FFFF");
-    assert_eq!(bad("%c", vec![i(0xD800)]), "`std::fmt::format` `%c` scalar out of range: 55296 is a surrogate");
+    assert_eq!(
+        bad("%c", vec![i(0x110000)]),
+        "`std::fmt::format` `%c` scalar out of range: 1114112 is not in 0 …= 0x10FFFF"
+    );
+    assert_eq!(
+        bad("%c", vec![i(0xD800)]),
+        "`std::fmt::format` `%c` scalar out of range: 55296 is a surrogate"
+    );
     let err = bad("%c", vec![s("a")]);
-    assert!(err.contains("`%c` takes an int value, found a string"), "unexpected: {err}");
+    assert!(
+        err.contains("`%c` takes an int value, found a string"),
+        "unexpected: {err}"
+    );
 }
 
 #[test]
 fn t_takes_a_bool() {
     assert_eq!(ok("%t", vec![FmtArg::Bool(false)]), "false");
     let err = bad("%t", vec![i(1)]);
-    assert!(err.contains("`%t` takes a bool value, found an int"), "unexpected: {err}");
+    assert!(
+        err.contains("`%t` takes a bool value, found an int"),
+        "unexpected: {err}"
+    );
 }
 
 #[test]
@@ -135,9 +159,15 @@ fn integer_verbs_accept_a_whole_float_value() {
 #[test]
 fn integer_verbs_refuse_a_fractional_number() {
     let err = bad("%d", vec![f(2.5)]);
-    assert!(err.contains("`%d` takes an int value, found a float"), "unexpected: {err}");
+    assert!(
+        err.contains("`%d` takes an int value, found a float"),
+        "unexpected: {err}"
+    );
     let err = bad("%d", vec![s("a")]);
-    assert!(err.contains("`%d` takes an int value, found a string"), "unexpected: {err}");
+    assert!(
+        err.contains("`%d` takes an int value, found a string"),
+        "unexpected: {err}"
+    );
 }
 
 #[test]
@@ -280,7 +310,10 @@ fn malformed_templates_are_runtime_failures() {
 #[test]
 fn q_requires_a_string_operand() {
     let err = bad("%q", vec![i(1)]);
-    assert!(err.contains("`%q` takes a string, found an int"), "unexpected: {err}");
+    assert!(
+        err.contains("`%q` takes a string, found an int"),
+        "unexpected: {err}"
+    );
     let err = bad("%q", vec![FmtArg::Rendered("[1]".into())]);
     assert!(
         err.contains("`%q` takes a string, found a rendered value"),

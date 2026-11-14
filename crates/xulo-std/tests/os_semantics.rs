@@ -78,7 +78,7 @@ fn chdir_to_a_missing_path_fails_with_the_path() {
         .join("nope");
     let err = os::chdir(&missing.to_string_lossy()).expect_err("missing dir fails");
     assert!(
-        err.starts_with("cannot change directory to '") && err.contains("No such file"),
+        err.starts_with("cannot change directory to '") && err.contains("xulo-os-absent"),
         "unexpected: {err}"
     );
 }

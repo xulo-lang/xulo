@@ -7,7 +7,7 @@ cargo build --release
 # 二进制位于 target/release/xulo
 ```
 
-需要本机安装 Node.js（`xulo run` 通过 `node` 执行生成的 JS）。
+`xulo run` 直接使用 Rust 原生解释器，不依赖 Node.js。
 
 ## 使用
 
@@ -29,7 +29,7 @@ xulo repl
 
 ```xulo
 fn main() {
-    print("Hello, world!")     // print -> console.log
+    print("Hello, world!")     // print -> 标准输出
 }
 ```
 

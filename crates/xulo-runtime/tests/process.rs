@@ -4,6 +4,8 @@
 //! `exit` is deliberately absent — it would take the test harness with it;
 //! the CLI's `process_exit` test covers it in a child process.
 
+#![cfg(unix)]
+
 use xulo_core::error::XuloError;
 use xulo_parser::parse_program;
 
@@ -354,7 +356,11 @@ fn glob_and_alias_imports_reach_the_process_surface() {
         }
         "#,
     );
-    assert_eq!(out, vec!["glob".to_string(), "via-glob".to_string()], "{out:?}");
+    assert_eq!(
+        out,
+        vec!["glob".to_string(), "via-glob".to_string()],
+        "{out:?}"
+    );
     let aliased = run_ok(
         r#"
         use std::process as proc;

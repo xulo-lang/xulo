@@ -248,23 +248,35 @@ pub fn build_executable_with(
 
 - The object file is emitted by `TargetMachine` using the host/`target_lexicon`
   triple.
-- Linking reuses `aot::link_executable`, but that function is currently
-  Linux/GNU-specific:
+- Linking goes through `aot::link_executable`, which selects the platform
+  linker and flags at compile time:
 
 ```
+# Linux
 cc -no-pie -o <exe> <obj> libxulo_runtime.a \
    -lpthread -lm -ldl \
    -Wl,--gc-sections -Wl,--strip-debug
+
+# macOS (ld64; PIC is required because the toolchain links PIE)
+cc -arch <arm64|x86_64> -o <exe> <obj> libxulo_runtime.a \
+   -lpthread -lm -Wl,-dead_strip -Wl,-S
+
+# Windows (MSVC, run from a Developer shell so LIB/INCLUDE are set)
+link.exe /NOLOGO /SUBSYSTEM:CONSOLE /OPT:REF /OPT:ICF \
+   /OUT:<exe> <obj> xulo_runtime.lib
 ```
 
-Cross-platform support must be handled separately (start with Linux; other
-platforms are separate work items):
+`XULO_LINKER` overrides the linker path; on Unix `XULO_CC` is also accepted.
 
-| Platform | Linker | Notes |
-|----------|--------|-------|
-| Linux | `cc` (GNU/Clang) | current flags; `-no-pie`, `--gc-sections` |
-| macOS | `cc` (Clang) | whether `-no-pie` works on ld64 must be measured; replace `--gc-sections` with `-Wl,-dead_strip` (to be verified); static/system libraries differ |
-| Windows | `link.exe` (MSVC) or `lld-link` | static-library suffix is `.lib`; requires the MSVC runtime/CRT |
+| Platform | Linker | Status / notes |
+|----------|--------|----------------|
+| Linux | `cc` (GNU/Clang) | implemented; `-no-pie`, `--gc-sections` |
+| macOS | `cc` (Clang/ld64) | implemented; `-arch`, `-dead_strip`, PIC object code |
+| Windows | `link.exe` (MSVC) | implemented; `.lib` suffix, needs the MSVC CRT/system libraries from a Developer shell |
+
+The macOS and Windows release previews build `xupm` with Cranelift because a
+static LLVM 22 toolchain is not available there; the linker abstraction is
+shared by both backends.
 
 Optimization levels:
 
@@ -274,12 +286,9 @@ Optimization levels:
 
 ### 7.5 Distributing and Locating the Runtime Static Library
 
-`aot.rs:126 runtime_library_path()` currently hardcodes the source-tree path
-`target/release/libxulo_runtime.a` and prints "run cargo build first". That
-works for source-tree development but **violates constraint 1**: an installed
-`xupm` cannot find that file.
-
-This must be solved together with distribution:
+`runtime_library_path()` resolves the archive at runtime (the source-tree
+`target/release` path remains the last development fallback). The installed
+layout is:
 
 1. **Ship it in the installer**: install the runtime static library to
    `<prefix>/lib/xulo/` (or a `lib/` next to the `xupm` executable) and locate
@@ -292,9 +301,8 @@ This must be solved together with distribution:
    avoids install-layout issues but increases `xupm` size and complicates cross
    builds.
 
-Suggested lookup order: `XULO_RUNTIME_LIB` → next to the executable/install
-prefix → source-tree `target/release` (development only). This must be resolved
-in M0/M2; otherwise "install only xulo" does not hold.
+Implemented lookup order: `XULO_RUNTIME_LIB` → next to the executable/install
+prefix → source-tree `target/release` (development only).
 
 ### 7.6 Debug Output (Language Developers Only)
 

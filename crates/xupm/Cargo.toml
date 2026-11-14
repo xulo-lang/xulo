@@ -17,6 +17,8 @@ llvm-dynamic = ["llvm", "xulo-compiler/llvm-dynamic"]
 llvm-static = ["llvm", "xulo-compiler/llvm-static"]
 # Distribution builds must never silently ship the Cranelift fallback.
 distribution = ["llvm-static"]
+# Stage-0 preview builds for hosts without a static LLVM (macOS/Windows).
+cranelift = []
 
 [dependencies]
 clap = { workspace = true }

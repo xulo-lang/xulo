@@ -280,9 +280,39 @@ pub fn render_ansi(ops: &[PaintOp<'_>], size: TerminalSize) -> String {
     Grid::from_ops(ops, size).to_ansi()
 }
 
+/// Enable ANSI escape processing on Windows consoles; other platforms are
+/// already ANSI-native.
+#[cfg(windows)]
+fn enable_console_ansi() {
+    use std::ffi::c_void;
+
+    const STD_OUTPUT_HANDLE: u32 = -11i32 as u32;
+    const ENABLE_VIRTUAL_TERMINAL_PROCESSING: u32 = 0x0004;
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetStdHandle(which: u32) -> *mut c_void;
+        fn GetConsoleMode(handle: *mut c_void, mode: *mut u32) -> i32;
+        fn SetConsoleMode(handle: *mut c_void, mode: u32) -> i32;
+    }
+
+    // SAFETY: these Win32 calls only inspect/modify the current console mode.
+    unsafe {
+        let handle = GetStdHandle(STD_OUTPUT_HANDLE);
+        let mut mode = 0;
+        if GetConsoleMode(handle, &mut mode) != 0 {
+            let _ = SetConsoleMode(handle, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn enable_console_ansi() {}
+
 /// Rasterize `ops` and print them to stdout, clearing the screen first. ANSI
 /// color is skipped when `NO_COLOR` is set or stdout is not a terminal.
 pub fn render_stdout(ops: &[PaintOp<'_>], size: TerminalSize) {
+    enable_console_ansi();
     let grid = Grid::from_ops(ops, size);
     let colored = std::env::var_os("NO_COLOR").is_none()
         && std::io::IsTerminal::is_terminal(&std::io::stdout());

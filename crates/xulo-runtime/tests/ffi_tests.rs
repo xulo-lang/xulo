@@ -4,6 +4,8 @@
 //! named arguments reorder, an omitted `Ptr?` binds `null` (spec ffi.md
 //! "Calling"). Foreign symbols come from the process itself (libc/libm).
 
+#![cfg(unix)]
+
 use xulo_core::error::XuloError;
 use xulo_parser::parse_program;
 use xulo_runtime::interpreter::Interpreter;

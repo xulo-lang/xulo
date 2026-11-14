@@ -60,12 +60,12 @@ pub type User = { name: string }
 > 注意：`import type` 写在 `import` 之后（`import type { ... }`），而非花括号内（`import { type ... }` 暂不支持）。
 > 历史：`export` 与 `default` 关键字均已移除并成为保留字（Xulo 没有默认导出）；跨模块导出统一用上面的 `pub` 形态，导入统一按名称。旧代码的 `export default fn main` 直接改写为 `pub fn main` 即可。
 
-## 导入解析规则（打包器）
+## 导入解析规则
 
-- 相对路径或本地存在的模块名（如 `./math`、`math`）→ 解析为本地 `.xulo` 文件，参与打包。
-- 其余说明符（如 `@xulo/ui`）→ 视为外部包，原样生成 ESM `import`。通过 bare specifier 解析到 `node_modules`（`xulo run` 会把临时 JS 写到源文件同目录，Node 会从那里向上查找；`examples/node_modules/@xulo/ui` 提供一个无头 demo shim）。
+- 相对路径或本地存在的模块名（如 `./math`、`math`）→ 解析为本地 `.xulo` 文件，由原生运行时加载。
+- 其余说明符（如 `@xulo/ui`）→ 视为外部包，按 `xupm.toml` 的依赖映射解析；只有版本、没有本地源码的依赖暴露不透明面，其成员绑定为 `null` 占位符。不经过 Node.js / ESM。
 - `import type` 只供类型检查；运行时仅当导入名同时是运行时值（如 `enum`）时保留其值绑定，以便 `Kind::Admin` 可用，否则完全擦除；`pub enum` 同时导出运行时值与类型。
-- **无运行时模块加载器**：每个文件编译为一个返回导出对象的 IIFE，依赖按拓扑序内联进同一个 JS 文件；入口文件加载时执行其 `main()`。
+- 本地模块由原生运行时按拓扑序初始化，入口文件执行其 `main()`。
 - 循环导入（A → B → A）会被拒绝。
 
 ## 跨模块调用

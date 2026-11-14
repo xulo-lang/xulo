@@ -2,11 +2,44 @@
 
 Xulo 是一门 UI First 编程语言：解析 `.xulo` 文件 → 语义检查 → 由 Rust 原生解释器执行。JS 代码生成已移除，工具链不依赖 Node.js。
 
-本仓库实现 Xulo 的 MVP（Rust + [pest](https://pest.rs)）：
+本仓库实现 Xulo 的 stage 0（Rust + [pest](https://pest.rs) 引导实现）：
 
 ```
 .xulo 文件 → 词法分析 (Token) → 语法分析 (AST) → 语义检查 → 原生 Rust 解释器
 ```
+
+## 安装（预编译）
+
+Linux / macOS：
+
+```bash
+curl -fsSL https://github.com/xulo-lang/xulo/releases/latest/download/install.sh | sh
+```
+
+Windows（PowerShell）：
+
+```powershell
+irm https://github.com/xulo-lang/xulo/releases/latest/download/install.ps1 | iex
+```
+
+Unix 默认安装到 `$HOME/.local`，Windows 默认安装到
+`$env:LOCALAPPDATA\Xulo`（`bin/` 与 `lib/xulo/`）；可通过 `XULO_PREFIX`
+改前缀、`XULO_VERSION` 指定版本。确保安装目录的 `bin/` 在 `PATH` 中：
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+xulo --version
+```
+
+也可以从 [GitHub Releases](https://github.com/xulo-lang/xulo/releases) 手动下载对应
+平台的 `xulo-<version>-<target>.tar.gz`（Windows 为 `.zip`），解压后把 `bin/` 加入
+`PATH`。`xupm` 通过 `bin/../lib/xulo/` 下的 `libxulo_runtime.a`（Windows 为
+`xulo_runtime.lib`）链接 AOT 产物，请保持目录结构完整。
+
+支持的发布目标：`x86_64-unknown-linux-gnu`、`x86_64-apple-darwin`、
+`aarch64-apple-darwin`、`x86_64-pc-windows-msvc`。
+Linux 发布版使用静态链接的 LLVM 22；macOS / Windows 的 stage 0 预览版
+`xupm` 使用 Cranelift 后端（无需安装 LLVM）。
 
 ## 构建
 
@@ -20,7 +53,9 @@ cargo build --release
 ### 原生 AOT 构建（xupm）
 
 `xupm build` 通过内置 LLVM 后端生成原生可执行文件。源码构建需要 LLVM 22
-开发库；未启用 `llvm` feature 时会回退到 Cranelift 并给出警告。
+开发库；未启用 `llvm` feature 时 `xupm` 使用 Cranelift（macOS/Windows 的
+stage 0 预览版走这条路径，也可显式 `--features cranelift`）。Windows 上 AOT
+链接需要 MSVC 的 `link.exe`，请在 Developer PowerShell 中运行。
 
 ```bash
 # 动态链接 LLVM（开发用）
@@ -211,3 +246,7 @@ CI（GitHub Actions，见 `.github/workflows/ci.yml`）执行 `cargo fmt --check
 ```
 
 `xulo run` 用 `xulo-runtime` crate 的 Rust 解释器直接执行，不经 JS/Node。`xulo-ide` 与 LSP 协议解耦：`xulo-analyzer` 只负责把 `xulo-ide` 的 `Range`/`Location`/`Diagnostic`/符号条目映射为 `lsp-types` 并通过 stdio 收发；每次文档变更由 `xulo-analyzer` 重建内存 Workspace 后重新发布诊断（非增量，MVP 实现）。
+
+## License
+
+MIT，见 [LICENSE](LICENSE)。

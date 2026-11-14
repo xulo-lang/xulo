@@ -10,7 +10,13 @@ pub enum SymbolKind {
     State,
     /// A `@Store` binding (reactive store-derived value).
     Store,
-    Function(Vec<String>, Vec<Param>, Type, Vec<FnBound>, Vec<GenericParam>),
+    Function(
+        Vec<String>,
+        Vec<Param>,
+        Type,
+        Vec<FnBound>,
+        Vec<GenericParam>,
+    ),
 }
 
 #[derive(Debug, Clone, PartialEq)]

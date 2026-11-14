@@ -99,12 +99,7 @@ fn make_format(precision: Option<usize>, alternate: bool) -> *mut XuloObject {
         },
         if precision.is_some() { 1 } else { 6 },
     );
-    xulo_object_set(
-        obj,
-        c"alternate".as_ptr(),
-        if alternate { 1 } else { 0 },
-        5,
-    );
+    xulo_object_set(obj, c"alternate".as_ptr(), if alternate { 1 } else { 0 }, 5);
     obj
 }
 

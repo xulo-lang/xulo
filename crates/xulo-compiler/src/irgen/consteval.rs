@@ -25,10 +25,7 @@ impl IrGenerator {
             Expression::Literal { value, .. } => match value {
                 Literal::String(_) => 0,
                 Literal::Number(n) => {
-                    if n.fract() == 0.0
-                        && n.is_finite()
-                        && n.abs() <= 9.007_199_254_740_992e15
-                    {
+                    if n.fract() == 0.0 && n.is_finite() && n.abs() <= 9.007_199_254_740_992e15 {
                         1
                     } else {
                         2

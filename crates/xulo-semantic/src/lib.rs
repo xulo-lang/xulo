@@ -1344,9 +1344,7 @@ fn builtin_property(recv: &Type, member: &str) -> Option<Type> {
         (Type::List(_), "len") => Some(Type::Number),
         (Type::Named(name, _), "len") if name == "Array" => Some(Type::Number),
         (Type::String, "len" | "byte_len") => Some(Type::Number),
-        (Type::Named(name, _), "len" | "byte_len") if name == "StringBuilder" => {
-            Some(Type::Number)
-        }
+        (Type::Named(name, _), "len" | "byte_len") if name == "StringBuilder" => Some(Type::Number),
         (Type::Named(name, _), "size") if name == "Map" || name == "Set" => Some(Type::Number),
         // The brace form of a map literal currently types as the loose
         // `object`; it still answers the Map members.
@@ -3791,8 +3789,8 @@ fn place_of(expr: &Expression) -> Option<Place> {
             Expression::Index(i) => {
                 let index = match &*i.index {
                     Expression::Literal {
-                        value: xulo_core::ast::Literal::Number(n)
-                        | xulo_core::ast::Literal::Float(n),
+                        value:
+                            xulo_core::ast::Literal::Number(n) | xulo_core::ast::Literal::Float(n),
                         ..
                     } if n.fract() == 0.0 && n.is_finite() => Some(*n as i64),
                     _ => None,
@@ -5188,10 +5186,7 @@ impl Analyzer {
                         args.first().cloned().unwrap_or(Type::Any)
                     }
                     Type::Named(name, _) if name == "StringBuilder" => {
-                        return Err(self.err_code(
-                            "E0213",
-                            "a `StringBuilder` is not iterable",
-                        ));
+                        return Err(self.err_code("E0213", "a `StringBuilder` is not iterable"));
                     }
                     other => {
                         return Err(self.err(format!(
@@ -7579,11 +7574,10 @@ impl Analyzer {
                             "E0215",
                             format!("`{}` is not subscriptable", resolved.name()),
                         )),
-                    Type::Named(ref name, _) if name == "StringBuilder" => Err(self
-                        .err_code(
-                            "E0215",
-                            format!("`{}` is not subscriptable", resolved.name()),
-                        )),
+                    Type::Named(ref name, _) if name == "StringBuilder" => Err(self.err_code(
+                        "E0215",
+                        format!("`{}` is not subscriptable", resolved.name()),
+                    )),
                     Type::Object | Type::Any | Type::Named(_, _) => Ok(Type::Any),
                     other => {
                         Err(self.err(format!("cannot assign into `{}` by index", other.name())))
@@ -7885,10 +7879,7 @@ impl Analyzer {
                     Type::List(_) | Type::Any | Type::Object => {}
                     Type::Named(name, _) if name == "Map" || name == "Set" || name == "Array" => {}
                     Type::Named(name, _) if name == "StringBuilder" => {
-                        return Err(self.err_code(
-                            "E0213",
-                            "a `StringBuilder` is not iterable",
-                        ));
+                        return Err(self.err_code("E0213", "a `StringBuilder` is not iterable"));
                     }
                     other => {
                         return Err(self.err(format!(
@@ -10621,11 +10612,7 @@ impl Analyzer {
                     Err(self
                         .err_code(
                             "E0211",
-                            format!(
-                                "cannot compare `{}` with `{}`",
-                                left.name(),
-                                right.name()
-                            ),
+                            format!("cannot compare `{}` with `{}`", left.name(), right.name()),
                         )
                         .at(bin.span.clone()))
                 }
@@ -10966,10 +10953,7 @@ impl Analyzer {
                 return Err(self
                     .err_code(
                         "E0207",
-                        format!(
-                            "expected 1 argument, found {}",
-                            call.arguments.len()
-                        ),
+                        format!("expected 1 argument, found {}", call.arguments.len()),
                     )
                     .at(call.span.clone()));
             }

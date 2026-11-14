@@ -558,10 +558,7 @@ impl Interpreter {
                     Value::String(text) => builder.borrow_mut().append(&text),
                     other => {
                         return Err(RunError::err(
-                            format!(
-                                "`append()` expects a `string`, found {}",
-                                other.kind_name()
-                            ),
+                            format!("`append()` expects a `string`, found {}", other.kind_name()),
                             args[0].value.span().clone(),
                         ));
                     }

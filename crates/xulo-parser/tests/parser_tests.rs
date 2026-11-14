@@ -373,7 +373,8 @@ fn chained_assignment_nests_the_right_hand_side() {
         panic!("expected nested assignment");
     };
     assert!(matches!(&inner.target, xulo_core::ast::AssignTarget::Name(n) if n == "b"));
-    let xulo_core::ast::AssignValue::Expr(Expression::Identifier { name, .. }) = &inner.value else {
+    let xulo_core::ast::AssignValue::Expr(Expression::Identifier { name, .. }) = &inner.value
+    else {
         panic!("expected identifier rhs");
     };
     assert_eq!(name, "c");

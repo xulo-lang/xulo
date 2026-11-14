@@ -124,7 +124,7 @@ fn cwd_returns_a_directory_and_chdir_to_missing_fails() {
     assert_eq!(out.len(), 2, "two lines: {out:?}");
     assert_eq!(out[0], "true", "cwd should be a non-empty path");
     assert!(
-        out[1].starts_with("cannot change directory to '") && out[1].contains("No such file"),
+        out[1].starts_with("cannot change directory to '") && out[1].contains("os error"),
         "unexpected: {}",
         out[1]
     );
