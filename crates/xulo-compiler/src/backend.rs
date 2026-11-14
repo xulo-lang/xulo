@@ -17,6 +17,8 @@ use cranelift::codegen::ir::types::{F64, I64, Type};
 use cranelift::codegen::ir::{FuncRef, Function, InstBuilder, Signature};
 use cranelift::codegen::isa::TargetIsa;
 use cranelift::codegen::settings;
+#[cfg(target_os = "macos")]
+use cranelift::codegen::settings::Configurable;
 use cranelift::frontend::FunctionBuilder;
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module};

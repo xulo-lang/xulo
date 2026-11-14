@@ -1,12 +1,18 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 const BIN: &str = env!("CARGO_BIN_EXE_xupm");
 
 fn temp_dir() -> PathBuf {
+    // 同一进程内的并行测试线程可能在同一微秒调用 `SystemTime::now()`，
+    // 仅靠 pid + 纳秒会撞名（macOS 上实测约 1/6 概率）。加进程内原子计数保证唯一。
+    static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+    let unique = NEXT_ID.fetch_add(1, Ordering::Relaxed);
     let dir = std::env::temp_dir().join(format!(
-        "xupm_it_{}_{}",
+        "xupm_it_{}_{}_{}",
         std::process::id(),
+        unique,
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()

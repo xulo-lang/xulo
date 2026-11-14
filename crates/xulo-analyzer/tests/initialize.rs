@@ -313,3 +313,39 @@ fn client_disconnecting_mid_handshake_exits_cleanly() {
         "graceful shutdown, not a panic: {status:?}"
     );
 }
+
+#[test]
+fn client_disconnecting_before_initialize_exits_cleanly() {
+    // The editor can be killed before it ever sends `initialize`. The server
+    // used to `.expect("client must send initialize")` and abort with code
+    // 101; it must now treat stdin EOF as an ordinary shutdown.
+    let mut server = Server::start();
+    server.disconnect();
+    let status = server
+        .wait_exit(Duration::from_secs(15))
+        .expect("server must exit after stdin closes");
+    assert!(
+        status.success(),
+        "graceful shutdown, not a panic: {status:?}"
+    );
+}
+
+#[test]
+fn exit_as_the_first_message_exits_cleanly() {
+    // `exit` before `initialize` is a protocol misuse, but it must not take
+    // the server down with a panic. It also must not block: the reader thread
+    // can still be waiting on stdin, which stays open in this test.
+    let mut server = Server::start();
+    server.send(&json!({
+        "jsonrpc": "2.0",
+        "method": "exit",
+        "params": Value::Null
+    }));
+    let status = server
+        .wait_exit(Duration::from_secs(15))
+        .expect("server must exit after an early `exit` notification");
+    assert!(
+        status.success(),
+        "graceful shutdown, not a panic: {status:?}"
+    );
+}

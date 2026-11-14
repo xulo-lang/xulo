@@ -177,7 +177,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
 
     fn declare_functions(&mut self) -> Result<(), XuloError> {
         let mut used: HashMap<String, usize> = HashMap::new();
-        for func in &self.ir.functions {
+        for (idx, func) in self.ir.functions.iter().enumerate() {
             let base = aot_symbol_name(&func.name);
             let count = {
                 let entry = used.entry(base.clone()).or_insert(0);
@@ -198,7 +198,9 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             } else {
                 let params: Vec<BasicMetadataTypeEnum<'ctx>> =
                     func.params.iter().map(|_| i64_ty.into()).collect();
-                if func.return_type.is_void() {
+                // 进程入口（AOT 的 `main`）按 C ABI 返回 int 作为退出码；
+                // 语言层 `main` 是 void，这里补 i64 返回，收尾返回 0。
+                if func.return_type.is_void() && idx != self.ir.entry_point.0 {
                     self.context.void_type().fn_type(&params, false)
                 } else {
                     i64_ty.fn_type(&params, false)

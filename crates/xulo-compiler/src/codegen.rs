@@ -217,8 +217,8 @@ impl CodeGen {
         let mut func_ids = Vec::new();
         let aot = self.backend.mode() == BackendMode::Aot;
         let mut used_symbols: HashMap<String, usize> = HashMap::new();
-        for func in &ir_module.functions {
-            let sig = self.create_signature(func);
+        for (idx, func) in ir_module.functions.iter().enumerate() {
+            let sig = self.create_signature(func, idx == ir_module.entry_point.0);
             let symbol = if aot {
                 let base = aot_symbol_name(&func.name);
                 let count = {
@@ -312,7 +312,7 @@ impl CodeGen {
         builder.ins().global_value(I64, gv)
     }
 
-    fn create_signature(&self, func: &IrFunction) -> Signature {
+    fn create_signature(&self, func: &IrFunction, is_entry: bool) -> Signature {
         let mut sig = Signature::new(target_call_conv());
         if func.closure_entry {
             // 闭包入口固定 `(env, a0..a7) -> i64`：CallIndirect 总是传满 9 个
@@ -326,7 +326,10 @@ impl CodeGen {
         for _ in &func.params {
             sig.params.push(cranelift::codegen::ir::AbiParam::new(I64));
         }
-        if !func.return_type.is_void() {
+        // 进程入口（AOT 的 `main`）按 C ABI 必须返回 int 作为退出码：
+        // 语言层的 `main` 是 void，这里补一个 I64 返回槽，函数体收尾会返回 0。
+        // 否则 ld64/MSVC CRT 会把残留寄存器值当作退出状态（macOS 实测为 251）。
+        if !func.return_type.is_void() || is_entry {
             sig.returns.push(cranelift::codegen::ir::AbiParam::new(I64));
         }
         sig
@@ -339,7 +342,7 @@ impl CodeGen {
         all_func_ids: &[FuncId],
         is_entry: bool,
     ) -> Result<(), XuloError> {
-        let sig = self.create_signature(ir_func);
+        let sig = self.create_signature(ir_func, is_entry);
         let mut ctx = self.backend.make_context();
         ctx.func = cranelift::codegen::ir::Function::with_name_signature(
             cranelift::codegen::ir::UserFuncName::testcase(ir_func.name.clone()),

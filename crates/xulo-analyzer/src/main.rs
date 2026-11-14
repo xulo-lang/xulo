@@ -52,9 +52,21 @@ impl State {
 
 fn main() {
     let (connection, io_threads) = Connection::stdio();
-    let (id, params) = connection
-        .initialize_start()
-        .expect("client must send `initialize`");
+    let (id, params) = match connection.initialize_start() {
+        Ok(start) => start,
+        Err(err) => {
+            // A client can disappear before `initialize` (editor closed, stdin
+            // EOF) or send `exit` as its first message. That is an ordinary
+            // shutdown, not a server fault: report it and leave quietly
+            // instead of panicking with an `expect`. The reader thread may
+            // still be blocked on stdin here, so joining it would hang —
+            // returning from `main` terminates the process and its threads.
+            eprintln!("xulo-analyzer: initialization ended early: {err}");
+            drop(connection);
+            drop(io_threads);
+            return;
+        }
+    };
     // A client that spells `initialize` differently must not take the server
     // down: the payload is only used for validation today, so an unparseable
     // one degrades to the defaults instead of panicking mid-handshake.
@@ -279,14 +291,17 @@ fn definition(state: &State, params: &TextDocumentPositionParams) -> Option<Valu
     let path = uri_to_path(&params.text_document.uri)?;
     let workspace = state.workspace(&path)?;
     let located = workspace.go_to_definition(&path, to_our_pos(params.position))?;
-    to_value(to_lsp_location(&located))
+    to_value(to_lsp_location(&located)?)
 }
 
-fn to_lsp_location(located: &Located) -> Location {
-    Location {
-        uri: path_to_uri(&located.file).expect("document uri"),
+/// A location can only be reported when its file maps onto a `file:` URI; a
+/// path that cannot (e.g. relative) yields no result instead of aborting the
+/// server, which one bad request must never be able to do.
+fn to_lsp_location(located: &Located) -> Option<Location> {
+    Some(Location {
+        uri: path_to_uri(&located.file)?,
         range: to_lsp_range(located.range),
-    }
+    })
 }
 
 fn hover(state: &State, params: &TextDocumentPositionParams) -> Option<Value> {
@@ -365,17 +380,19 @@ fn semantic_tokens(state: &State, params: &SemanticTokensParams) -> Option<Value
     let path = uri_to_path(&params.text_document.uri)?;
     let workspace = state.workspace(&path)?;
     let analysis = workspace.analysis(&path)?;
-    let data: Vec<lsp_types::SemanticToken> =
-        xulo_analyzer::semantic::encode(analysis, &analysis.semantic_tokens())
-            .chunks_exact(5)
-            .map(|chunk| lsp_types::SemanticToken {
-                delta_line: chunk[0],
-                delta_start: chunk[1],
-                length: chunk[2],
-                token_type: chunk[3],
-                token_modifiers_bitset: chunk[4],
-            })
-            .collect();
+    let encoded = xulo_analyzer::semantic::encode(analysis, &analysis.semantic_tokens());
+    let data: Vec<lsp_types::SemanticToken> = encoded
+        .as_chunks::<5>()
+        .0
+        .iter()
+        .map(|chunk| lsp_types::SemanticToken {
+            delta_line: chunk[0],
+            delta_start: chunk[1],
+            length: chunk[2],
+            token_type: chunk[3],
+            token_modifiers_bitset: chunk[4],
+        })
+        .collect();
     to_value(SemanticTokens {
         result_id: None,
         data,

@@ -11,7 +11,8 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
     ) -> Result<(), XuloError> {
         let fv = self.funcs[func_idx];
         self.cur_fn = Some(fv);
-        self.cur_void = !func.closure_entry && func.return_type.is_void();
+        // 入口函数声明为返回 i64（进程退出码），即使语言层 `main` 是 void。
+        self.cur_void = !func.closure_entry && func.return_type.is_void() && !is_entry;
         self.local_slots.clear();
         self.label_blocks.clear();
 
