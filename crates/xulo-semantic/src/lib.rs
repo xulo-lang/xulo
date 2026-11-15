@@ -2143,6 +2143,12 @@ pub struct Analyzer {
     /// the transfer: any later use of one is E0403 (spec
     /// `memory-and-runtime.md`). Cleared per function body.
     moved: std::collections::HashMap<String, std::ops::Range<usize>>,
+    /// Active flow-sensitive narrowings: the binding's name, the symbol before
+    /// narrowing, and the scope depth the binding lives at, in the order they
+    /// were applied. An assignment to a narrowed binding ends its narrowing
+    /// early (spec `expressions/control-flow.md`), and the branch restores
+    /// whatever is left when it finishes.
+    narrowed: Vec<(String, Symbol, usize)>,
     /// Set by the three move positions — a `let` initializer, an argument,
     /// and a `return` — and consumed by the expression checked there.
     in_move_position: bool,
@@ -2985,6 +2991,7 @@ fn run_analysis(
         spawn_scopes: Vec::new(),
         capture_operand: false,
         moved: std::collections::HashMap::new(),
+        narrowed: Vec::new(),
         in_move_position: false,
         cur_move_pos: false,
         impl_methods: HashMap::new(),
@@ -7227,6 +7234,12 @@ impl Analyzer {
     /// assignment (`a = b = c`) is checked first and contributes its own
     /// assigned value's type (spec `ast.md`, "Statements").
     fn check_assign_value(&mut self, assign: &AssignStmt) -> SResult<Type> {
+        // Writing the binding invalidates any flow-sensitive narrowing: from
+        // here on the branch checks with the declared type again (spec
+        // `expressions/control-flow.md`).
+        if let AssignTarget::Name(name) = &assign.target {
+            self.end_narrowing_on_assignment(name);
+        }
         let target_type = self.assign_target_type(&assign.target)?;
         let value_type = match &assign.value {
             AssignValue::Assign(inner) => self.check_assign_value(inner)?,
@@ -13522,10 +13535,10 @@ impl Analyzer {
     }
 
     /// Narrow the binding `name` for one `if` branch: `to_null` selects the
-    /// `null` type, otherwise the optional's inner type. Returns the name
-    /// and the symbol to restore once the branch has checked. Nothing to
-    /// restore means nothing narrowed (not a `T?` binding, or unbound).
-    fn narrow_binding(&mut self, name: &str, to_null: bool) -> Option<(String, Symbol)> {
+    /// `null` type, otherwise the optional's inner type. Returns the name to
+    /// restore once the branch has checked. Nothing to restore means nothing
+    /// narrowed (not a `T?` binding, or unbound).
+    fn narrow_binding(&mut self, name: &str, to_null: bool) -> Option<String> {
         let sym = self.table.lookup(name)?.clone();
         let resolved = self.resolve_alias(&sym.type_, 0);
         let Type::Optional(inner) = resolved else {
@@ -13533,8 +13546,41 @@ impl Analyzer {
         };
         let mut narrowed = sym;
         narrowed.type_ = if to_null { Type::Null } else { *inner };
+        let depth = self.table.depth_of(name).expect("binding looked up");
         let old = self.table.replace_symbol(name, narrowed)?;
-        Some((name.to_string(), old))
+        self.narrowed.push((name.to_string(), old, depth));
+        Some(name.to_string())
+    }
+
+    /// Undo one active narrowing when its branch has finished checking,
+    /// leaving any narrower scope's narrowing in place.
+    fn restore_narrowing(&mut self, name: &str) {
+        if let Some(index) = self.narrowed.iter().rposition(|(n, _, _)| n == name) {
+            let (_, old, depth) = self.narrowed.remove(index);
+            if self.table.depth_of(name) == Some(depth) {
+                self.table.replace_symbol(name, old);
+            }
+        }
+    }
+
+    /// An assignment to a narrowed binding ends the narrowing for the rest of
+    /// the enclosing branch (spec `expressions/control-flow.md`), so the
+    /// declared type — the one before the earliest active narrowing — is
+    /// restored. A shadowing declaration at a deeper scope is a different
+    /// binding and leaves the narrowing alone.
+    fn end_narrowing_on_assignment(&mut self, name: &str) {
+        let target_depth = self.table.depth_of(name);
+        let Some(first) = self
+            .narrowed
+            .iter()
+            .position(|(n, _, depth)| n == name && Some(*depth) == target_depth)
+        else {
+            return;
+        };
+        let old = self.narrowed[first].1.clone();
+        self.narrowed
+            .retain(|(n, _, depth)| !(n == name && Some(*depth) == target_depth));
+        self.table.replace_symbol(name, old);
     }
 
     /// The type a binding has in one branch of `x is T` / `x is not T`
@@ -13578,12 +13624,7 @@ impl Analyzer {
     /// Narrow a binding for one `is` branch. Only a value with a top type
     /// (`unknown`/`any`), a union, or an optional is narrowed: a plain type
     /// already says what the value is.
-    fn narrow_to_type(
-        &mut self,
-        name: &str,
-        tested: &Type,
-        positive: bool,
-    ) -> Option<(String, Symbol)> {
+    fn narrow_to_type(&mut self, name: &str, tested: &Type, positive: bool) -> Option<String> {
         let sym = self.table.lookup(name)?.clone();
         let resolved = self.resolve_alias(&sym.type_, 0);
         let narrowable = matches!(resolved, Type::Any | Type::Union(_) | Type::Optional(_))
@@ -13593,8 +13634,10 @@ impl Analyzer {
         }
         let mut narrowed = sym;
         narrowed.type_ = self.narrowed_type(&resolved, tested, positive);
+        let depth = self.table.depth_of(name).expect("binding looked up");
         let old = self.table.replace_symbol(name, narrowed)?;
-        Some((name.to_string(), old))
+        self.narrowed.push((name.to_string(), old, depth));
+        Some(name.to_string())
     }
 
     fn check_if(&mut self, if_expr: &IfExpr) -> SResult<Type> {
@@ -13623,8 +13666,8 @@ impl Analyzer {
                 .and_then(|(name, eq)| self.narrow_binding(name, *eq)),
         };
         let then_res = self.check_block_tail(&if_expr.then_branch);
-        if let Some((name, old)) = then_narrow {
-            self.table.replace_symbol(&name, old);
+        if let Some(name) = then_narrow {
+            self.restore_narrowing(&name);
         }
         let then_type = then_res?;
         let else_res = match &if_expr.else_branch {
@@ -13636,8 +13679,8 @@ impl Analyzer {
                         .and_then(|(name, eq)| self.narrow_binding(name, !*eq)),
                 };
                 let res = self.check_block_tail(branch);
-                if let Some((name, old)) = else_narrow {
-                    self.table.replace_symbol(&name, old);
+                if let Some(name) = else_narrow {
+                    self.restore_narrowing(&name);
                 }
                 res
             }

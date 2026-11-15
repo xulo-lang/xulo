@@ -6000,6 +6000,68 @@ fn narrowing_does_not_leak_past_its_branch() {
     );
 }
 
+#[test]
+fn assignment_ends_is_narrowing() {
+    // `v` is declared `int | string`; the assignment `v = "x"` is only legal
+    // once the `is int` narrowing in this branch has ended (spec
+    // `expressions/control-flow.md`).
+    let src = r#"
+        fn f(initial: int | string) {
+            let mut v: int | string = initial
+            if v is int {
+                v = "x"
+            }
+        }
+        fn main() {
+            f(1)
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn assignment_ends_is_narrowing_for_the_rest_of_the_branch() {
+    // After the assignment `v` is `int | string` again, so it no longer fits
+    // the `int` annotation even though the branch tested `v is int`.
+    let src = r#"
+        fn f(initial: int | string) {
+            let mut v: int | string = initial
+            if v is int {
+                v = 1
+                let n: int = v
+            }
+        }
+        fn main() {
+            f(1)
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert!(
+        err.message.contains("number | string"),
+        "unexpected: {}",
+        err.message
+    );
+}
+
+#[test]
+fn assignment_ends_null_narrowing() {
+    // The same rule applies to `x != null` narrowing: after `u = null` the
+    // binding is `User?` again, so assigning `null` is accepted.
+    let src = r#"
+        struct User { email: string }
+        fn f(initial: User?) {
+            let mut u: User? = initial
+            if u != null {
+                u = null
+            }
+        }
+        fn main() {
+            f(null)
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
 // ──────────────────────────────────────────────────────────────────────
 //  The `?` operator: success typing and the E0217/E0229 admission rules
 //  (spec `error-handling.md`).

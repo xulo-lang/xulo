@@ -192,7 +192,7 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 | L15 | `Array<T, N>` with `.len` and indexed access | **PARTIAL** | Interpreter works; AOT `.len` returns the wrong value | 4 |
 | L16 | `T?`, `?.`, `??`, null narrowing | **OK** | `optional_chaining`, semantic narrowing tests | 1 |
 | L17 | `unknown` as the top type | **OK** | Every type is assignable to `unknown`; `List<unknown>` and `Map<string, unknown>` accept heterogeneous values. `print` still rejects `unknown` itself (`E0212`, spec `builtins/intrinsic-functions.md`), so a probe narrows first. | 2 |
-| L18 | `is` / `is not` narrowing in `if` conditions | **PARTIAL** | `if v is T` narrows the then-branch and removes covered union members from the else-branch; `is not` swaps them; untestable types are `E0222`. Assignment inside a branch still keeps the narrowed type (L18b open). | 2 |
+| L18 | `is` / `is not` narrowing in `if` conditions | **OK** | `if v is T` narrows the then-branch and removes covered union members from the else-branch; `is not` swaps them; untestable types are `E0222`. An assignment to the narrowed binding ends the narrowing for the rest of the branch, so the declared type is used afterwards (L18b). | 2 |
 | L19 | `Result`/`Error` and `?` propagation | **OK** | tests and `std` examples | 1 |
 | L20 | `defer` runs at block exit in reverse registration order | **BROKEN** | Runtime executes the operand immediately; `defer` prints in wrong order | 3 |
 | L21 | `copy` / `move` and use-after-move checking | **PARTIAL** | Syntax/checker present; full runtime and move-invalidation behavior not verified here | 3 |
@@ -332,8 +332,9 @@ fn f(v: int | string): int {
 else-branch removes the members `T` covers (`string | int` minus `int` is
 `string`). `is not T` swaps the branches, `unknown` stays `unknown` in the
 negative branch, and an untestable or mismatched tested type is `E0222`.
-Chronological narrowing still survives an assignment inside the branch
-(L18b remains open).
+An assignment to the narrowed binding ends the narrowing for the rest of the
+branch (L18b), so a write of another union member is accepted and a later
+operation checks against the declared type again.
 
 ### 6.4 Tuple positional access is missing (L14)
 
@@ -480,8 +481,8 @@ matrix.
 
 **Exit:** §6.2–6.5 probes pass; no workaround needed for stage 1's AST.
 
-**Status:** done except L18b (an assignment inside a narrowed branch does not
-yet end the narrowing), D3, and S9. §6.2–6.5 pass in both execution paths.
+**Status:** done except D3 and S9. §6.2–6.5 pass in both execution paths, and
+L18b is covered by the semantic and interpreter regression tests.
 
 ### WP3 — AOT parity and bootstrap backend (P1, Gate 4)
 

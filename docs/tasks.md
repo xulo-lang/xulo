@@ -27,12 +27,12 @@ readiness document.
 |---|---:|---:|
 | WP0 — Matrix hygiene and conformance | 5 | 6 |
 | WP1 — 64-bit integer model | 7 | 7 |
-| WP2 — Type system and semantic convergence | 7 | 10 |
+| WP2 — Type system and semantic convergence | 8 | 10 |
 | WP3 — AOT parity and bootstrap backend | 0 | 8 |
 | WP4 — `defer` semantics | 0 | 5 |
 | WP5 — Stage 1 skeleton | 0 | 6 |
 | WP6 — Self-host loop | 0 | 7 |
-| **Total** | **14** | **49** |
+| **Total** | **15** | **49** |
 
 ## Gates
 
@@ -155,7 +155,7 @@ Priority P0 · needed by Gate 2/3 · source: `stage1-readiness.md` §7 WP2, §6.
 - [x] **L17b** Accept `unknown` in parameter and return positions.
 - [x] **L18a** Implement `is` / `is not` branch narrowing as specified in
       `expressions/control-flow.md` (branch types, union complement, E0222).
-- [ ] **L18b** End chronological narrowing on assignment.
+- [x] **L18b** End chronological narrowing on assignment.
 - [x] **L14a** Implement tuple positional access `p.0` / `p?.0`.
 - [x] **L14b** Support tuple positional writes through `let mut`.
 - [x] **L11** Implement generic struct construction from named arguments and

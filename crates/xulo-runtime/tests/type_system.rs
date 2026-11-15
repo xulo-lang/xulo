@@ -64,6 +64,30 @@ fn is_narrowing_covers_both_branches() {
     );
 }
 
+/// L18b: an assignment inside a narrowed branch ends the narrowing, so the
+/// branch may write a value of another union member and the next test sees the
+/// declared type again (spec `expressions/control-flow.md`).
+#[test]
+fn assignment_ends_chronological_narrowing() {
+    assert_eq!(
+        out("fn f(initial: int | string): string {
+                 let mut v: int | string = initial
+                 if v is int {
+                     v = \"changed\"
+                 }
+                 if v is string {
+                     return v
+                 }
+                 return \"other\"
+             }
+             fn main() {
+                 print(f(1))
+                 print(f(\"already\"))
+             }"),
+        vec!["changed", "already"]
+    );
+}
+
 /// The right operand must be testable and fit the subject (`E0222`).
 #[test]
 fn untestable_and_mismatched_types_are_e0222() {
