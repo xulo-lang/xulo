@@ -216,6 +216,20 @@ CI（GitHub Actions，见 `.github/workflows/ci.yml`）执行 `cargo fmt --check
 
 所有语义错误与警告均带源码定位（`--> file:line:col` + caret），诊断码见 `src/error.rs`（`E0001`-`E0005`、警告 `W0001`）。
 
+## 路线图：Stage 1（自举）准备度
+
+stage 1 指用 Xulo 自身编写的编译器/工具链，stage 2 是 stage 1 编译自身。stage 0
+当前已足以支撑解释器上的 stage 1 原型（Gate 1），但正式自举仍被若干 P0 缺口
+阻塞。各项能力是否就绪、阻塞项、工作包与验收门禁见
+[`docs/stage1-readiness.md`](docs/stage1-readiness.md)；可勾选的任务清单见
+[`docs/tasks.md`](docs/tasks.md)：
+
+- 已具备：核心语法/解释器、模块、struct/enum/trait/泛型、`Result`/`?`、
+  解释器侧 List/Map/Set、std 的 fs/io/process/os/path/json/regex/fmt、基础 AOT。
+- 主要阻塞：`int` 仍以 `f64` 承载、缺少 `unknown` 顶类型与 `is` 收窄、
+  缺少元组 `p.0`、泛型 struct 构造、AOT 缺 Map/Set 且与解释器存在输出差异、
+  `defer` 执行时机错误、无规范一致性测试 runner。
+
 ## 项目结构
 
 ```
@@ -240,7 +254,7 @@ CI（GitHub Actions，见 `.github/workflows/ci.yml`）执行 `cargo fmt --check
 ├── editors/
 │   └── vscode/                 # VSCode 扩展：无依赖手写 LSP 客户端 + TextMate 语法 + 语言配置
 ├── stdlib/                     # 未来标准库源码占位（.xulo）
-├── docs/                       # 语言规范（EBNF / 语法）+ 原生运行时内存模型
+├── docs/                       # 语言规范（EBNF / 语法）+ 原生运行时内存模型 + Stage 1 准备度矩阵与任务清单
 ├── examples/                   # 示例 .xulo 文件
 └── tests/                      # （各 crate 的 tests/ 目录承载测试）
 ```
