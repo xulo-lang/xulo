@@ -165,6 +165,11 @@ impl IrGenerator {
         let local = self.module.functions[func_idx].add_local(ty.clone());
         self.locals.insert(binding.name.clone(), local);
         self.local_types.insert(local, ty.clone());
+        if let Operand::Local(source) = &init_val
+            && let Some(tag) = self.value_tags.get(source).cloned()
+        {
+            self.value_tags.insert(local, tag);
+        }
 
         self.module.functions[func_idx]
             .instructions
@@ -325,6 +330,19 @@ impl IrGenerator {
 
     pub(super) fn generate_for(&mut self, for_stmt: &ForStmt) -> Result<(), XuloError> {
         let func_idx = self.current_func.unwrap();
+        let iterable_type = self.infer_source_type_from_expr(&for_stmt.iterable);
+        let map_keys = matches!(
+            &iterable_type,
+            Some(Type::Named(name, _)) if name == "Map"
+        ) || matches!(&iterable_type, Some(Type::Object | Type::ObjectType(_)));
+        let iterated_type = match &iterable_type {
+            Some(Type::List(inner)) => Some((**inner).clone()),
+            Some(Type::Named(name, args)) if name == "Map" => {
+                Some(args.first().cloned().unwrap_or(Type::String))
+            }
+            Some(Type::Object | Type::ObjectType(_)) => Some(Type::String),
+            _ => None,
+        };
 
         // 创建循环变量（被捕获时本地槽持有 cell；每次迭代换新 cell，
         // 同一轮迭代里创建的闭包共享该轮的值）
@@ -338,10 +356,8 @@ impl IrGenerator {
         if boxed {
             let logical = if matches!(for_stmt.iterable, Expression::Range(_)) {
                 IrType::I64
-            } else if let Some(Type::List(inner)) =
-                self.infer_source_type_from_expr(&for_stmt.iterable)
-            {
-                self.type_to_ir(Some(&inner))
+            } else if let Some(inner) = &iterated_type {
+                self.type_to_ir(Some(inner))
             } else {
                 IrType::Pointer
             };
@@ -350,8 +366,8 @@ impl IrGenerator {
         }
 
         // 推断迭代变量的源级类型
-        if let Some(Type::List(inner)) = self.infer_source_type_from_expr(&for_stmt.iterable) {
-            self.source_types.insert(for_stmt.iter_var.clone(), *inner);
+        if let Some(inner) = iterated_type {
+            self.source_types.insert(for_stmt.iter_var.clone(), inner);
         }
 
         let start_label = self.module.functions[func_idx].add_label();
@@ -495,7 +511,20 @@ impl IrGenerator {
                 .push(Instruction::Jump(start_label));
         } else {
             // Generic iteration over any expression (array or variable)
-            let array_operand = self.generate_expression(&for_stmt.iterable)?;
+            let array_operand = if map_keys {
+                let keys = self.module.functions[func_idx].add_local(IrType::Pointer);
+                let map = self.generate_expression(&for_stmt.iterable)?;
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::RuntimeCall {
+                        dst: Some(keys),
+                        func: RuntimeFn::ObjectKeys,
+                        args: vec![map],
+                    });
+                Operand::Local(keys)
+            } else {
+                self.generate_expression(&for_stmt.iterable)?
+            };
             let array_local = self.module.functions[func_idx].add_local(IrType::Pointer);
             self.module.functions[func_idx]
                 .instructions

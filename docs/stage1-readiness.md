@@ -143,10 +143,11 @@ main risks. Fixing P0 rows in §5 is the shortest path.
 **Exit criterion:** `xupm build` produces a stage 1 binary that runs the same
 bootstrap workload as `xulo run` and prints identical output.
 
-**Current assessment:** **Blocked by AOT gaps.** `Map` and `Set` are missing
-from the AOT path; list spread, nested ternaries, and `Array.len` have known
-divergences. The interpreter can be used for Gate 1–3, but native bootstrap
-requires these fixes or an explicitly narrower stage 1 design.
+**Current assessment:** **Blocked by AOT gaps.** `Map` now lowers through the
+compiled path, but `Set` is still missing there; list spread, nested ternaries,
+and `Array.len` have known divergences. The interpreter can be used for
+Gate 1–3, but native bootstrap requires these fixes or an explicitly narrower
+stage 1 design.
 
 ### Gate 5 — Self-host
 
@@ -220,7 +221,7 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 | ID | Requirement | Status | Evidence / limitation | Needed by |
 |----|-------------|--------|-----------------------|-----------|
 | C1 | `List` with `.push`, `.pop`, `.len`, indexing, `+`, iteration | **PARTIAL** | Interpreter OK; AOT list spread produces wrong elements | 1 |
-| C2 | `Map<K, V>` with `.get`, `.set`, `.has`, `.remove`, `.size`, iteration | **PARTIAL** | Interpreter OK; AOT has no map runtime support | 4 |
+| C2 | `Map<K, V>` with `.get`, `.set`, `.has`, `.remove`, `.size`, iteration | **OK** | Interpreter and compiled paths agree on members, projection, `Map::from_entries`, typed literals, and key iteration (`crates/xulo-compiler/tests/type_system_codegen_tests.rs`, `crates/xulo-compiler/tests/aot_syntax_coverage_tests.rs`) | 4 |
 | C3 | `Set<T>` with `.insert`, `.remove`, `.has`, `.size` | **PARTIAL** | Interpreter OK; AOT has no set runtime support | 4 |
 | C4 | `Array<T, N>` with `.len`, indexing, iteration | **PARTIAL** | Interpreter OK; AOT `.len` wrong; `Array::filled` not verified | 4 |
 | C5 | `string` members and UTF-8 behavior | **OK** | Interpreter and AOT string member tests | 1 |
@@ -364,7 +365,7 @@ fn main() {
 field arguments, and `p.first`/`p.second` substitute the inferred arguments
 into the declared field types. The typed object-literal form still works.
 
-### 6.6 AOT does not support `Map` / `Set` (C2, C3, B3)
+### 6.6 AOT does not support `Set` (C3, B3)
 
 ```xulo
 fn main() {
@@ -374,8 +375,8 @@ fn main() {
 }
 ```
 
-Actual under `xupm build`: `undefined function: get`. `Set::from_list` fails
-similarly. The interpreter supports both.
+The `Map` probe now passes under both paths (C2). `Set::from_list` still fails
+under `xupm build`; the interpreter supports it.
 
 ### 6.7 AOT and interpreter diverge on existing examples (R9, C1, L15)
 
@@ -427,9 +428,10 @@ defect but four groups:
   assignments at module scope; stage 0 accepts module-scope `let` but rejects
   module-scope `x = …`, `xs.sort()`, and `assert(…)` with `E0002`. This is a
   parser/top-level-statement gap, not covered elsewhere in this matrix.
-- **Syntax gaps (5).** Typed map literals `Map<K, V>{ … }`, parenthesized map
-  literals `({ a: 1 })`, and a `mut` parameter in a function with no return
-  annotation (`fn f(mut x: int) { … }`, "expected `self`").
+- **Syntax gaps (4).** Parenthesized map literals `({ a: 1 })` and a `mut`
+  parameter in a function with no return annotation
+  (`fn f(mut x: int) { … }`, "expected `self`"). Typed map literals
+  `Map<K, V>{ … }` now lower in the AOT path (C2).
 - **Semantic gaps (1+).** Generic inference from the expected type
   (`let ys: List<int> = empty()`), `#[test]` bodies that `await`, and
   borrow-checker examples (`E0404`, `E0410`, `E0411`) whose construct is

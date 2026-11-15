@@ -328,6 +328,7 @@ impl IrGenerator {
     pub(super) fn generate_function_body(&mut self, f: &FnDef) -> Result<(), XuloError> {
         let func_idx = self.current_func.unwrap();
         self.dyn_tag_of.clear();
+        self.value_tags.clear();
         self.uint_range_names.clear();
         self.closure_env = None;
 
@@ -809,6 +810,7 @@ impl IrGenerator {
             uint_range_names: std::mem::take(&mut self.uint_range_names),
             label_map: std::mem::take(&mut self.label_map),
             dyn_tag_of: std::mem::take(&mut self.dyn_tag_of),
+            value_tags: std::mem::take(&mut self.value_tags),
             loop_stack: std::mem::take(&mut self.loop_stack),
             boxed_names: std::mem::take(&mut self.boxed_names),
             boxed_logical: std::mem::take(&mut self.boxed_logical),
@@ -825,6 +827,7 @@ impl IrGenerator {
         self.uint_range_names = snap.uint_range_names;
         self.label_map = snap.label_map;
         self.dyn_tag_of = snap.dyn_tag_of;
+        self.value_tags = snap.value_tags;
         self.loop_stack = snap.loop_stack;
         self.boxed_names = snap.boxed_names;
         self.boxed_logical = snap.boxed_logical;

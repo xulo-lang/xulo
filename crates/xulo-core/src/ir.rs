@@ -71,6 +71,13 @@ pub enum RuntimeFn {
     /// 字段值 0 分不清 null 与整数 0）
     ObjectGetTag,
     ObjectSet,
+    ObjectHas,
+    ObjectRemove,
+    ObjectSize,
+    ObjectKeys,
+    ObjectValues,
+    ObjectEntries,
+    MapFromEntries,
     /// 枚举值：分配 + payload 写入 + match 的 tag/payload 读取
     AllocEnum,
     EnumSet,

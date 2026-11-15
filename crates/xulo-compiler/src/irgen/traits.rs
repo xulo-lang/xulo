@@ -552,6 +552,7 @@ impl IrGenerator {
                 self.uint_range_names.clear();
                 self.label_map.clear();
                 self.dyn_tag_of.clear();
+                self.value_tags.clear();
                 self.boxed_names.clear();
                 self.boxed_logical.clear();
                 self.closure_env = None;

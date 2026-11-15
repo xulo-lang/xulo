@@ -9368,7 +9368,10 @@ impl Analyzer {
                     self.check_expression(&entry.key)?;
                     self.check_expression(&entry.value)?;
                 }
-                Ok(Type::Named("Map".to_string(), Vec::new()))
+                Ok(Type::Named(
+                    "Map".to_string(),
+                    vec![tm.key_type.clone(), tm.value_type.clone()],
+                ))
             }
             Expression::Is(is) => {
                 let subject = self.check_expression(&is.expr)?;

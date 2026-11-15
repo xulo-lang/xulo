@@ -232,6 +232,30 @@ impl IrGenerator {
                     });
                 Ok(Operand::Local(local))
             }
+            Expression::TypedMap(map) => {
+                let func_idx = self.current_func.unwrap();
+                let object = self.module.functions[func_idx].add_local(IrType::Pointer);
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::RuntimeCall {
+                        dst: Some(object),
+                        func: RuntimeFn::AllocObject,
+                        args: vec![Operand::Const(IrValue::I64(map.entries.len() as i64))],
+                    });
+                for entry in &map.entries {
+                    let key = self.generate_map_key(&entry.key)?;
+                    let value = self.generate_expression(&entry.value)?;
+                    let value_tag = self.tag_operand_for(&entry.value, &value);
+                    self.module.functions[func_idx]
+                        .instructions
+                        .push(Instruction::RuntimeCall {
+                            dst: None,
+                            func: RuntimeFn::ObjectSet,
+                            args: vec![Operand::Local(object), key, value, value_tag],
+                        });
+                }
+                Ok(Operand::Local(object))
+            }
             // 区间表达式 `0..<3` / `1..=4` 求值为列表（for 循环已在
             // generate_for 单独降级，不会走到这里）
             Expression::Range(r) => {
@@ -910,6 +934,22 @@ impl IrGenerator {
             return self.generate_enum_construct(enum_name, variant, &call.arguments);
         }
 
+        if call.object.is_none() && call.callee == "Map::from_entries" {
+            let mut args = Vec::new();
+            for arg in &call.arguments {
+                args.push(self.generate_expression(&arg.value)?);
+            }
+            let local = self.module.functions[func_idx].add_local(IrType::Pointer);
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::RuntimeCall {
+                    dst: Some(local),
+                    func: RuntimeFn::MapFromEntries,
+                    args,
+                });
+            return Ok(Operand::Local(local));
+        }
+
         let mut args = Vec::new();
 
         // 对于方法调用，先生成 receiver 并作为第一个参数
@@ -1014,6 +1054,16 @@ impl IrGenerator {
             && self.determine_element_tag(&call.arguments[0].value) == 0
         {
             return Ok(args.swap_remove(0));
+        }
+
+        if call.object.is_some() && self.expr_is_map_receiver(&call.object) {
+            let method = call.method.as_deref().unwrap_or(&call.callee);
+            if matches!(
+                method,
+                "get" | "set" | "has" | "remove" | "keys" | "values" | "entries"
+            ) {
+                return self.generate_map_member(call, args);
+            }
         }
 
         // `std::math::` / `std::time::` / `std::fs::` / `std::io::` /
@@ -1131,13 +1181,7 @@ impl IrGenerator {
             if call.callee == "std::json::stringify" && (1..=2).contains(&args.len()) {
                 let tag = {
                     let arg_expr = &call.arguments[0].value;
-                    if let Expression::Identifier { name, .. } = arg_expr
-                        && let Some(tag_op) = self.dyn_tag_of.get(name).cloned()
-                    {
-                        tag_op
-                    } else {
-                        Operand::Const(IrValue::I64(self.determine_element_tag(arg_expr)))
-                    }
+                    self.tag_operand_for(arg_expr, &args[0])
                 };
                 let indent = if args.len() == 2 { args.pop() } else { None };
                 args.push(tag);
@@ -1290,13 +1334,9 @@ impl IrGenerator {
                             self.user_print_operand(arg_expr, args[0].clone())
                         {
                             args = vec![rendered, Operand::Const(IrValue::I64(0))];
-                        } else if let Expression::Identifier { name, .. } = arg_expr
-                            && let Some(tag_op) = self.dyn_tag_of.get(name).cloned()
-                        {
-                            args.push(tag_op);
                         } else {
-                            let tag = self.determine_element_tag(arg_expr);
-                            args.push(Operand::Const(IrValue::I64(tag)));
+                            let tag_op = self.tag_operand_for(arg_expr, &args[0]);
+                            args.push(tag_op);
                         }
                     }
                     Some(RuntimeFn::PrintValue)
@@ -1308,13 +1348,7 @@ impl IrGenerator {
                         args.push(Operand::Const(IrValue::I64(0)));
                     }
                     let tag_op = if let Some(arg) = call.arguments.first() {
-                        if let Expression::Identifier { name, .. } = &arg.value
-                            && let Some(tag_op) = self.dyn_tag_of.get(name).cloned()
-                        {
-                            tag_op
-                        } else {
-                            Operand::Const(IrValue::I64(self.determine_element_tag(&arg.value)))
-                        }
+                        self.tag_operand_for(&arg.value, &args[0])
                     } else {
                         Operand::Const(IrValue::I64(6)) // null
                     };
@@ -2120,6 +2154,135 @@ impl IrGenerator {
         Ok(())
     }
 
+    fn tag_operand_for(&self, expr: &Expression, value: &Operand) -> Operand {
+        if let Expression::Identifier { name, .. } = expr
+            && let Some(tag) = self.dyn_tag_of.get(name)
+        {
+            return tag.clone();
+        }
+        if let Operand::Local(local) = value
+            && let Some(tag) = self.value_tags.get(local)
+        {
+            return tag.clone();
+        }
+        Operand::Const(IrValue::I64(self.determine_element_tag(expr)))
+    }
+
+    fn stringify_key_operand(
+        &mut self,
+        expr: &Expression,
+        value: Operand,
+    ) -> Result<Operand, XuloError> {
+        let func_idx = self.current_func.unwrap();
+        let tag = self.tag_operand_for(expr, &value);
+        let local = self.module.functions[func_idx].add_local(IrType::Pointer);
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::RuntimeCall {
+                dst: Some(local),
+                func: RuntimeFn::Stringify,
+                args: vec![value, tag],
+            });
+        Ok(Operand::Local(local))
+    }
+
+    fn generate_map_key(&mut self, key: &Expression) -> Result<Operand, XuloError> {
+        let value = self.generate_expression(key)?;
+        self.stringify_key_operand(key, value)
+    }
+
+    fn generate_map_member(
+        &mut self,
+        call: &Call,
+        args: Vec<Operand>,
+    ) -> Result<Operand, XuloError> {
+        let func_idx = self.current_func.unwrap();
+        let method = call.method.as_deref().unwrap_or(&call.callee);
+        let receiver = args
+            .first()
+            .cloned()
+            .unwrap_or(Operand::Const(IrValue::Null));
+        if method == "keys" || method == "values" || method == "entries" {
+            let func = match method {
+                "keys" => RuntimeFn::ObjectKeys,
+                "values" => RuntimeFn::ObjectValues,
+                _ => RuntimeFn::ObjectEntries,
+            };
+            let local = self.module.functions[func_idx].add_local(IrType::Pointer);
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::RuntimeCall {
+                    dst: Some(local),
+                    func,
+                    args: vec![receiver],
+                });
+            return Ok(Operand::Local(local));
+        }
+        let key = args
+            .get(1)
+            .cloned()
+            .unwrap_or(Operand::Const(IrValue::Null));
+        let key = self.stringify_key_operand(&call.arguments[0].value, key)?;
+        match method {
+            "set" => {
+                let value = args
+                    .get(2)
+                    .cloned()
+                    .unwrap_or(Operand::Const(IrValue::Null));
+                let value_tag = self.tag_operand_for(&call.arguments[1].value, &value);
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::RuntimeCall {
+                        dst: None,
+                        func: RuntimeFn::ObjectSet,
+                        args: vec![receiver, key, value, value_tag],
+                    });
+                let local = self.module.functions[func_idx].add_local(IrType::Pointer);
+                Ok(Operand::Local(local))
+            }
+            "has" => {
+                let local = self.module.functions[func_idx].add_local(IrType::Bool);
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::RuntimeCall {
+                        dst: Some(local),
+                        func: RuntimeFn::ObjectHas,
+                        args: vec![receiver, key],
+                    });
+                Ok(Operand::Local(local))
+            }
+            "get" | "remove" => {
+                let tag = self.module.functions[func_idx].add_local(IrType::I64);
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::RuntimeCall {
+                        dst: Some(tag),
+                        func: RuntimeFn::ObjectGetTag,
+                        args: vec![receiver.clone(), key.clone()],
+                    });
+                let value = self.module.functions[func_idx].add_local(IrType::Pointer);
+                let func = if method == "get" {
+                    RuntimeFn::ObjectGet
+                } else {
+                    RuntimeFn::ObjectRemove
+                };
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::RuntimeCall {
+                        dst: Some(value),
+                        func,
+                        args: vec![receiver, key],
+                    });
+                self.value_tags.insert(value, Operand::Local(tag));
+                Ok(Operand::Local(value))
+            }
+            _ => Err(XuloError::new(
+                ErrorKind::Semantic,
+                format!("undefined function: {}", method),
+            )),
+        }
+    }
+
     pub(super) fn generate_member_access(
         &mut self,
         member: &MemberAccess,
@@ -2155,6 +2318,17 @@ impl IrGenerator {
             "byte_len" if is_builder => Some(RuntimeFn::StringBuilderByteLen),
             "len" if self.expr_is_list_receiver(&Some(Box::new(member.object.clone()))) => {
                 Some(RuntimeFn::ArrayLen)
+            }
+            "size"
+                if matches!(
+                    self.infer_source_type_from_expr(&member.object),
+                    Some(Type::Named(name, _)) if name == "Map"
+                ) || matches!(
+                    self.infer_source_type_from_expr(&member.object),
+                    Some(Type::Object | Type::ObjectType(_))
+                ) =>
+            {
+                Some(RuntimeFn::ObjectSize)
             }
             "len" => Some(RuntimeFn::StringSize),
             "byte_len" => Some(RuntimeFn::StringByteLen),

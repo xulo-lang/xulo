@@ -321,3 +321,141 @@ pub extern "C" fn xulo_object_set(
         }
     }
 }
+
+/// 对象/Map 是否含某键
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_object_has(obj: *const XuloObject, field: *const c_char) -> i64 {
+    unsafe {
+        if obj.is_null() || field.is_null() {
+            return 0;
+        }
+        let field_name = match CStr::from_ptr(field).to_str() {
+            Ok(s) => s,
+            Err(_) => return 0,
+        };
+        i64::from((*obj).fields.iter().any(|(name, _)| name == field_name))
+    }
+}
+
+/// 移除对象/Map 的一个键并返回原值；缺失时返回 0。
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_object_remove(obj: *mut XuloObject, field: *const c_char) -> i64 {
+    unsafe {
+        if obj.is_null() || field.is_null() {
+            return 0;
+        }
+        let field_name = match CStr::from_ptr(field).to_str() {
+            Ok(s) => s,
+            Err(_) => return 0,
+        };
+        let obj = &mut *obj;
+        let Some(index) = obj.fields.iter().position(|(name, _)| name == field_name) else {
+            return 0;
+        };
+        let (_, value) = obj.fields.remove(index);
+        if index < obj.field_tags.len() {
+            obj.field_tags.remove(index);
+        }
+        value
+    }
+}
+
+/// 对象/Map 的条目数
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_object_size(obj: *const XuloObject) -> usize {
+    unsafe {
+        if obj.is_null() {
+            0
+        } else {
+            (*obj).fields.len()
+        }
+    }
+}
+
+/// Map 的键列表（插入顺序）
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_object_keys(obj: *const XuloObject) -> *mut XuloArray {
+    let array = xulo_alloc_array(0);
+    if obj.is_null() {
+        return array;
+    }
+    unsafe {
+        for (name, _) in &(*obj).fields {
+            let key = intern_string(name.clone());
+            xulo_array_push(array, key as i64, 0);
+        }
+    }
+    array
+}
+
+/// Map 的值列表（插入顺序）
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_object_values(obj: *const XuloObject) -> *mut XuloArray {
+    let array = xulo_alloc_array(0);
+    if obj.is_null() {
+        return array;
+    }
+    unsafe {
+        let object = &*obj;
+        for (index, (_, value)) in object.fields.iter().enumerate() {
+            let tag = object.field_tags.get(index).copied().unwrap_or(1);
+            xulo_array_push(array, *value, tag);
+        }
+    }
+    array
+}
+
+/// Map 的 `(key, value)` 对列表（插入顺序）
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_object_entries(obj: *const XuloObject) -> *mut XuloArray {
+    let array = xulo_alloc_array(0);
+    if obj.is_null() {
+        return array;
+    }
+    unsafe {
+        let object = &*obj;
+        for (index, (name, value)) in object.fields.iter().enumerate() {
+            let tag = object.field_tags.get(index).copied().unwrap_or(1);
+            let pair = xulo_alloc_array(0);
+            let key = intern_string(name.clone());
+            xulo_array_push(pair, key as i64, 0);
+            xulo_array_push(pair, *value, tag);
+            xulo_array_push(array, pair as i64, 3);
+        }
+    }
+    array
+}
+
+/// `Map::from_entries(entries)`：按列表顺序建 Map，重复键保留后一个值。
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_map_from_entries(entries: *const XuloArray) -> *mut XuloObject {
+    let object = xulo_alloc_object(0);
+    if entries.is_null() {
+        return object;
+    }
+    unsafe {
+        let entries = &*entries;
+        for raw_pair in entries.elements.iter() {
+            let pair = *raw_pair as *const XuloArray;
+            if pair.is_null() {
+                continue;
+            }
+            let pair = &*pair;
+            if pair.elements.len() < 2 {
+                continue;
+            }
+            let key_tag = pair.tags.first().copied().unwrap_or(0);
+            let key = intern_string(format_value(pair.elements[0], key_tag as i64));
+            let value_tag = pair.tags.get(1).copied().unwrap_or(1);
+            xulo_object_set(object, key, pair.elements[1], value_tag as i64);
+        }
+    }
+    object
+}

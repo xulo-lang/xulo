@@ -60,6 +60,9 @@ pub struct IrGenerator {
     /// match 绑定名 -> 运行时标签操作数（payload 是 int 还是 f64 位模式，
     /// 编译期不知道，构造侧的 tag 在绑定时摘出来伴随使用）
     dyn_tag_of: HashMap<String, Operand>,
+    /// 本地槽 -> 运行时标签（Map 的 `.get`/`.remove` 返回 `V?`，缺失/存在的
+    /// 标签由 `ObjectGetTag` 决定，不能只靠静态类型）
+    value_tags: HashMap<LocalId, Operand>,
     /// 本作用域需要装箱（cell 承载）的名字：被嵌套字面量自由引用的绑定，
     /// 以及闭包体里来自 env 的捕获名
     boxed_names: HashSet<String>,
@@ -100,6 +103,7 @@ struct ScopeSnapshot {
     uint_range_names: HashSet<String>,
     label_map: HashMap<String, Label>,
     dyn_tag_of: HashMap<String, Operand>,
+    value_tags: HashMap<LocalId, Operand>,
     loop_stack: Vec<LoopContext>,
     boxed_names: HashSet<String>,
     boxed_logical: HashMap<String, IrType>,
@@ -249,6 +253,7 @@ impl IrGenerator {
             float_bit_returns: HashSet::new(),
             enums: HashMap::new(),
             dyn_tag_of: HashMap::new(),
+            value_tags: HashMap::new(),
             boxed_names: HashSet::new(),
             boxed_logical: HashMap::new(),
             closure_env: None,
@@ -736,6 +741,10 @@ impl IrGenerator {
                     .collect();
                 Some(Type::Tuple(types))
             }
+            Expression::TypedMap(map) => Some(Type::Named(
+                "Map".to_string(),
+                vec![map.key_type.clone(), map.value_type.clone()],
+            )),
             Expression::Identifier { name, .. } => self
                 .source_types
                 .get(name)
@@ -755,6 +764,23 @@ impl IrGenerator {
                     }
                     if call.callee == "StringBuilder::new" {
                         return Some(Type::Named("StringBuilder".to_string(), Vec::new()));
+                    }
+                    if call.callee == "Map::from_entries" {
+                        let (key, value) = call
+                            .arguments
+                            .first()
+                            .and_then(|a| self.infer_source_type_from_expr(&a.value))
+                            .and_then(|ty| match ty {
+                                Type::List(inner) => match *inner {
+                                    Type::Tuple(parts) if parts.len() == 2 => {
+                                        Some((parts[0].clone(), parts[1].clone()))
+                                    }
+                                    _ => None,
+                                },
+                                _ => None,
+                            })
+                            .unwrap_or((Type::Any, Type::Any));
+                        return Some(Type::Named("Map".to_string(), vec![key, value]));
                     }
                     // String inspection prelude functions.
                     match call.callee.as_str() {
@@ -857,6 +883,29 @@ impl IrGenerator {
                     let ctor = self.resolve_type(&call.callee);
                     if self.structs.contains_key(&ctor) {
                         return Some(Type::Named(ctor, Vec::new()));
+                    }
+                }
+                if call.object.is_some()
+                    && self.expr_is_map_receiver(&call.object)
+                    && let Some(Type::Named(_, args)) = call
+                        .object
+                        .as_ref()
+                        .and_then(|receiver| self.infer_source_type_from_expr(receiver))
+                {
+                    let key = args.first().cloned().unwrap_or(Type::Any);
+                    let value = args.get(1).cloned().unwrap_or(Type::Any);
+                    match call.method.as_deref() {
+                        Some("get" | "remove") => {
+                            return Some(Type::Optional(Box::new(value)));
+                        }
+                        Some("set") => return Some(Type::Named("unit".to_string(), Vec::new())),
+                        Some("has") => return Some(Type::Boolean),
+                        Some("keys") => return Some(Type::List(Box::new(key))),
+                        Some("values") => return Some(Type::List(Box::new(value))),
+                        Some("entries") => {
+                            return Some(Type::List(Box::new(Type::Tuple(vec![key, value]))));
+                        }
+                        _ => {}
                     }
                 }
                 // 内建字符串方法 `split` 产出 List<string>（用户结构体的
@@ -967,6 +1016,28 @@ impl IrGenerator {
     /// 确定表达式的类型标签（用于数组/对象元素存储）
     /// tag: 0=string, 1=int, 2=float, 3=array, 4=object, 5=bool, 6=null,
     /// 10=u64
+    fn type_tag(&self, ty: &Type) -> i64 {
+        match ty {
+            Type::String => 0,
+            Type::Number => -1,
+            Type::Boolean => 5,
+            Type::Null => 6,
+            Type::List(_) | Type::Tuple(_) => 3,
+            Type::Object | Type::ObjectType(_) => 4,
+            Type::Optional(inner) => self.type_tag(inner),
+            Type::Named(name, _) if name == "u64" => 10,
+            Type::Named(name, _) if name == "int" || name == "float" => {
+                if name == "float" {
+                    2
+                } else {
+                    1
+                }
+            }
+            Type::Named(name, _) if name == "unit" => 6,
+            _ => -1,
+        }
+    }
+
     fn determine_element_tag(&self, expr: &Expression) -> i64 {
         match expr {
             Expression::Literal { value, .. } => match value {
@@ -1033,6 +1104,7 @@ impl IrGenerator {
                         Type::Null => 6,
                         Type::List(_) => 3,
                         Type::Object | Type::ObjectType(_) => 4,
+                        Type::Tuple(_) => 3,
                         Type::Named(_, _) => -1, // 泛型参数，运行时自动检测
                         _ => 1,
                     }
@@ -1132,6 +1204,25 @@ impl IrGenerator {
                 }
             },
             Expression::Call(call) => {
+                if call.object.is_some() && self.expr_is_map_receiver(&call.object) {
+                    match call.method.as_deref() {
+                        Some("has") => return 5,
+                        Some("keys" | "values" | "entries") => return 3,
+                        Some("set") => return 6,
+                        Some("get" | "remove") => {
+                            if let Some(Type::Named(_, args)) = call
+                                .object
+                                .as_ref()
+                                .and_then(|receiver| self.infer_source_type_from_expr(receiver))
+                                && let Some(value) = args.get(1)
+                            {
+                                return self.type_tag(value);
+                            }
+                            return -1;
+                        }
+                        _ => {}
+                    }
+                }
                 // `std::hint::black_box` 的标签跟随实参
                 if call.object.is_none() && call.callee == "std::hint::black_box" {
                     return call
@@ -1309,6 +1400,7 @@ impl IrGenerator {
                 // 其余枚举值（含无 payload 的变体引用）
                 7
             }
+            Expression::TypedMap(_) => 4,
             // match 表达式：分支结果各异，运行时检测
             Expression::Match(_) => -1,
             // 区间表达式求值为列表
@@ -1654,6 +1746,19 @@ impl IrGenerator {
                 // 按方法名识别，避免 `split(...).length()` 误入字符串 lowering
                 || matches!(&**o, Expression::Call(call)
                     if call.object.is_some() && call.method.as_deref() == Some("split"))
+        })
+    }
+
+    /// 方法调用的接收者是否是 `Map`（brace 形式当前记为 `object`）。
+    pub(super) fn expr_is_map_receiver(&self, object: &Option<Box<Expression>>) -> bool {
+        object.as_ref().is_some_and(|o| {
+            matches!(
+                self.infer_source_type_from_expr(o),
+                Some(Type::Named(name, _)) if name == "Map"
+            ) || matches!(
+                self.infer_source_type_from_expr(o),
+                Some(Type::Object | Type::ObjectType(_))
+            )
         })
     }
 

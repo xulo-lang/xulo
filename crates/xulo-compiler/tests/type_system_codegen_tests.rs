@@ -86,3 +86,66 @@ fn main() {
     );
     assert_eq!(out, vec!["1", "x"]);
 }
+
+/// §6.6 / C2: `Map<K, V>` members and iteration in the compiled path.
+#[test]
+fn map_members_compile() {
+    let out = compile_and_run(
+        r#"fn main() {
+    let mut m: Map<string, int> = { a: 1 }
+    m.set("b", 2)
+    print(m.get("a"))
+    print(m.get("z"))
+    print(m.has("b"))
+    print(m.size)
+    print(m.remove("a"))
+    print(m.size)
+}"#,
+    );
+    assert_eq!(out, vec!["1", "null", "true", "2", "1", "1"]);
+}
+
+#[test]
+fn map_projection_and_iteration_compile() {
+    let out = compile_and_run(
+        r#"fn main() {
+    let m: Map<string, int> = { a: 1, b: 2 }
+    print(m.keys())
+    print(m.values())
+    print(m.entries())
+    for k in m { print(k) }
+}"#,
+    );
+    assert_eq!(out, vec!["[a, b]", "[1, 2]", "[[a, 1], [b, 2]]", "a", "b"]);
+}
+
+#[test]
+fn map_from_entries_and_typed_literal_compile() {
+    let out = compile_and_run(
+        r#"fn main() {
+    let m = Map::from_entries([("a", 1), ("a", 2)])
+    print(m.get("a"))
+    print(m.size)
+    let ages = Map<int, string>{ 30: "thirty" }
+    print(ages.get(30))
+    print(ages.keys())
+}"#,
+    );
+    assert_eq!(out, vec!["2", "1", "thirty", "[30]"]);
+}
+
+#[test]
+fn map_optional_get_keeps_runtime_tag() {
+    let out = compile_and_run(
+        r#"fn main() {
+    let m: Map<string, string> = { a: "x" }
+    print(m.get("a"))
+    print(m.get("z"))
+    let hit = m.get("a")
+    let miss = m.get("z")
+    print(hit)
+    print(miss)
+}"#,
+    );
+    assert_eq!(out, vec!["x", "null", "x", "null"]);
+}

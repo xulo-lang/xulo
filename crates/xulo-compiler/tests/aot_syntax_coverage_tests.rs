@@ -594,3 +594,31 @@ fn chained_assignment_lowers_inner_first() {
     );
     assert_eq!(out, vec!["5 5", "3 3"]);
 }
+
+#[test]
+fn map_members_reach_machine_code() {
+    let bytes = object_bytes(
+        r#"
+        fn main() {
+            let mut m: Map<string, int> = { a: 1 }
+            m.set("b", 2)
+            print(m.get("a"))
+            print(m.has("b"))
+            print(m.remove("a"))
+            print(m.size)
+            print(m.keys())
+            for k in m { print(k) }
+            let n = Map::from_entries([("a", 1)])
+            print(n.get("a"))
+        }
+        "#,
+    );
+    assert!(references_symbol(&bytes, "xulo_object_set"));
+    assert!(references_symbol(&bytes, "xulo_object_get"));
+    assert!(references_symbol(&bytes, "xulo_object_get_tag"));
+    assert!(references_symbol(&bytes, "xulo_object_has"));
+    assert!(references_symbol(&bytes, "xulo_object_remove"));
+    assert!(references_symbol(&bytes, "xulo_object_size"));
+    assert!(references_symbol(&bytes, "xulo_object_keys"));
+    assert!(references_symbol(&bytes, "xulo_map_from_entries"));
+}

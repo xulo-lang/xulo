@@ -149,6 +149,48 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
         returns: &[],
     },
     RuntimeFnDesc {
+        name: "xulo_object_has",
+        addr: xulo_runtime::runtime::xulo_object_has as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_object_remove",
+        addr: xulo_runtime::runtime::xulo_object_remove as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_object_size",
+        addr: xulo_runtime::runtime::xulo_object_size as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_object_keys",
+        addr: xulo_runtime::runtime::xulo_object_keys as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_object_values",
+        addr: xulo_runtime::runtime::xulo_object_values as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_object_entries",
+        addr: xulo_runtime::runtime::xulo_object_entries as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_map_from_entries",
+        addr: xulo_runtime::runtime::xulo_map_from_entries as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
         name: "xulo_alloc_enum",
         addr: xulo_runtime::runtime::xulo_alloc_enum as *const u8,
         params: &[I64, I64, I64, I64],
