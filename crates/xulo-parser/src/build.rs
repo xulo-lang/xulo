@@ -12,7 +12,10 @@ use xulo_core::ast::{
 };
 use xulo_core::error::XuloError;
 
-use super::expr::{assign_target, component_call, decode_string, expression, ternary_entry};
+use super::expr::{
+    assign_target, component_call, decode_float, decode_integer, decode_string, expression,
+    ternary_entry,
+};
 use super::types::{R, check_rule, single, type_expr};
 use super::{Rule, err, span_of};
 
@@ -199,12 +202,15 @@ fn attribute_arg(pair: Pair<'_, Rule>) -> R<AttributeArg> {
                 let val = match v.as_rule() {
                     Rule::identifier => AttributeValue::Identifier(v.as_str().to_string()),
                     Rule::string_literal => AttributeValue::String(decode_string(v.as_str())),
-                    Rule::number_literal => match literal_number(v.as_str()) {
+                    Rule::number_literal => match v.as_str().contains('.') {
                         // The decimal point, not the value, decides int vs
                         // float: `3.0` is a float literal, `3` is an integer.
-                        Some(n) if v.as_str().contains('.') => AttributeValue::Float(n),
-                        Some(n) => AttributeValue::Integer(n as i64),
-                        None => AttributeValue::Integer(0),
+                        true => AttributeValue::Float(decode_float(v.as_str())),
+                        false => AttributeValue::Integer(
+                            decode_integer(v.as_str())
+                                .and_then(|n| i64::try_from(n).ok())
+                                .unwrap_or(0),
+                        ),
                     },
                     Rule::boolean_literal => AttributeValue::Boolean(v.as_str() == "true"),
                     other => unreachable!("attribute_value child {other:?}"),
@@ -220,20 +226,6 @@ fn attribute_arg(pair: Pair<'_, Rule>) -> R<AttributeArg> {
         value: value.expect("attribute_arg has a value"),
         span,
     })
-}
-
-/// Decode a `number_literal` spelling into an `f64` (hex/bin/oct/dec).
-fn literal_number(text: &str) -> Option<f64> {
-    let t = text.replace('_', "");
-    if let Some(hex) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
-        i64::from_str_radix(hex, 16).ok().map(|n| n as f64)
-    } else if let Some(bin) = t.strip_prefix("0b").or_else(|| t.strip_prefix("0B")) {
-        i64::from_str_radix(bin, 2).ok().map(|n| n as f64)
-    } else if let Some(oct) = t.strip_prefix("0o").or_else(|| t.strip_prefix("0O")) {
-        i64::from_str_radix(oct, 8).ok().map(|n| n as f64)
-    } else {
-        t.parse::<f64>().ok()
-    }
 }
 
 fn fn_decl(pair: Pair<'_, Rule>) -> R<FnDef> {

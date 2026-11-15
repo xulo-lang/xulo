@@ -149,6 +149,27 @@ pub enum RuntimeFn {
     LiteralMatch,
     /// 区间表达式 `0..<3` / `1..=4` 求值为列表
     RangeList,
+    /// Checked integral arithmetic (spec `types/primitive-types.md`,
+    /// "Overflow"): overflow, division by zero, and an out-of-range shift
+    /// abort the program instead of wrapping. The compiler passes a third
+    /// argument selecting the unsigned `u64` domain.
+    IntAdd,
+    IntSub,
+    IntMul,
+    IntDiv,
+    IntRem,
+    IntPow,
+    /// Checked unary `-`; a second argument selects the unsigned domain.
+    IntNeg,
+    /// Exact integral comparison across signedness: returns `-1`, `0`, or
+    /// `1`; the two trailing flags say which operands are unsigned.
+    NumCompare,
+    /// Runtime type tag of a value (`is` tests), using the same tag space as
+    /// `PrintValue`.
+    DetectTag,
+    /// `<<` / `>>` with the shift-amount check and a mode selecting the
+    /// sign-filling or zero-filling right shift.
+    IntShift,
     /// 命名空间内建（`std::math::*` / `std::time::*`）：携带已映射好的运行时符号名
     Intrinsic(&'static str),
 }

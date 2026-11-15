@@ -203,7 +203,7 @@ impl Interpreter {
     /// and `#` flag (spec `types/traits.md`).
     pub(super) fn format_value_for(&self, precision: Option<usize>, alternate: bool) -> Value {
         let precision = match precision {
-            Some(p) => Value::Number(p as f64),
+            Some(p) => Value::Int(p as i64),
             None => Value::Null,
         };
         let obj = Rc::new(RefCell::new(vec![

@@ -25,17 +25,17 @@ impl Interpreter {
                 let operand = self.eval(&un.operand, env)?;
                 match un.operator {
                     UnaryOperator::Not => Ok(Value::Boolean(!is_truthy(&operand))),
-                    UnaryOperator::Neg => match operand {
-                        Value::Number(n) => Ok(Value::Number(-n)),
-                        other => Err(RunError::err(
-                            format!("cannot negate {}", other.kind_name()),
+                    UnaryOperator::Neg => match operand.num() {
+                        Some(num) => Num::neg(num).map_err(|e| num_trap("`-`", e, &un.span)),
+                        None => Err(RunError::err(
+                            format!("cannot negate {}", operand.kind_name()),
                             un.span.clone(),
                         )),
                     },
-                    UnaryOperator::BitNot => match operand {
-                        Value::Number(n) => Ok(Value::Number((!(n as i64)) as f64)),
-                        other => Err(RunError::err(
-                            format!("cannot apply `~` to {}", other.kind_name()),
+                    UnaryOperator::BitNot => match operand.num() {
+                        Some(num) => Num::bit_not(num).map_err(|e| num_trap("`~`", e, &un.span)),
+                        None => Err(RunError::err(
+                            format!("cannot apply `~` to {}", operand.kind_name()),
                             un.span.clone(),
                         )),
                     },
@@ -110,46 +110,51 @@ impl Interpreter {
             Expression::Index(idx) => {
                 let obj = self.eval(&idx.object, env)?;
                 let index = self.eval(&idx.index, env)?;
-                match (obj, &index) {
-                    (Value::List(list), Value::Number(n)) => {
-                        let i = list_index(*n, &idx.span)?;
+                // A list and a string require a numeric index; the other
+                // containers keep their non-numeric key.
+                let numeric = index.num().map(|n| list_index(n, &idx.span)).transpose()?;
+                match (obj, numeric) {
+                    (Value::List(list), Some(i)) => {
                         let list = list.borrow();
                         if i < list.len() {
                             Ok(list[i].clone())
                         } else {
                             Err(RunError::err(
                                 format!(
-                                    "index {n} out of bounds for a list of length {}",
+                                    "index {i} out of bounds for a list of length {}",
                                     list.len()
                                 ),
                                 idx.span.clone(),
                             ))
                         }
                     }
-                    (Value::String(s), Value::Number(n)) => {
+                    (Value::String(s), Some(i)) => {
                         // `"abc"[1]` reads a character, matching the JS path
                         // (which returns the string's element).
-                        let i = list_index(*n, &idx.span)?;
                         match s.chars().nth(i) {
                             Some(c) => Ok(Value::String(c.to_string().into())),
                             None => Err(RunError::err(
                                 format!(
-                                    "index {n} out of bounds for a string of length {}",
+                                    "index {i} out of bounds for a string of length {}",
                                     s.chars().count()
                                 ),
                                 idx.span.clone(),
                             )),
                         }
                     }
-                    (Value::Object(fields), Value::String(key)) => {
+                    (Value::Object(fields), _) => {
+                        let key = match index {
+                            Value::String(key) => key,
+                            other => other.format().into(),
+                        };
                         let fields = fields.borrow();
                         match fields.iter().find(|(k, _)| k.as_str() == key.as_ref()) {
                             Some((_, v)) => Ok(v.clone()),
                             None => Ok(Value::Null),
                         }
                     }
-                    (other, i) => Err(RunError::err(
-                        format!("cannot index {} with {}", other.kind_name(), i.format()),
+                    (other, _) => Err(RunError::err(
+                        format!("cannot index {} with {}", other.kind_name(), index.format()),
                         idx.span.clone(),
                     )),
                 }
@@ -163,13 +168,10 @@ impl Interpreter {
                 }
             }
             Expression::Range(r) => {
-                let start = self.eval_number(&r.start, env)?;
-                let end = self.eval_number(&r.end, env)?;
+                let mut cursor = self.range_cursor(r, env)?;
                 let mut out = Vec::new();
-                let mut i = start;
-                while self.range_has_next(i, end, r.end_inclusive) {
-                    out.push(Value::Number(i));
-                    i += 1.0;
+                while let Some(value) = cursor.next() {
+                    out.push(value);
                 }
                 Ok(Value::List(Rc::new(RefCell::new(out))))
             }
@@ -214,7 +216,6 @@ impl Interpreter {
                     let key = self.eval(&entry.key, env)?;
                     let key_str = match &key {
                         Value::String(s) => s.to_string(),
-                        Value::Number(n) => n.to_string(),
                         Value::Boolean(b) => b.to_string(),
                         other => other.format(),
                     };
@@ -466,7 +467,8 @@ impl Interpreter {
     ) -> Result<Value, RunError> {
         let value = match lit {
             Literal::String(s) => Value::String(Rc::from(s.as_str())),
-            Literal::Number(n) | Literal::Float(n) => Value::Number(*n),
+            Literal::Int(n) => int_value(*n),
+            Literal::Float(n) => Value::Float(*n),
             Literal::Boolean(b) => Value::Boolean(*b),
             Literal::Null => Value::Null,
             Literal::List(items) => {
@@ -551,20 +553,14 @@ impl Interpreter {
                 let right = self.eval(&bin.right, env)?;
                 match bin.operator {
                     BinaryOperator::Add => self.add(left, right, bin),
-                    BinaryOperator::Sub => self.arith(left, right, bin, "`-`", |a, b| a - b),
-                    BinaryOperator::Mul => self.arith(left, right, bin, "`*`", |a, b| a * b),
-                    BinaryOperator::Div => self.arith(left, right, bin, "`/`", |a, b| a / b),
-                    BinaryOperator::Mod => self.arith(left, right, bin, "`%`", |a, b| a % b),
-                    BinaryOperator::Pow => self.arith(left, right, bin, "`**`", |a, b| a.powf(b)),
-                    BinaryOperator::BitAnd => {
-                        self.arith(left, right, bin, "`&`", |a, b| (a as i64 & b as i64) as f64)
-                    }
-                    BinaryOperator::BitOr => {
-                        self.arith(left, right, bin, "`|`", |a, b| (a as i64 | b as i64) as f64)
-                    }
-                    BinaryOperator::Xor => {
-                        self.arith(left, right, bin, "`^`", |a, b| (a as i64 ^ b as i64) as f64)
-                    }
+                    BinaryOperator::Sub => self.arith(left, right, bin, "`-`", Num::sub),
+                    BinaryOperator::Mul => self.arith(left, right, bin, "`*`", Num::mul),
+                    BinaryOperator::Div => self.arith(left, right, bin, "`/`", Num::div),
+                    BinaryOperator::Mod => self.arith(left, right, bin, "`%`", Num::rem),
+                    BinaryOperator::Pow => self.arith(left, right, bin, "`**`", Num::pow),
+                    BinaryOperator::BitAnd => self.arith(left, right, bin, "`&`", Num::bit_and),
+                    BinaryOperator::BitOr => self.arith(left, right, bin, "`|`", Num::bit_or),
+                    BinaryOperator::Xor => self.arith(left, right, bin, "`^`", Num::bit_xor),
                     BinaryOperator::Shl => self.shift(left, right, bin, false),
                     BinaryOperator::Shr => self.shift(left, right, bin, true),
                     BinaryOperator::Eq => Ok(Value::Boolean(equal(&left, &right))),
@@ -580,20 +576,24 @@ impl Interpreter {
     }
 
     pub(super) fn add(&self, left: Value, right: Value, bin: &BinaryOp) -> Result<Value, RunError> {
+        // Two numbers go through the numeric tower; a string operand turns the
+        // other numeric side into text (spec `expressions/operators.md`).
+        if let (Some(a), Some(b)) = (left.num(), right.num()) {
+            return Num::add(a, b).map_err(|e| num_trap("`+`", e, &bin.span));
+        }
         match (left, right) {
-            (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a + b)),
             (Value::String(a), Value::String(b)) => Ok(Value::String(format!("{a}{b}").into())),
             (Value::List(a), Value::List(b)) => {
                 let mut out = a.borrow().clone();
                 out.extend(b.borrow().iter().cloned());
                 Ok(Value::List(Rc::new(RefCell::new(out))))
             }
-            (Value::String(a), Value::Number(b)) => Ok(Value::String(
-                format!("{a}{}", crate::value::format_number(b)).into(),
-            )),
-            (Value::Number(a), Value::String(b)) => Ok(Value::String(
-                format!("{}{b}", crate::value::format_number(a)).into(),
-            )),
+            (Value::String(a), b) if b.num().is_some() => {
+                Ok(Value::String(format!("{a}{}", b.format()).into()))
+            }
+            (a, Value::String(b)) if a.num().is_some() => {
+                Ok(Value::String(format!("{}{b}", a.format()).into()))
+            }
             (a, b) => Err(RunError::err(
                 format!(
                     "cannot apply `+` to {} and {}",
@@ -611,15 +611,15 @@ impl Interpreter {
         right: Value,
         bin: &BinaryOp,
         op: &str,
-        f: fn(f64, f64) -> f64,
+        f: fn(Num, Num) -> Result<Value, NumError>,
     ) -> Result<Value, RunError> {
-        match (left, right) {
-            (Value::Number(a), Value::Number(b)) => Ok(Value::Number(f(a, b))),
-            (a, b) => Err(RunError::err(
+        match (left.num(), right.num()) {
+            (Some(a), Some(b)) => f(a, b).map_err(|e| num_trap(op, e, &bin.span)),
+            _ => Err(RunError::err(
                 format!(
                     "cannot apply {op} to {} and {}",
-                    a.kind_name(),
-                    b.kind_name()
+                    left.kind_name(),
+                    right.kind_name()
                 ),
                 bin.span.clone(),
             )),
@@ -638,27 +638,14 @@ impl Interpreter {
         right_shift: bool,
     ) -> Result<Value, RunError> {
         let op = if right_shift { ">>" } else { "<<" };
-        match (left, right) {
-            (Value::Number(a), Value::Number(b)) => {
-                if !b.is_finite() || b.fract() != 0.0 || !(0.0..64.0).contains(&b) {
-                    return Err(RunError::err(
-                        format!("shift amount out of range: {b}"),
-                        bin.span.clone(),
-                    ));
-                }
-                let a = a as i64;
-                let amount = b as u32;
-                Ok(Value::Number(if right_shift {
-                    (a >> amount) as f64
-                } else {
-                    ((a as u64).wrapping_shl(amount) as i64) as f64
-                }))
-            }
-            (a, b) => Err(RunError::err(
+        match (left.num(), right.num()) {
+            (Some(a), Some(b)) => Num::shift(a, b, !right_shift)
+                .map_err(|e| num_trap(&format!("`{op}`"), e, &bin.span)),
+            _ => Err(RunError::err(
                 format!(
                     "cannot apply `{op}` to {} and {}",
-                    a.kind_name(),
-                    b.kind_name()
+                    left.kind_name(),
+                    right.kind_name()
                 ),
                 bin.span.clone(),
             )),
@@ -672,51 +659,63 @@ impl Interpreter {
         bin: &BinaryOp,
         op: &str,
     ) -> Result<Value, RunError> {
-        let result = match (&left, &right) {
-            (Value::Number(a), Value::Number(b)) => match op {
-                "<" => a < b,
-                ">" => a > b,
-                "<=" => a <= b,
-                _ => a >= b,
+        use std::cmp::Ordering;
+        let result = match (left.num(), right.num()) {
+            (Some(a), Some(b)) => match Num::cmp(a, b) {
+                // A `NaN` operand makes every ordering false.
+                None => false,
+                Some(ord) => match op {
+                    "<" => ord == Ordering::Less,
+                    ">" => ord == Ordering::Greater,
+                    "<=" => ord != Ordering::Greater,
+                    _ => ord != Ordering::Less,
+                },
             },
-            (Value::String(a), Value::String(b)) => match op {
-                "<" => a < b,
-                ">" => a > b,
-                "<=" => a <= b,
-                _ => a >= b,
+            _ => match (&left, &right) {
+                (Value::String(a), Value::String(b)) => match op {
+                    "<" => a < b,
+                    ">" => a > b,
+                    "<=" => a <= b,
+                    _ => a >= b,
+                },
+                _ => {
+                    return Err(RunError::err(
+                        format!(
+                            "cannot compare {} with {}",
+                            left.kind_name(),
+                            right.kind_name()
+                        ),
+                        bin.span.clone(),
+                    ));
+                }
             },
-            _ => {
-                return Err(RunError::err(
-                    format!(
-                        "cannot compare {} with {}",
-                        left.kind_name(),
-                        right.kind_name()
-                    ),
-                    bin.span.clone(),
-                ));
-            }
         };
         Ok(Value::Boolean(result))
     }
 
-    pub(super) fn eval_number(
+    /// A range's bounds and step, iterated without materialising the list so a
+    /// `for` loop stays lazy. Integer bounds iterate exactly; a float bound
+    /// promotes the whole range.
+    pub(super) fn range_cursor(
         &self,
-        expr: &Expression,
+        r: &xulo_core::ast::RangeExpr,
         env: &Rc<RefCell<Env>>,
-    ) -> Result<f64, RunError> {
-        match self.eval(expr, env)? {
-            Value::Number(n) => Ok(n),
-            other => Err(RunError::err(
-                format!("expected a `number`, found {}", other.kind_name()),
-                expr.span().clone(),
-            )),
-        }
-    }
-
-    /// Whether `i` is still inside a range with upper bound `end`:
-    /// `..<` is half-open (i < end), `..=` is closed (i <= end).
-    pub(super) fn range_has_next(&self, i: f64, end: f64, end_inclusive: bool) -> bool {
-        if end_inclusive { i <= end } else { i < end }
+    ) -> Result<RangeCursor, RunError> {
+        let start = self.eval(&r.start, env)?;
+        let end = self.eval(&r.end, env)?;
+        let (Some(start), Some(end)) = (start.num(), end.num()) else {
+            let bad = if start.num().is_none() { &start } else { &end };
+            let span = if start.num().is_none() {
+                r.start.span().clone()
+            } else {
+                r.end.span().clone()
+            };
+            return Err(RunError::err(
+                format!("range bound must be a number, found {}", bad.kind_name()),
+                span,
+            ));
+        };
+        Ok(RangeCursor::new(start, end, r.end_inclusive))
     }
 
     pub(super) fn eval_if(
@@ -810,22 +809,31 @@ impl Interpreter {
                     // The brace form of a map literal is the only object that
                     // answers `.size` (spec `types/composite-types.md`); a
                     // real member named `size` still wins above.
-                    None if m.property == "size" => Ok(Value::Number(fields.len() as f64)),
+                    None if m.property == "size" => Ok(Value::Int(fields.len() as i64)),
                     None => Ok(Value::Null),
                 }
             }
-            Value::List(list) if m.property == "len" => {
-                Ok(Value::Number(list.borrow().len() as f64))
+            // Positional tuple access: a tuple is a list at run time
+            // (spec `expressions/path-and-access.md`, "Positional access").
+            Value::List(list) if m.property.parse::<usize>().is_ok() => {
+                let index = m.property.parse::<usize>().expect("checked");
+                list.borrow().get(index).cloned().ok_or_else(|| {
+                    RunError::err(
+                        format!("position {index} does not exist in the tuple"),
+                        m.span.clone(),
+                    )
+                })
             }
-            Value::String(s) if m.property == "len" => Ok(Value::Number(s.chars().count() as f64)),
-            Value::String(s) if m.property == "byte_len" => Ok(Value::Number(s.len() as f64)),
+            Value::List(list) if m.property == "len" => Ok(Value::Int(list.borrow().len() as i64)),
+            Value::String(s) if m.property == "len" => Ok(Value::Int(s.chars().count() as i64)),
+            Value::String(s) if m.property == "byte_len" => Ok(Value::Int(s.len() as i64)),
             Value::StringBuilder(builder) if m.property == "len" => {
-                Ok(Value::Number(builder.borrow().len() as f64))
+                Ok(Value::Int(builder.borrow().len() as i64))
             }
             Value::StringBuilder(builder) if m.property == "byte_len" => {
-                Ok(Value::Number(builder.borrow().byte_len() as f64))
+                Ok(Value::Int(builder.borrow().byte_len() as i64))
             }
-            Value::Set(set) if m.property == "size" => Ok(Value::Number(set.borrow().len() as f64)),
+            Value::Set(set) if m.property == "size" => Ok(Value::Int(set.borrow().len() as i64)),
             other => Err(RunError::err(
                 format!(
                     "cannot access member `{}` of {}",
@@ -973,7 +981,7 @@ impl Interpreter {
     fn quote_hole_text(value: &Value) -> Result<String, String> {
         Ok(match value {
             Value::String(s) => s.to_string(),
-            Value::Number(n) => crate::value::format_number(*n),
+            Value::Int(_) | Value::UInt(_) | Value::Float(_) => value.format(),
             Value::Boolean(b) => b.to_string(),
             Value::AstNode(node) => node
                 .text
@@ -1024,5 +1032,94 @@ fn quote_statement_kind(stmt: &Statement) -> &'static str {
         Statement::Mod(_) => "ModuleDeclaration",
         Statement::ExternBlock(_) => "ExternBlockDeclaration",
         _ => "Statement",
+    }
+}
+
+/// A numeric literal in the slot that holds it: an integer that fits `i64`
+/// stays an `int`, a larger in-range `u64` becomes [`Value::UInt`].
+pub(super) fn int_value(n: i128) -> Value {
+    match i64::try_from(n) {
+        Ok(n) => Value::Int(n),
+        // Literals are range-checked at parse time, so the only remaining
+        // representable integral domain above `i64::MAX` is `u64`.
+        Err(_) => Value::UInt(n as u64),
+    }
+}
+
+/// A runtime trap for a numeric operator (spec
+/// `types/primitive-types.md`, "Overflow", and `expressions/operators.md`).
+fn num_trap(op: &str, error: NumError, span: &std::ops::Range<usize>) -> RunError {
+    RunError::err(format!("{op}: {}", error.message()), span.clone())
+}
+
+/// Lazy iteration over a range's values (spec
+/// `expressions/control-flow.md`, "Iterating a range"): `start`, `start + 1`,
+/// … while the value has not passed the upper bound. Integer bounds stay
+/// exact; one float bound promotes the whole range.
+pub(super) enum RangeCursor {
+    Int {
+        current: i128,
+        end: i128,
+        inclusive: bool,
+    },
+    Float {
+        current: f64,
+        end: f64,
+        inclusive: bool,
+    },
+}
+
+impl RangeCursor {
+    fn new(start: Num, end: Num, inclusive: bool) -> Self {
+        if start.is_float() || end.is_float() {
+            RangeCursor::Float {
+                current: start.to_f64(),
+                end: end.to_f64(),
+                inclusive,
+            }
+        } else {
+            RangeCursor::Int {
+                current: start.integer().expect("integral"),
+                end: end.integer().expect("integral"),
+                inclusive,
+            }
+        }
+    }
+
+    pub(super) fn next(&mut self) -> Option<Value> {
+        match self {
+            RangeCursor::Int {
+                current,
+                end,
+                inclusive,
+            } => {
+                if if *inclusive {
+                    *current > *end
+                } else {
+                    *current >= *end
+                } {
+                    return None;
+                }
+                let value = int_value(*current);
+                *current += 1;
+                Some(value)
+            }
+            RangeCursor::Float {
+                current,
+                end,
+                inclusive,
+            } => {
+                if if *inclusive {
+                    *current > *end
+                } else {
+                    *current >= *end
+                } {
+                    return None;
+                }
+                let value = *current;
+                *current += 1.0;
+                Some(Value::Float(value))
+            }
+        }
     }
 }

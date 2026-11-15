@@ -176,7 +176,7 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 | ID | Requirement | Status | Evidence / limitation | Needed by |
 |----|-------------|--------|-----------------------|-----------|
 | L1 | UTF-8 lexing and parsing of `.xulo` files | **OK** | `xulo-parser` tests and all examples | 1 |
-| L2 | `int` is a 64-bit signed integer; `u64` covers `0…2^64-1` | **BROKEN** | Literals are stored as `f64` (`Literal::Number`); `9007199254740993 == 9007199254740992` is `true`; `18446744073709551615` is `E0209` | 1 |
+| L2 | `int` is a 64-bit signed integer; `u64` covers `0…2^64-1` | **OK** | `Literal::Int(i128)` + `Literal::Float(f64)`; `Value::Int(i64)`/`UInt(u64)`/`Float(f64)`; integers are exact above `2^53` and through `u64::MAX`; a literal above the `u64` range is `E0209`; `crates/xulo-runtime/tests/integers.rs` | 1 |
 | L3 | `float`/`f64` arithmetic | **OK** | `f64` runtime; examples and tests | 1 |
 | L4 | `let`, `let mut`, assignment, shadowing | **OK** | semantic/runtime tests | 1 |
 | L5 | Functions, recursion, implicit return | **OK** | examples (`fibonacci`, `closures_hof`) | 1 |
@@ -185,14 +185,14 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 | L8 | Enums, payloads, recursive/generic enums, exhaustive `match` | **OK** | `enums_match`, probes with `Tree<T>` | 1 |
 | L9 | Structs, `impl`, traits, explicit `Trait::method(recv)` dispatch | **OK** | `structs`, `trait_shapes` | 1 |
 | L10 | Generic functions, bounds, `where` clauses | **OK** | `generics`, `T: Show` probe | 2 |
-| L11 | Generic struct construction with named arguments | **MISSING** | `Pair(first: 1, second: "x")` reports field `first` expects `A`; only a typed object literal with an expected type works | 2 |
+| L11 | Generic struct construction with named arguments | **OK** | The constructor infers type arguments from named field arguments and member access substitutes them; `crates/xulo-runtime/tests/type_system.rs`, `crates/xulo-compiler/tests/type_system_codegen_tests.rs` | 2 |
 | L12 | `mod`/`use`/`pub`, visibility, cross-file modules | **OK** | `examples/modules`; AOT module build | 1 |
 | L13 | Tuple literals, destructuring, equality | **OK** | parser/semantic/runtime tests | 1 |
-| L14 | Tuple positional access `p.0` and `?.0` | **MISSING** | `p.0` reports "cannot access member `0` of a tuple" | 2 |
+| L14 | Tuple positional access `p.0` and `?.0` | **OK** | Reads and `let mut` writes lower to the tuple's list slot; a position outside the arity is `E0220`; both execution paths agree | 2 |
 | L15 | `Array<T, N>` with `.len` and indexed access | **PARTIAL** | Interpreter works; AOT `.len` returns the wrong value | 4 |
 | L16 | `T?`, `?.`, `??`, null narrowing | **OK** | `optional_chaining`, semantic narrowing tests | 1 |
-| L17 | `unknown` as the top type | **MISSING** | `let xs: List<unknown> = ["a", 1]` is `E0201`; passing a `string` to an `unknown` parameter is rejected | 2 |
-| L18 | `is` / `is not` narrowing in `if` conditions | **MISSING** | `if v is int { v + 1 }` still sees `number \| string` and reports `E0003`; only `x != null` narrowing exists | 2 |
+| L17 | `unknown` as the top type | **OK** | Every type is assignable to `unknown`; `List<unknown>` and `Map<string, unknown>` accept heterogeneous values. `print` still rejects `unknown` itself (`E0212`, spec `builtins/intrinsic-functions.md`), so a probe narrows first. | 2 |
+| L18 | `is` / `is not` narrowing in `if` conditions | **PARTIAL** | `if v is T` narrows the then-branch and removes covered union members from the else-branch; `is not` swaps them; untestable types are `E0222`. Assignment inside a branch still keeps the narrowed type (L18b open). | 2 |
 | L19 | `Result`/`Error` and `?` propagation | **OK** | tests and `std` examples | 1 |
 | L20 | `defer` runs at block exit in reverse registration order | **BROKEN** | Runtime executes the operand immediately; `defer` prints in wrong order | 3 |
 | L21 | `copy` / `move` and use-after-move checking | **PARTIAL** | Syntax/checker present; full runtime and move-invalidation behavior not verified here | 3 |
@@ -205,15 +205,15 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 | ID | Requirement | Status | Evidence / limitation | Needed by |
 |----|-------------|--------|-----------------------|-----------|
 | R1 | Deterministic left-to-right evaluation | **OK** | specification and runtime tests | 1 |
-| R2 | 64-bit integer arithmetic, overflow/wrapping, shifts | **BROKEN** | Interpreter values are `f64`; `1 << 62` prints `4611686018427388000` instead of the exact integer | 1 |
+| R2 | 64-bit integer arithmetic, overflow/wrapping, shifts | **OK** | Interpreter `Num` tower (`crates/xulo-runtime/src/value.rs`) and AOT runtime helpers `xulo_int_add/sub/mul/div/rem/pow/neg` trap on overflow, division by zero, and a negative exponent; `xulo_shift`/`xulo_num_compare` implement wrap-on-left, sign- or zero-fill right shifts, and exact signed/unsigned comparison; `crates/xulo-runtime/tests/integers.rs` and `crates/xulo-compiler/tests/integer_model_codegen_tests.rs` | 1 |
 | R3 | UTF-8 scalar string operations | **OK** | `.len`, `.byte_len`, `.code_at`, `.slice`, `.bytes()` in interpreter and AOT | 1 |
 | R4 | Runtime failures with stable codes | **OK** | `E0006`, out-of-range tests | 1 |
 | R5 | No panic on adversarial input; nesting guard | **OK** | `tests/robustness.rs` | 1 |
 | R6 | `panic`, `assert`, and process exit status | **OK** | CLI/runtime tests | 1 |
 | R7 | `defer` executes at scope exit, reverse order | **BROKEN** | Same defect as L20 | 3 |
 | R8 | Value/reference semantics for `copy`/`move` | **PARTIAL** | Not fully verified; avoid relying on it until tested | 3 |
-| R9 | Interpreter and AOT produce identical observable behavior | **BROKEN** | `int` formatting, list spread, nested ternaries, and `Array.len` differ | 4 |
-| R10 | Deterministic output formatting for diagnostics and integers | **PARTIAL** | Large integers are printed through `f64` formatting in the interpreter | 2 |
+| R9 | Interpreter and AOT produce identical observable behavior | **PARTIAL** | Integer arithmetic, overflow, shifts, comparison, and printing now agree (`u64` uses print tag 10; §6.1 passes under `xupm build`). List spread, nested ternaries, and `Array.len` still differ (§6.7, WP3). | 4 |
+| R10 | Deterministic output formatting for diagnostics and integers | **OK** | `int`/`u64` print and stringify through exact decimal formatting in both paths; `crates/xulo-runtime/tests/integers.rs` covers `u64::MAX`, `2^63`, and `-2^63` | 2 |
 
 ### 5.3 Collections and text
 
@@ -225,7 +225,7 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 | C4 | `Array<T, N>` with `.len`, indexing, iteration | **PARTIAL** | Interpreter OK; AOT `.len` wrong; `Array::filled` not verified | 4 |
 | C5 | `string` members and UTF-8 behavior | **OK** | Interpreter and AOT string member tests | 1 |
 | C6 | `StringBuilder` with `new`/`append`/`clear`/`build`/`len`/`byte_len` | **OK** | runtime/AOT tests | 1 |
-| C7 | `str`/`fmt`/output of all bootstrap values | **PARTIAL** | Large integers and some numeric edge cases are not exact in the interpreter | 2 |
+| C7 | `str`/`fmt`/output of all bootstrap values | **OK** | `str`, `Format`, and `print` render `int`/`u64` exactly (AOT tag 10 for the unsigned slot); `crates/xulo-runtime/tests/integers.rs` and the interpreter/AOT golden suites | 2 |
 
 ### 5.4 Standard library and OS services
 
@@ -264,11 +264,11 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 | D4 | Stage 1's own diagnostics are consistent with stage 0 | **NOT VERIFIED** | Requires stage 1 implementation | 3 |
 | T1 | Unit and integration tests | **OK** | `cargo test --workspace`: 2019 passed, 0 failed (2026-11-15) | 1 |
 | T2 | All examples run in CI | **OK** | `.github/workflows/ci.yml` examples job | 1 |
-| T3 | Pinned-spec example conformance runner | **MISSING** | No runner extracts `// ok` / `// runs:` blocks | 2 |
+| T3 | Pinned-spec example conformance runner | **OK** | `crates/xulo-cli/tests/spec_conformance.rs`: 114 annotated examples extracted from the pinned spec, 81 pass, 33 triaged in `spec_conformance_baseline.tsv` (§6.10) | 2 |
 | T4 | Interpreter vs. AOT differential suite | **PARTIAL** | LLVM-only golden/differential tests exist; not a general suite | 4 |
 | T5 | Stage 1 self-parse/self-check/self-build tests | **MISSING** | No stage 1 code yet | 2–5 |
 | T6 | Robustness/fuzz tests | **OK** | `tests/robustness.rs` | 1 |
-| T7 | Spec and std-spec submodules aligned with the pin | **PARTIAL** | Working tree can be detached at an older commit; verify with `git submodule status` | 1 |
+| T7 | Spec and std-spec submodules aligned with the pin | **OK** | `crates/xulo-cli/tests/submodule_pins.rs` compares the `HEAD` gitlink, the index, and the checked-out submodule against `spec@48f49b7` / `std-spec@a2e4cb7`; CI job `conformance` | 1 |
 
 ## 6. Known blocking defects
 
@@ -286,24 +286,36 @@ fn main() {
 }
 ```
 
-Actual: `true`; `4611686018427388000`; the `u64` literal is `E0209`.
-The root is `Literal::Number(f64)` in `xulo-core` and `Value::Number(f64)` in
-the interpreter. AOT uses `i64` for some operations, which makes the two
-execution paths diverge.
+**Resolved (WP1).** The probe prints `false`,
+`4611686018427387904`, and `18446744073709551615` under both `xulo run` and
+`xupm build`. `xulo-core` now splits `Literal::Int(i128)` from
+`Literal::Float(f64)`; the interpreter's numeric tower carries `Int(i64)`,
+`UInt(u64)`, and `Float(f64)` (`crates/xulo-runtime/src/value.rs`); and the
+AOT path lowers integer arithmetic to checked `xulo_int_*` runtime helpers and
+prints `u64` values with tag `10`. `crates/xulo-runtime/tests/integers.rs`
+covers `2^53`, `2^63`, `2^64-1`, underflow/overflow traps, shifts, `to_fixed`,
+and the wrapping intrinsics. A literal above `u64::MAX` remains a parse error
+(`E0209`).
 
 ### 6.2 `unknown` is not a top type (L17)
 
 ```xulo
 fn show(v: unknown): unknown { return v }
 fn main() {
-    print(show("x")) // expected: x
+    let v = show("x")
+    if v is string {
+        print(v) // expected: x
+    }
     let xs: List<unknown> = ["a", 1, true]
-    print(xs.len)
+    print(xs.len) // expected: 3
 }
 ```
 
-Actual: passing `string` to `unknown` is rejected; `List<unknown>` is rejected.
-`any` exists internally for std signatures but is not a user-facing type.
+**Resolved (WP2).** A `string` now fits an `unknown` parameter/return
+position, and `List<unknown>`/`Map<string, unknown>` accept heterogeneous
+values. The probe narrows before printing because `print` rejects `unknown`
+itself (`E0212`, spec `builtins/intrinsic-functions.md`); the spec's
+`unknown` has no string form. Interpreter and AOT agree on the probe.
 
 ### 6.3 `is` narrowing is missing (L18)
 
@@ -316,8 +328,12 @@ fn f(v: int | string): int {
 }
 ```
 
-Actual: `E0003`, because `v` is still `number | string`. Only `x != null`
-narrowing is implemented.
+**Resolved (WP2, L18a).** The then-branch checks with `v : int`; the
+else-branch removes the members `T` covers (`string | int` minus `int` is
+`string`). `is not T` swaps the branches, `unknown` stays `unknown` in the
+negative branch, and an untestable or mismatched tested type is `E0222`.
+Chronological narrowing still survives an assignment inside the branch
+(L18b remains open).
 
 ### 6.4 Tuple positional access is missing (L14)
 
@@ -328,8 +344,10 @@ fn main() {
 }
 ```
 
-Actual: "cannot access member `0` of a `(number, string)`". Destructuring
-`let (a, b) = p` works.
+**Resolved (WP2).** `p.0` reads the first element in both paths; `p?.0`
+returns `null` for a null optional. `let mut r = …; r.0 = 5` writes through
+the mutable binding, and a position at or past the arity is `E0220`.
+Destructuring `let (a, b) = p` continues to work.
 
 ### 6.5 Generic struct construction does not infer field types (L11)
 
@@ -341,9 +359,9 @@ fn main() {
 }
 ```
 
-Actual: field `first` expects `A`, found `number`. The typed object-literal form
-`let p: Pair<int, string> = { first: 1, second: "x" }` works, but it is not the
-specified constructor form.
+**Resolved (WP2).** The constructor infers `Pair<int, string>` from the named
+field arguments, and `p.first`/`p.second` substitute the inferred arguments
+into the declared field types. The typed object-literal form still works.
 
 ### 6.6 AOT does not support `Map` / `Set` (C2, C3, B3)
 
@@ -387,6 +405,39 @@ Actual: `first`, `second`, `body`. Expected: `body`, `second`, `first`.
 - The working tree can be detached at an older spec commit than the superproject
   pin. `git submodule status` is part of the pre-gate checklist.
 
+**Resolved (WP0).** `crates/xulo-cli/tests/spec_conformance.rs` now extracts
+every annotated `xulo` block from the pinned spec and checks or runs it;
+`crates/xulo-cli/tests/submodule_pins.rs` fails when the `HEAD` gitlink, the
+index, or the checked-out submodule drifts from `spec@48f49b7` /
+`std-spec@a2e4cb7`. Both run in the `conformance` CI job. Divergences are
+recorded in §6.10 rather than in this section.
+
+### 6.10 Spec examples that still diverge (T3)
+
+`spec_conformance_baseline.tsv` lists each diverging example with a reason. The
+list currently holds 33 of 114 annotated examples; 81 pass. They are not one
+defect but four groups:
+
+- **Context-dependent examples (16).** The block calls or names a declaration
+  that exists only in the surrounding prose (`load_config`, `c_malloc`,
+  `first<T>`, `AppState`, `Status`, …). These can never pass unchanged; a
+  conformance corpus needs the missing declarations, not a compiler fix.
+- **Module-scope statements (11).** The spec writes expression statements and
+  assignments at module scope; stage 0 accepts module-scope `let` but rejects
+  module-scope `x = …`, `xs.sort()`, and `assert(…)` with `E0002`. This is a
+  parser/top-level-statement gap, not covered elsewhere in this matrix.
+- **Syntax gaps (5).** Typed map literals `Map<K, V>{ … }`, parenthesized map
+  literals `({ a: 1 })`, and a `mut` parameter in a function with no return
+  annotation (`fn f(mut x: int) { … }`, "expected `self`").
+- **Semantic gaps (1+).** Generic inference from the expected type
+  (`let ys: List<int> = empty()`), `#[test]` bodies that `await`, and
+  borrow-checker examples (`E0404`, `E0410`, `E0411`) whose construct is
+  rejected earlier for another reason.
+
+The groups above are candidate rows for the capability matrix; the harness
+exists so that removing a baseline line is the visible proof that a fix
+landed.
+
 ## 7. Work packages and recommended order
 
 ### WP0 — Matrix hygiene and conformance harness (P0, Gate 1/2)
@@ -398,6 +449,9 @@ Actual: `first`, `second`, `body`. Expected: `body`, `second`, `first`.
 
 **Exit:** conformance job runs in CI and its failures are triaged in this
 matrix.
+
+**Status:** done except the row-by-row "OK" audit (T3d). The CI job is
+`conformance`; §6.10 is the triage.
 
 ### WP1 — 64-bit integer model (P0, Gate 1/2/5)
 
@@ -412,6 +466,8 @@ matrix.
 
 **Exit:** §6.1 probe passes in both `xulo run` and `xupm build`.
 
+**Status:** done. See §6.1 and `crates/xulo-runtime/tests/integers.rs`.
+
 ### WP2 — Type-system completeness (P0, Gate 2/3)
 
 - Implement `unknown` as the top type, including `List<unknown>`,
@@ -423,6 +479,9 @@ matrix.
 - Add regression tests lifted from the pinned spec.
 
 **Exit:** §6.2–6.5 probes pass; no workaround needed for stage 1's AST.
+
+**Status:** done except L18b (an assignment inside a narrowed branch does not
+yet end the narrowing), D3, and S9. §6.2–6.5 pass in both execution paths.
 
 ### WP3 — AOT parity and bootstrap backend (P1, Gate 4)
 
@@ -493,6 +552,9 @@ Use these when updating the matrix:
 ```bash
 # Full workspace tests; record the count and date.
 cargo test --workspace
+
+# WP0 gates: pinned submodules and pinned-spec examples.
+cargo test -p xulo-cli --test submodule_pins --test spec_conformance -- --nocapture
 
 # Single-file behavior under the interpreter.
 target/debug/xulo check path/to/probe.xulo

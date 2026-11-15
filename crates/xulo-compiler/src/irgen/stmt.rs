@@ -64,6 +64,17 @@ impl IrGenerator {
         {
             self.source_types.insert(binding.name.clone(), src_ty);
         }
+        // A binding initialized with an unsigned-only value prints unsigned;
+        // shadowing replaces any earlier classification.
+        if binding
+            .value
+            .as_ref()
+            .is_some_and(|e| self.expr_has_unsigned_tag(e))
+        {
+            self.uint_range_names.insert(binding.name.clone());
+        } else {
+            self.uint_range_names.remove(&binding.name);
+        }
 
         let boxed = self.boxed_names.contains(&binding.name);
 
@@ -707,6 +718,17 @@ impl IrGenerator {
 
         match &assign.target {
             AssignTarget::Name(name) => {
+                // Keep the unsigned-print classification in step with the
+                // assigned value (`u64` and `int` share the slot).
+                let assigned_unsigned = matches!(
+                    &assign.value,
+                    AssignValue::Expr(expr) if self.expr_has_unsigned_tag(expr)
+                );
+                if assigned_unsigned {
+                    self.uint_range_names.insert(name.clone());
+                } else {
+                    self.uint_range_names.remove(name);
+                }
                 if let Some(local) = self.locals.get(name).copied() {
                     if self.boxed_names.contains(name) {
                         // 装箱变量：写入既有 cell（别名的闭包共享同一 cell）
@@ -729,14 +751,29 @@ impl IrGenerator {
             }
             AssignTarget::Member(obj, field) => {
                 let obj_operand = self.generate_expression(obj)?;
-                self.module.functions[func_idx]
-                    .instructions
-                    .push(Instruction::SetField {
-                        object: obj_operand,
-                        field: field.clone(),
-                        value,
-                        tag,
-                    });
+                // `p.0 = v` writes a tuple element by position; a tuple is a
+                // list at run time.
+                if matches!(self.infer_source_type_from_expr(obj), Some(Type::Tuple(_)))
+                    && let Ok(index) = field.parse::<usize>()
+                {
+                    self.module.functions[func_idx]
+                        .instructions
+                        .push(Instruction::SetIndex {
+                            array: obj_operand,
+                            index: Operand::Const(IrValue::I64(index as i64)),
+                            value,
+                            tag,
+                        });
+                } else {
+                    self.module.functions[func_idx]
+                        .instructions
+                        .push(Instruction::SetField {
+                            object: obj_operand,
+                            field: field.clone(),
+                            value,
+                            tag,
+                        });
+                }
             }
             AssignTarget::Index(obj, idx) => {
                 let obj_operand = self.generate_expression(obj)?;

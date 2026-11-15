@@ -8,8 +8,10 @@ fn test_literal_string() {
 
 #[test]
 fn test_literal_number() {
-    let lit = Literal::Number(42.5);
-    assert!(matches!(lit, Literal::Number(n) if n == 42.5));
+    let lit = Literal::Float(42.5);
+    assert!(matches!(lit, Literal::Float(n) if n == 42.5));
+    let int = Literal::Int(42);
+    assert!(matches!(int, Literal::Int(n) if n == 42));
 }
 
 #[test]
@@ -27,11 +29,11 @@ fn test_literal_null() {
 fn test_literal_list() {
     let lit = Literal::List(vec![
         Expression::Literal {
-            value: Literal::Number(1.0),
+            value: Literal::Int(1),
             span: 0..1,
         },
         Expression::Literal {
-            value: Literal::Number(2.0),
+            value: Literal::Int(2),
             span: 2..3,
         },
     ]);
@@ -46,7 +48,7 @@ fn test_literal_object() {
     let lit = Literal::Object(vec![ObjectField::Field {
         name: "x".to_string(),
         value: Expression::Literal {
-            value: Literal::Number(1.0),
+            value: Literal::Int(1),
             span: 4..5,
         },
     }]);

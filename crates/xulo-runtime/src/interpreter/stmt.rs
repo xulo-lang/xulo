@@ -1,5 +1,23 @@
 use super::*;
 
+/// Bind a value to a declaration whose annotation names an unsigned 64-bit
+/// integer. The numeric tower narrows a `u64` that fits `i64` to `int` for
+/// ordinary arithmetic; an explicit annotation must not lose that domain.
+pub(super) fn coerce_binding_type(annotation: &Option<Type>, value: Value) -> Value {
+    let unsigned = matches!(
+        annotation,
+        Some(Type::Named(name, args))
+            if args.is_empty() && matches!(name.as_str(), "u64" | "usize")
+    );
+    if unsigned
+        && let Value::Int(n) = value
+        && n >= 0
+    {
+        return Value::UInt(n as u64);
+    }
+    value
+}
+
 impl Interpreter {
     pub(super) fn exec_stmt(
         &self,
@@ -25,6 +43,11 @@ impl Interpreter {
                         None => Value::Null,
                     }
                 };
+                // An explicit `u64` annotation keeps the unsigned slot even
+                // when the value fits `i64`; otherwise `x + 1` would narrow
+                // back to `int` and overflow at `i64::MAX`
+                // (spec `types/primitive-types.md`).
+                let value = coerce_binding_type(&binding.type_annotation, value);
                 // Tuple destructuring: `let (a, b, c) = expr`
                 if let Some(tuple_names) = &binding.tuple_names {
                     match value {
@@ -543,34 +566,26 @@ impl Interpreter {
         // environments would make every closure read the *final* loop variable.
         let recycle = !block_has_closure(&f.body);
         if let Expression::Range(r) = &f.iterable {
-            let start = self.eval_number(&r.start, env)?;
-            let end = self.eval_number(&r.end, env)?;
-            let mut i = start;
+            let mut cursor = self.range_cursor(r, env)?;
             if recycle {
                 let child = Env::child(env);
-                while self.range_has_next(i, end, r.end_inclusive) {
-                    child
-                        .borrow_mut()
-                        .reset(&f.iter_var, Value::Number(i), true);
+                while let Some(value) = cursor.next() {
+                    child.borrow_mut().reset(&f.iter_var, value, true);
                     match self.exec_stmts(&f.body.statements, &child)? {
                         Flow::Continue | Flow::LoopContinue => {}
                         Flow::Break => break,
                         other => return Ok(other),
                     }
-                    i += 1.0;
                 }
             } else {
-                while self.range_has_next(i, end, r.end_inclusive) {
+                while let Some(value) = cursor.next() {
                     let child = Env::child(env);
-                    child
-                        .borrow_mut()
-                        .define(&f.iter_var, Value::Number(i), true);
+                    child.borrow_mut().define(&f.iter_var, value, true);
                     match self.exec_block(&f.body, &child)? {
                         Flow::Continue | Flow::LoopContinue => {}
                         Flow::Break => break,
                         other => return Ok(other),
                     }
-                    i += 1.0;
                 }
             }
             Ok(Flow::Continue)
@@ -704,6 +719,19 @@ impl Interpreter {
             AssignTarget::Member(object, property) => {
                 let obj = self.eval(object, env)?;
                 match obj {
+                    // `p.0 = v` on a tuple (a list at run time).
+                    Value::List(list) if property.parse::<usize>().is_ok() => {
+                        let index = property.parse::<usize>().expect("checked");
+                        let mut list = list.borrow_mut();
+                        if index < list.len() {
+                            list[index] = value;
+                        } else {
+                            return Err(RunError::err(
+                                format!("position {index} does not exist in the tuple"),
+                                a.span.clone(),
+                            ));
+                        }
+                    }
                     Value::Object(fields) => {
                         let mut fields = fields.borrow_mut();
                         if let Some((_, slot)) = fields.iter_mut().find(|(k, _)| k == property) {
@@ -724,15 +752,15 @@ impl Interpreter {
                 let obj = self.eval(object, env)?;
                 let idx = self.eval(index, env)?;
                 match (obj, &idx) {
-                    (Value::List(list), Value::Number(n)) => {
-                        let i = list_index(*n, &a.span)?;
+                    (Value::List(list), _) if idx.num().is_some() => {
+                        let i = list_index(idx.num().expect("checked"), &a.span)?;
                         let mut list = list.borrow_mut();
                         if i < list.len() {
                             list[i] = value;
                         } else {
                             return Err(RunError::err(
                                 format!(
-                                    "index {n} out of bounds for a list of length {}",
+                                    "index {i} out of bounds for a list of length {}",
                                     list.len()
                                 ),
                                 a.span.clone(),

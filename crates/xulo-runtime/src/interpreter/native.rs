@@ -186,13 +186,15 @@ pub(super) fn native_task_timeout(interp: &Interpreter, args: &[Value]) -> Resul
         ));
     };
     let inner = as_promise(first);
-    let ms = match args.get(1) {
-        Some(Value::Number(n)) if n.is_finite() && *n >= 0.0 => *n,
-        other => {
+    let ms = match args.get(1).and_then(|v| v.num()) {
+        Some(n) if n.to_f64().is_finite() && n.to_f64() >= 0.0 => n.to_f64(),
+        _ => {
             return Err(RunError::err(
                 format!(
                     "`Task::timeout` expects a millisecond count of type number, found {}",
-                    other.map(|v| v.kind_name()).unwrap_or("nothing".into())
+                    args.get(1)
+                        .map(|v| v.kind_name())
+                        .unwrap_or_else(|| "nothing".into())
                 ),
                 0..0,
             ));
@@ -231,12 +233,12 @@ pub(super) fn native_task_timeout(interp: &Interpreter, args: &[Value]) -> Resul
 /// the registered signature; this guard keeps a program that skips it from
 /// panicking on a wrong operand.
 pub(super) fn builtin_num_arg(args: &[Value], i: usize, name: &str) -> Result<f64, RunError> {
-    match args.get(i) {
-        Some(Value::Number(n)) => Ok(*n),
-        other => Err(RunError::err(
+    match args.get(i).and_then(|v| v.num()) {
+        Some(n) => Ok(n.to_f64()),
+        None => Err(RunError::err(
             format!(
                 "`{name}` expects a number, found {}",
-                other
+                args.get(i)
                     .map(|v| v.kind_name())
                     .unwrap_or_else(|| "nothing".into())
             ),
@@ -263,31 +265,55 @@ pub(super) fn builtin_str_arg(args: &[Value], i: usize, name: &str) -> Result<Rc
 }
 
 /// `std::math::abs(x)`: the absolute value (spec `builtins/intrinsic-functions.md`).
+/// The `number` signature keeps an `int` operand an `int`.
 pub(super) fn native_math_abs(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    Ok(Value::Number(xulo_std::math::abs(builtin_num_arg(
-        args,
-        0,
-        "std::math::abs",
-    )?)))
+    builtin_num_arg(args, 0, "std::math::abs")?;
+    let Some(arg) = args.first() else {
+        unreachable!("`builtin_num_arg` rejected a missing argument")
+    };
+    Ok(match arg.num() {
+        Some(Num::Int(n)) => Value::from_num(Num::UInt(n.unsigned_abs())),
+        Some(Num::UInt(n)) => Value::UInt(n),
+        _ => Value::Float(xulo_std::math::abs(arg.num().expect("checked").to_f64())),
+    })
 }
 
-/// `std::math::min(a, b)` / `std::math::max(a, b)`: the smaller / larger operand, with
-/// the IEEE-754 special values propagating (a `NaN` operand yields `NaN`).
+/// `std::math::min(a, b)` / `std::math::max(a, b)`: the smaller / larger operand,
+/// keeping the selected operand's numeric slot. A `NaN` operand yields `NaN`
+/// (IEEE-754 `minNum`/`maxNum`).
 pub(super) fn native_math_min(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    let a = builtin_num_arg(args, 0, "std::math::min")?;
-    let b = builtin_num_arg(args, 1, "std::math::min")?;
-    Ok(Value::Number(xulo_std::math::min(a, b)))
+    num_select(args, "std::math::min", std::cmp::Ordering::Greater)
 }
 
 pub(super) fn native_math_max(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    let a = builtin_num_arg(args, 0, "std::math::max")?;
-    let b = builtin_num_arg(args, 1, "std::math::max")?;
-    Ok(Value::Number(xulo_std::math::max(a, b)))
+    num_select(args, "std::math::max", std::cmp::Ordering::Less)
+}
+
+/// Return the operand that is not on the losing side of `lose`: `min` keeps
+/// the one that is not greater, `max` the one that is not less.
+fn num_select(args: &[Value], name: &str, lose: std::cmp::Ordering) -> Result<Value, RunError> {
+    builtin_num_arg(args, 0, name)?;
+    builtin_num_arg(args, 1, name)?;
+    let (Some(a), Some(b)) = (args.first(), args.get(1)) else {
+        unreachable!("`builtin_num_arg` rejected a missing argument")
+    };
+    if matches!(a.num(), Some(Num::Float(n)) if n.is_nan())
+        || matches!(b.num(), Some(Num::Float(n)) if n.is_nan())
+    {
+        return Ok(Value::Float(f64::NAN));
+    }
+    let (Some(x), Some(y)) = (a.num(), b.num()) else {
+        unreachable!("checked above")
+    };
+    Ok(match Num::cmp(x, y) {
+        Some(ord) if ord == lose => b.clone(),
+        _ => a.clone(),
+    })
 }
 
 /// `std::math::sqrt(x)`: the square root; a negative operand yields `NaN`.
 pub(super) fn native_math_sqrt(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    Ok(Value::Number(xulo_std::math::sqrt(builtin_num_arg(
+    Ok(Value::Float(xulo_std::math::sqrt(builtin_num_arg(
         args,
         0,
         "std::math::sqrt",
@@ -299,12 +325,12 @@ pub(super) fn native_math_sqrt(_interp: &Interpreter, args: &[Value]) -> Result<
 /// member.
 pub(super) fn native_math_random(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     no_arg_guard(args, "std::math::random")?;
-    Ok(Value::Number(xulo_std::math::random()))
+    Ok(Value::Float(xulo_std::math::random()))
 }
 
 /// `std::math::sign(x)`, `log1p`, `expm1`: unary float operations.
 pub(super) fn native_math_sign(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    Ok(Value::Number(xulo_std::math::sign(builtin_num_arg(
+    Ok(Value::Float(xulo_std::math::sign(builtin_num_arg(
         args,
         0,
         "std::math::sign",
@@ -314,18 +340,18 @@ pub(super) fn native_math_sign(_interp: &Interpreter, args: &[Value]) -> Result<
 pub(super) fn native_math_hypot(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     let a = builtin_num_arg(args, 0, "std::math::hypot")?;
     let b = builtin_num_arg(args, 1, "std::math::hypot")?;
-    Ok(Value::Number(xulo_std::math::hypot(a, b)))
+    Ok(Value::Float(xulo_std::math::hypot(a, b)))
 }
 
 pub(super) fn native_math_clamp(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     let x = builtin_num_arg(args, 0, "std::math::clamp")?;
     let lo = builtin_num_arg(args, 1, "std::math::clamp")?;
     let hi = builtin_num_arg(args, 2, "std::math::clamp")?;
-    Ok(Value::Number(xulo_std::math::clamp(x, lo, hi)))
+    Ok(Value::Float(xulo_std::math::clamp(x, lo, hi)))
 }
 
 pub(super) fn native_math_log1p(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    Ok(Value::Number(xulo_std::math::log1p(builtin_num_arg(
+    Ok(Value::Float(xulo_std::math::log1p(builtin_num_arg(
         args,
         0,
         "std::math::log1p",
@@ -333,7 +359,7 @@ pub(super) fn native_math_log1p(_interp: &Interpreter, args: &[Value]) -> Result
 }
 
 pub(super) fn native_math_expm1(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    Ok(Value::Number(xulo_std::math::expm1(builtin_num_arg(
+    Ok(Value::Float(xulo_std::math::expm1(builtin_num_arg(
         args,
         0,
         "std::math::expm1",
@@ -354,12 +380,12 @@ pub(super) fn native_math_random_int(
             0..0,
         ));
     }
-    Ok(Value::Number(xulo_std::math::random_int(lo, hi) as f64))
+    Ok(Value::Int(xulo_std::math::random_int(lo, hi)))
 }
 
 /// `std::math::cbrt(x)`: the cube root, defined for every `float`.
 pub(super) fn native_math_cbrt(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    Ok(Value::Number(xulo_std::math::cbrt(builtin_num_arg(
+    Ok(Value::Float(xulo_std::math::cbrt(builtin_num_arg(
         args,
         0,
         "std::math::cbrt",
@@ -370,7 +396,7 @@ pub(super) fn native_math_cbrt(_interp: &Interpreter, args: &[Value]) -> Result<
 pub(super) fn native_math_pow(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     let base = builtin_num_arg(args, 0, "std::math::pow")?;
     let exp = builtin_num_arg(args, 1, "std::math::pow")?;
-    Ok(Value::Number(xulo_std::math::pow(base, exp)))
+    Ok(Value::Float(xulo_std::math::pow(base, exp)))
 }
 
 /// `std::math::floor(x)` / `std::math::ceil(x)` / `std::math::round(x)` / `std::math::trunc(x)`:
@@ -378,7 +404,7 @@ pub(super) fn native_math_pow(_interp: &Interpreter, args: &[Value]) -> Result<V
 /// from zero (spec `builtins/intrinsic-functions.md`); every result stays an
 /// integer-valued `float`.
 pub(super) fn native_math_floor(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    Ok(Value::Number(xulo_std::math::floor(builtin_num_arg(
+    Ok(int_from_float(xulo_std::math::floor(builtin_num_arg(
         args,
         0,
         "std::math::floor",
@@ -386,7 +412,7 @@ pub(super) fn native_math_floor(_interp: &Interpreter, args: &[Value]) -> Result
 }
 
 pub(super) fn native_math_ceil(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    Ok(Value::Number(xulo_std::math::ceil(builtin_num_arg(
+    Ok(int_from_float(xulo_std::math::ceil(builtin_num_arg(
         args,
         0,
         "std::math::ceil",
@@ -394,7 +420,7 @@ pub(super) fn native_math_ceil(_interp: &Interpreter, args: &[Value]) -> Result<
 }
 
 pub(super) fn native_math_round(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    Ok(Value::Number(xulo_std::math::round(builtin_num_arg(
+    Ok(int_from_float(xulo_std::math::round(builtin_num_arg(
         args,
         0,
         "std::math::round",
@@ -402,11 +428,25 @@ pub(super) fn native_math_round(_interp: &Interpreter, args: &[Value]) -> Result
 }
 
 pub(super) fn native_math_trunc(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    Ok(Value::Number(xulo_std::math::trunc(builtin_num_arg(
+    Ok(int_from_float(xulo_std::math::trunc(builtin_num_arg(
         args,
         0,
         "std::math::trunc",
     )?)))
+}
+
+/// A `Math` function declared `fn(float): int`. A value outside the `int`
+/// range saturates (the semantic layer cannot rule it out at runtime).
+fn int_from_float(n: f64) -> Value {
+    if n.is_nan() {
+        Value::Int(0)
+    } else if n >= i64::MAX as f64 {
+        Value::Int(i64::MAX)
+    } else if n <= i64::MIN as f64 {
+        Value::Int(i64::MIN)
+    } else {
+        Value::Int(n as i64)
+    }
 }
 
 /// `std::math::to_fixed(x, digits)`: the decimal numeral of `x` with exactly
@@ -419,19 +459,24 @@ pub(super) fn native_math_to_fixed(
     args: &[Value],
 ) -> Result<Value, RunError> {
     let x = builtin_num_arg(args, 0, "std::math::to_fixed")?;
-    let digits = match args.get(1) {
-        Some(Value::Number(d)) if d.fract() == 0.0 && (0.0..=15.0).contains(d) => *d as usize,
-        Some(Value::Number(d)) => {
-            return Err(RunError::err(
-                format!("`std::math::to_fixed` digits must be an integer in 0..=15, found {d}"),
-                0..0,
-            ));
-        }
-        other => {
+    let digits = match args.get(1).and_then(|v| v.num()) {
+        Some(n) => match n.integer() {
+            Some(d) if (0..=15).contains(&d) => d as usize,
+            _ => {
+                return Err(RunError::err(
+                    format!(
+                        "`std::math::to_fixed` digits must be an integer in 0..=15, found {}",
+                        n.to_f64()
+                    ),
+                    0..0,
+                ));
+            }
+        },
+        None => {
             return Err(RunError::err(
                 format!(
                     "`std::math::to_fixed` expects a number for `digits`, found {}",
-                    other
+                    args.get(1)
                         .map(|v| v.kind_name())
                         .unwrap_or_else(|| "nothing".into())
                 ),
@@ -448,21 +493,21 @@ pub(super) fn native_math_unary_float(
     name: &'static str,
     f: fn(f64) -> f64,
 ) -> impl Fn(&Interpreter, &[Value]) -> Result<Value, RunError> {
-    move |_interp, args| Ok(Value::Number(f(builtin_num_arg(args, 0, name)?)))
+    move |_interp, args| Ok(Value::Float(f(builtin_num_arg(args, 0, name)?)))
 }
 
 /// `std::math::atan2(y, x)`: the quadrant-aware arctangent of `y / x`.
 pub(super) fn native_math_atan2(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     let y = builtin_num_arg(args, 0, "std::math::atan2")?;
     let x = builtin_num_arg(args, 1, "std::math::atan2")?;
-    Ok(Value::Number(xulo_std::math::atan2(y, x)))
+    Ok(Value::Float(xulo_std::math::atan2(y, x)))
 }
 
 /// `std::math::log(x)` / `std::math::log2(x)` / `std::math::log10(x)`: `-Infinity` at `0`,
 /// `NaN` for a negative argument; `std::math::exp(x)`: `e` raised to `x`,
 /// `Infinity` once the result overflows.
 pub(super) fn native_math_log(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    Ok(Value::Number(xulo_std::math::log(builtin_num_arg(
+    Ok(Value::Float(xulo_std::math::log(builtin_num_arg(
         args,
         0,
         "std::math::log",
@@ -470,7 +515,7 @@ pub(super) fn native_math_log(_interp: &Interpreter, args: &[Value]) -> Result<V
 }
 
 pub(super) fn native_math_log2(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    Ok(Value::Number(xulo_std::math::log2(builtin_num_arg(
+    Ok(Value::Float(xulo_std::math::log2(builtin_num_arg(
         args,
         0,
         "std::math::log2",
@@ -478,7 +523,7 @@ pub(super) fn native_math_log2(_interp: &Interpreter, args: &[Value]) -> Result<
 }
 
 pub(super) fn native_math_log10(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    Ok(Value::Number(xulo_std::math::log10(builtin_num_arg(
+    Ok(Value::Float(xulo_std::math::log10(builtin_num_arg(
         args,
         0,
         "std::math::log10",
@@ -486,7 +531,7 @@ pub(super) fn native_math_log10(_interp: &Interpreter, args: &[Value]) -> Result
 }
 
 pub(super) fn native_math_exp(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    Ok(Value::Number(xulo_std::math::exp(builtin_num_arg(
+    Ok(Value::Float(xulo_std::math::exp(builtin_num_arg(
         args,
         0,
         "std::math::exp",
@@ -540,7 +585,7 @@ pub(super) fn no_arg_guard(args: &[Value], name: &str) -> Result<(), RunError> {
 /// `std::time::now`: milliseconds since the Unix epoch (wall clock).
 pub(super) fn native_time_now(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     no_arg_guard(args, "std::time::now")?;
-    Ok(Value::Number(xulo_std::time::now_millis() as f64))
+    Ok(Value::Int(xulo_std::time::now_millis()))
 }
 
 /// `std::time::now_nanos`: nanoseconds since the Unix epoch (wall clock).
@@ -549,7 +594,7 @@ pub(super) fn native_time_now_nanos(
     args: &[Value],
 ) -> Result<Value, RunError> {
     no_arg_guard(args, "std::time::now_nanos")?;
-    Ok(Value::Number(xulo_std::time::now_nanos() as f64))
+    Ok(Value::Int(xulo_std::time::now_nanos()))
 }
 
 /// `std::time::monotonic`: milliseconds on the monotonic clock, measured from the
@@ -559,7 +604,7 @@ pub(super) fn native_time_monotonic(
     args: &[Value],
 ) -> Result<Value, RunError> {
     no_arg_guard(args, "std::time::monotonic")?;
-    Ok(Value::Number(xulo_std::time::monotonic_millis() as f64))
+    Ok(Value::Int(xulo_std::time::monotonic_millis()))
 }
 
 /// `std::time::monotonic_nanos`: nanoseconds on the monotonic clock.
@@ -568,7 +613,7 @@ pub(super) fn native_time_monotonic_nanos(
     args: &[Value],
 ) -> Result<Value, RunError> {
     no_arg_guard(args, "std::time::monotonic_nanos")?;
-    Ok(Value::Number(xulo_std::time::monotonic_nanos() as f64))
+    Ok(Value::Int(xulo_std::time::monotonic_nanos()))
 }
 
 /// `std::time::sleep(ms)`: a `Task<unit>` that settles at least `ms` milliseconds
@@ -627,7 +672,7 @@ pub(super) fn native_time_format(_interp: &Interpreter, args: &[Value]) -> Resul
 pub(super) fn native_time_parse(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     let text = builtin_str_arg(args, 0, "std::time::parse")?;
     Ok(std_result(
-        xulo_std::time::parse(&text).map(|ms| Value::Number(ms as f64)),
+        xulo_std::time::parse(&text).map(|ms| Value::from_num(Num::UInt(ms))),
     ))
 }
 
@@ -637,16 +682,13 @@ pub(super) fn native_time_parts(_interp: &Interpreter, args: &[Value]) -> Result
     let ms = builtin_ms_arg(args, 0, "std::time::parts")?;
     let p = xulo_std::time::parts(ms);
     Ok(Value::Object(Rc::new(RefCell::new(vec![
-        ("year".to_string(), Value::Number(p.year as f64)),
-        ("month".to_string(), Value::Number(p.month as f64)),
-        ("day".to_string(), Value::Number(p.day as f64)),
-        ("hour".to_string(), Value::Number(p.hour as f64)),
-        ("minute".to_string(), Value::Number(p.minute as f64)),
-        ("second".to_string(), Value::Number(p.second as f64)),
-        (
-            "millisecond".to_string(),
-            Value::Number(p.millisecond as f64),
-        ),
+        ("year".to_string(), Value::Int(p.year)),
+        ("month".to_string(), Value::Int(p.month)),
+        ("day".to_string(), Value::Int(p.day)),
+        ("hour".to_string(), Value::Int(p.hour)),
+        ("minute".to_string(), Value::Int(p.minute)),
+        ("second".to_string(), Value::Int(p.second)),
+        ("millisecond".to_string(), Value::Int(p.millisecond)),
     ]))))
 }
 
@@ -661,16 +703,23 @@ pub(super) fn native_time_from_parts(
     let field = |i: usize, name: &str| -> Result<i64, RunError> {
         match args.get(i) {
             None | Some(Value::Null) => Ok(0),
-            Some(Value::Number(n)) if n.is_finite() && n.fract() == 0.0 => Ok(*n as i64),
-            other => Err(RunError::err(
-                format!(
-                    "`std::time::from_parts` `{name}` expects an integer, found {}",
-                    other
-                        .map(|v| v.kind_name())
-                        .unwrap_or_else(|| "nothing".into())
-                ),
-                0..0,
-            )),
+            Some(v) => match v.num().and_then(|n| n.integer()) {
+                Some(n) => i64::try_from(n).map_err(|_| {
+                    RunError::err(
+                        format!(
+                            "`std::time::from_parts` `{name}` is out of range for a field: {n}"
+                        ),
+                        0..0,
+                    )
+                }),
+                None => Err(RunError::err(
+                    format!(
+                        "`std::time::from_parts` `{name}` expects an integer, found {}",
+                        v.kind_name()
+                    ),
+                    0..0,
+                )),
+            },
         }
     };
     let year = field(0, "year")?;
@@ -681,7 +730,7 @@ pub(super) fn native_time_from_parts(
     let second = field(5, "second")?;
     let millisecond = field(6, "millisecond")?;
     match xulo_std::time::from_parts(year, month, day, hour, minute, second, millisecond) {
-        Ok(ms) => Ok(Value::Number(ms as f64)),
+        Ok(ms) => Ok(Value::from_num(Num::UInt(ms))),
         Err(message) => Err(RunError::err(message, 0..0)),
     }
 }
@@ -693,7 +742,7 @@ pub(super) fn native_time_weekday(
     args: &[Value],
 ) -> Result<Value, RunError> {
     let ms = builtin_ms_arg(args, 0, "std::time::weekday")?;
-    Ok(Value::Number(xulo_std::time::weekday(ms) as f64))
+    Ok(Value::Int(xulo_std::time::weekday(ms)))
 }
 
 /// Wrap a fallible `std` member's outcome in the built-in `Result`: success
@@ -784,19 +833,19 @@ pub(super) fn builtin_bytes_arg(args: &[Value], i: usize, name: &str) -> Result<
     let items = items.borrow();
     let mut out = Vec::with_capacity(items.len());
     for (idx, item) in items.iter().enumerate() {
-        let Value::Number(n) = item else {
-            return Err(RunError::err(
-                format!("`{name}` expects a `List<u8>`, found a non-byte at index {idx}"),
-                0..0,
-            ));
-        };
-        if !n.is_finite() || n.fract() != 0.0 || *n < 0.0 || *n > 255.0 {
-            return Err(RunError::err(
-                format!("`{name}` expects bytes in 0 …= 255, found {n} at index {idx}"),
-                0..0,
-            ));
+        let n = item.num().and_then(|n| n.integer());
+        match n {
+            Some(n) if (0..=255).contains(&n) => out.push(n as u8),
+            _ => {
+                return Err(RunError::err(
+                    format!(
+                        "`{name}` expects bytes in 0 …= 255, found {} at index {idx}",
+                        item.format()
+                    ),
+                    0..0,
+                ));
+            }
         }
-        out.push(*n as u8);
     }
     Ok(out)
 }
@@ -811,7 +860,7 @@ fn byte_list_value(bytes: Vec<u8>) -> Value {
     Value::List(Rc::new(RefCell::new(
         bytes
             .into_iter()
-            .map(|b| Value::Number(f64::from(b)))
+            .map(|b| Value::Int(i64::from(b)))
             .collect(),
     )))
 }
@@ -893,9 +942,12 @@ pub(super) fn native_fs_stat(_interp: &Interpreter, args: &[Value]) -> Result<Va
     Ok(std_result(xulo_std::fs::stat(&path).map(|st| {
         Value::Object(Rc::new(RefCell::new(vec![
             ("kind".to_string(), Value::String(st.kind.into())),
-            ("size".to_string(), Value::Number(st.size as f64)),
-            ("modified".to_string(), Value::Number(st.modified as f64)),
-            ("mode".to_string(), Value::Number(st.mode as f64)),
+            ("size".to_string(), Value::from_num(Num::UInt(st.size))),
+            (
+                "modified".to_string(),
+                Value::from_num(Num::UInt(st.modified)),
+            ),
+            ("mode".to_string(), Value::from_num(Num::UInt(st.mode))),
         ])))
     })))
 }
@@ -1158,13 +1210,13 @@ pub(super) fn native_os_cpu_count(
     args: &[Value],
 ) -> Result<Value, RunError> {
     no_arg_guard(args, "std::os::cpu_count")?;
-    Ok(Value::Number(xulo_std::os::cpu_count() as f64))
+    Ok(Value::Int(xulo_std::os::cpu_count() as i64))
 }
 
 /// `std::os::pid()`: the process id — total, so no `Result` wraps it.
 pub(super) fn native_os_pid(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     no_arg_guard(args, "std::os::pid")?;
-    Ok(Value::Number(xulo_std::os::pid() as f64))
+    Ok(Value::Int(xulo_std::os::pid() as i64))
 }
 
 /// `std::os::platform()`: the OS family (`"linux"`, `"macos"`, …) — total.
@@ -1284,9 +1336,7 @@ pub(super) fn native_net_tcp_listen(
     args: &[Value],
 ) -> Result<Value, RunError> {
     let addr = builtin_str_arg(args, 0, "std::net::tcp_listen")?;
-    Ok(std_result(
-        xulo_std::net::tcp_listen(&addr).map(|h| Value::Number(h as f64)),
-    ))
+    Ok(std_result(xulo_std::net::tcp_listen(&addr).map(Value::Int)))
 }
 
 /// An optional trailing wait budget in milliseconds: absent or `null` means
@@ -1294,16 +1344,16 @@ pub(super) fn native_net_tcp_listen(
 fn builtin_opt_timeout_ms(args: &[Value], i: usize, name: &str) -> Result<Option<u64>, RunError> {
     match args.get(i) {
         None | Some(Value::Null) => Ok(None),
-        Some(Value::Number(n)) if n.is_finite() && *n >= 0.0 => Ok(Some(*n as u64)),
-        other => Err(RunError::err(
-            format!(
-                "`{name}` expects a `u64?` timeout in milliseconds, found {}",
-                other
-                    .map(|v| v.kind_name())
-                    .unwrap_or_else(|| "nothing".into())
-            ),
-            0..0,
-        )),
+        Some(v) => match v.num().and_then(|n| n.integer()) {
+            Some(n) if n >= 0 => Ok(Some(n as u64)),
+            _ => Err(RunError::err(
+                format!(
+                    "`{name}` expects a `u64?` timeout in milliseconds, found {}",
+                    v.kind_name()
+                ),
+                0..0,
+            )),
+        },
     }
 }
 
@@ -1316,7 +1366,7 @@ pub(super) fn native_net_tcp_accept(
     let handle = builtin_num_arg(args, 0, "std::net::tcp_accept")? as i64;
     let timeout = builtin_opt_timeout_ms(args, 1, "std::net::tcp_accept")?;
     Ok(std_result(
-        xulo_std::net::tcp_accept(handle, timeout).map(|h| Value::Number(h as f64)),
+        xulo_std::net::tcp_accept(handle, timeout).map(Value::Int),
     ))
 }
 
@@ -1329,7 +1379,7 @@ pub(super) fn native_net_tcp_connect(
     let addr = builtin_str_arg(args, 0, "std::net::tcp_connect")?;
     let timeout = builtin_opt_timeout_ms(args, 1, "std::net::tcp_connect")?;
     Ok(std_result(
-        xulo_std::net::tcp_connect(&addr, timeout).map(|h| Value::Number(h as f64)),
+        xulo_std::net::tcp_connect(&addr, timeout).map(Value::Int),
     ))
 }
 
@@ -1363,7 +1413,7 @@ pub(super) fn native_net_sock_write(
     let text = builtin_str_arg(args, 1, "std::net::sock_write")?;
     let timeout = builtin_opt_timeout_ms(args, 2, "std::net::sock_write")?;
     Ok(std_result(
-        xulo_std::net::sock_write(handle, &text, timeout).map(|n| Value::Number(n as f64)),
+        xulo_std::net::sock_write(handle, &text, timeout).map(Value::Int),
     ))
 }
 
@@ -1555,7 +1605,7 @@ fn run_output_value(r: xulo_std::process::RunOutput) -> Value {
     Value::Object(Rc::new(RefCell::new(vec![
         ("stdout".to_string(), Value::String(r.stdout.into())),
         ("stderr".to_string(), Value::String(r.stderr.into())),
-        ("code".to_string(), Value::Number(r.code as f64)),
+        ("code".to_string(), Value::Int(r.code)),
     ])))
 }
 
@@ -1683,7 +1733,7 @@ pub(super) fn child_object(handle: xulo_std::process::ChildHandle) -> Value {
             "pid".to_string(),
             Value::Native(Rc::new(move |_i, call_args| {
                 no_arg_guard(call_args, "Child::pid")?;
-                Ok(Value::Number(pid_h.borrow().pid() as f64))
+                Ok(Value::Int(pid_h.borrow().pid() as i64))
             })),
         ),
     ])))
@@ -1712,16 +1762,18 @@ pub(super) fn native_json_stringify(
     };
     let indent = match args.get(1) {
         None | Some(Value::Null) => None,
-        Some(Value::Number(n)) if n.is_finite() => Some(n.trunc() as i64),
-        Some(other) => {
-            return Err(RunError::err(
-                format!(
-                    "argument to `std::json::stringify` must be `number?`, found `{}`",
-                    other.kind_name()
-                ),
-                0..0,
-            ));
-        }
+        Some(v) => match v.num() {
+            Some(n) if n.to_f64().is_finite() => Some(n.to_f64().trunc() as i64),
+            _ => {
+                return Err(RunError::err(
+                    format!(
+                        "argument to `std::json::stringify` must be `number?`, found `{}`",
+                        v.kind_name()
+                    ),
+                    0..0,
+                ));
+            }
+        },
     };
     Ok(std_result(
         crate::runtime::value_to_json(value, 0)
@@ -1770,7 +1822,9 @@ pub(super) fn native_fmt_format(interp: &Interpreter, args: &[Value]) -> Result<
         .iter()
         .map(|value| match value {
             Value::String(s) => FmtArg::Str(s.to_string()),
-            Value::Number(n) => {
+            Value::Int(n) => FmtArg::Int(*n),
+            Value::UInt(n) => FmtArg::Float(*n as f64),
+            Value::Float(n) => {
                 // A whole float is its integer (`2` and `2.0` suit `%d`
                 // alike), but a negative zero keeps the float slot so `%f`
                 // and `%g` can render its sign.
@@ -1938,17 +1992,18 @@ pub(super) fn regex_match_value(m: &xulo_std::regex::Match) -> Value {
     let named: Vec<(String, Option<String>)> = m.named.clone();
     Value::Object(Rc::new(RefCell::new(vec![
         ("value".to_string(), Value::String(m.value.clone().into())),
-        ("index".to_string(), Value::Number(m.index as f64)),
-        ("end".to_string(), Value::Number(m.end_index as f64)),
+        ("index".to_string(), Value::Int(m.index as i64)),
+        ("end".to_string(), Value::Int(m.end_index as i64)),
         (
             "group".to_string(),
             Value::Native(Rc::new(move |_interp, call_args| match call_args.first() {
-                Some(Value::Number(index)) => {
-                    if !index.is_finite() || *index < 1.0 || index.fract() != 0.0 {
+                Some(index) if index.num().is_some() => {
+                    let index = index.num().expect("checked");
+                    let Some(index) = index.integer().filter(|n| *n >= 1) else {
                         return Ok(Value::Null);
-                    }
+                    };
                     Ok(groups
-                        .get(*index as usize - 1)
+                        .get(index as usize - 1)
                         .cloned()
                         .flatten()
                         .map(|s| Value::String(s.into()))
@@ -2025,28 +2080,15 @@ pub(super) fn native_spin_loop(_interp: &Interpreter, _args: &[Value]) -> Result
 }
 
 pub(super) fn native_array_new(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    let size = match args.first() {
-        Some(Value::Number(n)) => {
-            if n.is_nan() || *n < 0.0 || n.fract() != 0.0 {
-                return Err(RunError::err(
-                    format!("Array.new() size must be a non-negative integer, found {n}"),
-                    0..0,
-                ));
-            }
-            *n as usize
-        }
-        Some(other) => {
+    let size = match args.first().and_then(|v| v.num()).and_then(|n| n.integer()) {
+        Some(n) if n >= 0 => n as usize,
+        _ => {
+            let found = args
+                .first()
+                .map(|v| v.format())
+                .unwrap_or_else(|| "nothing".into());
             return Err(RunError::err(
-                format!(
-                    "Array.new() size must be a number, found {}",
-                    other.kind_name()
-                ),
-                0..0,
-            ));
-        }
-        None => {
-            return Err(RunError::err(
-                "Array.new() requires at least 1 argument",
+                format!("Array.new() size must be a non-negative integer, found {found}"),
                 0..0,
             ));
         }
@@ -2060,27 +2102,18 @@ pub(super) fn native_array_new(_interp: &Interpreter, args: &[Value]) -> Result<
 }
 
 pub(super) fn native_array_fill(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    let n = match args.first() {
-        Some(Value::Number(n)) => {
-            if n.is_nan() || *n < 0.0 || n.fract() != 0.0 {
-                return Err(RunError::err(
-                    format!("Array.fill() count must be a non-negative integer, found {n}"),
-                    0..0,
-                ));
-            }
-            *n as usize
-        }
-        Some(other) => {
+    let n = match args.first().and_then(|v| v.num()).and_then(|n| n.integer()) {
+        Some(n) if n >= 0 => n as usize,
+        _ => {
             return Err(RunError::err(
                 format!(
-                    "Array.fill() count must be a number, found {}",
-                    other.kind_name()
+                    "Array.fill() count must be a non-negative integer, found {}",
+                    args.first()
+                        .map(|v| v.format())
+                        .unwrap_or_else(|| "nothing".into())
                 ),
                 0..0,
             ));
-        }
-        None => {
-            return Err(RunError::err("Array.fill() requires 2 arguments", 0..0));
         }
     };
     let fill = args.get(1).cloned().unwrap_or(Value::Null);
@@ -2102,14 +2135,38 @@ pub(super) fn native_array_from(_interp: &Interpreter, args: &[Value]) -> Result
 /// semantic pass checks the registered signature; this guard rejects a
 /// non-integral value instead of silently truncating it.
 pub(super) fn builtin_int_arg(args: &[Value], i: usize, name: &str) -> Result<i64, RunError> {
-    let n = builtin_num_arg(args, i, name)?;
-    if !n.is_finite() || n.fract() != 0.0 {
-        return Err(RunError::err(
-            format!("`{name}` expects an integer, found {n}"),
+    let value = args.get(i);
+    match value.and_then(|v| v.num()).and_then(|n| n.integer()) {
+        Some(n) => i64::try_from(n)
+            .map_err(|_| RunError::err(format!("`{name}` expects an `int`, found {n}"), 0..0)),
+        None => Err(RunError::err(
+            format!(
+                "`{name}` expects an integer, found {}",
+                value
+                    .map(|v| v.kind_name())
+                    .unwrap_or_else(|| "nothing".into())
+            ),
             0..0,
-        ));
+        )),
     }
-    Ok(n as i64)
+}
+
+/// An unsigned 64-bit argument of a built-in (`u64` / `usize` signature).
+pub(super) fn builtin_u64_arg(args: &[Value], i: usize, name: &str) -> Result<u64, RunError> {
+    let value = args.get(i);
+    match value.and_then(|v| v.num()).and_then(|n| n.integer()) {
+        Some(n) => u64::try_from(n)
+            .map_err(|_| RunError::err(format!("`{name}` expects a `u64`, found {n}"), 0..0)),
+        None => Err(RunError::err(
+            format!(
+                "`{name}` expects an integer, found {}",
+                value
+                    .map(|v| v.kind_name())
+                    .unwrap_or_else(|| "nothing".into())
+            ),
+            0..0,
+        )),
+    }
 }
 
 /// `std::math::wrapping_add(a, b)` (spec `builtins/intrinsic-functions.md`).
@@ -2119,7 +2176,7 @@ pub(super) fn native_math_wrapping_add(
 ) -> Result<Value, RunError> {
     let a = builtin_int_arg(args, 0, "std::math::wrapping_add")?;
     let b = builtin_int_arg(args, 1, "std::math::wrapping_add")?;
-    Ok(Value::Number(xulo_std::math::wrapping_add(a, b) as f64))
+    Ok(Value::Int(xulo_std::math::wrapping_add(a, b)))
 }
 
 /// `std::math::wrapping_sub(a, b)`.
@@ -2129,7 +2186,7 @@ pub(super) fn native_math_wrapping_sub(
 ) -> Result<Value, RunError> {
     let a = builtin_int_arg(args, 0, "std::math::wrapping_sub")?;
     let b = builtin_int_arg(args, 1, "std::math::wrapping_sub")?;
-    Ok(Value::Number(xulo_std::math::wrapping_sub(a, b) as f64))
+    Ok(Value::Int(xulo_std::math::wrapping_sub(a, b)))
 }
 
 /// `std::math::wrapping_mul(a, b)`.
@@ -2139,7 +2196,7 @@ pub(super) fn native_math_wrapping_mul(
 ) -> Result<Value, RunError> {
     let a = builtin_int_arg(args, 0, "std::math::wrapping_mul")?;
     let b = builtin_int_arg(args, 1, "std::math::wrapping_mul")?;
-    Ok(Value::Number(xulo_std::math::wrapping_mul(a, b) as f64))
+    Ok(Value::Int(xulo_std::math::wrapping_mul(a, b)))
 }
 
 /// `std::math::pop_count(x)`.
@@ -2148,7 +2205,7 @@ pub(super) fn native_math_pop_count(
     args: &[Value],
 ) -> Result<Value, RunError> {
     let x = builtin_int_arg(args, 0, "std::math::pop_count")?;
-    Ok(Value::Number(xulo_std::math::pop_count(x) as f64))
+    Ok(Value::Int(xulo_std::math::pop_count(x)))
 }
 
 /// `std::math::count_leading_zeros(x)`.
@@ -2157,7 +2214,7 @@ pub(super) fn native_math_count_leading_zeros(
     args: &[Value],
 ) -> Result<Value, RunError> {
     let x = builtin_int_arg(args, 0, "std::math::count_leading_zeros")?;
-    Ok(Value::Number(xulo_std::math::count_leading_zeros(x) as f64))
+    Ok(Value::Int(xulo_std::math::count_leading_zeros(x)))
 }
 
 /// `std::math::count_trailing_zeros(x)`.
@@ -2166,7 +2223,7 @@ pub(super) fn native_math_count_trailing_zeros(
     args: &[Value],
 ) -> Result<Value, RunError> {
     let x = builtin_int_arg(args, 0, "std::math::count_trailing_zeros")?;
-    Ok(Value::Number(xulo_std::math::count_trailing_zeros(x) as f64))
+    Ok(Value::Int(xulo_std::math::count_trailing_zeros(x)))
 }
 
 /// `std::math::rotate_left(x, amount)`: `amount` is `u64` and taken modulo 64.
@@ -2175,8 +2232,8 @@ pub(super) fn native_math_rotate_left(
     args: &[Value],
 ) -> Result<Value, RunError> {
     let x = builtin_int_arg(args, 0, "std::math::rotate_left")?;
-    let amount = builtin_int_arg(args, 1, "std::math::rotate_left")? as u64;
-    Ok(Value::Number(xulo_std::math::rotate_left(x, amount) as f64))
+    let amount = builtin_u64_arg(args, 1, "std::math::rotate_left")?;
+    Ok(Value::Int(xulo_std::math::rotate_left(x, amount)))
 }
 
 /// `std::math::rotate_right(x, amount)`: `amount` is `u64` and modulo 64.
@@ -2185,8 +2242,8 @@ pub(super) fn native_math_rotate_right(
     args: &[Value],
 ) -> Result<Value, RunError> {
     let x = builtin_int_arg(args, 0, "std::math::rotate_right")?;
-    let amount = builtin_int_arg(args, 1, "std::math::rotate_right")? as u64;
-    Ok(Value::Number(xulo_std::math::rotate_right(x, amount) as f64))
+    let amount = builtin_u64_arg(args, 1, "std::math::rotate_right")?;
+    Ok(Value::Int(xulo_std::math::rotate_right(x, amount)))
 }
 
 // ──────────────────────────────────────────────────────────────────
@@ -2265,9 +2322,9 @@ fn http_field(value: &Value, key: &str) -> Option<Value> {
 /// A handler's `Response` value back into the pure record: the three public
 /// fields (`status` defaults to 0, which the server sends as `500`).
 fn http_response_from_value(value: &Value) -> Result<xulo_std::http::Response, RunError> {
-    let status = match http_field(value, "status") {
-        Some(Value::Number(n)) => n as i64,
-        _ => 0,
+    let status = match http_field(value, "status").as_ref().and_then(|v| v.num()) {
+        Some(n) => n.integer().unwrap_or(0) as i64,
+        None => 0,
     };
     let headers = match http_field(value, "headers") {
         Some(v) => http_header_list_arg(&v, "Response.headers")?,
@@ -2308,7 +2365,7 @@ fn http_request_value(interp: &Interpreter, req: xulo_std::http::Request) -> Val
 /// answer), with the type recorded so `.header(…)` resolves on it.
 fn http_response_value(interp: &Interpreter, res: xulo_std::http::Response) -> Value {
     let obj = Rc::new(RefCell::new(vec![
-        ("status".to_string(), Value::Number(res.status as f64)),
+        ("status".to_string(), Value::Int(res.status)),
         ("headers".to_string(), http_header_list_value(&res.headers)),
         ("body".to_string(), Value::String(res.body.into())),
     ]));
@@ -2413,16 +2470,18 @@ pub(super) fn native_http_response_text(
     let body = builtin_str_arg(args, 0, "Response.text")?;
     let status = match args.get(1) {
         None | Some(Value::Null) => 200,
-        Some(Value::Number(n)) => *n as i64,
-        Some(other) => {
-            return Err(RunError::err(
-                format!(
-                    "argument 2 to `Response.text` must be `number`, found `{}`",
-                    other.kind_name()
-                ),
-                0..0,
-            ));
-        }
+        Some(v) => match v.num().and_then(|n| n.integer()) {
+            Some(n) => n as i64,
+            None => {
+                return Err(RunError::err(
+                    format!(
+                        "argument 2 to `Response.text` must be `number`, found `{}`",
+                        v.kind_name()
+                    ),
+                    0..0,
+                ));
+            }
+        },
     };
     Ok(http_response_value(
         interp,

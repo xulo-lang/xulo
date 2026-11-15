@@ -10,7 +10,11 @@ pub(super) fn literal_matches(lit: &Literal, value: &Value) -> bool {
             Value::String(v) => v.as_ref() == s.as_str(),
             _ => false,
         },
-        Literal::Number(n) | Literal::Float(n) => matches!(value, Value::Number(v) if v == n),
+        Literal::Int(n) => value
+            .num()
+            .and_then(|v| v.integer())
+            .is_some_and(|v| v == *n),
+        Literal::Float(n) => value.num().is_some_and(|v| v.to_f64() == *n),
         Literal::Boolean(b) => matches!(value, Value::Boolean(v) if v == b),
         Literal::Null => matches!(value, Value::Null),
         Literal::List(_) | Literal::Object(_) => false,
@@ -21,14 +25,17 @@ pub(super) fn literal_matches(lit: &Literal, value: &Value) -> bool {
 /// negative, and NaN indices. Silently truncating (`-1.0 as usize` is 0 in
 /// Rust) used to read the wrong element — the JS path yields `undefined` for
 /// those, so the native runtime must not guess either.
-pub(super) fn list_index(n: f64, span: &std::ops::Range<usize>) -> Result<usize, RunError> {
-    if n.is_nan() || n < 0.0 || n.fract() != 0.0 {
-        return Err(RunError::err(
-            format!("index must be a non-negative integer, found {n}"),
+pub(super) fn list_index(n: Num, span: &std::ops::Range<usize>) -> Result<usize, RunError> {
+    match n.integer() {
+        Some(i) if i >= 0 && i <= usize::MAX as i128 => Ok(i as usize),
+        _ => Err(RunError::err(
+            format!(
+                "index must be a non-negative integer, found {}",
+                Value::from_num(n).format()
+            ),
             span.clone(),
-        ));
+        )),
     }
-    Ok(n as usize)
 }
 
 /// Whether an enum-pattern matches: the JS codegen accepts both a
@@ -109,24 +116,27 @@ pub(super) fn pattern_matches(
             end,
             end_inclusive,
             ..
-        } => match scrutinee {
-            Value::Number(n) => {
+        } => match scrutinee.num() {
+            Some(n) => {
+                let n = n.to_f64();
                 if *end_inclusive {
-                    n >= start && n <= end
+                    n >= *start && n <= *end
                 } else {
-                    n >= start && n < end
+                    n >= *start && n < *end
                 }
             }
-            Value::String(s) => {
-                let lo = s.as_ref() >= start.to_string().as_str();
-                let hi = if *end_inclusive {
-                    s.as_ref() <= end.to_string().as_str()
-                } else {
-                    s.as_ref() < end.to_string().as_str()
-                };
-                lo && hi
-            }
-            _ => false,
+            None => match scrutinee {
+                Value::String(s) => {
+                    let lo = s.as_ref() >= start.to_string().as_str();
+                    let hi = if *end_inclusive {
+                        s.as_ref() <= end.to_string().as_str()
+                    } else {
+                        s.as_ref() < end.to_string().as_str()
+                    };
+                    lo && hi
+                }
+                _ => false,
+            },
         },
         xulo_core::ast::MatchPattern::Binding { name, .. } => {
             env.borrow_mut().define(name, scrutinee.clone(), true);
@@ -191,7 +201,7 @@ pub(super) fn bind_struct_payload(
 pub(super) fn type_matches_value(type_: &Type, value: &Value) -> bool {
     match type_ {
         Type::String => matches!(value, Value::String(_)),
-        Type::Number => matches!(value, Value::Number(_)),
+        Type::Number => value.num().is_some(),
         Type::Boolean => matches!(value, Value::Boolean(_)),
         Type::Null => matches!(value, Value::Null),
         Type::List(_) => matches!(value, Value::List(_)),
@@ -215,9 +225,21 @@ pub(super) fn type_matches_value(type_: &Type, value: &Value) -> bool {
 pub(super) fn value_is_named_type(value: &Value, type_name: &str) -> bool {
     match type_name {
         // The spec primitive spellings (spec `types/primitive-types.md`),
-        // including the fixed-bit layer of the numeric system.
-        "number" | "int" | "float" | "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32"
-        | "u64" | "f32" | "f64" => matches!(value, Value::Number(_)),
+        // including the fixed-bit layer of the numeric system. Fixed-bit
+        // widths are not tracked at runtime, so a width test checks the
+        // value's range — the closest available approximation.
+        "number" => value.num().is_some(),
+        "int" | "i64" | "isize" => matches!(value, Value::Int(_)),
+        "i8" => matches!(value, Value::Int(n) if i8::try_from(*n).is_ok()),
+        "i16" => matches!(value, Value::Int(n) if i16::try_from(*n).is_ok()),
+        "i32" => matches!(value, Value::Int(n) if i32::try_from(*n).is_ok()),
+        "u64" | "usize" => {
+            matches!(value, Value::UInt(_)) || matches!(value, Value::Int(n) if *n >= 0)
+        }
+        "u8" => matches!(value, Value::Int(n) if u8::try_from(*n).is_ok()),
+        "u16" => matches!(value, Value::Int(n) if u16::try_from(*n).is_ok()),
+        "u32" => matches!(value, Value::Int(n) if u32::try_from(*n).is_ok()),
+        "float" | "f32" | "f64" => matches!(value, Value::Float(_)),
         "string" => matches!(value, Value::String(_)),
         "bool" => matches!(value, Value::Boolean(_)),
         "null" => matches!(value, Value::Null),

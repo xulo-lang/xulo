@@ -78,8 +78,8 @@ fn widget_with(
                     props = props.children(children);
                 }
                 "VStack" | "HStack" | "Fill" => {
-                    if let Some(Value::Number(spacing)) = get(&props_obj, "spacing") {
-                        props = props.number("spacing", *spacing);
+                    if let Some(spacing) = get(&props_obj, "spacing").and_then(number_of) {
+                        props = props.number("spacing", spacing);
                     }
                     let children = children_with(get(&props_obj, "children"), interp, callbacks);
                     props = props.children(children);
@@ -125,8 +125,8 @@ fn widget_with(
                 "Input" => {
                     let value = input_value(get(&props_obj, "value"));
                     props = props.string("value", value);
-                    if let Some(Value::Number(width)) = get(&props_obj, "width") {
-                        props = props.number("width", *width);
+                    if let Some(width) = get(&props_obj, "width").and_then(number_of) {
+                        props = props.number("width", width);
                     }
                     if let Some(placeholder) = get(&props_obj, "placeholder").and_then(string_of) {
                         props = props.string("placeholder", placeholder);
@@ -251,10 +251,19 @@ fn get<'a>(fields: &'a [(String, Value)], key: &str) -> Option<&'a Value> {
 fn string_of(value: &Value) -> Option<String> {
     match value {
         Value::String(s) => Some(s.to_string()),
-        Value::Number(n) => Some(n.to_string()),
+        Value::Int(_) | Value::UInt(_) | Value::Float(_) => Some(value.format()),
         Value::Boolean(b) => Some(b.to_string()),
         Value::Signal(cell) => string_of(&cell.borrow()),
         _ => None,
+    }
+}
+
+/// A numeric prop as the layout engine's `f64`; `int` and `u64` values (the
+/// default type of a literal) count as numbers.
+fn number_of(value: &Value) -> Option<f64> {
+    match value {
+        Value::Signal(cell) => number_of(&cell.borrow()),
+        other => other.num().map(|n| n.to_f64()),
     }
 }
 
@@ -299,8 +308,11 @@ fn extract_style(fields: &[(String, Value)], mut props: Props) -> Props {
         props = props.string("border", s);
     }
     // Numeric style props (short aliases: size, weight, radius)
-    if let Some(Value::Number(n)) = get(fields, "size").or_else(|| get(fields, "fontSize")) {
-        props = props.number("size", *n);
+    if let Some(n) = get(fields, "size")
+        .or_else(|| get(fields, "fontSize"))
+        .and_then(number_of)
+    {
+        props = props.number("size", n);
     }
     if let Some(s) = get(fields, "weight")
         .or_else(|| get(fields, "fontWeight"))
@@ -308,27 +320,26 @@ fn extract_style(fields: &[(String, Value)], mut props: Props) -> Props {
     {
         props = props.string("weight", s);
     }
-    if let Some(Value::Number(n)) = get(fields, "padding") {
-        props = props.number("padding", *n);
+    if let Some(n) = get(fields, "padding").and_then(number_of) {
+        props = props.number("padding", n);
     }
-    if let Some(Value::Number(n)) = get(fields, "margin") {
-        props = props.number("margin", *n);
+    if let Some(n) = get(fields, "margin").and_then(number_of) {
+        props = props.number("margin", n);
     }
     if let Some(s) = get(fields, "width").and_then(string_of) {
         props = props.string("width", s);
-    } else if let Some(Value::Number(n)) = get(fields, "width") {
-        props = props.string("width", n.to_string());
     }
     if let Some(s) = get(fields, "height").and_then(string_of) {
         props = props.string("height", s);
-    } else if let Some(Value::Number(n)) = get(fields, "height") {
-        props = props.string("height", n.to_string());
     }
-    if let Some(Value::Number(n)) = get(fields, "radius").or_else(|| get(fields, "borderRadius")) {
-        props = props.number("radius", *n);
+    if let Some(n) = get(fields, "radius")
+        .or_else(|| get(fields, "borderRadius"))
+        .and_then(number_of)
+    {
+        props = props.number("radius", n);
     }
-    if let Some(Value::Number(n)) = get(fields, "opacity") {
-        props = props.number("opacity", *n);
+    if let Some(n) = get(fields, "opacity").and_then(number_of) {
+        props = props.number("opacity", n);
     }
     if let Some(s) = get(fields, "alignment").and_then(string_of) {
         props = props.string("alignment", s);
@@ -337,15 +348,23 @@ fn extract_style(fields: &[(String, Value)], mut props: Props) -> Props {
         props = props.string("justify", s);
     }
     // Flex layout properties (yoga-layout compatible)
-    if let Some(Value::Number(n)) = get(fields, "flexGrow").or_else(|| get(fields, "flex_grow")) {
-        props = props.number("flexGrow", *n);
-    }
-    if let Some(Value::Number(n)) = get(fields, "flexShrink").or_else(|| get(fields, "flex_shrink"))
+    if let Some(n) = get(fields, "flexGrow")
+        .or_else(|| get(fields, "flex_grow"))
+        .and_then(number_of)
     {
-        props = props.number("flexShrink", *n);
+        props = props.number("flexGrow", n);
     }
-    if let Some(Value::Number(n)) = get(fields, "flexBasis").or_else(|| get(fields, "flex_basis")) {
-        props = props.number("flexBasis", *n);
+    if let Some(n) = get(fields, "flexShrink")
+        .or_else(|| get(fields, "flex_shrink"))
+        .and_then(number_of)
+    {
+        props = props.number("flexShrink", n);
+    }
+    if let Some(n) = get(fields, "flexBasis")
+        .or_else(|| get(fields, "flex_basis"))
+        .and_then(number_of)
+    {
+        props = props.number("flexBasis", n);
     }
     if let Some(s) = get(fields, "alignSelf")
         .or_else(|| get(fields, "align_self"))
@@ -354,17 +373,29 @@ fn extract_style(fields: &[(String, Value)], mut props: Props) -> Props {
         props = props.string("alignSelf", s);
     }
     // Min/max size constraints
-    if let Some(Value::Number(n)) = get(fields, "minWidth").or_else(|| get(fields, "min_width")) {
-        props = props.number("minWidth", *n);
+    if let Some(n) = get(fields, "minWidth")
+        .or_else(|| get(fields, "min_width"))
+        .and_then(number_of)
+    {
+        props = props.number("minWidth", n);
     }
-    if let Some(Value::Number(n)) = get(fields, "maxWidth").or_else(|| get(fields, "max_width")) {
-        props = props.number("maxWidth", *n);
+    if let Some(n) = get(fields, "maxWidth")
+        .or_else(|| get(fields, "max_width"))
+        .and_then(number_of)
+    {
+        props = props.number("maxWidth", n);
     }
-    if let Some(Value::Number(n)) = get(fields, "minHeight").or_else(|| get(fields, "min_height")) {
-        props = props.number("minHeight", *n);
+    if let Some(n) = get(fields, "minHeight")
+        .or_else(|| get(fields, "min_height"))
+        .and_then(number_of)
+    {
+        props = props.number("minHeight", n);
     }
-    if let Some(Value::Number(n)) = get(fields, "maxHeight").or_else(|| get(fields, "max_height")) {
-        props = props.number("maxHeight", *n);
+    if let Some(n) = get(fields, "maxHeight")
+        .or_else(|| get(fields, "max_height"))
+        .and_then(number_of)
+    {
+        props = props.number("maxHeight", n);
     }
     props
 }

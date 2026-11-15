@@ -562,11 +562,19 @@ pub(crate) fn literal_of(pair: Pair<'_, Rule>) -> R<Literal> {
             // to tell a float literal (`3.0`) from an integer one (`3`). The
             // grammar's float form is the only numeric spelling with a `.`.
             let raw = pair.as_str();
-            let value = decode_number(raw);
             Ok(if raw.contains('.') {
-                Literal::Float(value)
+                Literal::Float(decode_float(raw))
             } else {
-                Literal::Number(value)
+                Literal::Int(decode_integer(raw).ok_or_else(|| {
+                    // Spec `expressions/literals.md`: an integer literal that
+                    // does not fit its default type is `E0209`.
+                    XuloError::new(
+                        ErrorKind::Semantic,
+                        format!("literal `{raw}` does not fit in `int`"),
+                    )
+                    .with_code("E0209")
+                    .at(span_of(&pair))
+                })?)
             })
         }
         Rule::string_literal => Ok(Literal::String(decode_string(pair.as_str()))),
@@ -1387,24 +1395,38 @@ fn type_pattern(pair: Pair<'_, Rule>, span: Range<usize>) -> R<MatchPattern> {
     })
 }
 
-pub(crate) fn decode_number(raw: &str) -> f64 {
-    let lower = raw.to_ascii_lowercase();
-    let radix_body = |prefix: &str, radix| -> Option<f64> {
-        lower
-            .strip_prefix(prefix)
-            .and_then(|body| i64::from_str_radix(body, radix).ok())
-            .map(|v| v as f64)
+/// Decode an integer spelling (`42`, `0xff`, `0b1010`, `0o17`) exactly.
+/// Returns `None` when the value does not fit 128 bits (every spelling the
+/// grammar admits does; a caller turns `None` into a parse error).
+pub fn decode_integer(raw: &str) -> Option<i128> {
+    let radix = |prefix: &str| raw.strip_prefix(prefix);
+    let parsed = if let Some(body) = radix("0x").or_else(|| radix("0X")) {
+        u128::from_str_radix(body, 16)
+    } else if let Some(body) = radix("0b").or_else(|| radix("0B")) {
+        u128::from_str_radix(body, 2)
+    } else if let Some(body) = radix("0o").or_else(|| radix("0O")) {
+        u128::from_str_radix(body, 8)
+    } else {
+        raw.parse::<u128>()
     };
-    if let Some(v) = radix_body("0x", 16) {
-        return v;
-    }
-    if let Some(v) = radix_body("0b", 2) {
-        return v;
-    }
-    if let Some(v) = radix_body("0o", 8) {
-        return v;
-    }
+    parsed.ok().map(|value| value as i128)
+}
+
+/// Decode a float spelling (`3.14`) into an `f64`. An out-of-range magnitude
+/// becomes infinity, which the checker reports as `E0209` where a fixed-bit
+/// type is required.
+pub(crate) fn decode_float(raw: &str) -> f64 {
     raw.parse::<f64>().unwrap_or(0.0)
+}
+
+/// Decode a `number_literal` spelling into an `f64` (hex/bin/oct/dec).
+///
+/// Used for range-pattern bounds, which are still carried as `f64`.
+pub(crate) fn decode_number(raw: &str) -> f64 {
+    match decode_integer(raw) {
+        Some(value) => value as f64,
+        None => decode_float(raw),
+    }
 }
 
 pub(crate) fn decode_string(raw: &str) -> String {

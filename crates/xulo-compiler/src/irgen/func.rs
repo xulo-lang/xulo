@@ -328,6 +328,7 @@ impl IrGenerator {
     pub(super) fn generate_function_body(&mut self, f: &FnDef) -> Result<(), XuloError> {
         let func_idx = self.current_func.unwrap();
         self.dyn_tag_of.clear();
+        self.uint_range_names.clear();
         self.closure_env = None;
 
         // 捕获分析：被嵌套字面量自由引用的绑定需要装箱（cell 承载）
@@ -342,6 +343,9 @@ impl IrGenerator {
             // 记录参数的源级类型
             if let Some(ann) = &param.type_annotation {
                 self.source_types.insert(param.name.clone(), ann.clone());
+                if Self::is_unsigned_int_type(ann) {
+                    self.uint_range_names.insert(param.name.clone());
+                }
             }
             // 被捕获的参数装箱：cell 槽复用参数 LocalId（codegen 先解析实参
             // 再写 dst，参数原值可安全地作为 AllocCell 的输入）
@@ -802,6 +806,7 @@ impl IrGenerator {
             locals: std::mem::take(&mut self.locals),
             local_types: std::mem::take(&mut self.local_types),
             source_types: std::mem::take(&mut self.source_types),
+            uint_range_names: std::mem::take(&mut self.uint_range_names),
             label_map: std::mem::take(&mut self.label_map),
             dyn_tag_of: std::mem::take(&mut self.dyn_tag_of),
             loop_stack: std::mem::take(&mut self.loop_stack),
@@ -817,6 +822,7 @@ impl IrGenerator {
         self.locals = snap.locals;
         self.local_types = snap.local_types;
         self.source_types = snap.source_types;
+        self.uint_range_names = snap.uint_range_names;
         self.label_map = snap.label_map;
         self.dyn_tag_of = snap.dyn_tag_of;
         self.loop_stack = snap.loop_stack;

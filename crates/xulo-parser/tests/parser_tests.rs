@@ -560,9 +560,9 @@ fn numbers_hex_bin_oct() {
         };
         match &l.value {
             Some(Expression::Literal {
-                value: Literal::Number(n),
+                value: Literal::Int(n),
                 ..
-            }) => (*n, false),
+            }) => (*n as f64, false),
             Some(Expression::Literal {
                 value: Literal::Float(n),
                 ..
@@ -675,7 +675,7 @@ fn tuple_vs_group() {
     assert!(matches!(
         g.value,
         Some(Expression::Literal {
-            value: Literal::Number(_),
+            value: Literal::Int(_),
             ..
         })
     ));

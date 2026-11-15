@@ -137,6 +137,10 @@ fn format_value(value: i64, tag: i64) -> String {
         }
         1 => format!("{}", value),
         2 => format_number(f64::from_bits(value as u64)),
+        // `u64` shares the 64-bit slot with `int`; the compiler supplies this
+        // tag for values it knows are unsigned (spec
+        // `types/primitive-types.md`, "Integer").
+        10 => format!("{}", value as u64),
         3 => {
             let arr = value as *const XuloArray;
             unsafe {

@@ -14,7 +14,9 @@ use xulo_core::ast::{
 use xulo_core::error::{ErrorKind, XuloError};
 
 use crate::env::Env;
-use crate::value::{AstNodeRepr, AstNodeValue, FunctionValue, SpanValue, Value, equal, is_truthy};
+use crate::value::{
+    AstNodeRepr, AstNodeValue, FunctionValue, Num, NumError, SpanValue, Value, equal, is_truthy,
+};
 
 pub use xulo_core::ast::CallArg;
 
@@ -342,14 +344,14 @@ impl Interpreter {
         // `builtins/intrinsic-functions.md`): reached as `std::math::PI` /
         // `std::math::max(a, b)`, never as a value of its own.
         let math_members: Vec<(String, Value)> = vec![
-            ("PI".to_string(), Value::Number(xulo_std::math::PI)),
-            ("E".to_string(), Value::Number(xulo_std::math::E)),
-            ("TAU".to_string(), Value::Number(xulo_std::math::TAU)),
+            ("PI".to_string(), Value::Float(xulo_std::math::PI)),
+            ("E".to_string(), Value::Float(xulo_std::math::E)),
+            ("TAU".to_string(), Value::Float(xulo_std::math::TAU)),
             (
                 "INFINITY".to_string(),
-                Value::Number(xulo_std::math::INFINITY),
+                Value::Float(xulo_std::math::INFINITY),
             ),
-            ("NAN".to_string(), Value::Number(xulo_std::math::NAN)),
+            ("NAN".to_string(), Value::Float(xulo_std::math::NAN)),
             ("abs".to_string(), Value::Native(Rc::new(native_math_abs))),
             ("min".to_string(), Value::Native(Rc::new(native_math_min))),
             ("max".to_string(), Value::Native(Rc::new(native_math_max))),
@@ -1892,7 +1894,7 @@ fn novel_value_bytes(
         return;
     }
     match value {
-        Value::Number(_) | Value::Boolean(_) | Value::Null => {}
+        Value::Int(_) | Value::UInt(_) | Value::Float(_) | Value::Boolean(_) | Value::Null => {}
         Value::String(s) => {
             if seen.insert(Rc::as_ptr(s) as *const () as usize) {
                 *bytes = bytes.saturating_add(16u64.saturating_add(s.len() as u64));

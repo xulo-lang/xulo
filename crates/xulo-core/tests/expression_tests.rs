@@ -3,7 +3,7 @@ use xulo_core::ast::*;
 #[test]
 fn test_expression_span_literal() {
     let expr = Expression::Literal {
-        value: Literal::Number(42.0),
+        value: Literal::Int(42),
         span: 5..7,
     };
     assert_eq!(expr.span(), &(5..7));
@@ -120,7 +120,7 @@ fn test_expression_span_index() {
             span: 0..2,
         }),
         index: Box::new(Expression::Literal {
-            value: Literal::Number(0.0),
+            value: Literal::Int(0),
             span: 3..4,
         }),
         span: 0..5,

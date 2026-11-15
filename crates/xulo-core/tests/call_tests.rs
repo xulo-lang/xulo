@@ -135,7 +135,7 @@ fn test_call_arg_labeled() {
     let arg = CallArg {
         name: Some("x".to_string()),
         value: Expression::Literal {
-            value: Literal::Number(1.0),
+            value: Literal::Int(1),
             span: 4..5,
         },
     };
@@ -147,7 +147,7 @@ fn test_call_arg_positional() {
     let arg = CallArg {
         name: None,
         value: Expression::Literal {
-            value: Literal::Number(1.0),
+            value: Literal::Int(1),
             span: 0..1,
         },
     };

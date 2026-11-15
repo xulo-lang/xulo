@@ -14,6 +14,7 @@ mod expr;
 mod tokenize;
 mod types;
 
+pub use expr::decode_integer;
 pub use tokenize::{OPERATORS, tokenize};
 
 use std::ops::Range;

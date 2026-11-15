@@ -64,6 +64,27 @@ jobs:
           $out = & examples\.xupm\build\hello.exe
           if ($out -ne "Hello, world!") { throw "AOT smoke test failed: $out" }
 
+  conformance:
+    name: Spec conformance and repository pins
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      # WP0 (T7): the readiness matrix is written against pinned submodules.
+      - name: Submodule pins match docs/stage1-readiness.md
+        run: cargo test -p xulo-cli --test submodule_pins -- --nocapture
+
+      # WP0 (T3a–T3d): every annotated `xulo` example in the pinned spec is
+      # checked or run; failing examples must be triaged in
+      # crates/xulo-cli/tests/spec_conformance_baseline.tsv.
+      - name: Pinned spec examples conform
+        run: cargo test -p xulo-cli --test spec_conformance -- --nocapture
+
   examples:
     name: Run examples
     runs-on: ubuntu-latest

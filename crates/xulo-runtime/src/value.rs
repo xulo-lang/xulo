@@ -60,7 +60,16 @@ impl StringBuilderValue {
 /// semantics (`b = a; b[0] = 9` also changes `a`).
 #[derive(Clone)]
 pub enum Value {
-    Number(f64),
+    /// An `int` (64-bit signed) or a signed fixed-bit integer value. All
+    /// signed widths share this slot; the static type decides the width, and
+    /// the interpreter traps when an operation leaves that width's range
+    /// (spec `types/primitive-types.md`, "Overflow").
+    Int(i64),
+    /// A `u64`/`usize` value above `i64::MAX`. Smaller unsigned values are
+    /// ordinary [`Value::Int`]s, so `u64` shares the same arithmetic tower.
+    UInt(u64),
+    /// A `float`, `f32`, or `f64` value.
+    Float(f64),
     /// An immutable string backed by a refcounted buffer: cloning a `Value`
     /// (env reads, argument passing, indexing) is then a cheap refcount bump
     /// instead of a full heap copy, and the buffer can never be mutated in
@@ -180,7 +189,9 @@ impl Value {
     /// A short type name for error messages (e.g. "a `number`").
     pub fn kind_name(&self) -> String {
         match self {
-            Value::Number(_) => "a `number`".into(),
+            Value::Int(_) => "an `int`".into(),
+            Value::UInt(_) => "a `u64`".into(),
+            Value::Float(_) => "a `float`".into(),
             Value::String(_) => "a `string`".into(),
             Value::Boolean(_) => "a `bool`".into(),
             Value::Null => "`null`".into(),
@@ -208,7 +219,9 @@ impl Value {
     /// so a shared (non-cyclic) reference like `[a, a]` still prints twice.
     fn format_seen(&self, seen: &mut std::collections::HashSet<usize>) -> String {
         match self {
-            Value::Number(n) => format_number(*n),
+            Value::Int(n) => n.to_string(),
+            Value::UInt(n) => n.to_string(),
+            Value::Float(n) => format_number(*n),
             Value::String(s) => s.to_string(),
             Value::Boolean(b) => b.to_string(),
             Value::Null => "null".to_string(),
@@ -281,7 +294,17 @@ pub use xulo_std::format_number;
 /// payload, mirroring how `match` tests them).
 pub fn equal(a: &Value, b: &Value) -> bool {
     match (a, b) {
-        (Value::Number(x), Value::Number(y)) => x == y,
+        (Value::Int(x), Value::Int(y)) => x == y,
+        (Value::UInt(x), Value::UInt(y)) => x == y,
+        (Value::Float(x), Value::Float(y)) => x == y,
+        // `==` compares numbers by value across the three slots (spec
+        // `expressions/operators.md`): `1 == 1.0` is true, and an `int` and a
+        // `u64` with the same magnitude are equal.
+        (Value::Int(x), Value::UInt(y)) | (Value::UInt(y), Value::Int(x)) => {
+            *x >= 0 && *x as u64 == *y
+        }
+        (Value::Int(x), Value::Float(y)) | (Value::Float(y), Value::Int(x)) => *x as f64 == *y,
+        (Value::UInt(x), Value::Float(y)) | (Value::Float(y), Value::UInt(x)) => *x as f64 == *y,
         (Value::String(x), Value::String(y)) => x == y,
         (Value::Boolean(x), Value::Boolean(y)) => x == y,
         (Value::Null, Value::Null) => true,
@@ -328,10 +351,360 @@ pub fn equal(a: &Value, b: &Value) -> bool {
 pub fn is_truthy(v: &Value) -> bool {
     match v {
         Value::Boolean(b) => *b,
-        Value::Number(n) => *n != 0.0 && !n.is_nan(),
+        Value::Int(n) => *n != 0,
+        Value::UInt(n) => *n != 0,
+        Value::Float(n) => *n != 0.0 && !n.is_nan(),
         Value::String(s) => !s.is_empty(),
         Value::AstNode(_) => true,
         Value::Null => false,
         _ => true,
+    }
+}
+
+/// The interpreter's numeric tower (spec `types/primitive-types.md`): `int`,
+/// `u64`, and `float` share three value slots, and an operation stays integral
+/// unless a float takes part. Integer operations are checked against their
+/// width and trap on overflow; division and remainder by zero and an
+/// out-of-range shift amount also trap.
+#[derive(Clone, Copy, Debug)]
+pub enum Num {
+    Int(i64),
+    UInt(u64),
+    Float(f64),
+}
+
+/// Why an integral operation could not produce a value. The caller names the
+/// operator in the diagnostic.
+#[derive(Clone, Copy, Debug)]
+pub enum NumError {
+    /// The result leaves the operand type's range (spec
+    /// `types/primitive-types.md`, "Overflow").
+    Overflow,
+    /// `/` or `%` with a zero divisor (spec `expressions/operators.md`).
+    DivByZero,
+    /// A shift amount outside `0 … width-1` (spec `expressions/operators.md`).
+    ShiftRange,
+    /// `**` with a negative integer exponent.
+    NegativeExponent,
+    /// A bitwise operator applied to a `float`.
+    NotAnInteger,
+}
+
+impl NumError {
+    pub fn message(self) -> &'static str {
+        match self {
+            NumError::Overflow => "integer overflow",
+            NumError::DivByZero => "division by zero",
+            NumError::ShiftRange => "shift amount out of range",
+            NumError::NegativeExponent => "negative exponent",
+            NumError::NotAnInteger => "expected an integer",
+        }
+    }
+}
+
+impl Value {
+    /// The numeric view of this value, if it is a number.
+    pub fn num(&self) -> Option<Num> {
+        match self {
+            Value::Int(n) => Some(Num::Int(*n)),
+            Value::UInt(n) => Some(Num::UInt(*n)),
+            Value::Float(n) => Some(Num::Float(*n)),
+            _ => None,
+        }
+    }
+
+    /// A numeric value in the slot that holds it: a non-negative `u64` that
+    /// fits `i64` is an `int`, so ordinary arithmetic keeps the narrower slot.
+    pub fn from_num(num: Num) -> Value {
+        match num {
+            Num::Int(n) => Value::Int(n),
+            Num::UInt(n) => {
+                if n <= i64::MAX as u64 {
+                    Value::Int(n as i64)
+                } else {
+                    Value::UInt(n)
+                }
+            }
+            Num::Float(n) => Value::Float(n),
+        }
+    }
+}
+
+/// The tower's methods deliberately share names with `std::ops` traits
+/// (`add`, `cmp`, …): each is a checked, `Result`-returning operation, not an
+/// operator implementation, so the trait analogy would be misleading.
+#[allow(clippy::should_implement_trait)]
+impl Num {
+    pub fn to_f64(self) -> f64 {
+        match self {
+            Num::Int(n) => n as f64,
+            Num::UInt(n) => n as f64,
+            Num::Float(n) => n,
+        }
+    }
+
+    pub fn is_float(self) -> bool {
+        matches!(self, Num::Float(_))
+    }
+
+    /// The exact integer value, when this is an integral number.
+    pub fn integer(self) -> Option<i128> {
+        match self {
+            Num::Int(n) => Some(n as i128),
+            Num::UInt(n) => Some(n as i128),
+            Num::Float(n) if n.is_finite() && n.fract() == 0.0 => Some(n as i128),
+            Num::Float(_) => None,
+        }
+    }
+
+    /// Promote to `f64` when either operand is a float, else stay integral.
+    fn pair(a: Num, b: Num) -> Option<(Num, Num)> {
+        if a.is_float() || b.is_float() {
+            Some((Num::Float(a.to_f64()), Num::Float(b.to_f64())))
+        } else {
+            Some((a, b))
+        }
+    }
+
+    /// Narrow an exact 128-bit result back into a value slot: an `int` when it
+    /// fits, else a `u64`, else overflow.
+    fn narrow(value: i128) -> Result<Value, NumError> {
+        if let Ok(n) = i64::try_from(value) {
+            Ok(Value::Int(n))
+        } else if let Ok(n) = u64::try_from(value) {
+            Ok(Value::UInt(n))
+        } else {
+            Err(NumError::Overflow)
+        }
+    }
+
+    pub fn add(a: Num, b: Num) -> Result<Value, NumError> {
+        match Num::pair(a, b).expect("pair always succeeds") {
+            (Num::Float(x), Num::Float(y)) => Ok(Value::Float(x + y)),
+            (Num::Int(x), Num::Int(y)) => {
+                x.checked_add(y).map(Value::Int).ok_or(NumError::Overflow)
+            }
+            (Num::UInt(x), Num::UInt(y)) => {
+                x.checked_add(y).map(Value::UInt).ok_or(NumError::Overflow)
+            }
+            (x, y) => Num::narrow(
+                x.integer()
+                    .expect("integral")
+                    .checked_add(y.integer().expect("integral"))
+                    .ok_or(NumError::Overflow)?,
+            ),
+        }
+    }
+
+    pub fn sub(a: Num, b: Num) -> Result<Value, NumError> {
+        match Num::pair(a, b).expect("pair always succeeds") {
+            (Num::Float(x), Num::Float(y)) => Ok(Value::Float(x - y)),
+            (Num::Int(x), Num::Int(y)) => {
+                x.checked_sub(y).map(Value::Int).ok_or(NumError::Overflow)
+            }
+            // `T op T` keeps the operand type (spec
+            // `types/primitive-types.md`, "Arithmetic result types"), so a
+            // `u64` difference below zero leaves the type's range and traps.
+            // Mixed dynamic operands still narrow.
+            (Num::UInt(x), Num::UInt(y)) => {
+                x.checked_sub(y).map(Value::UInt).ok_or(NumError::Overflow)
+            }
+            (x, y) => Num::narrow(
+                x.integer()
+                    .expect("integral")
+                    .checked_sub(y.integer().expect("integral"))
+                    .ok_or(NumError::Overflow)?,
+            ),
+        }
+    }
+
+    pub fn mul(a: Num, b: Num) -> Result<Value, NumError> {
+        match Num::pair(a, b).expect("pair always succeeds") {
+            (Num::Float(x), Num::Float(y)) => Ok(Value::Float(x * y)),
+            (Num::Int(x), Num::Int(y)) => {
+                x.checked_mul(y).map(Value::Int).ok_or(NumError::Overflow)
+            }
+            (Num::UInt(x), Num::UInt(y)) => {
+                x.checked_mul(y).map(Value::UInt).ok_or(NumError::Overflow)
+            }
+            (x, y) => Num::narrow(
+                x.integer()
+                    .expect("integral")
+                    .checked_mul(y.integer().expect("integral"))
+                    .ok_or(NumError::Overflow)?,
+            ),
+        }
+    }
+
+    /// `/`: integer division truncates toward zero (spec
+    /// `expressions/operators.md`); float division follows IEEE-754.
+    pub fn div(a: Num, b: Num) -> Result<Value, NumError> {
+        match Num::pair(a, b).expect("pair always succeeds") {
+            (Num::Float(x), Num::Float(y)) => Ok(Value::Float(x / y)),
+            (Num::Int(x), Num::Int(y)) => x.checked_div(y).map(Value::Int).ok_or(if y == 0 {
+                NumError::DivByZero
+            } else {
+                NumError::Overflow
+            }),
+            (Num::UInt(x), Num::UInt(y)) => {
+                x.checked_div(y).map(Value::UInt).ok_or(NumError::DivByZero)
+            }
+            (x, y) => {
+                let divisor = y.integer().expect("integral");
+                if divisor == 0 {
+                    return Err(NumError::DivByZero);
+                }
+                Num::narrow(x.integer().expect("integral") / divisor)
+            }
+        }
+    }
+
+    /// `%`: the remainder takes the dividend's sign (spec
+    /// `expressions/operators.md`).
+    pub fn rem(a: Num, b: Num) -> Result<Value, NumError> {
+        match Num::pair(a, b).expect("pair always succeeds") {
+            (Num::Float(x), Num::Float(y)) => Ok(Value::Float(x % y)),
+            (Num::Int(x), Num::Int(y)) => x.checked_rem(y).map(Value::Int).ok_or(if y == 0 {
+                NumError::DivByZero
+            } else {
+                NumError::Overflow
+            }),
+            (Num::UInt(x), Num::UInt(y)) => {
+                x.checked_rem(y).map(Value::UInt).ok_or(NumError::DivByZero)
+            }
+            (x, y) => {
+                let divisor = y.integer().expect("integral");
+                if divisor == 0 {
+                    return Err(NumError::DivByZero);
+                }
+                Num::narrow(x.integer().expect("integral") % divisor)
+            }
+        }
+    }
+
+    pub fn pow(a: Num, b: Num) -> Result<Value, NumError> {
+        if a.is_float() || b.is_float() {
+            return Ok(Value::Float(a.to_f64().powf(b.to_f64())));
+        }
+        let Some(exponent) = b.integer() else {
+            return Err(NumError::NegativeExponent);
+        };
+        let Ok(exponent) = u32::try_from(exponent) else {
+            return Err(NumError::NegativeExponent);
+        };
+        match (a, b) {
+            (Num::Int(x), _) => x
+                .checked_pow(exponent)
+                .map(Value::Int)
+                .ok_or(NumError::Overflow),
+            (Num::UInt(x), _) => x
+                .checked_pow(exponent)
+                .map(Value::UInt)
+                .ok_or(NumError::Overflow),
+            _ => unreachable!("floats handled above"),
+        }
+    }
+
+    fn bit_op(
+        a: Num,
+        b: Num,
+        int: fn(i64, i64) -> i64,
+        uint: fn(u64, u64) -> u64,
+    ) -> Result<Value, NumError> {
+        let (a, b) = match (a, b) {
+            (Num::Int(x), Num::Int(y)) => return Ok(Value::Int(int(x, y))),
+            (Num::UInt(x), Num::UInt(y)) => return Ok(Value::UInt(uint(x, y))),
+            (Num::Float(_), _) | (_, Num::Float(_)) => return Err(NumError::NotAnInteger),
+            (x, y) => (x, y),
+        };
+        let value = int(
+            a.integer().expect("integral") as i64,
+            b.integer().expect("integral") as i64,
+        ) as i128;
+        Num::narrow(value)
+    }
+
+    pub fn bit_and(a: Num, b: Num) -> Result<Value, NumError> {
+        Num::bit_op(a, b, |x, y| x & y, |x, y| x & y)
+    }
+
+    pub fn bit_or(a: Num, b: Num) -> Result<Value, NumError> {
+        Num::bit_op(a, b, |x, y| x | y, |x, y| x | y)
+    }
+
+    pub fn bit_xor(a: Num, b: Num) -> Result<Value, NumError> {
+        Num::bit_op(a, b, |x, y| x ^ y, |x, y| x ^ y)
+    }
+
+    pub fn bit_not(a: Num) -> Result<Value, NumError> {
+        match a {
+            Num::Int(x) => Ok(Value::Int(!x)),
+            Num::UInt(x) => Ok(Value::UInt(!x)),
+            Num::Float(_) => Err(NumError::NotAnInteger),
+        }
+    }
+
+    /// `<<` fills from the right with `0`; `>>` fills with the sign bit for a
+    /// signed type and with `0` for an unsigned one. Bits shifted out are
+    /// discarded (spec `expressions/operators.md`).
+    pub fn shift(a: Num, amount: Num, left: bool) -> Result<Value, NumError> {
+        let amount = match amount.integer() {
+            Some(amount) if (0..64).contains(&amount) => amount as u32,
+            _ => return Err(NumError::ShiftRange),
+        };
+        match a {
+            Num::Int(x) if left => Ok(Value::Int((x as u64).wrapping_shl(amount) as i64)),
+            Num::Int(x) => Ok(Value::Int(x >> amount)),
+            Num::UInt(x) if left => Ok(Value::UInt(x.wrapping_shl(amount))),
+            Num::UInt(x) => Ok(Value::UInt(x >> amount)),
+            Num::Float(_) => Err(NumError::NotAnInteger),
+        }
+    }
+
+    pub fn neg(a: Num) -> Result<Value, NumError> {
+        match a {
+            Num::Float(x) => Ok(Value::Float(-x)),
+            Num::Int(x) => x.checked_neg().map(Value::Int).ok_or(NumError::Overflow),
+            Num::UInt(x) => Num::narrow(-(x as i128)),
+        }
+    }
+
+    /// Ordering between two numbers (`None` when a `NaN` takes part). Mixed
+    /// integer/float comparisons are exact: `9007199254740993 > 9007199254740992.0`
+    /// holds even though both round to the same `f64`.
+    pub fn cmp(a: Num, b: Num) -> Option<std::cmp::Ordering> {
+        use std::cmp::Ordering;
+        match (a, b) {
+            (Num::Int(x), Num::Int(y)) => Some(x.cmp(&y)),
+            (Num::UInt(x), Num::UInt(y)) => Some(x.cmp(&y)),
+            (Num::Int(x), Num::UInt(y)) => Some((x as i128).cmp(&(y as i128))),
+            (Num::UInt(x), Num::Int(y)) => Some((x as i128).cmp(&(y as i128))),
+            (Num::Float(x), Num::Float(y)) => x.partial_cmp(&y),
+            (Num::Int(x), Num::Float(y)) => cmp_i128_f64(x as i128, y),
+            (Num::UInt(x), Num::Float(y)) => cmp_i128_f64(x as i128, y),
+            (Num::Float(x), Num::Int(y)) => cmp_i128_f64(y as i128, x).map(Ordering::reverse),
+            (Num::Float(x), Num::UInt(y)) => cmp_i128_f64(y as i128, x).map(Ordering::reverse),
+        }
+    }
+}
+
+/// Exact comparison of an integer with a float: values beyond `i128` compare
+/// by sign, and a fractional float orders against the truncation.
+fn cmp_i128_f64(integer: i128, float: f64) -> Option<std::cmp::Ordering> {
+    use std::cmp::Ordering;
+    if float.is_nan() {
+        return None;
+    }
+    if float >= 1.7e38 {
+        return Some(Ordering::Less);
+    }
+    if float <= -1.7e38 {
+        return Some(Ordering::Greater);
+    }
+    let truncated = float.trunc() as i128;
+    match integer.cmp(&truncated) {
+        Ordering::Equal if float.fract() > 0.0 => Some(Ordering::Less),
+        Ordering::Equal if float.fract() < 0.0 => Some(Ordering::Greater),
+        other => Some(other),
     }
 }

@@ -308,12 +308,14 @@ pub extern "C" fn xulo_panic(value: i64, tag: i64) {
     std::process::exit(1);
 }
 
-/// 动态数值转 f64：tag=2 按位模式还原，其余按数值转换。
-/// 运行时算术的操作数标签在编译期未知（match 绑定等），统一走这里。
+/// 动态数值转 f64：tag=2 按位模式还原，tag=10 按无符号整数转换，其余按
+/// 数值转换。运行时算术的操作数标签在编译期未知（match 绑定等），统一走
+/// 这里。
 #[unsafe(no_mangle)]
 pub extern "C" fn xulo_as_f64(value: i64, tag: i64) -> f64 {
     match tag {
         2 => f64::from_bits(value as u64),
+        10 => (value as u64) as f64,
         5 => {
             if value != 0 {
                 1.0
@@ -394,20 +396,178 @@ pub extern "C" fn xulo_literal_match(scrut: i64, scrut_tag: i64, lit: i64, lit_t
     i64::from(matched)
 }
 
+/// Abort the compiled program with the interpreter's runtime-failure status.
+/// A message on stderr plus exit status 1 is the contract Rust callers (and
+/// `xupm run`) already use for `xulo_panic`.
+fn trap(message: &str) -> ! {
+    eprintln!("panic: {message}");
+    std::process::exit(1);
+}
+
+/// Narrow an exact 128-bit integer result back into a 64-bit slot: the bits
+/// are the same for `int` and `u64`; only the print tag differs. A result
+/// outside `-2^63 … 2^64-1` is an overflow.
+fn narrow_integer(value: i128) -> i64 {
+    if i64::try_from(value).is_ok() || u64::try_from(value).is_ok() {
+        value as i64
+    } else {
+        trap("integer overflow")
+    }
+}
+
+/// Checked integral `+` (spec `types/primitive-types.md`, "Overflow"). The
+/// third argument selects the unsigned `u64` domain; the slot stays 64 bits.
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_int_add(left: i64, right: i64, unsigned: i64) -> i64 {
+    if unsigned != 0 {
+        (left as u64)
+            .checked_add(right as u64)
+            .map(|v| v as i64)
+            .unwrap_or_else(|| trap("integer overflow"))
+    } else {
+        left.checked_add(right)
+            .unwrap_or_else(|| trap("integer overflow"))
+    }
+}
+
+/// Checked integral `-` (a `u64` difference below zero traps, like `int`).
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_int_sub(left: i64, right: i64, unsigned: i64) -> i64 {
+    if unsigned != 0 {
+        (left as u64)
+            .checked_sub(right as u64)
+            .map(|v| v as i64)
+            .unwrap_or_else(|| trap("integer overflow"))
+    } else {
+        left.checked_sub(right)
+            .unwrap_or_else(|| trap("integer overflow"))
+    }
+}
+
+/// Checked integral `*`.
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_int_mul(left: i64, right: i64, unsigned: i64) -> i64 {
+    if unsigned != 0 {
+        (left as u64)
+            .checked_mul(right as u64)
+            .map(|v| v as i64)
+            .unwrap_or_else(|| trap("integer overflow"))
+    } else {
+        left.checked_mul(right)
+            .unwrap_or_else(|| trap("integer overflow"))
+    }
+}
+
+/// Checked integral `/`: division truncates toward zero and a zero divisor is
+/// a runtime failure (spec `expressions/operators.md`).
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_int_div(left: i64, right: i64, unsigned: i64) -> i64 {
+    if unsigned != 0 {
+        (left as u64)
+            .checked_div(right as u64)
+            .map(|v| v as i64)
+            .unwrap_or_else(|| trap("division by zero"))
+    } else {
+        left.checked_div(right).unwrap_or_else(|| {
+            if right == 0 {
+                trap("division by zero")
+            } else {
+                trap("integer overflow")
+            }
+        })
+    }
+}
+
+/// Checked integral `%`: the remainder takes the dividend's sign.
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_int_rem(left: i64, right: i64, unsigned: i64) -> i64 {
+    if unsigned != 0 {
+        (left as u64)
+            .checked_rem(right as u64)
+            .map(|v| v as i64)
+            .unwrap_or_else(|| trap("division by zero"))
+    } else {
+        left.checked_rem(right).unwrap_or_else(|| {
+            if right == 0 {
+                trap("division by zero")
+            } else {
+                trap("integer overflow")
+            }
+        })
+    }
+}
+
+/// Checked integral `**`; a negative exponent is a runtime failure.
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_int_pow(left: i64, right: i64, unsigned: i64) -> i64 {
+    let Ok(exponent) = u32::try_from(right) else {
+        trap("negative exponent");
+    };
+    if unsigned != 0 {
+        (left as u64)
+            .checked_pow(exponent)
+            .map(|v| v as i64)
+            .unwrap_or_else(|| trap("integer overflow"))
+    } else {
+        left.checked_pow(exponent)
+            .unwrap_or_else(|| trap("integer overflow"))
+    }
+}
+
+/// Checked unary `-`. `-u64` narrows to `int`, like the interpreter.
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_int_neg(value: i64, unsigned: i64) -> i64 {
+    if unsigned != 0 {
+        narrow_integer(-((value as u64) as i128))
+    } else {
+        value
+            .checked_neg()
+            .unwrap_or_else(|| trap("integer overflow"))
+    }
+}
+
+/// Exact integral comparison across signedness (spec
+/// `expressions/operators.md`, "Comparison operators"): `int` and `u64`
+/// compare by mathematical value, so `0 - 1 == 18446744073709551615` is
+/// false. Returns `-1`, `0`, or `1`.
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_num_compare(
+    left: i64,
+    right: i64,
+    left_unsigned: i64,
+    right_unsigned: i64,
+) -> i64 {
+    let l = if left_unsigned != 0 {
+        (left as u64) as i128
+    } else {
+        left as i128
+    };
+    let r = if right_unsigned != 0 {
+        (right as u64) as i128
+    } else {
+        right as i128
+    };
+    match l.cmp(&r) {
+        std::cmp::Ordering::Less => -1,
+        std::cmp::Ordering::Equal => 0,
+        std::cmp::Ordering::Greater => 1,
+    }
+}
+
 /// `<<` / `>>` compiled entry point (spec `expressions/operators.md`): the
 /// amount must be in `0 … 63`; an out-of-range amount is a runtime failure,
-/// matching the interpreter's `RunError`. `right != 0` selects the
-/// sign-filling shift.
+/// matching the interpreter's `RunError`. `mode` is 0 for `<<`, 1 for a
+/// sign-filling `>>` (`int`), and 2 for a zero-filling `>>` (`u64`).
 #[unsafe(no_mangle)]
-pub extern "C" fn xulo_shift(value: i64, amount: i64, right: i64) -> i64 {
+pub extern "C" fn xulo_shift(value: i64, amount: i64, mode: i64) -> i64 {
     if !(0..64).contains(&amount) {
         eprintln!("shift amount out of range: {amount}");
         std::process::exit(1);
     }
     let amount = amount as u32;
-    if right != 0 {
-        value >> amount
-    } else {
-        ((value as u64).wrapping_shl(amount)) as i64
+    match mode {
+        0 => ((value as u64).wrapping_shl(amount)) as i64,
+        2 => ((value as u64) >> amount) as i64,
+        _ => value >> amount,
     }
 }

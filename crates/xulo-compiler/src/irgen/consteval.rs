@@ -13,7 +13,10 @@ impl IrGenerator {
             ConstDef {
                 module_id: module_id.to_string(),
                 tag: Self::const_static_tag(expr),
-                ty: Self::const_static_type(expr),
+                ty: b
+                    .type_annotation
+                    .clone()
+                    .or_else(|| Self::const_static_type(expr)),
                 expr: expr.clone(),
             },
         );
@@ -24,13 +27,8 @@ impl IrGenerator {
         match expr {
             Expression::Literal { value, .. } => match value {
                 Literal::String(_) => 0,
-                Literal::Number(n) => {
-                    if n.fract() == 0.0 && n.is_finite() && n.abs() <= 9.007_199_254_740_992e15 {
-                        1
-                    } else {
-                        2
-                    }
-                }
+                Literal::Int(n) if *n > i64::MAX as i128 => 10,
+                Literal::Int(_) => 1,
                 Literal::Float(_) => 2,
                 Literal::Boolean(_) => 5,
                 Literal::Null => 6,
@@ -54,7 +52,7 @@ impl IrGenerator {
         match expr {
             Expression::Literal { value, .. } => Some(match value {
                 Literal::String(_) => Type::String,
-                Literal::Number(_) | Literal::Float(_) => Type::Number,
+                Literal::Int(_) | Literal::Float(_) => Type::Number,
                 Literal::Boolean(_) => Type::Boolean,
                 Literal::Null => Type::Null,
                 Literal::List(_) => Type::List(Box::new(Type::Any)),

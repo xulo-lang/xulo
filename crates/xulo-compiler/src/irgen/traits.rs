@@ -549,6 +549,7 @@ impl IrGenerator {
                 self.locals.clear();
                 self.local_types.clear();
                 self.source_types.clear();
+                self.uint_range_names.clear();
                 self.label_map.clear();
                 self.dyn_tag_of.clear();
                 self.boxed_names.clear();

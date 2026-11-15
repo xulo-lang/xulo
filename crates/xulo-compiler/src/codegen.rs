@@ -130,6 +130,16 @@ pub(crate) fn runtime_fn_name(func: &RuntimeFn) -> &'static str {
         RuntimeFn::StringBuilderEq => "xulo_string_builder_eq",
         RuntimeFn::LiteralMatch => "xulo_literal_match",
         RuntimeFn::RangeList => "xulo_range_list",
+        RuntimeFn::IntAdd => "xulo_int_add",
+        RuntimeFn::IntSub => "xulo_int_sub",
+        RuntimeFn::IntMul => "xulo_int_mul",
+        RuntimeFn::IntDiv => "xulo_int_div",
+        RuntimeFn::IntRem => "xulo_int_rem",
+        RuntimeFn::IntPow => "xulo_int_pow",
+        RuntimeFn::IntNeg => "xulo_int_neg",
+        RuntimeFn::NumCompare => "xulo_num_compare",
+        RuntimeFn::DetectTag => "xulo_detect_tag",
+        RuntimeFn::IntShift => "xulo_shift",
         RuntimeFn::Intrinsic(name) => name,
     }
 }

@@ -608,8 +608,8 @@ impl Interpreter {
                         span.clone(),
                     ));
                 }
-                Ok(Value::Number(
-                    receiver.chars().nth(i).map(|c| c as u32).unwrap_or(0) as f64,
+                Ok(Value::Int(
+                    receiver.chars().nth(i).map(|c| c as u32).unwrap_or(0) as i64,
                 ))
             }
             "slice" => {
@@ -626,7 +626,7 @@ impl Interpreter {
                 let bytes: Vec<Value> = receiver
                     .as_bytes()
                     .iter()
-                    .map(|b| Value::Number(*b as f64))
+                    .map(|b| Value::Int(*b as i64))
                     .collect();
                 Ok(Value::List(Rc::new(RefCell::new(bytes))))
             }
@@ -735,7 +735,15 @@ impl Interpreter {
                 RunError::err(format!("`{text}` is not a const length"), call.span.clone())
             })?,
             Type::Named(name, a) if a.is_empty() => match env.borrow().get(name) {
-                Some(Value::Number(n)) => n as i64,
+                Some(v) => match v.num().and_then(|n| n.integer()) {
+                    Some(n) => i64::try_from(n).unwrap_or(i64::MAX),
+                    None => {
+                        return Err(RunError::err(
+                            format!("`{name}` is not a const length"),
+                            call.span.clone(),
+                        ));
+                    }
+                },
                 _ => {
                     return Err(RunError::err(
                         format!("`{name}` is not a const length"),
@@ -1039,17 +1047,17 @@ impl Interpreter {
                 let val = self.eval(&args[0].value, env)?;
                 let l = list.borrow();
                 match method {
-                    "index_of" => Ok(Value::Number(
+                    "index_of" => Ok(Value::Int(
                         l.iter()
                             .position(|v| equal(v, &val))
-                            .map(|i| i as f64)
-                            .unwrap_or(-1.0),
+                            .map(|i| i as i64)
+                            .unwrap_or(-1),
                     )),
-                    "last_index_of" => Ok(Value::Number(
+                    "last_index_of" => Ok(Value::Int(
                         l.iter()
                             .rposition(|v| equal(v, &val))
-                            .map(|i| i as f64)
-                            .unwrap_or(-1.0),
+                            .map(|i| i as i64)
+                            .unwrap_or(-1),
                     )),
                     _ => Ok(Value::Boolean(l.iter().any(|v| equal(v, &val)))),
                 }
@@ -1083,10 +1091,7 @@ impl Interpreter {
                     .iter()
                     .enumerate()
                     .map(|(i, v)| {
-                        Value::List(Rc::new(RefCell::new(vec![
-                            Value::Number(i as f64),
-                            v.clone(),
-                        ])))
+                        Value::List(Rc::new(RefCell::new(vec![Value::Int(i as i64), v.clone()])))
                     })
                     .collect();
                 Ok(Value::List(Rc::new(RefCell::new(out))))
@@ -1139,10 +1144,10 @@ impl Interpreter {
                 let snapshot = list.borrow().clone();
                 for (i, item) in snapshot.into_iter().enumerate() {
                     if is_truthy(&self.call_value_with_values(&f, &[item])?) {
-                        return Ok(Value::Number(i as f64));
+                        return Ok(Value::Int(i as i64));
                     }
                 }
-                Ok(Value::Number(-1.0))
+                Ok(Value::Int(-1))
             }
             "some" => {
                 expect_args(method, args, 1, 1, span)?;
@@ -1185,7 +1190,17 @@ impl Interpreter {
                         return Ordering::Equal;
                     }
                     match self.call_value_with_values(&f, &[a.clone(), b.clone()]) {
-                        Ok(Value::Number(n)) => {
+                        Ok(Value::Float(n)) => {
+                            if n < 0.0 {
+                                Ordering::Less
+                            } else if n > 0.0 {
+                                Ordering::Greater
+                            } else {
+                                Ordering::Equal
+                            }
+                        }
+                        Ok(value) if value.num().is_some() => {
+                            let n = value.num().expect("checked").to_f64();
                             if n < 0.0 {
                                 Ordering::Less
                             } else if n > 0.0 {
@@ -1227,10 +1242,10 @@ impl Interpreter {
         env: &Rc<RefCell<crate::env::Env>>,
     ) -> Result<f64, RunError> {
         let val = self.eval(&arg.value, env)?;
-        match val {
-            Value::Number(n) => Ok(n),
-            other => Err(RunError::err(
-                format!("expected a number, found {}", other.kind_name()),
+        match val.num() {
+            Some(n) => Ok(n.to_f64()),
+            None => Err(RunError::err(
+                format!("expected a number, found {}", val.kind_name()),
                 arg.value.span().clone(),
             )),
         }
@@ -1474,6 +1489,9 @@ impl Interpreter {
                 Some(v) => v,
                 None => self.default_param(param, env)?,
             };
+            // An explicit `u64` parameter keeps the unsigned slot (see
+            // `coerce_binding_type`).
+            let value = super::stmt::coerce_binding_type(&param.type_annotation, value);
             env.borrow_mut().define(&param.name, value, false);
         }
         Ok(())
@@ -1513,7 +1531,15 @@ impl Interpreter {
                     )
                 })?,
                 Type::Named(name, args) if args.is_empty() => match env.borrow().get(name) {
-                    Some(Value::Number(n)) => n as i64,
+                    Some(v) => match v.num().and_then(|n| n.integer()) {
+                        Some(n) => i64::try_from(n).unwrap_or(i64::MAX),
+                        None => {
+                            return Err(RunError::err(
+                                format!("`{name}` is not a const value"),
+                                call.span.clone(),
+                            ));
+                        }
+                    },
                     _ => {
                         return Err(RunError::err(
                             format!("`{name}` is not a const value"),
@@ -1562,8 +1588,7 @@ impl Interpreter {
                     let env = Env::child(&func.closure);
                     with_interp(|interp| {
                         for (name, value) in &consts {
-                            env.borrow_mut()
-                                .define(name, Value::Number(*value as f64), false);
+                            env.borrow_mut().define(name, Value::Int(*value), false);
                         }
                         interp.bind_callee_args(&env, &func.params, bound)?;
                         match interp.run_body(&func.body, &env, func.return_type.is_some()) {
@@ -1575,8 +1600,7 @@ impl Interpreter {
             }
             let env = Env::child(&func.closure);
             for (name, value) in consts {
-                env.borrow_mut()
-                    .define(name, Value::Number(*value as f64), false);
+                env.borrow_mut().define(name, Value::Int(*value), false);
             }
             self.bind_callee_args(&env, &func.params, bound)?;
             let result = if is_component_return(&func.return_type) {
@@ -1802,7 +1826,6 @@ fn slice_bounds(
 fn map_key_string(value: &Value) -> String {
     match value {
         Value::String(s) => s.to_string(),
-        Value::Number(n) => n.to_string(),
         Value::Boolean(b) => b.to_string(),
         other => other.format(),
     }

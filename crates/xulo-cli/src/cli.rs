@@ -970,9 +970,9 @@ fn colorize_value(v: &Value, colors: bool) -> String {
         return plain;
     }
     let code = match v {
-        Value::String(_) => "\x1b[32m",                     // green
-        Value::Number(_) | Value::Boolean(_) => "\x1b[33m", // yellow
-        Value::Null => "\x1b[1m\x1b[90m",                   // bold grey
+        Value::String(_) => "\x1b[32m", // green
+        Value::Int(_) | Value::UInt(_) | Value::Float(_) | Value::Boolean(_) => "\x1b[33m", // yellow
+        Value::Null => "\x1b[1m\x1b[90m", // bold grey
         _ => return plain,
     };
     format!("{code}{plain}\x1b[39m\x1b[22m")

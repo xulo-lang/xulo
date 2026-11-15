@@ -25,14 +25,14 @@ readiness document.
 
 | Work package | Done | Total |
 |---|---:|---:|
-| WP0 — Matrix hygiene and conformance | 0 | 6 |
-| WP1 — 64-bit integer model | 0 | 7 |
-| WP2 — Type system and semantic convergence | 0 | 10 |
+| WP0 — Matrix hygiene and conformance | 5 | 6 |
+| WP1 — 64-bit integer model | 7 | 7 |
+| WP2 — Type system and semantic convergence | 7 | 10 |
 | WP3 — AOT parity and bootstrap backend | 0 | 8 |
 | WP4 — `defer` semantics | 0 | 5 |
 | WP5 — Stage 1 skeleton | 0 | 6 |
 | WP6 — Self-host loop | 0 | 7 |
-| **Total** | **0** | **49** |
+| **Total** | **14** | **49** |
 
 ## Gates
 
@@ -100,34 +100,47 @@ the starting point, and their evidence is recorded in `stage1-readiness.md` §5.
 
 Priority P0 · needed by Gate 1/2 · source: `stage1-readiness.md` §7 WP0, §6.9
 
-- [ ] **T7** Add a CI check that `git submodule status` matches the pinned
+- [x] **T7** Add a CI check that `git submodule status` matches the pinned
       `spec@48f49b7` and `std-spec@a2e4cb7` commits.
-- [ ] **T3a** Add a conformance runner that extracts `// ok` blocks from the
+      `crates/xulo-cli/tests/submodule_pins.rs`.
+- [x] **T3a** Add a conformance runner that extracts `// ok` blocks from the
       pinned specification and runs them through stage 0.
-- [ ] **T3b** Extend the runner to `// error[E…]` blocks with expected codes.
-- [ ] **T3c** Extend the runner to `// runs:` blocks with expected output.
+      `crates/xulo-cli/tests/spec_conformance.rs` (`Accept` cases).
+- [x] **T3b** Extend the runner to `// error[E…]` blocks with expected codes.
+      Each rejected line is re-inserted uncommented and must produce its code.
+- [x] **T3c** Extend the runner to `// runs:` blocks with expected output.
+      Implemented, but the pinned spec currently has no `runs:` examples, so
+      that path has no cases yet.
 - [ ] **T3d** Ensure every row marked OK in `stage1-readiness.md` is backed by
       a test or a named probe; add the missing ones.
-- [ ] **T3e** Add the conformance job to `.github/workflows/ci.yml` and triage
+- [x] **T3e** Add the conformance job to `.github/workflows/ci.yml` and triage
       its failures in the readiness matrix.
+      Job `conformance`; the current divergences are listed with a reason in
+      `crates/xulo-cli/tests/spec_conformance_baseline.tsv` and summarised in
+      `stage1-readiness.md` §6.10.
+
+**Verify:** `cargo test -p xulo-cli --test submodule_pins --test spec_conformance`.
 
 ## WP1 — 64-bit integer model
 
 Priority P0 · needed by Gate 1/2/5 · source: `stage1-readiness.md` §7 WP1, §6.1
 
-- [ ] **L2a** Split integer and floating literals in `xulo-core`
-      (`Literal::Number(f64)` is the root).
-- [ ] **R2a** Split integer and floating runtime values in `xulo-runtime`, or
-      add an integer variant.
-- [ ] **R2b** Update arithmetic, comparison, formatting, and FFI for the new
-      integer representation.
-- [ ] **L2b** Parse `u64` literals without an `f64` round trip; accept
-      `18446744073709551615`.
-- [ ] **R9a** Make the interpreter and AOT agree on overflow, wrapping, shifts,
-      and integer printing.
-- [ ] **R2c** Add edge tests: `2^53`, `2^63`, `2^64-1`, `0 - 1`, `1 << 63`,
+- [x] **L2a** Split integer and floating literals in `xulo-core`
+      (`Literal::Int(i128)` + `Literal::Float(f64)`).
+- [x] **R2a** Split integer and floating runtime values in `xulo-runtime`
+      (`Value::Int(i64)` / `UInt(u64)` / `Float(f64)`).
+- [x] **R2b** Update arithmetic, comparison, formatting, and FFI for the new
+      integer representation. AOT lowers integral operators to checked
+      `xulo_int_*` helpers; `xulo_num_compare` compares across signedness;
+      `u64` prints with tag `10`.
+- [x] **L2b** Parse `u64` literals without an `f64` round trip; accept
+      `18446744073709551615`. A literal above `u64::MAX` is `E0209`.
+- [x] **R9a** Make the interpreter and AOT agree on overflow, wrapping, shifts,
+      and integer printing (`crates/xulo-runtime/tests/integers.rs`,
+      `crates/xulo-compiler/tests/integer_model_codegen_tests.rs`).
+- [x] **R2c** Add edge tests: `2^53`, `2^63`, `2^64-1`, `0 - 1`, `1 << 63`,
       `to_fixed`, and the wrapping intrinsics.
-- [ ] **G1** Make the `§6.1` probe pass under both `xulo run` and
+- [x] **G1** Make the `§6.1` probe pass under both `xulo run` and
       `xupm build`.
 
 **Verify:** `9007199254740993 == 9007199254740992` is `false`; `1 << 62` is
@@ -137,21 +150,23 @@ Priority P0 · needed by Gate 1/2/5 · source: `stage1-readiness.md` §7 WP1, §
 
 Priority P0 · needed by Gate 2/3 · source: `stage1-readiness.md` §7 WP2, §6.2–6.5
 
-- [ ] **L17a** Implement `unknown` as the top type, including `List<unknown>`
-      and `Map<string, unknown>`.
-- [ ] **L17b** Accept `unknown` in parameter and return positions.
-- [ ] **L18a** Implement `is` / `is not` branch narrowing as specified in
-      `expressions/control-flow.md`.
+- [x] **L17a** Implement `unknown` as the top type, including `List<unknown>`
+      and `Map<string, unknown>` (`assignable` treats `unknown` as top).
+- [x] **L17b** Accept `unknown` in parameter and return positions.
+- [x] **L18a** Implement `is` / `is not` branch narrowing as specified in
+      `expressions/control-flow.md` (branch types, union complement, E0222).
 - [ ] **L18b** End chronological narrowing on assignment.
-- [ ] **L14a** Implement tuple positional access `p.0` / `p?.0`.
-- [ ] **L14b** Support tuple positional writes through `let mut`.
-- [ ] **L11** Implement generic struct construction from named arguments and
+- [x] **L14a** Implement tuple positional access `p.0` / `p?.0`.
+- [x] **L14b** Support tuple positional writes through `let mut`.
+- [x] **L11** Implement generic struct construction from named arguments and
       the expected type.
 - [ ] **D3** Provide stable error codes for the bootstrap subset instead of
       coarse fallbacks.
 - [ ] **S9** Align std numeric signatures and diagnostics with `std-spec` §1.3.
-- [ ] **G2** Add regression tests lifted from the pinned specification and make
-      the `§6.2–6.5` probes pass.
+- [x] **G2** Add regression tests lifted from the pinned specification and make
+      the `§6.2–6.5` probes pass
+      (`crates/xulo-runtime/tests/type_system.rs`,
+      `crates/xulo-compiler/tests/type_system_codegen_tests.rs`).
 
 **Verify:** the four probes in `stage1-readiness.md` §6.2–6.5 run without a
 workaround.

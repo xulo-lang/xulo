@@ -113,7 +113,7 @@ fn test_let_binding_basic() {
         name_span: 4..5,
         type_annotation: None,
         value: Some(Expression::Literal {
-            value: Literal::Number(42.0),
+            value: Literal::Int(42),
             span: 8..10,
         }),
         is_const: false,
@@ -137,7 +137,7 @@ fn test_let_binding_const() {
         name_span: 6..9,
         type_annotation: Some(Type::Number),
         value: Some(Expression::Literal {
-            value: Literal::Number(100.0),
+            value: Literal::Int(100),
             span: 12..15,
         }),
         is_const: true,
@@ -188,7 +188,7 @@ fn test_let_binding_memo() {
 fn test_return_stmt_with_value() {
     let ret = ReturnStmt {
         value: Some(Expression::Literal {
-            value: Literal::Number(42.0),
+            value: Literal::Int(42),
             span: 7..9,
         }),
         span: 0..9,

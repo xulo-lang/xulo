@@ -124,7 +124,9 @@ fn arithmetic() {
             }
             "#
         ),
-        vec!["13", "7", "30", "3.3333333333333335", "7"]
+        // `/` on two `int`s truncates toward zero (spec
+        // `expressions/operators.md`).
+        vec!["13", "7", "30", "3", "7"]
     );
 }
 
@@ -972,7 +974,7 @@ fn view_main_captures_render_tree() {
     assert!(
         props
             .iter()
-            .any(|(k, v)| k == "spacing" && xulo_runtime::value::equal(v, &Value::Number(8.0)))
+            .any(|(k, v)| k == "spacing" && xulo_runtime::value::equal(v, &Value::Int(8)))
     );
     let children = props
         .iter()
@@ -1472,15 +1474,14 @@ fn module_namespace_import_exposes_named_fields() {
     assert_eq!(out, vec!["24", "24"]);
 }
 #[test]
-fn overflowing_number_literal_prints_infinity() {
-    // A 310-digit literal overflows f64 to +Infinity. `format_number` must print
-    // it like JS (`String(1e309)` -> "Infinity"), never Rust's "inf".
+fn overflowing_integer_literal_is_rejected() {
+    // Spec `expressions/literals.md`: an integer literal beyond `int` is
+    // `E0209` in any context, never a rounded or infinite value.
     let huge = format!("1{}", "0".repeat(309));
-    let out = run_raw(&format!("fn main() {{ print({huge}) }}")).unwrap();
-    assert_eq!(out, vec!["Infinity"]);
-
-    let out = run_raw(&format!("fn main() {{ print(-{huge}) }}")).unwrap();
-    assert_eq!(out, vec!["-Infinity"]);
+    let err = parse_program(&format!("fn main() {{ print({huge}) }}")).unwrap_err();
+    assert_eq!(err.code(), "E0209");
+    let err = parse_program(&format!("fn main() {{ print(-{huge}) }}")).unwrap_err();
+    assert_eq!(err.code(), "E0209");
 }
 
 #[test]
@@ -1489,7 +1490,7 @@ fn huge_finite_number_prints_full_digits() {
     // expansion where JS prints exponential notation for the same value
     // (`String(1e21)` -> "1e+21"). Pin the native behavior so any change is
     // deliberate.
-    let out = run_ok(r#"fn main() { print(1000000000000000000000) }"#);
+    let out = run_ok(r#"fn main() { print(1000000000000000000000.0) }"#);
     assert_eq!(out, vec!["1000000000000000000000"]);
 }
 

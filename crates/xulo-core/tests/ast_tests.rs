@@ -11,7 +11,7 @@ fn test_program_with_statements() {
     let program = Program {
         statements: vec![Statement::Return(ReturnStmt {
             value: Some(Expression::Literal {
-                value: Literal::Number(42.0),
+                value: Literal::Int(42),
                 span: 0..2,
             }),
             span: 0..2,

@@ -44,44 +44,52 @@ fn test_compile_let_binding() {
 fn test_compile_arithmetic() {
     let module = compile_to_ir_helper(r#"fn main() { let x = 1 + 2 }"#);
     let func = &module.functions[0];
-    assert!(
-        func.instructions
-            .iter()
-            .any(|i| matches!(i, Instruction::Add { .. }))
-    );
+    assert!(func.instructions.iter().any(|i| matches!(
+        i,
+        Instruction::RuntimeCall {
+            func: RuntimeFn::IntAdd,
+            ..
+        }
+    )));
 }
 
 #[test]
 fn test_compile_subtraction() {
     let module = compile_to_ir_helper(r#"fn main() { let x = 10 - 3 }"#);
     let func = &module.functions[0];
-    assert!(
-        func.instructions
-            .iter()
-            .any(|i| matches!(i, Instruction::Sub { .. }))
-    );
+    assert!(func.instructions.iter().any(|i| matches!(
+        i,
+        Instruction::RuntimeCall {
+            func: RuntimeFn::IntSub,
+            ..
+        }
+    )));
 }
 
 #[test]
 fn test_compile_multiplication() {
     let module = compile_to_ir_helper(r#"fn main() { let x = 4 * 5 }"#);
     let func = &module.functions[0];
-    assert!(
-        func.instructions
-            .iter()
-            .any(|i| matches!(i, Instruction::Mul { .. }))
-    );
+    assert!(func.instructions.iter().any(|i| matches!(
+        i,
+        Instruction::RuntimeCall {
+            func: RuntimeFn::IntMul,
+            ..
+        }
+    )));
 }
 
 #[test]
 fn test_compile_division() {
     let module = compile_to_ir_helper(r#"fn main() { let x = 20 / 4 }"#);
     let func = &module.functions[0];
-    assert!(
-        func.instructions
-            .iter()
-            .any(|i| matches!(i, Instruction::Div { .. }))
-    );
+    assert!(func.instructions.iter().any(|i| matches!(
+        i,
+        Instruction::RuntimeCall {
+            func: RuntimeFn::IntDiv,
+            ..
+        }
+    )));
 }
 
 #[test]
@@ -206,11 +214,13 @@ fn main() {
 fn test_compile_negative_number() {
     let module = compile_to_ir_helper(r#"fn main() { let x = -5 }"#);
     let func = &module.functions[0];
-    assert!(
-        func.instructions
-            .iter()
-            .any(|i| matches!(i, Instruction::Neg { .. }))
-    );
+    assert!(func.instructions.iter().any(|i| matches!(
+        i,
+        Instruction::RuntimeCall {
+            func: RuntimeFn::IntNeg,
+            ..
+        }
+    )));
 }
 
 #[test]

@@ -1,0 +1,36 @@
+# Spec conformance divergences, triaged in docs/stage1-readiness.md §6.
+# Format: <case id>	<reason>. Regenerate with XULO_SPEC_CONFORMANCE_BLESS=1;
+# review every line you add or remove, and update the readiness matrix.
+spec/builtins/intrinsic-functions.md:174 ok	module-scope `assert(...)` is a syntax error (E0002); the example assumes a function body
+spec/concurrency.md:138 ok	depends on `load_config`/`gather`/`transmit` declared only in the surrounding prose
+spec/concurrency.md:280 ok	`AppState` (shared type) is declared only in the surrounding prose, so E0410 cannot be exercised
+spec/concurrency.md:282 error	`AppState` (shared type) is declared only in the surrounding prose, so E0410 cannot be exercised
+spec/error-handling.md:262 ok	`poll` is declared only in the surrounding prose
+spec/error-handling.md:31 ok	`User`/`LoadError` are declared only in the surrounding prose
+spec/expressions/calls.md:60 ok	module-scope expression statement (the `render(...)` call) is a syntax error (E0002)
+spec/expressions/literals.md:192 ok	typed map literal `Map<K, V>{ ... }` is a syntax error
+spec/expressions/literals.md:196 error	typed map literal `Map<K, V>{ ... }` is a syntax error, so E0221 is unreachable
+spec/expressions/literals.md:217 ok	parenthesized map literal `({ a: 1 })` is a syntax error
+spec/ffi.md:221 ok	`c_malloc`/`c_free` are extern imports declared only in the surrounding prose
+spec/functions.md:43 ok	module-scope expression statement is a syntax error (E0002)
+spec/memory-and-runtime.md:450 ok	`mut` parameter without a return-type annotation is a syntax error ("expected `self`")
+spec/memory-and-runtime.md:483 ok	`mut` parameter without a return-type annotation is a syntax error ("expected `self`")
+spec/memory-and-runtime.md:487 error	`mut` parameter without a return-type annotation is a syntax error, so E0404 is unreachable
+spec/memory-and-runtime.md:488 error	`mut` parameter without a return-type annotation is a syntax error, so E0404 is unreachable
+spec/memory-and-runtime.md:525 ok	`fill` is declared only in the surrounding prose
+spec/statements/README.md:66 ok	module-scope expression statements are a syntax error (E0002)
+spec/statements/expression-statements.md:24 ok	module-scope expression statement is a syntax error (E0002)
+spec/statements/expression-statements.md:38 ok	module-scope expression statement is a syntax error (E0002)
+spec/statements/expression-statements.md:52 ok	module-scope expression statement is a syntax error (E0002)
+spec/statements/expression-statements.md:64 ok	module-scope expression statement is a syntax error (E0002)
+spec/statements/expression-statements.md:75 ok	module-scope expression statement is a syntax error (E0002)
+spec/statements/expression-statements.md:87 ok	module-scope expression statement is a syntax error (E0002)
+spec/statements/let-and-assignment.md:45 ok	module-scope assignment (`p.x = 1`) is a syntax error (E0002)
+spec/statements/let-and-assignment.md:63 ok	module-scope assignment is a syntax error (E0002)
+spec/testing.md:353 ok	`#[test] fn` bodies that `await` are rejected instead of checking the async test
+spec/type-system/coercion.md:81 ok	`Status` (string-literal union) is declared only in the surrounding prose; `u32`/`u8` literal rules are not exercised
+spec/types/function-types.md:100 ok	`mut` parameter without a return-type annotation is a syntax error ("expected `self`")
+spec/types/function-types.md:69 ok	example has no enclosing function: `greet` and the module-scope calls are undefined
+spec/types/generics.md:252 ok	`first<T>` is declared only in the surrounding prose
+spec/types/generics.md:262 ok	`first<T>` is declared only in the surrounding prose
+spec/types/generics.md:323 ok	inference from the expected type is missing: `List<T>` does not bind to `List<int>`

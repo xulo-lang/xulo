@@ -26,6 +26,11 @@ pub struct IrGenerator {
     local_types: HashMap<LocalId, IrType>,
     /// 跟踪变量的源级类型（用于 print 等需要类型区分的场景）
     source_types: HashMap<String, Type>,
+    /// Names whose value is known to live in the unsigned-only range
+    /// `(i64::MAX, u64::MAX]`, or to be a non-negative `u64` result. Their
+    /// print tag is `10` (unsigned); `int` and `u64` share the same 64-bit
+    /// slot, so only a statically known signedness can choose the rendering.
+    uint_range_names: HashSet<String>,
     /// 函数名 -> AST 返回类型注解（用于泛型函数的返回类型推断）
     func_return_types: HashMap<String, Option<Type>>,
     /// 用户函数的形参表（名字 + 默认表达式）：命名参数重排与缺省参数补齐
@@ -92,6 +97,7 @@ struct ScopeSnapshot {
     locals: HashMap<String, LocalId>,
     local_types: HashMap<LocalId, IrType>,
     source_types: HashMap<String, Type>,
+    uint_range_names: HashSet<String>,
     label_map: HashMap<String, Label>,
     dyn_tag_of: HashMap<String, Operand>,
     loop_stack: Vec<LoopContext>,
@@ -229,6 +235,7 @@ impl IrGenerator {
             locals: HashMap::new(),
             local_types: HashMap::new(),
             source_types: HashMap::new(),
+            uint_range_names: HashSet::new(),
             func_return_types: HashMap::new(),
             func_params: HashMap::new(),
             func_generic_params: HashMap::new(),
@@ -471,6 +478,7 @@ impl IrGenerator {
             self.locals.clear();
             self.local_types.clear();
             self.source_types.clear();
+            self.uint_range_names.clear();
             self.label_map.clear();
             // impl 方法：self 的源级类型
             let fn_name = self.module.functions[idx].name.clone();
@@ -647,7 +655,13 @@ impl IrGenerator {
         match expr {
             Expression::Literal { value, .. } => {
                 match value {
-                    Literal::Number(_) | Literal::Float(_) => Some(Type::Number),
+                    // A literal above `i64::MAX` only fits `u64`; keeping the
+                    // name lets a list of such elements report its element
+                    // type to `Index` (print tag and comparison domain).
+                    Literal::Int(n) if *n > i64::MAX as i128 => {
+                        Some(Type::Named("u64".to_string(), Vec::new()))
+                    }
+                    Literal::Int(_) | Literal::Float(_) => Some(Type::Number),
                     Literal::Boolean(_) => Some(Type::Boolean),
                     Literal::String(_) => Some(Type::String),
                     Literal::Null => Some(Type::Null),
@@ -694,13 +708,46 @@ impl IrGenerator {
                         return Some(Type::String);
                     }
                 }
+                // Arithmetic on a `u64` operand stays in the unsigned domain.
+                if matches!(
+                    binop.operator,
+                    BinaryOperator::Add
+                        | BinaryOperator::Sub
+                        | BinaryOperator::Mul
+                        | BinaryOperator::Div
+                        | BinaryOperator::Mod
+                        | BinaryOperator::Pow
+                        | BinaryOperator::BitAnd
+                        | BinaryOperator::BitOr
+                        | BinaryOperator::Xor
+                        | BinaryOperator::Shl
+                        | BinaryOperator::Shr
+                ) && (self.expr_is_unsigned_int(&binop.left)
+                    || self.expr_is_unsigned_int(&binop.right))
+                {
+                    return Some(Type::Named("u64".to_string(), Vec::new()));
+                }
                 None
+            }
+            Expression::Tuple { items, .. } => {
+                let types = items
+                    .iter()
+                    .map(|item| self.infer_source_type_from_expr(item).unwrap_or(Type::Any))
+                    .collect();
+                Some(Type::Tuple(types))
             }
             Expression::Identifier { name, .. } => self
                 .source_types
                 .get(name)
                 .cloned()
                 .or_else(|| self.const_def(name).and_then(|d| d.ty.clone())),
+            // An index of a known list has the list's element type. This is
+            // what lets `xs[0]` of a `List<u64>` or `[u64::MAX]` print and
+            // compare in the unsigned domain.
+            Expression::Index(index) => match self.infer_source_type_from_expr(&index.object) {
+                Some(Type::List(inner)) => Some(*inner),
+                _ => None,
+            },
             Expression::Call(call) => {
                 if call.object.is_none() {
                     if call.callee == "str" {
@@ -918,18 +965,16 @@ impl IrGenerator {
     }
 
     /// 确定表达式的类型标签（用于数组/对象元素存储）
-    /// tag: 0=string, 1=int, 2=float, 3=array, 4=object, 5=bool, 6=null
+    /// tag: 0=string, 1=int, 2=float, 3=array, 4=object, 5=bool, 6=null,
+    /// 10=u64
     fn determine_element_tag(&self, expr: &Expression) -> i64 {
         match expr {
             Expression::Literal { value, .. } => match value {
                 Literal::String(_) => 0,
-                Literal::Number(n) => {
-                    if n.fract() == 0.0 && n.is_finite() && n.abs() <= 9.007_199_254_740_992e15 {
-                        1
-                    } else {
-                        2
-                    }
-                }
+                // An integer literal above `i64::MAX` only fits `u64`; it
+                // shares the slot bits but must print unsigned.
+                Literal::Int(n) if *n > i64::MAX as i128 => 10,
+                Literal::Int(_) => 1,
                 Literal::Float(_) => 2,
                 Literal::Boolean(_) => 5,
                 Literal::Null => 6,
@@ -940,6 +985,11 @@ impl IrGenerator {
                 // match 绑定：payload 标签运行时才知道
                 if self.is_dyn_name(name) {
                     return -1;
+                }
+                // Values proven to stay in the unsigned `u64` domain print
+                // unsigned (the slot is shared with `int`).
+                if self.uint_range_names.contains(name) {
+                    return 10;
                 }
                 // 模块级 const：按初始化表达式的静态标签（字面量）打 tag
                 if !self.locals.contains_key(name)
@@ -1029,6 +1079,8 @@ impl IrGenerator {
                             || self.has_float_operand(&binop.right)
                         {
                             2
+                        } else if self.expr_has_unsigned_tag(expr) {
+                            10
                         } else {
                             1
                         }
@@ -1050,6 +1102,8 @@ impl IrGenerator {
                             || self.has_float_operand(&binop.right)
                         {
                             2
+                        } else if self.expr_has_unsigned_tag(expr) {
+                            10
                         } else {
                             1
                         }
@@ -1066,9 +1120,13 @@ impl IrGenerator {
             }
             Expression::Unary(unop) => match &unop.operator {
                 UnaryOperator::Not => 5,
-                UnaryOperator::Neg | UnaryOperator::BitNot => {
-                    self.determine_element_tag(&unop.operand)
-                }
+                // `-u64` is an `int` (or traps), but a float operand keeps
+                // its float slot; `~u64` stays in the unsigned domain.
+                UnaryOperator::Neg => match self.determine_element_tag(&unop.operand) {
+                    2 => 2,
+                    _ => 1,
+                },
+                UnaryOperator::BitNot => self.determine_element_tag(&unop.operand),
                 UnaryOperator::Move | UnaryOperator::Copy => {
                     self.determine_element_tag(&unop.operand)
                 }
@@ -1257,13 +1315,41 @@ impl IrGenerator {
             Expression::Range(_) => 3,
             // `expr?`：Ok payload 类型不定，运行时检测
             Expression::Propagate { .. } => -1,
+            // `is` / `is not` yields a `bool`.
+            Expression::Is(_) => 5,
             // 函数值（闭包/箭头字面量）：tag=8
             Expression::FnExpr(_) | Expression::Arrow(_) => 8,
             // 经任意表达式的函数值调用：返回标签未知
             Expression::CallValue(_) => -1,
             Expression::Nullish(nullish) => self.determine_element_tag(&nullish.right),
-            Expression::Index(_) => -1, // 数组元素类型未知，运行时自动检测
+            // An index of a list whose element type is known keeps that
+            // element's tag; otherwise the runtime tag is unknown.
+            Expression::Index(_) => match self.infer_source_type_from_expr(expr) {
+                Some(ty) if Self::is_unsigned_int_type(&ty) => 10,
+                Some(Type::String) => 0,
+                // `Number` covers both `int` and the float bit pattern; the
+                // runtime tag registry distinguishes them.
+                Some(Type::Number) => -1,
+                Some(Type::Boolean) => 5,
+                Some(Type::List(_)) => 3,
+                Some(Type::Object | Type::ObjectType(_)) => 4,
+                _ => -1,
+            },
             Expression::Member(member) => {
+                // Tuple positional access: the element type is the tuple's
+                // written type at that position.
+                if let Some(element) = self.tuple_element_type(member) {
+                    return match element {
+                        ty if Self::is_unsigned_int_type(&ty) => 10,
+                        Type::String => 0,
+                        Type::Number => -1,
+                        Type::Boolean => 5,
+                        Type::Null => 6,
+                        Type::List(_) => 3,
+                        Type::Object | Type::ObjectType(_) => 4,
+                        _ => -1,
+                    };
+                }
                 // 结构体字段类型已知
                 if let Some(recv_ty) = self.struct_name_of_expr(&member.object)
                     && let Some(fields) = self.structs.get(&recv_ty)
@@ -1328,13 +1414,183 @@ impl IrGenerator {
             });
     }
 
+    /// The runtime tags an `is` test accepts. `None` means the test is
+    /// always true (`is unknown`); an empty list means it can never match.
+    /// The tags are the `PrintValue`/`xulo_detect_tag` space.
+    fn type_test_tags(&self, ty: &Type) -> Option<Vec<i64>> {
+        match ty {
+            Type::String => Some(vec![0]),
+            // The checker's one numeric type covers both integer and float
+            // slots, so `is int`/`is number` accept either tag.
+            Type::Number => Some(vec![1, 2]),
+            Type::Boolean => Some(vec![5]),
+            Type::Null => Some(vec![6]),
+            Type::List(_) => Some(vec![3]),
+            Type::Literal(_) => Some(vec![0]),
+            Type::Object | Type::ObjectType(_) => Some(vec![4]),
+            Type::FnSig { .. } => Some(vec![8]),
+            Type::Optional(inner) => {
+                let mut tags = self.type_test_tags(inner)?;
+                tags.push(6);
+                Some(tags)
+            }
+            Type::Union(parts) => {
+                let mut tags = Vec::new();
+                for part in parts {
+                    let part_tags = self.type_test_tags(part)?;
+                    for tag in part_tags {
+                        if !tags.contains(&tag) {
+                            tags.push(tag);
+                        }
+                    }
+                }
+                Some(tags)
+            }
+            Type::Named(name, args) => {
+                if args.is_empty() && name == "unknown" {
+                    return None;
+                }
+                if self.structs.contains_key(name) {
+                    return Some(vec![4]);
+                }
+                if self.enums.contains_key(name) {
+                    return Some(vec![7]);
+                }
+                if matches!(
+                    name.as_str(),
+                    "u8" | "u16"
+                        | "u32"
+                        | "u64"
+                        | "usize"
+                        | "i8"
+                        | "i16"
+                        | "i32"
+                        | "i64"
+                        | "isize"
+                        | "f32"
+                        | "f64"
+                ) {
+                    return Some(if matches!(name.as_str(), "f32" | "f64") {
+                        vec![2]
+                    } else {
+                        vec![1]
+                    });
+                }
+                // A prelude enum (`Result`, `Error`, …) renders as an enum.
+                if matches!(name.as_str(), "Result" | "Error") {
+                    return Some(vec![7]);
+                }
+                Some(Vec::new())
+            }
+            _ => Some(Vec::new()),
+        }
+    }
+
+    /// The element type of a tuple positional access `p.<i>`, when the
+    /// receiver's tuple type is statically known.
+    fn tuple_element_type(&self, member: &MemberAccess) -> Option<Type> {
+        let Type::Tuple(items) = self.infer_source_type_from_expr(&member.object)? else {
+            return None;
+        };
+        let index = member.property.parse::<usize>().ok()?;
+        items.get(index).cloned()
+    }
+
+    /// Whether a type annotation names the unsigned 64-bit integer
+    /// (`u64`, and `usize` whose width the implementation documents as 64).
+    fn is_unsigned_int_type(ty: &Type) -> bool {
+        matches!(ty, Type::Named(name, args) if args.is_empty() && matches!(name.as_str(), "u64" | "usize"))
+    }
+
+    /// Whether this expression is an integral value in the unsigned `u64`
+    /// domain. The static checker rejects mixing `int` and `u64`, so one
+    /// unsigned operand is enough; a bare literal takes the other side's
+    /// domain.
+    fn expr_is_unsigned_int(&self, expr: &Expression) -> bool {
+        match expr {
+            Expression::Literal {
+                value: Literal::Int(n),
+                ..
+            } => *n > i64::MAX as i128,
+            Expression::Identifier { name, .. } => {
+                self.source_types
+                    .get(name)
+                    .is_some_and(Self::is_unsigned_int_type)
+                    || self
+                        .const_def(name)
+                        .and_then(|d| d.ty.as_ref())
+                        .is_some_and(Self::is_unsigned_int_type)
+            }
+            Expression::BinaryOp(binop) => {
+                matches!(
+                    binop.operator,
+                    BinaryOperator::Add
+                        | BinaryOperator::Sub
+                        | BinaryOperator::Mul
+                        | BinaryOperator::Div
+                        | BinaryOperator::Mod
+                        | BinaryOperator::Pow
+                ) && (self.expr_is_unsigned_int(&binop.left)
+                    || self.expr_is_unsigned_int(&binop.right))
+            }
+            Expression::Index(_) => self
+                .infer_source_type_from_expr(expr)
+                .is_some_and(|ty| Self::is_unsigned_int_type(&ty)),
+            Expression::Member(member) => self
+                .tuple_element_type(member)
+                .is_some_and(|ty| Self::is_unsigned_int_type(&ty)),
+            Expression::Unary(unop)
+                if matches!(unop.operator, UnaryOperator::Move | UnaryOperator::Copy) =>
+            {
+                self.expr_is_unsigned_int(&unop.operand)
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether the value is statically known to be non-negative, so the
+    /// unsigned print tag is exact even when it still fits `i64`:
+    /// `u64 + u64`, `*`, `/`, and `%` never leave the unsigned domain.
+    fn expr_has_unsigned_tag(&self, expr: &Expression) -> bool {
+        match expr {
+            Expression::Literal {
+                value: Literal::Int(n),
+                ..
+            } => *n > i64::MAX as i128,
+            Expression::Identifier { name, .. } => self.uint_range_names.contains(name),
+            Expression::BinaryOp(binop) => {
+                matches!(
+                    binop.operator,
+                    BinaryOperator::Add
+                        | BinaryOperator::Sub
+                        | BinaryOperator::Mul
+                        | BinaryOperator::Div
+                        | BinaryOperator::Mod
+                        | BinaryOperator::Pow
+                        | BinaryOperator::BitAnd
+                        | BinaryOperator::BitOr
+                        | BinaryOperator::Xor
+                        | BinaryOperator::Shl
+                        | BinaryOperator::Shr
+                ) && (self.expr_is_unsigned_int(&binop.left)
+                    || self.expr_is_unsigned_int(&binop.right))
+            }
+            Expression::Index(_) | Expression::Member(_) => self.expr_is_unsigned_int(expr),
+            Expression::Unary(unop)
+                if matches!(unop.operator, UnaryOperator::Move | UnaryOperator::Copy) =>
+            {
+                self.expr_has_unsigned_tag(&unop.operand)
+            }
+            _ => false,
+        }
+    }
+
     fn has_float_operand(&self, expr: &Expression) -> bool {
         match expr {
             Expression::Literal { value, .. } => match value {
                 Literal::Float(_) => true,
-                // Integer-spelled literals are ints even when integral-valued
-                // (`1`), but keep the fractional fallback for synthesized ASTs.
-                Literal::Number(n) => n.fract() != 0.0,
+                // Integer-spelled literals are ints (`1`).
+                Literal::Int(_) => false,
                 _ => false,
             },
             Expression::Identifier { name, .. } => {

@@ -1170,10 +1170,10 @@ fn span_value_json(ctx: &MacroCtx, span: &Range<usize>) -> Value {
     let s = ctx.span(span);
     object(vec![
         ("file".to_string(), Value::String(s.file.into())),
-        ("start".to_string(), Value::Number(s.start as f64)),
-        ("end".to_string(), Value::Number(s.end as f64)),
-        ("line".to_string(), Value::Number(s.line as f64)),
-        ("column".to_string(), Value::Number(s.column as f64)),
+        ("start".to_string(), Value::Int(s.start as i64)),
+        ("end".to_string(), Value::Int(s.end as i64)),
+        ("line".to_string(), Value::Int(s.line as i64)),
+        ("column".to_string(), Value::Int(s.column as i64)),
     ])
 }
 
@@ -1182,8 +1182,8 @@ fn ast_value(value: &AttributeValue) -> Value {
         AttributeValue::Identifier(s) | AttributeValue::String(s) => {
             Value::String(s.clone().into())
         }
-        AttributeValue::Integer(n) => Value::Number(*n as f64),
-        AttributeValue::Float(n) => Value::Number(*n),
+        AttributeValue::Integer(n) => Value::Int(*n),
+        AttributeValue::Float(n) => Value::Float(*n),
         AttributeValue::Boolean(b) => Value::Boolean(*b),
     }
 }
@@ -1585,9 +1585,11 @@ fn scalar_or_node(expr: &Expression, ctx: &MacroCtx) -> Value {
     match expr {
         Expression::Literal { value, .. } => match value {
             xulo_core::ast::Literal::String(s) => Value::String(s.clone().into()),
-            xulo_core::ast::Literal::Number(n) | xulo_core::ast::Literal::Float(n) => {
-                Value::Number(*n)
-            }
+            xulo_core::ast::Literal::Int(n) => match i64::try_from(*n) {
+                Ok(n) => Value::Int(n),
+                Err(_) => Value::UInt(*n as u64),
+            },
+            xulo_core::ast::Literal::Float(n) => Value::Float(*n),
             xulo_core::ast::Literal::Boolean(b) => Value::Boolean(*b),
             xulo_core::ast::Literal::Null => Value::Enum {
                 enum_name: "ast::Value".to_string(),
@@ -1783,7 +1785,7 @@ fn constructed_expression(node: &AstNodeValue) -> Option<Expression> {
     let field = |name: &str| get_field(&node.fields, name).map(|v| unwrap_ast_value(&v));
     let text = |name: &str| match field(name) {
         Some(Value::String(s)) => Some(s.to_string()),
-        Some(Value::Number(n)) => Some(crate::value::format_number(n)),
+        Some(v) => Some(v.format()),
         _ => None,
     };
     let span = node.span.start..node.span.end;
@@ -1797,11 +1799,10 @@ fn constructed_expression(node: &AstNodeValue) -> Option<Expression> {
         "StringLiteral" | "String" => literal(xulo_core::ast::Literal::String(text("text")?)),
         "NumberLiteral" | "IntLiteral" | "FloatLiteral" => {
             let raw = text("text")?;
-            let value = raw.parse().ok()?;
             literal(if raw.contains('.') {
-                xulo_core::ast::Literal::Float(value)
+                xulo_core::ast::Literal::Float(raw.parse().ok()?)
             } else {
-                xulo_core::ast::Literal::Number(value)
+                xulo_core::ast::Literal::Int(xulo_parser::decode_integer(&raw)?)
             })
         }
         "BooleanLiteral" | "Bool" => literal(xulo_core::ast::Literal::Boolean(matches!(
@@ -1873,14 +1874,10 @@ fn list_items(value: &Value) -> Vec<Value> {
 
 fn span_from_value(value: &Value) -> Option<Range<usize>> {
     let fields = value_fields(value)?;
-    let start = match get_field(&fields, "start")? {
-        Value::Number(n) => n as usize,
-        _ => return None,
-    };
-    let end = match get_field(&fields, "end")? {
-        Value::Number(n) => n as usize,
-        _ => return None,
-    };
+    let start = get_field(&fields, "start")?
+        .num()
+        .and_then(|n| n.integer())? as usize;
+    let end = get_field(&fields, "end")?.num().and_then(|n| n.integer())? as usize;
     Some(start..end)
 }
 
@@ -2346,10 +2343,10 @@ impl MacroCtxView {
 fn span_object(span: &SpanValue) -> Value {
     object(vec![
         ("file".to_string(), Value::String(span.file.clone().into())),
-        ("start".to_string(), Value::Number(span.start as f64)),
-        ("end".to_string(), Value::Number(span.end as f64)),
-        ("line".to_string(), Value::Number(span.line as f64)),
-        ("column".to_string(), Value::Number(span.column as f64)),
+        ("start".to_string(), Value::Int(span.start as i64)),
+        ("end".to_string(), Value::Int(span.end as i64)),
+        ("line".to_string(), Value::Int(span.line as i64)),
+        ("column".to_string(), Value::Int(span.column as i64)),
     ])
 }
 

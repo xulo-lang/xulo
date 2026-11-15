@@ -92,7 +92,7 @@ pub(super) fn expr_has_closure(expr: &Expression) -> bool {
                 ObjectField::Spread { value } => expr_has_closure(value),
             }),
             Literal::String(_)
-            | Literal::Number(_)
+            | Literal::Int(_)
             | Literal::Float(_)
             | Literal::Boolean(_)
             | Literal::Null => false,

@@ -42,7 +42,15 @@ pub fn json_to_value(json: &Json) -> Value {
     match json {
         Json::Null => Value::Null,
         Json::Bool(b) => Value::Boolean(*b),
-        Json::Number(n) => Value::Number(n.as_f64().unwrap_or(0.0)),
+        Json::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Value::Int(i)
+            } else if let Some(u) = n.as_u64() {
+                Value::UInt(u)
+            } else {
+                Value::Float(n.as_f64().unwrap_or(0.0))
+            }
+        }
         Json::String(s) => Value::String(s.as_str().into()),
         Json::Array(items) => {
             let list = items.iter().map(json_to_value).collect();
@@ -67,7 +75,9 @@ pub fn value_to_json(value: &Value, depth: usize) -> Result<Json, String> {
     match value {
         Value::Null => Ok(Json::Null),
         Value::Boolean(b) => Ok(Json::Bool(*b)),
-        Value::Number(n) => json_number(*n),
+        Value::Int(n) => Ok(Json::Number((*n).into())),
+        Value::UInt(n) => Ok(Json::Number((*n).into())),
+        Value::Float(n) => json_number(*n),
         Value::String(s) => Ok(Json::String(s.to_string())),
         Value::List(items) => {
             let items = items.borrow();
@@ -145,6 +155,7 @@ fn payload_to_json(value: i64, tag: i64, depth: usize) -> Result<Json, String> {
             Ok(Json::String(text.to_string()))
         }
         1 => Ok(Json::Number(value.into())),
+        10 => Ok(Json::Number((value as u64).into())),
         2 => json_number(f64::from_bits(value as u64)),
         3 => {
             let arr = value as *const XuloArray;

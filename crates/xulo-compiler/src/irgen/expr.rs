@@ -196,6 +196,7 @@ impl IrGenerator {
                 self.generate_enum_construct(&e.enum_name, &e.variant, &[])
             }
             Expression::Match(m) => self.generate_match(m),
+            Expression::Is(test) => self.generate_is(test),
             Expression::Propagate { expr, .. } => self.generate_propagate(expr),
             Expression::Panic { expr, .. } => {
                 let value = self.generate_expression(expr)?;
@@ -210,6 +211,25 @@ impl IrGenerator {
                     });
                 // panic 不返回值；同 generate_call 的无返回调用，返回一个不会被使用的虚拟值
                 let local = self.module.functions[func_idx].add_local(IrType::Pointer);
+                Ok(Operand::Local(local))
+            }
+            // A tuple literal is a fixed-arity list at run time; positional
+            // access and destructuring both read it as one (spec
+            // `types/composite-types.md`, "Tuples").
+            Expression::Tuple { items, .. } => {
+                let func_idx = self.current_func.unwrap();
+                let mut elements = Vec::new();
+                for item in items {
+                    let tag = self.determine_element_tag(item);
+                    elements.push((self.generate_expression(item)?, tag));
+                }
+                let local = self.module.functions[func_idx].add_local(IrType::Pointer);
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::NewArray {
+                        dst: local,
+                        elements,
+                    });
                 Ok(Operand::Local(local))
             }
             // 区间表达式 `0..<3` / `1..=4` 求值为列表（for 循环已在
@@ -298,7 +318,7 @@ impl IrGenerator {
             // Integer spelling (`42`, `0xff`) stays in an I64 slot; any literal
             // written with a decimal point (`3.0`) is a float and must use an
             // F64 slot even when integral, so `a / 1.0` is float division.
-            Literal::Number(n) => (IrValue::I64(*n as i64), IrType::I64),
+            Literal::Int(n) => (IrValue::I64(*n as i64), IrType::I64),
             Literal::Float(n) => (IrValue::F64(*n), IrType::F64),
             Literal::Boolean(b) => (IrValue::Bool(*b), IrType::Bool),
             Literal::String(s) => {
@@ -446,6 +466,132 @@ impl IrGenerator {
                 return Ok(Operand::Local(negated));
             }
             return Ok(Operand::Local(eq));
+        }
+
+        // Integral arithmetic is checked at runtime: overflow, division by
+        // zero, and an out-of-range shift abort instead of wrapping, matching
+        // the interpreter (spec `types/primitive-types.md`, "Overflow").
+        // `dyn_math` bindings were promoted to `f64` above, and either float
+        // operand keeps the IEEE path.
+        if !dyn_math
+            && !self.has_float_operand(&binop.left)
+            && !self.has_float_operand(&binop.right)
+            && let Some(func) = match binop.operator {
+                BinaryOperator::Add => Some(RuntimeFn::IntAdd),
+                BinaryOperator::Sub => Some(RuntimeFn::IntSub),
+                BinaryOperator::Mul => Some(RuntimeFn::IntMul),
+                BinaryOperator::Div => Some(RuntimeFn::IntDiv),
+                BinaryOperator::Mod => Some(RuntimeFn::IntRem),
+                BinaryOperator::Pow => Some(RuntimeFn::IntPow),
+                _ => None,
+            }
+        {
+            let unsigned =
+                self.expr_is_unsigned_int(&binop.left) || self.expr_is_unsigned_int(&binop.right);
+            let local = self.module.functions[func_idx].add_local(IrType::I64);
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::RuntimeCall {
+                    dst: Some(local),
+                    func,
+                    args: vec![
+                        left,
+                        right,
+                        Operand::Const(IrValue::I64(i64::from(unsigned))),
+                    ],
+                });
+            return Ok(Operand::Local(local));
+        }
+
+        // Integral comparisons are exact across signedness: `int` and `u64`
+        // are compared by mathematical value (`0 - 1 == u64::MAX` is false),
+        // which a raw signed `icmp` cannot do.
+        if !dyn_math
+            && !self.has_float_operand(&binop.left)
+            && !self.has_float_operand(&binop.right)
+            && matches!(
+                binop.operator,
+                BinaryOperator::Eq
+                    | BinaryOperator::Neq
+                    | BinaryOperator::Lt
+                    | BinaryOperator::Gt
+                    | BinaryOperator::Lte
+                    | BinaryOperator::Gte
+            )
+            && (self.expr_is_unsigned_int(&binop.left) || self.expr_is_unsigned_int(&binop.right))
+        {
+            let left_unsigned = self.expr_is_unsigned_int(&binop.left);
+            let right_unsigned = self.expr_is_unsigned_int(&binop.right);
+            let ordering = self.module.functions[func_idx].add_local(IrType::I64);
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::RuntimeCall {
+                    dst: Some(ordering),
+                    func: RuntimeFn::NumCompare,
+                    args: vec![
+                        left,
+                        right,
+                        Operand::Const(IrValue::I64(i64::from(left_unsigned))),
+                        Operand::Const(IrValue::I64(i64::from(right_unsigned))),
+                    ],
+                });
+            let local = self.module.functions[func_idx].add_local(IrType::Bool);
+            let zero = Operand::Const(IrValue::I64(0));
+            let instruction = match binop.operator {
+                BinaryOperator::Eq => Instruction::Eq {
+                    dst: local,
+                    left: Operand::Local(ordering),
+                    right: zero,
+                },
+                BinaryOperator::Neq => Instruction::Neq {
+                    dst: local,
+                    left: Operand::Local(ordering),
+                    right: zero,
+                },
+                BinaryOperator::Lt => Instruction::Lt {
+                    dst: local,
+                    left: Operand::Local(ordering),
+                    right: zero,
+                },
+                BinaryOperator::Gt => Instruction::Gt {
+                    dst: local,
+                    left: Operand::Local(ordering),
+                    right: zero,
+                },
+                BinaryOperator::Lte => Instruction::Lte {
+                    dst: local,
+                    left: Operand::Local(ordering),
+                    right: zero,
+                },
+                BinaryOperator::Gte => Instruction::Gte {
+                    dst: local,
+                    left: Operand::Local(ordering),
+                    right: zero,
+                },
+                _ => unreachable!("comparison operator matched above"),
+            };
+            self.module.functions[func_idx]
+                .instructions
+                .push(instruction);
+            return Ok(Operand::Local(local));
+        }
+
+        // `u64 >> n` fills with zero, `int >> n` with the sign bit (spec
+        // `expressions/operators.md`); `<<` is the same wrapping operation in
+        // both domains.
+        if matches!(binop.operator, BinaryOperator::Shr)
+            && !self.has_float_operand(&binop.left)
+            && self.expr_is_unsigned_int(&binop.left)
+        {
+            let local = self.module.functions[func_idx].add_local(IrType::I64);
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::RuntimeCall {
+                    dst: Some(local),
+                    func: RuntimeFn::IntShift,
+                    args: vec![left, right, Operand::Const(IrValue::I64(2))],
+                });
+            return Ok(Operand::Local(local));
         }
 
         let ty = match binop.operator {
@@ -623,6 +769,21 @@ impl IrGenerator {
             }
             UnaryOperator::Move | UnaryOperator::Copy => IrType::Pointer,
         };
+
+        // Unary minus on an integer is checked as well (`-i64::MIN` traps;
+        // `-u64` narrows to `int`, like the interpreter).
+        if matches!(unary.operator, UnaryOperator::Neg) && !matches!(ty, IrType::F64) {
+            let unsigned = self.expr_is_unsigned_int(&unary.operand);
+            let local = self.module.functions[func_idx].add_local(IrType::I64);
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::RuntimeCall {
+                    dst: Some(local),
+                    func: RuntimeFn::IntNeg,
+                    args: vec![operand, Operand::Const(IrValue::I64(i64::from(unsigned)))],
+                });
+            return Ok(Operand::Local(local));
+        }
 
         let local = self.module.functions[func_idx].add_local(ty);
 
@@ -1548,42 +1709,62 @@ impl IrGenerator {
         self.module.functions[func_idx]
             .instructions
             .push(Instruction::Label(then_label));
-        // 简化处理：只取最后一个表达式
-        if let Some(Statement::Expr(e)) = if_expr.then_branch.statements.last() {
-            let val = self.generate_expression(&e.expr)?;
+        let then_falls_through = self.generate_if_branch(&if_expr.then_branch, result_local)?;
+        if then_falls_through {
             self.module.functions[func_idx]
                 .instructions
-                .push(Instruction::SetLocal {
-                    dst: result_local,
-                    src: val,
-                });
+                .push(Instruction::Jump(end_label));
         }
-        self.module.functions[func_idx]
-            .instructions
-            .push(Instruction::Jump(end_label));
 
         self.module.functions[func_idx]
             .instructions
             .push(Instruction::Label(else_label));
-        if let Some(else_branch) = &if_expr.else_branch
-            && let Some(Statement::Expr(e)) = else_branch.statements.last()
-        {
-            let val = self.generate_expression(&e.expr)?;
+        let else_falls_through = match &if_expr.else_branch {
+            Some(branch) => self.generate_if_branch(branch, result_local)?,
+            None => true,
+        };
+        if else_falls_through {
             self.module.functions[func_idx]
                 .instructions
-                .push(Instruction::SetLocal {
-                    dst: result_local,
-                    src: val,
-                });
+                .push(Instruction::Jump(end_label));
         }
-        self.module.functions[func_idx]
-            .instructions
-            .push(Instruction::Jump(end_label));
         self.module.functions[func_idx]
             .instructions
             .push(Instruction::Label(end_label));
 
         Ok(Operand::Local(result_local))
+    }
+
+    /// Emit one `if` branch. Every statement is lowered in order (a `return`
+    /// in the branch must run, not be skipped in favour of a tail
+    /// expression); a trailing expression becomes the branch's value.
+    /// Returns whether control falls through to the join label.
+    fn generate_if_branch(
+        &mut self,
+        block: &Block,
+        result_local: LocalId,
+    ) -> Result<bool, XuloError> {
+        let func_idx = self.current_func.unwrap();
+        let last = block.statements.len().checked_sub(1);
+        for (index, statement) in block.statements.iter().enumerate() {
+            if Some(index) == last
+                && let Statement::Expr(expr_stmt) = statement
+            {
+                let value = self.generate_expression(&expr_stmt.expr)?;
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::SetLocal {
+                        dst: result_local,
+                        src: value,
+                    });
+                return Ok(true);
+            }
+            self.generate_statement(statement)?;
+        }
+        Ok(!matches!(
+            block.statements.last(),
+            Some(Statement::Return(_) | Statement::Break | Statement::Continue)
+        ))
     }
 
     /// `match` 表达式：按变体 tag 顺序测试，payload 槽摘出值与运行时标签，
@@ -1835,14 +2016,7 @@ impl IrGenerator {
     ) -> Result<(Operand, i64), XuloError> {
         let func_idx = self.current_func.unwrap();
         Ok(match lit {
-            Literal::Number(n) => {
-                // i64 槽只承载精确可表示的整数，其余按 f64 位模式比对
-                if n.fract() == 0.0 && n.is_finite() && n.abs() <= 9.007_199_254_740_992e15 {
-                    (Operand::Const(IrValue::I64(*n as i64)), 1)
-                } else {
-                    (Operand::Const(IrValue::F64(*n)), 2)
-                }
-            }
+            Literal::Int(n) => (Operand::Const(IrValue::I64(*n as i64)), 1),
             Literal::Float(n) => (Operand::Const(IrValue::F64(*n)), 2),
             Literal::String(s) => {
                 let idx = self.module.add_string(s.clone());
@@ -1952,6 +2126,23 @@ impl IrGenerator {
     ) -> Result<Operand, XuloError> {
         let func_idx = self.current_func.unwrap();
         let object = self.generate_expression(&member.object)?;
+        // Tuple positional access `p.0` reads the element by position (a
+        // tuple is a list at run time).
+        if matches!(
+            self.infer_source_type_from_expr(&member.object),
+            Some(Type::Tuple(_))
+        ) && let Ok(index) = member.property.parse::<usize>()
+        {
+            let local = self.module.functions[func_idx].add_local(IrType::Pointer);
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::GetIndex {
+                    dst: local,
+                    array: object,
+                    index: Operand::Const(IrValue::I64(index as i64)),
+                });
+            return Ok(Operand::Local(local));
+        }
         // Read-only collection properties (spec `types/composite-types.md`,
         // `types/primitive-types.md`): `.len` on a `List`, `.byte_len` on a
         // `string`. `.size` on a map has no compiled representation yet.
@@ -1991,6 +2182,87 @@ impl IrGenerator {
             });
 
         Ok(Operand::Local(local))
+    }
+
+    /// `e is T` / `e is not T`: read the value's runtime tag and compare it
+    /// with the tag set the tested type names (spec
+    /// `expressions/operators.md`, "Type tests").
+    pub(super) fn generate_is(&mut self, test: &IsExpr) -> Result<Operand, XuloError> {
+        let func_idx = self.current_func.unwrap();
+        let value = self.generate_expression(&test.expr)?;
+        let result = self.module.functions[func_idx].add_local(IrType::Bool);
+        match self.type_test_tags(&test.type_) {
+            // `is unknown` is always true.
+            None => {
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::Const {
+                        dst: result,
+                        value: IrValue::Bool(true),
+                    });
+            }
+            Some(tags) if tags.is_empty() => {
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::Const {
+                        dst: result,
+                        value: IrValue::Bool(false),
+                    });
+            }
+            Some(tags) => {
+                let tag_local = self.module.functions[func_idx].add_local(IrType::I64);
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::RuntimeCall {
+                        dst: Some(tag_local),
+                        func: RuntimeFn::DetectTag,
+                        args: vec![value],
+                    });
+                let mut accumulator: Option<LocalId> = None;
+                for tag in tags {
+                    let matched = self.module.functions[func_idx].add_local(IrType::Bool);
+                    self.module.functions[func_idx]
+                        .instructions
+                        .push(Instruction::Eq {
+                            dst: matched,
+                            left: Operand::Local(tag_local),
+                            right: Operand::Const(IrValue::I64(tag)),
+                        });
+                    accumulator = Some(match accumulator {
+                        None => matched,
+                        Some(previous) => {
+                            let combined = self.module.functions[func_idx].add_local(IrType::Bool);
+                            self.module.functions[func_idx]
+                                .instructions
+                                .push(Instruction::Or {
+                                    dst: combined,
+                                    left: Operand::Local(previous),
+                                    right: Operand::Local(matched),
+                                });
+                            combined
+                        }
+                    });
+                }
+                let combined = accumulator.expect("at least one tag");
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::SetLocal {
+                        dst: result,
+                        src: Operand::Local(combined),
+                    });
+            }
+        }
+        if !test.negated {
+            return Ok(Operand::Local(result));
+        }
+        let negated = self.module.functions[func_idx].add_local(IrType::Bool);
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Not {
+                dst: negated,
+                operand: Operand::Local(result),
+            });
+        Ok(Operand::Local(negated))
     }
 
     pub(super) fn generate_index(&mut self, index: &IndexExpr) -> Result<Operand, XuloError> {

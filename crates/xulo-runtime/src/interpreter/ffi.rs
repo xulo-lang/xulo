@@ -16,7 +16,7 @@ use xulo_core::error::{ErrorKind, XuloError};
 
 use crate::env::Env;
 use crate::interpreter::{Interpreter, NativeFn, RunError};
-use crate::value::{PtrValue, Value};
+use crate::value::{Num, PtrValue, Value};
 
 #[cfg(unix)]
 use std::ffi::CString;
@@ -195,26 +195,27 @@ fn value_to_arg(v: &Value, ty: &Type, local: &str, idx: usize) -> Result<FfiArg,
                     other.kind_name()
                 ))),
             },
-            "f32" => match v {
-                Value::Number(n) => Ok(FfiArg::F32(*n as f32)),
-                other => Err(err(format!(
+            "f32" => match v.num() {
+                Some(n) => Ok(FfiArg::F32(n.to_f64() as f32)),
+                None => Err(err(format!(
                     "{where_} must be a `f32`, found {}",
-                    other.kind_name()
+                    v.kind_name()
                 ))),
             },
-            "f64" => match v {
-                Value::Number(n) => Ok(FfiArg::F64(*n)),
-                other => Err(err(format!(
+            "f64" => match v.num() {
+                Some(n) => Ok(FfiArg::F64(n.to_f64())),
+                None => Err(err(format!(
                     "{where_} must be a `f64`, found {}",
-                    other.kind_name()
+                    v.kind_name()
                 ))),
             },
-            // i8…u64 / usize / isize：值域由 E0209/E0201 保证
-            _ => match v {
-                Value::Number(n) => Ok(FfiArg::Int(*n as i64)),
-                other => Err(err(format!(
+            // A narrow integer (i8…u32) or `u64`/`usize`: the value domain is
+            // guaranteed by E0209/E0201 and carried as a 64-bit word.
+            _ => match v.num().and_then(|n| n.integer()) {
+                Some(n) => Ok(FfiArg::Int(n as i64)),
+                None => Err(err(format!(
                     "{where_} must be a number, found {}",
-                    other.kind_name()
+                    v.kind_name()
                 ))),
             },
         },
@@ -225,25 +226,25 @@ fn value_to_arg(v: &Value, ty: &Type, local: &str, idx: usize) -> Result<FfiArg,
 fn ret_to_value(ret: FfiRet, ty: Option<&Type>) -> Value {
     match ret {
         FfiRet::Void => Value::Null,
-        FfiRet::F32(v) => Value::Number(v as f64),
-        FfiRet::F64(v) => Value::Number(v),
+        FfiRet::F32(v) => Value::Float(v as f64),
+        FfiRet::F64(v) => Value::Float(v),
         FfiRet::Wide(w) => match ty {
             Some(Type::Boolean) => Value::Boolean(w != 0),
             // E0901 只放行 `Ptr?` 一种可选拼写
             Some(Type::Optional(_)) => ptr_or_null(w),
             Some(Type::Named(n, _)) => match n.as_str() {
                 "Ptr" => ptr_or_null(w),
-                "i8" => Value::Number((w as u8 as i8) as f64),
-                "i16" => Value::Number((w as u16 as i16) as f64),
-                "i32" => Value::Number((w as u32 as i32) as f64),
-                "i64" | "isize" => Value::Number(w as i64 as f64),
-                "u8" => Value::Number((w as u8) as f64),
-                "u16" => Value::Number((w as u16) as f64),
-                "u32" => Value::Number((w as u32) as f64),
-                "u64" | "usize" => Value::Number(w as f64),
-                _ => Value::Number(w as f64),
+                "i8" => Value::Int(w as u8 as i8 as i64),
+                "i16" => Value::Int(w as u16 as i16 as i64),
+                "i32" => Value::Int(w as u32 as i32 as i64),
+                "i64" | "isize" => Value::Int(w as i64),
+                "u8" => Value::Int(w as u8 as i64),
+                "u16" => Value::Int(w as u16 as i64),
+                "u32" => Value::Int(w as u32 as i64),
+                "u64" | "usize" => Value::from_num(Num::UInt(w)),
+                _ => Value::from_num(Num::UInt(w)),
             },
-            _ => Value::Number(w as f64),
+            _ => Value::from_num(Num::UInt(w)),
         },
     }
 }

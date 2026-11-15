@@ -252,21 +252,6 @@ fn fixed_bit_name(ty: &Type) -> Option<&str> {
     }
 }
 
-/// Whether an integral literal value fits the fixed-bit integer type
-/// `bits`/`signed`. The AST carries every number as `f64`, so a non-integral
-/// value answers `false` (it is a float literal, which never coerces to an
-/// integer type — spec `type-system/coercion.md`) and the upper bound is
-/// checked exclusively so `2^63`/`2^64` (exactly representable) is rejected
-/// while every in-range integral value below it is accepted.
-fn int_fixed_fits(value: f64, bits: i32, signed: bool) -> bool {
-    if !value.is_finite() || value.fract() != 0.0 {
-        return false;
-    }
-    let upper = 2f64.powi(if signed { bits - 1 } else { bits });
-    let lower = if signed { -upper } else { 0.0 };
-    value >= lower && value < upper
-}
-
 /// How a numeric literal relates to a fixed-bit integer target: fits, does
 /// not fit (E0209), or is not an integer literal at all (the caller's E0201).
 enum LiteralFit {
@@ -275,23 +260,13 @@ enum LiteralFit {
     NotAnInteger,
 }
 
-fn int_literal_fit(value: f64, bits: i32, signed: bool) -> LiteralFit {
-    if !value.is_finite() || value.fract() != 0.0 {
+fn int_literal_fit(value: NumLit, bits: i32, signed: bool) -> LiteralFit {
+    if value.integral().is_none() {
         LiteralFit::NotAnInteger
-    } else if int_fixed_fits(value, bits, signed) {
+    } else if value.fits(bits, signed) {
         LiteralFit::Fits
     } else {
         LiteralFit::OutOfRange
-    }
-}
-
-/// A literal's text as written, for diagnostics: integers print without a
-/// fractional part (`300`, not `300.0`).
-fn num_literal_text(value: f64) -> String {
-    if value.fract() == 0.0 && value.abs() < 1e15 {
-        format!("{}", value as i64)
-    } else {
-        format!("{value}")
     }
 }
 
@@ -305,23 +280,80 @@ fn is_ptr_type(ty: &Type) -> bool {
     }
 }
 
-/// The numeric value of a literal as written: a direct `Literal::Number`,
-/// or the unary `-` applied to one (spec `expressions/literals.md` gives
-/// the sign its own precedence, but `abs(-1)` in spec ffi.md must still
-/// coerce — a negated literal is recognized as a signed literal for
-/// coercion). `None` for anything else.
-fn numeric_literal_of(expr: &Expression) -> Option<f64> {
+/// The exact value of a numeric literal as written (spec
+/// `types/primitive-types.md`): an integer keeps its full 128-bit value so a
+/// `u64` literal above `i64::MAX` is not rounded through `f64`.
+#[derive(Clone, Copy)]
+enum NumLit {
+    Int(i128),
+    Float(f64),
+}
+
+impl NumLit {
+    /// The value as an `f64`, for float targets and messages.
+    fn as_f64(self) -> f64 {
+        match self {
+            NumLit::Int(v) => v as f64,
+            NumLit::Float(f) => f,
+        }
+    }
+
+    /// The value as an integer when the literal is integral: an integer
+    /// literal, or a float literal with no fractional part (`3.0`).
+    fn integral(self) -> Option<i128> {
+        match self {
+            NumLit::Int(v) => Some(v),
+            NumLit::Float(f) if f.is_finite() && f.fract() == 0.0 => Some(f as i128),
+            NumLit::Float(_) => None,
+        }
+    }
+
+    /// Whether an integral literal fits the fixed-bit integer type
+    /// `bits`/`signed` (exclusive upper bound, so `2^63`/`2^64` are out of
+    /// range).
+    fn fits(self, bits: i32, signed: bool) -> bool {
+        let Some(value) = self.integral() else {
+            return false;
+        };
+        let upper = 1i128 << (if signed { bits - 1 } else { bits });
+        let lower = if signed { -upper } else { 0 };
+        value >= lower && value < upper
+    }
+
+    /// The value's spelling for diagnostics (`300`, not `300.0`).
+    fn text(self) -> String {
+        match self {
+            NumLit::Int(v) => v.to_string(),
+            NumLit::Float(f) => format!("{f}"),
+        }
+    }
+}
+
+/// The numeric value of a literal as written: a direct numeric literal, or
+/// the unary `-` applied to one (spec `expressions/literals.md` gives the sign
+/// its own precedence, but `abs(-1)` in spec ffi.md must still coerce — a
+/// negated literal is recognized as a signed literal for coercion). `None`
+/// for anything else.
+fn numeric_literal_of(expr: &Expression) -> Option<NumLit> {
     match expr {
         Expression::Literal {
-            value: Literal::Number(v) | Literal::Float(v),
+            value: Literal::Int(v),
             ..
-        } => Some(*v),
+        } => Some(NumLit::Int(*v)),
+        Expression::Literal {
+            value: Literal::Float(v),
+            ..
+        } => Some(NumLit::Float(*v)),
         Expression::Unary(un) if matches!(un.operator, xulo_core::ast::UnaryOperator::Neg) => {
             match &un.operand {
                 Expression::Literal {
-                    value: Literal::Number(v) | Literal::Float(v),
+                    value: Literal::Int(v),
                     ..
-                } => Some(-*v),
+                } => Some(NumLit::Int(v.wrapping_neg())),
+                Expression::Literal {
+                    value: Literal::Float(v),
+                    ..
+                } => Some(NumLit::Float(-v)),
                 _ => None,
             }
         }
@@ -1060,6 +1092,18 @@ fn match_null_test(cond: &Expression) -> Option<(String, bool)> {
         ) => Some((name.clone(), eq)),
         _ => None,
     }
+}
+
+/// A type test of a binding: `if v is T` / `if v is not T`. Returns the
+/// binding's name, the tested type, and whether the test is negated.
+fn match_type_test(cond: &Expression) -> Option<(String, Type, bool)> {
+    let Expression::Is(test) = cond else {
+        return None;
+    };
+    let Expression::Identifier { name, .. } = &*test.expr else {
+        return None;
+    };
+    Some((name.clone(), test.type_.clone(), test.negated))
 }
 
 /// A parameter of an intrinsic namespace function (spec
@@ -3787,14 +3831,9 @@ fn place_of(expr: &Expression) -> Option<Place> {
                 cur = &m.object;
             }
             Expression::Index(i) => {
-                let index = match &*i.index {
-                    Expression::Literal {
-                        value:
-                            xulo_core::ast::Literal::Number(n) | xulo_core::ast::Literal::Float(n),
-                        ..
-                    } if n.fract() == 0.0 && n.is_finite() => Some(*n as i64),
-                    _ => None,
-                };
+                let index = numeric_literal_of(&i.index)
+                    .and_then(NumLit::integral)
+                    .and_then(|n| i64::try_from(n).ok());
                 segs.push(PlaceSeg::Sub(index));
                 cur = &i.object;
             }
@@ -3869,13 +3908,9 @@ fn assign_target_place(target: &AssignTarget) -> Option<Place> {
         }
         AssignTarget::Index(object, index) => {
             let mut place = place_of(object)?;
-            let idx = match &**index {
-                Expression::Literal {
-                    value: xulo_core::ast::Literal::Number(n) | xulo_core::ast::Literal::Float(n),
-                    ..
-                } if n.fract() == 0.0 && n.is_finite() => Some(*n as i64),
-                _ => None,
-            };
+            let idx = numeric_literal_of(index)
+                .and_then(NumLit::integral)
+                .and_then(|n| i64::try_from(n).ok());
             match idx {
                 Some(n) => {
                     place.segs.push(PlaceSeg::Sub(Some(n)));
@@ -4605,6 +4640,26 @@ impl Analyzer {
             }
         }
         Ok(())
+    }
+
+    /// The right operand of `is`/`is not`: a base type, a non-generic
+    /// `struct`/`enum`, `unknown`, or a union/optional built from those
+    /// (spec `expressions/operators.md`, "Type tests"). A `List`, `Map`,
+    /// function type, generic instantiation, or type parameter is `E0222`.
+    fn testable_type(&self, ty: &Type) -> bool {
+        match ty {
+            Type::String | Type::Number | Type::Boolean | Type::Null => true,
+            Type::Union(parts) => parts.iter().all(|part| self.testable_type(part)),
+            Type::Optional(inner) => self.testable_type(inner),
+            Type::Named(name, args) => {
+                args.is_empty()
+                    && name != "Map"
+                    && name != "Set"
+                    && name != "Array"
+                    && !self.generics.iter().any(|g| g == name)
+            }
+            _ => false,
+        }
     }
 
     /// Does `t` have a string form — a base type, or a named type with a
@@ -7555,6 +7610,24 @@ impl Analyzer {
                         .find(|(n, _)| n == property)
                         .map(|(_, t)| t.clone())
                         .ok_or_else(|| self.err(format!("type has no member `{property}`"))),
+                    // `p.0 = v` writes a tuple element (spec
+                    // `expressions/path-and-access.md`); the position rule is
+                    // the read rule, E0220.
+                    Type::Tuple(items) => {
+                        let arity = items.len();
+                        property
+                            .parse::<usize>()
+                            .ok()
+                            .and_then(|index| items.get(index).cloned())
+                            .ok_or_else(|| {
+                                self.err_code(
+                                    "E0220",
+                                    format!(
+                                        "position `{property}` does not exist in a tuple of {arity} elements"
+                                    ),
+                                )
+                            })
+                    }
                     other => Err(self.err(format!(
                         "cannot assign member `{property}` of `{}`",
                         other.name()
@@ -9240,8 +9313,30 @@ impl Analyzer {
                 Ok(Type::Named("Map".to_string(), Vec::new()))
             }
             Expression::Is(is) => {
-                self.check_expression(&is.expr)?;
+                let subject = self.check_expression(&is.expr)?;
                 self.check_type(&is.type_)?;
+                // The tested type must be testable and fit the subject's
+                // type (spec `expressions/operators.md`, "Type tests").
+                if !self.testable_type(&is.type_) {
+                    return Err(self
+                        .err_code(
+                            "E0222",
+                            format!("type `{}` is not testable", is.type_.display()),
+                        )
+                        .at(is.span.clone()));
+                }
+                if !self.assignable(&is.type_, &subject) {
+                    return Err(self
+                        .err_code(
+                            "E0222",
+                            format!(
+                                "type `{}` does not fit `{}`",
+                                is.type_.display(),
+                                subject.display()
+                            ),
+                        )
+                        .at(is.span.clone()));
+                }
                 Ok(Type::Boolean)
             }
             Expression::Panic { expr: inner, .. } => {
@@ -9733,6 +9828,26 @@ impl Analyzer {
             }
             other => other,
         };
+        // Positional access `p.0` on a tuple (spec
+        // `expressions/path-and-access.md`, "Positional access"): the
+        // position must name an existing element, otherwise E0220.
+        if let Type::Tuple(items) = &inner {
+            let element = m
+                .property
+                .parse::<usize>()
+                .ok()
+                .and_then(|index| items.get(index).cloned());
+            return element.ok_or_else(|| {
+                self.err_code(
+                    "E0220",
+                    format!(
+                        "position `{}` does not exist in `{}`",
+                        m.property,
+                        inner.name()
+                    ),
+                )
+            });
+        }
         // Read-only inherent properties (spec `types/composite-types.md`,
         // `types/primitive-types.md`).
         if let Some(prop) = builtin_property(&inner, &m.property) {
@@ -9826,19 +9941,27 @@ impl Analyzer {
                 "E0102",
                 format!("no member `{property}` on `{}`", ty.name()),
             )),
-            Type::Named(name, _) => {
+            Type::Named(name, args) => {
                 // A declared struct's fields type their member access (`e`
                 // : `Error` has `message: string`); a name the struct does
                 // not declare is E0102 unless an `impl` method provides it —
                 // methods are reached by call, but the name exists (spec
-                // `expressions/path-and-access.md`).
+                // `expressions/path-and-access.md`). A generic struct's field
+                // type is written with the type parameters, so substitute the
+                // receiver's arguments.
                 if !self.generics.contains(name)
-                    && let Some(TypeEntryKind::Struct(fields)) =
-                        self.type_entry(name).map(|e| &e.kind)
+                    && let Some(entry) = self.type_entry(name)
+                    && let TypeEntryKind::Struct(fields) = &entry.kind
                 {
                     if let Some((_, field_type, _)) = fields.iter().find(|(n, _, _)| n == property)
                     {
-                        return Ok(field_type.clone());
+                        let bindings: HashMap<String, Type> = entry
+                            .type_params
+                            .iter()
+                            .cloned()
+                            .zip(args.iter().cloned())
+                            .collect();
+                        return Ok(substitute_type(field_type, &bindings));
                     }
                     if self
                         .impl_methods
@@ -10576,12 +10699,17 @@ impl Analyzer {
                         numeric_literal_of(&bin.left),
                         numeric_literal_of(&bin.right),
                     )
-                    && (!(0.0..64.0).contains(&amount) || amount.fract() != 0.0)
+                    && !amount
+                        .integral()
+                        .is_some_and(|amount| (0..64).contains(&amount))
                 {
                     return Err(self
                         .err_code(
                             "E0210",
-                            format!("shift amount out of range in constant expression: {amount}"),
+                            format!(
+                                "shift amount out of range in constant expression: {}",
+                                amount.text()
+                            ),
                         )
                         .at(bin.span.clone()));
                 }
@@ -12538,7 +12666,13 @@ impl Analyzer {
         for (fname, ftype, fdefault) in &declared {
             match provided.get(fname) {
                 Some((arg_type, expr)) => {
-                    if !self.assignable(arg_type, ftype) && !self.literal_matches(expr, ftype) {
+                    // A field typed by the struct's own type parameter is
+                    // bound by this argument; inference below collects it
+                    // (spec `types/generics.md`).
+                    let expected = self.erase_generic_params(ftype, &type_params);
+                    if !self.assignable(arg_type, &expected)
+                        && !self.literal_matches(expr, &expected)
+                    {
                         return Err(self
                             .err_code(
                                 "E0202",
@@ -13403,6 +13537,66 @@ impl Analyzer {
         Some((name.to_string(), old))
     }
 
+    /// The type a binding has in one branch of `x is T` / `x is not T`
+    /// (spec `expressions/control-flow.md`). The positive branch is `T`; the
+    /// negative branch removes every member of a union that `T` covers, so
+    /// `string | int` minus `string` is `int` and `string?` minus `string`
+    /// is `null`. `unknown` has no member to remove and stays `unknown`.
+    fn narrowed_type(&self, current: &Type, tested: &Type, positive: bool) -> Type {
+        if positive {
+            return tested.clone();
+        }
+        let resolved = self.resolve_alias(current, 0);
+        match &resolved {
+            Type::Union(parts) => {
+                let remaining: Vec<Type> = parts
+                    .iter()
+                    .filter(|part| !self.assignable(part, tested))
+                    .cloned()
+                    .collect();
+                match remaining.len() {
+                    0 => Type::Null,
+                    1 => remaining.into_iter().next().expect("one member"),
+                    _ => Type::Union(remaining),
+                }
+            }
+            Type::Optional(inner) => {
+                if self.assignable(inner, tested) {
+                    Type::Null
+                } else {
+                    resolved.clone()
+                }
+            }
+            // A top type keeps every member; a plain type has no complement
+            // left, so that branch never runs.
+            Type::Any => resolved.clone(),
+            Type::Named(name, args) if args.is_empty() && name == "unknown" => resolved.clone(),
+            _ => Type::Null,
+        }
+    }
+
+    /// Narrow a binding for one `is` branch. Only a value with a top type
+    /// (`unknown`/`any`), a union, or an optional is narrowed: a plain type
+    /// already says what the value is.
+    fn narrow_to_type(
+        &mut self,
+        name: &str,
+        tested: &Type,
+        positive: bool,
+    ) -> Option<(String, Symbol)> {
+        let sym = self.table.lookup(name)?.clone();
+        let resolved = self.resolve_alias(&sym.type_, 0);
+        let narrowable = matches!(resolved, Type::Any | Type::Union(_) | Type::Optional(_))
+            || matches!(&resolved, Type::Named(n, args) if args.is_empty() && n == "unknown");
+        if !narrowable {
+            return None;
+        }
+        let mut narrowed = sym;
+        narrowed.type_ = self.narrowed_type(&resolved, tested, positive);
+        let old = self.table.replace_symbol(name, narrowed)?;
+        Some((name.to_string(), old))
+    }
+
     fn check_if(&mut self, if_expr: &IfExpr) -> SResult<Type> {
         let condition = self.check_expression(&if_expr.condition)?;
         if !self.assignable(&condition, &Type::Boolean) {
@@ -13416,12 +13610,18 @@ impl Analyzer {
         // gives `x` type `T` in then and `null` in else, `x == null` the
         // reverse. The narrowed symbol shadows the declaration for the
         // branch check and is restored right after, so nested and sibling
-        // `if`s compose. Only `T?` narrows: `unknown`, `any`, and plain `T`
-        // are left untouched.
+        // `if`s compose. Only `T?` narrows on a null test: `unknown`, `any`,
+        // and plain `T` are left untouched.
         let null_test = match_null_test(&if_expr.condition);
-        let then_narrow = null_test
-            .as_ref()
-            .and_then(|(name, eq)| self.narrow_binding(name, *eq));
+        // `if v is T` narrows `v` to `T` in the then-branch; `is not T`
+        // narrows the else-branch (spec `expressions/control-flow.md`).
+        let type_test = match_type_test(&if_expr.condition);
+        let then_narrow = match &type_test {
+            Some((name, ty, negated)) => self.narrow_to_type(name, ty, !*negated),
+            None => null_test
+                .as_ref()
+                .and_then(|(name, eq)| self.narrow_binding(name, *eq)),
+        };
         let then_res = self.check_block_tail(&if_expr.then_branch);
         if let Some((name, old)) = then_narrow {
             self.table.replace_symbol(&name, old);
@@ -13429,9 +13629,12 @@ impl Analyzer {
         let then_type = then_res?;
         let else_res = match &if_expr.else_branch {
             Some(branch) => {
-                let else_narrow = null_test
-                    .as_ref()
-                    .and_then(|(name, eq)| self.narrow_binding(name, !*eq));
+                let else_narrow = match &type_test {
+                    Some((name, ty, negated)) => self.narrow_to_type(name, ty, *negated),
+                    None => null_test
+                        .as_ref()
+                        .and_then(|(name, eq)| self.narrow_binding(name, !*eq)),
+                };
                 let res = self.check_block_tail(branch);
                 if let Some((name, old)) = else_narrow {
                     self.table.replace_symbol(&name, old);
@@ -13647,6 +13850,12 @@ impl Analyzer {
     fn assignable(&self, from: &Type, to: &Type) -> bool {
         let from = self.resolve_alias(from, 0);
         let to = self.resolve_alias(to, 0);
+        // `unknown` is the top type: every type is assignable to it, and it
+        // is assignable only to itself (spec `types/primitive-types.md`,
+        // "unknown").
+        if matches!(&to, Type::Named(name, args) if args.is_empty() && name == "unknown") {
+            return true;
+        }
         if matches!(from, Type::Any) || matches!(to, Type::Any) {
             return true;
         }
@@ -13736,17 +13945,18 @@ impl Analyzer {
             // (spec `type-system/coercion.md`, literal coercion; the f32/f64
             // rows take any in-range value, the integer rows only an
             // integral one — a float literal never reaches an integer type).
-            // The AST carries every number as `Literal::Number`, so `3.0`
-            // writes the integer literal `3`, and the sign of `-1` lives in
-            // the unary operator ([`numeric_literal_of`]); an overflowing
-            // f64 literal parses to infinity and is out of range.
+            // Integer literals keep their exact value ([`NumLit`]); the sign
+            // of `-1` lives in the unary operator ([`numeric_literal_of`]).
             Type::Named(name, args) if args.is_empty() && fixed_bit(name).is_some() => {
                 match numeric_literal_of(value) {
                     None => false,
                     Some(v) => match fixed_bit(name).expect("guarded above") {
-                        FixedBit::Int { bits, signed } => int_fixed_fits(v, bits, signed),
-                        FixedBit::Float32 => v.is_finite() && v.abs() <= f32::MAX as f64,
-                        FixedBit::Float64 => v.is_finite(),
+                        FixedBit::Int { bits, signed } => v.fits(bits, signed),
+                        FixedBit::Float32 => {
+                            let v = v.as_f64();
+                            v.is_finite() && v.abs() <= f32::MAX as f64
+                        }
+                        FixedBit::Float64 => v.as_f64().is_finite(),
                     },
                 }
             }
@@ -13790,7 +14000,7 @@ impl Analyzer {
         if !args.is_empty() {
             return None;
         }
-        let text = num_literal_text(v);
+        let text = v.text();
         match fixed_bit(name)? {
             FixedBit::Int { bits, signed } => match int_literal_fit(v, bits, signed) {
                 LiteralFit::OutOfRange => Some(
@@ -13800,7 +14010,7 @@ impl Analyzer {
                 LiteralFit::Fits | LiteralFit::NotAnInteger => None,
             },
             FixedBit::Float32 => {
-                if !v.is_finite() || v.abs() > f32::MAX as f64 {
+                if !v.as_f64().is_finite() || v.as_f64().abs() > f32::MAX as f64 {
                     Some(
                         self.err_code("E0209", format!("literal `{text}` does not fit `f32`"))
                             .at(span),
@@ -13810,7 +14020,7 @@ impl Analyzer {
                 }
             }
             FixedBit::Float64 => {
-                if !v.is_finite() {
+                if !v.as_f64().is_finite() {
                     Some(
                         self.err_code("E0209", format!("literal `{text}` does not fit `f64`"))
                             .at(span),
@@ -14079,7 +14289,7 @@ fn type_same(a: &Type, b: &Type) -> bool {
 fn literal_type(lit: &Literal) -> Type {
     match lit {
         Literal::String(_) => Type::String,
-        Literal::Number(_) | Literal::Float(_) => Type::Number,
+        Literal::Int(_) | Literal::Float(_) => Type::Number,
         Literal::Boolean(_) => Type::Boolean,
         Literal::Null => Type::Null,
         Literal::List(items) => {
@@ -14131,9 +14341,8 @@ fn union_join(a: &Type, b: &Type) -> Type {
 fn pattern_name(arm: &xulo_core::ast::MatchArm) -> String {
     match &arm.pattern {
         xulo_core::ast::MatchPattern::Literal(Literal::String(s)) => format!("\"{s}\""),
-        xulo_core::ast::MatchPattern::Literal(Literal::Number(n) | Literal::Float(n)) => {
-            n.to_string()
-        }
+        xulo_core::ast::MatchPattern::Literal(Literal::Int(n)) => n.to_string(),
+        xulo_core::ast::MatchPattern::Literal(Literal::Float(n)) => n.to_string(),
         xulo_core::ast::MatchPattern::Literal(Literal::Boolean(b)) => b.to_string(),
         xulo_core::ast::MatchPattern::Literal(Literal::Null) => "null".into(),
         xulo_core::ast::MatchPattern::Literal(Literal::List(_)) => "[...]".into(),

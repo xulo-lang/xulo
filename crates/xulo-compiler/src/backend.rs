@@ -477,6 +477,65 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
         params: &[I64, I64, I64],
         returns: &[I64],
     },
+    // Checked integral arithmetic: overflow, division by zero, and an
+    // out-of-range shift abort with exit status 1 (spec
+    // `types/primitive-types.md`, "Overflow"). The last argument selects the
+    // unsigned `u64` domain.
+    RuntimeFnDesc {
+        name: "xulo_int_add",
+        addr: xulo_runtime::runtime::xulo_int_add as *const u8,
+        params: &[I64, I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_int_sub",
+        addr: xulo_runtime::runtime::xulo_int_sub as *const u8,
+        params: &[I64, I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_int_mul",
+        addr: xulo_runtime::runtime::xulo_int_mul as *const u8,
+        params: &[I64, I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_int_div",
+        addr: xulo_runtime::runtime::xulo_int_div as *const u8,
+        params: &[I64, I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_int_rem",
+        addr: xulo_runtime::runtime::xulo_int_rem as *const u8,
+        params: &[I64, I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_int_pow",
+        addr: xulo_runtime::runtime::xulo_int_pow as *const u8,
+        params: &[I64, I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_int_neg",
+        addr: xulo_runtime::runtime::xulo_int_neg as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_num_compare",
+        addr: xulo_runtime::runtime::xulo_num_compare as *const u8,
+        params: &[I64, I64, I64, I64],
+        returns: &[I64],
+    },
+    // Runtime type tag for `is` tests (the `PrintValue` tag space).
+    RuntimeFnDesc {
+        name: "xulo_detect_tag",
+        addr: xulo_runtime::runtime::xulo_detect_tag as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
     // Math 命名空间：float 组返回 f64（对齐语义 builtin_member 的 BuiltinRet）
     RuntimeFnDesc {
         name: "xulo_math_abs",

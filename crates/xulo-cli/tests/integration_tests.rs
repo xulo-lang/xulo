@@ -128,19 +128,18 @@ fn run_arithmetic() {
 }
 
 #[test]
-fn run_overflowing_number_literal_infinity() {
-    // A 310-digit literal overflows f64 to +Infinity. The JS path formats it as
-    // the `Infinity` global (Rust's "inf" is not valid JS and used to throw a
-    // ReferenceError under node).
+fn run_overflowing_integer_literal_is_e0209() {
+    // Spec `expressions/literals.md`: an integer literal whose value does not
+    // fit its default type `int` is `E0209`, not a rounded or infinite value.
     let huge = format!("1{}", "0".repeat(309));
     let file = temp_file("inf.xulo", &format!("fn main() {{ print({huge}) }}"));
     let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        out.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
+        stderr.contains("E0209") && stderr.contains("does not fit in `int`"),
+        "stderr: {stderr}"
     );
-    assert_eq!(String::from_utf8_lossy(&out.stdout), "Infinity\n");
     let _ = std::fs::remove_file(&file);
 }
 
@@ -1350,6 +1349,7 @@ fn run_negative_and_float_arithmetic() {
             print(-5 * 3.5)
             print(10 / 4)
             print(-10 - -3)
+            print(10.0 / 4.0)
         }
         "#,
     );
@@ -1359,7 +1359,9 @@ fn run_negative_and_float_arithmetic() {
         "stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&out.stdout), "-17.5\n2.5\n-7\n");
+    // `/` on two `int`s truncates toward zero (spec
+    // `expressions/operators.md`); a `float` operand keeps the fraction.
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "-17.5\n2\n-7\n2.5\n");
     let _ = std::fs::remove_file(&file);
 }
 
