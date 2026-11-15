@@ -7894,3 +7894,43 @@ fn hint_glob_import_binds_all_four_members() {
     )
     .unwrap_or_else(|e| panic!("{}", e.message));
 }
+
+#[test]
+fn regex_types_resolve_in_annotations_without_an_import() {
+    let src = r#"
+        fn probe(re: RegExp, err: RegexError, m: RegexMatch) {
+            print(str(re.test("x")))
+            print(err.message)
+            print(m.value)
+        }
+        fn main() { print("ok") }
+    "#;
+    analyze_src(src).unwrap_or_else(|e| panic!("{}", e.message));
+}
+
+#[test]
+fn regex_alias_reaches_the_type_statics() {
+    let src = r#"
+        use std::regex::RegExp as R;
+        fn main() {
+            match R::compile("a+") {
+                Result::Ok(re) => print(str(re.test("aaa")))
+                Result::Err(e) => print(e.message)
+            }
+        }
+    "#;
+    analyze_src(src).unwrap_or_else(|e| panic!("{}", e.message));
+}
+
+#[test]
+fn std_numeric_results_name_their_spec_type() {
+    for (source, expected) in [
+        ("std::math::floor(2.5)", "`int`"),
+        ("std::math::sqrt(2.0)", "`float`"),
+        ("std::time::now()", "`u64`"),
+    ] {
+        let err =
+            analyze_src(&format!(r#"fn main() {{ let value: string = {source} }}"#)).unwrap_err();
+        assert!(err.message.contains(expected), "{source}: {}", err.message);
+    }
+}

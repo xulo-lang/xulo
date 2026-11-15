@@ -64,8 +64,8 @@ fn test_math_time_example_matches_interpreter() {
 
 #[test]
 fn test_math_float_group_rounding_and_abs() {
-    // floor/ceil/round/trunc/abs/min/max：结果槽是 F64、tag=2 打印，
-    // 整数值的 float 经 format_number 呈现为 "3" 这样的整数形态
+    // abs/min/max 仍落 F64 槽；floor/ceil/round/trunc 按 spec 收窄成
+    // int，落 I64 槽（tag=1），打印形态与解释器一致。
     let out = compile_and_run(
         r#"fn main() {
     print(std::math::floor(-3.7), std::math::ceil(-3.2), std::math::round(-3.5), std::math::trunc(-3.7))
@@ -138,6 +138,34 @@ fn test_time_clock_comparisons() {
         .map(|s| s.to_string())
         .collect();
     assert_eq!(out, expected);
+}
+
+/// JIT 路径的取整越界：规范要求运行期失败（`modules/math.md`），
+/// 进程以状态码 1 退出并写出诊断——同样在子进程中验证，避免带走测试宿主。
+#[test]
+fn test_jit_math_rounding_range_failure_exits() {
+    if std::env::var_os("XULO_CG_ROUNDING_RANGE_CHILD").is_some() {
+        compile_and_run(r#"fn main() { print(std::math::floor(9223372036854775808.0)) }"#);
+        panic!("out-of-range rounding returned");
+    }
+    let exe = std::env::current_exe().expect("test binary path");
+    let out = std::process::Command::new(exe)
+        .arg("test_jit_math_rounding_range_failure_exits")
+        .arg("--nocapture")
+        .env("XULO_CG_ROUNDING_RANGE_CHILD", "1")
+        .output()
+        .expect("spawn child test");
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "child stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("result is outside `int`'s range"),
+        "child stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 #[test]

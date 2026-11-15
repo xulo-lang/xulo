@@ -404,49 +404,47 @@ pub(super) fn native_math_pow(_interp: &Interpreter, args: &[Value]) -> Result<V
 /// from zero (spec `builtins/intrinsic-functions.md`); every result stays an
 /// integer-valued `float`.
 pub(super) fn native_math_floor(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    Ok(int_from_float(xulo_std::math::floor(builtin_num_arg(
-        args,
-        0,
-        "std::math::floor",
-    )?)))
+    int_from_float(
+        "floor",
+        xulo_std::math::floor(builtin_num_arg(args, 0, "std::math::floor")?),
+    )
 }
 
 pub(super) fn native_math_ceil(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    Ok(int_from_float(xulo_std::math::ceil(builtin_num_arg(
-        args,
-        0,
-        "std::math::ceil",
-    )?)))
+    int_from_float(
+        "ceil",
+        xulo_std::math::ceil(builtin_num_arg(args, 0, "std::math::ceil")?),
+    )
 }
 
 pub(super) fn native_math_round(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    Ok(int_from_float(xulo_std::math::round(builtin_num_arg(
-        args,
-        0,
-        "std::math::round",
-    )?)))
+    int_from_float(
+        "round",
+        xulo_std::math::round(builtin_num_arg(args, 0, "std::math::round")?),
+    )
 }
 
 pub(super) fn native_math_trunc(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
-    Ok(int_from_float(xulo_std::math::trunc(builtin_num_arg(
-        args,
-        0,
-        "std::math::trunc",
-    )?)))
+    int_from_float(
+        "trunc",
+        xulo_std::math::trunc(builtin_num_arg(args, 0, "std::math::trunc")?),
+    )
 }
 
-/// A `Math` function declared `fn(float): int`. A value outside the `int`
-/// range saturates (the semantic layer cannot rule it out at runtime).
-fn int_from_float(n: f64) -> Value {
+/// A `Math` function declared `fn(float): int`: an integral result outside
+/// the `int` range is a runtime failure (spec `modules/math.md`, "Rounding
+/// and narrowing"). `NaN` keeps the historical `0` image.
+fn int_from_float(name: &str, n: f64) -> Result<Value, RunError> {
     if n.is_nan() {
-        Value::Int(0)
-    } else if n >= i64::MAX as f64 {
-        Value::Int(i64::MAX)
-    } else if n <= i64::MIN as f64 {
-        Value::Int(i64::MIN)
-    } else {
-        Value::Int(n as i64)
+        return Ok(Value::Int(0));
     }
+    if n < i64::MIN as f64 || n >= i64::MAX as f64 {
+        return Err(RunError::err(
+            format!("`std::math::{name}`: result is outside `int`'s range"),
+            0..0,
+        ));
+    }
+    Ok(Value::Int(n as i64))
 }
 
 /// `std::math::to_fixed(x, digits)`: the decimal numeral of `x` with exactly

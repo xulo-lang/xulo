@@ -239,7 +239,7 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 | S6 | `std::regex` and `std::fmt` | **OK** | runtime tests | 2 |
 | S7 | `std::net` and `std::http` | **OK** | runtime tests; outside the bootstrap subset | — |
 | S8 | `extern "C"` FFI | **PARTIAL** | Unix only; Windows returns an unsupported error; outside the bootstrap subset | — |
-| S9 | Numeric signatures and std diagnostics match the std spec | **PARTIAL** | std-spec §1.3 lists known convergence items (numeric signatures, coarse error codes, regex reachability) | 2 |
+| S9 | Numeric signatures and std diagnostics match the std spec | **OK** | Numeric results name `int`/`float`/`u64`; AOT rounding narrows to the `int` slot with a runtime range failure; regex types annotate without imports and aliases reach their statics; stable diagnostic codes from D3 (`crates/xulo-semantic/tests/semantic_tests.rs`, `crates/xulo-runtime/tests/native.rs`, `crates/xulo-compiler/tests/intrinsics_codegen_tests.rs`) | 2 |
 
 ### 5.5 Modules, build, and toolchain
 
@@ -481,9 +481,11 @@ matrix.
 
 **Exit:** §6.2–6.5 probes pass; no workaround needed for stage 1's AST.
 
-**Status:** done except S9. §6.2–6.5 pass in both execution paths, L18b is
-covered by the semantic and interpreter regression tests, and D3's fine-grained
-diagnostic codes are asserted in the semantic tests.
+**Status:** done. §6.2–6.5 pass in both execution paths, L18b is covered by the
+semantic and interpreter regression tests, D3's fine-grained diagnostic codes
+are asserted in the semantic tests, and S9 aligns the std numeric result types,
+AOT narrowing slot, range failures, and regex reachability with `std-spec`
+§1.3.
 
 ### WP3 — AOT parity and bootstrap backend (P1, Gate 4)
 

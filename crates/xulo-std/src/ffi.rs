@@ -92,24 +92,39 @@ pub extern "C" fn xulo_math_max(a: f64, b: f64) -> f64 {
     math::max(a, b)
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn xulo_math_floor(x: f64) -> f64 {
-    math::floor(x)
+/// Narrow one of the rounding results to `int` (spec
+/// `modules/math.md`, "Rounding and narrowing"): an integral result outside
+/// `-2⁶³ … 2⁶³−1` is a runtime failure, matching the interpreter. `NaN` keeps
+/// the interpreter's `0` image.
+fn narrow_rounding(name: &str, value: f64) -> i64 {
+    if value.is_nan() {
+        return 0;
+    }
+    if value < i64::MIN as f64 || value >= i64::MAX as f64 {
+        eprintln!("`std::math::{name}`: result is outside `int`'s range");
+        std::process::exit(1);
+    }
+    value as i64
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn xulo_math_ceil(x: f64) -> f64 {
-    math::ceil(x)
+pub extern "C" fn xulo_math_floor(x: f64) -> i64 {
+    narrow_rounding("floor", math::floor(x))
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn xulo_math_round(x: f64) -> f64 {
-    math::round(x)
+pub extern "C" fn xulo_math_ceil(x: f64) -> i64 {
+    narrow_rounding("ceil", math::ceil(x))
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn xulo_math_trunc(x: f64) -> f64 {
-    math::trunc(x)
+pub extern "C" fn xulo_math_round(x: f64) -> i64 {
+    narrow_rounding("round", math::round(x))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_math_trunc(x: f64) -> i64 {
+    narrow_rounding("trunc", math::trunc(x))
 }
 
 #[unsafe(no_mangle)]

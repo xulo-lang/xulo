@@ -27,12 +27,12 @@ readiness document.
 |---|---:|---:|
 | WP0 — Matrix hygiene and conformance | 5 | 6 |
 | WP1 — 64-bit integer model | 7 | 7 |
-| WP2 — Type system and semantic convergence | 9 | 10 |
+| WP2 — Type system and semantic convergence | 10 | 10 |
 | WP3 — AOT parity and bootstrap backend | 0 | 8 |
 | WP4 — `defer` semantics | 0 | 5 |
 | WP5 — Stage 1 skeleton | 0 | 6 |
 | WP6 — Self-host loop | 0 | 7 |
-| **Total** | **16** | **49** |
+| **Total** | **17** | **49** |
 
 ## Gates
 
@@ -162,7 +162,7 @@ Priority P0 · needed by Gate 2/3 · source: `stage1-readiness.md` §7 WP2, §6.
       the expected type.
 - [x] **D3** Provide stable error codes for the bootstrap subset instead of
       coarse fallbacks.
-- [ ] **S9** Align std numeric signatures and diagnostics with `std-spec` §1.3.
+- [x] **S9** Align std numeric signatures and diagnostics with `std-spec` §1.3.
 - [x] **G2** Add regression tests lifted from the pinned specification and make
       the `§6.2–6.5` probes pass
       (`crates/xulo-runtime/tests/type_system.rs`,

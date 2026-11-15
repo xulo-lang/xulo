@@ -2419,6 +2419,29 @@ fn math_round_rounds_halfway_cases_away_from_zero() {
 }
 
 #[test]
+fn math_rounding_outside_int_range_is_a_runtime_failure() {
+    // spec `modules/math.md`, "Rounding and narrowing": the four narrowing
+    // functions fail at run time when the integral result is outside `int`.
+    for name in ["floor", "ceil", "round", "trunc"] {
+        let err = run(&format!(
+            r#"
+            fn main() {{
+                print(str(std::math::{name}(9223372036854775808.0)))
+            }}
+        "#
+        ))
+        .unwrap_err();
+        assert!(
+            err.message.contains(&format!(
+                "`std::math::{name}`: result is outside `int`'s range"
+            )),
+            "{name}: {}",
+            err.message
+        );
+    }
+}
+
+#[test]
 fn math_domain_edges_follow_ieee754() {
     let out = run_ok(
         r#"

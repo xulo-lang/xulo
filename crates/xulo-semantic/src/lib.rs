@@ -252,6 +252,18 @@ fn fixed_bit_name(ty: &Type) -> Option<&str> {
     }
 }
 
+/// Whether `ty` is the loose `int` or `float` result type a standard-library
+/// signature names. The language's one `number` type is the union of the two
+/// (`spec/types/primitive-types.md`), so these names are diagnostics-bearing
+/// views of `number`, not fixed-bit types.
+fn loose_numeric_name(ty: &Type) -> bool {
+    matches!(
+        ty,
+        Type::Named(name, args)
+            if args.is_empty() && matches!(name.as_str(), "int" | "float")
+    )
+}
+
 /// How a numeric literal relates to a fixed-bit integer target: fits, does
 /// not fit (E0209), or is not an integer literal at all (the caller's E0201).
 enum LiteralFit {
@@ -448,8 +460,12 @@ fn builtin_type_entries() -> HashMap<String, TypeEntry> {
             },
         );
     }
-    // `RegexMatch` needs no import: an annotation of the name answers from
-    // here, while `use regex::RegexMatch` binds the same shape locally.
+    // The `std::regex` types answer annotations without an import
+    // (`fn probe(re: RegExp)`); a value position still requires the import,
+    // which is what `regex_names` records. `use std::regex::…` binds the same
+    // shape locally and shadows these entries.
+    builtins.insert("RegExp".to_string(), regex_regexp_type_entry());
+    builtins.insert("RegexError".to_string(), regex_error_type_entry());
     builtins.insert("RegexMatch".to_string(), regex_match_type_entry());
     // `StringBuilder` is a prelude builtin type (no import required): its
     // only static is `create`, and instances expose `append`/`build`.
@@ -1164,7 +1180,11 @@ impl BuiltinTy {
             BuiltinTy::ListHeaders => header_list_ty(),
             BuiltinTy::ListAny => Type::List(Box::new(Type::Any)),
             BuiltinTy::Bool => Type::Boolean,
-            _ => Type::Number,
+            BuiltinTy::U64 => Type::Named("u64".to_string(), Vec::new()),
+            // `int`/`float`/`number` parameters stay the loose `number`
+            // layer: an `int` and a `float` operand are both accepted
+            // (spec `std-spec/README.md` §1.3).
+            BuiltinTy::Number | BuiltinTy::Float | BuiltinTy::Int => Type::Number,
         }
     }
 }
@@ -1175,6 +1195,7 @@ enum BuiltinRet {
     Number,
     Float,
     Int,
+    U64,
     String,
     Bool,
     /// `any` — `std::hint::black_box` reports its operand's type at the call,
@@ -1194,6 +1215,8 @@ enum BuiltinRet {
     /// a number: the socket handle `std::net`'s openers yield, or the byte
     /// count `sock_write` reports.
     ResultNumErr,
+    /// `Result<u64, Error>` — `std::time::parse`'s millisecond timestamp.
+    ResultU64Err,
     /// The never-returning result of `std::process::exit`: typed `null` so it
     /// composes in statement position; nothing can ever observe a value.
     Never,
@@ -1238,7 +1261,10 @@ enum BuiltinRet {
 impl BuiltinRet {
     fn ty(self) -> Type {
         match self {
-            BuiltinRet::Number | BuiltinRet::Float | BuiltinRet::Int => Type::Number,
+            BuiltinRet::Number => Type::Number,
+            BuiltinRet::Float => Type::Named("float".to_string(), Vec::new()),
+            BuiltinRet::Int => Type::Named("int".to_string(), Vec::new()),
+            BuiltinRet::U64 => Type::Named("u64".to_string(), Vec::new()),
             BuiltinRet::String => Type::String,
             BuiltinRet::Bool => Type::Boolean,
             BuiltinRet::Any => Type::Any,
@@ -1267,6 +1293,13 @@ impl BuiltinRet {
             BuiltinRet::ResultNumErr => Type::Named(
                 "Result".to_string(),
                 vec![Type::Number, Type::Named("Error".to_string(), Vec::new())],
+            ),
+            BuiltinRet::ResultU64Err => Type::Named(
+                "Result".to_string(),
+                vec![
+                    Type::Named("u64".to_string(), Vec::new()),
+                    Type::Named("Error".to_string(), Vec::new()),
+                ],
             ),
             BuiltinRet::Never => Type::Null,
             BuiltinRet::Unit => unit_type(),
@@ -1309,13 +1342,13 @@ impl BuiltinRet {
                 ("ext".to_string(), Type::String),
             ]),
             BuiltinRet::TimeParts => Type::ObjectType(vec![
-                ("year".to_string(), Type::Number),
-                ("month".to_string(), Type::Number),
-                ("day".to_string(), Type::Number),
-                ("hour".to_string(), Type::Number),
-                ("minute".to_string(), Type::Number),
-                ("second".to_string(), Type::Number),
-                ("millisecond".to_string(), Type::Number),
+                ("year".to_string(), BuiltinRet::Int.ty()),
+                ("month".to_string(), BuiltinRet::Int.ty()),
+                ("day".to_string(), BuiltinRet::Int.ty()),
+                ("hour".to_string(), BuiltinRet::Int.ty()),
+                ("minute".to_string(), BuiltinRet::Int.ty()),
+                ("second".to_string(), BuiltinRet::Int.ty()),
+                ("millisecond".to_string(), BuiltinRet::Int.ty()),
             ]),
             BuiltinRet::OptString => Type::Optional(Box::new(Type::String)),
             BuiltinRet::ResultAnyErr => Type::Named(
@@ -1608,17 +1641,17 @@ fn builtin_member(ns: &str, member: &str) -> Option<BuiltinMember> {
             _ => None,
         },
         "std::time" => match member {
-            "now" | "now_nanos" | "monotonic" | "monotonic_nanos" => f(&[], R::Number),
+            "now" | "now_nanos" | "monotonic" | "monotonic_nanos" => f(&[], R::U64),
             "sleep" => f(&[T::U64], R::TaskUnit),
             // 日历（spec `modules/time.md`）：UTC 单域。format/parse 交换
             // ISO 8601 文本，parts/from_parts 交换字段记录，weekday 是星期
             // 序号；from_parts 的 hour…millisecond 四个尾参可缺席（默认 0）。
             "format" => f(&[T::U64], R::String),
-            "parse" => f(&[T::String], R::ResultNumErr),
+            "parse" => f(&[T::String], R::ResultU64Err),
             "parts" => f(&[T::U64], R::TimeParts),
             "from_parts" => f4(
                 &[T::Int, T::Int, T::Int, T::Int, T::Int, T::Int, T::Int],
-                R::Number,
+                R::U64,
             ),
             "weekday" => f(&[T::U64], R::Int),
             _ => None,
@@ -2198,6 +2231,10 @@ pub struct Analyzer {
     /// A program-declared type of the same name shadows the import, so this
     /// records only what the import bound — never what the program declared.
     regex_names: std::collections::HashSet<String>,
+    /// The local name of each `std::regex` type import mapped to the exported
+    /// name it aliases (`use std::regex::RegExp as R` records `R → RegExp`),
+    /// so an alias reaches the type's statics exactly like the original name.
+    regex_aliases: HashMap<String, String>,
     /// Local names bound from the built-in `process` module's types
     /// (`use std::process::Command`): the heads whose static members are the
     /// module's (`Command::shell`). Shadowing works like `regex_names`.
@@ -2961,6 +2998,7 @@ fn run_analysis(
         current_return: None,
         declared_return: false,
         regex_names: std::collections::HashSet::new(),
+        regex_aliases: HashMap::new(),
         process_type_names: std::collections::HashSet::new(),
         http_type_names: std::collections::HashSet::new(),
         std_fns: HashMap::new(),
@@ -4684,6 +4722,11 @@ impl Analyzer {
                 if name == "unknown" {
                     return false;
                 }
+                // Fixed-bit primitives and the loose `int`/`float` views
+                // render like `number` (`str(1u64)`, `str(std::time::now())`).
+                if fixed_bit(name).is_some() || matches!(name.as_str(), "int" | "float") {
+                    return true;
+                }
                 if self.displays.contains(name) || self.generics.iter().any(|g| g == name) {
                     return true;
                 }
@@ -6284,6 +6327,8 @@ impl Analyzer {
             }
         };
         self.regex_names.insert(local.to_string());
+        self.regex_aliases
+            .insert(local.to_string(), segments[0].clone());
         self.bind_builtin_type_name(local, entry, u)
     }
 
@@ -10619,7 +10664,7 @@ impl Analyzer {
             (Some(_), None) => {
                 if self.literal_matches(&bin.right, &l) {
                     Ok(Some(if comparison { Type::Boolean } else { l.clone() }))
-                } else if matches!(r, Type::Number) {
+                } else if matches!(r, Type::Number) || loose_numeric_name(&r) {
                     // A `number` operand that is not a literal coercing to
                     // the fixed type — a variable, or an out-of-range /
                     // non-integral literal — mixes (E0201).
@@ -10631,7 +10676,7 @@ impl Analyzer {
             (None, Some(_)) => {
                 if self.literal_matches(&bin.left, &r) {
                     Ok(Some(if comparison { Type::Boolean } else { r.clone() }))
-                } else if matches!(l, Type::Number) {
+                } else if matches!(l, Type::Number) || loose_numeric_name(&l) {
                     Err(mixing_err(self, &l, &r))
                 } else {
                     Ok(None)
@@ -10654,7 +10699,9 @@ impl Analyzer {
                 if let Some(t) = self.fixed_bit_op(bin, &l, &r, false)? {
                     return Ok(t);
                 }
-                if matches!(l, Type::Number) && matches!(r, Type::Number) {
+                if (matches!(l, Type::Number) || loose_numeric_name(&l))
+                    && (matches!(r, Type::Number) || loose_numeric_name(&r))
+                {
                     Ok(Type::Number)
                 } else if self.is_stringish(&l) && self.is_stringish(&r) {
                     Ok(Type::String)
@@ -10846,6 +10893,16 @@ impl Analyzer {
                 .at(call.span.clone()));
         }
         Ok(Type::Named("StringBuilder".to_string(), Vec::new()))
+    }
+
+    /// Whether `name` is a `std::regex` type reachable in this module: bound
+    /// by a regex import (under its own name or an alias), declared locally,
+    /// or imported from a program module. The prelude entries that answer
+    /// bare annotations are not enough for a value position.
+    fn regex_name_is_in_scope(&self, name: &str) -> bool {
+        self.regex_names.contains(name)
+            || self.type_table.contains_key(name)
+            || self.imported_types.contains_key(name)
     }
 
     /// `RegExp::compile(pattern, flags)` — the regex module's only static
@@ -11610,7 +11667,12 @@ impl Analyzer {
             // `use regex::…` bound, so a program-declared type of the same
             // name — or a module that resolved above — shadows the builtin.
             if self.regex_names.contains(enum_name) {
-                return self.check_regex_static_call(call, enum_name, variant);
+                let head = self
+                    .regex_aliases
+                    .get(enum_name)
+                    .cloned()
+                    .unwrap_or_else(|| enum_name.to_string());
+                return self.check_regex_static_call(call, &head, variant);
             }
             // The `process` module's `Command`/`Child` statics
             // (`Command::shell("…")`): `process_type_names` records what
@@ -11625,7 +11687,7 @@ impl Analyzer {
             // The same heads without their import: name the fix instead of
             // reporting an unknown enum.
             if matches!(enum_name, "RegExp" | "RegexError" | "RegexMatch")
-                && self.type_entry(enum_name).is_none()
+                && !self.regex_name_is_in_scope(enum_name)
             {
                 return Err(self
                     .err_code(
@@ -12783,7 +12845,12 @@ impl Analyzer {
         // `use regex::…` bound, so a program's own type of the name shadows
         // it like any other declaration.
         if self.regex_names.contains(&enum_name) {
-            return match (enum_name.as_str(), variant) {
+            let exported = self
+                .regex_aliases
+                .get(&enum_name)
+                .map(String::as_str)
+                .unwrap_or(enum_name.as_str());
+            return match (exported, variant) {
                 ("RegExp", "compile") => Ok(Type::FnSig {
                     params: vec![Type::String, Type::String],
                     ret: Some(Box::new(regex_compile_result_type())),
@@ -12865,7 +12932,7 @@ impl Analyzer {
         // The regex module's heads without their import: name the fix
         // instead of reporting an unknown enum.
         if matches!(enum_name.as_str(), "RegExp" | "RegexError" | "RegexMatch")
-            && self.type_entry(&enum_name).is_none()
+            && !self.regex_name_is_in_scope(&enum_name)
         {
             return Err(self.err_code(
                 "E0101",
@@ -13958,6 +14025,14 @@ impl Analyzer {
             return true;
         }
         if from == to {
+            return true;
+        }
+        // The loose `number` layer names an `int` or a `float` result: both
+        // are views of `number`, so they flow to and from it (spec
+        // `std-spec/README.md` §1.3).
+        if (matches!(from, Type::Number) && loose_numeric_name(&to))
+            || (loose_numeric_name(&from) && matches!(to, Type::Number))
+        {
             return true;
         }
         match (&from, &to) {
