@@ -654,6 +654,7 @@ fn calls_function_value_from_index() {
 #[test]
 fn rejects_calling_non_function_expression() {
     let err = analyze_src("fn main() { print([1, 2](0)) }").unwrap_err();
+    assert_eq!(err.code(), "E0204");
     assert!(err.message.contains("is not callable"));
 }
 
@@ -4795,6 +4796,7 @@ fn math_constant_as_a_call_is_rejected() {
         }
     "#;
     let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0204");
     assert!(
         err.message
             .contains("member `std::math::PI` is not a function"),
@@ -5691,6 +5693,7 @@ fn regex_head_requires_the_import() {
         }
     "#;
     let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0101");
     assert!(
         err.message
             .contains("`RegExp` belongs to the built-in `std::regex` module"),
@@ -5699,6 +5702,42 @@ fn regex_head_requires_the_import() {
     );
     assert!(
         err.message.contains("use std::regex::{RegExp}"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn regex_value_path_into_the_module_is_e0607() {
+    let src = r#"
+        fn main() {
+            let built = std::regex::RegExp::compile("a")
+            print(str(built))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0607");
+    assert!(
+        err.message
+            .contains("cannot resolve `std::regex::RegExp::compile`"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn regex_unknown_module_member_is_e0601() {
+    let src = r#"
+        fn main() {
+            let found = std::regex::find("a", "b")
+            print(str(found))
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0601");
+    assert!(
+        err.message
+            .contains("module `std::regex` does not export `find`"),
         "unexpected message: {}",
         err.message
     );

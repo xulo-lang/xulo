@@ -9296,10 +9296,10 @@ impl Analyzer {
                         }
                         Ok(Type::Any)
                     }
-                    other => Err(self.err(format!(
-                        "expression of type `{}` is not callable",
-                        other.name()
-                    ))),
+                    other => Err(self.err_code(
+                        "E0204",
+                        format!("expression of type `{}` is not callable", other.name()),
+                    )),
                 }
             }
             Expression::Component(c) => {
@@ -11105,7 +11105,10 @@ impl Analyzer {
             Some(BuiltinMember::Fn(sig)) => sig,
             Some(BuiltinMember::Constant) => {
                 return Err(self
-                    .err(format!("member `{ns}::{member}` is not a function"))
+                    .err_code(
+                        "E0204",
+                        format!("member `{ns}::{member}` is not a function"),
+                    )
                     .at(call.span.clone()));
             }
             None => {
@@ -11179,14 +11182,27 @@ impl Analyzer {
     /// A qualified call inside the built-in `std` tree: `rest` is the callee
     /// with the `std::` prefix removed (`math::floor`, `regex::RegExp::compile`).
     fn check_std_call(&mut self, rest: &str, call: &Call) -> SResult<Type> {
-        if rest.starts_with("regex") && rest.split("::").nth(1).is_some() {
-            // Any path under `std::regex` names a type reached through its
-            // imported name, never a static call.
-            return Err(self
-                .err(
-                    "`std::regex` types are reached through their imported name: use `use std::regex::{RegExp, RegexError}` and call `RegExp::compile(…)`",
-                )
-                .at(call.span.clone()));
+        if rest.starts_with("regex") {
+            // `std::regex` has a type face, not a value namespace. A type path
+            // is `E0607`; an unknown member is `E0601` (std-spec
+            // `modules/regex.md`, "Spellings this specification rejects").
+            let mut parts = rest.split("::");
+            let _module = parts.next();
+            return Err(match parts.next() {
+                Some(member) if !matches!(member, "RegExp" | "RegexError" | "RegexMatch") => {
+                    self.err_code(
+                        "E0601",
+                        format!("module `std::regex` does not export `{member}`"),
+                    )
+                }
+                _ => self.err_code(
+                    "E0607",
+                    format!(
+                        "cannot resolve `std::{rest}`: `std::regex` types are reached through their imported name: use `use std::regex::{{RegExp, RegexError}}` and call `RegExp::compile(…)`"
+                    ),
+                ),
+            }
+            .at(call.span.clone()));
         }
         let Some((module, member)) = rest.split_once("::") else {
             return Err(self
@@ -11612,9 +11628,12 @@ impl Analyzer {
                 && self.type_entry(enum_name).is_none()
             {
                 return Err(self
-                    .err(format!(
-                        "`{enum_name}` belongs to the built-in `std::regex` module: import it with `use std::regex::{{{enum_name}}}` or `use std::regex::{{RegExp, RegexError}}`"
-                    ))
+                    .err_code(
+                        "E0101",
+                        format!(
+                            "`{enum_name}` belongs to the built-in `std::regex` module: import it with `use std::regex::{{{enum_name}}}` or `use std::regex::{{RegExp, RegexError}}`"
+                        ),
+                    )
                     .at(call.span.clone()));
             }
             if matches!(enum_name, "Command" | "Child") && self.type_entry(enum_name).is_none() {
@@ -11626,8 +11645,11 @@ impl Analyzer {
             }
             if enum_name.starts_with("std::regex::") {
                 return Err(self
-                    .err(
-                        "`std::regex` types are reached through their imported name: use `use std::regex::{RegExp, RegexError}` and call `RegExp::compile(…)`",
+                    .err_code(
+                        "E0607",
+                        format!(
+                            "cannot resolve `{enum_name}::{variant}`: `std::regex` types are reached through their imported name: use `use std::regex::{{RegExp, RegexError}}` and call `RegExp::compile(…)`"
+                        ),
                     )
                     .at(call.span.clone()));
             }
@@ -12464,14 +12486,16 @@ impl Analyzer {
                     _ => None,
                 };
                 let Some((params, ret)) = sig else {
-                    return Err(self.err(format!("`{}` is not a function", call.callee)));
+                    return Err(
+                        self.err_code("E0204", format!("`{}` is not a function", call.callee))
+                    );
                 };
                 // A call through a function value takes no type arguments.
                 self.no_type_args(call)?;
                 self.check_fn_value_args(&params, ret, &call.arguments)
             }
             SymbolKind::State | SymbolKind::Store => {
-                Err(self.err(format!("`{}` is not a function", call.callee)))
+                Err(self.err_code("E0204", format!("`{}` is not a function", call.callee)))
             }
         }
     }
@@ -12749,7 +12773,8 @@ impl Analyzer {
             ));
         }
         if enum_name == "std::regex" || enum_name.starts_with("std::regex::") {
-            return Err(self.err(
+            return Err(self.err_code(
+                "E0607",
                 "`std::regex` types are reached through their imported name: use `use std::regex::{RegExp, RegexError}`",
             ));
         }
@@ -12842,9 +12867,12 @@ impl Analyzer {
         if matches!(enum_name.as_str(), "RegExp" | "RegexError" | "RegexMatch")
             && self.type_entry(&enum_name).is_none()
         {
-            return Err(self.err(format!(
-                "`{enum_name}` belongs to the built-in `std::regex` module: import it with `use std::regex::{{{enum_name}}}` or `use std::regex::{{RegExp, RegexError}}`"
-            )));
+            return Err(self.err_code(
+                "E0101",
+                format!(
+                    "`{enum_name}` belongs to the built-in `std::regex` module: import it with `use std::regex::{{{enum_name}}}` or `use std::regex::{{RegExp, RegexError}}`"
+                ),
+            ));
         }
         // The process module's heads without their import: same guidance.
         if matches!(enum_name.as_str(), "Command" | "Child")
@@ -12933,11 +12961,21 @@ impl Analyzer {
                     .at(call.span.clone()));
             }
             if member.contains("::") || std_module == "regex" {
-                return Err(self
-                    .err(
-                        "`std::regex` types are reached through their imported name: use `use std::regex::{RegExp, RegexError}` and call `RegExp::compile(…)`",
+                let (code, message) = if std_module == "regex"
+                    && !member.contains("::")
+                    && !matches!(member, "RegExp" | "RegexError" | "RegexMatch")
+                {
+                    (
+                        "E0601",
+                        format!("module `std::regex` does not export `{member}`"),
                     )
-                    .at(call.span.clone()));
+                } else {
+                    (
+                        "E0607",
+                        "`std::regex` types are reached through their imported name: use `use std::regex::{RegExp, RegexError}` and call `RegExp::compile(…)`".to_string(),
+                    )
+                };
+                return Err(self.err_code(code, message).at(call.span.clone()));
             }
             let ns = format!("std::{std_module}");
             let ty = self.check_builtin_fn_call(&ns, member, call)?;
@@ -13092,7 +13130,9 @@ impl Analyzer {
                 };
                 self.no_type_args(call)?;
                 let Some((params, ret)) = sig else {
-                    return Err(self.err(format!("`{head}::{member}` is not a function")));
+                    return Err(
+                        self.err_code("E0204", format!("`{head}::{member}` is not a function"))
+                    );
                 };
                 Ok(Some(self.check_fn_value_args(
                     &params,
@@ -13131,12 +13171,27 @@ impl Analyzer {
         // A std alias/namespace head in value position (`m::PI`).
         if let Some(std_module) = std_module_name(&module) {
             if std_module == "regex" || member.contains("::") {
-                return Err(self.err(
-                    "`std::regex` types are reached through their imported name: use `use std::regex::{RegExp, RegexError}`",
-                ));
+                let (code, message) = if std_module == "regex"
+                    && !member.contains("::")
+                    && !matches!(member, "RegExp" | "RegexError" | "RegexMatch")
+                {
+                    (
+                        "E0601",
+                        format!("module `std::regex` does not export `{member}`"),
+                    )
+                } else {
+                    (
+                        "E0607",
+                        "`std::regex` types are reached through their imported name: use `use std::regex::{RegExp, RegexError}`".to_string(),
+                    )
+                };
+                return Err(self.err_code(code, message));
             }
             let Some(registered) = builtin_member(&format!("std::{std_module}"), member) else {
-                return Err(self.err(format!("`std::{std_module}` has no member `{member}`")));
+                return Err(self.err_code(
+                    "E0601",
+                    format!("`std::{std_module}` has no member `{member}`"),
+                ));
             };
             return Ok(Some(match registered {
                 BuiltinMember::Constant => Type::Number,

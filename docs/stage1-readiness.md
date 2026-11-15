@@ -260,7 +260,7 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 |----|-------------|--------|-----------------------|-----------|
 | D1 | Source spans and `file:line:column` diagnostics | **OK** | stage 0 diagnostics; tests | 1 |
 | D2 | stderr writes and nonzero exit status | **OK** | CLI/runtime tests | 1 |
-| D3 | Stable error codes for the bootstrap subset | **PARTIAL** | std-spec §1.3 names coarse-code fallbacks | 2 |
+| D3 | Stable error codes for the bootstrap subset | **OK** | Called constants are `E0204`; `std::regex` value paths are `E0607`, unknown module members `E0601`, and an unimported type used as a value `E0101` (std-spec `modules/regex.md`). The head/member diagnostics std-spec §1.3 named as coarse fallbacks now carry their fine-grained codes. | 2 |
 | D4 | Stage 1's own diagnostics are consistent with stage 0 | **NOT VERIFIED** | Requires stage 1 implementation | 3 |
 | T1 | Unit and integration tests | **OK** | `cargo test --workspace`: 2019 passed, 0 failed (2026-11-15) | 1 |
 | T2 | All examples run in CI | **OK** | `.github/workflows/ci.yml` examples job | 1 |
@@ -481,8 +481,9 @@ matrix.
 
 **Exit:** §6.2–6.5 probes pass; no workaround needed for stage 1's AST.
 
-**Status:** done except D3 and S9. §6.2–6.5 pass in both execution paths, and
-L18b is covered by the semantic and interpreter regression tests.
+**Status:** done except S9. §6.2–6.5 pass in both execution paths, L18b is
+covered by the semantic and interpreter regression tests, and D3's fine-grained
+diagnostic codes are asserted in the semantic tests.
 
 ### WP3 — AOT parity and bootstrap backend (P1, Gate 4)
 
