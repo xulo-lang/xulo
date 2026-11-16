@@ -741,35 +741,38 @@ impl Interpreter {
         env: &Rc<RefCell<Env>>,
     ) -> Result<Value, RunError> {
         let child = Env::child(env);
-        let (prefix, tail) = match block.statements.last() {
-            Some(Statement::Expr(e)) if !e.has_semicolon => (
-                &block.statements[..block.statements.len() - 1],
-                Tail::Expr(&e.expr),
-            ),
-            Some(Statement::Return(r)) => (
-                &block.statements[..block.statements.len() - 1],
-                Tail::Return(r),
-            ),
-            _ => {
-                return match self.exec_stmts(&block.statements, &child)? {
-                    Flow::Continue | Flow::LoopContinue => Ok(Value::Null),
-                    Flow::Return(v) => Ok(v),
-                    Flow::Break => Ok(Value::Null),
-                };
+        let result = (|| {
+            let (prefix, tail) = match block.statements.last() {
+                Some(Statement::Expr(e)) if !e.has_semicolon => (
+                    &block.statements[..block.statements.len() - 1],
+                    Tail::Expr(&e.expr),
+                ),
+                Some(Statement::Return(r)) => (
+                    &block.statements[..block.statements.len() - 1],
+                    Tail::Return(r),
+                ),
+                _ => {
+                    return match self.exec_stmts(&block.statements, &child)? {
+                        Flow::Continue | Flow::LoopContinue => Ok(Value::Null),
+                        Flow::Return(v) => Ok(v),
+                        Flow::Break => Ok(Value::Null),
+                    };
+                }
+            };
+            if let Some(v) = self.exec_prefix(prefix, &child)? {
+                // An explicit `return` before the trailing expression short-circuits
+                // the block's value (the JS IIFE does the same).
+                return Ok(v);
             }
-        };
-        if let Some(v) = self.exec_prefix(prefix, &child)? {
-            // An explicit `return` before the trailing expression short-circuits
-            // the block's value (the JS IIFE does the same).
-            return Ok(v);
-        }
-        match tail {
-            Tail::Expr(expr) => self.eval(expr, &child),
-            Tail::Return(r) => match &r.value {
-                Some(expr) => self.eval(expr, &child),
-                None => Ok(Value::Null),
-            },
-        }
+            match tail {
+                Tail::Expr(expr) => self.eval(expr, &child),
+                Tail::Return(r) => match &r.value {
+                    Some(expr) => self.eval(expr, &child),
+                    None => Ok(Value::Null),
+                },
+            }
+        })();
+        self.leave_block(&child, result)
     }
 
     /// Execute every statement before a block's trailing expression, unwinding

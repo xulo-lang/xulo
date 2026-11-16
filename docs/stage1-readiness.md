@@ -1,7 +1,7 @@
 # Stage 1 Bootstrap Readiness
 
 - **Status**: Living document
-- **Date**: 2026-11-15
+- **Date**: 2026-11-16
 - **Audience**: compiler/runtime maintainers, stage 1 bootstrap team
 - **Normative sources**: `spec@48f49b7` and `std-spec@a2e4cb7`, the commits pinned by this repository
 - **Scope**: the capabilities stage 0 must provide for stage 1, their current status, and the gates for calling stage 0 "host-ready"
@@ -197,7 +197,7 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 | L17 | `unknown` as the top type | **OK** | Every type is assignable to `unknown`; `List<unknown>` and `Map<string, unknown>` accept heterogeneous values. `print` still rejects `unknown` itself (`E0212`, spec `builtins/intrinsic-functions.md`), so a probe narrows first. | 2 |
 | L18 | `is` / `is not` narrowing in `if` conditions | **OK** | `if v is T` narrows the then-branch and removes covered union members from the else-branch; `is not` swaps them; untestable types are `E0222`. An assignment to the narrowed binding ends the narrowing for the rest of the branch, so the declared type is used afterwards (L18b). | 2 |
 | L19 | `Result`/`Error` and `?` propagation | **OK** | tests and `std` examples | 1 |
-| L20 | `defer` runs at block exit in reverse registration order | **BROKEN** | Runtime executes the operand immediately; `defer` prints in wrong order | 3 |
+| L20 | `defer` runs at block exit in reverse registration order | **OK** | The operand registers in its block's environment without evaluation and runs in reverse at exit; `crates/xulo-runtime/tests/defer.rs` covers nesting, loops, `return`, and `?` | 3 |
 | L21 | `copy` / `move` and use-after-move checking | **PARTIAL** | Syntax/checker present; full runtime and move-invalidation behavior not verified here | 3 |
 | L22 | Async/await, `spawn`, `lock`, `shared` | **OK** | Runtime tests/examples; outside the bootstrap subset | — |
 | L23 | Attributes, `#[test]`, `#[derive]`, macros | **OK** | parser/semantic/runtime tests; outside the bootstrap subset | — |
@@ -213,7 +213,7 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 | R4 | Runtime failures with stable codes | **OK** | `E0006`, out-of-range tests | 1 |
 | R5 | No panic on adversarial input; nesting guard | **OK** | `tests/robustness.rs` | 1 |
 | R6 | `panic`, `assert`, and process exit status | **OK** | CLI/runtime tests | 1 |
-| R7 | `defer` executes at scope exit, reverse order | **BROKEN** | Same defect as L20 | 3 |
+| R7 | `defer` executes at scope exit, reverse order | **OK** | `leave_block` drains the scope queue on normal exit and `?` propagation (before `return`/`break`/`continue` pass out); `crates/xulo-runtime/tests/defer.rs` | 3 |
 | R8 | Value/reference semantics for `copy`/`move` | **PARTIAL** | Not fully verified; avoid relying on it until tested | 3 |
 | R9 | Interpreter and AOT produce identical observable behavior | **PARTIAL** | `crates/xupm/tests/aot_differential.rs` compares 25 examples byte for byte, including dynamic JSON index tags and generic bool returns. Remaining baseline: `async_tasks` output, plus `fs`/`http`/`path`/`process` builds (`crates/xupm/tests/aot_differential_baseline.tsv`). | 4 |
 | R10 | Deterministic output formatting for diagnostics and integers | **OK** | `int`/`u64` print and stringify through exact decimal formatting in both paths; `crates/xulo-runtime/tests/integers.rs` covers `u64::MAX`, `2^63`, and `-2^63` | 2 |
@@ -265,7 +265,7 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 | D2 | stderr writes and nonzero exit status | **OK** | CLI/runtime tests | 1 |
 | D3 | Stable error codes for the bootstrap subset | **OK** | Called constants are `E0204`; `std::regex` value paths are `E0607`, unknown module members `E0601`, and an unimported type used as a value `E0101` (std-spec `modules/regex.md`). The head/member diagnostics std-spec §1.3 named as coarse fallbacks now carry their fine-grained codes. | 2 |
 | D4 | Stage 1's own diagnostics are consistent with stage 0 | **NOT VERIFIED** | Requires stage 1 implementation | 3 |
-| T1 | Unit and integration tests | **OK** | `cargo test --workspace`: 2077 passed, 0 failed (2026-11-16) | 1 |
+| T1 | Unit and integration tests | **OK** | `cargo test --workspace`: 2086 passed, 0 failed (2026-11-16) | 1 |
 | T2 | All examples run in CI | **OK** | `.github/workflows/ci.yml` examples job | 1 |
 | T3 | Pinned-spec example conformance runner | **OK** | `crates/xulo-cli/tests/spec_conformance.rs`: 114 annotated examples extracted from the pinned spec, 81 pass, 33 triaged in `spec_conformance_baseline.tsv` (§6.10) | 2 |
 | T4 | Interpreter vs. AOT differential suite | **OK** | `crates/xupm/tests/aot_differential.rs` builds and executes every top-level example, compares stdout/stderr against `xupm run`, and fails on stale baseline entries; CI runs it on Linux after the release build. Five known gaps are recorded in `crates/xupm/tests/aot_differential_baseline.tsv` | 4 |
@@ -401,6 +401,13 @@ fn main() {
 
 Actual: `first`, `second`, `body`. Expected: `body`, `second`, `first`.
 
+**Resolved (WP4).** The interpreter now registers the operand without
+evaluating it, drains each scope's queue in reverse at block exit, and runs it
+before `return`, `break`, `continue`, and `?`. The AOT backend rejects `defer`
+as a bootstrap restriction instead of silently ignoring it. Covered by
+`crates/xulo-runtime/tests/defer.rs` and
+`crates/xulo-compiler/tests/aot_syntax_coverage_tests.rs`.
+
 ### 6.9 No automated spec conformance and a possibly stale submodule (T3, T7)
 
 - No test extracts the pinned spec's `// ok` / `// runs:` examples and runs them.
@@ -513,6 +520,9 @@ AOT narrowing slot, range failures, and regex reachability with `std-spec`
 
 **Exit:** §6.8 probe passes; stage 1 can use `defer` for cleanup.
 
+**Status:** done (L20a, L20b, R7, B3b, G4). The AOT backend reports a clear
+error for `defer` rather than dropping the operand.
+
 ### WP5 — Stage 1 skeleton (can start in parallel)
 
 - Create `stage1/` (or the agreed location) with a lexer and parser written in
@@ -579,7 +589,7 @@ Last recorded verification (2026-11-16):
 
 | Check | Result |
 |-------|--------|
-| `cargo test --workspace` | 2077 passed, 0 failed |
+| `cargo test --workspace` | 2086 passed, 0 failed |
 | Examples (CI job) | Configured to run every `examples/*.xulo`; `async_tasks` uses `u64` sleep input |
 | AOT smoke tests | `hello` on macOS/Windows; `structs`, `trait_shapes`, `generics`, `modules` probed locally |
 | AOT differential suite | 25 examples compare byte for byte; 5 known gaps in `crates/xupm/tests/aot_differential_baseline.tsv` |

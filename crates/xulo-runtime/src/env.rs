@@ -2,6 +2,8 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use xulo_core::ast::DeferBody;
+
 use crate::value::Value;
 
 /// A lexical scope chain. Bindings are looked up through parent scopes;
@@ -13,6 +15,11 @@ pub struct Env {
     bindings: HashMap<String, Value>,
     /// Parallel to `bindings`: tracks whether each variable is mutable.
     mutability: HashMap<String, bool>,
+    /// Operands registered by `defer` in this block, in source order. They run
+    /// in reverse when the block is left (spec statements/return-and-block.md).
+    /// Associated with the scope, not the interpreter, so a suspended async
+    /// task's pending defers cannot interleave with another task's.
+    deferred: RefCell<Vec<DeferBody>>,
 }
 
 impl Env {
@@ -28,7 +35,19 @@ impl Env {
             parent: Some(parent.clone()),
             bindings: HashMap::new(),
             mutability: HashMap::new(),
+            deferred: RefCell::new(Vec::new()),
         }))
+    }
+
+    /// Register a `defer` operand in this scope. The operand is not evaluated
+    /// until the scope is left.
+    pub fn push_defer(&self, body: DeferBody) {
+        self.deferred.borrow_mut().push(body);
+    }
+
+    /// Take the registered defer operands, leaving the scope's queue empty.
+    pub fn take_defers(&self) -> Vec<DeferBody> {
+        std::mem::take(&mut *self.deferred.borrow_mut())
     }
 
     /// Bind `name` in this scope, shadowing any outer binding of the same name.
@@ -44,6 +63,7 @@ impl Env {
     pub fn reset(&mut self, name: &str, value: Value, is_mutable: bool) {
         self.bindings.clear();
         self.mutability.clear();
+        self.deferred.borrow_mut().clear();
         self.bindings.insert(name.to_string(), value);
         self.mutability.insert(name.to_string(), is_mutable);
     }
@@ -58,6 +78,7 @@ impl Env {
     pub fn clear(&mut self) {
         self.bindings.clear();
         self.mutability.clear();
+        self.deferred.borrow_mut().clear();
     }
 
     /// Look `name` up through the scope chain.

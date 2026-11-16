@@ -1101,6 +1101,14 @@ impl Interpreter {
                 }
             }
         }
+        // The module's top-level block is left before `main` runs: its
+        // registered defers execute in reverse registration order here.
+        match self.leave_block(&global, Ok::<(), RunError>(())) {
+            Ok(()) => {}
+            Err(RunError::Err(e)) => return Err(e),
+            Err(RunError::Propagate(v)) => return Err(stray_propagate(&v)),
+            Err(RunError::Throw(v)) => return Err(self.uncaught(&v)),
+        }
         if let Some(main) = main_fn(program) {
             *self.entry_env.borrow_mut() = Some(global.clone());
             self.run_main(main, &global)?;
@@ -1420,6 +1428,9 @@ impl Interpreter {
                 Err(e) => return Err(e),
             }
         }
+        // Leave the module's top-level block: run its deferred operands before
+        // the caller invokes `main`.
+        self.leave_block(&global, Ok::<(), RunError>(()))?;
         Ok(global)
     }
 

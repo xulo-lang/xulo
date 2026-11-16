@@ -1,7 +1,7 @@
 # Stage 1 Bootstrap Tasks
 
 - **Status**: Living checklist
-- **Date**: 2026-11-15
+- **Date**: 2026-11-16
 - **Companion document**: [`stage1-readiness.md`](stage1-readiness.md) — rationale, evidence, and gate definitions
 - **Normative sources**: `spec@48f49b7` and `std-spec@a2e4cb7`, as pinned by this repository
 - **Scope**: the executable checklist for making stage 0 host-ready and bootstrapping stage 1
@@ -29,10 +29,10 @@ readiness document.
 | WP1 — 64-bit integer model | 7 | 7 |
 | WP2 — Type system and semantic convergence | 10 | 10 |
 | WP3 — AOT parity and bootstrap backend | 8 | 8 |
-| WP4 — `defer` semantics | 0 | 5 |
+| WP4 — `defer` semantics | 5 | 5 |
 | WP5 — Stage 1 skeleton | 0 | 6 |
 | WP6 — Self-host loop | 0 | 7 |
-| **Total** | **25** | **49** |
+| **Total** | **30** | **49** |
 
 ## Gates
 
@@ -92,7 +92,7 @@ the starting point, and their evidence is recorded in `stage1-readiness.md` §5.
 - [x] **B5** Runtime static library and linker path
 - [x] **D1** Source spans and `file:line:column` diagnostics
 - [x] **D2** stderr writes and nonzero exit status
-- [x] **T1** Unit and integration tests — `cargo test --workspace`: 2077 passed, 0 failed (2026-11-16)
+- [x] **T1** Unit and integration tests — `cargo test --workspace`: 2086 passed, 0 failed (2026-11-16)
 - [x] **T2** All examples run in CI
 - [x] **T6** Robustness/fuzz tests
 
@@ -197,18 +197,21 @@ Priority P1 · needed by Gate 4 · source: `stage1-readiness.md` §7 WP3, §6.6�
 
 Priority P1 · needed by Gate 3 · source: `stage1-readiness.md` §7 WP4, §6.8
 
-- [ ] **L20a** Add a per-block defer queue in the interpreter that registers
+- [x] **L20a** Add a per-block defer queue in the interpreter that registers
       without evaluating the operand.
-- [ ] **L20b** Run deferred statements at scope exit in reverse registration
+- [x] **L20b** Run deferred statements at scope exit in reverse registration
       order.
-- [ ] **R7** Run deferred statements before `return`, `break`, and `?`
+- [x] **R7** Run deferred statements before `return`, `break`, and `?`
       propagation.
-- [ ] **B3b** Decide whether the AOT path supports `defer`; if not, document it
+- [x] **B3b** Decide whether the AOT path supports `defer`; if not, document it
       as a bootstrap restriction instead of silently executing it immediately.
-- [ ] **G4** Make the `§6.8` probe pass.
+- [x] **G4** Make the `§6.8` probe pass.
 
 **Verify:** `defer print("first")` / `defer print("second")` / `print("body")`
-prints `body`, `second`, `first`.
+prints `body`, `second`, `first`. Covered by
+`crates/xulo-runtime/tests/defer.rs`; the AOT backend rejects `defer` with a
+named bootstrap-restriction diagnostic (no silent skip), tested in
+`crates/xulo-compiler/tests/aot_syntax_coverage_tests.rs`.
 
 ## WP5 — Stage 1 skeleton
 

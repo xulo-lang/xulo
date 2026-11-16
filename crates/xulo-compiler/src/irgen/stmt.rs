@@ -49,6 +49,14 @@ impl IrGenerator {
                 "AOT codegen does not support UI state/effect/component declarations; run UI programs with `xulo run`"
                     .to_string(),
             )),
+            // The interpreter implements block-exit `defer`; the AOT backend
+            // does not yet. Reject rather than drop the operand silently (a
+            // binary that skips cleanup would diverge from `xulo run`).
+            Statement::Defer(_) => Err(XuloError::new(
+                ErrorKind::Semantic,
+                "AOT codegen does not support `defer` (bootstrap restriction); run programs using `defer` with `xulo run`"
+                    .to_string(),
+            )),
             _ => Ok(()), // 其他语句暂时忽略
         }
     }

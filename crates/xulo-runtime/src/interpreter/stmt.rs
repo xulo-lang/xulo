@@ -192,16 +192,10 @@ impl Interpreter {
             Statement::Break => Ok(Flow::Break),
             Statement::Continue => Ok(Flow::LoopContinue),
             Statement::Defer(d) => {
-                // TODO(defer): real defer runs at scope exit; until then the
-                // body executes immediately (parsed/checked, not yet queued).
-                match &d.body {
-                    xulo_core::ast::DeferBody::Block(b) => {
-                        self.exec_block(b, env)?;
-                    }
-                    xulo_core::ast::DeferBody::Expr(e) => {
-                        self.eval(e, env)?;
-                    }
-                }
+                // Register only; the operand runs when this block is left
+                // (`exec_block`/`run_body`/`block_value` drain the scope's
+                // queue in reverse at exit).
+                env.borrow().push_defer(d.body.clone());
                 Ok(Flow::Continue)
             }
             Statement::Struct(_) => {
@@ -536,13 +530,51 @@ impl Interpreter {
         ]))))
     }
 
+    /// Run `defer` operands registered in `env`, last registered first, and
+    /// then return `result` unchanged. A normal exit and a `?` propagation
+    /// both leave the block, so both drain; a panic (`Throw`) or fatal runtime
+    /// error abandons every defer whose operand has not begun (spec
+    /// `statements/return-and-block.md`).
+    pub(super) fn leave_block<T>(
+        &self,
+        env: &Rc<RefCell<Env>>,
+        result: Result<T, RunError>,
+    ) -> Result<T, RunError> {
+        match result {
+            Ok(value) => {
+                self.run_defers(env)?;
+                Ok(value)
+            }
+            Err(RunError::Propagate(value)) => {
+                self.run_defers(env)?;
+                Err(RunError::Propagate(value))
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    fn run_defers(&self, env: &Rc<RefCell<Env>>) -> Result<(), RunError> {
+        let defers = env.borrow().take_defers();
+        for body in defers.into_iter().rev() {
+            match body {
+                xulo_core::ast::DeferBody::Block(block) => {
+                    self.exec_block(&block, env)?;
+                }
+                xulo_core::ast::DeferBody::Expr(expr) => {
+                    self.eval(&expr, env)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn exec_block(
         &self,
         block: &Block,
         env: &Rc<RefCell<Env>>,
     ) -> Result<Flow, RunError> {
         let child = Env::child(env);
-        self.exec_stmts(&block.statements, &child)
+        self.leave_block(&child, self.exec_stmts(&block.statements, &child))
     }
 
     pub(super) fn exec_stmts(
@@ -571,7 +603,7 @@ impl Interpreter {
                 let child = Env::child(env);
                 while let Some(value) = cursor.next() {
                     child.borrow_mut().reset(&f.iter_var, value, true);
-                    match self.exec_stmts(&f.body.statements, &child)? {
+                    match self.leave_block(&child, self.exec_stmts(&f.body.statements, &child))? {
                         Flow::Continue | Flow::LoopContinue => {}
                         Flow::Break => break,
                         other => return Ok(other),
@@ -634,7 +666,7 @@ impl Interpreter {
                         list[i].clone()
                     };
                     child.borrow_mut().reset(&f.iter_var, item, true);
-                    match self.exec_stmts(&f.body.statements, &child)? {
+                    match self.leave_block(&child, self.exec_stmts(&f.body.statements, &child))? {
                         Flow::Continue | Flow::LoopContinue => {}
                         Flow::Break => break,
                         other => return Ok(other),

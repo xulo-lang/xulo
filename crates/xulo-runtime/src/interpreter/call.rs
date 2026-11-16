@@ -1717,23 +1717,26 @@ impl Interpreter {
         env: &Rc<RefCell<Env>>,
         _declared_return: bool,
     ) -> Result<Value, RunError> {
-        if let Some(Statement::Expr(last)) = body.statements.last()
-            && !last.has_semicolon
-        {
-            for stmt in &body.statements[..body.statements.len() - 1] {
-                match self.exec_stmt(stmt, env)? {
-                    Flow::Continue | Flow::LoopContinue => {}
-                    Flow::Return(v) => return Ok(v),
-                    Flow::Break => return Ok(Value::Null),
+        let result = (|| {
+            if let Some(Statement::Expr(last)) = body.statements.last()
+                && !last.has_semicolon
+            {
+                for stmt in &body.statements[..body.statements.len() - 1] {
+                    match self.exec_stmt(stmt, env)? {
+                        Flow::Continue | Flow::LoopContinue => {}
+                        Flow::Return(v) => return Ok(v),
+                        Flow::Break => return Ok(Value::Null),
+                    }
                 }
+                return self.eval(&last.expr, env);
             }
-            return self.eval(&last.expr, env);
-        }
-        match self.exec_stmts(&body.statements, env)? {
-            Flow::Continue | Flow::LoopContinue => Ok(Value::Null),
-            Flow::Return(v) => Ok(v),
-            Flow::Break => Ok(Value::Null),
-        }
+            match self.exec_stmts(&body.statements, env)? {
+                Flow::Continue | Flow::LoopContinue => Ok(Value::Null),
+                Flow::Return(v) => Ok(v),
+                Flow::Break => Ok(Value::Null),
+            }
+        })();
+        self.leave_block(env, result)
     }
 
     /// Execute a component function body. Reactive declarations hoist before
@@ -1747,25 +1750,28 @@ impl Interpreter {
         body: &Block,
         env: &Rc<RefCell<Env>>,
     ) -> Result<Value, RunError> {
-        if let Some(last) = body.statements.last() {
-            for stmt in &body.statements[..body.statements.len() - 1] {
-                match self.exec_stmt(stmt, env)? {
-                    Flow::Continue | Flow::LoopContinue => {}
-                    Flow::Return(v) => return Ok(v),
-                    Flow::Break => return Ok(Value::Null),
+        let result = (|| {
+            if let Some(last) = body.statements.last() {
+                for stmt in &body.statements[..body.statements.len() - 1] {
+                    match self.exec_stmt(stmt, env)? {
+                        Flow::Continue | Flow::LoopContinue => {}
+                        Flow::Return(v) => return Ok(v),
+                        Flow::Break => return Ok(Value::Null),
+                    }
                 }
-            }
-            match last {
-                Statement::Component(block) => self.eval_component_stmt(block, env),
-                Statement::Expr(es) if !es.has_semicolon => self.eval(&es.expr, env),
-                other => {
-                    self.exec_stmt(other, env)?;
-                    Ok(Value::Null)
+                match last {
+                    Statement::Component(block) => self.eval_component_stmt(block, env),
+                    Statement::Expr(es) if !es.has_semicolon => self.eval(&es.expr, env),
+                    other => {
+                        self.exec_stmt(other, env)?;
+                        Ok(Value::Null)
+                    }
                 }
+            } else {
+                Ok(Value::Null)
             }
-        } else {
-            Ok(Value::Null)
-        }
+        })();
+        self.leave_block(env, result)
     }
 }
 

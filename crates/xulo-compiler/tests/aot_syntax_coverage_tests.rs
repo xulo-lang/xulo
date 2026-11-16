@@ -577,6 +577,23 @@ fn ui_state_declaration_is_rejected() {
 }
 
 #[test]
+fn defer_is_rejected() {
+    let err = compile_err(
+        r#"
+        fn main() {
+            defer print("cleanup")
+            print("body")
+        }
+        "#,
+    );
+    assert!(
+        err.message.contains("does not support `defer`"),
+        "unexpected error: {}",
+        err.message
+    );
+}
+
+#[test]
 fn chained_assignment_lowers_inner_first() {
     let out = compile_and_run(
         r#"
