@@ -1438,6 +1438,13 @@ impl IrGenerator {
             // 经任意表达式的函数值调用：返回标签未知
             Expression::CallValue(_) => -1,
             Expression::Nullish(nullish) => self.determine_element_tag(&nullish.right),
+            // Both ternary arms share one result slot; use a common static tag
+            // when they agree, otherwise let the runtime inspect the value.
+            Expression::Ternary(ternary) => {
+                let then_tag = self.determine_element_tag(&ternary.then_value);
+                let else_tag = self.determine_element_tag(&ternary.else_value);
+                if then_tag == else_tag { then_tag } else { -1 }
+            }
             // An index of a list whose element type is known keeps that
             // element's tag; otherwise the runtime tag is unknown.
             Expression::Index(_) => match self.infer_source_type_from_expr(expr) {

@@ -143,11 +143,10 @@ main risks. Fixing P0 rows in §5 is the shortest path.
 **Exit criterion:** `xupm build` produces a stage 1 binary that runs the same
 bootstrap workload as `xulo run` and prints identical output.
 
-**Current assessment:** **Blocked by AOT gaps.** `Map`, `Set`, list spread,
-and object spread now lower through the compiled path; nested ternaries and
-`Array.len` still have known divergences. The interpreter can be used for
-Gate 1–3, but native bootstrap requires these fixes or an explicitly narrower
-stage 1 design.
+**Current assessment:** **Blocked by AOT gaps.** `Map`, `Set`, list/object
+spread, and nested ternaries now lower through the compiled path; `Array.len`
+still has a known divergence. The interpreter can be used for Gate 1–3, but
+native bootstrap requires this fix or an explicitly narrower stage 1 design.
 
 ### Gate 5 — Self-host
 
@@ -213,7 +212,7 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 | R6 | `panic`, `assert`, and process exit status | **OK** | CLI/runtime tests | 1 |
 | R7 | `defer` executes at scope exit, reverse order | **BROKEN** | Same defect as L20 | 3 |
 | R8 | Value/reference semantics for `copy`/`move` | **PARTIAL** | Not fully verified; avoid relying on it until tested | 3 |
-| R9 | Interpreter and AOT produce identical observable behavior | **PARTIAL** | Integer arithmetic, overflow, shifts, comparison, printing, `Map`/`Set`, and list/object spread now agree (`u64` uses print tag 10; §6.1 passes under `xupm build`). Nested ternaries and `Array.len` still differ (§6.7, WP3). | 4 |
+| R9 | Interpreter and AOT produce identical observable behavior | **PARTIAL** | Integer arithmetic, overflow, shifts, comparison, printing, `Map`/`Set`, list/object spread, and nested ternaries now agree (`u64` uses print tag 10; §6.1 passes under `xupm build`). `Array.len` still differs (§6.7, WP3). | 4 |
 | R10 | Deterministic output formatting for diagnostics and integers | **OK** | `int`/`u64` print and stringify through exact decimal formatting in both paths; `crates/xulo-runtime/tests/integers.rs` covers `u64::MAX`, `2^63`, and `-2^63` | 2 |
 
 ### 5.3 Collections and text
@@ -248,7 +247,7 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 |----|-------------|--------|-----------------------|-----------|
 | B1 | `xulo run` and `xulo check` for a single file | **OK** | CLI integration tests | 1 |
 | B2 | `xupm build` for core language and `hello` | **OK** | macOS/Windows CI AOT smoke test | 4 |
-| B3 | `xupm build` for the bootstrap subset | **BROKEN** | Nested-ternary and `Array.len` bugs remain (R9b, L15); `Map`/`Set`/spread now lower (C2, C3, C1) | 4 |
+| B3 | `xupm build` for the bootstrap subset | **BROKEN** | The `Array.len` bug remains (L15); `Map`/`Set`/spread/ternary now lower (C2, C3, C1, R9b) | 4 |
 | B4 | AOT module tree (`mod`/`use`) | **OK** | `examples/modules` native build | 4 |
 | B5 | Runtime static library and linker path | **OK** | CI and release workflow | 4 |
 | B6 | `xupm test` for stage 1's own tests | **NOT VERIFIED** | Command exists; no stage 1 test corpus yet | 3 |
@@ -379,12 +378,10 @@ fn main() {
 ```
 
 The `Map` and `Set` probes now pass under both paths. `xupm build` still fails
-the bootstrap subset for the nested-ternary/`Array.len` reasons in §6.7.
+the bootstrap subset for the `Array.len` reason in §6.7.
 
-### 6.7 AOT and interpreter diverge on existing examples (R9, L15)
+### 6.7 AOT and interpreter diverge on `Array.len` (R9, L15)
 
-- `examples/optional_chaining.xulo`: the nested ternary returns `0` under AOT
-  instead of `"B"`.
 - `Array<int, 3>.len` returns `1` under AOT instead of `3`.
 
 These are observable differences on programs the interpreter already accepts;
@@ -493,7 +490,7 @@ AOT narrowing slot, range failures, and regex reachability with `std-spec`
 ### WP3 — AOT parity and bootstrap backend (P1, Gate 4)
 
 - AOT runtime support for `Map` and `Set` is in place (C2, C3).
-- Fix nested ternaries and `Array.len` in the AOT lowering.
+- Fix `Array.len` in the AOT lowering.
 - Add a differential runner that builds every non-interactive example both ways
   and compares output.
 - Make `xupm build` failures return a nonzero exit status (verify separately;
@@ -575,14 +572,14 @@ git submodule status
 git ls-tree HEAD spec std-spec
 ```
 
-Last recorded verification (2026-11-15):
+Last recorded verification (2026-11-16):
 
 | Check | Result |
 |-------|--------|
-| `cargo test --workspace` | 2019 passed, 0 failed |
+| `cargo test --workspace` | 2071 passed, 0 failed |
 | Examples (CI job) | Configured to run every `examples/*.xulo` |
 | AOT smoke tests | `hello` on macOS/Windows; `structs`, `trait_shapes`, `generics`, `modules` probed locally |
-| AOT differential probes | `collections`, `optional_chaining`, `Array.len` currently diverge |
+| AOT differential probes | `collections` and `optional_chaining` match; `Array.len` still diverges |
 
 ## 10. Maintenance
 

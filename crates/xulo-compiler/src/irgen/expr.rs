@@ -148,6 +148,7 @@ impl IrGenerator {
             Expression::Unary(unary) => self.generate_unary(unary),
             Expression::Call(call) => self.generate_call(call),
             Expression::If(if_expr) => self.generate_if_expr(if_expr),
+            Expression::Ternary(ternary) => self.generate_ternary(ternary),
             Expression::Nullish(nullish) => self.generate_nullish(nullish),
             Expression::Member(member) => self.generate_member_access(member),
             Expression::Index(index) => self.generate_index(index),
@@ -1815,6 +1816,58 @@ impl IrGenerator {
             .push(Instruction::SetLocal {
                 dst: result,
                 src: right,
+            });
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Jump(end_label));
+
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Label(end_label));
+        Ok(Operand::Local(result))
+    }
+
+    /// `cond ? then : else` lowers like a two-arm `if` expression; the else
+    /// operand is itself an expression, so right-nested ternaries recurse.
+    pub(super) fn generate_ternary(&mut self, ternary: &TernaryExpr) -> Result<Operand, XuloError> {
+        let func_idx = self.current_func.unwrap();
+        let condition = self.generate_expression(&ternary.condition)?;
+        let then_label = self.module.functions[func_idx].add_label();
+        let else_label = self.module.functions[func_idx].add_label();
+        let end_label = self.module.functions[func_idx].add_label();
+        let result = self.module.functions[func_idx].add_local(IrType::Pointer);
+
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Branch {
+                condition,
+                then_label,
+                else_label,
+            });
+
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Label(then_label));
+        let then_value = self.generate_expression(&ternary.then_value)?;
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::SetLocal {
+                dst: result,
+                src: then_value,
+            });
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Jump(end_label));
+
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Label(else_label));
+        let else_value = self.generate_expression(&ternary.else_value)?;
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::SetLocal {
+                dst: result,
+                src: else_value,
             });
         self.module.functions[func_idx]
             .instructions

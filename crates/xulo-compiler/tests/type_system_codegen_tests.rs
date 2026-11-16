@@ -184,6 +184,29 @@ fn set_string_values_compile() {
     assert_eq!(out, vec!["2", "true", "true", "false", "a"]);
 }
 
+/// R9b: right-nested ternaries evaluate exactly one branch and print strings.
+#[test]
+fn nested_ternary_compile() {
+    let out = compile_and_run(
+        r#"fn mark(name: string): string {
+    print(name)
+    name
+}
+fn main() {
+    let score = 85
+    let grade = score >= 90 ? "A" : score >= 60 ? "B" : "C"
+    print(grade)
+    let low = 40
+    print(low >= 90 ? "A" : low >= 60 ? "B" : "C")
+    let pass = true
+    print(pass ? "yes" : "no")
+    print(true ? mark("then") : mark("else"))
+    print(false ? mark("then") : mark("else"))
+}"#,
+    );
+    assert_eq!(out, vec!["B", "C", "yes", "then", "then", "else", "else"]);
+}
+
 /// C1: list and object spread preserve order and later overrides.
 #[test]
 fn list_and_object_spread_compile() {

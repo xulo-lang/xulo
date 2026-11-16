@@ -624,6 +624,20 @@ fn map_members_reach_machine_code() {
 }
 
 #[test]
+fn nested_ternary_compiles() {
+    let out = compile_and_run(
+        r#"
+        fn main() {
+            let score = 85
+            let grade = score >= 90 ? "A" : score >= 60 ? "B" : "C"
+            print(grade)
+        }
+        "#,
+    );
+    assert_eq!(out, vec!["B"]);
+}
+
+#[test]
 fn spread_lowering_reaches_machine_code() {
     let bytes = object_bytes(
         r#"
