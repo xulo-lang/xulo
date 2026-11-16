@@ -191,6 +191,30 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
         returns: &[I64],
     },
     RuntimeFnDesc {
+        name: "xulo_set_from_list",
+        addr: xulo_runtime::runtime::xulo_set_from_list as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_set_has",
+        addr: xulo_runtime::runtime::xulo_set_has as *const u8,
+        params: &[I64, I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_set_insert",
+        addr: xulo_runtime::runtime::xulo_set_insert as *const u8,
+        params: &[I64, I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_set_remove",
+        addr: xulo_runtime::runtime::xulo_set_remove as *const u8,
+        params: &[I64, I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
         name: "xulo_alloc_enum",
         addr: xulo_runtime::runtime::xulo_alloc_enum as *const u8,
         params: &[I64, I64, I64, I64],

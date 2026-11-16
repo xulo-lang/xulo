@@ -340,6 +340,9 @@ impl IrGenerator {
             Some(Type::Named(name, args)) if name == "Map" => {
                 Some(args.first().cloned().unwrap_or(Type::String))
             }
+            Some(Type::Named(name, args)) if name == "Set" => {
+                Some(args.first().cloned().unwrap_or(Type::Any))
+            }
             Some(Type::Object | Type::ObjectType(_)) => Some(Type::String),
             _ => None,
         };

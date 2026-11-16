@@ -143,11 +143,10 @@ main risks. Fixing P0 rows in §5 is the shortest path.
 **Exit criterion:** `xupm build` produces a stage 1 binary that runs the same
 bootstrap workload as `xulo run` and prints identical output.
 
-**Current assessment:** **Blocked by AOT gaps.** `Map` now lowers through the
-compiled path, but `Set` is still missing there; list spread, nested ternaries,
-and `Array.len` have known divergences. The interpreter can be used for
-Gate 1–3, but native bootstrap requires these fixes or an explicitly narrower
-stage 1 design.
+**Current assessment:** **Blocked by AOT gaps.** `Map` and `Set` now lower
+through the compiled path; list spread, nested ternaries, and `Array.len` still
+have known divergences. The interpreter can be used for Gate 1–3, but native
+bootstrap requires these fixes or an explicitly narrower stage 1 design.
 
 ### Gate 5 — Self-host
 
@@ -222,7 +221,7 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 |----|-------------|--------|-----------------------|-----------|
 | C1 | `List` with `.push`, `.pop`, `.len`, indexing, `+`, iteration | **PARTIAL** | Interpreter OK; AOT list spread produces wrong elements | 1 |
 | C2 | `Map<K, V>` with `.get`, `.set`, `.has`, `.remove`, `.size`, iteration | **OK** | Interpreter and compiled paths agree on members, projection, `Map::from_entries`, typed literals, and key iteration (`crates/xulo-compiler/tests/type_system_codegen_tests.rs`, `crates/xulo-compiler/tests/aot_syntax_coverage_tests.rs`) | 4 |
-| C3 | `Set<T>` with `.insert`, `.remove`, `.has`, `.size` | **PARTIAL** | Interpreter OK; AOT has no set runtime support | 4 |
+| C3 | `Set<T>` with `.insert`, `.remove`, `.has`, `.size` | **OK** | Interpreter and compiled paths agree on construction, membership, insertion, removal, size, and iteration for numbers, strings, and payload-free enums (`crates/xulo-compiler/tests/type_system_codegen_tests.rs`, `crates/xulo-compiler/tests/aot_syntax_coverage_tests.rs`) | 4 |
 | C4 | `Array<T, N>` with `.len`, indexing, iteration | **PARTIAL** | Interpreter OK; AOT `.len` wrong; `Array::filled` not verified | 4 |
 | C5 | `string` members and UTF-8 behavior | **OK** | Interpreter and AOT string member tests | 1 |
 | C6 | `StringBuilder` with `new`/`append`/`clear`/`build`/`len`/`byte_len` | **OK** | runtime/AOT tests | 1 |
@@ -248,7 +247,7 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 |----|-------------|--------|-----------------------|-----------|
 | B1 | `xulo run` and `xulo check` for a single file | **OK** | CLI integration tests | 1 |
 | B2 | `xupm build` for core language and `hello` | **OK** | macOS/Windows CI AOT smoke test | 4 |
-| B3 | `xupm build` for the bootstrap subset | **BROKEN** | `Map`/`Set` unsupported; spread/ternary/Array bugs | 4 |
+| B3 | `xupm build` for the bootstrap subset | **BROKEN** | Spread/ternary/Array bugs remain (C1, R9b, L15); `Map`/`Set` now lower (C2, C3) | 4 |
 | B4 | AOT module tree (`mod`/`use`) | **OK** | `examples/modules` native build | 4 |
 | B5 | Runtime static library and linker path | **OK** | CI and release workflow | 4 |
 | B6 | `xupm test` for stage 1's own tests | **NOT VERIFIED** | Command exists; no stage 1 test corpus yet | 3 |
@@ -365,18 +364,21 @@ fn main() {
 field arguments, and `p.first`/`p.second` substitute the inferred arguments
 into the declared field types. The typed object-literal form still works.
 
-### 6.6 AOT does not support `Set` (C3, B3)
+### 6.6 AOT collection support (C2, C3)
 
 ```xulo
 fn main() {
     let m: Map<string, int> = { a: 1 }
     print(m.get("a"))
     print(m.size)
+    let mut s = Set::from_list([1, 2, 2])
+    print(s.size)
+    print(s.has(2))
 }
 ```
 
-The `Map` probe now passes under both paths (C2). `Set::from_list` still fails
-under `xupm build`; the interpreter supports it.
+The `Map` and `Set` probes now pass under both paths. `xupm build` still fails
+the bootstrap subset for the spread/ternary/`Array.len` reasons in §6.7.
 
 ### 6.7 AOT and interpreter diverge on existing examples (R9, C1, L15)
 
@@ -491,8 +493,7 @@ AOT narrowing slot, range failures, and regex reachability with `std-spec`
 
 ### WP3 — AOT parity and bootstrap backend (P1, Gate 4)
 
-- Add AOT runtime support for `Map` and `Set`, or explicitly forbid them in the
-  bootstrap subset and provide a supported alternative.
+- AOT runtime support for `Map` and `Set` is in place (C2, C3).
 - Fix list spread, nested ternaries, and `Array.len` in the AOT lowering.
 - Add a differential runner that builds every non-interactive example both ways
   and compares output.

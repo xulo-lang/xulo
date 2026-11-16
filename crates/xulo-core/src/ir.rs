@@ -78,6 +78,10 @@ pub enum RuntimeFn {
     ObjectValues,
     ObjectEntries,
     MapFromEntries,
+    SetFromList,
+    SetHas,
+    SetInsert,
+    SetRemove,
     /// 枚举值：分配 + payload 写入 + match 的 tag/payload 读取
     AllocEnum,
     EnumSet,

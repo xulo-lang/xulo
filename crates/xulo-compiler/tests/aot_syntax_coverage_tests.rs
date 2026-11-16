@@ -622,3 +622,24 @@ fn map_members_reach_machine_code() {
     assert!(references_symbol(&bytes, "xulo_object_keys"));
     assert!(references_symbol(&bytes, "xulo_map_from_entries"));
 }
+
+#[test]
+fn set_members_reach_machine_code() {
+    let bytes = object_bytes(
+        r#"
+        fn main() {
+            let mut s = Set::from_list([1, 2, 2])
+            print(s.has(2))
+            print(s.insert(3))
+            print(s.remove(1))
+            print(s.size)
+            for v in s { print(v) }
+        }
+        "#,
+    );
+    assert!(references_symbol(&bytes, "xulo_set_from_list"));
+    assert!(references_symbol(&bytes, "xulo_set_has"));
+    assert!(references_symbol(&bytes, "xulo_set_insert"));
+    assert!(references_symbol(&bytes, "xulo_set_remove"));
+    assert!(references_symbol(&bytes, "xulo_array_len"));
+}

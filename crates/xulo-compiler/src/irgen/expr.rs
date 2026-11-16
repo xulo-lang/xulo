@@ -950,6 +950,22 @@ impl IrGenerator {
             return Ok(Operand::Local(local));
         }
 
+        if call.object.is_none() && call.callee == "Set::from_list" {
+            let mut args = Vec::new();
+            for arg in &call.arguments {
+                args.push(self.generate_expression(&arg.value)?);
+            }
+            let local = self.module.functions[func_idx].add_local(IrType::Pointer);
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::RuntimeCall {
+                    dst: Some(local),
+                    func: RuntimeFn::SetFromList,
+                    args,
+                });
+            return Ok(Operand::Local(local));
+        }
+
         let mut args = Vec::new();
 
         // 对于方法调用，先生成 receiver 并作为第一个参数
@@ -1063,6 +1079,13 @@ impl IrGenerator {
                 "get" | "set" | "has" | "remove" | "keys" | "values" | "entries"
             ) {
                 return self.generate_map_member(call, args);
+            }
+        }
+
+        if call.object.is_some() && self.expr_is_set_receiver(&call.object) {
+            let method = call.method.as_deref().unwrap_or(&call.callee);
+            if matches!(method, "has" | "insert" | "remove") {
+                return self.generate_set_member(call, args);
             }
         }
 
@@ -2283,6 +2306,44 @@ impl IrGenerator {
         }
     }
 
+    fn generate_set_member(
+        &mut self,
+        call: &Call,
+        args: Vec<Operand>,
+    ) -> Result<Operand, XuloError> {
+        let func_idx = self.current_func.unwrap();
+        let method = call.method.as_deref().unwrap_or(&call.callee);
+        let receiver = args
+            .first()
+            .cloned()
+            .unwrap_or(Operand::Const(IrValue::Null));
+        let value = args
+            .get(1)
+            .cloned()
+            .unwrap_or(Operand::Const(IrValue::Null));
+        let value_tag = self.tag_operand_for(&call.arguments[0].value, &value);
+        let func = match method {
+            "has" => RuntimeFn::SetHas,
+            "insert" => RuntimeFn::SetInsert,
+            "remove" => RuntimeFn::SetRemove,
+            _ => {
+                return Err(XuloError::new(
+                    ErrorKind::Semantic,
+                    format!("undefined function: {method}"),
+                ));
+            }
+        };
+        let local = self.module.functions[func_idx].add_local(IrType::Bool);
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::RuntimeCall {
+                dst: Some(local),
+                func,
+                args: vec![receiver, value, value_tag],
+            });
+        Ok(Operand::Local(local))
+    }
+
     pub(super) fn generate_member_access(
         &mut self,
         member: &MemberAccess,
@@ -2307,8 +2368,8 @@ impl IrGenerator {
             return Ok(Operand::Local(local));
         }
         // Read-only collection properties (spec `types/composite-types.md`,
-        // `types/primitive-types.md`): `.len` on a `List`, `.byte_len` on a
-        // `string`. `.size` on a map has no compiled representation yet.
+        // `types/primitive-types.md`): `.len` on a `List`, `.size` on a
+        // `Map`/`Set`, `.byte_len` on a `string`.
         let is_builder = matches!(
             self.infer_source_type_from_expr(&member.object),
             Some(Type::Named(name, _)) if name == "StringBuilder"
@@ -2329,6 +2390,14 @@ impl IrGenerator {
                 ) =>
             {
                 Some(RuntimeFn::ObjectSize)
+            }
+            "size"
+                if matches!(
+                    self.infer_source_type_from_expr(&member.object),
+                    Some(Type::Named(name, _)) if name == "Set"
+                ) =>
+            {
+                Some(RuntimeFn::ArrayLen)
             }
             "len" => Some(RuntimeFn::StringSize),
             "byte_len" => Some(RuntimeFn::StringByteLen),

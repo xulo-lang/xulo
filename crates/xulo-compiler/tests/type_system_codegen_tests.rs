@@ -31,8 +31,6 @@ fn main() {
     print(xs.len)
 }"#,
     );
-    // `Map`/`Set` are a separate AOT gap (§6.6, WP3); the semantic shape is
-    // covered by the interpreter test.
     assert_eq!(out, vec!["x", "3"]);
 }
 
@@ -132,6 +130,58 @@ fn map_from_entries_and_typed_literal_compile() {
 }"#,
     );
     assert_eq!(out, vec!["2", "1", "thirty", "[30]"]);
+}
+
+/// §6.6 / C3: `Set<T>` members and iteration in the compiled path.
+#[test]
+fn set_members_compile() {
+    let out = compile_and_run(
+        r#"fn main() {
+    let mut s = Set::from_list([1, 2, 2])
+    print(s.size)
+    print(s.has(2))
+    print(s.insert(2))
+    print(s.insert(3))
+    print(s.remove(1))
+    print(s.size)
+    for v in s { print(v) }
+}"#,
+    );
+    assert_eq!(
+        out,
+        vec!["2", "true", "false", "true", "true", "2", "2", "3"]
+    );
+}
+
+#[test]
+fn set_enum_values_compile() {
+    let out = compile_and_run(
+        r#"enum Color { Red, Green }
+fn main() {
+    let mut s = Set::from_list([Color::Red, Color::Green, Color::Red])
+    print(s.size)
+    print(s.has(Color::Red))
+    print(s.insert(Color::Green))
+    print(s.remove(Color::Red))
+    print(s.size)
+}"#,
+    );
+    assert_eq!(out, vec!["2", "true", "false", "true", "1"]);
+}
+
+#[test]
+fn set_string_values_compile() {
+    let out = compile_and_run(
+        r#"fn main() {
+    let mut s = Set::from_list(["a", "b", "a"])
+    print(s.size)
+    print(s.has("b"))
+    print(s.remove("b"))
+    print(s.has("b"))
+    for v in s { print(v) }
+}"#,
+    );
+    assert_eq!(out, vec!["2", "true", "true", "false", "a"]);
 }
 
 #[test]

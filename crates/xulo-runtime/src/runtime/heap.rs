@@ -432,6 +432,137 @@ pub extern "C" fn xulo_object_entries(obj: *const XuloObject) -> *mut XuloArray 
     array
 }
 
+/// `Set` 的元素标签；缺失槽位按 int 处理。
+fn set_tag(tags: &[u8], index: usize) -> i64 {
+    tags.get(index).copied().unwrap_or(1) as i64
+}
+
+/// `Set` 元素/Map 键的相等判定：数字按数值、字符串按内容、枚举按
+/// 类型与变体；`NaN` 彼此相等（spec `types/composite-types.md`）。
+fn set_value_eq(left: i64, left_tag: i64, right: i64, right_tag: i64) -> bool {
+    let left_tag = if left_tag == -1 {
+        xulo_detect_tag(left)
+    } else {
+        left_tag
+    };
+    let right_tag = if right_tag == -1 {
+        xulo_detect_tag(right)
+    } else {
+        right_tag
+    };
+    let as_f64 = |value: i64, tag: i64| match tag {
+        1 => Some(value as f64),
+        2 => Some(f64::from_bits(value as u64)),
+        10 => Some((value as u64) as f64),
+        _ => None,
+    };
+    match (left_tag, right_tag) {
+        (1, 1) => left == right,
+        (10, 10) => left as u64 == right as u64,
+        (1, 10) => left >= 0 && left as u64 == right as u64,
+        (10, 1) => right >= 0 && right as u64 == left as u64,
+        (2, 2) | (1, 2) | (2, 1) | (10, 2) | (2, 10) => {
+            let (Some(left), Some(right)) = (as_f64(left, left_tag), as_f64(right, right_tag))
+            else {
+                return false;
+            };
+            (left.is_nan() && right.is_nan()) || left == right
+        }
+        (0, 0) => unsafe {
+            if left == 0 || right == 0 {
+                return left == right;
+            }
+            CStr::from_ptr(left as *const c_char).to_bytes()
+                == CStr::from_ptr(right as *const c_char).to_bytes()
+        },
+        (5, 5) => (left != 0) == (right != 0),
+        (6, 6) => true,
+        (7, 7) => unsafe {
+            if left == 0 || right == 0 {
+                return left == right;
+            }
+            let left = &*(left as *const XuloEnum);
+            let right = &*(right as *const XuloEnum);
+            left.variant == right.variant
+                && CStr::from_ptr(left.type_name).to_bytes()
+                    == CStr::from_ptr(right.type_name).to_bytes()
+        },
+        _ => left == right,
+    }
+}
+
+fn set_find(set: &XuloArray, value: i64, tag: i64) -> Option<usize> {
+    set.elements
+        .iter()
+        .enumerate()
+        .position(|(index, seen)| set_value_eq(*seen, set_tag(&set.tags, index), value, tag))
+}
+
+/// `Set::from_list(values)`：按列表顺序保留每个不同值的首次出现。
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_set_from_list(values: *const XuloArray) -> *mut XuloArray {
+    let set = xulo_alloc_array(0);
+    if values.is_null() {
+        return set;
+    }
+    unsafe {
+        let values = &*values;
+        for (index, value) in values.elements.iter().copied().enumerate() {
+            let tag = set_tag(&values.tags, index);
+            if set_find(&*set, value, tag).is_none() {
+                xulo_array_push(set, value, tag);
+            }
+        }
+    }
+    set
+}
+
+/// `Set::has(value)`
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_set_has(set: *const XuloArray, value: i64, tag: i64) -> i64 {
+    if set.is_null() {
+        return 0;
+    }
+    i64::from(unsafe { set_find(&*set, value, tag).is_some() })
+}
+
+/// `Set::insert(value)`：返回是否真的插入。
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_set_insert(set: *mut XuloArray, value: i64, tag: i64) -> i64 {
+    if set.is_null() {
+        return 0;
+    }
+    unsafe {
+        if set_find(&*set, value, tag).is_some() {
+            return 0;
+        }
+        xulo_array_push(set, value, tag);
+    }
+    1
+}
+
+/// `Set::remove(value)`：返回是否真的移除。
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_set_remove(set: *mut XuloArray, value: i64, tag: i64) -> i64 {
+    if set.is_null() {
+        return 0;
+    }
+    unsafe {
+        let Some(index) = set_find(&*set, value, tag) else {
+            return 0;
+        };
+        (*set).elements.remove(index);
+        if index < (*set).tags.len() {
+            (*set).tags.remove(index);
+        }
+    }
+    1
+}
+
 /// `Map::from_entries(entries)`：按列表顺序建 Map，重复键保留后一个值。
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]

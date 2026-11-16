@@ -782,6 +782,18 @@ impl IrGenerator {
                             .unwrap_or((Type::Any, Type::Any));
                         return Some(Type::Named("Map".to_string(), vec![key, value]));
                     }
+                    if call.callee == "Set::from_list" {
+                        let element = call
+                            .arguments
+                            .first()
+                            .and_then(|a| self.infer_source_type_from_expr(&a.value))
+                            .and_then(|ty| match ty {
+                                Type::List(inner) => Some(*inner),
+                                _ => None,
+                            })
+                            .unwrap_or(Type::Any);
+                        return Some(Type::Named("Set".to_string(), vec![element]));
+                    }
                     // String inspection prelude functions.
                     match call.callee.as_str() {
                         "stringSize" | "stringCodeAt" => return Some(Type::Number),
@@ -907,6 +919,12 @@ impl IrGenerator {
                         }
                         _ => {}
                     }
+                }
+                if call.object.is_some()
+                    && self.expr_is_set_receiver(&call.object)
+                    && matches!(call.method.as_deref(), Some("has" | "insert" | "remove"))
+                {
+                    return Some(Type::Boolean);
                 }
                 // 内建字符串方法 `split` 产出 List<string>（用户结构体的
                 // 同名方法不在此列）：let 绑定与链式接收者都拿到列表类型，
@@ -1204,6 +1222,12 @@ impl IrGenerator {
                 }
             },
             Expression::Call(call) => {
+                if call.object.is_none() && call.callee == "Set::from_list" {
+                    return 3;
+                }
+                if call.object.is_some() && self.expr_is_set_receiver(&call.object) {
+                    return 5;
+                }
                 if call.object.is_some() && self.expr_is_map_receiver(&call.object) {
                     match call.method.as_deref() {
                         Some("has") => return 5,
@@ -1758,6 +1782,16 @@ impl IrGenerator {
             ) || matches!(
                 self.infer_source_type_from_expr(o),
                 Some(Type::Object | Type::ObjectType(_))
+            )
+        })
+    }
+
+    /// 方法调用的接收者是否是 `Set`。
+    pub(super) fn expr_is_set_receiver(&self, object: &Option<Box<Expression>>) -> bool {
+        object.as_ref().is_some_and(|o| {
+            matches!(
+                self.infer_source_type_from_expr(o),
+                Some(Type::Named(name, _)) if name == "Set"
             )
         })
     }
