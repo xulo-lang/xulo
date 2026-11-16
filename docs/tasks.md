@@ -25,14 +25,15 @@ readiness document.
 
 | Work package | Done | Total |
 |---|---:|---:|
-| WP0 — Matrix hygiene and conformance | 6 | 6 |
+| WP0 — Matrix hygiene and conformance | 5 | 5 |
 | WP1 — 64-bit integer model | 7 | 7 |
-| WP2 — Type system and semantic convergence | 10 | 10 |
-| WP3 — AOT parity and bootstrap backend | 8 | 8 |
+| WP2 — Type system and semantic convergence | 10 | 12 |
+| WP3 — AOT parity and bootstrap backend | 8 | 13 |
 | WP4 — `defer` semantics | 5 | 5 |
 | WP5 — Stage 1 skeleton | 6 | 6 |
 | WP6 — Self-host loop | 1 | 7 |
-| **Total** | **43** | **49** |
+| WP7 — Non-gating follow-ups | 0 | 4 |
+| **Total** | **42** | **59** |
 
 ## Gates
 
@@ -57,10 +58,11 @@ Gates are cumulative. An open earlier gate blocks every later gate.
 - [ ] **Gate 6 — Conformance**: the pinned specification's checkable examples
       and the bootstrap suite run in CI.
 
-## Completed baseline
+## Baseline capabilities
 
 Capabilities stage 1 may rely on today. These are not work packages; they are
 the starting point, and their evidence is recorded in `stage1-readiness.md` §5.
+Unchecked entries are open; each is tracked in a work package below.
 
 - [x] **L1** UTF-8 lexing and parsing of `.xulo` files
 - [x] **L3** `float` / `f64` arithmetic
@@ -77,20 +79,25 @@ the starting point, and their evidence is recorded in `stage1-readiness.md` §5.
 - [x] **L19** `Result` / `Error` and `?` propagation
 - [x] **L22** Async/await, `spawn`, `lock`, `shared` (outside the bootstrap subset)
 - [x] **L23** Attributes, `#[test]`, `#[derive]`, macros (outside the bootstrap subset)
+- [x] **L25** Type aliases (`type X = …`), including alias receivers, dispatch, and function-type aliases
 - [x] **R1** Deterministic left-to-right evaluation
 - [x] **R3** UTF-8 scalar string operations
 - [x] **R4** Runtime failures with stable codes
 - [x] **R5** No panic on adversarial input; nesting guard
 - [x] **R6** `panic`, `assert`, and process exit status
+- [x] **R10** Deterministic formatting of integers and diagnostics
 - [x] **C5** `string` members and UTF-8 behavior
 - [x] **C6** `StringBuilder` with `new` / `append` / `clear` / `build` / `len` / `byte_len`
+- [x] **C7** `str` / `fmt` / `print` output for every bootstrap value
 - [x] **S1** `std::fs`
 - [x] **S2** `std::io`
-- [x] **S3** `std::process`
+- [ ] **S3** `std::process` — PARTIAL: `launch`/`Command`/`Child` have no AOT lowering (WP3)
 - [x] **S4** `std::path`, `std::os`, environment, cwd, pid
 - [x] **S5** `std::json`
 - [x] **S6** `std::regex` and `std::fmt`
 - [x] **S7** `std::net` and `std::http` (outside the bootstrap subset)
+- [x] **S10** `std::math` (interpreter and AOT)
+- [x] **S11** `std::time` (interpreter and AOT)
 - [x] **B1** `xulo run` and `xulo check` for a single file
 - [x] **B2** `xupm build` for core language and `hello`
 - [x] **B4** AOT module tree (`mod` / `use`)
@@ -113,9 +120,6 @@ Priority P0 · needed by Gate 1/2 · source: `stage1-readiness.md` §7 WP0, §6.
       `crates/xulo-cli/tests/spec_conformance.rs` (`Accept` cases).
 - [x] **T3b** Extend the runner to `// error[E…]` blocks with expected codes.
       Each rejected line is re-inserted uncommented and must produce its code.
-- [x] **T3c** Extend the runner to `// runs:` blocks with expected output.
-      Implemented, but the pinned spec currently has no `runs:` examples, so
-      that path has no cases yet.
 - [x] **T3d** Ensure every row marked OK in `stage1-readiness.md` is backed by
       a test or a named probe; add the missing ones.
       `crates/xulo-cli/tests/readiness_matrix.rs` requires every OK row to cite
@@ -178,6 +182,13 @@ Priority P0 · needed by Gate 2/3 · source: `stage1-readiness.md` §7 WP2, §6.
       the `§6.2–6.5` probes pass
       (`crates/xulo-runtime/tests/type_system.rs`,
       `crates/xulo-compiler/tests/type_system_codegen_tests.rs`).
+- [ ] **L6** Closures: an untyped lambda passed to a generic callback can fail
+      with `E0202`. The bootstrap subset includes closures; stage 1 works around
+      this by avoiding arrow closures (`xuloc/BOOTSTRAP.md` limit 6).
+- [ ] **L13b** Structural `==` for `List`, tuple, and `struct` values (and
+      `Map`/`Set`), per `stage1-readiness.md` §6.11. Add a runtime
+      `xulo_value_equal` helper and route non-scalar `==`/`!=` through it in the
+      AOT path. Until then, compare elements individually.
 
 **Verify:** the four probes in `stage1-readiness.md` §6.2–6.5 run without a
 workaround.
@@ -198,6 +209,18 @@ Priority P1 · needed by Gate 4 · source: `stage1-readiness.md` §7 WP3, §6.6�
 - [x] **B3a** Verify that `xupm build` failures return a nonzero exit status;
       fix the pipeline if they do not.
 - [x] **G3** Make the `§6.6–6.7` probes pass.
+- [ ] **B3c** AOT lowering for `std::fs::write_bytes` (`fs`), `std::path::split`
+      (`path`), and the `std::http` server types and `std::os::exec_path`
+      (`http`). Entries in `crates/xupm/tests/aot_differential_baseline.tsv`.
+- [ ] **S3a** AOT lowering for `std::process::launch`, `Command`, and `Child`
+      (`process`).
+- [ ] **R9c** `async_tasks`: AOT `await` produces zero values. Outside the
+      bootstrap subset (§8 of `stage1-readiness.md`); tracked in the baseline.
+- [ ] **C4** Verify `Array::filled` under both execution paths.
+- [ ] **B7** Run `stage1_binary_matches_the_interpreter` on macOS and Windows,
+      not only Linux. Today the differential job is Linux-only and both other
+      platforms run only the `hello` AOT smoke test, so Gate 4's assessment is
+      Linux-only until this closes. Windows FFI stays out of scope (S8).
 
 **Verify:** `xupm build examples/collections.xulo` and
 `xupm build examples/optional_chaining.xulo` match `xulo run` byte for byte.
@@ -237,7 +260,7 @@ Can start in parallel with WP1–WP4 · needed by Gate 1/2 · source:
       generic AST tree with scalar spans.
 - [x] Limit the source to rows marked OK/PARTIAL and record every workaround
       in `xuloc/BOOTSTRAP.md`.
-      The document lists the fourteen deliberate limits, including the
+      The document lists the sixteen deliberate limits, including the
       `xulo run` argv workaround, cross-module method dispatch, and the
       unsupported postfix `?`, call-site type arguments, and arrow closures.
 - [x] **T5a** Smoke test: stage 1 parses a fixed example and prints
@@ -284,20 +307,44 @@ After WP1–WP5 · needed by Gate 4/5/6 · source: `stage1-readiness.md` §7 WP6
 `XULO_AOT_DIFFERENTIAL=1 XULO_RUNTIME_LIB=$PWD/target/release/libxulo_runtime.a
 cargo test -p xupm --test aot_differential stage1_binary_matches_the_interpreter`.
 
-**Exit:** Gate 4, Gate 5, Gate 6. Gates 3 and 4 are reached; Gates 5–6 remain
-blocked on stage 1 code generation and self-build.
+**Exit:** Gate 4, Gate 5, Gate 6. Gate 4 is reached; Gates 5–6 remain blocked
+on stage 1 code generation and self-build.
+
+## WP7 — Non-gating follow-ups
+
+Not in any gate's exit criterion. Each item must still be closed or explicitly
+re-scoped before the gate it informs.
+
+- [ ] **T3f** Triage the 33 divergences in `spec_conformance_baseline.tsv` by
+      group: 11 context-dependent, 12 module-scope statements, 8 syntax gaps,
+      2 semantic gaps. Each group names an owner component and the gate that
+      clears it in the table in `stage1-readiness.md` §6.10; the component paths
+      are checked by `readiness_matrix`.
+- [ ] **T3c** Extend the runner to `// runs:` blocks with expected output.
+      Implemented, but the pinned spec currently has no `runs:` examples, so
+      that path has no cases yet. Add `runs:` cases under
+      `crates/xulo-cli/tests/` (the pinned spec is a submodule and is not
+      edited here).
+- [ ] **L21** `copy` / `move` and use-after-move checking (PARTIAL). Not in the
+      §2.1 bootstrap subset; verify before stage 1 relies on it.
+- [ ] **R8** Value/reference semantics for `copy` / `move` (PARTIAL). Same
+      scope note as L21. `xuloc/` currently uses neither construct.
+
+**Verify:** `cargo test -p xulo-cli --test spec_conformance -- --nocapture`
+(for T3f) and the L21/R8 probes once they exist.
 
 ## Out of scope for stage 1 bootstrap
 
 These are deliberately not tracked here. They remain P2 in
 `stage1-readiness.md` §8 and must not block Gate 1 or Gate 2:
 
-- UI components, renderers, `@State` / `@Environment`, terminal/webview backends.
+- **L24** UI components, renderers, `@State` / `@Environment`, terminal/webview
+  backends.
 - LSP, IDE integration, and formatter comment handling.
 - Async tasks, `spawn` / `lock` / `shared`, `std::net`, `std::http`, package
   registry.
 - Macro expansion beyond `#[test]` in stage 1's own tests.
-- Full FFI and Windows FFI.
+- **S8** Full FFI and Windows FFI.
 
 ## Maintenance
 

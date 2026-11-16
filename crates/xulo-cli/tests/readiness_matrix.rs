@@ -320,3 +320,58 @@ fn probes_pass_and_are_cited() {
             .join("\n")
     );
 }
+
+/// §6.10 assigns every spec-conformance divergence group to the component that
+/// must change for it to clear. This project is agent-developed, so the owner is
+/// a crate path rather than a person: check the path exists instead of trusting
+/// a name. Whether the group actually shrinks is proven separately, by
+/// `spec_conformance` losing baseline lines at Gate 5/Gate 6.
+#[test]
+fn spec_divergence_groups_name_a_live_component() {
+    let root = repo_root();
+    let text = fs::read_to_string(readiness_path()).expect("read docs/stage1-readiness.md");
+    let section = text
+        .split("### 6.10")
+        .nth(1)
+        .and_then(|rest| rest.split("### 6.11").next())
+        .expect("docs/stage1-readiness.md must keep a §6.10 section");
+
+    let mut rows = 0;
+    let mut problems: Vec<String> = Vec::new();
+    for line in section.lines() {
+        let line = line.trim();
+        if !line.starts_with('|') {
+            continue;
+        }
+        let cells: Vec<&str> = line.trim_matches('|').split('|').map(str::trim).collect();
+        if cells.len() != 4 {
+            continue;
+        }
+        // Skip the header and the `|---:|---|` separator.
+        if cells[0] == "Group" || cells[0].chars().all(|c| matches!(c, '-' | ':')) {
+            continue;
+        }
+        rows += 1;
+        let owners = backticked(cells[2]);
+        if owners.is_empty() {
+            problems.push(format!("{}: names no component", cells[0]));
+        } else if !owners.iter().any(|token| is_proof(&root, token)) {
+            problems.push(format!(
+                "{}: component `{}` does not exist",
+                cells[0],
+                owners.join(", ")
+            ));
+        }
+    }
+
+    assert!(
+        rows > 0,
+        "the §6.10 group table was not parsed; check its shape (4 columns, \
+         `Group | Cases | Owner (component) | Cleared by`)"
+    );
+    assert!(
+        problems.is_empty(),
+        "every §6.10 group must name an existing component path:\n  {}",
+        problems.join("\n  ")
+    );
+}
