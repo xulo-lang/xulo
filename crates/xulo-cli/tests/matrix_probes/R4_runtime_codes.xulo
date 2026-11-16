@@ -1,0 +1,7 @@
+// Readiness probe R4 (§5.2): a runtime failure stops the program with a stable
+// code. The runner requires exit status != 0 and `E0006` on stderr.
+// @error E0006
+fn main() {
+    let xs = [1]
+    print(xs[1])
+}

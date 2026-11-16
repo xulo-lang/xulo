@@ -1,0 +1,12 @@
+// Readiness probe L1 (docs/stage1-readiness.md §5.1): a UTF-8 source file
+// lexes and parses, and UTF-8 string literals survive to the runtime.
+// @expect
+// héllo, 世界 🌍
+// 11
+// 19
+fn main() {
+    let s = "héllo, 世界 🌍"
+    print(s)
+    print(s.len)
+    print(s.byte_len)
+}

@@ -1,0 +1,29 @@
+// Readiness probe R1 (§5.2): operands evaluate left to right, including
+// arithmetic, list literals, and call arguments.
+// @expect
+// a
+// b
+// c
+// 7
+// d
+// e
+// [4, 5]
+// f
+// g
+// 6 7
+fn mark(label: string, value: int): int {
+    print(label)
+    value
+}
+
+fn pair(a: int, b: int): unit {
+    print(a, b)
+}
+
+fn main() {
+    let sum = mark("a", 1) + mark("b", 2) * mark("c", 3)
+    print(sum)
+    let xs = [mark("d", 4), mark("e", 5)]
+    print(xs)
+    pair(mark("f", 6), mark("g", 7))
+}

@@ -1,0 +1,41 @@
+// Readiness probe L10 (§5.1): generic functions, trait bounds written inline
+// and in a `where` clause, and a generic struct.
+// @expect
+// P(1);P(2);
+// P(7)
+// Pair
+struct Pair<A, B> { first: A, second: B }
+
+trait Show {
+    fn show(self): string
+}
+
+struct P { x: int }
+
+impl Show for P {
+    fn show(self): string {
+        `P(${self.x})`
+    }
+}
+
+fn show_all<T: Show>(xs: List<T>): string {
+    let mut out = ""
+    for x in xs {
+        out = out + Show::show(x) + ";"
+    }
+    out
+}
+
+fn show_first<T>(xs: List<T>): string where T: Show {
+    Show::show(xs[0])
+}
+
+fn main() {
+    print(show_all([P(x: 1), P(x: 2)]))
+    print(show_first([P(x: 7)]))
+    let pair = Pair(first: 1, second: "x")
+    print(match pair.first {
+        1 => "Pair"
+        _ => "other"
+    })
+}

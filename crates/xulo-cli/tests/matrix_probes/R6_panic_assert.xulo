@@ -1,0 +1,7 @@
+// Readiness probe R6 (§5.2): `assert` stops the program with a nonzero exit
+// status and reports its message. The runner requires exit status != 0 and
+// `assert probe` on stderr.
+// @panic assert probe
+fn main() {
+    assert(1 == 2, "assert probe")
+}

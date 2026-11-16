@@ -1,0 +1,48 @@
+// Readiness probe L7 (§5.1): `if`/`else`, `while`, `for`, `match`, `break`,
+// and `continue`.
+// @expect
+// yes
+// 3
+// 4
+// 2
+// two
+// 6
+fn main() {
+    print(if 1 < 2 { "yes" } else { "no" })
+
+    let mut n = 0
+    while n < 3 {
+        n = n + 1
+    }
+    print(n)
+
+    let mut sum = 0
+    for i in 0..=3 {
+        if i == 2 {
+            continue
+        }
+        sum = sum + i
+    }
+    print(sum)
+
+    let mut k = 0
+    while true {
+        k = k + 1
+        if k == 2 {
+            break
+        }
+    }
+    print(k)
+
+    print(match 2 {
+        1 => "one"
+        2 => "two"
+        _ => "many"
+    })
+
+    let mut total = 0
+    for x in [1, 2, 3] {
+        total = total + x
+    }
+    print(total)
+}

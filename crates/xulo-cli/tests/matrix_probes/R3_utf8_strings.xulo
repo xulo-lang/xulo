@@ -1,0 +1,13 @@
+// Readiness probe R3 (§5.2): UTF-8 scalar string operations.
+// @expect
+// 3 6
+// 233
+// é世
+// [97, 195, 169, 228, 184, 150]
+fn main() {
+    let s = "aé世"
+    print(s.len, s.byte_len)
+    print(s.code_at(1))
+    print(s.slice(1, 3))
+    print(s.bytes())
+}

@@ -1,0 +1,42 @@
+// Readiness probe L8 (§5.1): payload enums, a recursive generic enum, and an
+// exhaustive `match`.
+// @expect
+// Color.Green
+// 6
+// 0
+// leaf 5
+enum Color { Red Green Blue }
+
+enum Tree<T> {
+    Leaf(T)
+    Node(left: Tree<T>, right: Tree<T>)
+}
+
+fn total(t: Tree<int>): int {
+    match t {
+        Tree::Leaf(v) => v
+        Tree::Node(left, right) => total(left) + total(right)
+    }
+}
+
+fn show<T>(t: Tree<T>): string {
+    match t {
+        Tree::Leaf(v) => `leaf ${str(v)}`
+        Tree::Node(left, right) => `node ${show(left)} ${show(right)}`
+    }
+}
+
+fn main() {
+    print(Color::Green)
+    let t = Tree::Node(
+        Tree::Leaf(1),
+        Tree::Node(Tree::Leaf(2), Tree::Leaf(3))
+    )
+    print(total(t))
+    print(match Color::Red {
+        Color::Red => 0
+        Color::Green => 1
+        Color::Blue => 2
+    })
+    print(show(Tree::Leaf(5)))
+}

@@ -5022,11 +5022,29 @@ impl Analyzer {
                     self.record_task_borrows(call, &binding.name);
                 }
 
-                // Tuple destructuring: `let (a, b, c) = expr`
+                // Tuple destructuring: `let (a, b, c) = expr`. A list binds
+                // every name to the element type; a tuple binds each name to
+                // its own element type (spec `statements/let-and-assignment.md`,
+                // "Tuple destructuring").
                 if let Some(tuple_names) = &binding.tuple_names {
-                    let inner_type = match &value_type {
-                        Type::List(inner) => *inner.clone(),
-                        Type::Any => Type::Any,
+                    let element_types: Vec<Type> = match self.resolve_alias(&value_type, 0) {
+                        Type::List(inner) => {
+                            vec![*inner; tuple_names.len()]
+                        }
+                        Type::Tuple(items) => {
+                            if items.len() != tuple_names.len() {
+                                return Err(self.err_code(
+                                    "E0219",
+                                    format!(
+                                        "expected a tuple of {} elements, found `{}`",
+                                        tuple_names.len(),
+                                        value_type.name()
+                                    ),
+                                ));
+                            }
+                            items
+                        }
+                        Type::Any => vec![Type::Any; tuple_names.len()],
                         other => {
                             return Err(self.err(format!(
                                 "cannot destructure `{}` as a list (expected a list, found `{}`)",
@@ -5036,7 +5054,7 @@ impl Analyzer {
                         }
                     };
                     let mut seen = std::collections::HashSet::new();
-                    for name in tuple_names {
+                    for (name, inner_type) in tuple_names.iter().zip(element_types) {
                         if !seen.insert(name.clone()) {
                             return Err(self.err(format!(
                                 "duplicate binding name `{}` in tuple destructuring",

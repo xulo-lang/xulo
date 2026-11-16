@@ -1,0 +1,26 @@
+// Readiness probe L5 (§5.1): functions, recursion, implicit return, and a
+// default parameter.
+// @expect
+// 42
+// 55
+// hi x!
+// hi y?
+fn inc(n: int): int { n + 1 }
+
+fn fib(n: int): int {
+    if n <= 1 {
+        return n
+    }
+    fib(n - 1) + fib(n - 2)
+}
+
+fn greet(name: string, punct: string = "!"): string {
+    `hi ${name}${punct}`
+}
+
+fn main() {
+    print(inc(41))
+    print(fib(10))
+    print(greet("x"))
+    print(greet("y", "?"))
+}

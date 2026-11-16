@@ -1,0 +1,29 @@
+// Readiness probe L16 (§5.1): `T?`, `?.`, `??`, and null narrowing.
+// @expect
+// fallback
+// Hello, x
+// Hello, stranger
+// nick
+// 4
+// abc
+fn greet(name: string?): string {
+    `Hello, ${name ?? "stranger"}`
+}
+
+struct User { nick: string? }
+
+fn main() {
+    let none: string? = null
+    print(none ?? "fallback")
+    print(greet("x"))
+    print(greet(none))
+
+    let user = User(nick: "nick")
+    print(user.nick ?? "no nick")
+    print(user.nick?.len)
+
+    let maybe: string? = "abc"
+    if maybe != null {
+        print(maybe)
+    }
+}

@@ -262,6 +262,11 @@ fn fn_decl(pair: Pair<'_, Rule>) -> R<FnDef> {
             _ => unreachable!("fn_decl child {:?}", p.as_rule()),
         }
     }
+    let body = body.expect("fn_decl has a body");
+    let body = match &return_type {
+        Some(Type::Named(name, _)) if name == "View" => view_body(body),
+        _ => body,
+    };
     Ok(FnDef {
         name,
         name_span,
@@ -271,7 +276,7 @@ fn fn_decl(pair: Pair<'_, Rule>) -> R<FnDef> {
         generic_params,
         bounds,
         is_async,
-        body: body.expect("fn_decl has a body"),
+        body,
         span,
         attributes,
         abi: None,
@@ -1436,23 +1441,38 @@ fn inner_statement(pair: Pair<'_, Rule>) -> R<Statement> {
     }
 }
 
-/// Lower an expression in statement position: a component invocation becomes
-/// `Statement::Component`, and an uppercase plain call — `Text("Hi")` — reads
-/// the same (spec: components/view-syntax.md).
+/// Lower an expression in statement position. Only the form with a children
+/// block reaches here as `Expression::Component`; a plain uppercase call is an
+/// ordinary call expression (spec: components/view-syntax.md, "Component
+/// invocations"). A component body is the one place where such a call is a
+/// render statement, and [`view_body`] rewrites it there, so a normal function
+/// that ends with `Point(x: 1, y: 2)` keeps its implicit return value.
 pub(crate) fn statement_from_expr(expr: Expression, span: Range<usize>) -> R<Statement> {
     match expr {
         Expression::Component(c) => Ok(Statement::Component(c)),
-        other => {
-            if is_upper_plain_call(&other) {
-                Ok(Statement::Component(component_from_call(other)))
-            } else {
-                Ok(Statement::Expr(ExprStmt {
-                    expr: other,
-                    has_semicolon: false,
-                    span,
-                }))
-            }
-        }
+        other => Ok(Statement::Expr(ExprStmt {
+            expr: other,
+            has_semicolon: false,
+            span,
+        })),
+    }
+}
+
+/// Rewrite the top-level statements of a `View`-returning body: an uppercase
+/// plain call such as `Text("Hi")` is a component invocation there, exactly as
+/// the argument-list-and-block form is (spec: components/view-syntax.md).
+fn view_body(body: Block) -> Block {
+    Block {
+        statements: body
+            .statements
+            .into_iter()
+            .map(|stmt| match stmt {
+                Statement::Expr(es) if is_upper_plain_call(&es.expr) => {
+                    Statement::Component(component_from_call(es.expr))
+                }
+                other => other,
+            })
+            .collect(),
     }
 }
 

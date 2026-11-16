@@ -1,0 +1,32 @@
+// Readiness probe L9 (§5.1): structs, inherent `impl` methods, traits, and
+// explicit `Trait::method(recv)` dispatch. `scale` relies on the implicit
+// return of a struct construction, which is a plain call expression, not a
+// component invocation.
+// @expect
+// 6
+// 6
+// 24
+trait Area {
+    fn area(self): int
+}
+
+struct Rect { w: int, h: int }
+
+impl Rect {
+    fn scale(self, k: int): Rect {
+        Rect(w: self.w * k, h: self.h * k)
+    }
+}
+
+impl Area for Rect {
+    fn area(self): int {
+        self.w * self.h
+    }
+}
+
+fn main() {
+    let r = Rect(w: 2, h: 3)
+    print(Area::area(r))
+    print(r.area())
+    print(Area::area(r.scale(2)))
+}

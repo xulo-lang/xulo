@@ -1,0 +1,14 @@
+// Readiness probe L3 (§5.1): `float`/`f64` literals, arithmetic, and printing.
+// @expect
+// 3.75
+// 2.5
+// -7
+// true
+// 0.125
+fn main() {
+    print(1.5 + 2.25)
+    print(10.0 / 4.0)
+    print(2.0 * -3.5)
+    print(1.0 == 1)
+    print(0.5 / 4.0)
+}

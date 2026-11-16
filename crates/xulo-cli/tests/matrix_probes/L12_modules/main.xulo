@@ -1,0 +1,22 @@
+// Readiness probe L12 (§5.1): `mod`/`use`/`pub` across files, with a group
+// import, an alias, and a qualified call.
+// @expect
+// 5
+// 3.5
+// 81
+// 2
+// 3.5
+// hello you
+mod math;
+mod greet;
+use math::{add, PI, square};
+use math as m;
+
+fn main() {
+    print(add(2, 3))
+    print(PI)
+    print(square(square(3)))
+    print(m::add(1, 1))
+    print(m::PI)
+    print(greet::greet("you"))
+}

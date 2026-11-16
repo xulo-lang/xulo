@@ -1350,13 +1350,20 @@ fn for_loop_variable_is_scoped_to_the_loop() {
 
 #[test]
 fn component_call_props_are_loosely_typed() {
-    // Uppercase calls lower to external UI components (`Name({ key: value })`);
-    // props are not validated against the function signature.
+    // Inside a `View` body an uppercase call is a render statement
+    // (`Statement::Component`); props are not validated against the function
+    // signature there. An ordinary function body keeps call checking.
     let ok = r#"
+        fn Counter(x: number): View { VStack { Text(str(x)) } }
+        fn main(): View { Counter(x: "a") }
+    "#;
+    assert!(analyze_src(ok).is_ok());
+
+    let strict = r#"
         fn Counter(x: number): string { str(x) }
         fn main(): string { Counter(x: "a") }
     "#;
-    assert!(analyze_src(ok).is_ok());
+    assert!(analyze_src(strict).is_err());
 }
 
 #[test]
@@ -2827,6 +2834,33 @@ fn tuple_destructure_non_list_is_error() {
         }
     "#;
     assert!(analyze_src(src).is_err());
+}
+
+#[test]
+fn tuple_destructure_accepts_a_tuple_and_binds_element_types() {
+    let src = r#"
+        fn f() {
+            let p: (int, string) = (10, "ten")
+            let (n, label) = p
+            let x: int = n
+            let y: string = label
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
+fn tuple_destructure_arity_mismatch_is_e0219() {
+    let err = analyze_src(
+        r#"
+        fn f() {
+            let p: (int, string) = (10, "ten")
+            let (a, b, c) = p
+        }
+    "#,
+    )
+    .expect_err("three names cannot bind a two-element tuple");
+    assert_eq!(err.code(), "E0219");
 }
 
 // Struct tests

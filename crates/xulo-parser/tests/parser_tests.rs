@@ -885,6 +885,34 @@ fn component_decl_variants() {
     assert!(matches!(f.body.statements[4], Statement::Component(_)));
 }
 
+/// A trailing struct construction in an ordinary function is a call
+/// expression, so it stays the implicit return value instead of becoming a
+/// component statement (spec `components/view-syntax.md`: only a call with a
+/// children block is a `ComponentCall`).
+#[test]
+fn trailing_struct_construction_is_not_a_component() {
+    let p = parse_ok("struct P { x: int } fn make(): P { P(x: 5) }");
+    let Statement::Fn(f) = &p.statements[1] else {
+        panic!("expected fn");
+    };
+    assert!(
+        matches!(f.body.statements.last(), Some(Statement::Expr(_))),
+        "trailing construction became {:?}",
+        f.body.statements.last()
+    );
+}
+
+/// The `View` body is the one place where a plain uppercase call is a render
+/// statement; the same shape must still become `Statement::Component` there.
+#[test]
+fn view_body_plain_call_is_a_component_statement() {
+    let p = parse_ok("fn V(): View { Text(\"hi\") }");
+    let Statement::Fn(f) = &p.statements[0] else {
+        panic!("expected fn");
+    };
+    assert!(matches!(f.body.statements[0], Statement::Component(_)));
+}
+
 #[test]
 fn if_condition_block_is_not_swallowed_by_component_call() {
     // regression: a bare identifier + block in a condition must be `if`'s block

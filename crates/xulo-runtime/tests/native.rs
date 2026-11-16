@@ -2087,6 +2087,39 @@ fn tuple_destructure_not_a_list_errors() {
     );
 }
 
+#[test]
+fn tuple_destructure_from_a_tuple_value() {
+    // A tuple type is destructured element-wise; the runtime represents a
+    // tuple as a list, but the checker must accept the tuple type too
+    // (spec `statements/let-and-assignment.md`, "Tuple destructuring").
+    assert_eq!(
+        run_ok(
+            r#"fn main() {
+                let p: (int, string) = (10, "ten")
+                let (n, label) = p
+                print(n)
+                print(label)
+            }"#
+        ),
+        vec!["10", "ten"]
+    );
+}
+
+#[test]
+fn implicit_return_of_a_struct_construction() {
+    // A trailing `Point(x: 1)` is an ordinary call expression, not a
+    // component invocation, so it is the function's implicit return value
+    // (spec `functions.md`; `components/view-syntax.md`).
+    assert_eq!(
+        run_ok(
+            r#"struct P { x: int }
+fn make(): P { P(x: 5) }
+fn main() { print(make().x) }"#
+        ),
+        vec!["5"]
+    );
+}
+
 // Struct runtime tests
 
 #[test]
