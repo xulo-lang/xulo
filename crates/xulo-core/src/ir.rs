@@ -58,6 +58,8 @@ pub enum RuntimeFn {
     AllocObject,
     AllocArray,
     StringConcat,
+    /// 按内容比较两个 `string`（任一操作数为 null 时按空指针身份比较）
+    StringEqual,
     /// 带标签的值格式化成字符串（多参数 print 的参数拼接 / str() 转换）
     Stringify,
     ArrayPush,

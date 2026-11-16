@@ -33,6 +33,21 @@ pub extern "C" fn xulo_string_concat(a: *const c_char, b: *const c_char) -> *con
     }
 }
 
+/// 按内容比较两个字符串。任一输入为空指针时按指针身份比较，这样
+/// `null == ""` 仍为 false，而 `null == null` 为 true。
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_string_equal(a: *const c_char, b: *const c_char) -> i64 {
+    if a.is_null() || b.is_null() {
+        return if a == b { 1 } else { 0 };
+    }
+    unsafe {
+        let left = CStr::from_ptr(a).to_bytes();
+        let right = CStr::from_ptr(b).to_bytes();
+        i64::from(left == right)
+    }
+}
+
 /// 把带类型标签的值格式化成字符串（str() 转换与多参数 print 的参数拼接用）
 #[unsafe(no_mangle)]
 pub extern "C" fn xulo_stringify(value: i64, tag: i64) -> *const c_char {

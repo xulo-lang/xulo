@@ -546,6 +546,33 @@ impl IrGenerator {
             return Ok(Operand::Local(local));
         }
 
+        // `string == string` compares contents. A raw `icmp` on the two
+        // pointers only works for interned literals; runtime-produced strings
+        // (argv, file contents, slices) need the content comparison.
+        if matches!(binop.operator, BinaryOperator::Eq | BinaryOperator::Neq)
+            && (self.is_string_like(&binop.left) || self.is_string_like(&binop.right))
+        {
+            let eq = self.module.functions[func_idx].add_local(IrType::Bool);
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::RuntimeCall {
+                    dst: Some(eq),
+                    func: RuntimeFn::StringEqual,
+                    args: vec![left, right],
+                });
+            if matches!(binop.operator, BinaryOperator::Neq) {
+                let negated = self.module.functions[func_idx].add_local(IrType::Bool);
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::Not {
+                        dst: negated,
+                        operand: Operand::Local(eq),
+                    });
+                return Ok(Operand::Local(negated));
+            }
+            return Ok(Operand::Local(eq));
+        }
+
         // `StringBuilder == StringBuilder` compares the current text, not the
         // handle identity (spec `types/composite-types.md`).
         if matches!(binop.operator, BinaryOperator::Eq | BinaryOperator::Neq)
@@ -1374,32 +1401,32 @@ impl IrGenerator {
                         Some(RuntimeFn::RegexReplace)
                     }
                 }
-                "to_uppercase" => Some(RuntimeFn::StringToUppercase),
-                "to_lowercase" => Some(RuntimeFn::StringToLowercase),
-                "trim" => Some(RuntimeFn::StringTrim),
+                "to_uppercase" if !receiver_is_struct => Some(RuntimeFn::StringToUppercase),
+                "to_lowercase" if !receiver_is_struct => Some(RuntimeFn::StringToLowercase),
+                "trim" if !receiver_is_struct => Some(RuntimeFn::StringTrim),
                 // StringBuilder 实例方法：只按静态类型派发，避免与列表/
                 // 用户方法的同名成员冲突。
                 "append" if receiver_is_builder => Some(RuntimeFn::StringBuilderAppend),
                 "clear" if receiver_is_builder => Some(RuntimeFn::StringBuilderClear),
                 "build" if receiver_is_builder => Some(RuntimeFn::StringBuilderBuild),
-                "starts_with" => Some(RuntimeFn::StringStartsWith),
-                "ends_with" => Some(RuntimeFn::StringEndsWith),
-                "split" => Some(RuntimeFn::StringSplit),
-                "pad_start" => Some(RuntimeFn::StringPadStart),
-                "pad_end" => Some(RuntimeFn::StringPadEnd),
-                "repeat" => Some(RuntimeFn::StringRepeat),
+                "starts_with" if !receiver_is_struct => Some(RuntimeFn::StringStartsWith),
+                "ends_with" if !receiver_is_struct => Some(RuntimeFn::StringEndsWith),
+                "split" if !receiver_is_struct => Some(RuntimeFn::StringSplit),
+                "pad_start" if !receiver_is_struct => Some(RuntimeFn::StringPadStart),
+                "pad_end" if !receiver_is_struct => Some(RuntimeFn::StringPadEnd),
+                "repeat" if !receiver_is_struct => Some(RuntimeFn::StringRepeat),
                 // Built-in `string` members (spec `types/primitive-types.md`).
-                "code_at" => Some(RuntimeFn::StringCodeAt),
-                "bytes" => Some(RuntimeFn::StringBytes),
-                "slice" if !self.expr_is_list_receiver(&call.object) => {
+                "code_at" if !receiver_is_struct => Some(RuntimeFn::StringCodeAt),
+                "bytes" if !receiver_is_struct => Some(RuntimeFn::StringBytes),
+                "slice" if !receiver_is_struct && !self.expr_is_list_receiver(&call.object) => {
                     Some(RuntimeFn::StringSlice)
                 }
                 // `contains`/`length` 在列表与字符串上重名：列表接收者保持
                 // 原路径（这些成员尚未 lowering，按用户函数解析报错）
-                "contains" if !self.expr_is_list_receiver(&call.object) => {
+                "contains" if !receiver_is_struct && !self.expr_is_list_receiver(&call.object) => {
                     Some(RuntimeFn::StringContains)
                 }
-                "length" if !self.expr_is_list_receiver(&call.object) => {
+                "length" if !receiver_is_struct && !self.expr_is_list_receiver(&call.object) => {
                     Some(RuntimeFn::StringLength)
                 }
                 _ => None,

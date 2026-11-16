@@ -67,6 +67,7 @@ pub(crate) fn runtime_fn_name(func: &RuntimeFn) -> &'static str {
         RuntimeFn::PrintValue => "xulo_print_value",
         RuntimeFn::Panic => "xulo_panic",
         RuntimeFn::StringConcat => "xulo_string_concat",
+        RuntimeFn::StringEqual => "xulo_string_equal",
         RuntimeFn::Stringify => "xulo_stringify",
         RuntimeFn::AllocObject => "xulo_alloc_object",
         RuntimeFn::AllocArray => "xulo_alloc_array",
@@ -436,6 +437,18 @@ impl CodeGen {
         }
 
         for instr in &ir_func.instructions {
+            // A block ends at its terminating instruction. IR generation can
+            // leave instructions after a `return`/`jump` in the same block
+            // (for example the implicit result slot of a branch that already
+            // returned). Those instructions are unreachable; dropping them
+            // keeps Cranelift's "block already filled" invariant. A following
+            // Label still starts a fresh block.
+            if !matches!(instr, Instruction::Label(_))
+                && let Some(current) = builder.current_block()
+                && block_has_terminator(builder.func, current)
+            {
+                continue;
+            }
             match instr {
                 Instruction::Label(label) => {
                     if let Some(&block) = block_map.get(label) {

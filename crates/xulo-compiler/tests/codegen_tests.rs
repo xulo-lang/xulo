@@ -423,3 +423,65 @@ fn main() {
     );
     assert_eq!(out, vec!["[0, 1, 0, 2, 0, 3]", "[p, a, p, b]"]);
 }
+
+/// IR generation can leave a result slot and a jump after an arm that already
+/// returned. Those instructions are unreachable; codegen must drop them
+/// instead of letting Cranelift reject a block that already has a terminator.
+#[test]
+fn test_codegen_match_arms_that_return() {
+    let output = compile_and_run(
+        r#"
+fn pick(v: number): number {
+    match v {
+        0 => { return 1 }
+        _ => { return 2 }
+    }
+}
+fn main() { print(pick(0)) }
+"#,
+    );
+    assert_eq!(output, vec!["1"]);
+}
+
+/// String equality compares contents in the compiled path, not interned
+/// pointers. An indexed string is produced at runtime, so the literal-only
+/// fast path cannot hide a pointer comparison.
+#[test]
+fn test_codegen_string_equality_is_by_content() {
+    let output = compile_and_run(
+        r#"
+fn main() {
+    let xs = ["alpha", "beta"]
+    print(xs[0] == "alpha")
+    print(xs[0] == "beta")
+    print("alpha" != xs[1])
+}
+"#,
+    );
+    assert_eq!(output, vec!["true", "false", "true"]);
+}
+
+/// A user method keeps its name when a string member has the same name.
+/// `starts_with` on a struct receiver must dispatch to the `impl`, not to the
+/// built-in string member.
+#[test]
+fn test_codegen_user_method_named_like_string_member() {
+    let output = compile_and_run(
+        r#"
+struct Prefix { text: string }
+
+impl Prefix {
+    fn starts_with(self, other: string): bool {
+        return self.text == other
+    }
+}
+
+fn main() {
+    let p = Prefix(text: "alpha")
+    print(p.starts_with("alpha"))
+    print(p.starts_with("beta"))
+}
+"#,
+    );
+    assert_eq!(output, vec!["true", "false"]);
+}

@@ -83,6 +83,12 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
         returns: &[I64],
     },
     RuntimeFnDesc {
+        name: "xulo_string_equal",
+        addr: xulo_runtime::runtime::xulo_string_equal as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
         name: "xulo_stringify",
         addr: xulo_runtime::runtime::xulo_stringify as *const u8,
         params: &[I64, I64],
@@ -1649,6 +1655,7 @@ fn _ensure_runtime_linked() {
     let _ = xulo_runtime::runtime::xulo_print as *const u8;
     let _ = xulo_runtime::runtime::xulo_print_value as *const u8;
     let _ = xulo_runtime::runtime::xulo_string_concat as *const u8;
+    let _ = xulo_runtime::runtime::xulo_string_equal as *const u8;
     let _ = xulo_runtime::runtime::xulo_stringify as *const u8;
     let _ = xulo_runtime::runtime::xulo_alloc_object as *const u8;
     let _ = xulo_runtime::runtime::xulo_alloc_array as *const u8;
