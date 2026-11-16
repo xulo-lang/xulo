@@ -46,6 +46,13 @@ jobs:
       - name: Build release binary
         run: cargo build --release --workspace
 
+      - name: AOT differential examples (Linux)
+        if: runner.os == 'Linux'
+        env:
+          XULO_AOT_DIFFERENTIAL: "1"
+          XULO_RUNTIME_LIB: ${{ github.workspace }}/target/release/libxulo_runtime.a
+        run: cargo test -p xupm --test aot_differential -- --nocapture
+
       - name: AOT smoke test (macOS)
         if: runner.os == 'macOS'
         run: |

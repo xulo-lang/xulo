@@ -28,11 +28,11 @@ readiness document.
 | WP0 — Matrix hygiene and conformance | 5 | 6 |
 | WP1 — 64-bit integer model | 7 | 7 |
 | WP2 — Type system and semantic convergence | 10 | 10 |
-| WP3 — AOT parity and bootstrap backend | 6 | 8 |
+| WP3 — AOT parity and bootstrap backend | 8 | 8 |
 | WP4 — `defer` semantics | 0 | 5 |
 | WP5 — Stage 1 skeleton | 0 | 6 |
 | WP6 — Self-host loop | 0 | 7 |
-| **Total** | **23** | **49** |
+| **Total** | **25** | **49** |
 
 ## Gates
 
@@ -92,7 +92,7 @@ the starting point, and their evidence is recorded in `stage1-readiness.md` §5.
 - [x] **B5** Runtime static library and linker path
 - [x] **D1** Source spans and `file:line:column` diagnostics
 - [x] **D2** stderr writes and nonzero exit status
-- [x] **T1** Unit and integration tests — `cargo test --workspace`: 2019 passed, 0 failed (2026-11-15)
+- [x] **T1** Unit and integration tests — `cargo test --workspace`: 2077 passed, 0 failed (2026-11-16)
 - [x] **T2** All examples run in CI
 - [x] **T6** Robustness/fuzz tests
 
@@ -182,14 +182,16 @@ Priority P1 · needed by Gate 4 · source: `stage1-readiness.md` §7 WP3, §6.6�
 - [x] **R9b** Fix nested ternary lowering in the AOT path
       (`examples/optional_chaining.xulo`).
 - [x] **L15** Fix `Array<T, N>.len` in the AOT path.
-- [ ] **T4** Add a differential runner that builds every non-interactive
+- [x] **T4** Add a differential runner that builds every non-interactive
       example both ways and compares output.
-- [ ] **B3a** Verify that `xupm build` failures return a nonzero exit status;
+- [x] **B3a** Verify that `xupm build` failures return a nonzero exit status;
       fix the pipeline if they do not.
 - [x] **G3** Make the `§6.6–6.7` probes pass.
 
 **Verify:** `xupm build examples/collections.xulo` and
 `xupm build examples/optional_chaining.xulo` match `xulo run` byte for byte.
+`XULO_AOT_DIFFERENTIAL=1 cargo test -p xupm --test aot_differential` compares
+25 examples; the baseline records five entries that cannot be compared yet.
 
 ## WP4 — `defer` semantics
 

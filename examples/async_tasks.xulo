@@ -1,5 +1,5 @@
 // 并发：await、Task::resolve / all / race / timeout、std::time::sleep
-async fn slow(id: number): number {
+async fn slow(id: u64): u64 {
     await std::time::sleep(id * 20)
     id * 10
 }

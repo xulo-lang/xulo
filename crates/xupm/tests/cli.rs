@@ -93,6 +93,29 @@ fn new_refuses_an_existing_destination() {
 }
 
 #[test]
+fn build_failure_returns_nonzero() {
+    let dir = temp_dir();
+    write_project(
+        &dir,
+        "[package]\nname = \"demo\"\nentry = \"main.xulo\"\n",
+        "fn main() { print( }\n",
+    );
+    let out = run(&["build"], &dir);
+    assert!(
+        !out.status.success(),
+        "stdout: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("error"), "stderr: {stderr}");
+    assert!(
+        !String::from_utf8_lossy(&out.stdout).contains("build successful"),
+        "stdout: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+}
+
+#[test]
 fn run_uses_the_manifest_entry() {
     let dir = temp_dir();
     write_project(

@@ -1438,3 +1438,24 @@ fn hint_likely_unlikely_and_spin_loop_lower_to_runtime_calls() {
         assert!(references_symbol(&bytes, symbol), "object missing {symbol}");
     }
 }
+
+/// T4: indexing a JSON value tree reads the element's runtime tag, so bool and
+/// null payloads print like the interpreter instead of `1` / `0`.
+#[test]
+fn dynamic_index_reads_runtime_tag() {
+    let out = compile_and_run(
+        r#"
+fn main() {
+    match std::json::parse("[1, true, \"x\", null]") {
+        Result::Ok(v) => {
+            let b = v[1]
+            print(v[0], v[1], v[2], str(v[3]))
+            print(b)
+        }
+        Result::Err(e) => print(e.message)
+    }
+}
+"#,
+    );
+    assert_eq!(out, vec!["1 true x null", "true"]);
+}

@@ -119,6 +119,12 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
         returns: &[I64],
     },
     RuntimeFnDesc {
+        name: "xulo_array_get_tag",
+        addr: xulo_runtime::runtime::xulo_array_get_tag as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
         name: "xulo_array_set",
         addr: xulo_runtime::runtime::xulo_array_set as *const u8,
         params: &[I64, I64, I64, I64],

@@ -1,0 +1,8 @@
+# Examples that cannot be compared yet because `xupm run` rejects them or
+# `xupm build` cannot lower them. Remove an entry once both paths succeed.
+# Format: example.xulo<TAB>reason
+async_tasks.xulo	AOT async awaits produce zero values; async is outside the bootstrap subset
+fs.xulo	`std::fs::write_bytes` has no AOT runtime lowering
+http.xulo	`std::http` server types and `std::os::exec_path` have no AOT lowering
+path.xulo	`std::path::split` has no AOT runtime lowering
+process.xulo	`std::process::launch` and `Command`/`Child` have no AOT lowering

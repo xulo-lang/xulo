@@ -143,10 +143,13 @@ main risks. Fixing P0 rows in §5 is the shortest path.
 **Exit criterion:** `xupm build` produces a stage 1 binary that runs the same
 bootstrap workload as `xulo run` and prints identical output.
 
-**Current assessment:** **Achievable now.** Known AOT gaps are closed:
-`Map`, `Set`, list/object spread, nested ternaries, and `Array.len` match the
-interpreter. The remaining WP3 work is automation (`T4`) and verified
-build-failure exit status (`B3a`).
+**Current assessment:** **Not yet.** The differential runner compares 25 of
+the 30 top-level examples and `xupm build` failures now return nonzero.
+Five examples remain outside parity: `fs`, `path`, and `process` (bootstrap
+subset members) lack AOT lowering for `std::fs::write_bytes`,
+`std::path::split`, and `std::process::launch`; `http` is outside the subset;
+`async_tasks` builds but AOT awaits produce zero values. See
+`crates/xupm/tests/aot_differential_baseline.tsv`.
 
 ### Gate 5 — Self-host
 
@@ -212,7 +215,7 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 | R6 | `panic`, `assert`, and process exit status | **OK** | CLI/runtime tests | 1 |
 | R7 | `defer` executes at scope exit, reverse order | **BROKEN** | Same defect as L20 | 3 |
 | R8 | Value/reference semantics for `copy`/`move` | **PARTIAL** | Not fully verified; avoid relying on it until tested | 3 |
-| R9 | Interpreter and AOT produce identical observable behavior | **PARTIAL** | All known probes agree: integer arithmetic, overflow, shifts, comparison, printing, `Map`/`Set`, list/object spread, nested ternaries, and `Array.len` (`u64` uses print tag 10; §6.1 and §6.6–6.7 pass under `xupm build`). Broad automated parity coverage still depends on `T4`. | 4 |
+| R9 | Interpreter and AOT produce identical observable behavior | **PARTIAL** | `crates/xupm/tests/aot_differential.rs` compares 25 examples byte for byte, including dynamic JSON index tags and generic bool returns. Remaining baseline: `async_tasks` output, plus `fs`/`http`/`path`/`process` builds (`crates/xupm/tests/aot_differential_baseline.tsv`). | 4 |
 | R10 | Deterministic output formatting for diagnostics and integers | **OK** | `int`/`u64` print and stringify through exact decimal formatting in both paths; `crates/xulo-runtime/tests/integers.rs` covers `u64::MAX`, `2^63`, and `-2^63` | 2 |
 
 ### 5.3 Collections and text
@@ -233,7 +236,7 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 |----|-------------|--------|-----------------------|-----------|
 | S1 | `std::fs` read/write/stat/read_dir/walk/remove/rename/temp | **OK** | runtime tests and examples | 1 |
 | S2 | `std::io` print/eprint/flush/read | **OK** | runtime tests | 1 |
-| S3 | `std::process` args/exit/run/exec/launch | **OK** | runtime tests; AOT symbols present | 1 |
+| S3 | `std::process` args/exit/run/exec/launch | **PARTIAL** | Interpreter runtime tests pass; AOT covers `args`/`run`/`exit`, but `launch`/`Command`/`Child` have no lowering (`examples/process.xulo` is in the differential baseline) | 1 |
 | S4 | `std::path`, `std::os`, environment, cwd, pid | **OK** | runtime tests | 1 |
 | S5 | `std::json` parse/stringify/valid | **OK** | runtime tests | 2 |
 | S6 | `std::regex` and `std::fmt` | **OK** | runtime tests | 2 |
@@ -247,7 +250,7 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 |----|-------------|--------|-----------------------|-----------|
 | B1 | `xulo run` and `xulo check` for a single file | **OK** | CLI integration tests | 1 |
 | B2 | `xupm build` for core language and `hello` | **OK** | macOS/Windows CI AOT smoke test | 4 |
-| B3 | `xupm build` for the bootstrap subset | **OK** | Known probes match `xulo run`: `collections`, `optional_chaining`, and `Array<int, 3>.len`; automated differential coverage is still pending (`T4`) | 4 |
+| B3 | `xupm build` for the bootstrap subset | **PARTIAL** | `aot_differential` compares 25 examples and `xupm build` failure exit status is covered. Still missing AOT lowering for `std::fs::write_bytes` (`fs`), `std::path::split` (`path`), and `std::process::launch`/`Command`/`Child` (`process`); `async_tasks` builds with wrong await results | 4 |
 | B4 | AOT module tree (`mod`/`use`) | **OK** | `examples/modules` native build | 4 |
 | B5 | Runtime static library and linker path | **OK** | CI and release workflow | 4 |
 | B6 | `xupm test` for stage 1's own tests | **NOT VERIFIED** | Command exists; no stage 1 test corpus yet | 3 |
@@ -262,10 +265,10 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 | D2 | stderr writes and nonzero exit status | **OK** | CLI/runtime tests | 1 |
 | D3 | Stable error codes for the bootstrap subset | **OK** | Called constants are `E0204`; `std::regex` value paths are `E0607`, unknown module members `E0601`, and an unimported type used as a value `E0101` (std-spec `modules/regex.md`). The head/member diagnostics std-spec §1.3 named as coarse fallbacks now carry their fine-grained codes. | 2 |
 | D4 | Stage 1's own diagnostics are consistent with stage 0 | **NOT VERIFIED** | Requires stage 1 implementation | 3 |
-| T1 | Unit and integration tests | **OK** | `cargo test --workspace`: 2019 passed, 0 failed (2026-11-15) | 1 |
+| T1 | Unit and integration tests | **OK** | `cargo test --workspace`: 2077 passed, 0 failed (2026-11-16) | 1 |
 | T2 | All examples run in CI | **OK** | `.github/workflows/ci.yml` examples job | 1 |
 | T3 | Pinned-spec example conformance runner | **OK** | `crates/xulo-cli/tests/spec_conformance.rs`: 114 annotated examples extracted from the pinned spec, 81 pass, 33 triaged in `spec_conformance_baseline.tsv` (§6.10) | 2 |
-| T4 | Interpreter vs. AOT differential suite | **PARTIAL** | LLVM-only golden/differential tests exist; not a general suite | 4 |
+| T4 | Interpreter vs. AOT differential suite | **OK** | `crates/xupm/tests/aot_differential.rs` builds and executes every top-level example, compares stdout/stderr against `xupm run`, and fails on stale baseline entries; CI runs it on Linux after the release build. Five known gaps are recorded in `crates/xupm/tests/aot_differential_baseline.tsv` | 4 |
 | T5 | Stage 1 self-parse/self-check/self-build tests | **MISSING** | No stage 1 code yet | 2–5 |
 | T6 | Robustness/fuzz tests | **OK** | `tests/robustness.rs` | 1 |
 | T7 | Spec and std-spec submodules aligned with the pin | **OK** | `crates/xulo-cli/tests/submodule_pins.rs` compares the `HEAD` gitlink, the index, and the checked-out submodule against `spec@48f49b7` / `std-spec@a2e4cb7`; CI job `conformance` | 1 |
@@ -491,14 +494,14 @@ AOT narrowing slot, range failures, and regex reachability with `std-spec`
 - AOT runtime support for `Map` and `Set` is in place (C2, C3).
 - Known AOT parity probes now agree, including spread, ternaries, and
   `Array.len` (C1, R9b, L15).
-- Add a differential runner that builds every non-interactive example both ways
-  and compares output.
-- Make `xupm build` failures return a nonzero exit status (verify separately;
-  several probes currently report errors while a shell pipeline hides the exit
-  code).
+- The differential runner is in place and compares 25 examples; the five
+  remaining gaps are listed in `crates/xupm/tests/aot_differential_baseline.tsv`
+  (async output, plus `fs`/`http`/`path`/`process` builds).
+- `xupm build` failures return a nonzero exit status and are covered by
+  `crates/xupm/tests/cli.rs` (B3a).
 
 **Exit:** §6.6–6.7 probes pass; stage 1 can be built by `xupm` and matches
-`xulo run` on the bootstrap suite.
+`xulo run` on the bootstrap suite. Blocked by the five baseline gaps above.
 
 ### WP4 — `defer` semantics (P1, Gate 3)
 
@@ -576,10 +579,11 @@ Last recorded verification (2026-11-16):
 
 | Check | Result |
 |-------|--------|
-| `cargo test --workspace` | 2073 passed, 0 failed |
-| Examples (CI job) | Configured to run every `examples/*.xulo` |
+| `cargo test --workspace` | 2077 passed, 0 failed |
+| Examples (CI job) | Configured to run every `examples/*.xulo`; `async_tasks` uses `u64` sleep input |
 | AOT smoke tests | `hello` on macOS/Windows; `structs`, `trait_shapes`, `generics`, `modules` probed locally |
-| AOT differential probes | `collections`, `optional_chaining`, and `Array.len` all match |
+| AOT differential suite | 25 examples compare byte for byte; 5 known gaps in `crates/xupm/tests/aot_differential_baseline.tsv` |
+| AOT build failure | `xupm build` exits nonzero and reports the diagnostic (`crates/xupm/tests/cli.rs`) |
 
 ## 10. Maintenance
 

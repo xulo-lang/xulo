@@ -262,3 +262,20 @@ fn map_optional_get_keeps_runtime_tag() {
     );
     assert_eq!(out, vec!["x", "null", "x", "null"]);
 }
+
+/// T4: a generic return keeps the argument's static tag, so `identity(true)`
+/// prints `true` instead of the integer `1`.
+#[test]
+fn generic_return_keeps_bool_tag() {
+    let out = compile_and_run(
+        r#"fn identity<T>(value: T): T { value }
+fn first<T>(list: List<T>): T { list[0] }
+fn main() {
+    print(identity(true))
+    print(identity("x"))
+    print(first(["hi"]))
+    print(first([true]))
+}"#,
+    );
+    assert_eq!(out, vec!["true", "x", "hi", "true"]);
+}

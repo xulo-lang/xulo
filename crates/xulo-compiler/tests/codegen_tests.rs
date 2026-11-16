@@ -340,9 +340,8 @@ fn main() {
 }
 "#,
     );
-    // 注意：泛型函数返回 bool 时，运行时无法区分 bool 和 int（true=1, false=0）
-    // 因此输出为 "1" 而非 "true"
-    assert_eq!(out, vec!["1"]);
+    // 调用点从实参反推 `T = bool`，返回槽按 tag=5 打印。
+    assert_eq!(out, vec!["true"]);
 }
 
 #[test]

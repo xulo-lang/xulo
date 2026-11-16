@@ -35,6 +35,8 @@ pub struct IrGenerator {
     func_return_types: HashMap<String, Option<Type>>,
     /// 用户函数的形参表（名字 + 默认表达式）：命名参数重排与缺省参数补齐
     func_params: HashMap<String, Vec<(String, Option<Expression>)>>,
+    /// 用户函数的形参类型注解（按声明序）：泛型返回标签从实参反推
+    func_param_types: HashMap<String, Vec<Type>>,
     /// 每个函数声明对应的完整泛型形参表（含 const 形参）；调用点按它
     /// 追加 const 实参（spec `types/generics.md`）。
     func_generic_params: HashMap<String, Vec<xulo_core::ast::GenericParam>>,
@@ -242,6 +244,7 @@ impl IrGenerator {
             uint_range_names: HashSet::new(),
             func_return_types: HashMap::new(),
             func_params: HashMap::new(),
+            func_param_types: HashMap::new(),
             func_generic_params: HashMap::new(),
             label_map: HashMap::new(),
             loop_stack: Vec::new(),
@@ -1056,6 +1059,69 @@ impl IrGenerator {
         }
     }
 
+    /// 泛型函数返回 `T` 时，从形参注解与实参反推 `T` 的具体标签。
+    /// 只处理静态可判定的位置；`int`/`float` 共用槽仍返回 `None`。
+    fn generic_return_tag(&self, key: &str, param: &str, args: &[CallArg]) -> Option<i64> {
+        let params = self.func_param_types.get(key)?;
+        for (param_ty, arg) in params.iter().zip(args) {
+            if let Some(tag) = self.generic_tag_from_arg(param_ty, param, &arg.value) {
+                return Some(tag);
+            }
+        }
+        None
+    }
+
+    fn generic_tag_from_arg(&self, param_ty: &Type, param: &str, arg: &Expression) -> Option<i64> {
+        match param_ty {
+            Type::Named(name, _) if name == param => {
+                let tag = self.determine_element_tag(arg);
+                if tag != -1 {
+                    return Some(tag);
+                }
+                let arg_ty = self.infer_source_type_from_expr(arg)?;
+                let tag = self.type_tag(&arg_ty);
+                (tag != -1).then_some(tag)
+            }
+            Type::List(inner) => {
+                let arg_ty = self.infer_source_type_from_expr(arg)?;
+                let Type::List(arg_inner) = arg_ty else {
+                    return None;
+                };
+                self.generic_tag_from_type(inner, param, &arg_inner)
+            }
+            Type::Optional(inner) => {
+                let arg_ty = self.infer_source_type_from_expr(arg)?;
+                let Type::Optional(arg_inner) = arg_ty else {
+                    return None;
+                };
+                self.generic_tag_from_type(inner, param, &arg_inner)
+            }
+            _ => None,
+        }
+    }
+
+    fn generic_tag_from_type(&self, param_ty: &Type, param: &str, arg_ty: &Type) -> Option<i64> {
+        match param_ty {
+            Type::Named(name, _) if name == param => {
+                let tag = self.type_tag(arg_ty);
+                (tag != -1).then_some(tag)
+            }
+            Type::List(inner) => {
+                let Type::List(arg_inner) = arg_ty else {
+                    return None;
+                };
+                self.generic_tag_from_type(inner, param, arg_inner)
+            }
+            Type::Optional(inner) => {
+                let Type::Optional(arg_inner) = arg_ty else {
+                    return None;
+                };
+                self.generic_tag_from_type(inner, param, arg_inner)
+            }
+            _ => None,
+        }
+    }
+
     fn determine_element_tag(&self, expr: &Expression) -> i64 {
         match expr {
             Expression::Literal { value, .. } => match value {
@@ -1364,6 +1430,16 @@ impl IrGenerator {
                 }
                 // 优先使用 AST 返回类型注解推断 tag
                 if let Some(Some(ast_ret)) = self.func_return_types.get(&key) {
+                    // 返回类型是泛型参数时，从形参注解与实参类型反推具体标签
+                    // （`identity(true)` 的 bool 不能靠运行时从整数槽里辨认）。
+                    if let Type::Named(ret_param, _) = ast_ret
+                        && self.func_generic_params.get(&key).is_some_and(|params| {
+                            params.iter().any(|param| &param.name == ret_param)
+                        })
+                        && let Some(tag) = self.generic_return_tag(&key, ret_param, &call.arguments)
+                    {
+                        return tag;
+                    }
                     match ast_ret {
                         Type::String => 0,
                         // number 的返回可能是 f64 位模式（float 结果在返回边界

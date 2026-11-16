@@ -1721,14 +1721,14 @@ impl IrGenerator {
             let next = if let Some(rendered) = self.user_print_operand(&arg.value, v.clone()) {
                 rendered
             } else {
-                let tag = self.determine_element_tag(&arg.value);
+                let tag = self.tag_operand_for(&arg.value, &v);
                 let s_local = self.module.functions[func_idx].add_local(IrType::Pointer);
                 self.module.functions[func_idx]
                     .instructions
                     .push(Instruction::RuntimeCall {
                         dst: Some(s_local),
                         func: RuntimeFn::Stringify,
-                        args: vec![v, Operand::Const(IrValue::I64(tag))],
+                        args: vec![v, tag],
                     });
                 Operand::Local(s_local)
             };
@@ -2646,6 +2646,11 @@ impl IrGenerator {
 
     pub(super) fn generate_index(&mut self, index: &IndexExpr) -> Result<Operand, XuloError> {
         let func_idx = self.current_func.unwrap();
+        let indexed_string = matches!(
+            self.infer_source_type_from_expr(&index.object),
+            Some(Type::String)
+        );
+        let static_tag = self.determine_element_tag(&Expression::Index(Box::new(index.clone())));
         let array = self.generate_expression(&index.object)?;
         let idx = self.generate_expression(&index.index)?;
         let local = self.module.functions[func_idx].add_local(IrType::Pointer);
@@ -2654,9 +2659,22 @@ impl IrGenerator {
             .instructions
             .push(Instruction::GetIndex {
                 dst: local,
-                array,
-                index: idx,
+                array: array.clone(),
+                index: idx.clone(),
             });
+        // 元素标签静态未知时，在取值点从数组的配套标签槽读出；之后即使
+        // 列表被改写，该结果值的标签也保持取值时的状态。
+        if !indexed_string && static_tag == -1 {
+            let tag = self.module.functions[func_idx].add_local(IrType::I64);
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::RuntimeCall {
+                    dst: Some(tag),
+                    func: RuntimeFn::ArrayGetTag,
+                    args: vec![array, idx],
+                });
+            self.value_tags.insert(local, Operand::Local(tag));
+        }
 
         Ok(Operand::Local(local))
     }

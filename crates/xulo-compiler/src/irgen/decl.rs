@@ -148,6 +148,13 @@ impl IrGenerator {
                 .map(|p| (p.name.clone(), p.default.clone()))
                 .collect(),
         );
+        self.func_param_types.insert(
+            name.to_string(),
+            f.params
+                .iter()
+                .map(|p| p.type_annotation.clone().unwrap_or(Type::Any))
+                .collect(),
+        );
         self.func_generic_params
             .insert(name.to_string(), f.generic_params.clone());
 
