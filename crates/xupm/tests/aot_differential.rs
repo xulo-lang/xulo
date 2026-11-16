@@ -204,6 +204,7 @@ fn stage1_binary_matches_the_interpreter() {
         ("tokens", "examples/fibonacci.xulo"),
         ("parse", "examples/fibonacci.xulo"),
         ("parse", "xuloc/main.xulo"),
+        ("check", "xuloc/corpus/accept/basics.xulo"),
     ];
     for (mode, file) in workloads {
         let interpreted = Command::new(BIN)

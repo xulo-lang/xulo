@@ -1,0 +1,28 @@
+// Functions, bindings, control flow, lists, strings, and calls.
+fn add(a: number, b: number): number {
+    return a + b
+}
+
+fn classify(n: number): string {
+    if n > 0 {
+        return "positive"
+    } else if n == 0 {
+        return "zero"
+    }
+    return "negative"
+}
+
+fn main() {
+    let mut total = 0
+    for i in [1, 2, 3] {
+        total = total + i
+    }
+    while total < 10 {
+        total = total + 1
+    }
+    let label: string = classify(total)
+    print(add(total, 2))
+    print(label)
+    print(str(total))
+    assert(total >= 6, "the total should reach at least six")
+}

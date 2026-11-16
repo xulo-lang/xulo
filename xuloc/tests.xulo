@@ -7,10 +7,12 @@
 // file, which is the T5b smoke test in executable form.
 
 mod ast;
+mod checker;
 mod lexer;
 mod parser;
 
 use ast::{render, Node};
+use checker::{check, CheckResult};
 use lexer::{lex, LexResult, Token};
 use parser::{parse, ParseResult};
 
@@ -97,6 +99,7 @@ fn parses_its_own_source() {
         "xuloc/ast.xulo",
         "xuloc/lexer.xulo",
         "xuloc/parser.xulo",
+        "xuloc/checker.xulo",
         "xuloc/main.xulo",
         "xuloc/tests.xulo",
     ]
@@ -114,4 +117,70 @@ fn parses_its_own_source() {
             }
         }
     }
+}
+
+#[test]
+fn checker_accepts_the_bootstrap_corpus() {
+    let files = [
+        "xuloc/corpus/accept/fibonacci.xulo",
+        "xuloc/corpus/accept/basics.xulo",
+    ]
+    for path in files {
+        match std::fs::read(path) {
+            Result::Ok(source) => {
+                let lexed: LexResult = lex(source)
+                assert(lexed.error == "", path + ": lex failed: " + lexed.error)
+                let parsed: ParseResult = parse(lexed.tokens)
+                assert(parsed.error == "", path + ": parse failed: " + parsed.error)
+                let result: CheckResult = check(parsed.root)
+                assert(
+                    result.ok,
+                    path + ": " + result.code + ": " + result.message,
+                )
+            }
+            Result::Err(error) => {
+                assert(false, path + ": cannot read: " + error.message)
+            }
+        }
+    }
+}
+
+#[test]
+fn checker_rejects_the_bad_corpus() {
+    let files = [
+        "xuloc/corpus/reject/undefined_name.xulo",
+        "xuloc/corpus/reject/type_mismatch.xulo",
+        "xuloc/corpus/reject/arity.xulo",
+        "xuloc/corpus/reject/condition.xulo",
+        "xuloc/corpus/reject/not_iterable.xulo",
+        "xuloc/corpus/reject/return_mismatch.xulo",
+    ]
+    for path in files {
+        match std::fs::read(path) {
+            Result::Ok(source) => {
+                let lexed: LexResult = lex(source)
+                assert(lexed.error == "", path + ": lex failed: " + lexed.error)
+                let parsed: ParseResult = parse(lexed.tokens)
+                assert(parsed.error == "", path + ": parse failed: " + parsed.error)
+                let result: CheckResult = check(parsed.root)
+                assert(!result.ok, path + ": was accepted")
+                assert(result.code.slice(0, 1) == "E", path + ": no error code")
+                assert(result.line > 0, path + ": no line")
+                assert(result.column > 0, path + ": no column")
+            }
+            Result::Err(error) => {
+                assert(false, path + ": cannot read: " + error.message)
+            }
+        }
+    }
+}
+
+#[test]
+fn checker_reports_code_and_position() {
+    let parsed: ParseResult = parse_source("fn main() { print(total) }\n")
+    let result: CheckResult = check(parsed.root)
+    assert(!result.ok, "an undefined name must fail")
+    assert(result.code == "E0101", "error code")
+    assert(result.line == 1, "error line")
+    assert(result.column == 19, "error column")
 }

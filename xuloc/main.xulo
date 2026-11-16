@@ -12,10 +12,12 @@
 // `<file>:<line>:<column>: error: <message>` and the process exits 1.
 
 mod ast;
+mod checker;
 mod lexer;
 mod parser;
 
 use ast::{render};
+use checker::{check, CheckResult};
 use lexer::{lex, LexResult, Token};
 use parser::{parse, ParseResult};
 
@@ -31,8 +33,8 @@ fn env_or(name: string, fallback: string): string {
 }
 
 fn usage() {
-    std::io::eprintln("usage: xuloc <tokens|parse> <file>")
-    std::io::eprintln("   or: XULO_STAGE1_MODE=tokens|parse XULO_STAGE1_FILE=<file> xulo run xuloc/main.xulo")
+    std::io::eprintln("usage: xuloc <tokens|parse|check> <file>")
+    std::io::eprintln("   or: XULO_STAGE1_MODE=tokens|parse|check XULO_STAGE1_FILE=<file> xulo run xuloc/main.xulo")
 }
 
 fn kind_label(code: string): string {
@@ -45,7 +47,7 @@ fn kind_label(code: string): string {
     if code == "E0004" {
         return "io"
     }
-    return "error"
+    return "semantic"
 }
 
 fn fail(file: string, line: number, column: number, code: string, message: string) {
@@ -81,6 +83,22 @@ fn run_tokens(file: string, source: string) {
     print_tokens(result.tokens)
 }
 
+fn run_check(file: string, source: string) {
+    let lexed: LexResult = lex(source)
+    if lexed.error != "" {
+        fail(file, lexed.line, lexed.column, "E0001", lexed.error)
+    }
+    let parsed: ParseResult = parse(lexed.tokens)
+    if parsed.error != "" {
+        fail(file, parsed.line, parsed.column, "E0002", parsed.error)
+    }
+    let result: CheckResult = check(parsed.root)
+    if !result.ok {
+        fail(file, result.line, result.column, result.code, result.message)
+    }
+    print("no errors")
+}
+
 fn run_parse(file: string, source: string) {
     let lexed: LexResult = lex(source)
     if lexed.error != "" {
@@ -97,7 +115,9 @@ fn main() {
     let args = std::process::args()
     let mut mode = env_or("XULO_STAGE1_MODE", "parse")
     let mut file = env_or("XULO_STAGE1_FILE", "")
-    if args.len >= 3 and (args[1] == "tokens" or args[1] == "parse") {
+    if args.len >= 3
+        and (args[1] == "tokens" or args[1] == "parse" or args[1] == "check")
+    {
         mode = args[1]
         file = args[2]
     }
@@ -105,7 +125,7 @@ fn main() {
         usage()
         std::process::exit(1)
     }
-    if mode != "tokens" and mode != "parse" {
+    if mode != "tokens" and mode != "parse" and mode != "check" {
         usage()
         std::process::exit(1)
     }
@@ -113,6 +133,8 @@ fn main() {
         Result::Ok(source) => {
             if mode == "tokens" {
                 run_tokens(file, source)
+            } else if mode == "check" {
+                run_check(file, source)
             } else {
                 run_parse(file, source)
             }

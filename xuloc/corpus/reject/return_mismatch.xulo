@@ -1,0 +1,7 @@
+fn label(): number {
+    return "not a number"
+}
+
+fn main() {
+    print(label())
+}

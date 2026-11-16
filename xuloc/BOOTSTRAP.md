@@ -1,9 +1,9 @@
 # Stage 1 bootstrap notes
 
-Stage 1 is a lexer and parser for the bootstrap subset, written in Xulo and
-executed by stage 0. It is intentionally a parser, not a compiler: Gate 1 and
-Gate 2 are about proving that the language is usable for its own tooling
-before stage 1 grows a checker or code generator.
+Stage 1 is a lexer, parser, and first semantic checker for the bootstrap
+subset, written in Xulo and executed by stage 0. Gates 1–3 prove that the
+language is usable for its own front end; code generation and the self-host
+loop (Gates 5–6) are the next stage.
 
 ## Layout
 
@@ -12,14 +12,17 @@ before stage 1 grows a checker or code generator.
 | `xuloc/ast.xulo` | One generic `Node` shape plus the stable tree renderer |
 | `xuloc/lexer.xulo` | UTF-8 scalar scanner: tokens, spans, line/column, comments, literals, operators |
 | `xuloc/parser.xulo` | Recursive-descent parser: headers, declarations, statements, expressions, patterns, types |
-| `xuloc/main.xulo` | CLI: `tokens` and `parse` modes, diagnostics, exit status |
-| `xuloc/tests.xulo` | Stage 1's own `#[test]` functions, including the self-parse test |
+| `xuloc/checker.xulo` | Name and type checking for the Gate 3 corpus: functions, bindings, control flow, lists, optionals, calls |
+| `xuloc/corpus/accept/` | Files stage 1 and stage 0 must both accept |
+| `xuloc/corpus/reject/` | Files both must reject, with a coded semantic diagnostic |
+| `xuloc/main.xulo` | CLI: `tokens`, `parse`, and `check` modes, diagnostics, exit status |
+| `xuloc/tests.xulo` | Stage 1's own `#[test]` functions, including self-parse and corpus checks |
 
 `crates/xulo-cli/tests/stage1.rs` drives the same files through the stage 0
 binary, and `crates/xupm/tests/cli.rs` verifies that `xupm test` runs the
 `#[test]` functions in `xuloc/tests.xulo`.
 
-`ast`, `lexer`, and `parser` are modules, so check them through an entry point
+`ast`, `lexer`, `parser`, and `checker` are modules, so check them through an entry point
 (`xuloc/main.xulo` or `xuloc/tests.xulo`). Checking `xuloc/parser.xulo` on
 its own cannot resolve the sibling `ast` module, by design.
 
@@ -36,14 +39,21 @@ XULO_STAGE1_MODE=tokens XULO_STAGE1_FILE=examples/fibonacci.xulo \
 XULO_STAGE1_MODE=parse XULO_STAGE1_FILE=xuloc/parser.xulo \
   target/debug/xulo run xuloc/main.xulo
 
+XULO_STAGE1_MODE=check XULO_STAGE1_FILE=xuloc/corpus/accept/basics.xulo \
+  target/debug/xulo run xuloc/main.xulo
+
 # Native path once a binary exists
 xuloc tokens examples/fibonacci.xulo
 xuloc parse examples/fibonacci.xulo
+xuloc check xuloc/corpus/accept/basics.xulo
 ```
 
 The default mode is `parse`. Diagnostics use the stage 0 codes and one-line
 shape `<file>:<line>:<column>: error[E…] <kind>: <message>` (`E0001` lexical,
-`E0002` syntax, `E0004` I/O) and exit with status 1.
+`E0002` syntax, `E0004` I/O). Semantic failures use `E0101` (missing name),
+`E0201` (type mismatch), `E0202` (argument mismatch), `E0211` (no common type),
+`E0213` (not iterable), and `E0215` (not indexable). All failures exit 1.
+`check` prints `no errors` on success, matching `xulo check`.
 
 ## Output formats
 
@@ -72,8 +82,17 @@ assignment (L4), functions and recursion (L5), control flow (L7), enums and
 `Result`/`Error` matching (L19). It also recognises `defer`, `async`/`await`,
 attributes, and trait/impl declarations well enough to skip through them.
 
-The parser is deliberately syntactic. It does not resolve names, infer types,
-check exhaustiveness, or evaluate constants. Gate 3 and later add those jobs.
+The parser is deliberately syntactic. `xuloc check` adds the first semantic
+pass: function signatures are collected before bodies, local bindings are
+scoped, calls are checked for arity and argument types, `if`/`while` conditions
+must be `bool`, `for` iterables must be `List`, returns must match the declared
+return type, and operators check their operand types. The fixed corpus in
+`xuloc/corpus/` is the Gate 3 evidence; `crates/xulo-cli/tests/stage1.rs`
+requires stage 1 and stage 0 to agree on accept/reject for every file.
+
+The checker is not yet a full bootstrap checker. `match`, enums, structs,
+traits, impls, generics, modules, closures, and components report E0003
+("not supported yet") rather than being silently accepted.
 
 ## Workarounds and deliberate limits
 
@@ -140,7 +159,17 @@ so stage 2 does not inherit them silently.
     recursive calls such as `self.expr()` work on the caller's binding. This is
     the proven L9/L10 pattern stage 1 relies on.
 
-14. **AOT-safe members only.** The native build (Gate 4/B8a) does not lower the
+14. **Scope exit does not use `pop`/`truncate`.** `checker.xulo` records a
+    scope id per binding and keeps an active-scope count. Leaving a block only
+    decrements the count, so old bindings become invisible without list
+    removal. This keeps the checker inside the AOT-lowered list operations.
+
+15. **Types are canonical strings.** `checker.xulo` represents `number`,
+    `string`, `bool`, `unit`, `unknown`, `null`, `List<T>`, and `T?` as strings.
+    Type comparison is therefore string equality, avoiding the structural
+    equality gap for tuples/lists and keeping the checker small.
+
+16. **AOT-safe members only.** The native build (Gate 4/B8a) does not lower the
     list members `.includes` and `.join`; the lexer uses an explicit keyword
     loop and a `StringBuilder` loop for token text. The interpreter accepts
     both forms, but stage 1's own source stays inside the subset its native
@@ -148,8 +177,10 @@ so stage 2 does not inherit them silently.
 
 ## Known gaps (tracked, not hidden)
 
-- `parse` does not build a typed tree, so Gate 3 (self-check) needs a semantic
-  pass over this shape or a richer AST.
+- `check` is a first semantic pass over the generic AST, not a typed tree. It
+  covers the Gate 3 corpus; structs, enums, traits, impls, generics, modules,
+  closures, components, and `match` still report E0003.
+- Code generation and the self-host loop (Gates 5–6) are not implemented.
 - Postfix `?`, arrow closures, call-site type arguments, components, macros
   beyond attributes, and `spawn`/`lock` are outside the parser's accepted
   subset.
@@ -164,6 +195,8 @@ so stage 2 does not inherit them silently.
 ./target/debug/xulo check xuloc/main.xulo
 ./target/debug/xulo test xuloc/tests.xulo
 ./target/debug/xupm test xuloc/tests.xulo
+XULO_STAGE1_MODE=check XULO_STAGE1_FILE=xuloc/corpus/accept/basics.xulo \
+  ./target/debug/xulo run xuloc/main.xulo
 cargo test -p xulo-cli --test stage1
 cargo test -p xupm --test cli
 

@@ -140,11 +140,13 @@ listed in `xuloc/BOOTSTRAP.md`. Evidence:
 with stage 0 on accept/reject for the bootstrap subset. Diagnostics include
 file/line/column and exit nonzero on failure.
 
-**Current assessment:** **Blocked on stage 1 itself.** Stage 0 now supplies
-`unknown`, `is` narrowing, tuple positional access, generic struct
-construction, and the stable `E…` codes WP2 required, so the former type-system
-risks are closed. Gate 3 needs the stage 1 checker over the WP5 AST; that is
-WP6's first item.
+**Current assessment:** **Reached (2026-11-16).** `xuloc/checker.xulo` checks
+the fixed corpus under `xuloc/corpus/` (functions, bindings, control flow,
+lists, strings, calls, return types). Stage 1 and stage 0 agree on accept/reject
+for both accepted files and all six rejected files; rejected diagnostics carry
+`file:line:column`, an `E…` code, and exit 1. Evidence:
+`crates/xulo-cli/tests/stage1.rs::stage1_check_agrees_with_stage0_on_the_corpus`
+and `xuloc/tests.xulo::checker_*`.
 
 ### Gate 4 — Native build
 
@@ -181,8 +183,9 @@ known deviations are listed with an owner and a deadline.
 **Current assessment:** **Runner in place, bootstrap suite open.** The pinned
 specification's checkable examples run in the `conformance` job
 (`crates/xulo-cli/tests/spec_conformance.rs`), with known divergences recorded
-in `spec_conformance_baseline.tsv`. The bootstrap suite cannot be added until
-Gate 3–5 produce a stage 1 checker and self-hosted build.
+in `spec_conformance_baseline.tsv`. The checker corpus is now part of
+`cargo test --workspace`; the full bootstrap suite still waits on stage 1 code
+generation and the self-hosted build (Gates 5–6).
 
 ## 5. Capability matrix
 
@@ -267,7 +270,7 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 | B3 | `xupm build` for the bootstrap subset | **PARTIAL** | `aot_differential` compares 25 examples and `xupm build` failure exit status is covered. Still missing AOT lowering for `std::fs::write_bytes` (`fs`), `std::path::split` (`path`), and `std::process::launch`/`Command`/`Child` (`process`); `async_tasks` builds with wrong await results | 4 |
 | B4 | AOT module tree (`mod`/`use`) | **OK** | `crates/xulo-compiler/tests/module_system.rs`, `examples/modules` native build | 4 |
 | B5 | Runtime static library and linker path | **OK** | `.github/workflows/ci.yml` and the release workflow | 4 |
-| B6 | `xupm test` for stage 1's own tests | **OK** | `crates/xupm/tests/cli.rs::runs_stage1_test_file` runs `xuloc/tests.xulo` (7 tests); `crates/xulo-cli/tests/stage1.rs` covers the `xulo test` path | 3 |
+| B6 | `xupm test` for stage 1's own tests | **OK** | `crates/xupm/tests/cli.rs::runs_stage1_test_file` runs `xuloc/tests.xulo` (10 tests); `crates/xulo-cli/tests/stage1.rs` covers the `xulo test` path | 3 |
 | B7 | Linux/macOS/Windows build matrix | **PARTIAL** | Release artifacts exist; Windows FFI is unsupported | 4 |
 | B8 | Reproducible stage 1 build and self-compile smoke test | **PARTIAL** | B8a: `xupm build xuloc/main.xulo --release` produces a native front end that matches the interpreter (`crates/xupm/tests/aot_differential.rs::stage1_binary_matches_the_interpreter`). Reproducibility and the stage 1 self-build await WP6. | 5 |
 
@@ -278,12 +281,12 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 | D1 | Source spans and `file:line:column` diagnostics | **OK** | `crates/xulo-core/tests/diagnostics_tests.rs`, `crates/xulo-cli/tests/integration_tests.rs` | 1 |
 | D2 | stderr writes and nonzero exit status | **OK** | `crates/xulo-cli/tests/process_exit.rs`, `crates/xulo-cli/tests/matrix_probes/R6_panic_assert.xulo` | 1 |
 | D3 | Stable error codes for the bootstrap subset | **OK** | Called constants are `E0204`; `std::regex` value paths are `E0607`, unknown module members `E0601`, and an unimported type used as a value `E0101` (std-spec `modules/regex.md`). The head/member diagnostics std-spec §1.3 named as coarse fallbacks now carry their fine-grained codes (`crates/xulo-semantic/tests/semantic_tests.rs`, `crates/xulo-compiler/tests/intrinsics_codegen_tests.rs`). | 2 |
-| D4 | Stage 1's own diagnostics are consistent with stage 0 | **PARTIAL** | Lexical/syntax failures use `E0001`/`E0002` and `file:line:column` (`crates/xulo-cli/tests/stage1.rs`); semantic diagnostics await the stage 1 checker | 3 |
-| T1 | Unit and integration tests | **OK** | `cargo test --workspace`: 2105 passed, 0 failed (2026-11-16) | 1 |
+| D4 | Stage 1's own diagnostics are consistent with stage 0 | **PARTIAL** | Lexical/syntax use `E0001`/`E0002`; checker failures use `E0101`/`E0201`/`E0202`/`E0211`/`E0213`/`E0215` with `file:line:column` (`crates/xulo-cli/tests/stage1.rs`). Stage 0 still reports `E0003` for several of the same corpus cases, so exact codes are not aligned yet. | 3 |
+| T1 | Unit and integration tests | **OK** | `cargo test --workspace`: 2106 passed, 0 failed (2026-11-16) | 1 |
 | T2 | All examples run in CI | **OK** | `.github/workflows/ci.yml` examples job | 1 |
 | T3 | Pinned-spec example conformance runner | **OK** | `crates/xulo-cli/tests/spec_conformance.rs`: 114 annotated examples extracted from the pinned spec, 81 pass, 33 triaged in `spec_conformance_baseline.tsv` (§6.10) | 2 |
 | T4 | Interpreter vs. AOT differential suite | **OK** | `crates/xupm/tests/aot_differential.rs` builds and executes every top-level example, compares stdout/stderr against `xupm run`, and fails on stale baseline entries; CI runs it on Linux after the release build. Five known gaps are recorded in `crates/xupm/tests/aot_differential_baseline.tsv` | 4 |
-| T5 | Stage 1 self-parse/self-check/self-build tests | **PARTIAL** | Self-parse and interpreter smoke tests are live (`crates/xulo-cli/tests/stage1.rs`, `xuloc/tests.xulo`); self-check and self-build await WP6 | 2–5 |
+| T5 | Stage 1 self-parse/self-check/self-build tests | **PARTIAL** | Self-parse, self-check, and interpreter smoke tests are live (`crates/xulo-cli/tests/stage1.rs`, `xuloc/tests.xulo`); self-build awaits WP6 | 2–5 |
 | T6 | Robustness/fuzz tests | **OK** | `crates/xulo-compiler/tests/robustness.rs`, `crates/xulo-parser/tests/parser_tests.rs` | 1 |
 | T7 | Spec and std-spec submodules aligned with the pin | **OK** | `crates/xulo-cli/tests/submodule_pins.rs` compares the `HEAD` gitlink, the index, and the checked-out submodule against `spec@48f49b7` / `std-spec@a2e4cb7`; CI job `conformance` | 1 |
 
@@ -576,10 +579,10 @@ error for `defer` rather than dropping the operand.
 
 **Exit:** Gate 1 and Gate 2 — reached on 2026-11-16.
 
-**Status:** done. `xuloc/` holds the generic AST, lexer, parser, CLI, and
-self-tests. Gate 1 is covered by the token/parse smoke tests and the clean
+**Status:** done. `xuloc/` holds the generic AST, lexer, parser, first checker,
+CLI, corpus, and self-tests. Gate 1 is covered by the token/parse smoke tests and the clean
 diagnostic test; Gate 2 self-parses all five stage 1 files. `xulo test` and
-`xupm test` both run `xuloc/tests.xulo` (7 tests).
+`xupm test` both run `xuloc/tests.xulo` (10 tests).
 
 ### WP6 — Self-host loop (after WP1–WP5)
 
@@ -590,13 +593,13 @@ diagnostic test; Gate 2 self-parses all five stage 1 files. `xulo test` and
 
 **Exit:** Gate 4–6.
 
-**Status:** in progress. B8a and Gate 4 are done: `xupm build
-xuloc/main.xulo --release` produces a native front end whose `tokens`/`parse`
-output matches the interpreter. Gate 5 and the checker/self-build items remain
-open. The native build surfaced and fixed three stage 0 defects: unreachable IR
-after a terminating block, pointer-based `string` equality in the compiled
-path, and user methods named like string members being dispatched to the
-built-in lowering.
+**Status:** in progress. B8a, Gate 3, and Gate 4 are done. `xuloc` now has a
+checked bootstrap corpus and a native front end whose `tokens`/`parse`/`check`
+output matches the interpreter. Gate 5 and the code-generation/self-build items
+remain open. The native build surfaced and fixed three stage 0 defects:
+unreachable IR after a terminating block, pointer-based `string` equality in
+the compiled path, and user methods named like string members being dispatched
+to the built-in lowering.
 
 ## 8. Non-goals for stage 1 bootstrap
 
@@ -630,7 +633,7 @@ cargo test -p xulo-cli --test submodule_pins --test spec_conformance -- --nocapt
 # WP0/T3d: every OK matrix row cites a live test or probe.
 cargo test -p xulo-cli --test readiness_matrix -- --nocapture
 
-# WP5: stage 1 runs under the interpreter, prints tokens/AST, self-parses.
+# WP5/Gate 3: stage 1 runs under the interpreter, parses, and checks the corpus.
 cargo test -p xulo-cli --test stage1
 cargo test -p xupm --test cli runs_stage1_test_file
 
@@ -656,7 +659,7 @@ Last recorded verification (2026-11-16):
 
 | Check | Result |
 |-------|--------|
-| `cargo test --workspace` | 2105 passed, 0 failed |
+| `cargo test --workspace` | 2106 passed, 0 failed |
 | Examples (CI job) | Configured to run every `examples/*.xulo`; `async_tasks` uses `u64` sleep input |
 | AOT smoke tests | `hello` on macOS/Windows; `structs`, `trait_shapes`, `generics`, `modules` probed locally |
 | AOT differential suite | 25 examples compare byte for byte; 5 known gaps in `crates/xupm/tests/aot_differential_baseline.tsv` |
@@ -664,6 +667,7 @@ Last recorded verification (2026-11-16):
 | Stage 1 smoke tests | `cargo test -p xulo-cli --test stage1` — 6 passed; self-parses `xuloc/*.xulo`, clean diagnostics, `xulo test` |
 | Stage 1 under `xupm test` | `cargo test -p xupm --test cli runs_stage1_test_file` — 7 stage 1 tests passed |
 | Stage 1 native build | `cargo test -p xupm --test aot_differential stage1_binary_matches_the_interpreter` (with `XULO_AOT_DIFFERENTIAL=1`) — interpreter and native output agree |
+| Stage 1 checker | `cargo test -p xulo-cli --test stage1 stage1_check_agrees_with_stage0_on_the_corpus` — 2 accept + 6 reject files agree with stage 0 |
 
 ## 10. Maintenance
 

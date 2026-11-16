@@ -44,9 +44,11 @@ Gates are cumulative. An open earlier gate blocks every later gate.
 - [x] **Gate 2 — Self-parse**: stage 1 parses its own source (or a fixed
       nontrivial bootstrap file) with accurate spans.
       `crates/xulo-cli/tests/stage1.rs` parses `xuloc/*.xulo` itself.
-- [ ] **Gate 3 — Self-check**: stage 1 type-checks a nontrivial bootstrap file
+- [x] **Gate 3 — Self-check**: stage 1 type-checks a nontrivial bootstrap file
       and agrees with stage 0 on accept/reject; diagnostics carry
       file/line/column and exit nonzero.
+      `xuloc/checker.xulo` + `xuloc/corpus/`; verified by
+      `crates/xulo-cli/tests/stage1.rs::stage1_check_agrees_with_stage0_on_the_corpus`.
 - [x] **Gate 4 — Native build**: `xupm build` produces a stage 1 binary whose
       output matches `xulo run` on the bootstrap workload.
       `crates/xupm/tests/aot_differential.rs::stage1_binary_matches_the_interpreter`.
@@ -95,7 +97,7 @@ the starting point, and their evidence is recorded in `stage1-readiness.md` §5.
 - [x] **B5** Runtime static library and linker path
 - [x] **D1** Source spans and `file:line:column` diagnostics
 - [x] **D2** stderr writes and nonzero exit status
-- [x] **T1** Unit and integration tests — `cargo test --workspace`: 2105 passed, 0 failed (2026-11-16)
+- [x] **T1** Unit and integration tests — `cargo test --workspace`: 2106 passed, 0 failed (2026-11-16)
 - [x] **T2** All examples run in CI
 - [x] **T6** Robustness/fuzz tests
 
@@ -259,6 +261,8 @@ Can start in parallel with WP1–WP4 · needed by Gate 1/2 · source:
 After WP1–WP5 · needed by Gate 4/5/6 · source: `stage1-readiness.md` §7 WP6
 
 - [ ] Stage 1 checks and compiles a fixed bootstrap corpus.
+      Checker portion is live (`xuloc check` over `xuloc/corpus/accept` and
+      `xuloc/corpus/reject`); code generation for the corpus is still open.
 - [x] **B8a** Build stage 1 with stage 0's `xupm`.
       `xupm build xuloc/main.xulo --release` produces
       `xuloc/.xupm/build/main`; the native binary matches the interpreter for
@@ -270,16 +274,18 @@ After WP1–WP5 · needed by Gate 4/5/6 · source: `stage1-readiness.md` §7 WP6
 - [ ] **B8b** Add a reproducible build and self-compile smoke test.
 - [ ] **D4** Make stage 1 diagnostics consistent with stage 0 for the
       bootstrap subset.
-      Lexical/syntax diagnostics now use stage 0's `E0001`/`E0002` codes and a
-      one-line `file:line:column` shape; semantic diagnostics need the
-      stage 1 checker and are still open.
+      Lexical/syntax diagnostics use `E0001`/`E0002`; the checker reports
+      `E0101`/`E0201`/`E0202`/`E0211`/`E0213`/`E0215` with
+      `file:line:column`. Remaining gap: stage 0 still uses its coarse `E0003`
+      fallback for several of the same corpus errors, so the codes are not yet
+      identical.
 
 **Verify:** `cargo test -p xulo-cli --test stage1` plus
 `XULO_AOT_DIFFERENTIAL=1 XULO_RUNTIME_LIB=$PWD/target/release/libxulo_runtime.a
 cargo test -p xupm --test aot_differential stage1_binary_matches_the_interpreter`.
 
-**Exit:** Gate 4, Gate 5, Gate 6. Gate 4 is reached; Gates 5–6 remain blocked on
-the stage 1 checker and self-build.
+**Exit:** Gate 4, Gate 5, Gate 6. Gates 3 and 4 are reached; Gates 5–6 remain
+blocked on stage 1 code generation and self-build.
 
 ## Out of scope for stage 1 bootstrap
 

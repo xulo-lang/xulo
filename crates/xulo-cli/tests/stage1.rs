@@ -182,7 +182,7 @@ fn stage1_tests_run_under_xulo_test() {
     assert_success(&out, "xulo test xuloc/tests.xulo");
     let text = stdout_of(&out);
     assert!(
-        text.contains("7 passed, 0 failed"),
+        text.contains("10 passed, 0 failed"),
         "all stage 1 tests should pass:\n{text}\n{}",
         stderr_of(&out)
     );
@@ -199,4 +199,60 @@ fn stage1_entry_point_checks() {
         .output()
         .expect("xulo check should start");
     assert_success(&out, "xulo check xuloc/main.xulo");
+}
+
+/// Gate 3: stage 1's checker agrees with stage 0 on accept/reject for the
+/// fixed bootstrap corpus, and rejected files carry a file:line:column code.
+#[test]
+fn stage1_check_agrees_with_stage0_on_the_corpus() {
+    let root = repo_root();
+    let cases = [
+        ("xuloc/corpus/accept/fibonacci.xulo", true),
+        ("xuloc/corpus/accept/basics.xulo", true),
+        ("xuloc/corpus/reject/undefined_name.xulo", false),
+        ("xuloc/corpus/reject/type_mismatch.xulo", false),
+        ("xuloc/corpus/reject/arity.xulo", false),
+        ("xuloc/corpus/reject/condition.xulo", false),
+        ("xuloc/corpus/reject/not_iterable.xulo", false),
+        ("xuloc/corpus/reject/return_mismatch.xulo", false),
+    ];
+    for (relative, accept) in cases {
+        let file = root.join(relative);
+        let stage0 = Command::new(BIN)
+            .arg("check")
+            .arg(&file)
+            .current_dir(&root)
+            .output()
+            .expect("xulo check should start");
+        let stage1 = run_stage1("check", &file);
+        assert_eq!(
+            stage0.status.success(),
+            accept,
+            "stage 0 disagreed on {relative}:\n{}",
+            stderr_of(&stage0)
+        );
+        assert_eq!(
+            stage1.status.success(),
+            accept,
+            "stage 1 disagreed on {relative}:\n{}\n{}",
+            stdout_of(&stage1),
+            stderr_of(&stage1)
+        );
+        if accept {
+            assert!(
+                stdout_of(&stage1).contains("no errors"),
+                "stage 1 check should report success for {relative}"
+            );
+        } else {
+            let err = stderr_of(&stage1);
+            assert!(
+                err.contains(": error[") && err.contains("] semantic:"),
+                "stage 1 should report a coded semantic diagnostic for {relative}:\n{err}"
+            );
+            assert!(
+                err.starts_with(&file.display().to_string()),
+                "stage 1 diagnostic should name the file for {relative}:\n{err}"
+            );
+        }
+    }
 }

@@ -1,0 +1,1007 @@
+// xuloc's first semantic pass.
+//
+// The checker works on the generic AST and covers the front-end subset stage 1
+// needs for Gate 3: functions, parameters, primitive types, `List<T>`, `T?`,
+// `let`/`const`, assignment, `return`, `if`/`else`, `while`, `for`, calls,
+// arithmetic/comparison/logical operators, indexing, and the `print`/`str`/
+// `assert`/`panic` intrinsics.
+//
+// It deliberately reports "not supported yet" (E0003) for declarations it does
+// not understand instead of silently accepting them. Structs, enums, traits,
+// impls, modules, generics, closures, components, and `match` arrive in later
+// WP6 slices.
+//
+// Types are canonical strings (`number`, `string`, `bool`, `unit`, `unknown`,
+// `null`, `List<T>`, `T?`) so comparisons never depend on structural equality.
+// Scopes are a flat binding list plus a scope-id stack; leaving a block only
+// decrements the active scope count, so the checker avoids list `pop`/
+// `truncate`, which the AOT runtime does not lower yet.
+
+use ast::{Node};
+
+pub struct CheckResult {
+    pub ok: bool,
+    pub code: string,
+    pub message: string,
+    pub line: number,
+    pub column: number,
+}
+
+pub struct Binding {
+    name: string,
+    ty: string,
+    scope: number,
+}
+
+pub struct FuncSig {
+    name: string,
+    params: List<string>,
+    ret: string,
+}
+
+pub struct Checker {
+    functions: List<FuncSig>,
+    bindings: List<Binding>,
+    scopes: List<number>,
+    active_scopes: number,
+    next_scope: number,
+    current_return: string,
+    error: string,
+    code: string,
+    line: number,
+    column: number,
+}
+
+pub fn check(root: Node): CheckResult {
+    let mut checker = Checker(
+        functions: [],
+        bindings: [],
+        scopes: [],
+        active_scopes: 0,
+        next_scope: 1,
+        current_return: "unit",
+        error: "",
+        code: "",
+        line: 1,
+        column: 1,
+    )
+    checker.enter_scope()
+    checker.collect_functions(root)
+    if checker.error == "" {
+        checker.check_program(root)
+    }
+    return CheckResult(
+        ok: checker.error == "",
+        code: checker.code,
+        message: checker.error,
+        line: checker.line,
+        column: checker.column,
+    )
+}
+
+impl Checker {
+    // ── diagnostics and scopes ───────────────────────────────────────────
+
+    fn fail(mut self, node: Node, code: string, message: string) {
+        if self.error == "" {
+            self.error = message
+            self.code = code
+            self.line = node.line
+            self.column = node.column
+        }
+    }
+
+    fn enter_scope(mut self) {
+        self.scopes.push(self.next_scope)
+        self.next_scope = self.next_scope + 1
+        self.active_scopes = self.active_scopes + 1
+    }
+
+    fn leave_scope(mut self) {
+        if self.active_scopes > 0 {
+            self.active_scopes = self.active_scopes - 1
+        }
+    }
+
+    fn scope_active(self, scope: number): bool {
+        let mut i = 0
+        while i < self.active_scopes {
+            if self.scopes[i] == scope {
+                return true
+            }
+            i = i + 1
+        }
+        return false
+    }
+
+    fn bind(mut self, name: string, ty: string) {
+        if name == "" or name == "_" {
+            return
+        }
+        let scope = self.scopes[self.active_scopes - 1]
+        self.bindings.push(Binding(name: name, ty: ty, scope: scope))
+    }
+
+    fn lookup(self, name: string): string {
+        let mut i = self.bindings.len
+        while i > 0 {
+            i = i - 1
+            let binding = self.bindings[i]
+            if binding.name == name and self.scope_active(binding.scope) {
+                return binding.ty
+            }
+        }
+        return ""
+    }
+
+    fn find_function(self, name: string): number {
+        let mut i = 0
+        while i < self.functions.len {
+            if self.functions[i].name == name {
+                return i
+            }
+            i = i + 1
+        }
+        return -1
+    }
+
+    // ── types ────────────────────────────────────────────────────────────
+
+    fn is_type_node(self, node: Node): bool {
+        return node.kind == "TypeName"
+            or node.kind == "OptionalType"
+            or node.kind == "TupleType"
+            or node.kind == "FnType"
+    }
+
+    fn type_of(mut self, node: Node): string {
+        if self.error != "" {
+            return "unknown"
+        }
+        if node.kind == "OptionalType" {
+            if node.children.len == 0 {
+                self.fail(node, "E0101", "an optional type needs an inner type")
+                return "unknown"
+            }
+            return self.type_of(node.children[0]) + "?"
+        }
+        if node.kind != "TypeName" {
+            self.fail(node, "E0003", "stage 1 checker does not support this type yet")
+            return "unknown"
+        }
+        let name = node.value
+        if name == "int"
+            or name == "i8"
+            or name == "i16"
+            or name == "i32"
+            or name == "i64"
+            or name == "u8"
+            or name == "u16"
+            or name == "u32"
+            or name == "u64"
+            or name == "usize"
+            or name == "isize"
+            or name == "float"
+            or name == "f32"
+            or name == "f64"
+            or name == "number"
+        {
+            return "number"
+        }
+        if name == "bool" {
+            return "bool"
+        }
+        if name == "string" {
+            return "string"
+        }
+        if name == "unit" {
+            return "unit"
+        }
+        if name == "unknown" {
+            return "unknown"
+        }
+        if name == "List" or name == "Array" {
+            let mut i = 0
+            while i < node.children.len {
+                let child = node.children[i]
+                if child.kind == "TypeArgs" and child.children.len > 0 {
+                    let elem = self.type_of(child.children[0])
+                    return "List<" + elem + ">"
+                }
+                i = i + 1
+            }
+            self.fail(node, "E0101", "`" + name + "` needs a type argument")
+            return "unknown"
+        }
+        self.fail(node, "E0101", "unknown type `" + name + "`")
+        return "unknown"
+    }
+
+    fn is_number(self, ty: string): bool {
+        return ty == "number"
+    }
+
+    fn is_optional(self, ty: string): bool {
+        if ty.len == 0 {
+            return false
+        }
+        return ty.slice(ty.len - 1, ty.len) == "?"
+    }
+
+    fn optional_inner(self, ty: string): string {
+        if !self.is_optional(ty) {
+            return ty
+        }
+        return ty.slice(0, ty.len - 1)
+    }
+
+    fn is_list(self, ty: string): bool {
+        if ty.len < 6 {
+            return false
+        }
+        return ty.slice(0, 5) == "List<"
+    }
+
+    fn list_element(self, ty: string): string {
+        if !self.is_list(ty) {
+            return "unknown"
+        }
+        return ty.slice(5, ty.len - 1)
+    }
+
+    fn assignable(self, expected: string, actual: string): bool {
+        if expected == actual {
+            return true
+        }
+        if expected == "unknown" {
+            return true
+        }
+        if actual == "unknown" {
+            return false
+        }
+        if self.is_number(expected) and self.is_number(actual) {
+            return true
+        }
+        if actual == "null" {
+            return self.is_optional(expected)
+        }
+        if self.is_optional(actual) and self.is_optional(expected) {
+            return self.assignable(self.optional_inner(expected), self.optional_inner(actual))
+        }
+        if self.is_list(expected) and self.is_list(actual) {
+            return self.assignable(self.list_element(expected), self.list_element(actual))
+        }
+        return false
+    }
+
+    fn unify(mut self, node: Node, left: string, right: string): string {
+        if left == right {
+            return left
+        }
+        if self.assignable(left, right) {
+            return left
+        }
+        if self.assignable(right, left) {
+            return right
+        }
+        if self.is_optional(left) and right == "null" {
+            return left
+        }
+        if self.is_optional(right) and left == "null" {
+            return right
+        }
+        self.fail(
+            node,
+            "E0211",
+            "`" + left + "` and `" + right + "` have no common type",
+        )
+        return "unknown"
+    }
+
+    // ── declarations ─────────────────────────────────────────────────────
+
+    fn collect_functions(mut self, root: Node) {
+        for item in root.children {
+            if item.kind == "Fn" {
+                self.add_function(item)
+            }
+        }
+    }
+
+    fn add_function(mut self, item: Node) {
+        if self.error != "" {
+            return
+        }
+        let mut params: List<string> = []
+        let mut ret = "unit"
+        for child in item.children {
+            if child.kind == "Param" {
+                if child.value == "self" or child.value == "mut self" {
+                    self.fail(child, "E0003", "stage 1 checker does not support methods yet")
+                    return
+                }
+                let mut ty = "unknown"
+                for part in child.children {
+                    if self.is_type_node(part) {
+                        ty = self.type_of(part)
+                    }
+                }
+                params.push(ty)
+            } else if self.is_type_node(child) {
+                ret = self.type_of(child)
+            }
+        }
+        if self.error == "" {
+            self.functions.push(FuncSig(name: item.value, params: params, ret: ret))
+        }
+    }
+
+    fn check_program(mut self, root: Node) {
+        for item in root.children {
+            if self.error != "" {
+                return
+            }
+            if item.kind == "Fn" {
+                self.check_function(item)
+            } else if item.kind == "Let" {
+                self.check_let(item)
+            } else if item.kind == "Const" {
+                self.check_const(item)
+            } else if item.kind == "Attribute" {
+                // Attributes are attached to their declaration; nothing to do.
+            } else if item.kind != "Use" and item.kind != "Mod" {
+                self.fail(
+                    item,
+                    "E0003",
+                    "stage 1 checker does not support `" + item.kind + "` declarations yet",
+                )
+            }
+        }
+    }
+
+    fn check_function(mut self, item: Node) {
+        let index = self.find_function(item.value)
+        if index < 0 {
+            self.fail(item, "E0101", "cannot find function `" + item.value + "`")
+            return
+        }
+        let sig = self.functions[index]
+        self.current_return = sig.ret
+        self.enter_scope()
+        let mut p = 0
+        while p < sig.params.len {
+            let name = self.param_name(item, p)
+            self.bind(name, sig.params[p])
+            p = p + 1
+        }
+        let mut body = item
+        let mut found = false
+        for child in item.children {
+            if child.kind == "Block" {
+                body = child
+                found = true
+            }
+        }
+        if !found {
+            self.fail(item, "E0003", "a function needs a body")
+        } else {
+            self.check_block(body)
+        }
+        self.leave_scope()
+    }
+
+    // The parser stores parameter names on the direct `Param` children.
+    fn param_name(self, item: Node, index: number): string {
+        let mut seen = 0
+        for child in item.children {
+            if child.kind == "Param" {
+                if seen == index {
+                    return child.value
+                }
+                seen = seen + 1
+            }
+        }
+        return "_"
+    }
+
+    fn check_const(mut self, item: Node) {
+        let mut ty = ""
+        let mut initializer = item
+        let mut found = false
+        for child in item.children {
+            if self.is_type_node(child) {
+                ty = self.type_of(child)
+            } else {
+                initializer = child
+                found = true
+            }
+        }
+        if !found {
+            self.fail(item, "E0003", "a constant needs an initializer")
+            return
+        }
+        let actual = self.check_expr(initializer)
+        if ty == "" {
+            ty = actual
+        } else if !self.assignable(ty, actual) {
+            self.fail(
+                initializer,
+                "E0201",
+                "expected `" + ty + "`, found `" + actual + "`",
+            )
+        }
+        self.bind(item.value, ty)
+    }
+
+    fn check_let(mut self, item: Node) {
+        let mut ty = ""
+        let mut initializer = item
+        let mut found = false
+        for child in item.children {
+            if child.kind == "Mut" {
+                // Mutability is tracked when the checker grows assignment rules.
+            } else if self.is_type_node(child) {
+                ty = self.type_of(child)
+            } else {
+                initializer = child
+                found = true
+            }
+        }
+        if !found {
+            self.fail(item, "E0003", "a binding needs an initializer")
+            return
+        }
+        let actual = self.check_expr(initializer)
+        if ty == "" {
+            ty = actual
+        } else if !self.assignable(ty, actual) {
+            self.fail(
+                initializer,
+                "E0201",
+                "expected `" + ty + "`, found `" + actual + "`",
+            )
+        }
+        self.bind(item.value, ty)
+    }
+
+    // ── statements ───────────────────────────────────────────────────────
+
+    fn check_block(mut self, block: Node): string {
+        self.enter_scope()
+        let mut value = "unit"
+        for stmt in block.children {
+            if self.error != "" {
+                break
+            }
+            value = self.check_statement(stmt)
+        }
+        self.leave_scope()
+        return value
+    }
+
+    fn check_statement(mut self, stmt: Node): string {
+        if stmt.kind == "Let" {
+            self.check_let(stmt)
+            return "unit"
+        }
+        if stmt.kind == "Const" {
+            self.check_const(stmt)
+            return "unit"
+        }
+        if stmt.kind == "Assign" {
+            self.check_assign(stmt)
+            return "unit"
+        }
+        if stmt.kind == "ExprStmt" {
+            if stmt.children.len == 0 {
+                return "unit"
+            }
+            return self.check_expr(stmt.children[0])
+        }
+        if stmt.kind == "Return" {
+            self.check_return(stmt)
+            return "unit"
+        }
+        if stmt.kind == "Jump" {
+            return "unit"
+        }
+        if stmt.kind == "Defer" {
+            if stmt.children.len > 0 {
+                self.check_expr(stmt.children[0])
+            }
+            return "unit"
+        }
+        if stmt.kind == "While" {
+            self.check_while(stmt)
+            return "unit"
+        }
+        if stmt.kind == "For" {
+            self.check_for(stmt)
+            return "unit"
+        }
+        if stmt.kind == "Fn" {
+            self.fail(stmt, "E0003", "nested functions are not supported yet")
+            return "unit"
+        }
+        self.fail(
+            stmt,
+            "E0003",
+            "stage 1 checker does not support `" + stmt.kind + "` statements yet",
+        )
+        return "unit"
+    }
+
+    fn check_assign(mut self, stmt: Node) {
+        if stmt.children.len < 2 {
+            self.fail(stmt, "E0003", "an assignment needs two operands")
+            return
+        }
+        let lhs = self.place_type(stmt.children[0])
+        let rhs = self.check_expr(stmt.children[1])
+        if self.error == "" and !self.assignable(lhs, rhs) {
+            self.fail(
+                stmt,
+                "E0201",
+                "expected `" + lhs + "`, found `" + rhs + "`",
+            )
+        }
+    }
+
+    fn place_type(mut self, node: Node): string {
+        if node.kind == "Name" {
+            let ty = self.lookup(node.value)
+            if ty == "" {
+                self.fail(node, "E0101", "cannot find value `" + node.value + "` in this scope")
+                return "unknown"
+            }
+            return ty
+        }
+        if node.kind == "Index" {
+            return self.check_index(node)
+        }
+        self.fail(node, "E0003", "stage 1 checker does not support this assignment target yet")
+        return "unknown"
+    }
+
+    fn check_return(mut self, stmt: Node) {
+        let mut actual = "unit"
+        if stmt.children.len > 0 {
+            actual = self.check_expr(stmt.children[0])
+        }
+        if self.error != "" {
+            return
+        }
+        if !self.assignable(self.current_return, actual) {
+            self.fail(
+                stmt,
+                "E0201",
+                "expected `" + self.current_return + "`, found `" + actual + "`",
+            )
+        }
+    }
+
+    fn check_while(mut self, stmt: Node) {
+        if stmt.children.len == 0 {
+            self.fail(stmt, "E0003", "a loop needs a condition")
+            return
+        }
+        let cond = self.check_expr(stmt.children[0])
+        if self.error == "" and cond != "bool" {
+            self.fail(
+                stmt.children[0],
+                "E0201",
+                "expected `bool`, found `" + cond + "`",
+            )
+            return
+        }
+        if stmt.children.len > 1 {
+            self.check_block(stmt.children[1])
+        }
+    }
+
+    fn check_for(mut self, stmt: Node) {
+        if stmt.children.len == 0 {
+            self.fail(stmt, "E0003", "a for loop needs an iterable")
+            return
+        }
+        let iterable = self.check_expr(stmt.children[0])
+        if self.error != "" {
+            return
+        }
+        if !self.is_list(iterable) {
+            self.fail(
+                stmt.children[0],
+                "E0213",
+                "`" + iterable + "` is not iterable",
+            )
+            return
+        }
+        self.enter_scope()
+        self.bind(stmt.value, self.list_element(iterable))
+        if stmt.children.len > 1 {
+            self.check_block(stmt.children[1])
+        }
+        self.leave_scope()
+    }
+
+    // ── expressions ──────────────────────────────────────────────────────
+
+    fn check_expr(mut self, node: Node): string {
+        if self.error != "" {
+            return "unknown"
+        }
+        if node.kind == "Literal" {
+            return self.literal_type(node.value)
+        }
+        if node.kind == "Name" {
+            let ty = self.lookup(node.value)
+            if ty == "" {
+                self.fail(node, "E0101", "cannot find value `" + node.value + "` in this scope")
+                return "unknown"
+            }
+            return ty
+        }
+        if node.kind == "Group" {
+            if node.children.len == 0 {
+                return "unit"
+            }
+            return self.check_expr(node.children[0])
+        }
+        if node.kind == "Binary" {
+            return self.check_binary(node)
+        }
+        if node.kind == "Unary" {
+            return self.check_unary(node)
+        }
+        if node.kind == "Call" {
+            return self.check_call(node)
+        }
+        if node.kind == "Member" {
+            return self.check_member(node)
+        }
+        if node.kind == "Index" {
+            return self.check_index(node)
+        }
+        if node.kind == "If" {
+            return self.check_if(node)
+        }
+        if node.kind == "Ternary" {
+            return self.check_ternary(node)
+        }
+        if node.kind == "List" {
+            return self.check_list(node)
+        }
+        self.fail(
+            node,
+            "E0003",
+            "stage 1 checker does not support `" + node.kind + "` expressions yet",
+        )
+        return "unknown"
+    }
+
+    fn literal_type(self, text: string): string {
+        if text == "true" or text == "false" {
+            return "bool"
+        }
+        if text == "null" {
+            return "null"
+        }
+        if text.len == 0 {
+            return "unknown"
+        }
+        let first = text.slice(0, 1)
+        if first == "\"" or first == "'" or first == "`" {
+            return "string"
+        }
+        return "number"
+    }
+
+    fn check_unary(mut self, node: Node): string {
+        if node.children.len == 0 {
+            return "unit"
+        }
+        let ty = self.check_expr(node.children[0])
+        if self.error != "" {
+            return "unknown"
+        }
+        if node.value == "!" {
+            if ty != "bool" {
+                self.fail(node, "E0201", "expected `bool`, found `" + ty + "`")
+                return "unknown"
+            }
+            return "bool"
+        }
+        if node.value == "-" or node.value == "~" {
+            if !self.is_number(ty) {
+                self.fail(node, "E0201", "expected `number`, found `" + ty + "`")
+                return "unknown"
+            }
+            return "number"
+        }
+        self.fail(node, "E0003", "stage 1 checker does not support `" + node.value + "` yet")
+        return "unknown"
+    }
+
+    fn check_binary(mut self, node: Node): string {
+        if node.children.len < 2 {
+            return "unit"
+        }
+        let left = self.check_expr(node.children[0])
+        let right = self.check_expr(node.children[1])
+        if self.error != "" {
+            return "unknown"
+        }
+        let op = node.value
+        if op == "+" {
+            if self.is_number(left) and self.is_number(right) {
+                return "number"
+            }
+            if left == "string" and right == "string" {
+                return "string"
+            }
+            if self.is_list(left) and left == right {
+                return left
+            }
+            self.fail(
+                node,
+                "E0201",
+                "operator `+` cannot combine `" + left + "` and `" + right + "`",
+            )
+            return "unknown"
+        }
+        if op == "-"
+            or op == "*"
+            or op == "/"
+            or op == "%"
+            or op == "**"
+            or op == "&"
+            or op == "|"
+            or op == "^"
+            or op == "<<"
+            or op == ">>"
+        {
+            if self.is_number(left) and self.is_number(right) {
+                return "number"
+            }
+            self.fail(
+                node,
+                "E0201",
+                "operator `" + op + "` needs `number` operands, found `" + left + "` and `" + right + "`",
+            )
+            return "unknown"
+        }
+        if op == "<" or op == ">" or op == "<=" or op == ">=" {
+            if self.is_number(left) and self.is_number(right) {
+                return "bool"
+            }
+            self.fail(
+                node,
+                "E0201",
+                "operator `" + op + "` needs `number` operands",
+            )
+            return "unknown"
+        }
+        if op == "and" or op == "or" {
+            if left == "bool" and right == "bool" {
+                return "bool"
+            }
+            self.fail(node, "E0201", "operator `" + op + "` needs `bool` operands")
+            return "unknown"
+        }
+        if op == "==" or op == "!=" {
+            if self.assignable(left, right) or self.assignable(right, left) {
+                return "bool"
+            }
+            self.fail(
+                node,
+                "E0201",
+                "`" + left + "` and `" + right + "` cannot be compared",
+            )
+            return "unknown"
+        }
+        if op == "??" {
+            if left == "null" {
+                return right
+            }
+            if self.is_optional(left) {
+                return self.unify(node, self.optional_inner(left), right)
+            }
+            if left == "unknown" {
+                return right
+            }
+            self.fail(node, "E0201", "`??` needs an optional or null left operand")
+            return "unknown"
+        }
+        self.fail(node, "E0003", "stage 1 checker does not support `" + op + "` yet")
+        return "unknown"
+    }
+
+    fn check_call(mut self, node: Node): string {
+        if node.children.len == 0 {
+            return "unit"
+        }
+        let callee = node.children[0]
+        if callee.kind != "Name" and callee.kind != "Path" {
+            self.fail(callee, "E0204", "this expression is not callable")
+            return "unknown"
+        }
+        let name = callee.value
+        let mut arg_types: List<string> = []
+        let mut i = 1
+        while i < node.children.len {
+            let mut arg = node.children[i]
+            if arg.kind == "Arg" {
+                if arg.children.len > 0 {
+                    arg = arg.children[0]
+                }
+            }
+            arg_types.push(self.check_expr(arg))
+            i = i + 1
+        }
+        if self.error != "" {
+            return "unknown"
+        }
+        if name == "print" or name == "println" {
+            return "unit"
+        }
+        if name == "str" {
+            if arg_types.len != 1 {
+                self.fail(node, "E0202", "`str` expects 1 argument")
+            }
+            return "string"
+        }
+        if name == "assert" {
+            if arg_types.len != 2 {
+                self.fail(node, "E0202", "`assert` expects 2 arguments")
+                return "unit"
+            }
+            if arg_types[0] != "bool" {
+                self.fail(node, "E0202", "`assert` expects a `bool` condition")
+            }
+            if arg_types[1] != "string" {
+                self.fail(node, "E0202", "`assert` expects a `string` message")
+            }
+            return "unit"
+        }
+        if name == "panic" {
+            return "unit"
+        }
+        let index = self.find_function(name)
+        if index < 0 {
+            if self.lookup(name) != "" {
+                self.fail(node, "E0204", "`" + name + "` is not callable")
+            } else {
+                self.fail(node, "E0101", "cannot find function `" + name + "`")
+            }
+            return "unknown"
+        }
+        let sig = self.functions[index]
+        if arg_types.len != sig.params.len {
+            self.fail(
+                node,
+                "E0202",
+                "`" + name + "` expects " + str(sig.params.len) + " arguments, found " + str(arg_types.len),
+            )
+            return sig.ret
+        }
+        let mut p = 0
+        while p < sig.params.len {
+            if !self.assignable(sig.params[p], arg_types[p]) {
+                self.fail(
+                node,
+                    "E0202",
+                    "argument " + str(p + 1) + " to `" + name + "` expects `" + sig.params[p] + "`, found `" + arg_types[p] + "`",
+                )
+                return sig.ret
+            }
+            p = p + 1
+        }
+        return sig.ret
+    }
+
+    fn check_member(mut self, node: Node): string {
+        if node.children.len == 0 {
+            return "unknown"
+        }
+        let recv = self.check_expr(node.children[0])
+        if self.error != "" {
+            return "unknown"
+        }
+        if node.value == "len" or node.value == "byte_len" {
+            if recv == "string" or self.is_list(recv) {
+                return "number"
+            }
+        }
+        self.fail(
+            node,
+            "E0102",
+            "no member `" + node.value + "` on `" + recv + "`",
+        )
+        return "unknown"
+    }
+
+    fn check_index(mut self, node: Node): string {
+        if node.children.len < 2 {
+            return "unknown"
+        }
+        let recv = self.check_expr(node.children[0])
+        let index = self.check_expr(node.children[1])
+        if self.error != "" {
+            return "unknown"
+        }
+        if !self.is_number(index) {
+            self.fail(
+                node.children[1],
+                "E0201",
+                "an index must be `number`, found `" + index + "`",
+            )
+            return "unknown"
+        }
+        if self.is_list(recv) {
+            return self.list_element(recv)
+        }
+        self.fail(node, "E0215", "`" + recv + "` cannot be indexed")
+        return "unknown"
+    }
+
+    fn check_if(mut self, node: Node): string {
+        if node.children.len < 2 {
+            return "unit"
+        }
+        let cond = self.check_expr(node.children[0])
+        if self.error != "" {
+            return "unknown"
+        }
+        if cond != "bool" {
+            self.fail(
+                node.children[0],
+                "E0201",
+                "expected `bool`, found `" + cond + "`",
+            )
+            return "unknown"
+        }
+        let then_ty = self.check_block(node.children[1])
+        if node.children.len < 3 {
+            return "unit"
+        }
+        let else_node = node.children[2]
+        let else_ty = if else_node.kind == "If" {
+            self.check_expr(else_node)
+        } else {
+            self.check_block(else_node)
+        }
+        return self.unify(node, then_ty, else_ty)
+    }
+
+    fn check_ternary(mut self, node: Node): string {
+        if node.children.len < 3 {
+            return "unknown"
+        }
+        let cond = self.check_expr(node.children[0])
+        if self.error != "" {
+            return "unknown"
+        }
+        if cond != "bool" {
+            self.fail(node.children[0], "E0201", "a ternary condition must be `bool`")
+            return "unknown"
+        }
+        let then_ty = self.check_expr(node.children[1])
+        let else_ty = self.check_expr(node.children[2])
+        return self.unify(node, then_ty, else_ty)
+    }
+
+    fn check_list(mut self, node: Node): string {
+        if node.children.len == 0 {
+            return "List<unknown>"
+        }
+        let first = self.check_expr(node.children[0])
+        let mut elem = first
+        let mut i = 1
+        while i < node.children.len {
+            let ty = self.check_expr(node.children[i])
+            elem = self.unify(node.children[i], elem, ty)
+            i = i + 1
+        }
+        return "List<" + elem + ">"
+    }
+}
