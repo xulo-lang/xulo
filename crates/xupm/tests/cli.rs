@@ -327,3 +327,27 @@ fn explicit_file_cannot_be_combined_with_a_package() {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+/// WP5/B6: `xupm test <file>` runs stage 1's own `#[test]` functions, not just
+/// package manifests. This is the project-manager half of the stage 1 smoke
+/// test; `crates/xulo-cli/tests/stage1.rs` covers the `xulo test` half.
+#[test]
+fn runs_stage1_test_file() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("crates/xupm has a repository parent")
+        .to_path_buf();
+    let out = run(&["test", "xuloc/tests.xulo"], &root);
+    assert!(
+        out.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("7 passed, 0 failed"),
+        "stage 1 tests should run through xupm test:\n{stdout}"
+    );
+}

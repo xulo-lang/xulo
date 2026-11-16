@@ -1,0 +1,1635 @@
+// Stage 1 recursive-descent parser.
+//
+// The parser consumes the token list produced by `lexer.lex` and builds the
+// generic `ast.Node` tree. It covers the part of the language stage 1 needs:
+// headers (`mod`/`use`), declarations (fn, struct, enum, trait, impl, type,
+// const, let, test attributes), statements, the full expression precedence
+// ladder, `if`/`match`, patterns, and structural types.
+//
+// The grammar is newline-insensitive, so statement boundaries are implicit:
+// an expression stops when the next token cannot continue it, and `;` is
+// accepted but never required. The parser stops at the first error and
+// records the 1-based line/column of the offending token.
+//
+// Deliberate subset limits (also listed in BOOTSTRAP.md): closures and
+// arrow-lambdas parse only as `fn(...) { ... }`, postfix `?` propagation is
+// not recognised in expressions, and call-site type arguments (`f<int>(x)`)
+// are not consumed. Stage 1's own source avoids all three.
+
+use ast::{Node, node, add};
+use lexer::{Token};
+
+pub struct ParseResult {
+    pub root: Node,
+    pub error: string,
+    pub line: number,
+    pub column: number,
+}
+
+pub struct Parser {
+    tokens: List<Token>,
+    pos: number,
+    error: string,
+    err_line: number,
+    err_column: number,
+}
+
+pub fn parse(tokens: List<Token>): ParseResult {
+    let mut p = Parser(
+        tokens: tokens,
+        pos: 0,
+        error: "",
+        err_line: 1,
+        err_column: 1,
+    )
+    let root = p.program()
+    return ParseResult(
+        root: root,
+        error: p.error,
+        line: p.err_line,
+        column: p.err_column,
+    )
+}
+
+impl Parser {
+    // ── token access ─────────────────────────────────────────────────────
+
+    fn current(self): Token {
+        if self.pos >= self.tokens.len {
+            return self.tokens[self.tokens.len - 1]
+        }
+        return self.tokens[self.pos]
+    }
+
+    fn prev(self): Token {
+        if self.pos == 0 {
+            return self.current()
+        }
+        return self.tokens[self.pos - 1]
+    }
+
+    fn peek_text(self, offset: number): string {
+        let at = self.pos + offset
+        if at >= self.tokens.len {
+            return ""
+        }
+        return self.tokens[at].text
+    }
+
+    fn at(self, text: string): bool {
+        return self.current().text == text
+    }
+
+    fn at_kind(self, kind: string): bool {
+        return self.current().kind == kind
+    }
+
+    fn advance(mut self): Token {
+        let token = self.current()
+        if token.kind != "eof" {
+            self.pos = self.pos + 1
+        }
+        return token
+    }
+
+    fn eat(mut self, text: string): bool {
+        if self.at(text) {
+            self.advance()
+            return true
+        }
+        return false
+    }
+
+    fn fail(mut self, message: string) {
+        if self.error == "" {
+            let token = self.current()
+            self.error = message
+            self.err_line = token.line
+            self.err_column = token.column
+        }
+    }
+
+    fn describe(self): string {
+        let token = self.current()
+        if token.kind == "eof" {
+            return "end of file"
+        }
+        return "`" + token.text + "`"
+    }
+
+    fn expect(mut self, text: string): bool {
+        if self.at(text) {
+            self.advance()
+            return true
+        }
+        self.fail("expected `" + text + "`, found " + self.describe())
+        return false
+    }
+
+    fn ident_name(mut self): string {
+        let token = self.current()
+        if token.kind == "ident" or token.kind == "keyword" {
+            self.advance()
+            return token.text
+        }
+        self.fail("expected an identifier, found " + self.describe())
+        return ""
+    }
+
+    // ── nodes ────────────────────────────────────────────────────────────
+
+    fn mk(self, kind: string, value: string, start: Token): Node {
+        let end = self.prev()
+        return node(kind, value, start.start, end.end, start.line, start.column)
+    }
+
+    fn mk_pair(self, kind: string, value: string, start: Token, end: Token): Node {
+        return node(kind, value, start.start, end.end, start.line, start.column)
+    }
+
+    fn placeholder(self, start: Token): Node {
+        return node("Error", "", start.start, start.end, start.line, start.column)
+    }
+
+    fn binary(self, op: string, left: Node, right: Node): Node {
+        let mut n = node(
+            "Binary",
+            op,
+            left.start,
+            right.end,
+            left.line,
+            left.column,
+        )
+        add(n, left)
+        add(n, right)
+        return n
+    }
+
+    fn skip_balanced(mut self, opening: string, closing: string) {
+        if !self.at(opening) {
+            return
+        }
+        let mut depth = 0
+        while self.error == "" and !self.at_kind("eof") {
+            if self.at(opening) {
+                depth = depth + 1
+                self.advance()
+            } else if self.at(closing) {
+                depth = depth - 1
+                self.advance()
+                if depth == 0 {
+                    return
+                }
+            } else {
+                self.advance()
+            }
+        }
+    }
+
+    // ── program and headers ──────────────────────────────────────────────
+
+    fn program(mut self): Node {
+        let start = self.current()
+        let mut root = node("Program", "", start.start, start.end, start.line, start.column)
+        while self.error == "" and !self.at_kind("eof") {
+            let item = self.declaration()
+            if self.error != "" {
+                break
+            }
+            add(root, item)
+        }
+        if self.error == "" {
+            root.end = self.prev().end
+        }
+        return root
+    }
+
+    fn declaration(mut self): Node {
+        let start = self.current()
+        let mut attrs: List<Node> = []
+        while self.at("#") and self.error == "" {
+            attrs.push(self.attribute())
+        }
+        if self.error != "" {
+            return self.placeholder(start)
+        }
+        if self.at("pub") {
+            self.advance()
+        }
+        if self.at("async") {
+            self.advance()
+        }
+        let mut item = self.placeholder(start)
+        if self.at("mod") {
+            item = self.mod_decl()
+        } else if self.at("use") {
+            item = self.use_decl()
+        } else if self.at("fn") {
+            item = self.fn_decl()
+        } else if self.at("struct") {
+            item = self.struct_decl()
+        } else if self.at("enum") {
+            item = self.enum_decl()
+        } else if self.at("trait") {
+            item = self.trait_decl()
+        } else if self.at("impl") {
+            item = self.impl_decl()
+        } else if self.at("type") {
+            item = self.type_alias_decl()
+        } else if self.at("const") {
+            item = self.const_decl()
+        } else if self.at("let") {
+            item = self.let_decl()
+        } else if self.at("extern") {
+            item = self.extern_decl()
+        } else {
+            self.fail("expected a declaration, found " + self.describe())
+        }
+        for attr in attrs {
+            add(item, attr)
+        }
+        return item
+    }
+
+    fn attribute(mut self): Node {
+        let start = self.advance()
+        let mut n = self.mk("Attribute", "", start)
+        if !self.expect("[") {
+            return n
+        }
+        let name = self.ident_name()
+        n.value = name
+        while self.error == "" and !self.at("]") and !self.at_kind("eof") {
+            if self.at("(") {
+                self.skip_balanced("(", ")")
+            } else {
+                self.advance()
+            }
+        }
+        self.expect("]")
+        n.end = self.prev().end
+        return n
+    }
+
+    fn mod_decl(mut self): Node {
+        let start = self.advance()
+        let name = self.ident_name()
+        let mut n = node("Mod", name, start.start, start.end, start.line, start.column)
+        if self.eat(";") {
+            n.end = self.prev().end
+            return n
+        }
+        if !self.expect("{") {
+            return n
+        }
+        while self.error == "" and !self.at("}") and !self.at_kind("eof") {
+            add(n, self.declaration())
+        }
+        self.expect("}")
+        n.end = self.prev().end
+        return n
+    }
+
+    fn use_decl(mut self): Node {
+        let start = self.advance()
+        let mut value = ""
+        if self.at_kind("ident") or self.at_kind("keyword") {
+            value = self.current().text
+        }
+        let mut n = node("Use", value, start.start, start.end, start.line, start.column)
+        while self.error == "" and !self.at(";") and !self.at_kind("eof") {
+            if self.at("{") {
+                self.skip_balanced("{", "}")
+            } else {
+                self.advance()
+            }
+        }
+        self.expect(";")
+        n.end = self.prev().end
+        return n
+    }
+
+    fn extern_decl(mut self): Node {
+        let start = self.advance()
+        let mut n = self.mk("Extern", "", start)
+        while self.error == "" and !self.at("{") and !self.at(";") and !self.at_kind("eof") {
+            self.advance()
+        }
+        if self.at("{") {
+            self.skip_balanced("{", "}")
+        } else if self.at(";") {
+            self.advance()
+        }
+        n.end = self.prev().end
+        return n
+    }
+
+    // ── declarations ─────────────────────────────────────────────────────
+
+    fn fn_decl(mut self): Node {
+        let start = self.advance()
+        let name = self.ident_name()
+        let mut n = node("Fn", name, start.start, start.end, start.line, start.column)
+        if self.at("<") {
+            add(n, self.generic_params())
+        }
+        if !self.expect("(") {
+            return n
+        }
+        for param in self.parameters() {
+            add(n, param)
+        }
+        self.expect(")")
+        if self.at(":") {
+            self.advance()
+            add(n, self.type_expr())
+        }
+        while self.error == "" and !self.at("{") and !self.at_kind("eof") {
+            self.advance()
+        }
+        if self.at("{") {
+            add(n, self.block())
+        } else {
+            self.fail("expected a function body, found " + self.describe())
+        }
+        n.end = self.prev().end
+        return n
+    }
+
+    fn parameters(mut self): List<Node> {
+        let mut out: List<Node> = []
+        while self.error == "" and !self.at(")") and !self.at_kind("eof") {
+            out.push(self.parameter())
+            if self.at(",") {
+                self.advance()
+            } else {
+                break
+            }
+        }
+        return out
+    }
+
+    fn parameter(mut self): Node {
+        let start = self.current()
+        if self.at("self") {
+            self.advance()
+            return self.mk("Param", "self", start)
+        }
+        if self.at("mut") and self.peek_text(1) == "self" {
+            self.advance()
+            self.advance()
+            return self.mk("Param", "mut self", start)
+        }
+        let name = self.ident_name()
+        let mut n = node("Param", name, start.start, start.end, start.line, start.column)
+        if !self.expect(":") {
+            return n
+        }
+        if self.at("mut") or self.at("shared") {
+            self.advance()
+        }
+        add(n, self.type_expr())
+        if self.at("=") {
+            self.advance()
+            add(n, self.expr())
+        }
+        n.end = self.prev().end
+        return n
+    }
+
+    fn struct_decl(mut self): Node {
+        let start = self.advance()
+        let name = self.ident_name()
+        let mut n = node("Struct", name, start.start, start.end, start.line, start.column)
+        if self.at("<") {
+            add(n, self.generic_params())
+        }
+        if !self.expect("{") {
+            return n
+        }
+        while self.error == "" and !self.at("}") and !self.at_kind("eof") {
+            add(n, self.field_decl())
+            if self.at(",") {
+                self.advance()
+            }
+        }
+        self.expect("}")
+        n.end = self.prev().end
+        return n
+    }
+
+    fn field_decl(mut self): Node {
+        let start = self.current()
+        if self.at("pub") {
+            self.advance()
+        }
+        let name = self.ident_name()
+        let mut n = node("Field", name, start.start, start.end, start.line, start.column)
+        if !self.expect(":") {
+            return n
+        }
+        add(n, self.type_expr())
+        n.end = self.prev().end
+        return n
+    }
+
+    fn enum_decl(mut self): Node {
+        let start = self.advance()
+        let name = self.ident_name()
+        let mut n = node("Enum", name, start.start, start.end, start.line, start.column)
+        if self.at("<") {
+            add(n, self.generic_params())
+        }
+        if !self.expect("{") {
+            return n
+        }
+        while self.error == "" and !self.at("}") and !self.at_kind("eof") {
+            add(n, self.variant_decl())
+            if self.at(",") {
+                self.advance()
+            }
+        }
+        self.expect("}")
+        n.end = self.prev().end
+        return n
+    }
+
+    fn variant_decl(mut self): Node {
+        let start = self.current()
+        let name = self.ident_name()
+        let mut n = node("Variant", name, start.start, start.end, start.line, start.column)
+        if self.at("(") {
+            add(n, self.payload_types())
+        }
+        n.end = self.prev().end
+        return n
+    }
+
+    fn payload_types(mut self): Node {
+        let start = self.advance()
+        let mut n = node("Payload", "", start.start, start.end, start.line, start.column)
+        while self.error == "" and !self.at(")") and !self.at_kind("eof") {
+            let item_start = self.current()
+            if (self.at_kind("ident") or self.at_kind("keyword")) and self.peek_text(1) == ":" {
+                let name = self.ident_name()
+                self.advance()
+                let mut field = node(
+                    "PayloadField",
+                    name,
+                    item_start.start,
+                    item_start.end,
+                    item_start.line,
+                    item_start.column,
+                )
+                add(field, self.type_expr())
+                field.end = self.prev().end
+                add(n, field)
+            } else {
+                add(n, self.type_expr())
+            }
+            if self.at(",") {
+                self.advance()
+            } else {
+                break
+            }
+        }
+        self.expect(")")
+        n.end = self.prev().end
+        return n
+    }
+
+    fn trait_decl(mut self): Node {
+        let start = self.advance()
+        let name = self.ident_name()
+        let mut n = node("Trait", name, start.start, start.end, start.line, start.column)
+        if self.at("<") {
+            add(n, self.generic_params())
+        }
+        if !self.expect("{") {
+            return n
+        }
+        while self.error == "" and !self.at("}") and !self.at_kind("eof") {
+            if self.at(";") {
+                self.advance()
+            } else {
+                add(n, self.trait_method())
+            }
+        }
+        self.expect("}")
+        n.end = self.prev().end
+        return n
+    }
+
+    fn trait_method(mut self): Node {
+        let start = self.current()
+        if self.at("async") {
+            self.advance()
+        }
+        let mut n = self.mk("TraitMethod", "", start)
+        if !self.expect("fn") {
+            return n
+        }
+        n.value = self.ident_name()
+        if !self.expect("(") {
+            return n
+        }
+        for param in self.parameters() {
+            add(n, param)
+        }
+        self.expect(")")
+        if self.at(":") {
+            self.advance()
+            add(n, self.type_expr())
+        } else {
+            self.fail("a trait method must declare a return type")
+        }
+        if self.at(";") {
+            self.advance()
+        }
+        n.end = self.prev().end
+        return n
+    }
+
+    fn impl_decl(mut self): Node {
+        let start = self.advance()
+        let mut n = self.mk("Impl", "", start)
+        if self.at("<") {
+            self.advance()
+            while self.error == "" and !self.at(">") and !self.at_kind("eof") {
+                self.advance()
+            }
+            self.expect(">")
+        }
+        let first = self.type_expr()
+        n.value = first.value
+        add(n, first)
+        if self.at("for") {
+            self.advance()
+            add(n, self.type_expr())
+        }
+        if !self.expect("{") {
+            return n
+        }
+        while self.error == "" and !self.at("}") and !self.at_kind("eof") {
+            let mut attrs: List<Node> = []
+            while self.at("#") and self.error == "" {
+                attrs.push(self.attribute())
+            }
+            if self.at("pub") {
+                self.advance()
+            }
+            if self.at("async") {
+                self.advance()
+            }
+            if self.at("fn") {
+                let method = self.fn_decl()
+                for attr in attrs {
+                    add(method, attr)
+                }
+                add(n, method)
+            } else {
+                self.fail("expected a method in impl, found " + self.describe())
+            }
+        }
+        self.expect("}")
+        n.end = self.prev().end
+        return n
+    }
+
+    fn type_alias_decl(mut self): Node {
+        let start = self.advance()
+        let name = self.ident_name()
+        let mut n = node("TypeAlias", name, start.start, start.end, start.line, start.column)
+        if self.at("<") {
+            add(n, self.generic_params())
+        }
+        if !self.expect("=") {
+            return n
+        }
+        add(n, self.type_expr())
+        n.end = self.prev().end
+        return n
+    }
+
+    fn const_decl(mut self): Node {
+        let start = self.advance()
+        let name = self.ident_name()
+        let mut n = node("Const", name, start.start, start.end, start.line, start.column)
+        if self.at(":") {
+            self.advance()
+            add(n, self.type_expr())
+        }
+        if !self.expect("=") {
+            return n
+        }
+        add(n, self.expr())
+        if self.at(";") {
+            self.advance()
+        }
+        n.end = self.prev().end
+        return n
+    }
+
+    fn let_decl(mut self): Node {
+        let start = self.advance()
+        let mut n = self.mk("Let", "", start)
+        if self.at("mut") {
+            self.advance()
+            add(n, self.mk_pair("Mut", "", start, self.prev()))
+        }
+        if self.at("(") or self.at("{") {
+            let opening = self.current().text
+            let mut closing = ")"
+            if opening == "{" {
+                closing = "}"
+            }
+            self.skip_balanced(opening, closing)
+        } else {
+            n.value = self.ident_name()
+        }
+        if self.at(":") {
+            self.advance()
+            add(n, self.type_expr())
+        }
+        if self.at("=") or self.at(":=") {
+            let op = self.advance()
+            if op.text == ":=" {
+                add(n, self.mk_pair("Mut", "", start, op))
+            }
+            add(n, self.expr())
+        } else {
+            self.fail("expected an initializer, found " + self.describe())
+        }
+        if self.at(";") {
+            self.advance()
+        }
+        n.end = self.prev().end
+        return n
+    }
+
+    // ── types ────────────────────────────────────────────────────────────
+
+    fn type_expr(mut self): Node {
+        let mut left = self.type_intersection()
+        while self.error == "" and self.at("|") {
+            let op = self.advance()
+            let right = self.type_intersection()
+            left = self.binary_type("|", op.text, left, right)
+        }
+        return left
+    }
+
+    fn type_intersection(mut self): Node {
+        let mut left = self.type_postfix()
+        while self.error == "" and self.at("&") {
+            let op = self.advance()
+            let right = self.type_postfix()
+            left = self.binary_type("&", op.text, left, right)
+        }
+        return left
+    }
+
+    fn binary_type(self, kind: string, op: string, left: Node, right: Node): Node {
+        let mut n = node(kind, op, left.start, right.end, left.line, left.column)
+        add(n, left)
+        add(n, right)
+        return n
+    }
+
+    fn type_postfix(mut self): Node {
+        let mut base = self.type_primary()
+        while self.error == "" and self.at("?") {
+            let question = self.advance()
+            let mut n = node(
+                "OptionalType",
+                "?",
+                base.start,
+                question.end,
+                base.line,
+                base.column,
+            )
+            add(n, base)
+            base = n
+        }
+        return base
+    }
+
+    fn type_primary(mut self): Node {
+        let start = self.current()
+        if self.at("(") {
+            self.advance()
+            let first = self.type_expr()
+            if self.at(",") {
+                let mut n = self.mk_pair("TupleType", "", start, start)
+                add(n, first)
+                while self.error == "" and self.at(",") {
+                    self.advance()
+                    if self.at(")") {
+                        break
+                    }
+                    add(n, self.type_expr())
+                }
+                self.expect(")")
+                n.end = self.prev().end
+                return n
+            }
+            self.expect(")")
+            return first
+        }
+        if self.at("fn") or (self.at("async") and self.peek_text(1) == "fn") {
+            return self.function_type()
+        }
+        if self.at_kind("ident") or self.at_kind("keyword") {
+            self.advance()
+            let mut n = self.mk("TypeName", start.text, start)
+            if self.at("<") {
+                add(n, self.type_args())
+            }
+            while self.error == "" and self.at("::") {
+                self.advance()
+                let segment = self.ident_name()
+                let mut path = node(
+                    "TypeName",
+                    n.value + "::" + segment,
+                    n.start,
+                    self.prev().end,
+                    n.line,
+                    n.column,
+                )
+                add(path, n)
+                n = path
+            }
+            n.end = self.prev().end
+            return n
+        }
+        self.fail("expected a type, found " + self.describe())
+        return self.placeholder(start)
+    }
+
+    fn function_type(mut self): Node {
+        let start = self.current()
+        if self.at("async") {
+            self.advance()
+        }
+        self.expect("fn")
+        let mut n = self.mk("FnType", "", start)
+        if !self.expect("(") {
+            return n
+        }
+        while self.error == "" and !self.at(")") and !self.at_kind("eof") {
+            let param_start = self.current()
+            if self.at_kind("ident") and self.peek_text(1) == ":" {
+                self.advance()
+                self.advance()
+            } else if self.at("mut") or self.at("shared") {
+                self.advance()
+            }
+            add(n, self.type_expr())
+            if self.at(",") {
+                self.advance()
+            } else {
+                break
+            }
+        }
+        self.expect(")")
+        if self.at(":") {
+            self.advance()
+            add(n, self.type_expr())
+        }
+        n.end = self.prev().end
+        return n
+    }
+
+    fn type_args(mut self): Node {
+        let start = self.advance()
+        let mut n = node("TypeArgs", "", start.start, start.end, start.line, start.column)
+        while self.error == "" and !self.at(">") and !self.at_kind("eof") {
+            add(n, self.type_expr())
+            if self.at(",") {
+                self.advance()
+            } else {
+                break
+            }
+        }
+        self.expect(">")
+        n.end = self.prev().end
+        return n
+    }
+
+    fn generic_params(mut self): Node {
+        let start = self.advance()
+        let mut n = node("GenericParams", "", start.start, start.end, start.line, start.column)
+        while self.error == "" and !self.at(">") and !self.at_kind("eof") {
+            let param_start = self.current()
+            let mut param = node(
+                "GenericParam",
+                "",
+                param_start.start,
+                param_start.end,
+                param_start.line,
+                param_start.column,
+            )
+            if self.at("const") {
+                self.advance()
+            }
+            param.value = self.ident_name()
+            if self.at(":") {
+                self.advance()
+                add(param, self.type_expr())
+                while self.at("+") {
+                    self.advance()
+                    add(param, self.type_expr())
+                }
+            }
+            param.end = self.prev().end
+            add(n, param)
+            if self.at(",") {
+                self.advance()
+            } else {
+                break
+            }
+        }
+        self.expect(">")
+        n.end = self.prev().end
+        return n
+    }
+
+    // ── statements ───────────────────────────────────────────────────────
+
+    fn block(mut self): Node {
+        let start = self.advance()
+        let mut n = node("Block", "", start.start, start.end, start.line, start.column)
+        while self.error == "" and !self.at("}") and !self.at_kind("eof") {
+            add(n, self.statement())
+        }
+        if self.error == "" {
+            self.expect("}")
+        }
+        n.end = self.prev().end
+        return n
+    }
+
+    fn statement(mut self): Node {
+        let start = self.current()
+        if self.at("let") {
+            return self.let_decl()
+        }
+        if self.at("const") {
+            return self.const_decl()
+        }
+        if self.at("return") {
+            self.advance()
+            let mut n = node("Return", "", start.start, start.end, start.line, start.column)
+            if !self.at("}") and !self.at(";") and !self.at_kind("eof") {
+                add(n, self.expr())
+            }
+            if self.at(";") {
+                self.advance()
+            }
+            n.end = self.prev().end
+            return n
+        }
+        if self.at("break") or self.at("continue") {
+            let word = self.advance()
+            if self.at(";") {
+                self.advance()
+            }
+            return self.mk("Jump", word.text, start)
+        }
+        if self.at("defer") {
+            self.advance()
+            let mut n = node("Defer", "", start.start, start.end, start.line, start.column)
+            if self.at("{") {
+                add(n, self.block())
+            } else {
+                add(n, self.expr())
+            }
+            if self.at(";") {
+                self.advance()
+            }
+            n.end = self.prev().end
+            return n
+        }
+        if self.at("for") {
+            return self.for_stmt()
+        }
+        if self.at("while") {
+            return self.while_stmt()
+        }
+        if self.at("fn") {
+            return self.fn_decl()
+        }
+        let left = self.expr()
+        if self.error != "" {
+            return left
+        }
+        if self.at("=") {
+            self.advance()
+            let right = self.expr()
+            let mut n = node("Assign", "", left.start, right.end, left.line, left.column)
+            add(n, left)
+            add(n, right)
+            if self.at(";") {
+                self.advance()
+            }
+            n.end = self.prev().end
+            return n
+        }
+        let mut n = node("ExprStmt", "", left.start, left.end, left.line, left.column)
+        add(n, left)
+        if self.at(";") {
+            self.advance()
+        }
+        n.end = self.prev().end
+        return n
+    }
+
+    fn for_stmt(mut self): Node {
+        let start = self.advance()
+        let name = self.ident_name()
+        let mut n = node("For", name, start.start, start.end, start.line, start.column)
+        if !self.expect("in") {
+            return n
+        }
+        add(n, self.expr())
+        if self.at("{") {
+            add(n, self.block())
+        } else {
+            self.fail("expected a loop body, found " + self.describe())
+        }
+        n.end = self.prev().end
+        return n
+    }
+
+    fn while_stmt(mut self): Node {
+        let start = self.advance()
+        let mut n = node("While", "", start.start, start.end, start.line, start.column)
+        add(n, self.expr())
+        if self.at("{") {
+            add(n, self.block())
+        } else {
+            self.fail("expected a loop body, found " + self.describe())
+        }
+        n.end = self.prev().end
+        return n
+    }
+
+    // ── expressions ──────────────────────────────────────────────────────
+
+    fn expr(mut self): Node {
+        return self.ternary()
+    }
+
+    fn ternary(mut self): Node {
+        let cond = self.logical_or()
+        if self.error == "" and self.at("?") {
+            self.advance()
+            let then_branch = self.expr()
+            if !self.expect(":") {
+                return cond
+            }
+            let else_branch = self.ternary()
+            let mut n = node(
+                "Ternary",
+                "?",
+                cond.start,
+                else_branch.end,
+                cond.line,
+                cond.column,
+            )
+            add(n, cond)
+            add(n, then_branch)
+            add(n, else_branch)
+            return n
+        }
+        return cond
+    }
+
+    fn logical_or(mut self): Node {
+        let mut left = self.logical_and()
+        while self.error == "" and self.at("or") {
+            self.advance()
+            let right = self.logical_and()
+            left = self.binary("or", left, right)
+        }
+        return left
+    }
+
+    fn logical_and(mut self): Node {
+        let mut left = self.nullish()
+        while self.error == "" and self.at("and") {
+            self.advance()
+            let right = self.nullish()
+            left = self.binary("and", left, right)
+        }
+        return left
+    }
+
+    fn nullish(mut self): Node {
+        let mut left = self.equality()
+        while self.error == "" and self.at("??") {
+            self.advance()
+            let right = self.equality()
+            left = self.binary("??", left, right)
+        }
+        return left
+    }
+
+    fn equality(mut self): Node {
+        let mut left = self.is_expr()
+        while self.error == "" and (self.at("==") or self.at("!=")) {
+            let op = self.advance()
+            let right = self.is_expr()
+            left = self.binary(op.text, left, right)
+        }
+        return left
+    }
+
+    fn is_expr(mut self): Node {
+        let mut left = self.relational()
+        if self.error == "" and self.at("is") {
+            self.advance()
+            let mut value = "is"
+            if self.at("not") {
+                self.advance()
+                value = "is not"
+            }
+            let ty = self.type_expr()
+            let mut n = node("Is", value, left.start, ty.end, left.line, left.column)
+            add(n, left)
+            add(n, ty)
+            left = n
+        }
+        return left
+    }
+
+    fn relational(mut self): Node {
+        let mut left = self.range_expr()
+        while self.error == ""
+            and (self.at("<") or self.at(">") or self.at("<=") or self.at(">="))
+        {
+            let op = self.advance()
+            let right = self.range_expr()
+            left = self.binary(op.text, left, right)
+        }
+        return left
+    }
+
+    fn range_expr(mut self): Node {
+        let mut left = self.bit_or()
+        while self.error == "" and (self.at("..<") or self.at("..=")) {
+            let op = self.advance()
+            let right = self.bit_or()
+            left = self.binary(op.text, left, right)
+        }
+        return left
+    }
+
+    fn bit_or(mut self): Node {
+        let mut left = self.bit_xor()
+        while self.error == "" and self.at("|") {
+            self.advance()
+            let right = self.bit_xor()
+            left = self.binary("|", left, right)
+        }
+        return left
+    }
+
+    fn bit_xor(mut self): Node {
+        let mut left = self.bit_and()
+        while self.error == "" and self.at("^") {
+            self.advance()
+            let right = self.bit_and()
+            left = self.binary("^", left, right)
+        }
+        return left
+    }
+
+    fn bit_and(mut self): Node {
+        let mut left = self.shift()
+        while self.error == "" and self.at("&") {
+            self.advance()
+            let right = self.shift()
+            left = self.binary("&", left, right)
+        }
+        return left
+    }
+
+    fn shift(mut self): Node {
+        let mut left = self.additive()
+        while self.error == "" and (self.at("<<") or self.at(">>")) {
+            let op = self.advance()
+            let right = self.additive()
+            left = self.binary(op.text, left, right)
+        }
+        return left
+    }
+
+    fn additive(mut self): Node {
+        let mut left = self.multiplicative()
+        while self.error == "" and (self.at("+") or self.at("-")) {
+            let op = self.advance()
+            let right = self.multiplicative()
+            left = self.binary(op.text, left, right)
+        }
+        return left
+    }
+
+    fn multiplicative(mut self): Node {
+        let mut left = self.power()
+        while self.error == "" and (self.at("*") or self.at("/") or self.at("%")) {
+            let op = self.advance()
+            let right = self.power()
+            left = self.binary(op.text, left, right)
+        }
+        return left
+    }
+
+    fn power(mut self): Node {
+        let left = self.unary()
+        if self.error == "" and self.at("**") {
+            self.advance()
+            let right = self.power()
+            return self.binary("**", left, right)
+        }
+        return left
+    }
+
+    fn unary(mut self): Node {
+        let start = self.current()
+        if self.at("!")
+            or self.at("-")
+            or self.at("~")
+            or self.at("await")
+            or self.at("move")
+            or self.at("copy")
+        {
+            let op = self.advance()
+            let operand = self.unary()
+            let mut n = node(
+                "Unary",
+                op.text,
+                start.start,
+                operand.end,
+                start.line,
+                start.column,
+            )
+            add(n, operand)
+            return n
+        }
+        return self.postfix()
+    }
+
+    fn postfix(mut self): Node {
+        let mut value = self.primary()
+        while self.error == "" {
+            if self.at("(") {
+                value = self.call_tail(value)
+            } else if self.at("[") {
+                self.advance()
+                let index = self.expr()
+                self.expect("]")
+                let mut n = node(
+                    "Index",
+                    "",
+                    value.start,
+                    self.prev().end,
+                    value.line,
+                    value.column,
+                )
+                add(n, value)
+                add(n, index)
+                value = n
+            } else if self.at(".") or self.at("?.") {
+                let dot = self.advance()
+                let property = self.member_name()
+                let mut kind = "Member"
+                if dot.text == "?." {
+                    kind = "OptionalMember"
+                }
+                let mut n = node(
+                    kind,
+                    property,
+                    value.start,
+                    self.prev().end,
+                    value.line,
+                    value.column,
+                )
+                add(n, value)
+                value = n
+            } else {
+                break
+            }
+        }
+        return value
+    }
+
+    fn member_name(mut self): string {
+        let token = self.current()
+        if token.kind == "ident"
+            or token.kind == "keyword"
+            or token.kind == "int"
+        {
+            self.advance()
+            return token.text
+        }
+        self.fail("expected a member name, found " + self.describe())
+        return ""
+    }
+
+    fn call_tail(mut self, callee: Node): Node {
+        let start = self.current()
+        self.advance()
+        let mut n = node(
+            "Call",
+            "",
+            callee.start,
+            start.end,
+            callee.line,
+            callee.column,
+        )
+        add(n, callee)
+        while self.error == "" and !self.at(")") and !self.at_kind("eof") {
+            if (self.at_kind("ident") or self.at_kind("keyword")) and self.peek_text(1) == ":" {
+                let arg_start = self.current()
+                let name = self.ident_name()
+                self.advance()
+                let mut arg = node(
+                    "Arg",
+                    name,
+                    arg_start.start,
+                    arg_start.end,
+                    arg_start.line,
+                    arg_start.column,
+                )
+                add(arg, self.expr())
+                arg.end = self.prev().end
+                add(n, arg)
+            } else {
+                add(n, self.expr())
+            }
+            if self.at(",") {
+                self.advance()
+            } else {
+                break
+            }
+        }
+        self.expect(")")
+        n.end = self.prev().end
+        return n
+    }
+
+    fn primary(mut self): Node {
+        let start = self.current()
+        if self.at("true") or self.at("false") or self.at("null") {
+            self.advance()
+            return self.mk("Literal", start.text, start)
+        }
+        if self.at_kind("int")
+            or self.at_kind("float")
+            or self.at_kind("string")
+            or self.at_kind("template")
+        {
+            self.advance()
+            return self.mk("Literal", start.text, start)
+        }
+        if self.at("(") {
+            return self.paren_expr()
+        }
+        if self.at("[") {
+            return self.list_expr()
+        }
+        if self.at("{") {
+            return self.map_expr()
+        }
+        if self.at("if") {
+            return self.if_expr()
+        }
+        if self.at("match") {
+            return self.match_expr()
+        }
+        if self.at("fn") {
+            return self.fn_expr()
+        }
+        if self.at("panic") {
+            self.advance()
+            let name = self.mk("Name", "panic", start)
+            if self.at("(") {
+                return self.call_tail(name)
+            }
+            return name
+        }
+        if self.at_kind("ident") or self.at_kind("keyword") {
+            self.advance()
+            let mut n = self.mk("Name", start.text, start)
+            while self.error == "" and self.at("::") {
+                self.advance()
+                let segment = self.ident_name()
+                let mut path = node(
+                    "Path",
+                    n.value + "::" + segment,
+                    n.start,
+                    self.prev().end,
+                    n.line,
+                    n.column,
+                )
+                add(path, n)
+                n = path
+            }
+            return n
+        }
+        self.fail("expected an expression, found " + self.describe())
+        return self.placeholder(start)
+    }
+
+    fn paren_expr(mut self): Node {
+        let start = self.advance()
+        let first = self.expr()
+        if self.at(",") {
+            let mut n = node("Tuple", "", start.start, start.end, start.line, start.column)
+            add(n, first)
+            while self.error == "" and self.at(",") {
+                self.advance()
+                if self.at(")") {
+                    break
+                }
+                add(n, self.expr())
+            }
+            self.expect(")")
+            n.end = self.prev().end
+            return n
+        }
+        self.expect(")")
+        let mut n = node("Group", "", start.start, self.prev().end, start.line, start.column)
+        add(n, first)
+        return n
+    }
+
+    fn list_expr(mut self): Node {
+        let start = self.advance()
+        let mut n = node("List", "", start.start, start.end, start.line, start.column)
+        while self.error == "" and !self.at("]") and !self.at_kind("eof") {
+            if self.at("...") {
+                let spread_start = self.advance()
+                let mut spread = node(
+                    "Spread",
+                    "",
+                    spread_start.start,
+                    spread_start.end,
+                    spread_start.line,
+                    spread_start.column,
+                )
+                add(spread, self.expr())
+                spread.end = self.prev().end
+                add(n, spread)
+            } else {
+                add(n, self.expr())
+            }
+            if self.at(",") {
+                self.advance()
+            } else {
+                break
+            }
+        }
+        self.expect("]")
+        n.end = self.prev().end
+        return n
+    }
+
+    fn map_expr(mut self): Node {
+        let start = self.advance()
+        let mut n = node("Map", "", start.start, start.end, start.line, start.column)
+        while self.error == "" and !self.at("}") and !self.at_kind("eof") {
+            if self.at("...") {
+                let spread_start = self.advance()
+                let mut spread = node(
+                    "Spread",
+                    "",
+                    spread_start.start,
+                    spread_start.end,
+                    spread_start.line,
+                    spread_start.column,
+                )
+                add(spread, self.expr())
+                spread.end = self.prev().end
+                add(n, spread)
+            } else {
+                let key = self.ident_name()
+                self.expect(":")
+                let mut entry = self.mk("Entry", key, start)
+                add(entry, self.expr())
+                entry.end = self.prev().end
+                add(n, entry)
+            }
+            if self.at(",") {
+                self.advance()
+            } else {
+                break
+            }
+        }
+        self.expect("}")
+        n.end = self.prev().end
+        return n
+    }
+
+    fn if_expr(mut self): Node {
+        let start = self.advance()
+        let condition = self.expr()
+        let then_block = self.block()
+        let mut n = node(
+            "If",
+            "",
+            start.start,
+            then_block.end,
+            start.line,
+            start.column,
+        )
+        add(n, condition)
+        add(n, then_block)
+        if self.at("else") {
+            self.advance()
+            if self.at("if") {
+                add(n, self.if_expr())
+            } else {
+                add(n, self.block())
+            }
+        }
+        n.end = self.prev().end
+        return n
+    }
+
+    fn match_expr(mut self): Node {
+        let start = self.advance()
+        let scrutinee = self.expr()
+        let mut n = node("Match", "", start.start, start.end, start.line, start.column)
+        add(n, scrutinee)
+        if !self.expect("{") {
+            return n
+        }
+        while self.error == "" and !self.at("}") and !self.at_kind("eof") {
+            add(n, self.match_arm())
+            if self.at(",") {
+                self.advance()
+            }
+        }
+        self.expect("}")
+        n.end = self.prev().end
+        return n
+    }
+
+    fn match_arm(mut self): Node {
+        let start = self.current()
+        let mut n = node("Arm", "", start.start, start.end, start.line, start.column)
+        add(n, self.pattern())
+        if self.at("if") {
+            let guard_start = self.advance()
+            let mut guard_node = node(
+                "Guard",
+                "",
+                guard_start.start,
+                guard_start.end,
+                guard_start.line,
+                guard_start.column,
+            )
+            add(guard_node, self.expr())
+            guard_node.end = self.prev().end
+            add(n, guard_node)
+        }
+        if !self.expect("=>") {
+            return n
+        }
+        if self.at("{") {
+            add(n, self.block())
+        } else {
+            add(n, self.expr())
+        }
+        n.end = self.prev().end
+        return n
+    }
+
+    fn pattern(mut self): Node {
+        let mut value = self.pattern_alt()
+        while self.error == "" and self.at("|") {
+            self.advance()
+            let right = self.pattern_alt()
+            let mut n = node(
+                "OrPattern",
+                "|",
+                value.start,
+                right.end,
+                value.line,
+                value.column,
+            )
+            add(n, value)
+            add(n, right)
+            value = n
+        }
+        return value
+    }
+
+    fn pattern_alt(mut self): Node {
+        let start = self.current()
+        if self.at("_") {
+            self.advance()
+            return self.mk("Wildcard", "_", start)
+        }
+        if self.at_kind("int")
+            or self.at_kind("float")
+            or self.at_kind("string")
+            or self.at("true")
+            or self.at("false")
+            or self.at("null")
+        {
+            self.advance()
+            let mut n = self.mk("LiteralPattern", start.text, start)
+            if self.at("..<") or self.at("..=") {
+                let op = self.advance()
+                n.value = n.value + op.text
+                let end = self.advance()
+                n.value = n.value + end.text
+                n.end = end.end
+            }
+            return n
+        }
+        if self.at("(") {
+            self.advance()
+            let inner = self.pattern()
+            self.expect(")")
+            return inner
+        }
+        if self.at_kind("ident") or self.at_kind("keyword") {
+            self.advance()
+            let mut path = start.text
+            while self.error == "" and self.at("::") {
+                self.advance()
+                path = path + "::" + self.ident_name()
+            }
+            if self.at("(") {
+                let mut n = node(
+                    "VariantPattern",
+                    path,
+                    start.start,
+                    start.end,
+                    start.line,
+                    start.column,
+                )
+                add(n, self.pattern_payload())
+                n.end = self.prev().end
+                return n
+            }
+            if self.at_kind("ident")
+                and (start.kind == "keyword" or path == "unknown" or path == "unit")
+            {
+                let binder = self.advance()
+                return self.mk_pair(
+                    "TypePattern",
+                    path + " " + binder.text,
+                    start,
+                    binder,
+                )
+            }
+            return self.mk("NamePattern", path, start)
+        }
+        self.fail("expected a pattern, found " + self.describe())
+        return self.placeholder(start)
+    }
+
+    fn pattern_payload(mut self): Node {
+        let start = self.advance()
+        let mut n = node("PatternPayload", "", start.start, start.end, start.line, start.column)
+        while self.error == "" and !self.at(")") and !self.at_kind("eof") {
+            add(n, self.pattern())
+            if self.at(",") {
+                self.advance()
+            } else {
+                break
+            }
+        }
+        self.expect(")")
+        n.end = self.prev().end
+        return n
+    }
+
+    fn fn_expr(mut self): Node {
+        let start = self.advance()
+        let mut n = node("Closure", "", start.start, start.end, start.line, start.column)
+        if !self.expect("(") {
+            return n
+        }
+        for param in self.parameters() {
+            add(n, param)
+        }
+        self.expect(")")
+        if self.at(":") {
+            self.advance()
+            add(n, self.type_expr())
+        }
+        if self.at("{") {
+            add(n, self.block())
+        } else {
+            self.fail("expected a closure body, found " + self.describe())
+        }
+        n.end = self.prev().end
+        return n
+    }
+}

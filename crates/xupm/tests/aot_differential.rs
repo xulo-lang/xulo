@@ -176,3 +176,70 @@ fn aot_matches_interpreter_on_examples() {
         examples_dir.display()
     );
 }
+
+/// WP6/B8a + Gate 4: stage 0's `xupm` builds stage 1 into a native binary, and
+/// that binary matches the interpreter on the bootstrap workload. Like the
+/// example differential, this needs `target/release/libxulo_runtime.a` and is
+/// enabled by `XULO_AOT_DIFFERENTIAL=1`.
+#[test]
+fn stage1_binary_matches_the_interpreter() {
+    if std::env::var_os("XULO_AOT_DIFFERENTIAL").is_none() {
+        eprintln!(
+            "skipping stage 1 native differential (set XULO_AOT_DIFFERENTIAL=1 after \
+             building target/release/libxulo_runtime.a)"
+        );
+        return;
+    }
+
+    let root = workspace_root();
+    let build = run(&["build", "xuloc/main.xulo", "--release"], &root);
+    assert!(
+        build.status.success(),
+        "`xupm build xuloc/main.xulo --release` failed:\n{}",
+        render(&build.stderr)
+    );
+    let artifact = artifact_path(&build);
+
+    let workloads = [
+        ("tokens", "examples/fibonacci.xulo"),
+        ("parse", "examples/fibonacci.xulo"),
+        ("parse", "xuloc/main.xulo"),
+    ];
+    for (mode, file) in workloads {
+        let interpreted = Command::new(BIN)
+            .arg("run")
+            .arg("xuloc/main.xulo")
+            .current_dir(&root)
+            .env("XULO_STAGE1_MODE", mode)
+            .env("XULO_STAGE1_FILE", root.join(file))
+            .output()
+            .unwrap_or_else(|e| panic!("cannot run {BIN}: {e}"));
+        let native = Command::new(&artifact)
+            .arg(mode)
+            .arg(root.join(file))
+            .current_dir(&root)
+            .output()
+            .unwrap_or_else(|e| panic!("cannot run {}: {e}", artifact.display()));
+
+        assert!(
+            interpreted.status.success(),
+            "interpreter failed for {mode} {file}:\n{}",
+            render(&interpreted.stderr)
+        );
+        assert!(
+            native.status.success(),
+            "native stage 1 failed for {mode} {file}:\n{}",
+            render(&native.stderr)
+        );
+        assert_eq!(
+            render(&interpreted.stdout),
+            render(&native.stdout),
+            "native stage 1 differs from the interpreter for {mode} {file}"
+        );
+        assert_eq!(
+            render(&interpreted.stderr),
+            render(&native.stderr),
+            "native stage 1 stderr differs for {mode} {file}"
+        );
+    }
+}

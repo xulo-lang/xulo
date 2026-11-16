@@ -25,29 +25,31 @@ readiness document.
 
 | Work package | Done | Total |
 |---|---:|---:|
-| WP0 — Matrix hygiene and conformance | 5 | 6 |
+| WP0 — Matrix hygiene and conformance | 6 | 6 |
 | WP1 — 64-bit integer model | 7 | 7 |
 | WP2 — Type system and semantic convergence | 10 | 10 |
 | WP3 — AOT parity and bootstrap backend | 8 | 8 |
 | WP4 — `defer` semantics | 5 | 5 |
-| WP5 — Stage 1 skeleton | 0 | 6 |
-| WP6 — Self-host loop | 0 | 7 |
-| **Total** | **30** | **49** |
+| WP5 — Stage 1 skeleton | 6 | 6 |
+| WP6 — Self-host loop | 1 | 7 |
+| **Total** | **43** | **49** |
 
 ## Gates
 
 Gates are cumulative. An open earlier gate blocks every later gate.
 
-- [ ] **Gate 1 — Interpreter prototype**: stage 1 lexer/parser runs under
+- [x] **Gate 1 — Interpreter prototype**: stage 1 lexer/parser runs under
       `xulo run`, reads a `.xulo` file, and prints tokens/AST or a clean
-      diagnostic.
-- [ ] **Gate 2 — Self-parse**: stage 1 parses its own source (or a fixed
+      diagnostic. `crates/xulo-cli/tests/stage1.rs`.
+- [x] **Gate 2 — Self-parse**: stage 1 parses its own source (or a fixed
       nontrivial bootstrap file) with accurate spans.
+      `crates/xulo-cli/tests/stage1.rs` parses `xuloc/*.xulo` itself.
 - [ ] **Gate 3 — Self-check**: stage 1 type-checks a nontrivial bootstrap file
       and agrees with stage 0 on accept/reject; diagnostics carry
       file/line/column and exit nonzero.
-- [ ] **Gate 4 — Native build**: `xupm build` produces a stage 1 binary whose
+- [x] **Gate 4 — Native build**: `xupm build` produces a stage 1 binary whose
       output matches `xulo run` on the bootstrap workload.
+      `crates/xupm/tests/aot_differential.rs::stage1_binary_matches_the_interpreter`.
 - [ ] **Gate 5 — Self-host**: stage 1 compiles itself into stage 2; stage 1 and
       stage 2 agree on the bootstrap suite and the conformance subset.
 - [ ] **Gate 6 — Conformance**: the pinned specification's checkable examples
@@ -67,7 +69,8 @@ the starting point, and their evidence is recorded in `stage1-readiness.md` §5.
 - [x] **L9** Structs, `impl`, traits, explicit `Trait::method(recv)` dispatch
 - [x] **L10** Generic functions, bounds, `where` clauses
 - [x] **L12** `mod` / `use` / `pub`, visibility, cross-file modules
-- [x] **L13** Tuple literals, destructuring, equality
+- [ ] **L13** Tuple literals, positional access, and destructuring (equality is
+      identity-based for `List`/tuple/`struct`; see `stage1-readiness.md` §6.11)
 - [x] **L16** `T?`, `?.`, `??`, null narrowing
 - [x] **L19** `Result` / `Error` and `?` propagation
 - [x] **L22** Async/await, `spawn`, `lock`, `shared` (outside the bootstrap subset)
@@ -92,7 +95,7 @@ the starting point, and their evidence is recorded in `stage1-readiness.md` §5.
 - [x] **B5** Runtime static library and linker path
 - [x] **D1** Source spans and `file:line:column` diagnostics
 - [x] **D2** stderr writes and nonzero exit status
-- [x] **T1** Unit and integration tests — `cargo test --workspace`: 2086 passed, 0 failed (2026-11-16)
+- [x] **T1** Unit and integration tests — `cargo test --workspace`: 2105 passed, 0 failed (2026-11-16)
 - [x] **T2** All examples run in CI
 - [x] **T6** Robustness/fuzz tests
 
@@ -111,15 +114,21 @@ Priority P0 · needed by Gate 1/2 · source: `stage1-readiness.md` §7 WP0, §6.
 - [x] **T3c** Extend the runner to `// runs:` blocks with expected output.
       Implemented, but the pinned spec currently has no `runs:` examples, so
       that path has no cases yet.
-- [ ] **T3d** Ensure every row marked OK in `stage1-readiness.md` is backed by
+- [x] **T3d** Ensure every row marked OK in `stage1-readiness.md` is backed by
       a test or a named probe; add the missing ones.
+      `crates/xulo-cli/tests/readiness_matrix.rs` requires every OK row to cite
+      an existing path, runs the `crates/xulo-cli/tests/matrix_probes/` corpus,
+      and fails on a probe that no row cites. The audit found and fixed two
+      defects (a trailing struct construction was mistaken for a component and
+      lost its implicit return; tuple destructuring rejected tuple types) and
+      re-graded L13 to PARTIAL for identity-based equality (§6.11).
 - [x] **T3e** Add the conformance job to `.github/workflows/ci.yml` and triage
       its failures in the readiness matrix.
       Job `conformance`; the current divergences are listed with a reason in
       `crates/xulo-cli/tests/spec_conformance_baseline.tsv` and summarised in
       `stage1-readiness.md` §6.10.
 
-**Verify:** `cargo test -p xulo-cli --test submodule_pins --test spec_conformance`.
+**Verify:** `cargo test -p xulo-cli --test submodule_pins --test spec_conformance --test readiness_matrix`.
 
 ## WP1 — 64-bit integer model
 
@@ -218,31 +227,59 @@ named bootstrap-restriction diagnostic (no silent skip), tested in
 Can start in parallel with WP1–WP4 · needed by Gate 1/2 · source:
 `stage1-readiness.md` §7 WP5
 
-- [ ] Create the agreed `stage1/` location and a lexer written in Xulo.
-- [ ] Add a parser written in Xulo that runs under `xulo run`.
-- [ ] Limit the source to rows marked OK/PARTIAL and record every workaround
-      in `stage1/BOOTSTRAP.md`.
-- [ ] **T5a** Smoke test: stage 1 parses a fixed example and prints
+- [x] Create the agreed `xuloc/` location and a lexer written in Xulo.
+      `xuloc/ast.xulo` and `xuloc/lexer.xulo`; run with
+      `XULO_STAGE1_MODE=tokens XULO_STAGE1_FILE=<file> xulo run xuloc/main.xulo`.
+- [x] Add a parser written in Xulo that runs under `xulo run`.
+      `xuloc/parser.xulo` and `xuloc/main.xulo`; `parse` mode prints the
+      generic AST tree with scalar spans.
+- [x] Limit the source to rows marked OK/PARTIAL and record every workaround
+      in `xuloc/BOOTSTRAP.md`.
+      The document lists the fourteen deliberate limits, including the
+      `xulo run` argv workaround, cross-module method dispatch, and the
+      unsupported postfix `?`, call-site type arguments, and arrow closures.
+- [x] **T5a** Smoke test: stage 1 parses a fixed example and prints
       spans/tokens.
-- [ ] **T5b** Smoke test: stage 1 parses its own source.
-- [ ] **B6** Verify `xupm test` runs stage 1's own `#[test]` functions.
+      `crates/xulo-cli/tests/stage1.rs` runs `tokens` and `parse` on
+      `examples/fibonacci.xulo` and asserts spans and node positions.
+- [x] **T5b** Smoke test: stage 1 parses its own source.
+      The same test parses every `xuloc/*.xulo`; `xuloc/tests.xulo` repeats
+      the check through its own `#[test]` functions.
+- [x] **B6** Verify `xupm test` runs stage 1's own `#[test]` functions.
+      `crates/xupm/tests/cli.rs::runs_stage1_test_file` and
+      `crates/xulo-cli/tests/stage1.rs::stage1_tests_run_under_xulo_test`.
 
-**Exit:** Gate 1 and Gate 2.
+**Verify:** `cargo test -p xulo-cli --test stage1` and
+`cargo test -p xupm --test cli runs_stage1_test_file`.
+
+**Exit:** Gate 1 and Gate 2 — reached on 2026-11-16.
 
 ## WP6 — Self-host loop
 
 After WP1–WP5 · needed by Gate 4/5/6 · source: `stage1-readiness.md` §7 WP6
 
 - [ ] Stage 1 checks and compiles a fixed bootstrap corpus.
-- [ ] **B8a** Build stage 1 with stage 0's `xupm`.
+- [x] **B8a** Build stage 1 with stage 0's `xupm`.
+      `xupm build xuloc/main.xulo --release` produces
+      `xuloc/.xupm/build/main`; the native binary matches the interpreter for
+      `tokens`/`parse` on `examples/fibonacci.xulo` and `parse` on
+      `xuloc/main.xulo`. The opt-in differential test rejects output drift.
 - [ ] Stage 1 builds itself, producing a stage 2 binary.
 - [ ] **T5c** Compare stage 1 and stage 2 output on the bootstrap suite.
 - [ ] Add the bootstrap suite to CI alongside the conformance runner.
 - [ ] **B8b** Add a reproducible build and self-compile smoke test.
 - [ ] **D4** Make stage 1 diagnostics consistent with stage 0 for the
       bootstrap subset.
+      Lexical/syntax diagnostics now use stage 0's `E0001`/`E0002` codes and a
+      one-line `file:line:column` shape; semantic diagnostics need the
+      stage 1 checker and are still open.
 
-**Exit:** Gate 4, Gate 5, Gate 6.
+**Verify:** `cargo test -p xulo-cli --test stage1` plus
+`XULO_AOT_DIFFERENTIAL=1 XULO_RUNTIME_LIB=$PWD/target/release/libxulo_runtime.a
+cargo test -p xupm --test aot_differential stage1_binary_matches_the_interpreter`.
+
+**Exit:** Gate 4, Gate 5, Gate 6. Gate 4 is reached; Gates 5–6 remain blocked on
+the stage 1 checker and self-build.
 
 ## Out of scope for stage 1 bootstrap
 

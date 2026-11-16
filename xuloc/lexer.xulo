@@ -1,0 +1,530 @@
+// Stage 1 lexer.
+//
+// The scanner works on a `List<string>` of Unicode scalar values
+// (`source.split("")`), so index arithmetic is O(1) and character offsets are
+// scalar offsets. It follows spec/lexical-structure.md: ASCII identifiers,
+// longest-match operators, line and non-nested block comments, integer and
+// float literals, single- and double-quoted strings, and backtick templates.
+//
+// Every token carries a half-open span `[start, end)` in scalar offsets and
+// the 1-based line/column of its first character. The EOF token has an empty
+// text and a zero-width span.
+//
+// Workaround: stage 1 never writes template literals or nested block comments
+// in its own source (see BOOTSTRAP.md), but the lexer still recognises them so
+// that it can scan ordinary bootstrap files.
+
+pub const KEYWORDS: List<string> = [
+    "and",
+    "as",
+    "async",
+    "await",
+    "bool",
+    "break",
+    "const",
+    "continue",
+    "copy",
+    "defer",
+    "else",
+    "enum",
+    "extern",
+    "f32",
+    "f64",
+    "false",
+    "float",
+    "fn",
+    "for",
+    "i8",
+    "i16",
+    "i32",
+    "i64",
+    "if",
+    "impl",
+    "in",
+    "int",
+    "is",
+    "isize",
+    "let",
+    "lock",
+    "match",
+    "mod",
+    "move",
+    "mut",
+    "not",
+    "number",
+    "null",
+    "or",
+    "panic",
+    "pub",
+    "return",
+    "self",
+    "shared",
+    "spawn",
+    "string",
+    "struct",
+    "super",
+    "trait",
+    "true",
+    "type",
+    "u8",
+    "u16",
+    "u32",
+    "u64",
+    "unit",
+    "unknown",
+    "use",
+    "usize",
+    "where",
+    "while",
+]
+
+const MULTI_OPS: List<string> = [
+    "...",
+    "..<",
+    "..=",
+    "?.",
+    "??",
+    "::",
+    ":=",
+    "=>",
+    "==",
+    "!=",
+    "<=",
+    ">=",
+    "<<",
+    ">>",
+    "**",
+]
+
+fn is_single_op_code(c: number): bool {
+    return c == 40
+        or c == 41
+        or c == 123
+        or c == 125
+        or c == 91
+        or c == 93
+        or c == 44
+        or c == 58
+        or c == 59
+        or c == 46
+        or c == 63
+        or c == 33
+        or c == 61
+        or c == 60
+        or c == 62
+        or c == 43
+        or c == 45
+        or c == 42
+        or c == 47
+        or c == 37
+        or c == 38
+        or c == 124
+        or c == 94
+        or c == 126
+        or c == 64
+        or c == 36
+        or c == 35
+}
+
+pub struct Token {
+    pub kind: string,
+    pub text: string,
+    pub start: number,
+    pub end: number,
+    pub line: number,
+    pub column: number,
+}
+
+pub struct LexResult {
+    pub tokens: List<Token>,
+    pub error: string,
+    pub line: number,
+    pub column: number,
+}
+
+pub struct Lexer {
+    chars: List<string>,
+    i: number,
+    pub line: number,
+    pub column: number,
+    pub error: string,
+    err_line: number,
+    err_column: number,
+}
+
+fn is_digit_code(c: number): bool {
+    return c >= 48 and c <= 57
+}
+
+fn is_alpha_code(c: number): bool {
+    if c >= 65 and c <= 90 {
+        return true
+    }
+    if c >= 97 and c <= 122 {
+        return true
+    }
+    return c == 95
+}
+
+fn is_hex_code(c: number): bool {
+    if is_digit_code(c) {
+        return true
+    }
+    if c >= 65 and c <= 70 {
+        return true
+    }
+    return c >= 97 and c <= 102
+}
+
+fn is_oct_code(c: number): bool {
+    return c >= 48 and c <= 55
+}
+
+fn is_space_code(c: number): bool {
+    return c == 32 or c == 9 or c == 10 or c == 13
+}
+
+fn is_keyword(text: string): bool {
+    for keyword in KEYWORDS {
+        if keyword == text {
+            return true
+        }
+    }
+    return false
+}
+
+pub fn lex(source: string): LexResult {
+    let mut lx = Lexer(
+        chars: source.split(""),
+        i: 0,
+        line: 1,
+        column: 1,
+        error: "",
+        err_line: 1,
+        err_column: 1,
+    )
+    let mut tokens: List<Token> = []
+    if lx.code() == 65279 {
+        lx.advance()
+    }
+    while !lx.done() and lx.error == "" {
+        let token = lx.next()
+        if lx.error == "" and token.kind != "eof" {
+            tokens.push(token)
+        }
+    }
+    if lx.error == "" {
+        tokens.push(
+            Token(
+                kind: "eof",
+                text: "",
+                start: lx.i,
+                end: lx.i,
+                line: lx.line,
+                column: lx.column,
+            ),
+        )
+    }
+    return LexResult(
+        tokens: tokens,
+        error: lx.error,
+        line: lx.err_line,
+        column: lx.err_column,
+    )
+}
+
+impl Lexer {
+    fn done(self): bool {
+        return self.i >= self.chars.len
+    }
+
+    fn code(self): number {
+        if self.i >= self.chars.len {
+            return -1
+        }
+        return self.chars[self.i].code_at(0)
+    }
+
+    fn peek_code(self, offset: number): number {
+        let at = self.i + offset
+        if at >= self.chars.len {
+            return -1
+        }
+        return self.chars[at].code_at(0)
+    }
+
+    fn advance(mut self) {
+        let c = self.code()
+        if c == 13 and self.peek_code(1) != 10 {
+            self.i = self.i + 1
+            self.line = self.line + 1
+            self.column = 1
+            return
+        }
+        if c == 10 {
+            self.i = self.i + 1
+            self.line = self.line + 1
+            self.column = 1
+            return
+        }
+        self.i = self.i + 1
+        self.column = self.column + 1
+    }
+
+    fn fail(mut self, message: string) {
+        self.fail_at(message, self.line, self.column)
+    }
+
+    fn fail_at(mut self, message: string, line: number, column: number) {
+        if self.error == "" {
+            self.error = message
+            self.err_line = line
+            self.err_column = column
+        }
+    }
+
+    fn text_from(self, start: number): string {
+        let mut out = StringBuilder::new()
+        let mut k = start
+        while k < self.i {
+            out.append(self.chars[k])
+            k = k + 1
+        }
+        return out.build()
+    }
+
+    fn starts_with(self, text: string): bool {
+        if self.i + text.len > self.chars.len {
+            return false
+        }
+        let mut k = 0
+        while k < text.len {
+            if self.chars[self.i + k] != text.slice(k, k + 1) {
+                return false
+            }
+            k = k + 1
+        }
+        return true
+    }
+
+    fn make(self, kind: string, text: string, start: number, line: number, column: number): Token {
+        return Token(
+            kind: kind,
+            text: text,
+            start: start,
+            end: self.i,
+            line: line,
+            column: column,
+        )
+    }
+
+    fn skip_trivia(mut self) {
+        while !self.done() {
+            let c = self.code()
+            if is_space_code(c) {
+                self.advance()
+            } else if c == 47 and self.peek_code(1) == 47 {
+                self.advance()
+                self.advance()
+                while !self.done() {
+                    let n = self.code()
+                    if n == 10 or n == 13 {
+                        break
+                    }
+                    self.advance()
+                }
+            } else if c == 47 and self.peek_code(1) == 42 {
+                let sl = self.line
+                let sc = self.column
+                self.advance()
+                self.advance()
+                let mut closed = false
+                while !self.done() {
+                    if self.code() == 42 and self.peek_code(1) == 47 {
+                        self.advance()
+                        self.advance()
+                        closed = true
+                        break
+                    }
+                    self.advance()
+                }
+                if !closed {
+                    self.error = "unterminated block comment"
+                    self.err_line = sl
+                    self.err_column = sc
+                    return
+                }
+            } else {
+                return
+            }
+        }
+    }
+
+    fn next(mut self): Token {
+        self.skip_trivia()
+        let start = self.i
+        let sl = self.line
+        let sc = self.column
+        if self.error != "" or self.done() {
+            return self.make("eof", "", start, sl, sc)
+        }
+        let c = self.code()
+        if is_alpha_code(c) {
+            return self.scan_ident()
+        }
+        if is_digit_code(c) {
+            return self.scan_number()
+        }
+        if c == 34 or c == 39 {
+            return self.scan_quoted(c)
+        }
+        if c == 96 {
+            return self.scan_template()
+        }
+        let mut m = 0
+        while m < MULTI_OPS.len {
+            let op = MULTI_OPS[m]
+            if self.starts_with(op) {
+                let mut k = 0
+                while k < op.len {
+                    self.advance()
+                    k = k + 1
+                }
+                return self.make("op", op, start, sl, sc)
+            }
+            m = m + 1
+        }
+        let ch = self.chars[self.i]
+        if is_single_op_code(c) {
+            self.advance()
+            return self.make("op", ch, start, sl, sc)
+        }
+        self.fail("unexpected character " + ch)
+        self.advance()
+        return self.make("invalid", ch, start, sl, sc)
+    }
+
+    fn scan_ident(mut self): Token {
+        let start = self.i
+        let sl = self.line
+        let sc = self.column
+        while !self.done() {
+            let c = self.code()
+            if is_alpha_code(c) or is_digit_code(c) {
+                self.advance()
+            } else {
+                break
+            }
+        }
+        let text = self.text_from(start)
+        let mut kind = "ident"
+        if is_keyword(text) {
+            kind = "keyword"
+        }
+        return self.make(kind, text, start, sl, sc)
+    }
+
+    fn scan_number(mut self): Token {
+        let start = self.i
+        let sl = self.line
+        let sc = self.column
+        let mut kind = "int"
+        if self.code() == 48 {
+            let p = self.peek_code(1)
+            if p == 120 or p == 88 {
+                self.advance()
+                self.advance()
+                while is_hex_code(self.code()) {
+                    self.advance()
+                }
+                return self.make(kind, self.text_from(start), start, sl, sc)
+            }
+            if p == 98 or p == 66 {
+                self.advance()
+                self.advance()
+                while self.code() == 48 or self.code() == 49 {
+                    self.advance()
+                }
+                return self.make(kind, self.text_from(start), start, sl, sc)
+            }
+            if p == 111 or p == 79 {
+                self.advance()
+                self.advance()
+                while is_oct_code(self.code()) {
+                    self.advance()
+                }
+                return self.make(kind, self.text_from(start), start, sl, sc)
+            }
+        }
+        while is_digit_code(self.code()) {
+            self.advance()
+        }
+        if self.code() == 46 and is_digit_code(self.peek_code(1)) {
+            kind = "float"
+            self.advance()
+            while is_digit_code(self.code()) {
+                self.advance()
+            }
+        }
+        return self.make(kind, self.text_from(start), start, sl, sc)
+    }
+
+    fn scan_quoted(mut self, quote: number): Token {
+        let start = self.i
+        let sl = self.line
+        let sc = self.column
+        self.advance()
+        while !self.done() {
+            let c = self.code()
+            if c == quote {
+                self.advance()
+                return self.make("string", self.text_from(start), start, sl, sc)
+            }
+            if c == 10 or c == 13 {
+                self.fail_at("unterminated string literal", sl, sc)
+                return self.make("string", self.text_from(start), start, sl, sc)
+            }
+            if c == 92 {
+                self.advance()
+                if !self.done() {
+                    self.advance()
+                }
+            } else {
+                self.advance()
+            }
+        }
+        self.fail_at("unterminated string literal", sl, sc)
+        return self.make("string", self.text_from(start), start, sl, sc)
+    }
+
+    fn scan_template(mut self): Token {
+        let start = self.i
+        let sl = self.line
+        let sc = self.column
+        self.advance()
+        let mut depth = 0
+        while !self.done() {
+            let c = self.code()
+            if c == 92 {
+                self.advance()
+                if !self.done() {
+                    self.advance()
+                }
+            } else if c == 36 and self.peek_code(1) == 123 {
+                depth = depth + 1
+                self.advance()
+                self.advance()
+            } else if c == 125 and depth > 0 {
+                depth = depth - 1
+                self.advance()
+            } else if c == 96 and depth == 0 {
+                self.advance()
+                return self.make("template", self.text_from(start), start, sl, sc)
+            } else {
+                self.advance()
+            }
+        }
+        self.fail_at("unterminated template literal", sl, sc)
+        return self.make("template", self.text_from(start), start, sl, sc)
+    }
+}

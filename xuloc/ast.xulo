@@ -1,0 +1,78 @@
+// Stage 1 AST: one generic node shape keeps the bootstrap parser small.
+//
+// The parser does not build a typed tree yet. It records a stable `kind`
+// string, an optional `value` (a name, literal text, or operator), the
+// half-open character span `[start, end)`, and the 1-based line/column of the
+// first token. Children are ordered as written in the source. Stage 1 can
+// therefore grow more precise node kinds without changing the printer or the
+// tests that consume its output.
+//
+// Workaround: `Node` is a struct with a `List` field. Xulo lists are reference
+// values, so `add` needs `mut self` only to allow the call on a mutable
+// binding; the child list itself is shared. See BOOTSTRAP.md.
+
+pub struct Node {
+    pub kind: string,
+    pub value: string,
+    pub start: number,
+    pub end: number,
+    pub line: number,
+    pub column: number,
+    pub children: List<Node>,
+}
+
+pub fn node(
+    kind: string,
+    value: string,
+    start: number,
+    end: number,
+    line: number,
+    column: number,
+): Node {
+    return Node(
+        kind: kind,
+        value: value,
+        start: start,
+        end: end,
+        line: line,
+        column: column,
+        children: [],
+    )
+}
+
+pub fn add(n: Node, child: Node) {
+    n.children.push(child)
+}
+
+// A stable, line-oriented rendering. One node per line:
+//
+//     kind value @line:column [start,end)
+//
+// The value is omitted when it is empty. This is the format T5a/T5b assert on.
+pub fn render(n: Node, depth: number): string {
+    let mut out = StringBuilder::new()
+    let mut i = 0
+    while i < depth {
+        out.append("  ")
+        i = i + 1
+    }
+    out.append(n.kind)
+    if n.value != "" {
+        out.append(" ")
+        out.append(n.value)
+    }
+    out.append(" @")
+    out.append(str(n.line))
+    out.append(":")
+    out.append(str(n.column))
+    out.append(" [")
+    out.append(str(n.start))
+    out.append(",")
+    out.append(str(n.end))
+    out.append(")")
+    for child in n.children {
+        out.append("\n")
+        out.append(render(child, depth + 1))
+    }
+    return out.build()
+}

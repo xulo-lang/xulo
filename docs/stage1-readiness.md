@@ -111,11 +111,14 @@ gate while an earlier one is open.
 **Exit criterion:** stage 1's lexer and parser run under `xulo run`, read a
 `.xulo` file, and print tokens/AST or a clean diagnostic. The source uses only
 rows marked OK/PARTIAL in this document, and every workaround is recorded in
-`stage1/BOOTSTRAP.md`.
+`xuloc/BOOTSTRAP.md`.
 
-**Current assessment:** **Achievable now.** The interpreter is sufficient for a
-first lexer/parser if the stage 1 code avoids the P0 gaps in §5. This is the
-recommended starting point.
+**Current assessment:** **Reached (2026-11-16).** `xuloc/main.xulo` runs the
+`xuloc/lexer.xulo` and `xuloc/parser.xulo` front end under `xulo run`, reads a
+file through `XULO_STAGE1_FILE`, and prints either tokens or the AST tree (or a
+clean `file:line:column` diagnostic and exit 1). Evidence:
+`crates/xulo-cli/tests/stage1.rs`. Every workaround is recorded in
+`xuloc/BOOTSTRAP.md`.
 
 ### Gate 2 — Self-parse
 
@@ -123,10 +126,13 @@ recommended starting point.
 bootstrap file) and reports accurate spans. Round-trip or structural checks
 cover literals, expressions, declarations, and modules.
 
-**Current assessment:** **At risk.** Gate 2 itself is reachable, but a
-spec-shaped parser wants `int` for positions, tuples for spans, `unknown` for
-heterogeneous AST fields, and `is` narrowing for node categories. Workarounds
-exist, but they should be written down rather than discovered late.
+**Current assessment:** **Reached (2026-11-16).** Stage 1 parses all five of its
+own source files (`ast`, `lexer`, `parser`, `main`, `tests`) and reports scalar
+spans and 1-based line/column. A generic `Node` plus `unknown`-free scalar
+fields replaced the earlier tuple/`unknown`/`is` design risk; the trade-offs are
+listed in `xuloc/BOOTSTRAP.md`. Evidence:
+`crates/xulo-cli/tests/stage1.rs::stage1_parses_its_own_source` and
+`xuloc/tests.xulo::parses_its_own_source`.
 
 ### Gate 3 — Self-check
 
@@ -134,22 +140,25 @@ exist, but they should be written down rather than discovered late.
 with stage 0 on accept/reject for the bootstrap subset. Diagnostics include
 file/line/column and exit nonzero on failure.
 
-**Current assessment:** **Blocked by type-system gaps.** `unknown`, `is`
-narrowing, tuple positional access, and generic struct construction are the
-main risks. Fixing P0 rows in §5 is the shortest path.
+**Current assessment:** **Blocked on stage 1 itself.** Stage 0 now supplies
+`unknown`, `is` narrowing, tuple positional access, generic struct
+construction, and the stable `E…` codes WP2 required, so the former type-system
+risks are closed. Gate 3 needs the stage 1 checker over the WP5 AST; that is
+WP6's first item.
 
 ### Gate 4 — Native build
 
 **Exit criterion:** `xupm build` produces a stage 1 binary that runs the same
 bootstrap workload as `xulo run` and prints identical output.
 
-**Current assessment:** **Not yet.** The differential runner compares 25 of
-the 30 top-level examples and `xupm build` failures now return nonzero.
-Five examples remain outside parity: `fs`, `path`, and `process` (bootstrap
-subset members) lack AOT lowering for `std::fs::write_bytes`,
-`std::path::split`, and `std::process::launch`; `http` is outside the subset;
-`async_tasks` builds but AOT awaits produce zero values. See
-`crates/xupm/tests/aot_differential_baseline.tsv`.
+**Current assessment:** **Reached (2026-11-16).** `xupm build
+xuloc/main.xulo --release` produces a native stage 1 binary, and its stdout and
+stderr match `xulo run` for `tokens`/`parse` on `examples/fibonacci.xulo` and
+`parse` on `xuloc/main.xulo`. Evidence:
+`crates/xupm/tests/aot_differential.rs::stage1_binary_matches_the_interpreter`,
+run by the AOT differential CI job. The five example-level parity gaps listed
+for B3/R9 (`fs`, `path`, `process`, `http`, `async_tasks`) are not used by the
+bootstrap workload and remain tracked separately.
 
 ### Gate 5 — Self-host
 
@@ -157,9 +166,11 @@ subset members) lack AOT lowering for `std::fs::write_bytes`,
 and stage 2 agree on the bootstrap suite and on the conformance subset. A
 failure in either direction is a release blocker.
 
-**Current assessment:** **Blocked by numeric semantics and conformance.** The
-64-bit integer model must be fixed first; otherwise spans, hashes, and bit
-operations are not trustworthy across interpreters and backends.
+**Current assessment:** **Blocked on stage 1's checker and code generator.**
+The 64-bit integer model and the AOT stage 1 build are in place (WP1, B8a), so
+the remaining prerequisites are the stage 1 semantic pass and a stage 1 backend
+that can emit a stage 2 binary. Gate 4 already proves the bootstrap workload
+survives the native path.
 
 ### Gate 6 — Conformance
 
@@ -167,8 +178,11 @@ operations are not trustworthy across interpreters and backends.
 bootstrap suite run in CI; stage 1 and stage 0 agree on the bootstrap subset;
 known deviations are listed with an owner and a deadline.
 
-**Current assessment:** **No runner yet.** This document's matrix is the
-interim checklist; it is not a substitute for automated conformance.
+**Current assessment:** **Runner in place, bootstrap suite open.** The pinned
+specification's checkable examples run in the `conformance` job
+(`crates/xulo-cli/tests/spec_conformance.rs`), with known divergences recorded
+in `spec_conformance_baseline.tsv`. The bootstrap suite cannot be added until
+Gate 3–5 produce a stage 1 checker and self-hosted build.
 
 ## 5. Capability matrix
 
@@ -178,41 +192,41 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 
 | ID | Requirement | Status | Evidence / limitation | Needed by |
 |----|-------------|--------|-----------------------|-----------|
-| L1 | UTF-8 lexing and parsing of `.xulo` files | **OK** | `xulo-parser` tests and all examples | 1 |
+| L1 | UTF-8 lexing and parsing of `.xulo` files | **OK** | Unicode comments and literals survive lexing/parsing and reach the runtime; `crates/xulo-cli/tests/matrix_probes/L1_utf8_lexing.xulo`, `crates/xulo-parser/tests/tokenize_tests.rs` | 1 |
 | L2 | `int` is a 64-bit signed integer; `u64` covers `0…2^64-1` | **OK** | `Literal::Int(i128)` + `Literal::Float(f64)`; `Value::Int(i64)`/`UInt(u64)`/`Float(f64)`; integers are exact above `2^53` and through `u64::MAX`; a literal above the `u64` range is `E0209`; `crates/xulo-runtime/tests/integers.rs` | 1 |
-| L3 | `float`/`f64` arithmetic | **OK** | `f64` runtime; examples and tests | 1 |
-| L4 | `let`, `let mut`, assignment, shadowing | **OK** | semantic/runtime tests | 1 |
-| L5 | Functions, recursion, implicit return | **OK** | examples (`fibonacci`, `closures_hof`) | 1 |
+| L3 | `float`/`f64` arithmetic | **OK** | `f64` literals, arithmetic, and printing; `crates/xulo-cli/tests/matrix_probes/L3_float_arithmetic.xulo` | 1 |
+| L4 | `let`, `let mut`, assignment, shadowing | **OK** | Bindings, assignment, and nested-block shadowing; `crates/xulo-cli/tests/matrix_probes/L4_bindings.xulo`, `crates/xulo-semantic/tests/semantic_tests.rs` | 1 |
+| L5 | Functions, recursion, implicit return | **OK** | Recursion, implicit return, and default parameters; `crates/xulo-cli/tests/matrix_probes/L5_functions.xulo` | 1 |
 | L6 | Closures and function values | **PARTIAL** | Named-function callbacks work; an untyped lambda passed to a generic callback can fail with `E0202` | 2 |
-| L7 | `if`/`else`, `while`, `for`, `match`, `break`, `continue` | **OK** | examples and tests | 1 |
-| L8 | Enums, payloads, recursive/generic enums, exhaustive `match` | **OK** | `enums_match`, probes with `Tree<T>` | 1 |
-| L9 | Structs, `impl`, traits, explicit `Trait::method(recv)` dispatch | **OK** | `structs`, `trait_shapes` | 1 |
-| L10 | Generic functions, bounds, `where` clauses | **OK** | `generics`, `T: Show` probe | 2 |
+| L7 | `if`/`else`, `while`, `for`, `match`, `break`, `continue` | **OK** | `crates/xulo-cli/tests/matrix_probes/L7_control_flow.xulo` | 1 |
+| L8 | Enums, payloads, recursive/generic enums, exhaustive `match` | **OK** | Payload and recursive generic enums; `crates/xulo-cli/tests/matrix_probes/L8_enums_match.xulo`, `examples/enums_match.xulo` | 1 |
+| L9 | Structs, `impl`, traits, explicit `Trait::method(recv)` dispatch | **OK** | `crates/xulo-cli/tests/matrix_probes/L9_structs_traits.xulo`, `examples/trait_shapes.xulo` | 1 |
+| L10 | Generic functions, bounds, `where` clauses | **OK** | Inline and `where` bounds on a generic function; `crates/xulo-cli/tests/matrix_probes/L10_generics.xulo`, `examples/generics.xulo` | 2 |
 | L11 | Generic struct construction with named arguments | **OK** | The constructor infers type arguments from named field arguments and member access substitutes them; `crates/xulo-runtime/tests/type_system.rs`, `crates/xulo-compiler/tests/type_system_codegen_tests.rs` | 2 |
-| L12 | `mod`/`use`/`pub`, visibility, cross-file modules | **OK** | `examples/modules`; AOT module build | 1 |
-| L13 | Tuple literals, destructuring, equality | **OK** | parser/semantic/runtime tests | 1 |
-| L14 | Tuple positional access `p.0` and `?.0` | **OK** | Reads and `let mut` writes lower to the tuple's list slot; a position outside the arity is `E0220`; both execution paths agree | 2 |
+| L12 | `mod`/`use`/`pub`, visibility, cross-file modules | **OK** | `crates/xulo-cli/tests/matrix_probes/L12_modules/main.xulo`, `examples/modules`; AOT module build | 1 |
+| L13 | Tuple literals, destructuring, equality | **PARTIAL** | Literals, `p.i`, destructuring, and positional writes work (`crates/xulo-cli/tests/matrix_probes/L13_tuples.xulo`). `==` compares `List`/tuple/`struct` values by identity instead of structurally (§6.11), so the workaround is to compare elements one by one. | 1 |
+| L14 | Tuple positional access `p.0` and `?.0` | **OK** | Reads and `let mut` writes lower to the tuple's list slot; a position outside the arity is `E0220`; both execution paths agree (`crates/xulo-runtime/tests/type_system.rs`) | 2 |
 | L15 | `Array<T, N>` with `.len` and indexed access | **OK** | Interpreter and AOT agree on `.len`, indexing, and iteration; probes cover `Array<int, 3>` and `Array<string, 2>` (`crates/xulo-compiler/tests/type_system_codegen_tests.rs`) | 4 |
-| L16 | `T?`, `?.`, `??`, null narrowing | **OK** | `optional_chaining`, semantic narrowing tests | 1 |
-| L17 | `unknown` as the top type | **OK** | Every type is assignable to `unknown`; `List<unknown>` and `Map<string, unknown>` accept heterogeneous values. `print` still rejects `unknown` itself (`E0212`, spec `builtins/intrinsic-functions.md`), so a probe narrows first. | 2 |
-| L18 | `is` / `is not` narrowing in `if` conditions | **OK** | `if v is T` narrows the then-branch and removes covered union members from the else-branch; `is not` swaps them; untestable types are `E0222`. An assignment to the narrowed binding ends the narrowing for the rest of the branch, so the declared type is used afterwards (L18b). | 2 |
-| L19 | `Result`/`Error` and `?` propagation | **OK** | tests and `std` examples | 1 |
+| L16 | `T?`, `?.`, `??`, null narrowing | **OK** | `crates/xulo-cli/tests/matrix_probes/L16_optionals.xulo`, `examples/optional_chaining.xulo` | 1 |
+| L17 | `unknown` as the top type | **OK** | Every type is assignable to `unknown`; `List<unknown>` and `Map<string, unknown>` accept heterogeneous values. `print` still rejects `unknown` itself (`E0212`, spec `builtins/intrinsic-functions.md`), so a probe narrows first (`crates/xulo-runtime/tests/type_system.rs`). | 2 |
+| L18 | `is` / `is not` narrowing in `if` conditions | **OK** | `if v is T` narrows the then-branch and removes covered union members from the else-branch; `is not` swaps them; untestable types are `E0222`. An assignment to the narrowed binding ends the narrowing for the rest of the branch, so the declared type is used afterwards (L18b). `crates/xulo-runtime/tests/type_system.rs` | 2 |
+| L19 | `Result`/`Error` and `?` propagation | **OK** | `?` propagation through `Result::Err`; `crates/xulo-cli/tests/matrix_probes/L19_result_question.xulo` | 1 |
 | L20 | `defer` runs at block exit in reverse registration order | **OK** | The operand registers in its block's environment without evaluation and runs in reverse at exit; `crates/xulo-runtime/tests/defer.rs` covers nesting, loops, `return`, and `?` | 3 |
 | L21 | `copy` / `move` and use-after-move checking | **PARTIAL** | Syntax/checker present; full runtime and move-invalidation behavior not verified here | 3 |
-| L22 | Async/await, `spawn`, `lock`, `shared` | **OK** | Runtime tests/examples; outside the bootstrap subset | — |
-| L23 | Attributes, `#[test]`, `#[derive]`, macros | **OK** | parser/semantic/runtime tests; outside the bootstrap subset | — |
+| L22 | Async/await, `spawn`, `lock`, `shared` | **OK** | `crates/xulo-runtime/tests/task_slots.rs`, `crates/xulo-runtime/tests/service.rs`, `examples/async_tasks.xulo`; outside the bootstrap subset | — |
+| L23 | Attributes, `#[test]`, `#[derive]`, macros | **OK** | `crates/xulo-parser/tests/attribute_tests.rs`, `crates/xulo-parser/tests/macro_syntax_tests.rs`, `crates/xulo-runtime/tests/macro_system.rs`; outside the bootstrap subset | — |
 | L24 | UI/components and `@State`/`@Environment` | **PARTIAL** | UI works in examples; `@Environment` is explicitly unsupported; outside the bootstrap subset | — |
 
 ### 5.2 Runtime semantics
 
 | ID | Requirement | Status | Evidence / limitation | Needed by |
 |----|-------------|--------|-----------------------|-----------|
-| R1 | Deterministic left-to-right evaluation | **OK** | specification and runtime tests | 1 |
+| R1 | Deterministic left-to-right evaluation | **OK** | `crates/xulo-cli/tests/matrix_probes/R1_evaluation_order.xulo` | 1 |
 | R2 | 64-bit integer arithmetic, overflow/wrapping, shifts | **OK** | Interpreter `Num` tower (`crates/xulo-runtime/src/value.rs`) and AOT runtime helpers `xulo_int_add/sub/mul/div/rem/pow/neg` trap on overflow, division by zero, and a negative exponent; `xulo_shift`/`xulo_num_compare` implement wrap-on-left, sign- or zero-fill right shifts, and exact signed/unsigned comparison; `crates/xulo-runtime/tests/integers.rs` and `crates/xulo-compiler/tests/integer_model_codegen_tests.rs` | 1 |
-| R3 | UTF-8 scalar string operations | **OK** | `.len`, `.byte_len`, `.code_at`, `.slice`, `.bytes()` in interpreter and AOT | 1 |
-| R4 | Runtime failures with stable codes | **OK** | `E0006`, out-of-range tests | 1 |
-| R5 | No panic on adversarial input; nesting guard | **OK** | `tests/robustness.rs` | 1 |
-| R6 | `panic`, `assert`, and process exit status | **OK** | CLI/runtime tests | 1 |
+| R3 | UTF-8 scalar string operations | **OK** | `crates/xulo-cli/tests/matrix_probes/R3_utf8_strings.xulo`; `.len`, `.byte_len`, `.code_at`, `.slice`, `.bytes()` in interpreter and AOT | 1 |
+| R4 | Runtime failures with stable codes | **OK** | `crates/xulo-cli/tests/matrix_probes/R4_runtime_codes.xulo` (`E0006` on an out-of-range index) | 1 |
+| R5 | No panic on adversarial input; nesting guard | **OK** | `crates/xulo-compiler/tests/robustness.rs`, `crates/xulo-parser/tests/parser_tests.rs` | 1 |
+| R6 | `panic`, `assert`, and process exit status | **OK** | `crates/xulo-cli/tests/matrix_probes/R6_panic_assert.xulo`, `crates/xulo-cli/tests/process_exit.rs` | 1 |
 | R7 | `defer` executes at scope exit, reverse order | **OK** | `leave_block` drains the scope queue on normal exit and `?` propagation (before `return`/`break`/`continue` pass out); `crates/xulo-runtime/tests/defer.rs` | 3 |
 | R8 | Value/reference semantics for `copy`/`move` | **PARTIAL** | Not fully verified; avoid relying on it until tested | 3 |
 | R9 | Interpreter and AOT produce identical observable behavior | **PARTIAL** | `crates/xupm/tests/aot_differential.rs` compares 25 examples byte for byte, including dynamic JSON index tags and generic bool returns. Remaining baseline: `async_tasks` output, plus `fs`/`http`/`path`/`process` builds (`crates/xupm/tests/aot_differential_baseline.tsv`). | 4 |
@@ -226,21 +240,21 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 | C2 | `Map<K, V>` with `.get`, `.set`, `.has`, `.remove`, `.size`, iteration | **OK** | Interpreter and compiled paths agree on members, projection, `Map::from_entries`, typed literals, brace-map spread, and key iteration (`crates/xulo-compiler/tests/type_system_codegen_tests.rs`, `crates/xulo-compiler/tests/aot_syntax_coverage_tests.rs`) | 4 |
 | C3 | `Set<T>` with `.insert`, `.remove`, `.has`, `.size` | **OK** | Interpreter and compiled paths agree on construction, membership, insertion, removal, size, and iteration for numbers, strings, and payload-free enums (`crates/xulo-compiler/tests/type_system_codegen_tests.rs`, `crates/xulo-compiler/tests/aot_syntax_coverage_tests.rs`) | 4 |
 | C4 | `Array<T, N>` with `.len`, indexing, iteration | **PARTIAL** | Interpreter and AOT agree on `.len`, indexing, and iteration; `Array::filled` not verified | 4 |
-| C5 | `string` members and UTF-8 behavior | **OK** | Interpreter and AOT string member tests | 1 |
-| C6 | `StringBuilder` with `new`/`append`/`clear`/`build`/`len`/`byte_len` | **OK** | runtime/AOT tests | 1 |
+| C5 | `string` members and UTF-8 behavior | **OK** | `crates/xulo-runtime/tests/string_methods.rs`, `crates/xulo-runtime/tests/string_introspection.rs` | 1 |
+| C6 | `StringBuilder` with `new`/`append`/`clear`/`build`/`len`/`byte_len` | **OK** | `crates/xulo-runtime/tests/native.rs` (interpreter and AOT) | 1 |
 | C7 | `str`/`fmt`/output of all bootstrap values | **OK** | `str`, `Format`, and `print` render `int`/`u64` exactly (AOT tag 10 for the unsigned slot); `crates/xulo-runtime/tests/integers.rs` and the interpreter/AOT golden suites | 2 |
 
 ### 5.4 Standard library and OS services
 
 | ID | Requirement | Status | Evidence / limitation | Needed by |
 |----|-------------|--------|-----------------------|-----------|
-| S1 | `std::fs` read/write/stat/read_dir/walk/remove/rename/temp | **OK** | runtime tests and examples | 1 |
-| S2 | `std::io` print/eprint/flush/read | **OK** | runtime tests | 1 |
+| S1 | `std::fs` read/write/stat/read_dir/walk/remove/rename/temp | **OK** | `crates/xulo-runtime/tests/fs.rs`, `examples/fs.xulo` | 1 |
+| S2 | `std::io` print/eprint/flush/read | **OK** | `crates/xulo-runtime/tests/io.rs` | 1 |
 | S3 | `std::process` args/exit/run/exec/launch | **PARTIAL** | Interpreter runtime tests pass; AOT covers `args`/`run`/`exit`, but `launch`/`Command`/`Child` have no lowering (`examples/process.xulo` is in the differential baseline) | 1 |
-| S4 | `std::path`, `std::os`, environment, cwd, pid | **OK** | runtime tests | 1 |
-| S5 | `std::json` parse/stringify/valid | **OK** | runtime tests | 2 |
-| S6 | `std::regex` and `std::fmt` | **OK** | runtime tests | 2 |
-| S7 | `std::net` and `std::http` | **OK** | runtime tests; outside the bootstrap subset | — |
+| S4 | `std::path`, `std::os`, environment, cwd, pid | **OK** | `crates/xulo-runtime/tests/os.rs`, `crates/xulo-runtime/tests/path.rs` | 1 |
+| S5 | `std::json` parse/stringify/valid | **OK** | `crates/xulo-runtime/tests/json.rs` | 2 |
+| S6 | `std::regex` and `std::fmt` | **OK** | `crates/xulo-runtime/tests/regex.rs`, `crates/xulo-runtime/tests/fmt.rs` | 2 |
+| S7 | `std::net` and `std::http` | **OK** | `crates/xulo-runtime/tests/net.rs`, `crates/xulo-runtime/tests/http.rs`; outside the bootstrap subset | — |
 | S8 | `extern "C"` FFI | **PARTIAL** | Unix only; Windows returns an unsupported error; outside the bootstrap subset | — |
 | S9 | Numeric signatures and std diagnostics match the std spec | **OK** | Numeric results name `int`/`float`/`u64`; AOT rounding narrows to the `int` slot with a runtime range failure; regex types annotate without imports and aliases reach their statics; stable diagnostic codes from D3 (`crates/xulo-semantic/tests/semantic_tests.rs`, `crates/xulo-runtime/tests/native.rs`, `crates/xulo-compiler/tests/intrinsics_codegen_tests.rs`) | 2 |
 
@@ -248,29 +262,29 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 
 | ID | Requirement | Status | Evidence / limitation | Needed by |
 |----|-------------|--------|-----------------------|-----------|
-| B1 | `xulo run` and `xulo check` for a single file | **OK** | CLI integration tests | 1 |
-| B2 | `xupm build` for core language and `hello` | **OK** | macOS/Windows CI AOT smoke test | 4 |
+| B1 | `xulo run` and `xulo check` for a single file | **OK** | `crates/xulo-cli/tests/integration_tests.rs` | 1 |
+| B2 | `xupm build` for core language and `hello` | **OK** | `.github/workflows/ci.yml`: macOS/Windows AOT smoke test | 4 |
 | B3 | `xupm build` for the bootstrap subset | **PARTIAL** | `aot_differential` compares 25 examples and `xupm build` failure exit status is covered. Still missing AOT lowering for `std::fs::write_bytes` (`fs`), `std::path::split` (`path`), and `std::process::launch`/`Command`/`Child` (`process`); `async_tasks` builds with wrong await results | 4 |
-| B4 | AOT module tree (`mod`/`use`) | **OK** | `examples/modules` native build | 4 |
-| B5 | Runtime static library and linker path | **OK** | CI and release workflow | 4 |
-| B6 | `xupm test` for stage 1's own tests | **NOT VERIFIED** | Command exists; no stage 1 test corpus yet | 3 |
+| B4 | AOT module tree (`mod`/`use`) | **OK** | `crates/xulo-compiler/tests/module_system.rs`, `examples/modules` native build | 4 |
+| B5 | Runtime static library and linker path | **OK** | `.github/workflows/ci.yml` and the release workflow | 4 |
+| B6 | `xupm test` for stage 1's own tests | **OK** | `crates/xupm/tests/cli.rs::runs_stage1_test_file` runs `xuloc/tests.xulo` (7 tests); `crates/xulo-cli/tests/stage1.rs` covers the `xulo test` path | 3 |
 | B7 | Linux/macOS/Windows build matrix | **PARTIAL** | Release artifacts exist; Windows FFI is unsupported | 4 |
-| B8 | Reproducible stage 1 build and self-compile smoke test | **MISSING** | No stage 1 build in CI | 5 |
+| B8 | Reproducible stage 1 build and self-compile smoke test | **PARTIAL** | B8a: `xupm build xuloc/main.xulo --release` produces a native front end that matches the interpreter (`crates/xupm/tests/aot_differential.rs::stage1_binary_matches_the_interpreter`). Reproducibility and the stage 1 self-build await WP6. | 5 |
 
 ### 5.6 Diagnostics, testing, and conformance
 
 | ID | Requirement | Status | Evidence / limitation | Needed by |
 |----|-------------|--------|-----------------------|-----------|
-| D1 | Source spans and `file:line:column` diagnostics | **OK** | stage 0 diagnostics; tests | 1 |
-| D2 | stderr writes and nonzero exit status | **OK** | CLI/runtime tests | 1 |
-| D3 | Stable error codes for the bootstrap subset | **OK** | Called constants are `E0204`; `std::regex` value paths are `E0607`, unknown module members `E0601`, and an unimported type used as a value `E0101` (std-spec `modules/regex.md`). The head/member diagnostics std-spec §1.3 named as coarse fallbacks now carry their fine-grained codes. | 2 |
-| D4 | Stage 1's own diagnostics are consistent with stage 0 | **NOT VERIFIED** | Requires stage 1 implementation | 3 |
-| T1 | Unit and integration tests | **OK** | `cargo test --workspace`: 2086 passed, 0 failed (2026-11-16) | 1 |
+| D1 | Source spans and `file:line:column` diagnostics | **OK** | `crates/xulo-core/tests/diagnostics_tests.rs`, `crates/xulo-cli/tests/integration_tests.rs` | 1 |
+| D2 | stderr writes and nonzero exit status | **OK** | `crates/xulo-cli/tests/process_exit.rs`, `crates/xulo-cli/tests/matrix_probes/R6_panic_assert.xulo` | 1 |
+| D3 | Stable error codes for the bootstrap subset | **OK** | Called constants are `E0204`; `std::regex` value paths are `E0607`, unknown module members `E0601`, and an unimported type used as a value `E0101` (std-spec `modules/regex.md`). The head/member diagnostics std-spec §1.3 named as coarse fallbacks now carry their fine-grained codes (`crates/xulo-semantic/tests/semantic_tests.rs`, `crates/xulo-compiler/tests/intrinsics_codegen_tests.rs`). | 2 |
+| D4 | Stage 1's own diagnostics are consistent with stage 0 | **PARTIAL** | Lexical/syntax failures use `E0001`/`E0002` and `file:line:column` (`crates/xulo-cli/tests/stage1.rs`); semantic diagnostics await the stage 1 checker | 3 |
+| T1 | Unit and integration tests | **OK** | `cargo test --workspace`: 2105 passed, 0 failed (2026-11-16) | 1 |
 | T2 | All examples run in CI | **OK** | `.github/workflows/ci.yml` examples job | 1 |
 | T3 | Pinned-spec example conformance runner | **OK** | `crates/xulo-cli/tests/spec_conformance.rs`: 114 annotated examples extracted from the pinned spec, 81 pass, 33 triaged in `spec_conformance_baseline.tsv` (§6.10) | 2 |
 | T4 | Interpreter vs. AOT differential suite | **OK** | `crates/xupm/tests/aot_differential.rs` builds and executes every top-level example, compares stdout/stderr against `xupm run`, and fails on stale baseline entries; CI runs it on Linux after the release build. Five known gaps are recorded in `crates/xupm/tests/aot_differential_baseline.tsv` | 4 |
-| T5 | Stage 1 self-parse/self-check/self-build tests | **MISSING** | No stage 1 code yet | 2–5 |
-| T6 | Robustness/fuzz tests | **OK** | `tests/robustness.rs` | 1 |
+| T5 | Stage 1 self-parse/self-check/self-build tests | **PARTIAL** | Self-parse and interpreter smoke tests are live (`crates/xulo-cli/tests/stage1.rs`, `xuloc/tests.xulo`); self-check and self-build await WP6 | 2–5 |
+| T6 | Robustness/fuzz tests | **OK** | `crates/xulo-compiler/tests/robustness.rs`, `crates/xulo-parser/tests/parser_tests.rs` | 1 |
 | T7 | Spec and std-spec submodules aligned with the pin | **OK** | `crates/xulo-cli/tests/submodule_pins.rs` compares the `HEAD` gitlink, the index, and the checked-out submodule against `spec@48f49b7` / `std-spec@a2e4cb7`; CI job `conformance` | 1 |
 
 ## 6. Known blocking defects
@@ -448,6 +462,30 @@ The groups above are candidate rows for the capability matrix; the harness
 exists so that removing a baseline line is the visible proof that a fix
 landed.
 
+### 6.11 Structural equality compares identity for `List`/tuple/`struct` (L13, R9)
+
+```xulo
+struct P { x: int, y: int }
+fn main() {
+    print(P(x: 1, y: 2) == P(x: 1, y: 2)) // expected: true
+    print([1, 2] == [1, 2])                   // expected: true
+    print((1, 2) == (1, 2))                   // expected: true
+}
+```
+
+**Open.** The specification (`expressions/operators.md`, "Equality") requires
+structural equality for every value-carrying type. The interpreter's `equal`
+compares `List` and `Object` handles by `Rc::ptr_eq`, so two independently
+constructed equal values differ; the AOT path lowers `Eq` to a machine-word
+comparison, with the same result. Enum payloads and `StringBuilder` text are
+already structural. `crates/xulo-cli/tests/matrix_probes/L13_tuples.xulo` stops
+short of equality for this reason, and L13 is **PARTIAL**.
+
+Workaround for stage 1: compare elements or fields individually. The fix is a
+runtime `xulo_value_equal(left, left_tag, right, right_tag)` helper that
+recurses through lists, objects, tuples, maps, sets, and structs with a
+visited-pair guard, and an IR lowering that routes non-scalar `==`/`!=` to it.
+
 ## 7. Work packages and recommended order
 
 ### WP0 — Matrix hygiene and conformance harness (P0, Gate 1/2)
@@ -460,8 +498,12 @@ landed.
 **Exit:** conformance job runs in CI and its failures are triaged in this
 matrix.
 
-**Status:** done except the row-by-row "OK" audit (T3d). The CI job is
-`conformance`; §6.10 is the triage.
+**Status:** done. The CI job is `conformance`; §6.10 is the triage, and
+`crates/xulo-cli/tests/readiness_matrix.rs` enforces that every OK row cites an
+existing test/probe, runs the `matrix_probes` corpus, and fails on an uncited
+probe. The audit itself fixed two small defects (implicit return of a trailing
+struct construction, tuple destructuring of a tuple type) and re-graded L13 to
+PARTIAL for identity-based equality (§6.11).
 
 ### WP1 — 64-bit integer model (P0, Gate 1/2/5)
 
@@ -525,14 +567,19 @@ error for `defer` rather than dropping the operand.
 
 ### WP5 — Stage 1 skeleton (can start in parallel)
 
-- Create `stage1/` (or the agreed location) with a lexer and parser written in
+- Create `xuloc/` (or the agreed location) with a lexer and parser written in
   Xulo, run by `xulo run`.
 - Start with the subset rows marked OK; record every PARTIAL workaround in
-  `stage1/BOOTSTRAP.md`.
+  `xuloc/BOOTSTRAP.md`.
 - First smoke test: stage 1 parses a fixed example and prints spans/tokens.
 - Second smoke test: stage 1 parses its own source.
 
-**Exit:** Gate 1 and Gate 2.
+**Exit:** Gate 1 and Gate 2 — reached on 2026-11-16.
+
+**Status:** done. `xuloc/` holds the generic AST, lexer, parser, CLI, and
+self-tests. Gate 1 is covered by the token/parse smoke tests and the clean
+diagnostic test; Gate 2 self-parses all five stage 1 files. `xulo test` and
+`xupm test` both run `xuloc/tests.xulo` (7 tests).
 
 ### WP6 — Self-host loop (after WP1–WP5)
 
@@ -542,6 +589,14 @@ error for `defer` rather than dropping the operand.
 - Add the bootstrap suite to CI, alongside the conformance runner.
 
 **Exit:** Gate 4–6.
+
+**Status:** in progress. B8a and Gate 4 are done: `xupm build
+xuloc/main.xulo --release` produces a native front end whose `tokens`/`parse`
+output matches the interpreter. Gate 5 and the checker/self-build items remain
+open. The native build surfaced and fixed three stage 0 defects: unreachable IR
+after a terminating block, pointer-based `string` equality in the compiled
+path, and user methods named like string members being dispatched to the
+built-in lowering.
 
 ## 8. Non-goals for stage 1 bootstrap
 
@@ -572,6 +627,13 @@ cargo test --workspace
 # WP0 gates: pinned submodules and pinned-spec examples.
 cargo test -p xulo-cli --test submodule_pins --test spec_conformance -- --nocapture
 
+# WP0/T3d: every OK matrix row cites a live test or probe.
+cargo test -p xulo-cli --test readiness_matrix -- --nocapture
+
+# WP5: stage 1 runs under the interpreter, prints tokens/AST, self-parses.
+cargo test -p xulo-cli --test stage1
+cargo test -p xupm --test cli runs_stage1_test_file
+
 # Single-file behavior under the interpreter.
 target/debug/xulo check path/to/probe.xulo
 target/debug/xulo run path/to/probe.xulo
@@ -579,6 +641,11 @@ target/debug/xulo run path/to/probe.xulo
 # Native path (requires the runtime static library).
 XULO_RUNTIME_LIB="$PWD/target/release/libxulo_runtime.a" \
   target/release/xupm build path/to/probe.xulo --release
+
+# Gate 4/B8a: stage 1 native output matches the interpreter.
+XULO_AOT_DIFFERENTIAL=1 \
+XULO_RUNTIME_LIB="$PWD/target/release/libxulo_runtime.a" \
+  cargo test -p xupm --test aot_differential stage1_binary_matches_the_interpreter
 
 # Repository state.
 git submodule status
@@ -589,11 +656,14 @@ Last recorded verification (2026-11-16):
 
 | Check | Result |
 |-------|--------|
-| `cargo test --workspace` | 2086 passed, 0 failed |
+| `cargo test --workspace` | 2105 passed, 0 failed |
 | Examples (CI job) | Configured to run every `examples/*.xulo`; `async_tasks` uses `u64` sleep input |
 | AOT smoke tests | `hello` on macOS/Windows; `structs`, `trait_shapes`, `generics`, `modules` probed locally |
 | AOT differential suite | 25 examples compare byte for byte; 5 known gaps in `crates/xupm/tests/aot_differential_baseline.tsv` |
 | AOT build failure | `xupm build` exits nonzero and reports the diagnostic (`crates/xupm/tests/cli.rs`) |
+| Stage 1 smoke tests | `cargo test -p xulo-cli --test stage1` — 6 passed; self-parses `xuloc/*.xulo`, clean diagnostics, `xulo test` |
+| Stage 1 under `xupm test` | `cargo test -p xupm --test cli runs_stage1_test_file` — 7 stage 1 tests passed |
+| Stage 1 native build | `cargo test -p xupm --test aot_differential stage1_binary_matches_the_interpreter` (with `XULO_AOT_DIFFERENTIAL=1`) — interpreter and native output agree |
 
 ## 10. Maintenance
 

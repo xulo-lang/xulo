@@ -1,0 +1,124 @@
+// Stage 1 command line.
+//
+// Two ways to choose the input, because `xulo run <file>` does not forward
+// script arguments:
+//
+//   * compiled binary:  xuloc tokens <file>
+//                       xuloc parse  <file>
+//   * under `xulo run`: set XULO_STAGE1_MODE=tokens|parse and
+//                       XULO_STAGE1_FILE=<file>
+//
+// The default mode is `parse`. Diagnostics go to stderr in the stage 0 shape
+// `<file>:<line>:<column>: error: <message>` and the process exits 1.
+
+mod ast;
+mod lexer;
+mod parser;
+
+use ast::{render};
+use lexer::{lex, LexResult, Token};
+use parser::{parse, ParseResult};
+
+fn env_or(name: string, fallback: string): string {
+    match std::os::getenv(name) {
+        Result::Ok(value) => {
+            return value ?? fallback
+        }
+        Result::Err(_) => {
+            return fallback
+        }
+    }
+}
+
+fn usage() {
+    std::io::eprintln("usage: xuloc <tokens|parse> <file>")
+    std::io::eprintln("   or: XULO_STAGE1_MODE=tokens|parse XULO_STAGE1_FILE=<file> xulo run xuloc/main.xulo")
+}
+
+fn kind_label(code: string): string {
+    if code == "E0001" {
+        return "lexical"
+    }
+    if code == "E0002" {
+        return "syntax"
+    }
+    if code == "E0004" {
+        return "io"
+    }
+    return "error"
+}
+
+fn fail(file: string, line: number, column: number, code: string, message: string) {
+    std::io::eprintln(
+        file + ":" + str(line) + ":" + str(column) + ": error[" + code + "] " + kind_label(code) + ": " + message,
+    )
+    std::process::exit(1)
+}
+
+fn print_tokens(tokens: List<Token>) {
+    for token in tokens {
+        let mut out = StringBuilder::new()
+        out.append(str(token.line))
+        out.append(":")
+        out.append(str(token.column))
+        out.append(" ")
+        out.append(token.kind)
+        out.append(" ")
+        out.append(str(token.start))
+        out.append(":")
+        out.append(str(token.end))
+        out.append(" ")
+        out.append(token.text)
+        print(out.build())
+    }
+}
+
+fn run_tokens(file: string, source: string) {
+    let result: LexResult = lex(source)
+    if result.error != "" {
+        fail(file, result.line, result.column, "E0001", result.error)
+    }
+    print_tokens(result.tokens)
+}
+
+fn run_parse(file: string, source: string) {
+    let lexed: LexResult = lex(source)
+    if lexed.error != "" {
+        fail(file, lexed.line, lexed.column, "E0001", lexed.error)
+    }
+    let result: ParseResult = parse(lexed.tokens)
+    if result.error != "" {
+        fail(file, result.line, result.column, "E0002", result.error)
+    }
+    print(render(result.root, 0))
+}
+
+fn main() {
+    let args = std::process::args()
+    let mut mode = env_or("XULO_STAGE1_MODE", "parse")
+    let mut file = env_or("XULO_STAGE1_FILE", "")
+    if args.len >= 3 and (args[1] == "tokens" or args[1] == "parse") {
+        mode = args[1]
+        file = args[2]
+    }
+    if file == "" {
+        usage()
+        std::process::exit(1)
+    }
+    if mode != "tokens" and mode != "parse" {
+        usage()
+        std::process::exit(1)
+    }
+    match std::fs::read(file) {
+        Result::Ok(source) => {
+            if mode == "tokens" {
+                run_tokens(file, source)
+            } else {
+                run_parse(file, source)
+            }
+        }
+        Result::Err(error) => {
+            fail(file, 1, 1, "E0004", "cannot read file: " + error.message)
+        }
+    }
+}

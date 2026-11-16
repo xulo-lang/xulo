@@ -1,0 +1,117 @@
+// Stage 1's own tests. Run from the repository root:
+//
+//     xulo test xuloc/tests.xulo
+//     xupm test xuloc/tests.xulo
+//
+// They exercise the lexer and parser directly and parse every stage 1 source
+// file, which is the T5b smoke test in executable form.
+
+mod ast;
+mod lexer;
+mod parser;
+
+use ast::{render, Node};
+use lexer::{lex, LexResult, Token};
+use parser::{parse, ParseResult};
+
+fn parse_source(source: string): ParseResult {
+    let lexed: LexResult = lex(source)
+    return parse(lexed.tokens)
+}
+
+#[test]
+fn lexes_keywords_identifiers_and_spans() {
+    let result: LexResult = lex("fn main() { let x = 1 + 2 }")
+    assert(result.error == "", "a simple function must lex")
+    assert(result.tokens.len == 13, "twelve tokens plus EOF")
+    assert(result.tokens[0].kind == "keyword", "fn is a keyword")
+    assert(result.tokens[0].text == "fn", "keyword text")
+    assert(result.tokens[0].start == 0, "fn starts at offset 0")
+    assert(result.tokens[0].end == 2, "fn ends at offset 2")
+    assert(result.tokens[1].kind == "ident", "main is an identifier")
+    assert(result.tokens[1].line == 1, "line is 1-based")
+    assert(result.tokens[1].column == 4, "column is 1-based")
+}
+
+#[test]
+fn lexes_lines_comments_and_longest_operator() {
+    let result: LexResult = lex("let a = 1\nlet b = 2 // tail\nc /* mid */ ?.d")
+    assert(result.error == "", "comments are skipped")
+    assert(result.tokens[4].text == "let", "second let")
+    assert(result.tokens[4].line == 2, "second line")
+    assert(result.tokens[4].column == 1, "column resets after LF")
+    assert(result.tokens[4].start == 10, "second line starts at offset 10")
+    let mut found = false
+    for token in result.tokens {
+        if token.text == "?." {
+            found = true
+        }
+    }
+    assert(found, "`?.` is one longest-match token")
+}
+
+#[test]
+fn rejects_unterminated_lexical_forms() {
+    let comment: LexResult = lex("/* left open")
+    assert(comment.error == "unterminated block comment", "block comment error")
+    let text: LexResult = lex("\"left open")
+    assert(text.error == "unterminated string literal", "string error")
+}
+
+#[test]
+fn parses_a_recursive_function() {
+    let source = "fn fib(n: number): number {\n    if n <= 1 {\n        return n\n    }\n    return fib(n - 1) + fib(n - 2)\n}\n"
+    let result: ParseResult = parse_source(source)
+    assert(result.error == "", "fib must parse")
+    assert(result.root.kind == "Program", "root is Program")
+    assert(result.root.children.len == 1, "one top-level declaration")
+    let fn_node: Node = result.root.children[0]
+    assert(fn_node.kind == "Fn", "the declaration is a function")
+    assert(fn_node.value == "fib", "function name")
+    assert(fn_node.children.len == 3, "param, return type, body")
+    assert(fn_node.children[0].kind == "Param", "parameter")
+    assert(fn_node.children[1].kind == "TypeName", "return type")
+    assert(fn_node.children[2].kind == "Block", "body block")
+    assert(fn_node.end == source.len - 1, "the span reaches the closing brace")
+}
+
+#[test]
+fn reports_the_error_position() {
+    let result: ParseResult = parse_source("fn main( {\n}\n")
+    assert(result.error != "", "malformed parameters must fail")
+    assert(result.line == 1, "error is on the first line")
+    assert(result.column > 0, "error carries a column")
+}
+
+#[test]
+fn renders_the_tree() {
+    let result: ParseResult = parse_source("let x = 1 + 2")
+    let text = render(result.root, 0)
+    assert(text.slice(0, 7) == "Program", "render starts with Program")
+    assert(text.len > 20, "render includes children")
+}
+
+#[test]
+fn parses_its_own_source() {
+    let files = [
+        "xuloc/ast.xulo",
+        "xuloc/lexer.xulo",
+        "xuloc/parser.xulo",
+        "xuloc/main.xulo",
+        "xuloc/tests.xulo",
+    ]
+    for path in files {
+        match std::fs::read(path) {
+            Result::Ok(source) => {
+                let lexed: LexResult = lex(source)
+                assert(lexed.error == "", path + ": lex failed: " + lexed.error)
+                let result: ParseResult = parse(lexed.tokens)
+                assert(result.error == "", path + ": parse failed: " + result.error)
+                assert(result.root.children.len > 0, path + ": empty tree")
+            }
+            Result::Err(error) => {
+                assert(false, path + ": cannot read: " + error.message)
+            }
+        }
+    }
+}
