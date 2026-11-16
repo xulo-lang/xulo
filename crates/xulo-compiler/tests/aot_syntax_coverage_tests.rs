@@ -624,6 +624,24 @@ fn map_members_reach_machine_code() {
 }
 
 #[test]
+fn spread_lowering_reaches_machine_code() {
+    let bytes = object_bytes(
+        r#"
+        fn main() {
+            let head = [1, 2]
+            let all = [...head, 3]
+            let base = { a: 1 }
+            let merged = { ...base, b: 2 }
+            print(all)
+            print(merged.b)
+        }
+        "#,
+    );
+    assert!(references_symbol(&bytes, "xulo_array_concat"));
+    assert!(references_symbol(&bytes, "xulo_object_extend"));
+}
+
+#[test]
 fn set_members_reach_machine_code() {
     let bytes = object_bytes(
         r#"

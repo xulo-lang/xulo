@@ -79,6 +79,7 @@ pub(crate) fn runtime_fn_name(func: &RuntimeFn) -> &'static str {
         RuntimeFn::ObjectGet => "xulo_object_get",
         RuntimeFn::ObjectGetTag => "xulo_object_get_tag",
         RuntimeFn::ObjectSet => "xulo_object_set",
+        RuntimeFn::ObjectExtend => "xulo_object_extend",
         RuntimeFn::ObjectHas => "xulo_object_has",
         RuntimeFn::ObjectRemove => "xulo_object_remove",
         RuntimeFn::ObjectSize => "xulo_object_size",

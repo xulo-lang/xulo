@@ -28,11 +28,11 @@ readiness document.
 | WP0 — Matrix hygiene and conformance | 5 | 6 |
 | WP1 — 64-bit integer model | 7 | 7 |
 | WP2 — Type system and semantic convergence | 10 | 10 |
-| WP3 — AOT parity and bootstrap backend | 2 | 8 |
+| WP3 — AOT parity and bootstrap backend | 3 | 8 |
 | WP4 — `defer` semantics | 0 | 5 |
 | WP5 — Stage 1 skeleton | 0 | 6 |
 | WP6 — Self-host loop | 0 | 7 |
-| **Total** | **19** | **49** |
+| **Total** | **20** | **49** |
 
 ## Gates
 
@@ -177,7 +177,7 @@ Priority P1 · needed by Gate 4 · source: `stage1-readiness.md` §7 WP3, §6.6�
 
 - [x] **C2** Add AOT runtime support for `Map`.
 - [x] **C3** Add AOT runtime support for `Set`.
-- [ ] **C1** Fix list spread lowering in the AOT path
+- [x] **C1** Fix list spread lowering in the AOT path
       (`examples/collections.xulo`).
 - [ ] **R9b** Fix nested ternary lowering in the AOT path
       (`examples/optional_chaining.xulo`).

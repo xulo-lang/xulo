@@ -184,6 +184,27 @@ fn set_string_values_compile() {
     assert_eq!(out, vec!["2", "true", "true", "false", "a"]);
 }
 
+/// C1: list and object spread preserve order and later overrides.
+#[test]
+fn list_and_object_spread_compile() {
+    let out = compile_and_run(
+        r#"fn main() {
+    let head = [1, 2]
+    let tail = [3, 4]
+    let all = [...head, ...tail]
+    let with_extra = [...all, 9]
+    print(all)
+    print(with_extra)
+    let base = { a: 1, b: 2 }
+    let merged = { ...base, a: 3, c: 4 }
+    print(merged.a)
+    print(merged.b)
+    print(merged.c)
+}"#,
+    );
+    assert_eq!(out, vec!["[1, 2, 3, 4]", "[1, 2, 3, 4, 9]", "3", "2", "4"]);
+}
+
 #[test]
 fn map_optional_get_keeps_runtime_tag() {
     let out = compile_and_run(

@@ -351,43 +351,78 @@ impl IrGenerator {
             }
             Literal::Null => (IrValue::Null, IrType::Pointer),
             Literal::List(elements) => {
-                // 创建数组
-                let mut element_ops = Vec::new();
-                for elem in elements {
-                    let tag = self.determine_element_tag(elem);
-                    element_ops.push((self.generate_expression(elem)?, tag));
+                if !elements
+                    .iter()
+                    .any(|elem| matches!(elem, Expression::Spread { .. }))
+                {
+                    let mut element_ops = Vec::new();
+                    for elem in elements {
+                        let tag = self.determine_element_tag(elem);
+                        element_ops.push((self.generate_expression(elem)?, tag));
+                    }
+                    return Ok(self.emit_new_array(element_ops));
                 }
-                let local = self.module.functions[func_idx].add_local(IrType::Pointer);
-                self.module.functions[func_idx]
-                    .instructions
-                    .push(Instruction::NewArray {
-                        dst: local,
-                        elements: element_ops,
-                    });
-                return Ok(Operand::Local(local));
+                // Spread 需要按出现顺序拼接：静态元素先聚成一段数组，再与
+                // 展开操作数依次做运行时连接。起始空数组保证结果不与任何
+                // 操作数共享。
+                let mut accumulator = self.emit_new_array(Vec::new());
+                let mut run = Vec::new();
+                for elem in elements {
+                    if let Expression::Spread { expr, .. } = elem {
+                        if !run.is_empty() {
+                            let segment = self.emit_new_array(std::mem::take(&mut run));
+                            accumulator = self.emit_list_concat(accumulator, segment);
+                        }
+                        let spread = self.generate_expression(expr)?;
+                        accumulator = self.emit_list_concat(accumulator, spread);
+                    } else {
+                        let tag = self.determine_element_tag(elem);
+                        run.push((self.generate_expression(elem)?, tag));
+                    }
+                }
+                if !run.is_empty() {
+                    let segment = self.emit_new_array(run);
+                    accumulator = self.emit_list_concat(accumulator, segment);
+                }
+                return Ok(accumulator);
             }
             Literal::Object(fields) => {
-                // 创建对象
-                let mut field_ops = Vec::new();
+                if !fields
+                    .iter()
+                    .any(|field| matches!(field, ObjectField::Spread { .. }))
+                {
+                    let mut field_ops = Vec::new();
+                    for field in fields {
+                        if let ObjectField::Field { name, value } = field {
+                            let tag = self.determine_element_tag(value);
+                            field_ops.push((name.clone(), self.generate_expression(value)?, tag));
+                        }
+                    }
+                    return Ok(self.emit_new_object(field_ops));
+                }
+                let accumulator = self.emit_new_object(Vec::new());
+                let mut run = Vec::new();
                 for field in fields {
                     match field {
                         ObjectField::Field { name, value } => {
                             let tag = self.determine_element_tag(value);
-                            field_ops.push((name.clone(), self.generate_expression(value)?, tag));
+                            run.push((name.clone(), self.generate_expression(value)?, tag));
                         }
-                        ObjectField::Spread { .. } => {
-                            // Spread 暂不支持
+                        ObjectField::Spread { value } => {
+                            if !run.is_empty() {
+                                let segment = self.emit_new_object(std::mem::take(&mut run));
+                                self.emit_object_extend(accumulator.clone(), segment);
+                            }
+                            let spread = self.generate_expression(value)?;
+                            self.emit_object_extend(accumulator.clone(), spread);
                         }
                     }
                 }
-                let local = self.module.functions[func_idx].add_local(IrType::Pointer);
-                self.module.functions[func_idx]
-                    .instructions
-                    .push(Instruction::NewObject {
-                        dst: local,
-                        fields: field_ops,
-                    });
-                return Ok(Operand::Local(local));
+                if !run.is_empty() {
+                    let segment = self.emit_new_object(run);
+                    self.emit_object_extend(accumulator.clone(), segment);
+                }
+                return Ok(accumulator);
             }
         };
 
@@ -396,6 +431,51 @@ impl IrGenerator {
             .instructions
             .push(Instruction::Const { dst: local, value });
         Ok(Operand::Local(local))
+    }
+
+    fn emit_new_array(&mut self, elements: Vec<(Operand, i64)>) -> Operand {
+        let func_idx = self.current_func.unwrap();
+        let local = self.module.functions[func_idx].add_local(IrType::Pointer);
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::NewArray {
+                dst: local,
+                elements,
+            });
+        Operand::Local(local)
+    }
+
+    fn emit_list_concat(&mut self, left: Operand, right: Operand) -> Operand {
+        let func_idx = self.current_func.unwrap();
+        let local = self.module.functions[func_idx].add_local(IrType::Pointer);
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::RuntimeCall {
+                dst: Some(local),
+                func: RuntimeFn::ArrayConcat,
+                args: vec![left, right],
+            });
+        Operand::Local(local)
+    }
+
+    fn emit_new_object(&mut self, fields: Vec<(String, Operand, i64)>) -> Operand {
+        let func_idx = self.current_func.unwrap();
+        let local = self.module.functions[func_idx].add_local(IrType::Pointer);
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::NewObject { dst: local, fields });
+        Operand::Local(local)
+    }
+
+    fn emit_object_extend(&mut self, target: Operand, source: Operand) {
+        let func_idx = self.current_func.unwrap();
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::RuntimeCall {
+                dst: None,
+                func: RuntimeFn::ObjectExtend,
+                args: vec![target, source],
+            });
     }
 
     pub(super) fn generate_binary_op(&mut self, binop: &BinaryOp) -> Result<Operand, XuloError> {

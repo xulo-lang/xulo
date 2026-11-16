@@ -149,6 +149,12 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
         returns: &[],
     },
     RuntimeFnDesc {
+        name: "xulo_object_extend",
+        addr: xulo_runtime::runtime::xulo_object_extend as *const u8,
+        params: &[I64, I64],
+        returns: &[],
+    },
+    RuntimeFnDesc {
         name: "xulo_object_has",
         addr: xulo_runtime::runtime::xulo_object_has as *const u8,
         params: &[I64, I64],

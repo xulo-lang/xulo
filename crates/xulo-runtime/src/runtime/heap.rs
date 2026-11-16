@@ -322,6 +322,34 @@ pub extern "C" fn xulo_object_set(
     }
 }
 
+/// 对象展开：把 `src` 的字段按顺序写入 `dst`，同名键覆盖原值。
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_object_extend(dst: *mut XuloObject, src: *const XuloObject) {
+    if dst.is_null() || src.is_null() {
+        return;
+    }
+    unsafe {
+        let source = &*src;
+        let target = &mut *dst;
+        for (index, (name, value)) in source.fields.iter().enumerate() {
+            let tag = source.field_tags.get(index).copied().unwrap_or(1);
+            if let Some(slot) = target.fields.iter().position(|(key, _)| key == name) {
+                target.fields[slot].1 = *value;
+                if slot < target.field_tags.len() {
+                    target.field_tags[slot] = tag;
+                } else {
+                    target.field_tags.resize(slot + 1, 1);
+                    target.field_tags[slot] = tag;
+                }
+            } else {
+                target.fields.push((name.clone(), *value));
+                target.field_tags.push(tag);
+            }
+        }
+    }
+}
+
 /// 对象/Map 是否含某键
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]

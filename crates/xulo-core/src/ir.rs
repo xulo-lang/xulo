@@ -71,6 +71,7 @@ pub enum RuntimeFn {
     /// 字段值 0 分不清 null 与整数 0）
     ObjectGetTag,
     ObjectSet,
+    ObjectExtend,
     ObjectHas,
     ObjectRemove,
     ObjectSize,
