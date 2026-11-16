@@ -2510,7 +2510,10 @@ impl IrGenerator {
         let prop_fn = match member.property.as_str() {
             "len" if is_builder => Some(RuntimeFn::StringBuilderLen),
             "byte_len" if is_builder => Some(RuntimeFn::StringBuilderByteLen),
-            "len" if self.expr_is_list_receiver(&Some(Box::new(member.object.clone()))) => {
+            "len"
+                if self.expr_is_list_receiver(&Some(Box::new(member.object.clone())))
+                    || self.expr_is_fixed_array(&member.object) =>
+            {
                 Some(RuntimeFn::ArrayLen)
             }
             "size"

@@ -1780,6 +1780,15 @@ impl IrGenerator {
         })
     }
 
+    /// `Array<T, N>` is an inline value at run time, but its `.len` must use
+    /// the array header rather than string lowering.
+    fn expr_is_fixed_array(&self, object: &Expression) -> bool {
+        matches!(
+            self.infer_source_type_from_expr(object),
+            Some(Type::Named(name, _)) if name == "Array"
+        )
+    }
+
     /// 方法调用的接收者是否是 `Map`（brace 形式当前记为 `object`）。
     pub(super) fn expr_is_map_receiver(&self, object: &Option<Box<Expression>>) -> bool {
         object.as_ref().is_some_and(|o| {

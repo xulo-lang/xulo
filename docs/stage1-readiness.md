@@ -143,10 +143,10 @@ main risks. Fixing P0 rows in §5 is the shortest path.
 **Exit criterion:** `xupm build` produces a stage 1 binary that runs the same
 bootstrap workload as `xulo run` and prints identical output.
 
-**Current assessment:** **Blocked by AOT gaps.** `Map`, `Set`, list/object
-spread, and nested ternaries now lower through the compiled path; `Array.len`
-still has a known divergence. The interpreter can be used for Gate 1–3, but
-native bootstrap requires this fix or an explicitly narrower stage 1 design.
+**Current assessment:** **Achievable now.** Known AOT gaps are closed:
+`Map`, `Set`, list/object spread, nested ternaries, and `Array.len` match the
+interpreter. The remaining WP3 work is automation (`T4`) and verified
+build-failure exit status (`B3a`).
 
 ### Gate 5 — Self-host
 
@@ -189,7 +189,7 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 | L12 | `mod`/`use`/`pub`, visibility, cross-file modules | **OK** | `examples/modules`; AOT module build | 1 |
 | L13 | Tuple literals, destructuring, equality | **OK** | parser/semantic/runtime tests | 1 |
 | L14 | Tuple positional access `p.0` and `?.0` | **OK** | Reads and `let mut` writes lower to the tuple's list slot; a position outside the arity is `E0220`; both execution paths agree | 2 |
-| L15 | `Array<T, N>` with `.len` and indexed access | **PARTIAL** | Interpreter works; AOT `.len` returns the wrong value | 4 |
+| L15 | `Array<T, N>` with `.len` and indexed access | **OK** | Interpreter and AOT agree on `.len`, indexing, and iteration; probes cover `Array<int, 3>` and `Array<string, 2>` (`crates/xulo-compiler/tests/type_system_codegen_tests.rs`) | 4 |
 | L16 | `T?`, `?.`, `??`, null narrowing | **OK** | `optional_chaining`, semantic narrowing tests | 1 |
 | L17 | `unknown` as the top type | **OK** | Every type is assignable to `unknown`; `List<unknown>` and `Map<string, unknown>` accept heterogeneous values. `print` still rejects `unknown` itself (`E0212`, spec `builtins/intrinsic-functions.md`), so a probe narrows first. | 2 |
 | L18 | `is` / `is not` narrowing in `if` conditions | **OK** | `if v is T` narrows the then-branch and removes covered union members from the else-branch; `is not` swaps them; untestable types are `E0222`. An assignment to the narrowed binding ends the narrowing for the rest of the branch, so the declared type is used afterwards (L18b). | 2 |
@@ -212,7 +212,7 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 | R6 | `panic`, `assert`, and process exit status | **OK** | CLI/runtime tests | 1 |
 | R7 | `defer` executes at scope exit, reverse order | **BROKEN** | Same defect as L20 | 3 |
 | R8 | Value/reference semantics for `copy`/`move` | **PARTIAL** | Not fully verified; avoid relying on it until tested | 3 |
-| R9 | Interpreter and AOT produce identical observable behavior | **PARTIAL** | Integer arithmetic, overflow, shifts, comparison, printing, `Map`/`Set`, list/object spread, and nested ternaries now agree (`u64` uses print tag 10; §6.1 passes under `xupm build`). `Array.len` still differs (§6.7, WP3). | 4 |
+| R9 | Interpreter and AOT produce identical observable behavior | **PARTIAL** | All known probes agree: integer arithmetic, overflow, shifts, comparison, printing, `Map`/`Set`, list/object spread, nested ternaries, and `Array.len` (`u64` uses print tag 10; §6.1 and §6.6–6.7 pass under `xupm build`). Broad automated parity coverage still depends on `T4`. | 4 |
 | R10 | Deterministic output formatting for diagnostics and integers | **OK** | `int`/`u64` print and stringify through exact decimal formatting in both paths; `crates/xulo-runtime/tests/integers.rs` covers `u64::MAX`, `2^63`, and `-2^63` | 2 |
 
 ### 5.3 Collections and text
@@ -222,7 +222,7 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 | C1 | `List` with `.push`, `.pop`, `.len`, indexing, `+`, iteration | **OK** | Interpreter and AOT agree, including spread; `examples/collections.xulo` matches byte for byte (`crates/xulo-compiler/tests/type_system_codegen_tests.rs`) | 1 |
 | C2 | `Map<K, V>` with `.get`, `.set`, `.has`, `.remove`, `.size`, iteration | **OK** | Interpreter and compiled paths agree on members, projection, `Map::from_entries`, typed literals, brace-map spread, and key iteration (`crates/xulo-compiler/tests/type_system_codegen_tests.rs`, `crates/xulo-compiler/tests/aot_syntax_coverage_tests.rs`) | 4 |
 | C3 | `Set<T>` with `.insert`, `.remove`, `.has`, `.size` | **OK** | Interpreter and compiled paths agree on construction, membership, insertion, removal, size, and iteration for numbers, strings, and payload-free enums (`crates/xulo-compiler/tests/type_system_codegen_tests.rs`, `crates/xulo-compiler/tests/aot_syntax_coverage_tests.rs`) | 4 |
-| C4 | `Array<T, N>` with `.len`, indexing, iteration | **PARTIAL** | Interpreter OK; AOT `.len` wrong; `Array::filled` not verified | 4 |
+| C4 | `Array<T, N>` with `.len`, indexing, iteration | **PARTIAL** | Interpreter and AOT agree on `.len`, indexing, and iteration; `Array::filled` not verified | 4 |
 | C5 | `string` members and UTF-8 behavior | **OK** | Interpreter and AOT string member tests | 1 |
 | C6 | `StringBuilder` with `new`/`append`/`clear`/`build`/`len`/`byte_len` | **OK** | runtime/AOT tests | 1 |
 | C7 | `str`/`fmt`/output of all bootstrap values | **OK** | `str`, `Format`, and `print` render `int`/`u64` exactly (AOT tag 10 for the unsigned slot); `crates/xulo-runtime/tests/integers.rs` and the interpreter/AOT golden suites | 2 |
@@ -247,7 +247,7 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 |----|-------------|--------|-----------------------|-----------|
 | B1 | `xulo run` and `xulo check` for a single file | **OK** | CLI integration tests | 1 |
 | B2 | `xupm build` for core language and `hello` | **OK** | macOS/Windows CI AOT smoke test | 4 |
-| B3 | `xupm build` for the bootstrap subset | **BROKEN** | The `Array.len` bug remains (L15); `Map`/`Set`/spread/ternary now lower (C2, C3, C1, R9b) | 4 |
+| B3 | `xupm build` for the bootstrap subset | **OK** | Known probes match `xulo run`: `collections`, `optional_chaining`, and `Array<int, 3>.len`; automated differential coverage is still pending (`T4`) | 4 |
 | B4 | AOT module tree (`mod`/`use`) | **OK** | `examples/modules` native build | 4 |
 | B5 | Runtime static library and linker path | **OK** | CI and release workflow | 4 |
 | B6 | `xupm test` for stage 1's own tests | **NOT VERIFIED** | Command exists; no stage 1 test corpus yet | 3 |
@@ -377,15 +377,14 @@ fn main() {
 }
 ```
 
-The `Map` and `Set` probes now pass under both paths. `xupm build` still fails
-the bootstrap subset for the `Array.len` reason in §6.7.
+The `Map` and `Set` probes pass under both paths.
 
-### 6.7 AOT and interpreter diverge on `Array.len` (R9, L15)
+### 6.7 AOT and interpreter agree on `Array.len` (R9, L15)
 
-- `Array<int, 3>.len` returns `1` under AOT instead of `3`.
+- `Array<int, 3>.len` returns `3` under both paths; indexing and iteration
+  also agree.
 
-These are observable differences on programs the interpreter already accepts;
-a native stage 1 would inherit them.
+No known observable divergence remains in the §6.6–6.7 probes.
 
 ### 6.8 `defer` has the wrong execution time (L20, R7)
 
@@ -490,7 +489,8 @@ AOT narrowing slot, range failures, and regex reachability with `std-spec`
 ### WP3 — AOT parity and bootstrap backend (P1, Gate 4)
 
 - AOT runtime support for `Map` and `Set` is in place (C2, C3).
-- Fix `Array.len` in the AOT lowering.
+- Known AOT parity probes now agree, including spread, ternaries, and
+  `Array.len` (C1, R9b, L15).
 - Add a differential runner that builds every non-interactive example both ways
   and compares output.
 - Make `xupm build` failures return a nonzero exit status (verify separately;
@@ -576,10 +576,10 @@ Last recorded verification (2026-11-16):
 
 | Check | Result |
 |-------|--------|
-| `cargo test --workspace` | 2071 passed, 0 failed |
+| `cargo test --workspace` | 2073 passed, 0 failed |
 | Examples (CI job) | Configured to run every `examples/*.xulo` |
 | AOT smoke tests | `hello` on macOS/Windows; `structs`, `trait_shapes`, `generics`, `modules` probed locally |
-| AOT differential probes | `collections` and `optional_chaining` match; `Array.len` still diverges |
+| AOT differential probes | `collections`, `optional_chaining`, and `Array.len` all match |
 
 ## 10. Maintenance
 

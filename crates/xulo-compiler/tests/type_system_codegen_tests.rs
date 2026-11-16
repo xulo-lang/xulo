@@ -184,6 +184,25 @@ fn set_string_values_compile() {
     assert_eq!(out, vec!["2", "true", "true", "false", "a"]);
 }
 
+/// L15: `Array<T, N>.len` uses the array header in the AOT path.
+#[test]
+fn fixed_array_len_compile() {
+    let out = compile_and_run(
+        r#"fn count(items: Array<int, 3>): number {
+    items.len
+}
+fn main() {
+    let numbers: Array<int, 3> = [1, 2, 3]
+    let words: Array<string, 2> = ["a", "b"]
+    print(numbers.len)
+    print(words.len)
+    print(numbers[1])
+    print(count(numbers))
+}"#,
+    );
+    assert_eq!(out, vec!["3", "2", "2", "3"]);
+}
+
 /// R9b: right-nested ternaries evaluate exactly one branch and print strings.
 #[test]
 fn nested_ternary_compile() {

@@ -624,6 +624,20 @@ fn map_members_reach_machine_code() {
 }
 
 #[test]
+fn fixed_array_len_compiles() {
+    let out = compile_and_run(
+        r#"
+        fn main() {
+            let numbers: Array<int, 3> = [1, 2, 3]
+            print(numbers.len)
+            print(numbers[2])
+        }
+        "#,
+    );
+    assert_eq!(out, vec!["3", "3"]);
+}
+
+#[test]
 fn nested_ternary_compiles() {
     let out = compile_and_run(
         r#"
