@@ -234,6 +234,15 @@ impl IrGenerator {
                         dst: local,
                         elements,
                     });
+                // Tuples are value category; register the array so a later
+                // binding copy detaches it from `List` reference semantics.
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::RuntimeCall {
+                        dst: None,
+                        func: RuntimeFn::MarkValueArray,
+                        args: vec![Operand::Local(local)],
+                    });
                 Ok(Operand::Local(local))
             }
             Expression::TypedMap(map) => {

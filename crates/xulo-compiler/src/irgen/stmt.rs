@@ -129,6 +129,41 @@ impl IrGenerator {
             Operand::Const(IrValue::Null)
         };
 
+        // `Array<T, N>` shares the list representation and an object literal
+        // annotated with a struct type is a struct, not a `Map`; register the
+        // value category before the binding copy can preserve it
+        // (spec `memory-and-runtime.md`).
+        let value_marker = match &binding.type_annotation {
+            Some(Type::Named(name, _)) if name == "Array" => Some(RuntimeFn::MarkValueArray),
+            Some(Type::Named(name, _)) => {
+                let resolved = self.resolve_type(name);
+                self.structs
+                    .contains_key(&resolved)
+                    .then_some(RuntimeFn::MarkStruct)
+            }
+            _ => None,
+        };
+        let init_val = if let Some(marker) = value_marker {
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::RuntimeCall {
+                    dst: None,
+                    func: marker,
+                    args: vec![init_val.clone()],
+                });
+            init_val
+        } else {
+            init_val
+        };
+        // `let x = e`: a value-category aggregate gets its own container;
+        // reference-category values keep sharing (R8).
+        let init_val = if let Some(expr) = &binding.value {
+            let tag = self.tag_operand_for(expr, &init_val);
+            self.shallow_bind_copy(init_val, tag)
+        } else {
+            init_val
+        };
+
         // 元组/对象解构：`let (a, b) = expr` / `let { f, g: h } = expr`
         if binding.tuple_names.is_some() || binding.object_destructuring.is_some() {
             return self.generate_destructured_lets(binding, init_val, func_idx);
@@ -207,7 +242,11 @@ impl IrGenerator {
                         array: init_val.clone(),
                         index: Operand::Const(IrValue::I64(i as i64)),
                     });
-                self.locals.insert(name.clone(), elem);
+                let elem =
+                    self.shallow_bind_copy(Operand::Local(elem), Operand::Const(IrValue::I64(-1)));
+                if let Operand::Local(local) = elem {
+                    self.locals.insert(name.clone(), local);
+                }
             }
             return Ok(());
         }
@@ -222,11 +261,45 @@ impl IrGenerator {
                         object: init_val.clone(),
                         field: field.clone(),
                     });
-                self.locals.insert(name, elem);
+                let elem =
+                    self.shallow_bind_copy(Operand::Local(elem), Operand::Const(IrValue::I64(-1)));
+                if let Operand::Local(local) = elem {
+                    self.locals.insert(name, local);
+                }
             }
             return Ok(());
         }
         Ok(())
+    }
+
+    /// Binding/assignment copy (spec `memory-and-runtime.md`, value semantics):
+    /// the runtime duplicates `struct`/`enum`/`Array`/tuple containers and
+    /// leaves reference-category values shared. Scalar slots need no copy, so
+    /// only pointer-shaped operands pay for the call.
+    pub(super) fn shallow_bind_copy(&mut self, value: Operand, tag: Operand) -> Operand {
+        let func_idx = self.current_func.unwrap();
+        if !matches!(self.operand_slot_type(&value), IrType::Pointer) {
+            return value;
+        }
+        // A dynamic tag attached to the source local (JSON index payloads,
+        // match bindings) must follow the copy, or printing the binding falls
+        // back to the static slot tag.
+        let dynamic_tag = match &value {
+            Operand::Local(source) => self.value_tags.get(source).cloned(),
+            _ => None,
+        };
+        let local = self.module.functions[func_idx].add_local(IrType::Pointer);
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::RuntimeCall {
+                dst: Some(local),
+                func: RuntimeFn::ValueShallowCopy,
+                args: vec![value, tag],
+            });
+        if let Some(dynamic_tag) = dynamic_tag {
+            self.value_tags.insert(local, dynamic_tag);
+        }
+        Operand::Local(local)
     }
 
     pub(super) fn generate_return(&mut self, r: &ReturnStmt) -> Result<(), XuloError> {
@@ -602,20 +675,31 @@ impl IrGenerator {
                         array: Operand::Local(array_local),
                         index: Operand::Local(index_local),
                     });
+                let copied =
+                    self.shallow_bind_copy(Operand::Local(raw), Operand::Const(IrValue::I64(-1)));
                 self.module.functions[func_idx]
                     .instructions
                     .push(Instruction::RuntimeCall {
                         dst: Some(iter_local),
                         func: RuntimeFn::AllocCell,
-                        args: vec![Operand::Local(raw)],
+                        args: vec![copied],
                     });
             } else {
+                let raw = self.module.functions[func_idx].add_local(IrType::Pointer);
                 self.module.functions[func_idx]
                     .instructions
                     .push(Instruction::GetIndex {
-                        dst: iter_local,
+                        dst: raw,
                         array: Operand::Local(array_local),
                         index: Operand::Local(index_local),
+                    });
+                let copied =
+                    self.shallow_bind_copy(Operand::Local(raw), Operand::Const(IrValue::I64(-1)));
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::SetLocal {
+                        dst: iter_local,
+                        src: copied,
                     });
             }
             for stmt in &for_stmt.body.statements {
@@ -754,6 +838,8 @@ impl IrGenerator {
             AssignValue::Assign(inner) => self.generate_assign_value(inner)?,
         };
         let tag = Self::assign_value_tag(self, &assign.value);
+        // Assignment binds by the same value/reference rule as `let` (R8).
+        let value = self.shallow_bind_copy(value, Operand::Const(IrValue::I64(tag)));
         let result = value.clone();
 
         match &assign.target {

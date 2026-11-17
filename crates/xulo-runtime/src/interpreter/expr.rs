@@ -173,7 +173,9 @@ impl Interpreter {
                 while let Some(value) = cursor.next() {
                     out.push(value);
                 }
-                Ok(Value::List(Rc::new(RefCell::new(out))))
+                let list = Rc::new(RefCell::new(out));
+                self.mark_value_list(&list);
+                Ok(Value::List(list))
             }
             Expression::Await { expr, span } => {
                 let operand = self.eval(expr, env)?;
@@ -208,7 +210,9 @@ impl Interpreter {
                 for item in items {
                     out.push(self.eval(item, env)?);
                 }
-                Ok(Value::List(Rc::new(RefCell::new(out))))
+                let list = Rc::new(RefCell::new(out));
+                self.mark_value_list(&list);
+                Ok(Value::List(list))
             }
             Expression::TypedMap(tm) => {
                 let mut fields = Vec::with_capacity(tm.entries.len());
@@ -856,7 +860,7 @@ impl Interpreter {
         let scrutinee = self.eval(&m.value, env)?;
         for arm in &m.arms {
             let arm_env = Env::child(env);
-            if !pattern_matches(&arm.pattern, &scrutinee, &arm_env)? {
+            if !pattern_matches(self, &arm.pattern, &scrutinee, &arm_env)? {
                 continue;
             }
             if let Some(guard) = &arm.guard {

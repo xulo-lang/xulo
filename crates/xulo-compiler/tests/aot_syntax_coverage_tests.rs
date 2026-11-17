@@ -260,6 +260,67 @@ fn task_combinators_follow_the_compiled_async_model() {
     );
 }
 
+/// R8: plain `let`/assignment follows the value/reference table (spec
+/// `memory-and-runtime.md`): struct, enum, tuple, and `Array` values get their
+/// own container, while `List`, `Map`, `Set`, and `StringBuilder` stay shared.
+#[test]
+fn bindings_copy_value_aggregates_and_share_references() {
+    let out = compile_and_run(
+        r#"
+        struct Inner { n: int }
+        struct Point { x: int, inner: Inner, items: List<int> }
+        fn bump(p: mut Point) {
+            p.x = 9
+        }
+        fn main() {
+            let a = Point(x: 1, inner: Inner(n: 1), items: [1, 2])
+            let mut b = a
+            b.x = 9
+            b.inner.n = 8
+            b.items[0] = 7
+            print(a.x)
+            print(b.x)
+            print(a.inner.n)
+            print(b.inner.n)
+            print(a.items[0])
+
+            let mut point = Point(x: 0, inner: Inner(n: 0), items: [])
+            point = a
+            point.x = 5
+            print(a.x)
+            print(point.x)
+
+            let mut t = (1, 2)
+            let mut u = t
+            u.0 = 9
+            print(t.0)
+            print(u.0)
+
+            let mut xs: Array<number, 2> = [1, 2]
+            let mut ys = xs
+            ys[0] = 8
+            print(xs[0])
+            print(ys[0])
+
+            let xs2 = [1, 2]
+            let mut ys2 = xs2
+            ys2[0] = 9
+            print(xs2[0])
+
+            let mut p = Point(x: 1, inner: Inner(n: 1), items: [])
+            bump(p)
+            print(p.x)
+        }
+        "#,
+    );
+    assert_eq!(
+        out,
+        vec![
+            "1", "9", "1", "8", "7", "1", "5", "1", "9", "1", "8", "9", "9"
+        ]
+    );
+}
+
 // ── 循环控制 ──────────────────────────────────────────────────────────────
 #[test]
 fn continue_skips_for_iteration() {

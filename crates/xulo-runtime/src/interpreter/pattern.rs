@@ -54,6 +54,7 @@ pub(super) fn enum_ref_matches(enum_name: &str, variant: &str, value: &Value) ->
 /// Bind a matched enum payload into `env`: a single binding receives the value
 /// itself; several bindings receive the elements of a list payload.
 pub(super) fn bind_enum_payload(
+    interp: &Interpreter,
     env: &Rc<RefCell<Env>>,
     bindings: &[String],
     payload: &Value,
@@ -62,7 +63,8 @@ pub(super) fn bind_enum_payload(
     if bindings.len() == 1 {
         let name = &bindings[0];
         if name != "_" {
-            env.borrow_mut().define(name, payload.clone(), false);
+            env.borrow_mut()
+                .define(name, interp.value_bind_copy(payload.clone()), false);
         }
         return Ok(());
     }
@@ -78,13 +80,15 @@ pub(super) fn bind_enum_payload(
             continue;
         }
         let value = list.get(i).cloned().unwrap_or(Value::Null);
-        env.borrow_mut().define(name, value, false);
+        env.borrow_mut()
+            .define(name, interp.value_bind_copy(value), false);
     }
     Ok(())
 }
 
 /// Match a scrutinee against a pattern, binding names into `env` on success.
 pub(super) fn pattern_matches(
+    interp: &Interpreter,
     pattern: &xulo_core::ast::MatchPattern,
     scrutinee: &Value,
     env: &Rc<RefCell<Env>>,
@@ -105,7 +109,7 @@ pub(super) fn pattern_matches(
                 && tag == variant
                 && let Some(payload) = payload
             {
-                bind_enum_payload(env, bindings, payload, span)?;
+                bind_enum_payload(interp, env, bindings, payload, span)?;
                 true
             } else {
                 false
@@ -139,7 +143,8 @@ pub(super) fn pattern_matches(
             },
         },
         xulo_core::ast::MatchPattern::Binding { name, .. } => {
-            env.borrow_mut().define(name, scrutinee.clone(), true);
+            env.borrow_mut()
+                .define(name, interp.value_bind_copy(scrutinee.clone()), true);
             true
         }
         xulo_core::ast::MatchPattern::TypePattern {
@@ -151,13 +156,14 @@ pub(super) fn pattern_matches(
             let ok = value_is_named_type(scrutinee, type_name)
                 || (*optional && matches!(scrutinee, Value::Null));
             if ok && let xulo_core::ast::PatternBinder::Binding(b) = binder {
-                env.borrow_mut().define(b, scrutinee.clone(), true);
+                env.borrow_mut()
+                    .define(b, interp.value_bind_copy(scrutinee.clone()), true);
             }
             ok
         }
         xulo_core::ast::MatchPattern::Or { patterns, .. } => {
             for p in patterns {
-                if pattern_matches(p, scrutinee, env)? {
+                if pattern_matches(interp, p, scrutinee, env)? {
                     return Ok(true);
                 }
             }
@@ -169,7 +175,7 @@ pub(super) fn pattern_matches(
             } = scrutinee
                 && enum_name == name
             {
-                bind_struct_payload(env, bindings, payload.as_deref());
+                bind_struct_payload(interp, env, bindings, payload.as_deref());
                 true
             } else {
                 false
@@ -180,6 +186,7 @@ pub(super) fn pattern_matches(
 
 /// Bind a struct's positional payload values to the pattern's binding names.
 pub(super) fn bind_struct_payload(
+    interp: &Interpreter,
     env: &Rc<RefCell<Env>>,
     bindings: &[xulo_core::ast::MatchPattern],
     payload: Option<&Value>,
@@ -192,7 +199,8 @@ pub(super) fn bind_struct_payload(
     for (i, binder) in bindings.iter().enumerate() {
         if let xulo_core::ast::MatchPattern::Binding { name, .. } = binder {
             let value = values.get(i).cloned().unwrap_or(Value::Null);
-            env.borrow_mut().define(name, value, true);
+            env.borrow_mut()
+                .define(name, interp.value_bind_copy(value), true);
         }
     }
 }
@@ -333,5 +341,95 @@ fn deep_copy_value_inner(
             Value::StringBuilder(Rc::new(RefCell::new(builder.borrow().clone())))
         }
         other => other.clone(),
+    }
+}
+
+impl Interpreter {
+    /// Register a value-category list (`Array`, tuple, `Range`). The
+    /// interpreter represents all three with `Value::List`, so the registry is
+    /// what separates them from reference-category `List`/`Set` at binding
+    /// time.
+    pub(super) fn mark_value_list(&self, list: &Rc<RefCell<Vec<Value>>>) {
+        self.value_lists
+            .borrow_mut()
+            .insert(Rc::as_ptr(list) as usize);
+    }
+
+    /// Binding/assignment copy (spec `memory-and-runtime.md`, "Value semantics
+    /// and reference semantics"): `struct` instances, enum values, and marked
+    /// `Array`/tuple/`Range` lists get a fresh container, while `List`, `Map`,
+    /// `Set`, and `StringBuilder` keep sharing the one underlying value.
+    /// Fields and elements follow their own category recursively, so this is
+    /// the spec's shallow copy, not the deep copy of `copy e`.
+    pub(super) fn value_bind_copy(&self, value: Value) -> Value {
+        self.value_bind_copy_inner(value, &mut std::collections::HashMap::new())
+    }
+
+    fn value_bind_copy_inner(
+        &self,
+        value: Value,
+        seen: &mut std::collections::HashMap<usize, Value>,
+    ) -> Value {
+        match value {
+            Value::Object(fields) => {
+                let Some(type_name) = self.instance_type(&fields) else {
+                    // Object literals are `Map` values: reference semantics.
+                    return Value::Object(fields);
+                };
+                let key = Rc::as_ptr(&fields) as usize;
+                if let Some(copy) = seen.get(&key) {
+                    return copy.clone();
+                }
+                let source: Vec<(String, Value)> = fields.borrow().clone();
+                let copy_fields = Rc::new(RefCell::new(Vec::with_capacity(source.len())));
+                let copy = Value::Object(copy_fields.clone());
+                seen.insert(key, copy.clone());
+                let items = source
+                    .into_iter()
+                    .map(|(name, field)| (name, self.value_bind_copy_inner(field, seen)))
+                    .collect();
+                *copy_fields.borrow_mut() = items;
+                // The copy is a struct too: keep method dispatch resolving.
+                self.register_instance(&copy_fields, &type_name);
+                copy
+            }
+            Value::Enum {
+                enum_name,
+                tag,
+                payload,
+            } => {
+                // Enums are always value category; their payload follows the
+                // same per-category rule.
+                let payload =
+                    payload.map(|inner| Box::new(self.value_bind_copy_inner(*inner, seen)));
+                Value::Enum {
+                    enum_name,
+                    tag,
+                    payload,
+                }
+            }
+            Value::List(list) => {
+                let key = Rc::as_ptr(&list) as usize;
+                let is_value = self.value_lists.borrow().contains(&key);
+                if !is_value {
+                    return Value::List(list);
+                }
+                if let Some(copy) = seen.get(&key) {
+                    return copy.clone();
+                }
+                let source: Vec<Value> = list.borrow().clone();
+                let copy_items = Rc::new(RefCell::new(Vec::with_capacity(source.len())));
+                let copy = Value::List(copy_items.clone());
+                seen.insert(key, copy.clone());
+                self.mark_value_list(&copy_items);
+                let items = source
+                    .into_iter()
+                    .map(|item| self.value_bind_copy_inner(item, seen))
+                    .collect();
+                *copy_items.borrow_mut() = items;
+                copy
+            }
+            other => other,
+        }
     }
 }

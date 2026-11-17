@@ -127,6 +127,7 @@ pub extern "C" fn xulo_range_list(start: f64, end: f64, inclusive: i64) -> *mut 
         }
         i = next;
     }
+    xulo_mark_value_array(arr as i64);
     arr
 }
 
@@ -894,6 +895,139 @@ pub extern "C" fn xulo_value_copy(value: i64, tag: i64) -> i64 {
     runtime_value_copy(value, tag, &mut std::collections::HashMap::new(), 0)
 }
 
+/// Mark a struct instance (spec `memory-and-runtime.md`, value semantics).
+/// The `XuloObject` representation is shared with `Map`, so construction sites
+/// register the value-semantic ones and `Map` stays a shared reference.
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_mark_struct(value: i64) {
+    if value != 0 {
+        STRUCT_OBJECTS.with(|objects| {
+            objects.borrow_mut().insert(value as usize);
+        });
+    }
+}
+
+/// Mark an `Array`/tuple value. `List`/`Set` share the `XuloArray`
+/// representation but keep reference semantics, so only these creation sites
+/// register.
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_mark_value_array(value: i64) {
+    if value != 0 {
+        VALUE_ARRAYS.with(|arrays| {
+            arrays.borrow_mut().insert(value as usize);
+        });
+    }
+}
+
+fn runtime_value_shallow_copy(
+    value: i64,
+    tag: i64,
+    seen: &mut std::collections::HashMap<usize, i64>,
+    depth: usize,
+) -> i64 {
+    if depth > MAX_VALUE_COPY_DEPTH {
+        value_copy_too_deep();
+    }
+    let tag = if tag == -1 {
+        xulo_detect_tag(value)
+    } else {
+        tag
+    };
+    match tag {
+        3 => unsafe {
+            if value == 0 {
+                return 0;
+            }
+            let key = value as usize;
+            let is_value = VALUE_ARRAYS.with(|arrays| arrays.borrow().contains(&key));
+            if !is_value {
+                // `List`/`Set`: reference-category, the binding shares it.
+                return value;
+            }
+            if let Some(copy) = seen.get(&key) {
+                return *copy;
+            }
+            let source = &*(value as *const XuloArray);
+            let copy = xulo_alloc_array(source.elements.len());
+            VALUE_ARRAYS.with(|arrays| {
+                arrays.borrow_mut().insert(copy as usize);
+            });
+            seen.insert(key, copy as i64);
+            for (index, element) in source.elements.iter().copied().enumerate() {
+                let element_tag = set_tag(&source.tags, index);
+                let copied = runtime_value_shallow_copy(element, element_tag, seen, depth + 1);
+                xulo_array_push(copy, copied, element_tag);
+            }
+            copy as i64
+        },
+        4 => unsafe {
+            if value == 0 {
+                return 0;
+            }
+            let key = value as usize;
+            let is_value = STRUCT_OBJECTS.with(|objects| objects.borrow().contains(&key));
+            if !is_value {
+                // `Map`: reference-category, the binding shares it.
+                return value;
+            }
+            if let Some(copy) = seen.get(&key) {
+                return *copy;
+            }
+            let source = &*(value as *const XuloObject);
+            let copy = xulo_alloc_object(source.fields.len());
+            STRUCT_OBJECTS.with(|objects| {
+                objects.borrow_mut().insert(copy as usize);
+            });
+            seen.insert(key, copy as i64);
+            for (index, (name, field)) in source.fields.iter().enumerate() {
+                let field_tag = source.field_tags.get(index).copied().unwrap_or(1);
+                let copied = runtime_value_shallow_copy(*field, field_tag, seen, depth + 1);
+                (*copy).fields.push((name.clone(), copied));
+                (*copy).field_tags.push(field_tag);
+            }
+            copy as i64
+        },
+        // Enums are always value-category, so every binding gets its own
+        // variant; the payload follows the same per-category rule.
+        7 => unsafe {
+            if value == 0 {
+                return 0;
+            }
+            let key = value as usize;
+            if let Some(copy) = seen.get(&key) {
+                return *copy;
+            }
+            let source = &*(value as *const XuloEnum);
+            let copy = xulo_alloc_enum(
+                source.type_name,
+                source.variant_name,
+                source.variant,
+                source.elements.len(),
+            );
+            seen.insert(key, copy as i64);
+            for (index, element) in source.elements.iter().copied().enumerate() {
+                let element_tag = source.tags.get(index).copied().unwrap_or(1);
+                let copied = runtime_value_shallow_copy(element, element_tag, seen, depth + 1);
+                xulo_enum_set(copy, index, copied, element_tag);
+            }
+            copy as i64
+        },
+        // Scalars, strings, functions, tasks, and other identity-carrying
+        // values are already values for binding.
+        _ => value,
+    }
+}
+
+/// Binding/assignment copy (spec `memory-and-runtime.md`, "Value semantics and
+/// reference semantics"): a value-category aggregate gets a fresh container
+/// while reference-category values keep sharing. Unlike [`xulo_value_copy`],
+/// which is the explicit deep copy of `copy e`, this shallow copy stops at the
+/// first reference-category container.
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_value_shallow_copy(value: i64, tag: i64) -> i64 {
+    runtime_value_shallow_copy(value, tag, &mut std::collections::HashMap::new(), 0)
+}
+
 /// `Array::filled<T, N>(value)`: a fixed array of `N` copies of `value`.
 /// The native representation is the list-shaped `XuloArray`; the static type
 /// carries the length (spec `types/composite-types.md`).
@@ -912,5 +1046,6 @@ pub extern "C" fn xulo_array_filled(value: i64, tag: i64, len: i64) -> *mut Xulo
     for _ in 0..len {
         xulo_array_push(array, value, tag);
     }
+    xulo_mark_value_array(array as i64);
     array
 }

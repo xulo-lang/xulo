@@ -159,6 +159,15 @@ impl IrGenerator {
                 dst: local,
                 fields: field_ops,
             });
+        // Mark the instance as value-category so binding/assignment copies it
+        // (spec `memory-and-runtime.md`); `Map` objects stay shared references.
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::RuntimeCall {
+                dst: None,
+                func: RuntimeFn::MarkStruct,
+                args: vec![Operand::Local(local)],
+            });
         Ok(Operand::Local(local))
     }
 }

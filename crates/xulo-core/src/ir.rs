@@ -64,6 +64,13 @@ pub enum RuntimeFn {
     ValueEqual,
     /// `copy e`：按标签递归复制列表/对象/枚举/集合的内容
     ValueCopy,
+    /// 绑定/赋值时的值语义浅拷贝（`struct`/`enum`/`Array`/tuple 独立，
+    /// `List`/`Map`/`Set`/builder 共享）
+    ValueShallowCopy,
+    /// 登记一个 `struct` 实例为值语义对象
+    MarkStruct,
+    /// 登记一个 `Array`/tuple 为值语义数组
+    MarkValueArray,
     /// `Array::filled<T, N>(value)`：N 个同值元素的新列表
     ArrayFilled,
     /// `Task::race([t, u])`：AOT 的异步调用同步完成，取首个已结算元素

@@ -2077,7 +2077,7 @@ pub(super) fn native_spin_loop(_interp: &Interpreter, _args: &[Value]) -> Result
     Ok(Value::Null)
 }
 
-pub(super) fn native_array_new(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+pub(super) fn native_array_new(interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     let size = match args.first().and_then(|v| v.num()).and_then(|n| n.integer()) {
         Some(n) if n >= 0 => n as usize,
         _ => {
@@ -2096,10 +2096,12 @@ pub(super) fn native_array_new(_interp: &Interpreter, args: &[Value]) -> Result<
     } else {
         Value::Null
     };
-    Ok(Value::List(Rc::new(RefCell::new(vec![fill; size]))))
+    let list = Rc::new(RefCell::new(vec![fill; size]));
+    interp.mark_value_list(&list);
+    Ok(Value::List(list))
 }
 
-pub(super) fn native_array_fill(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+pub(super) fn native_array_fill(interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     let n = match args.first().and_then(|v| v.num()).and_then(|n| n.integer()) {
         Some(n) if n >= 0 => n as usize,
         _ => {
@@ -2115,12 +2117,18 @@ pub(super) fn native_array_fill(_interp: &Interpreter, args: &[Value]) -> Result
         }
     };
     let fill = args.get(1).cloned().unwrap_or(Value::Null);
-    Ok(Value::List(Rc::new(RefCell::new(vec![fill; n]))))
+    let list = Rc::new(RefCell::new(vec![fill; n]));
+    interp.mark_value_list(&list);
+    Ok(Value::List(list))
 }
 
-pub(super) fn native_array_from(_interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
+pub(super) fn native_array_from(interp: &Interpreter, args: &[Value]) -> Result<Value, RunError> {
     match args.first() {
-        Some(Value::List(list)) => Ok(Value::List(Rc::new(RefCell::new(list.borrow().clone())))),
+        Some(Value::List(list)) => {
+            let copy = Rc::new(RefCell::new(list.borrow().clone()));
+            interp.mark_value_list(&copy);
+            Ok(Value::List(copy))
+        }
         Some(other) => Err(RunError::err(
             format!("Array.clone() expected a list, found {}", other.kind_name()),
             0..0,

@@ -48,6 +48,27 @@ impl Interpreter {
                 // back to `int` and overflow at `i64::MAX`
                 // (spec `types/primitive-types.md`).
                 let value = coerce_binding_type(&binding.type_annotation, value);
+                // `Array<T, N>` shares the list representation; an annotated
+                // array is registered so later bindings copy it (R8). An object
+                // literal annotated with a struct type is a struct instance,
+                // not a `Map`.
+                let value = if let Some(Type::Named(name, _)) = &binding.type_annotation {
+                    if name == "Array" {
+                        if let Value::List(list) = &value {
+                            self.mark_value_list(list);
+                        }
+                    } else if self.struct_names.borrow().iter().any(|known| known == name)
+                        && let Value::Object(object) = &value
+                    {
+                        self.register_instance(object, name);
+                    }
+                    value
+                } else {
+                    value
+                };
+                // `let x = e` binds by value/reference rule: aggregates in the
+                // value category get their own container.
+                let value = self.value_bind_copy(value);
                 // Tuple destructuring: `let (a, b, c) = expr`
                 if let Some(tuple_names) = &binding.tuple_names {
                     match value {
@@ -64,8 +85,8 @@ impl Interpreter {
                                 ));
                             }
                             for (name, item) in tuple_names.iter().zip(l.iter()) {
-                                env.borrow_mut()
-                                    .define(name, item.clone(), binding.is_mutable);
+                                let item = self.value_bind_copy(item.clone());
+                                env.borrow_mut().define(name, item, binding.is_mutable);
                             }
                         }
                         other => {
@@ -90,6 +111,7 @@ impl Interpreter {
                                     .find(|(k, _)| k == field_name)
                                     .map(|(_, v)| v.clone())
                                     .unwrap_or(Value::Null);
+                                let val = self.value_bind_copy(val);
                                 env.borrow_mut().define(bind_name, val, binding.is_mutable);
                             }
                         }
@@ -602,7 +624,9 @@ impl Interpreter {
             if recycle {
                 let child = Env::child(env);
                 while let Some(value) = cursor.next() {
-                    child.borrow_mut().reset(&f.iter_var, value, true);
+                    child
+                        .borrow_mut()
+                        .reset(&f.iter_var, self.value_bind_copy(value), true);
                     match self.leave_block(&child, self.exec_stmts(&f.body.statements, &child))? {
                         Flow::Continue | Flow::LoopContinue => {}
                         Flow::Break => break,
@@ -612,7 +636,9 @@ impl Interpreter {
             } else {
                 while let Some(value) = cursor.next() {
                     let child = Env::child(env);
-                    child.borrow_mut().define(&f.iter_var, value, true);
+                    child
+                        .borrow_mut()
+                        .define(&f.iter_var, self.value_bind_copy(value), true);
                     match self.exec_block(&f.body, &child)? {
                         Flow::Continue | Flow::LoopContinue => {}
                         Flow::Break => break,
@@ -665,7 +691,9 @@ impl Interpreter {
                         }
                         list[i].clone()
                     };
-                    child.borrow_mut().reset(&f.iter_var, item, true);
+                    child
+                        .borrow_mut()
+                        .reset(&f.iter_var, self.value_bind_copy(item), true);
                     match self.leave_block(&child, self.exec_stmts(&f.body.statements, &child))? {
                         Flow::Continue | Flow::LoopContinue => {}
                         Flow::Break => break,
@@ -683,7 +711,9 @@ impl Interpreter {
                         list[i].clone()
                     };
                     let child = Env::child(env);
-                    child.borrow_mut().define(&f.iter_var, item, true);
+                    child
+                        .borrow_mut()
+                        .define(&f.iter_var, self.value_bind_copy(item), true);
                     match self.exec_block(&f.body, &child)? {
                         Flow::Continue | Flow::LoopContinue => {}
                         Flow::Break => break,
@@ -724,6 +754,8 @@ impl Interpreter {
             AssignValue::Expr(expr) => self.eval(expr, env)?,
             AssignValue::Assign(inner) => self.exec_assign_value(inner, env)?,
         };
+        // Assignment follows the same value/reference rule as `let` (R8).
+        let value = self.value_bind_copy(value);
         let result = value.clone();
         match &a.target {
             AssignTarget::Name(name) => {

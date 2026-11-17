@@ -242,7 +242,7 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 | R5 | No panic on adversarial input; nesting guard | **OK** | `crates/xulo-compiler/tests/robustness.rs`, `crates/xulo-parser/tests/parser_tests.rs` | 1 |
 | R6 | `panic`, `assert`, and process exit status | **OK** | `crates/xulo-cli/tests/matrix_probes/R6_panic_assert.xulo`, `crates/xulo-cli/tests/process_exit.rs` | 1 |
 | R7 | `defer` executes at scope exit, reverse order | **OK** | `leave_block` drains the scope queue on normal exit and `?` propagation (before `return`/`break`/`continue` pass out); `crates/xulo-runtime/tests/defer.rs` | 3 |
-| R8 | Value/reference semantics for `copy`/`move` | **PARTIAL** | `copy` deep-copies lists, maps, sets, builders, structs, enums, and tuples in both paths, mirrors cycles, and keeps identity-carrying values shared (`crates/xulo-runtime/tests/native.rs::copy_detaches_sets_enums_and_nested_containers`, `crates/xulo-compiler/tests/aot_syntax_coverage_tests.rs::copy_detaches_reference_values_and_keeps_float_slots`); `move` transfers and invalidates the binding (L21). Remaining: a plain `let b = a` of a value-category aggregate still aliases, because the runtime erases the struct/tuple/`Array` category the value-semantics table needs. Outside the §2.1 bootstrap subset | — |
+| R8 | Value/reference semantics for `copy`/`move` | **OK** | `copy` deep-copies lists, maps, sets, builders, structs, enums, and tuples, mirrors cycles, and keeps identity-carrying values shared (`crates/xulo-runtime/tests/native.rs::copy_detaches_sets_enums_and_nested_containers`, `crates/xulo-compiler/tests/aot_syntax_coverage_tests.rs::copy_detaches_reference_values_and_keeps_float_slots`); `move` transfers and invalidates the binding (L21). Plain `let`, assignment, destructuring, loop, and match binding now apply the value/reference table: `struct`/`enum`/`Array`/tuple/`Range` values get their own container and `List`/`Map`/`Set`/`StringBuilder` stay shared (`crates/xulo-runtime/tests/value_semantics.rs`, `crates/xulo-compiler/tests/aot_syntax_coverage_tests.rs::bindings_copy_value_aggregates_and_share_references`). | — |
 | R9 | Interpreter and AOT produce identical observable behavior | **OK** | `crates/xupm/tests/aot_differential.rs` compares all 30 top-level examples byte for byte, including dynamic JSON index tags, generic bool returns, HTTP server round-trips, process `Command`/`Child` handles, and `Task::resolve`/`all`/`race`/`timeout`; the shared baseline is empty. Compiled async calls run eagerly, so race order and timeout durations follow synchronous completion; that model is part of the AOT backend, not an unrecorded baseline gap. | 4 |
 | R10 | Deterministic output formatting for diagnostics and integers | **OK** | `int`/`u64` print and stringify through exact decimal formatting in both paths; `crates/xulo-runtime/tests/integers.rs` covers `u64::MAX`, `2^63`, and `-2^63` | 2 |
 
@@ -295,7 +295,7 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 | D2 | stderr writes and nonzero exit status | **OK** | `crates/xulo-cli/tests/process_exit.rs`, `crates/xulo-cli/tests/matrix_probes/R6_panic_assert.xulo` | 1 |
 | D3 | Stable error codes for the bootstrap subset | **OK** | Called constants are `E0204`; `std::regex` value paths are `E0607`, unknown module members `E0601`, and an unimported type used as a value `E0101` (std-spec `modules/regex.md`). The head/member diagnostics std-spec §1.3 named as coarse fallbacks now carry their fine-grained codes (`crates/xulo-semantic/tests/semantic_tests.rs`, `crates/xulo-compiler/tests/intrinsics_codegen_tests.rs`). | 2 |
 | D4 | Stage 1's own diagnostics are consistent with stage 0 | **OK** | Lexical/syntax use `E0001`/`E0002`; checker failures use `E0101`/`E0201`/`E0202`/`E0207`/`E0211`/`E0213`/`E0215` with `file:line:column`. Stage 0 now reports `E0101` for undefined names, `E0201` for conditions, `E0203` for return mismatches, `E0207` for arity, and `E0213` for non-iterables; `crates/xulo-cli/tests/stage1.rs` compares the codes in `stage1_check_agrees_with_stage0_on_the_corpus`. | 3 |
-| T1 | Unit and integration tests | **OK** | `cargo test --workspace`: 2121 passed, 0 failed (2026-11-17) | 1 |
+| T1 | Unit and integration tests | **OK** | `cargo test --workspace`: 2129 passed, 0 failed (2026-11-17) | 1 |
 | T2 | All examples run in CI | **OK** | `.github/workflows/ci.yml` examples job | 1 |
 | T3 | Pinned-spec example conformance runner | **OK** | `crates/xulo-cli/tests/spec_conformance.rs`: 114 annotated examples extracted from the pinned spec, 81 pass, 33 triaged in `spec_conformance_baseline.tsv` (§6.10) | 2 |
 | T4 | Interpreter vs. AOT differential suite | **OK** | `crates/xupm/tests/aot_differential.rs` builds and executes every top-level example, compares stdout/stderr against `xupm run`, and fails on stale baseline entries; CI runs it on Linux and macOS after the release build. The shared baseline is empty; Windows parks `ffi.xulo` in `crates/xupm/tests/aot_differential_baseline.windows.tsv` | 4 |
@@ -659,9 +659,9 @@ to the built-in lowering.
 
 - Triage the 33 spec-conformance divergences by group with an owner and the
   gate that clears it per group (T3f). Gate 6 requires this.
-- `copy`/`move` and use-after-move checking (L21) is done; the remaining R8
-  gap is plain value-semantic binding, both outside the §2.1 subset; verify R8
-  before stage 1 relies on plain aggregate rebinding.
+- `copy`/`move` and use-after-move checking (L21) and value/reference binding
+  semantics (R8) are done. Plain `let`/assignment copies value-category
+  aggregates while reference values keep sharing; `xuloc` can rely on both.
 
 Items that gate work depends on are kept in their work packages (R9c and B7 in
 WP3).
@@ -669,8 +669,7 @@ WP3).
 **Status:** T3f is done: §6.10 records the group counts, an owner component, and
 the gate that clears each group, and `readiness_matrix` checks that every owner
 path exists, and T3c's local `// runs:` cases keep the executable path covered.
-L21 is done; R8 remains open and non-gating because plain value-semantic
-binding still aliases.
+L21 and R8 are done and non-gating.
 
 ## 8. Non-goals for stage 1 bootstrap
 
@@ -731,7 +730,7 @@ Last recorded verification (2026-11-17):
 
 | Check | Result |
 |-------|--------|
-| `cargo test --workspace` | 2121 passed, 0 failed |
+| `cargo test --workspace` | 2129 passed, 0 failed |
 | Examples (CI job) | Configured to run every `examples/*.xulo`; `async_tasks` uses `u64` sleep input |
 | AOT smoke tests | `hello` on macOS/Windows; `structs`, `trait_shapes`, `generics`, `modules` probed locally |
 | AOT differential suite | 30 examples compare byte for byte; the shared baseline is empty, and Windows parks only `ffi.xulo` in `crates/xupm/tests/aot_differential_baseline.windows.tsv` |

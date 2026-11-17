@@ -101,6 +101,24 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
         returns: &[I64],
     },
     RuntimeFnDesc {
+        name: "xulo_value_shallow_copy",
+        addr: xulo_runtime::runtime::xulo_value_shallow_copy as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_mark_struct",
+        addr: xulo_runtime::runtime::xulo_mark_struct as *const u8,
+        params: &[I64],
+        returns: &[],
+    },
+    RuntimeFnDesc {
+        name: "xulo_mark_value_array",
+        addr: xulo_runtime::runtime::xulo_mark_value_array as *const u8,
+        params: &[I64],
+        returns: &[],
+    },
+    RuntimeFnDesc {
         name: "xulo_array_filled",
         addr: xulo_runtime::runtime::xulo_array_filled as *const u8,
         params: &[I64, I64, I64],

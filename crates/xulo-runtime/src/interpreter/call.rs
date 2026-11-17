@@ -765,7 +765,9 @@ impl Interpreter {
             ));
         }
         let value = self.eval(&args[0].value, env)?;
-        Ok(Value::List(Rc::new(RefCell::new(vec![value; n as usize]))))
+        let list = Rc::new(RefCell::new(vec![value; n as usize]));
+        self.mark_value_list(&list);
+        Ok(Value::List(list))
     }
 
     /// `Map::from_entries(entries)`: build a map from `(K, V)` pairs in list

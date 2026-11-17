@@ -32,8 +32,8 @@ readiness document.
 | WP4 — `defer` semantics | 5 | 5 |
 | WP5 — Stage 1 skeleton | 6 | 6 |
 | WP6 — Self-host loop | 3 | 7 |
-| WP7 — Non-gating follow-ups | 3 | 4 |
-| **Total** | **53** | **59** |
+| WP7 — Non-gating follow-ups | 4 | 4 |
+| **Total** | **54** | **59** |
 
 ## Gates
 
@@ -93,10 +93,11 @@ package or out-of-scope section that tracks it.
 - [x] **R4** Runtime failures with stable codes
 - [x] **R5** No panic on adversarial input; nesting guard
 - [x] **R6** `panic`, `assert`, and process exit status
-- [ ] **R8** Value/reference semantics for `copy` / `move` — PARTIAL: `copy`
-      deep-copies in both paths and `move` transfers, but a plain `let b = a`
-      of a value-category aggregate still aliases (the runtime erases
-      struct/tuple/`Array` categories). Outside the bootstrap subset (WP7)
+- [x] **R8** Value/reference semantics for `copy` / `move`: `copy` deep-copies,
+      `move` transfers, and plain `let`/assignment/loop/match binding copies
+      value-category aggregates (`struct`, `enum`, `Array`, tuple, `Range`)
+      while `List`/`Map`/`Set`/`StringBuilder` stay shared
+      (`crates/xulo-runtime/tests/value_semantics.rs`).
 - [x] **R9** Interpreter and AOT produce identical observable behavior — all 30
       top-level examples plus the stage 1 workload match byte for byte
       (WP3 R9c)
@@ -129,7 +130,7 @@ package or out-of-scope section that tracks it.
 - [x] **D1** Source spans and `file:line:column` diagnostics
 - [x] **D2** stderr writes and nonzero exit status
 - [x] **D4** Stage 1 diagnostics consistent with stage 0
-- [x] **T1** Unit and integration tests — `cargo test --workspace`: 2121 passed, 0 failed (2026-11-17)
+- [x] **T1** Unit and integration tests — `cargo test --workspace`: 2129 passed, 0 failed (2026-11-17)
 - [x] **T2** All examples run in CI
 - [ ] **T5** Stage 1 self-parse/self-check/self-build tests — PARTIAL: self-parse
       and self-check are live, the self-build is not (WP5, WP6 T5c)
@@ -383,20 +384,20 @@ re-scoped before the gate it informs.
       binding, and any later use of a moved binding is E0403.
       `crates/xulo-semantic/tests/semantic_tests.rs` covers the position,
       borrow, twice-move, and use-after-move cases.
-- [ ] **R8** Value/reference semantics for `copy` / `move` (PARTIAL). `copy`
-      deep-copies lists, maps, sets, builders, structs, enums, and tuples in
-      both paths and preserves identity-carrying values; `move` transfers the
-      value and invalidates the binding. Remaining: a plain `let b = a` of a
-      value-category aggregate still aliases, because the runtime erases the
-      struct/tuple/`Array` category that the value-semantics table needs. Same
-      scope note as L21; `xuloc/` currently uses neither construct. Evidence:
-      `crates/xulo-compiler/tests/aot_syntax_coverage_tests.rs::copy_detaches_reference_values_and_keeps_float_slots`
-      and `crates/xulo-runtime/tests/native.rs::copy_detaches_sets_enums_and_nested_containers`.
+- [x] **R8** Value/reference semantics for `copy` / `move`. `copy` deep-copies
+      lists, maps, sets, builders, structs, enums, and tuples in both paths and
+      preserves identity-carrying values; `move` transfers the value and
+      invalidates the binding. Plain binding, assignment, destructuring, loop,
+      and match binding now apply the spec's value/reference table: `struct`,
+      `enum`, `Array`, tuple, and `Range` values get their own container, while
+      `List`, `Map`, `Set`, and `StringBuilder` keep sharing. Evidence:
+      `crates/xulo-runtime/tests/value_semantics.rs` and
+      `crates/xulo-compiler/tests/aot_syntax_coverage_tests.rs::bindings_copy_value_aggregates_and_share_references`.
 
 **Verify:** `cargo test -p xulo-cli --test readiness_matrix` (T3f owner
 components), `cargo test -p xulo-cli --test spec_conformance -- --nocapture`
 (T3c), `cargo test -p xulo-semantic --test semantic_tests` (L21), and the R8
-deep-copy tests listed above.
+value-semantics tests listed above.
 
 ## Out of scope for stage 1 bootstrap
 

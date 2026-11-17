@@ -190,6 +190,10 @@ pub struct Interpreter {
     /// handle makes a recycled pointer evict a stale entry instead of claiming
     /// a type it no longer has.
     instance_types: InstanceTypeMap,
+    /// Value-category list pointers (`Array`/tuple/`Range`). `List`/`Set`
+    /// share the representation but keep reference semantics, so only these
+    /// are copied when a binding takes them (R8).
+    value_lists: RefCell<std::collections::HashSet<usize>>,
     /// `@Memo let` value cache keyed by the binding's `name_span.start`: each
     /// site holds `(deps values, cached result)` entries, scanned by value
     /// equality. Live for the whole run (the native runtime has no re-render
@@ -970,6 +974,7 @@ impl Interpreter {
             struct_fields: RefCell::new(std::collections::HashMap::new()),
             extern_params: RefCell::new(std::collections::HashMap::new()),
             instance_types: RefCell::new(std::collections::HashMap::new()),
+            value_lists: RefCell::new(std::collections::HashSet::new()),
             view: RefCell::new(None),
             entry_env: RefCell::new(None),
             state_store: RefCell::new(std::collections::HashMap::new()),

@@ -115,6 +115,11 @@ thread_local! {
     /// `Set` 值（与 `List`/`Array` 共用 `XuloArray` 表示）：登记数组指针，
     /// 让结构相等知道应当按无序集合比较。
     static SETS: RefCell<std::collections::HashSet<usize>> = RefCell::new(std::collections::HashSet::new());
+    /// 值语义容器（spec `memory-and-runtime.md`）：`struct` 实例指针与
+    /// `Array`/tuple 的数组指针。绑定/赋值时这些值要各自独立；同表示的
+    /// `Map`/`List`/`Set` 是引用语义，不登记，保持共享。
+    static STRUCT_OBJECTS: RefCell<std::collections::HashSet<usize>> = RefCell::new(std::collections::HashSet::new());
+    static VALUE_ARRAYS: RefCell<std::collections::HashSet<usize>> = RefCell::new(std::collections::HashSet::new());
 }
 
 /// 取走输出缓冲区（测试用）
@@ -289,6 +294,8 @@ pub extern "C" fn xulo_cleanup() {
         }
     });
     MATCH_GROUPS.with(|groups| groups.borrow_mut().clear());
+    STRUCT_OBJECTS.with(|objects| objects.borrow_mut().clear());
+    VALUE_ARRAYS.with(|arrays| arrays.borrow_mut().clear());
 
     ENVS.with(|envs| {
         for ptr in envs.borrow_mut().drain(..) {
