@@ -165,9 +165,8 @@ run by the AOT differential CI job, which sets `XULO_AOT_DIFFERENTIAL=1` and
 `XULO_RUNTIME_LIB`; a plain `cargo test --workspace` does not run it. This
 assessment is **Linux-only**: the differential job runs on Linux, while macOS
 and Windows run only the `hello` AOT smoke test. Cross-platform coverage is B7
-in `tasks.md` WP3. The five example-level parity gaps listed
-for B3/R9 (`fs`, `path`, `process`, `http`, `async_tasks`) are not used by the
-bootstrap workload and remain tracked separately.
+in `tasks.md` WP3. The remaining example-level parity gap (`async_tasks` Task
+semantics) is not used by the bootstrap workload and remains tracked separately.
 
 ### Gate 5 — Self-host
 
@@ -242,7 +241,7 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 | R6 | `panic`, `assert`, and process exit status | **OK** | `crates/xulo-cli/tests/matrix_probes/R6_panic_assert.xulo`, `crates/xulo-cli/tests/process_exit.rs` | 1 |
 | R7 | `defer` executes at scope exit, reverse order | **OK** | `leave_block` drains the scope queue on normal exit and `?` propagation (before `return`/`break`/`continue` pass out); `crates/xulo-runtime/tests/defer.rs` | 3 |
 | R8 | Value/reference semantics for `copy`/`move` | **PARTIAL** | Not fully verified; avoid relying on it until tested. Outside the §2.1 bootstrap subset | — |
-| R9 | Interpreter and AOT produce identical observable behavior | **PARTIAL** | `crates/xupm/tests/aot_differential.rs` compares 25 examples byte for byte, including dynamic JSON index tags and generic bool returns. Remaining baseline: `async_tasks` output, plus `fs`/`http`/`path`/`process` builds (`crates/xupm/tests/aot_differential_baseline.tsv`). | 4 |
+| R9 | Interpreter and AOT produce identical observable behavior | **PARTIAL** | `crates/xupm/tests/aot_differential.rs` compares 24 examples byte for byte, including dynamic JSON index tags, generic bool returns, HTTP server round-trips, and process `Command`/`Child` handles. The only remaining baseline entry is `async_tasks` Task semantics (`crates/xupm/tests/aot_differential_baseline.tsv`). | 4 |
 | R10 | Deterministic output formatting for diagnostics and integers | **OK** | `int`/`u64` print and stringify through exact decimal formatting in both paths; `crates/xulo-runtime/tests/integers.rs` covers `u64::MAX`, `2^63`, and `-2^63` | 2 |
 
 ### 5.3 Collections and text
@@ -263,7 +262,7 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 |----|-------------|--------|-----------------------|-----------|
 | S1 | `std::fs` read/write/stat/read_dir/walk/remove/rename/temp | **OK** | `crates/xulo-runtime/tests/fs.rs`, `examples/fs.xulo` | 1 |
 | S2 | `std::io` print/eprint/flush/read | **OK** | `crates/xulo-runtime/tests/io.rs` | 1 |
-| S3 | `std::process` args/exit/run/exec/launch | **PARTIAL** | Interpreter path covered by `crates/xulo-runtime/tests/process.rs` (launch, `Command`, `Child`, wait, kill, timeout); AOT covers `args`/`run`/`exit`, but `launch`/`Command`/`Child` have no lowering (`examples/process.xulo` is in the differential baseline) | 1 |
+| S3 | `std::process` args/exit/run/exec/launch | **OK** | Interpreter covered by `crates/xulo-runtime/tests/process.rs`; AOT now lowers `launch`/`Command`/`Child` (wait, kill, pid, timeout), and `examples/process.xulo` compares byte for byte in `crates/xupm/tests/aot_differential.rs`. | 1 |
 | S4 | `std::path`, `std::os`, environment, cwd, pid | **OK** | `crates/xulo-runtime/tests/os.rs`, `crates/xulo-runtime/tests/path.rs` | 1 |
 | S5 | `std::json` parse/stringify/valid | **OK** | `crates/xulo-runtime/tests/json.rs` | 2 |
 | S6 | `std::regex` and `std::fmt` | **OK** | `crates/xulo-runtime/tests/regex.rs`, `crates/xulo-runtime/tests/fmt.rs` | 2 |
@@ -279,7 +278,7 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 |----|-------------|--------|-----------------------|-----------|
 | B1 | `xulo run` and `xulo check` for a single file | **OK** | `crates/xulo-cli/tests/integration_tests.rs` | 1 |
 | B2 | `xupm build` for core language and `hello` | **OK** | `.github/workflows/ci.yml`: macOS/Windows AOT smoke test | 4 |
-| B3 | `xupm build` for the bootstrap subset | **PARTIAL** | `aot_differential` compares 25 examples and `xupm build` failure exit status is covered. Still missing AOT lowering for `std::fs::write_bytes` (`fs`), `std::path::split` (`path`), the `std::http` server types and `std::os::exec_path` (`http`), and `std::process::launch`/`Command`/`Child` (`process`); `async_tasks` builds with wrong await results | 4 |
+| B3 | `xupm build` for the bootstrap subset | **PARTIAL** | `aot_differential` compares 24 examples and `xupm build` failure exit status is covered. FS bytes, path `split`/`relative`, HTTP server types, `os::exec_path`, and process `launch`/`Command`/`Child` now lower and compare; only `async_tasks` Task semantics remain (`crates/xupm/tests/aot_differential_baseline.tsv`). | 4 |
 | B4 | AOT module tree (`mod`/`use`) | **OK** | `crates/xulo-compiler/tests/module_system.rs`, `examples/modules` native build | 4 |
 | B5 | Runtime static library and linker path | **OK** | `.github/workflows/ci.yml` and the release workflow | 4 |
 | B6 | `xupm test` for stage 1's own tests | **OK** | `crates/xupm/tests/cli.rs::runs_stage1_test_file` runs `xuloc/tests.xulo` (10 tests); `crates/xulo-cli/tests/stage1.rs` covers the `xulo test` path | 3 |
@@ -593,17 +592,18 @@ wildcard so a later argument can fix the callback's type parameter.
 - AOT runtime support for `Map` and `Set` is in place (C2, C3).
 - Known AOT parity probes now agree, including spread, ternaries,
   `Array.len`, and `Array::filled` (C1, R9b, L15, C4).
-- The differential runner is in place and compares 25 examples; the five
-  remaining gaps are listed in `crates/xupm/tests/aot_differential_baseline.tsv`
-  (async output, plus `fs`/`http`/`path`/`process` builds).
+- The differential runner is in place and compares 24 examples; the one
+  remaining gap (`async_tasks` Task semantics) is listed in
+  `crates/xupm/tests/aot_differential_baseline.tsv`. FS bytes, path
+  `split`/`relative`, HTTP server types, `os::exec_path`, and process
+  `launch`/`Command`/`Child` are lowered (B3c, S3a).
 - `xupm build` failures return a nonzero exit status and are covered by
   `crates/xupm/tests/cli.rs` (B3a).
 
 **Exit:** §6.6–6.7 probes pass; stage 1 can be built by `xupm` and matches
-`xulo run` on the bootstrap workload (Gate 4, reached). The five baseline gaps
-are open items B3c, S3, and R9c in `tasks.md`; the bootstrap workload does not
-use them, but they must close before the example-level differential is
-complete.
+`xulo run` on the bootstrap workload (Gate 4, reached). The one baseline gap
+is R9c's `async_tasks` Task semantics; the bootstrap workload does not use it,
+but it must close before the example-level differential is complete.
 
 ### WP4 — `defer` semantics (P1, Gate 3)
 
@@ -659,8 +659,8 @@ to the built-in lowering.
 - `copy`/`move` and use-after-move checking (L21, R8) are PARTIAL and outside the
   §2.1 subset; verify them before stage 1 relies on them.
 
-Items that gate work depends on are kept in their work packages (B3c, S3, R9c,
-B7 in WP3).
+Items that gate work depends on are kept in their work packages (R9c and B7 in
+WP3).
 
 **Status:** T3f is done: §6.10 records the group counts, an owner component, and
 the gate that clears each group, and `readiness_matrix` checks that every owner
@@ -729,7 +729,7 @@ Last recorded verification (2026-11-17):
 | `cargo test --workspace` | 2107 passed, 0 failed |
 | Examples (CI job) | Configured to run every `examples/*.xulo`; `async_tasks` uses `u64` sleep input |
 | AOT smoke tests | `hello` on macOS/Windows; `structs`, `trait_shapes`, `generics`, `modules` probed locally |
-| AOT differential suite | 25 examples compare byte for byte; 5 known gaps in `crates/xupm/tests/aot_differential_baseline.tsv` |
+| AOT differential suite | 24 examples compare byte for byte; 1 known gap (`async_tasks`) in `crates/xupm/tests/aot_differential_baseline.tsv` |
 | AOT build failure | `xupm build` exits nonzero and reports the diagnostic (`crates/xupm/tests/cli.rs`) |
 | Stage 1 smoke tests | `cargo test -p xulo-cli --test stage1` — 7 passed; self-parses `xuloc/*.xulo`, clean diagnostics, `xulo test` |
 | Stage 1 under `xupm test` | `cargo test -p xupm --test cli runs_stage1_test_file` — 10 stage 1 tests passed |

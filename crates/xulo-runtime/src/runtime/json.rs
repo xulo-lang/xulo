@@ -141,7 +141,7 @@ fn json_to_payload(json: &Json, depth: usize) -> (i64, i64) {
 /// 编译路径：(载荷位模式, 标签) → serde 树，供 `stringify` 消费。
 /// tag 语义与 `xulo_print_value` 一致；环（自引用结构）在深度上限处
 /// 变成 Err。
-fn payload_to_json(value: i64, tag: i64, depth: usize) -> Result<Json, String> {
+pub(crate) fn payload_to_json(value: i64, tag: i64, depth: usize) -> Result<Json, String> {
     if depth > xulo_std::json::MAX_DEPTH {
         return Err(depth_err());
     }

@@ -835,6 +835,14 @@ impl IrGenerator {
                     if call.callee == "StringBuilder::new" {
                         return Some(Type::Named("StringBuilder".to_string(), Vec::new()));
                     }
+                    if matches!(call.callee.as_str(), "Request" | "Response") {
+                        return Some(Type::Named(call.callee.clone(), Vec::new()));
+                    }
+                    if call.callee.ends_with("Command::shell")
+                        || call.callee.ends_with("Command::direct")
+                    {
+                        return Some(Type::Named("Command".to_string(), Vec::new()));
+                    }
                     if call.callee == "Map::from_entries" {
                         let (key, value) = call
                             .arguments
@@ -928,6 +936,11 @@ impl IrGenerator {
                             _ => None,
                         };
                     }
+                    // `std::http::listen` 的 Ok 载荷是 opaque `Server`；
+                    // Request/Response 构造在同一分支之前识别。
+                    if call.callee == "std::http::listen" {
+                        return Some(Type::Named("Server".to_string(), Vec::new()));
+                    }
                     // `std::json`：两成员一律返回 Result 枚举（同 io/net，
                     // 没有可标的原始类型）——必须在下面按 tag 的兜底之前
                     // 拦住，否则 tag=7 会被误推成 Number
@@ -944,6 +957,11 @@ impl IrGenerator {
                         return match call.callee.as_str() {
                             "std::path::is_absolute" => Some(Type::Boolean),
                             "std::path::relative" => Some(Type::Optional(Box::new(Type::String))),
+                            "std::path::split" => Some(Type::ObjectType(vec![
+                                ("dir".to_string(), Type::String),
+                                ("base".to_string(), Type::String),
+                                ("ext".to_string(), Type::String),
+                            ])),
                             _ => Some(Type::String),
                         };
                     }
@@ -1009,6 +1027,34 @@ impl IrGenerator {
                     && matches!(call.method.as_deref(), Some("has" | "insert" | "remove"))
                 {
                     return Some(Type::Boolean);
+                }
+                if call.object.is_some() {
+                    match call.method.as_deref() {
+                        Some("input" | "cwd" | "env" | "timeout") => {
+                            return Some(Type::Named("Command".to_string(), Vec::new()));
+                        }
+                        Some("pid") => return Some(Type::Number),
+                        _ => {}
+                    }
+                }
+                // `std::http` 的 Request/Response 成员：查询方法返回
+                // `string?`（运行时空指针即 null），Response 速记沿用类型名。
+                if let Some(recv_ty) = call
+                    .object
+                    .as_ref()
+                    .and_then(|o| self.infer_source_type_from_expr(o))
+                    && let Type::Named(name, _) = &recv_ty
+                {
+                    match (name.as_str(), call.method.as_deref()) {
+                        ("Request", Some("header" | "query_value" | "form_value"))
+                        | ("Response", Some("header")) => {
+                            return Some(Type::Optional(Box::new(Type::String)));
+                        }
+                        ("Response", Some("text" | "json")) => {
+                            return Some(Type::Named("Response".to_string(), Vec::new()));
+                        }
+                        _ => {}
+                    }
                 }
                 // 内建字符串方法 `split` 产出 List<string>（用户结构体的
                 // 同名方法不在此列）：let 绑定与链式接收者都拿到列表类型，
@@ -1373,6 +1419,55 @@ impl IrGenerator {
                     && matches!(call.callee.as_str(), "Set::from_list" | "Array::filled")
                 {
                     return 3;
+                }
+                if call.object.is_none()
+                    && (call.callee.ends_with("Command::shell")
+                        || call.callee.ends_with("Command::direct"))
+                {
+                    return 4;
+                }
+                if let Some(object) = &call.object {
+                    let method = call.method.as_deref().unwrap_or(&call.callee);
+                    if matches!(method, "input" | "cwd" | "env" | "timeout") {
+                        let _ = object;
+                        return 4;
+                    }
+                    if matches!(method, "pid") {
+                        return 1;
+                    }
+                    if matches!(method, "run" | "launch" | "kill" | "wait") {
+                        return 7;
+                    }
+                }
+                // `std::http` 的 Request/Response/Server 值标签：
+                // 构造与 text 产出对象，json/listen/serve/addr 是 Result，
+                // 查询成员返回 `string?`（空指针按字符串 null 打印）。
+                if call.object.is_none()
+                    && (matches!(call.callee.as_str(), "Request" | "Response")
+                        || call.callee.ends_with("::Request")
+                        || call.callee.ends_with("::Response"))
+                {
+                    return 4;
+                }
+                if call.object.is_none() && call.callee == "std::http::listen" {
+                    return 7;
+                }
+                if let Some(object) = &call.object {
+                    let method = call.method.as_deref().unwrap_or(&call.callee);
+                    if matches!(method, "header" | "query_value" | "form_value") {
+                        return 0;
+                    }
+                    let http_static = dotted_expr_path(object)
+                        .is_some_and(|path| path == "Response" || path.ends_with("::Response"));
+                    if http_static && method == "text" {
+                        return 4;
+                    }
+                    if http_static && method == "json" {
+                        return 7;
+                    }
+                    if matches!(method, "serve" | "addr") {
+                        return 7;
+                    }
                 }
                 if call.object.is_some() && self.expr_is_set_receiver(&call.object) {
                     return 5;
@@ -2106,6 +2201,7 @@ impl IrGenerator {
             "Time::parts" => ("xulo_time_parts", IrType::Pointer, 4),
             "Time::from_parts" => ("xulo_time_from_parts", IrType::I64, 1),
             "Time::weekday" => ("xulo_time_weekday", IrType::I64, 1),
+            "Time::sleep" => ("xulo_time_sleep", IrType::I64, 6),
             // `std::fs`：可失败操作返回内置 Result 枚举（tag=7），exists 是 bool
             "Fs::read" => ("xulo_fs_read", IrType::Pointer, 7),
             "Fs::write" => ("xulo_fs_write", IrType::Pointer, 7),
@@ -2128,6 +2224,9 @@ impl IrGenerator {
             "Fs::temp_dir" => ("xulo_fs_temp_dir", IrType::Pointer, 7),
             "Fs::temp_file_in" => ("xulo_fs_temp_file_in", IrType::Pointer, 7),
             "Fs::temp_dir_in" => ("xulo_fs_temp_dir_in", IrType::Pointer, 7),
+            "Fs::read_bytes" => ("xulo_fs_read_bytes", IrType::Pointer, 7),
+            "Fs::write_bytes" => ("xulo_fs_write_bytes", IrType::Pointer, 7),
+            "Fs::append_bytes" => ("xulo_fs_append_bytes", IrType::Pointer, 7),
             // `std::io`：七个成员全部可失败，一律返回内置 Result 枚举
             // （tag=7）；读入结果由运行时按载荷 tag 区分字符串与 null(EOF)
             "Io::print" => ("xulo_io_print", IrType::Pointer, 7),
@@ -2165,6 +2264,8 @@ impl IrGenerator {
             "Path::basename" => ("xulo_path_basename", IrType::Pointer, 0),
             "Path::ext" => ("xulo_path_ext", IrType::Pointer, 0),
             "Path::normalize" => ("xulo_path_normalize", IrType::Pointer, 0),
+            "Path::relative" => ("xulo_path_relative", IrType::Pointer, 0),
+            "Path::split" => ("xulo_path_split", IrType::Pointer, 4),
             // `std::net`：十成员一律返回内置 Result 枚举（tag=7）——开句
             // 载荷是句柄数字（tag=1），读入载荷区分字符串/null(EOF，tag=6)
             "Net::tcp_listen" => ("xulo_net_tcp_listen", IrType::Pointer, 7),
@@ -2184,6 +2285,7 @@ impl IrGenerator {
             "Process::args" => ("xulo_process_args", IrType::Pointer, 3),
             "Process::run" => ("xulo_process_run", IrType::Pointer, 7),
             "Process::exec" => ("xulo_process_exec", IrType::Pointer, 7),
+            "Process::launch" => ("xulo_process_launch", IrType::Pointer, 7),
             // `std::json`：两成员都返回内置 Result 枚举（tag=7）——parse
             // 的载荷种类由 FFI 写进枚举，stringify 的载荷是驻留字符串
             "Json::parse" => ("xulo_json_parse", IrType::Pointer, 7),
@@ -2197,6 +2299,7 @@ impl IrGenerator {
             // 构造器没有 AOT 落地（走解释器）
             "Http::fetch" => ("xulo_http_fetch", IrType::Pointer, 7),
             "Http::request" => ("xulo_http_request", IrType::Pointer, 7),
+            "Http::listen" => ("xulo_http_listen", IrType::Pointer, 7),
             // `std::hint`：likely/unlikely 是 bool 恒等（tag=5），spin_loop
             // 返回 unit（null 槽，tag=6）；black_box 在调用点单独 lower
             "Hint::likely" => ("xulo_hint_likely", IrType::I64, 5),
@@ -2242,5 +2345,19 @@ pub fn generate_ir(program: &Program) -> Result<IrModule, XuloError> {
 fn push_unique(list: &mut Vec<String>, name: &str) {
     if !list.iter().any(|n| n == name) {
         list.push(name.to_string());
+    }
+}
+
+/// The dotted path of an identifier/enum-reference/member chain, used to
+/// recognize the built-in `std::http` types through import aliases and
+/// qualified paths (`Response`, `std::http::Response`).
+fn dotted_expr_path(expr: &Expression) -> Option<String> {
+    match expr {
+        Expression::Identifier { name, .. } => Some(name.clone()),
+        Expression::EnumRef(r) => Some(format!("{}::{}", r.enum_name, r.variant)),
+        Expression::Member(m) => {
+            dotted_expr_path(&m.object).map(|p| format!("{p}::{}", m.property))
+        }
+        _ => None,
     }
 }

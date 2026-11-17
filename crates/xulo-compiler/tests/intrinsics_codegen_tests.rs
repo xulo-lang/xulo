@@ -847,22 +847,40 @@ fn main() {
     assert_eq!(out[1], "edge\n");
 }
 
-/// AOT gap：`launch`/`Command`/`Child` 保留子进程句柄，只有解释器能跑——
-/// 编译路径在 IR 生成就以 "undefined function" 拒绝（与 fs 字节成员同列）。
+/// `launch`/`Command`/`Child` now lower to opaque runtime handles; the
+/// generated object references the runtime entry points.
 #[test]
-fn test_aot_gap_launch_and_command_need_the_interpreter() {
-    for src in [
-        "fn main() { std::process::launch(\"make\") }",
-        "fn main() { std::process::Command::shell(\"make\") }",
-        "use std::process::Command;\nfn main() { Command::shell(\"make\").run() }",
+fn test_aot_lowers_process_launch_and_command() {
+    let bytes = object_bytes(
+        r#"
+fn main() {
+    match std::process::launch("true") {
+        Result::Ok(child) => {
+            print(child.pid())
+            match child.wait() {
+                Result::Ok(r) => print(r.code)
+                Result::Err(e) => print(e.message)
+            }
+        }
+        Result::Err(e) => print(e.message)
+    }
+    let spec = std::process::Command::shell("printf hi").env("X", "1").timeout(1000)
+    match spec.run() {
+        Result::Ok(r) => print(r.stdout)
+        Result::Err(e) => print(e.message)
+    }
+}
+"#,
+    );
+    for symbol in [
+        "xulo_process_launch",
+        "xulo_process_command_shell",
+        "xulo_process_command_refine",
+        "xulo_process_command_run",
+        "xulo_process_child_pid",
+        "xulo_process_child_wait",
     ] {
-        let err = compile_to_ir(src, Path::new("test.xulo"))
-            .expect_err("handle members have no AOT lowering");
-        assert!(
-            err.message.contains("undefined function"),
-            "{src}: {}",
-            err.message
-        );
+        assert!(references_symbol(&bytes, symbol), "missing {symbol}");
     }
 }
 
@@ -1324,27 +1342,40 @@ fn main() {{
     );
 }
 
-/// AOT gap：`listen`/`Server` 与对象上的方法/构造器只有解释器能跑——
-/// 编译路径在 IR 生成就拒绝（与 fs 字节成员、process 的 launch 同列）。
+/// `listen`/`Server` and the Request/Response object surface now lower; the
+/// generated object references the runtime entry points.
 #[test]
-fn test_aot_gap_http_server_needs_the_interpreter() {
-    for (src, needle) in [
-        (
-            "fn main() { std::http::listen(\"127.0.0.1:1\") }",
-            "undefined function",
-        ),
-        (
-            "fn main() { std::http::Response.text(\"x\") }",
-            "undefined variant",
-        ),
-        (
-            "fn main() { std::http::Response(status: 200, headers: [], body: \"ok\") }",
-            "undefined function",
-        ),
+fn test_aot_lowers_http_server_objects() {
+    let bytes = object_bytes(
+        r#"use std::http::{Request, Response};
+fn main() {
+    let req = Request(
+        method: "GET", path: "/", query: [], form: [],
+        headers: [], body: "", version: "HTTP/1.1", remote_addr: "127.0.0.1:1"
+    )
+    print(req.header("x"))
+    let res = Response(status: 200, headers: [], body: "ok")
+    print(res.body)
+    match std::http::Response.json({ ok: true }) {
+        Result::Ok(r) => print(r.body)
+        Result::Err(e) => print(e.message)
+    }
+    match std::http::listen("127.0.0.1:1") {
+        Result::Ok(server) => print(server.addr())
+        Result::Err(e) => print(e.message)
+    }
+}
+"#,
+    );
+    for symbol in [
+        "xulo_http_request_new",
+        "xulo_http_response_new",
+        "xulo_http_response_json",
+        "xulo_http_request_lookup",
+        "xulo_http_listen",
+        "xulo_http_server_addr",
     ] {
-        let err = compile_to_ir(src, Path::new("test.xulo"))
-            .expect_err("server/object members have no AOT lowering");
-        assert!(err.message.contains(needle), "{src}: {}", err.message);
+        assert!(references_symbol(&bytes, symbol), "missing {symbol}");
     }
 }
 

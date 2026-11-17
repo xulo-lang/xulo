@@ -301,3 +301,74 @@ pub extern "C" fn xulo_fs_temp_dir_in(dir: *const c_char, prefix: *const c_char)
         Err(message) => fs_err(message),
     }
 }
+
+/// A `List<u8>` argument: every element must be an int in `0 …= 255`.
+fn bytes_arg(bytes: *const XuloArray) -> Result<Vec<u8>, String> {
+    if bytes.is_null() {
+        return Err("expects a `List<u8>` argument, found nothing".to_string());
+    }
+    let arr = unsafe { &*bytes };
+    let mut out = Vec::with_capacity(arr.elements.len());
+    for (idx, &elem) in arr.elements.iter().enumerate() {
+        let tag = arr.tags.get(idx).copied().map(i64::from).unwrap_or(1);
+        if tag != 1 || !(0..=255).contains(&elem) {
+            return Err(format!(
+                "expects bytes in 0 …= 255, found tag {tag} value {elem} at index {idx}"
+            ));
+        }
+        out.push(elem as u8);
+    }
+    Ok(out)
+}
+
+fn byte_list_value(bytes: Vec<u8>) -> *mut XuloArray {
+    let arr = xulo_alloc_array(bytes.len());
+    for byte in bytes {
+        xulo_array_push(arr, i64::from(byte), 1);
+    }
+    arr
+}
+
+/// `std::fs::read_bytes(path)` -> `Result<List<u8>, Error>`
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_fs_read_bytes(path: *const c_char) -> *mut XuloEnum {
+    match xulo_std::fs::read_bytes(&cstr_to_string(path)) {
+        Ok(bytes) => fs_ok(byte_list_value(bytes) as i64, 3),
+        Err(message) => fs_err(message),
+    }
+}
+
+/// `std::fs::write_bytes(path, bytes)` -> `Result<null, Error>`
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_fs_write_bytes(
+    path: *const c_char,
+    bytes: *const XuloArray,
+) -> *mut XuloEnum {
+    let bytes = match bytes_arg(bytes) {
+        Ok(bytes) => bytes,
+        Err(message) => return fs_err(message),
+    };
+    match xulo_std::fs::write_bytes(&cstr_to_string(path), &bytes) {
+        Ok(()) => fs_ok(0, 6),
+        Err(message) => fs_err(message),
+    }
+}
+
+/// `std::fs::append_bytes(path, bytes)` -> `Result<null, Error>`
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_fs_append_bytes(
+    path: *const c_char,
+    bytes: *const XuloArray,
+) -> *mut XuloEnum {
+    let bytes = match bytes_arg(bytes) {
+        Ok(bytes) => bytes,
+        Err(message) => return fs_err(message),
+    };
+    match xulo_std::fs::append_bytes(&cstr_to_string(path), &bytes) {
+        Ok(()) => fs_ok(0, 6),
+        Err(message) => fs_err(message),
+    }
+}

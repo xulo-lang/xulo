@@ -323,6 +323,17 @@ pub extern "C" fn xulo_path_with_ext(p: *const c_char, ext: *const c_char) -> *c
     keep(path::with_ext(&cstr_arg(p), &cstr_arg(ext)))
 }
 
+/// `Path::relative(from, to)` compiled entry point: the relative path as a
+/// kept C string, or null when the relationship cannot be named.
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_path_relative(from: *const c_char, to: *const c_char) -> *const c_char {
+    match path::relative(&cstr_arg(from), &cstr_arg(to)) {
+        Some(relative) => keep(relative),
+        None => std::ptr::null(),
+    }
+}
+
 /// `Math::wrapping_add` / `Math::wrapping_sub` / `Math::wrapping_mul` compiled
 /// entry points: two's-complement results modulo 2⁶⁴, never trapping.
 #[unsafe(no_mangle)]

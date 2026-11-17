@@ -136,6 +136,9 @@ impl IrGenerator {
                 };
                 self.generate_closure_value(&a.params, a.return_type.as_ref(), &body, expr)
             }
+            // `await e`：编译路径的 async 调用本身同步完成，等待就是取
+            // 已经算好的值（`std::time::sleep` 在运行时真实睡眠）。
+            Expression::Await { expr, .. } => self.generate_expression(expr),
             Expression::CallValue(cv) => {
                 let callee = self.generate_expression(&cv.callee)?;
                 let mut args = Vec::new();
@@ -1076,6 +1079,262 @@ impl IrGenerator {
             return self.generate_enum_construct(enum_name, variant, &call.arguments);
         }
 
+        // `std::process::Command::shell/direct(...)` 构造纯规格对象。
+        if call.object.is_none()
+            && (call.callee.ends_with("Command::shell") || call.callee.ends_with("Command::direct"))
+        {
+            let method = if call.callee.ends_with("Command::shell") {
+                RuntimeFn::ProcessCommandShell
+            } else {
+                RuntimeFn::ProcessCommandDirect
+            };
+            let mut args = Vec::new();
+            for arg in &call.arguments {
+                args.push(self.generate_expression(&arg.value)?);
+            }
+            let local = self.module.functions[func_idx].add_local(IrType::Pointer);
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::RuntimeCall {
+                    dst: Some(local),
+                    func: method,
+                    args,
+                });
+            return Ok(Operand::Local(local));
+        }
+
+        // `std::http` 的服务器与数据类型：`Request(...)` / `Response(...)`
+        // 构造、`Response.text/json` 静态速记，以及 Request/Response/Server
+        // 的方法。语义层已把它们解析为内建类型；这里落到带标签的运行时对象。
+        if call.object.is_none() && (call.callee == "Request" || call.callee.ends_with("::Request"))
+        {
+            let mut args = Vec::with_capacity(8);
+            for field in [
+                "method",
+                "path",
+                "query",
+                "form",
+                "headers",
+                "body",
+                "version",
+                "remote_addr",
+            ] {
+                match call
+                    .arguments
+                    .iter()
+                    .find(|a| a.name.as_deref() == Some(field))
+                {
+                    Some(a) => args.push(self.generate_expression(&a.value)?),
+                    None => args.push(Operand::Const(IrValue::Null)),
+                }
+            }
+            let local = self.module.functions[func_idx].add_local(IrType::Pointer);
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::RuntimeCall {
+                    dst: Some(local),
+                    func: RuntimeFn::HttpRequestNew,
+                    args,
+                });
+            return Ok(Operand::Local(local));
+        }
+        if call.object.is_none()
+            && (call.callee == "Response" || call.callee.ends_with("::Response"))
+        {
+            let mut args = Vec::with_capacity(3);
+            for field in ["status", "headers", "body"] {
+                match call
+                    .arguments
+                    .iter()
+                    .find(|a| a.name.as_deref() == Some(field))
+                {
+                    Some(a) => args.push(self.generate_expression(&a.value)?),
+                    None => args.push(Operand::Const(IrValue::Null)),
+                }
+            }
+            let local = self.module.functions[func_idx].add_local(IrType::Pointer);
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::RuntimeCall {
+                    dst: Some(local),
+                    func: RuntimeFn::HttpResponseNew,
+                    args,
+                });
+            return Ok(Operand::Local(local));
+        }
+        if let Some(object) = &call.object {
+            if dotted_expr_path(object)
+                .is_some_and(|path| path == "Response" || path.ends_with("::Response"))
+            {
+                let method = call.method.as_deref().unwrap_or(&call.callee);
+                if method == "text" {
+                    let body = match call.arguments.first() {
+                        Some(a) => self.generate_expression(&a.value)?,
+                        None => Operand::Const(IrValue::Null),
+                    };
+                    let status = match call.arguments.get(1) {
+                        Some(a) => self.generate_expression(&a.value)?,
+                        None => Operand::Const(IrValue::I64(200)),
+                    };
+                    let local = self.module.functions[func_idx].add_local(IrType::Pointer);
+                    self.module.functions[func_idx]
+                        .instructions
+                        .push(Instruction::RuntimeCall {
+                            dst: Some(local),
+                            func: RuntimeFn::HttpResponseText,
+                            args: vec![body, status],
+                        });
+                    return Ok(Operand::Local(local));
+                }
+                if method == "json" {
+                    let value = match call.arguments.first() {
+                        Some(a) => self.generate_expression(&a.value)?,
+                        None => Operand::Const(IrValue::Null),
+                    };
+                    let tag = call
+                        .arguments
+                        .first()
+                        .map(|a| self.tag_operand_for(&a.value, &value))
+                        .unwrap_or(Operand::Const(IrValue::I64(6)));
+                    let local = self.module.functions[func_idx].add_local(IrType::Pointer);
+                    self.module.functions[func_idx]
+                        .instructions
+                        .push(Instruction::RuntimeCall {
+                            dst: Some(local),
+                            func: RuntimeFn::HttpResponseJson,
+                            args: vec![value, tag],
+                        });
+                    return Ok(Operand::Local(local));
+                }
+            }
+            let method = call.method.as_deref().unwrap_or(&call.callee);
+            let user_receiver = self
+                .struct_name_of_expr(object)
+                .is_some_and(|name| self.structs.contains_key(&name));
+            // `std::process` 的 Command 规格与 Child 句柄方法。
+            if !user_receiver && matches!(method, "input" | "cwd" | "env" | "timeout") {
+                let receiver = self.generate_expression(object)?;
+                let a = match call.arguments.first() {
+                    Some(a) => self.generate_expression(&a.value)?,
+                    None => Operand::Const(IrValue::Null),
+                };
+                let b = if method == "env" {
+                    match call.arguments.get(1) {
+                        Some(a) => self.generate_expression(&a.value)?,
+                        None => Operand::Const(IrValue::Null),
+                    }
+                } else {
+                    Operand::Const(IrValue::Null)
+                };
+                let ms = if method == "timeout" {
+                    a.clone()
+                } else {
+                    Operand::Const(IrValue::F64(-1.0))
+                };
+                let which = match method {
+                    "input" => 0,
+                    "cwd" => 1,
+                    "env" => 2,
+                    _ => 3,
+                };
+                let local = self.module.functions[func_idx].add_local(IrType::Pointer);
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::RuntimeCall {
+                        dst: Some(local),
+                        func: RuntimeFn::ProcessCommandRefine,
+                        args: vec![receiver, Operand::Const(IrValue::I64(which)), a, b, ms],
+                    });
+                return Ok(Operand::Local(local));
+            }
+            if !user_receiver && matches!(method, "run" | "launch") {
+                let receiver = self.generate_expression(object)?;
+                let func = if method == "run" {
+                    RuntimeFn::ProcessCommandRun
+                } else {
+                    RuntimeFn::ProcessCommandLaunch
+                };
+                let local = self.module.functions[func_idx].add_local(IrType::Pointer);
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::RuntimeCall {
+                        dst: Some(local),
+                        func,
+                        args: vec![receiver],
+                    });
+                return Ok(Operand::Local(local));
+            }
+            if !user_receiver && matches!(method, "pid" | "kill" | "wait") {
+                let receiver = self.generate_expression(object)?;
+                let func = match method {
+                    "pid" => RuntimeFn::ProcessChildPid,
+                    "kill" => RuntimeFn::ProcessChildKill,
+                    _ => RuntimeFn::ProcessChildWait,
+                };
+                let local = self.module.functions[func_idx].add_local(IrType::Pointer);
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::RuntimeCall {
+                        dst: Some(local),
+                        func,
+                        args: vec![receiver],
+                    });
+                return Ok(Operand::Local(local));
+            }
+            // `header` is shared by Request and Response and reads the same
+            // `headers` field in both; `query_value`/`form_value` are
+            // Request-only. A user struct's own method wins.
+            if !user_receiver && matches!(method, "header" | "query_value" | "form_value") {
+                let receiver = self.generate_expression(object)?;
+                let name = match call.arguments.first() {
+                    Some(a) => self.generate_expression(&a.value)?,
+                    None => Operand::Const(IrValue::Null),
+                };
+                let which = match method {
+                    "header" => 0,
+                    "query_value" => 1,
+                    _ => 2,
+                };
+                let local = self.module.functions[func_idx].add_local(IrType::Pointer);
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::RuntimeCall {
+                        dst: Some(local),
+                        func: RuntimeFn::HttpRequestLookup,
+                        args: vec![receiver, name, Operand::Const(IrValue::I64(which))],
+                    });
+                return Ok(Operand::Local(local));
+            }
+            if !user_receiver && method == "serve" {
+                let receiver = self.generate_expression(object)?;
+                let handler = match call.arguments.first() {
+                    Some(a) => self.generate_expression(&a.value)?,
+                    None => Operand::Const(IrValue::Null),
+                };
+                let local = self.module.functions[func_idx].add_local(IrType::Pointer);
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::RuntimeCall {
+                        dst: Some(local),
+                        func: RuntimeFn::HttpServerServe,
+                        args: vec![receiver, handler],
+                    });
+                return Ok(Operand::Local(local));
+            }
+            if !user_receiver && method == "addr" {
+                let receiver = self.generate_expression(object)?;
+                let local = self.module.functions[func_idx].add_local(IrType::Pointer);
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::RuntimeCall {
+                        dst: Some(local),
+                        func: RuntimeFn::HttpServerAddr,
+                        args: vec![receiver],
+                    });
+                return Ok(Operand::Local(local));
+            }
+        }
+
         if call.object.is_none() && call.callee == "Map::from_entries" {
             let mut args = Vec::new();
             for arg in &call.arguments {
@@ -1294,6 +1553,14 @@ impl IrGenerator {
                     args.push(Operand::Const(IrValue::Null));
                 }
                 if args.len() == 3 {
+                    args.push(Operand::Const(IrValue::F64(-1.0)));
+                }
+            }
+            if call.callee == "std::process::launch" {
+                if args.len() == 1 {
+                    args.push(Operand::Const(IrValue::Null));
+                }
+                if args.len() == 2 {
                     args.push(Operand::Const(IrValue::F64(-1.0)));
                 }
             }
@@ -2184,6 +2451,41 @@ impl IrGenerator {
                         ) {
                             self.source_types
                                 .insert(bind.clone(), Type::List(Box::new(Type::String)));
+                        } else if matches!(
+                            &m.value,
+                            Expression::Call(call)
+                                if call.object.is_none()
+                                    && call.callee == "std::fs::read_bytes"
+                        ) {
+                            self.source_types.insert(
+                                bind.clone(),
+                                Type::List(Box::new(Type::Named("u8".to_string(), Vec::new()))),
+                            );
+                        } else if matches!(
+                            &m.value,
+                            Expression::Call(call)
+                                if call.object.is_none()
+                                    && call.callee == "std::http::listen"
+                        ) {
+                            self.source_types.insert(
+                                bind.clone(),
+                                Type::Named("Server".to_string(), Vec::new()),
+                            );
+                        } else if matches!(
+                            &m.value,
+                            Expression::Call(call)
+                                if call.object.is_none()
+                                    && matches!(
+                                        call.callee.as_str(),
+                                        "std::http::fetch"
+                                            | "std::http::request"
+                                            | "std::http::Response::json"
+                                    )
+                        ) {
+                            self.source_types.insert(
+                                bind.clone(),
+                                Type::Named("Response".to_string(), Vec::new()),
+                            );
                         }
                     }
                     self.generate_match_arm_body(arm, result_local)?;

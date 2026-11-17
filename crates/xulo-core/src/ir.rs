@@ -64,6 +64,26 @@ pub enum RuntimeFn {
     ValueEqual,
     /// `Array::filled<T, N>(value)`：N 个同值元素的新列表
     ArrayFilled,
+    /// `std::http` 的服务器与 Request/Response 数据类型
+    HttpRequestNew,
+    HttpResponseNew,
+    HttpResponseText,
+    HttpResponseJson,
+    HttpListen,
+    HttpServerServe,
+    HttpServerAddr,
+    HttpRequestLookup,
+    HttpResponseHeader,
+    /// `std::process` 的 Child 句柄与 Command 规格
+    ProcessLaunch,
+    ProcessCommandShell,
+    ProcessCommandDirect,
+    ProcessCommandRefine,
+    ProcessCommandRun,
+    ProcessCommandLaunch,
+    ProcessChildPid,
+    ProcessChildKill,
+    ProcessChildWait,
     /// 带标签的值格式化成字符串（多参数 print 的参数拼接 / str() 转换）
     Stringify,
     ArrayPush,

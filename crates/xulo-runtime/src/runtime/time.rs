@@ -41,3 +41,14 @@ pub extern "C" fn xulo_time_parts(ms: f64) -> *mut XuloObject {
     xulo_object_set(obj, c"millisecond".as_ptr(), p.millisecond, 1);
     obj
 }
+
+/// `std::time::sleep(ms)`：AOT 路径同步等待 `ms` 毫秒后产出 unit。
+/// 编译路径的 `await` 直接取其值（async 调用本身已同步完成），所以这里
+/// 真正睡眠即可。
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_time_sleep(ms: f64) -> i64 {
+    if ms.is_finite() && ms > 0.0 {
+        std::thread::sleep(std::time::Duration::from_millis(ms as u64));
+    }
+    0
+}

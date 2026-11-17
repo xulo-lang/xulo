@@ -897,6 +897,12 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
         returns: &[I64],
     },
     RuntimeFnDesc {
+        name: "xulo_time_sleep",
+        addr: xulo_runtime::runtime::xulo_time_sleep as *const u8,
+        params: &[F64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
         name: "xulo_time_now_nanos",
         addr: xulo_std::ffi::xulo_time_now_nanos as *const u8,
         params: &[],
@@ -1074,6 +1080,136 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
         params: &[I64, I64],
         returns: &[I64],
     },
+    RuntimeFnDesc {
+        name: "xulo_fs_read_bytes",
+        addr: xulo_runtime::runtime::xulo_fs_read_bytes as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_fs_write_bytes",
+        addr: xulo_runtime::runtime::xulo_fs_write_bytes as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_fs_append_bytes",
+        addr: xulo_runtime::runtime::xulo_fs_append_bytes as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
+    // `std::http`：服务器与 Request/Response 数据类型。服务器句柄和对象
+    // 方法都寄存为运行时对象，闭包 handler 经 `(env, a0..a7)` 协议回调。
+    RuntimeFnDesc {
+        name: "xulo_http_request_new",
+        addr: xulo_runtime::runtime::xulo_http_request_new as *const u8,
+        params: &[I64, I64, I64, I64, I64, I64, I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_http_response_new",
+        addr: xulo_runtime::runtime::xulo_http_response_new as *const u8,
+        params: &[I64, I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_http_response_text",
+        addr: xulo_runtime::runtime::xulo_http_response_text as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_http_response_json",
+        addr: xulo_runtime::runtime::xulo_http_response_json as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_http_listen",
+        addr: xulo_runtime::runtime::xulo_http_listen as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_http_server_serve",
+        addr: xulo_runtime::runtime::xulo_http_server_serve as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_http_server_addr",
+        addr: xulo_runtime::runtime::xulo_http_server_addr as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_http_request_lookup",
+        addr: xulo_runtime::runtime::xulo_http_request_lookup as *const u8,
+        params: &[I64, I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_http_response_header",
+        addr: xulo_runtime::runtime::xulo_http_response_header as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
+    // `std::process`：Child 句柄与 Command 规格（opaque 对象，隐藏
+    // `_child`/`_spec` 字段持有 Rust 侧句柄；setter 是纯函数）。
+    RuntimeFnDesc {
+        name: "xulo_process_launch",
+        addr: xulo_runtime::runtime::xulo_process_launch as *const u8,
+        params: &[I64, I64, F64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_process_command_shell",
+        addr: xulo_runtime::runtime::xulo_process_command_shell as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_process_command_direct",
+        addr: xulo_runtime::runtime::xulo_process_command_direct as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_process_command_refine",
+        addr: xulo_runtime::runtime::xulo_process_command_refine as *const u8,
+        params: &[I64, I64, I64, I64, F64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_process_command_run",
+        addr: xulo_runtime::runtime::xulo_process_command_run as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_process_command_launch",
+        addr: xulo_runtime::runtime::xulo_process_command_launch as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_process_child_pid",
+        addr: xulo_runtime::runtime::xulo_process_child_pid as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_process_child_kill",
+        addr: xulo_runtime::runtime::xulo_process_child_kill as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_process_child_wait",
+        addr: xulo_runtime::runtime::xulo_process_child_wait as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
     // `std::io`：写真实 stdout/stderr、读真实 stdin，七个成员一律返回
     // Result 枚举指针（载荷 tag 区分 null/字符串）
     RuntimeFnDesc {
@@ -1239,6 +1375,18 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
         name: "xulo_path_with_ext",
         addr: xulo_std::ffi::xulo_path_with_ext as *const u8,
         params: &[I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_path_relative",
+        addr: xulo_std::ffi::xulo_path_relative as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_path_split",
+        addr: xulo_runtime::runtime::xulo_path_split as *const u8,
+        params: &[I64],
         returns: &[I64],
     },
     RuntimeFnDesc {

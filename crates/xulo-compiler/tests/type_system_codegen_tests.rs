@@ -340,3 +340,58 @@ fn array_filled_compiles() {
     );
     assert_eq!(out, vec!["[7, 7, 7, 7]", "4", "[x, x]"]);
 }
+
+/// `std::http` data types: `Request(...)`/`Response(...)` constructors,
+/// `Response.text/json` shorthands, query/header lookups, and Result payloads.
+#[test]
+fn http_data_types_compile() {
+    let out = compile_and_run(
+        r#"use std::http::{Request, Response};
+fn main() {
+    let req = Request(
+        method: "GET",
+        path: "/greet",
+        query: [{ name: "name", value: "xulo" }],
+        form: [],
+        headers: [{ name: "user-agent", value: "demo" }],
+        body: "",
+        version: "HTTP/1.1",
+        remote_addr: "127.0.0.1:50000"
+    )
+    print(req.query_value("name"))
+    print(req.header("user-agent"))
+    print(req.header("x-none"))
+    let ok = Response.text("done", 201)
+    print(ok.status, ok.header("content-type"), ok.body)
+    match std::http::Response.json({ ok: true }) {
+        Result::Ok(res) => print(res.header("content-type"), res.body)
+        Result::Err(e) => print(e.message)
+    }
+    let bare = Response(status: 404, headers: [], body: "gone")
+    print(bare.status, bare.header("content-type") ?? "none", bare.body)
+}"#,
+    );
+    assert_eq!(
+        out,
+        vec![
+            "xulo",
+            "demo",
+            "null",
+            "201 text/plain; charset=utf-8 done",
+            "application/json {\"ok\":true}",
+            "404 none gone",
+        ]
+    );
+}
+
+/// A closure may capture a function-valued parameter without treating the
+/// captured pointer as a boxed cell.
+#[test]
+fn closure_captures_function_parameter() {
+    let out = compile_and_run(
+        r#"fn make(f: fn(number): number): fn(number): number { (x) => f(x) }
+fn double(v: number): number { v * 2 }
+fn main() { let g = make(double) print(g(21)) }"#,
+    );
+    assert_eq!(out, vec!["42"]);
+}

@@ -131,3 +131,184 @@ fn string_list(args: *mut XuloArray) -> Result<Vec<String>, String> {
     }
     Ok(strings)
 }
+
+// ──────────────────────────────────────────────────────────────────
+// Child 句柄与 Command 规格的 AOT 落地
+// ──────────────────────────────────────────────────────────────────
+
+fn process_string(ptr: *const c_char) -> String {
+    if ptr.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(ptr).to_str().unwrap_or("").to_string() }
+    }
+}
+
+fn process_object_field(obj: *const XuloObject, key: &str) -> Option<(i64, i64)> {
+    if obj.is_null() {
+        return None;
+    }
+    unsafe { &*obj }
+        .fields
+        .iter()
+        .enumerate()
+        .find(|(_, (k, _))| k == key)
+        .map(|(i, (_, v))| {
+            let tag = unsafe { &*obj }.field_tags.get(i).copied().unwrap_or(-1);
+            (*v, tag)
+        })
+}
+
+fn command_object(spec: xulo_std::process::CommandSpec) -> *mut XuloObject {
+    let obj = xulo_alloc_object(1);
+    let handle = Box::into_raw(Box::new(spec));
+    xulo_object_set(obj, c"_spec".as_ptr(), handle as i64, 1);
+    obj
+}
+
+fn command_spec(obj: *const XuloObject) -> Option<&'static xulo_std::process::CommandSpec> {
+    match process_object_field(obj, "_spec") {
+        Some((value, _)) if value != 0 => unsafe {
+            (value as *const xulo_std::process::CommandSpec).as_ref()
+        },
+        _ => None,
+    }
+}
+
+fn output_enum(result: Result<xulo_std::process::RunOutput, String>) -> *mut XuloEnum {
+    match result {
+        Ok(r) => run_output_object(r),
+        Err(message) => fs_err(message),
+    }
+}
+
+fn child_object(handle: xulo_std::process::ChildHandle) -> *mut XuloObject {
+    let obj = xulo_alloc_object(1);
+    let handle = Box::into_raw(Box::new(handle));
+    xulo_object_set(obj, c"_child".as_ptr(), handle as i64, 1);
+    obj
+}
+
+fn child_handle(obj: *mut XuloObject) -> Option<&'static mut xulo_std::process::ChildHandle> {
+    match process_object_field(obj, "_child") {
+        Some((value, _)) if value != 0 => unsafe {
+            (value as *mut xulo_std::process::ChildHandle).as_mut()
+        },
+        _ => None,
+    }
+}
+
+/// `std::process::launch(cmd[, input[, timeout]])` -> `Result<Child, Error>`
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_process_launch(
+    cmd: *const c_char,
+    input: *const c_char,
+    timeout: f64,
+) -> *mut XuloEnum {
+    let cmd = process_string(cmd);
+    let input = (!input.is_null()).then(|| process_string(input));
+    match xulo_std::process::launch(&cmd, input.as_deref(), opt_timeout(timeout)) {
+        Ok(child) => fs_ok(child_object(child) as i64, 4),
+        Err(message) => fs_err(message),
+    }
+}
+
+/// `std::process::Command::shell(cmd)`
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_process_command_shell(cmd: *const c_char) -> *mut XuloObject {
+    command_object(xulo_std::process::CommandSpec::shell(&process_string(cmd)))
+}
+
+/// `std::process::Command::direct(program, args)`
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_process_command_direct(
+    program: *const c_char,
+    args: *mut XuloArray,
+) -> *mut XuloObject {
+    let args = if args.is_null() {
+        Vec::new()
+    } else {
+        string_list(args).unwrap_or_default()
+    };
+    command_object(xulo_std::process::CommandSpec::direct(
+        &process_string(program),
+        args,
+    ))
+}
+
+/// `Command::input(text)` / `cwd(path)` / `env(name, value)` / `timeout(ms)`
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_process_command_refine(
+    spec: *mut XuloObject,
+    method: i64,
+    a: *const c_char,
+    b: *const c_char,
+    ms: f64,
+) -> *mut XuloObject {
+    let Some(spec) = command_spec(spec) else {
+        return command_object(xulo_std::process::CommandSpec::shell(""));
+    };
+    let refined = match method {
+        0 => spec.clone().input(&process_string(a)),
+        1 => spec.clone().cwd(&process_string(a)),
+        2 => spec.clone().env(&process_string(a), &process_string(b)),
+        _ => spec.clone().timeout(if ms.is_finite() && ms >= 0.0 {
+            ms as u64
+        } else {
+            0
+        }),
+    };
+    command_object(refined)
+}
+
+/// `Command::run()` -> `Result<{stdout, stderr, code}, Error>`
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_process_command_run(spec: *mut XuloObject) -> *mut XuloEnum {
+    let Some(spec) = command_spec(spec) else {
+        return fs_err("`Command::run` runs on a Command value".to_string());
+    };
+    output_enum(spec.run())
+}
+
+/// `Command::launch()` -> `Result<Child, Error>`
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_process_command_launch(spec: *mut XuloObject) -> *mut XuloEnum {
+    let Some(spec) = command_spec(spec) else {
+        return fs_err("`Command::launch` runs on a Command value".to_string());
+    };
+    match spec.launch() {
+        Ok(child) => fs_ok(child_object(child) as i64, 4),
+        Err(message) => fs_err(message),
+    }
+}
+
+/// `Child::pid()` -> number（句柄消耗后仍是事实）
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_process_child_pid(child: *mut XuloObject) -> i64 {
+    child_handle(child).map(|c| c.pid() as i64).unwrap_or(0)
+}
+
+/// `Child::kill()` -> `Result<null, Error>`
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_process_child_kill(child: *mut XuloObject) -> *mut XuloEnum {
+    match child_handle(child) {
+        Some(child) => match child.kill() {
+            Ok(()) => fs_ok(0, 6),
+            Err(message) => fs_err(message),
+        },
+        None => fs_err("`Child::kill` runs on a Child value".to_string()),
+    }
+}
+
+/// `Child::wait()` -> `Result<{stdout, stderr, code}, Error>`
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_process_child_wait(child: *mut XuloObject) -> *mut XuloEnum {
+    match child_handle(child) {
+        Some(child) => output_enum(child.wait()),
+        None => fs_err("`Child::wait` runs on a Child value".to_string()),
+    }
+}

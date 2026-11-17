@@ -28,12 +28,12 @@ readiness document.
 | WP0 — Matrix hygiene and conformance | 5 | 5 |
 | WP1 — 64-bit integer model | 7 | 7 |
 | WP2 — Type system and semantic convergence | 12 | 12 |
-| WP3 — AOT parity and bootstrap backend | 9 | 13 |
+| WP3 — AOT parity and bootstrap backend | 11 | 13 |
 | WP4 — `defer` semantics | 5 | 5 |
 | WP5 — Stage 1 skeleton | 6 | 6 |
 | WP6 — Self-host loop | 2 | 7 |
 | WP7 — Non-gating follow-ups | 2 | 4 |
-| **Total** | **46** | **59** |
+| **Total** | **50** | **59** |
 
 ## Gates
 
@@ -97,7 +97,8 @@ package or out-of-scope section that tracks it.
 - [ ] **R8** Value/reference semantics for `copy` / `move` — PARTIAL, outside the
       bootstrap subset (WP7)
 - [ ] **R9** Interpreter and AOT produce identical observable behavior —
-      PARTIAL: five baseline gaps in `aot_differential_baseline.tsv` (WP3)
+      PARTIAL: one baseline gap (`async_tasks`) in `aot_differential_baseline.tsv`
+      (WP3 R9c)
 - [x] **R10** Deterministic formatting of integers and diagnostics
 - [x] **C4** `Array<T, N>` with `.len`, indexing, iteration, and `Array::filled`
 - [x] **C5** `string` members and UTF-8 behavior
@@ -105,7 +106,7 @@ package or out-of-scope section that tracks it.
 - [x] **C7** `str` / `fmt` / `print` output for every bootstrap value
 - [x] **S1** `std::fs`
 - [x] **S2** `std::io`
-- [ ] **S3** `std::process` — PARTIAL: `launch`/`Command`/`Child` have no AOT lowering (WP3)
+- [x] **S3** `std::process`
 - [x] **S4** `std::path`, `std::os`, environment, cwd, pid
 - [x] **S5** `std::json`
 - [x] **S6** `std::regex` and `std::fmt`
@@ -116,8 +117,8 @@ package or out-of-scope section that tracks it.
 - [x] **S11** `std::time` (interpreter and AOT)
 - [x] **B1** `xulo run` and `xulo check` for a single file
 - [x] **B2** `xupm build` for core language and `hello`
-- [ ] **B3** `xupm build` for the bootstrap subset — PARTIAL: five AOT lowering
-      gaps (WP3 B3c, S3a, R9c)
+- [ ] **B3** `xupm build` for the bootstrap subset — PARTIAL: one AOT gap
+      (`async_tasks` Task semantics, WP3 R9c)
 - [x] **B4** AOT module tree (`mod` / `use`)
 - [x] **B5** Runtime static library and linker path
 - [ ] **B7** Linux/macOS/Windows build matrix — PARTIAL: the AOT differential
@@ -238,13 +239,19 @@ Priority P1 · needed by Gate 4 · source: `stage1-readiness.md` §7 WP3, §6.6�
 - [x] **B3a** Verify that `xupm build` failures return a nonzero exit status;
       fix the pipeline if they do not.
 - [x] **G3** Make the `§6.6–6.7` probes pass.
-- [ ] **B3c** AOT lowering for `std::fs::write_bytes` (`fs`), `std::path::split`
-      (`path`), and the `std::http` server types and `std::os::exec_path`
-      (`http`). Entries in `crates/xupm/tests/aot_differential_baseline.tsv`.
-- [ ] **S3a** AOT lowering for `std::process::launch`, `Command`, and `Child`
-      (`process`).
-- [ ] **R9c** `async_tasks`: AOT `await` produces zero values. Outside the
-      bootstrap subset (§8 of `stage1-readiness.md`); tracked in the baseline.
+- [x] **B3c** AOT lowering for `std::fs::write_bytes`/`read_bytes` (`fs`),
+      `std::path::split`/`relative` (`path`), and the `std::http` server types
+      (`listen`, `Server::serve/addr`, `Request`/`Response` constructors and
+      lookups). `fs.xulo` and `path.xulo` are out of the differential baseline;
+      `http.xulo` compares byte for byte once `S3a` and the await lowering land.
+      Regression: `crates/xulo-compiler/tests/type_system_codegen_tests.rs::http_data_types_compile`.
+- [x] **S3a** AOT lowering for `std::process::launch`, `Command`, and `Child`
+      (`process`). `crates/xupm/tests/aot_differential.rs` now compares
+      `examples/process.xulo` byte for byte.
+- [ ] **R9c** `async_tasks`: AOT `await` now yields its operand, so the pending
+      gap is the `Task::all`/`race`/`timeout` namespace and real timeout
+      semantics. Outside the bootstrap subset (§8 of `stage1-readiness.md`);
+      tracked in the baseline.
 - [x] **C4** Verify `Array::filled` under both execution paths.
       `crates/xulo-runtime/tests/native.rs::array_filled_runs` (interpreter) and
       `crates/xulo-compiler/tests/type_system_codegen_tests.rs::array_filled_compiles`
@@ -257,7 +264,8 @@ Priority P1 · needed by Gate 4 · source: `stage1-readiness.md` §7 WP3, §6.6�
 **Verify:** `xupm build examples/collections.xulo` and
 `xupm build examples/optional_chaining.xulo` match `xulo run` byte for byte.
 `XULO_AOT_DIFFERENTIAL=1 cargo test -p xupm --test aot_differential` compares
-25 examples; the baseline records five entries that cannot be compared yet.
+24 examples; the baseline records one entry (`async_tasks`) that cannot be
+compared yet.
 
 ## WP4 — `defer` semantics
 

@@ -22,10 +22,11 @@ impl IrGenerator {
                 free.push(name.clone());
             }
         }
-        // 需装箱 = 被嵌套字面量自由引用的本层绑定
+        // 需装箱 = 被嵌套字面量自由引用的本层绑定。参数是借用值，不拥有
+        // 可共享的存储：闭包按值捕获它们，而不是把参数槽当作 cell 解包。
         let mut boxed = HashSet::new();
         for name in children_free.iter().flatten() {
-            if binds.contains(name) {
+            if binds.contains(name) && !params.iter().any(|p| &p.name == name) {
                 boxed.insert(name.clone());
             }
         }
@@ -70,7 +71,13 @@ impl IrGenerator {
             }
             Statement::Fn(f) => {
                 push_unique(binds, &f.name);
-                let child = self.analyze_scope(&f.params, &f.body);
+                let mut child = self.analyze_scope(&f.params, &f.body);
+                // A body that calls its own inner function needs the name in
+                // the child's free set so the enclosing scope boxes it; the
+                // body's own analysis cannot see the slot yet.
+                if !child.free.contains(&f.name) {
+                    child.free.push(f.name.clone());
+                }
                 children_free.push(child.free);
             }
             Statement::Return(r) => {
@@ -170,7 +177,15 @@ impl IrGenerator {
                 children_free.push(child.free);
             }
             Expression::Call(call) => {
-                if call.object.is_none() && call.method.is_none() {
+                // A bare callee is a capture only when it names a local
+                // binding. Top-level functions, `std::` intrinsics, and type
+                // constructors are resolved globally by `generate_call` and
+                // must not be captured (otherwise every `std::io::println`
+                // inside a closure would look like a free variable).
+                if call.object.is_none()
+                    && call.method.is_none()
+                    && self.locals.contains_key(&call.callee)
+                {
                     push_unique(refs, &call.callee);
                 }
                 if let Some(obj) = &call.object {
@@ -513,7 +528,13 @@ impl IrGenerator {
     pub(super) fn generate_inner_fn(&mut self, f: &FnDef) -> Result<(), XuloError> {
         let name = f.name.clone();
         let is_boxed = self.boxed_names.contains(&name);
-        let capture = self.analyze_scope(&f.params, &f.body);
+        let mut capture = self.analyze_scope(&f.params, &f.body);
+        // The body may call the inner function itself; its own closure value
+        // is not in `locals` yet when the scope is analyzed, so add the
+        // self-capture explicitly (the slot is created just below).
+        if !capture.free.contains(&name) {
+            capture.free.push(name.clone());
+        }
 
         // 注册体函数（IR 名带作用域计数，避免同名冲突）。
         // 与 thunk/箭头一致：闭包入口签名固定 (env, a0..a7)，
@@ -703,14 +724,22 @@ impl IrGenerator {
                 env_source.push((name.clone(), t.clone()));
             }
         }
+        // A free name whose outer binding is boxed is stored in the
+        // environment as a cell pointer; one whose outer binding is a plain
+        // slot (a parameter, an un-boxed local) is stored by value. The
+        // closure body must mirror that choice instead of treating every
+        // captured name as a cell.
+        let mut body_boxed = capture.boxed.clone();
+        for name in &capture.free {
+            if self.boxed_names.contains(name) {
+                body_boxed.insert(name.clone());
+            }
+        }
 
         let snap = self.swap_scope();
         self.current_func = Some(func_id);
         self.closure_env = Some(LocalId(0));
-        self.boxed_names = capture.boxed.clone();
-        for name in &capture.free {
-            self.boxed_names.insert(name.clone());
-        }
+        self.boxed_names = body_boxed;
         self.boxed_logical = env_logical;
 
         // env 槽加载：cell 指针 → 本地 Pointer 槽
