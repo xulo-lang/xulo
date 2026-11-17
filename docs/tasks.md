@@ -28,12 +28,12 @@ readiness document.
 | WP0 — Matrix hygiene and conformance | 5 | 5 |
 | WP1 — 64-bit integer model | 7 | 7 |
 | WP2 — Type system and semantic convergence | 12 | 12 |
-| WP3 — AOT parity and bootstrap backend | 12 | 13 |
+| WP3 — AOT parity and bootstrap backend | 13 | 13 |
 | WP4 — `defer` semantics | 5 | 5 |
 | WP5 — Stage 1 skeleton | 6 | 6 |
 | WP6 — Self-host loop | 3 | 7 |
 | WP7 — Non-gating follow-ups | 4 | 4 |
-| **Total** | **54** | **59** |
+| **Total** | **55** | **59** |
 
 ## Gates
 
@@ -53,8 +53,9 @@ Gates are cumulative. An open earlier gate blocks every later gate.
 - [x] **Gate 4 — Native build**: `xupm build` produces a stage 1 binary whose
       output matches `xulo run` on the bootstrap workload.
       `crates/xupm/tests/aot_differential.rs::stage1_binary_matches_the_interpreter`.
-      Reached on Linux and macOS (macOS verified locally on 2026-11-17); the
-      Windows job is wired but has not run yet, so B7 (WP3) remains open.
+      Reached on Linux, macOS, and Windows (macOS verified locally on
+      2026-11-17; the Windows differential and stage 1 build pass locally and
+      in CI, closing B7 in WP3).
 - [ ] **Gate 5 — Self-host**: stage 1 compiles itself into stage 2; stage 1 and
       stage 2 agree on the bootstrap suite and the conformance subset.
 - [ ] **Gate 6 — Conformance**: the pinned specification's checkable examples
@@ -122,9 +123,9 @@ package or out-of-scope section that tracks it.
 - [x] **B3** `xupm build` for the bootstrap subset
 - [x] **B4** AOT module tree (`mod` / `use`)
 - [x] **B5** Runtime static library and linker path
-- [ ] **B7** Linux/macOS/Windows build matrix — PARTIAL: Linux and macOS run the
-      full AOT differential, and Windows runs it with `ffi.xulo` parked
-      (Unix-only FFI, S8); the first Windows CI run is still pending (WP3)
+- [x] **B7** Linux/macOS/Windows build matrix — Linux and Windows run the full
+      AOT differential in CI, and macOS is verified locally; Windows parks
+      `ffi.xulo` (Unix-only FFI, S8) and passes locally and in CI on 2026-11-17
 - [ ] **B8** Reproducible stage 1 build and self-compile smoke test — PARTIAL:
       B8a is done, reproducibility and the self-build await WP6
 - [x] **D1** Source spans and `file:line:column` diagnostics
@@ -260,14 +261,18 @@ Priority P1 · needed by Gate 4 · source: `stage1-readiness.md` §7 WP3, §6.6�
       `crates/xulo-runtime/tests/native.rs::array_filled_runs` (interpreter) and
       `crates/xulo-compiler/tests/type_system_codegen_tests.rs::array_filled_compiles`
       (AOT runtime lowering `xulo_array_filled`).
-- [ ] **B7** Run `stage1_binary_matches_the_interpreter` on macOS and Windows,
+- [x] **B7** Run `stage1_binary_matches_the_interpreter` on macOS and Windows,
       not only Linux. macOS is verified: the opt-in differential compares all 30
-      examples and the stage 1 workload byte for byte on 2026-11-17, and CI now
-      runs it there. Windows now runs the same differential with
+      examples and the stage 1 workload byte for byte on 2026-11-17, and CI runs
+      it there. Windows runs the same differential with
       `crates/xupm/tests/aot_differential_baseline.windows.tsv`
-      (`ffi.xulo`, because `extern "C"` FFI stays Unix-only, S8); the first
-      Windows CI run has not happened yet, so the item stays open. Windows FFI
-      stays out of scope (S8).
+      (`ffi.xulo`, because `extern "C"` FFI stays Unix-only, S8). The Windows
+      link now names the Rust runtime's system libraries
+      (`kernel32`/`ntdll`/`userenv`/`ws2_32`/`dbghelp`/`synchronization` plus
+      `/DEFAULTLIB:msvcrt`), and `examples/fs.xulo` no longer prints its host
+      temp path, so all 29 comparable examples and the stage 1 native build pass
+      byte for byte locally and in CI on 2026-11-17. Windows FFI stays out of
+      scope (S8).
 
 **Verify:** `xupm build examples/collections.xulo` and
 `xupm build examples/optional_chaining.xulo` match `xulo run` byte for byte.

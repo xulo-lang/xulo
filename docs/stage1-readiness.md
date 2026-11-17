@@ -163,12 +163,13 @@ stderr match `xulo run` for `tokens`/`parse` on `examples/fibonacci.xulo` and
 `crates/xupm/tests/aot_differential.rs::stage1_binary_matches_the_interpreter`,
 run by the AOT differential CI job, which sets `XULO_AOT_DIFFERENTIAL=1` and
 `XULO_RUNTIME_LIB`; a plain `cargo test --workspace` does not run it. The
-assessment covers Linux and macOS: macOS was verified locally on 2026-11-17
-(all 30 examples and the stage 1 workload match byte for byte), and CI now runs
-the differential on both hosts. Windows runs the same
-differential with a platform baseline that parks `ffi.xulo` (Unix-only FFI,
-S8); its first CI run is pending, so cross-platform coverage remains open as B7
-in `tasks.md` WP3.
+assessment covers Linux, macOS, and Windows: macOS was verified locally on
+2026-11-17 (all 30 examples and the stage 1 workload match byte for byte), and
+CI runs the differential on Linux and Windows. Windows uses a platform baseline
+that parks `ffi.xulo` (Unix-only FFI, S8); after the Windows link gained the
+runtime's system libraries and `examples/fs.xulo` stopped printing a host temp
+path, the full differential and the stage 1 native build pass byte for byte
+locally and in CI (B7, 2026-11-17).
 
 ### Gate 5 — Self-host
 
@@ -284,7 +285,7 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 | B4 | AOT module tree (`mod`/`use`) | **OK** | `crates/xulo-compiler/tests/module_system.rs`, `examples/modules` native build | 4 |
 | B5 | Runtime static library and linker path | **OK** | `.github/workflows/ci.yml` and the release workflow | 4 |
 | B6 | `xupm test` for stage 1's own tests | **OK** | `crates/xupm/tests/cli.rs::runs_stage1_test_file` runs `xuloc/tests.xulo` (10 tests); `crates/xulo-cli/tests/stage1.rs` covers the `xulo test` path | 3 |
-| B7 | Linux/macOS/Windows build matrix | **PARTIAL** | Linux and macOS run the full AOT differential; macOS verified locally on 2026-11-17 (30 examples plus the stage 1 workload). Windows now runs the same differential with `crates/xupm/tests/aot_differential_baseline.windows.tsv` (`ffi.xulo`, since FFI is Unix-only, S8), but its first CI run is pending (open B7 in `tasks.md` WP3). | 4 |
+| B7 | Linux/macOS/Windows build matrix | **OK** | Linux and Windows run the full AOT differential in CI; macOS verified locally on 2026-11-17 (30 examples plus the stage 1 workload). Windows parks `ffi.xulo` in `crates/xupm/tests/aot_differential_baseline.windows.tsv` (FFI is Unix-only, S8) and otherwise compares all 29 examples plus the stage 1 binary byte for byte. The Windows link names the Rust runtime's system libraries (`kernel32`, `ntdll`, `userenv`, `ws2_32`, `dbghelp`, `synchronization`, `/DEFAULTLIB:msvcrt`), and `examples/fs.xulo` derives the last walk segment without printing its host temp path (`crates/xupm/tests/aot_differential.rs`). | 4 |
 | B8 | Reproducible stage 1 build and self-compile smoke test | **PARTIAL** | B8a: `xupm build xuloc/main.xulo --release` produces a native front end that matches the interpreter (`crates/xupm/tests/aot_differential.rs::stage1_binary_matches_the_interpreter`). Reproducibility and the stage 1 self-build await WP6. | 5 |
 
 ### 5.6 Diagnostics, testing, and conformance
@@ -298,7 +299,7 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 | T1 | Unit and integration tests | **OK** | `cargo test --workspace`: 2129 passed, 0 failed (2026-11-17) | 1 |
 | T2 | All examples run in CI | **OK** | `.github/workflows/ci.yml` examples job | 1 |
 | T3 | Pinned-spec example conformance runner | **OK** | `crates/xulo-cli/tests/spec_conformance.rs`: 114 annotated examples extracted from the pinned spec, 81 pass, 33 triaged in `spec_conformance_baseline.tsv` (§6.10) | 2 |
-| T4 | Interpreter vs. AOT differential suite | **OK** | `crates/xupm/tests/aot_differential.rs` builds and executes every top-level example, compares stdout/stderr against `xupm run`, and fails on stale baseline entries; CI runs it on Linux and macOS after the release build. The shared baseline is empty; Windows parks `ffi.xulo` in `crates/xupm/tests/aot_differential_baseline.windows.tsv` | 4 |
+| T4 | Interpreter vs. AOT differential suite | **OK** | `crates/xupm/tests/aot_differential.rs` builds and executes every top-level example, compares stdout/stderr against `xupm run`, and fails on stale baseline entries; CI runs it on Linux and Windows after the release build, and macOS is verified locally. The shared baseline is empty; Windows parks `ffi.xulo` in `crates/xupm/tests/aot_differential_baseline.windows.tsv` | 4 |
 | T5 | Stage 1 self-parse/self-check/self-build tests | **PARTIAL** | Self-parse, self-check, and interpreter smoke tests are live (`crates/xulo-cli/tests/stage1.rs`, `xuloc/tests.xulo`); self-build awaits WP6 | 2–5 |
 | T6 | Robustness/fuzz tests | **OK** | `crates/xulo-compiler/tests/robustness.rs`, `crates/xulo-parser/tests/parser_tests.rs` | 1 |
 | T7 | Spec and std-spec submodules aligned with the pin | **OK** | `crates/xulo-cli/tests/submodule_pins.rs` compares the `HEAD` gitlink, the index, and the checked-out submodule against `spec@48f49b7` / `std-spec@a2e4cb7`; CI job `conformance` | 1 |
@@ -733,7 +734,7 @@ Last recorded verification (2026-11-17):
 | `cargo test --workspace` | 2129 passed, 0 failed |
 | Examples (CI job) | Configured to run every `examples/*.xulo`; `async_tasks` uses `u64` sleep input |
 | AOT smoke tests | `hello` on macOS/Windows; `structs`, `trait_shapes`, `generics`, `modules` probed locally |
-| AOT differential suite | 30 examples compare byte for byte; the shared baseline is empty, and Windows parks only `ffi.xulo` in `crates/xupm/tests/aot_differential_baseline.windows.tsv` |
+| AOT differential suite | 30 examples compare byte for byte on Linux/macOS; Windows parks only `ffi.xulo` in `crates/xupm/tests/aot_differential_baseline.windows.tsv` and compares the other 29 plus the stage 1 binary |
 | AOT build failure | `xupm build` exits nonzero and reports the diagnostic (`crates/xupm/tests/cli.rs`) |
 | Stage 1 smoke tests | `cargo test -p xulo-cli --test stage1` — 7 passed; self-parses `xuloc/*.xulo`, clean diagnostics, `xulo test` |
 | Stage 1 under `xupm test` | `cargo test -p xupm --test cli runs_stage1_test_file` — 10 stage 1 tests passed |
