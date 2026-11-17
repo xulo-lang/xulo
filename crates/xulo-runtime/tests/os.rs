@@ -119,7 +119,7 @@ fn cwd_returns_a_directory_and_chdir_to_missing_fails() {
             }}
         }}
         "#,
-        missing.to_string_lossy()
+        missing.to_string_lossy().replace('\\', "\\\\")
     ));
     assert_eq!(out.len(), 2, "two lines: {out:?}");
     assert_eq!(out[0], "true", "cwd should be a non-empty path");
