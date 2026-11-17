@@ -107,6 +107,18 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
         returns: &[I64],
     },
     RuntimeFnDesc {
+        name: "xulo_task_race",
+        addr: xulo_runtime::runtime::xulo_task_race as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_task_timeout",
+        addr: xulo_runtime::runtime::xulo_task_timeout as *const u8,
+        params: &[I64, I64, I64, I64, F64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
         name: "xulo_stringify",
         addr: xulo_runtime::runtime::xulo_stringify as *const u8,
         params: &[I64, I64],

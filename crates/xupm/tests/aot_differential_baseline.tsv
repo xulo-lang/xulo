@@ -1,4 +1,3 @@
 # Examples that cannot be compared yet because `xupm run` rejects them or
 # `xupm build` cannot lower them. Remove an entry once both paths succeed.
 # Format: example.xulo<TAB>reason
-async_tasks.xulo	AOT has no Task::all/race/timeout lowering and cannot reproduce async timeout semantics; async is outside the bootstrap subset

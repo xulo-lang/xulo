@@ -223,8 +223,44 @@ fn copy_detaches_reference_values_and_keeps_float_slots() {
     );
 }
 
-// ── 循环控制 ──────────────────────────────────────────────────────────────
+/// R9c: `Task::resolve`/`all`/`race` lower to their already-settled values
+/// because the compiled async model runs calls eagerly, and `Task::timeout`
+/// decides from the measured runtime (spec `concurrency.md`, combinators).
+#[test]
+fn task_combinators_follow_the_compiled_async_model() {
+    let out = compile_and_run(
+        r#"
+        async fn fast(id: number): number {
+            id + 1
+        }
 
+        async fn slow(): number {
+            await std::time::sleep(30)
+            7
+        }
+
+        async fn main() {
+            print(await Task::all([fast(1), fast(2)]))
+            print(await Task::race([fast(3), fast(4)]))
+            print(await Task::resolve("ready"))
+            print(await Task::timeout(fast(5), 100))
+            print(await Task::timeout(slow(), 1))
+        }
+        "#,
+    );
+    assert_eq!(
+        out,
+        vec![
+            "[2, 3]",
+            "4",
+            "ready",
+            "Result.Ok(6)",
+            "Result.Err({ message: timed out })",
+        ]
+    );
+}
+
+// ── 循环控制 ──────────────────────────────────────────────────────────────
 #[test]
 fn continue_skips_for_iteration() {
     let out = compile_and_run(

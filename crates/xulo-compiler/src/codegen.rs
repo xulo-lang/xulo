@@ -71,6 +71,8 @@ pub(crate) fn runtime_fn_name(func: &RuntimeFn) -> &'static str {
         RuntimeFn::ValueEqual => "xulo_value_equal",
         RuntimeFn::ValueCopy => "xulo_value_copy",
         RuntimeFn::ArrayFilled => "xulo_array_filled",
+        RuntimeFn::TaskRace => "xulo_task_race",
+        RuntimeFn::TaskTimeout => "xulo_task_timeout",
         RuntimeFn::HttpRequestNew => "xulo_http_request_new",
         RuntimeFn::HttpResponseNew => "xulo_http_response_new",
         RuntimeFn::HttpResponseText => "xulo_http_response_text",

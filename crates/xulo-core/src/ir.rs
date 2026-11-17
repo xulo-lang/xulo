@@ -66,6 +66,10 @@ pub enum RuntimeFn {
     ValueCopy,
     /// `Array::filled<T, N>(value)`：N 个同值元素的新列表
     ArrayFilled,
+    /// `Task::race([t, u])`：AOT 的异步调用同步完成，取首个已结算元素
+    TaskRace,
+    /// `Task::timeout(t, ms)`：按实测耗时决定 `Result::Ok` 还是超时 `Err`
+    TaskTimeout,
     /// `std::http` 的服务器与 Request/Response 数据类型
     HttpRequestNew,
     HttpResponseNew,

@@ -1422,7 +1422,29 @@ impl IrGenerator {
                     self.determine_element_tag(&unop.operand)
                 }
             },
+            // `await e` yields `e`'s value, so the output tag follows the
+            // operand (`await Task::all(...)` is a list, `await f()` keeps the
+            // function's return tag, and so on).
+            Expression::Await { expr, .. } => self.determine_element_tag(expr),
             Expression::Call(call) => {
+                // `Task` combinators: `resolve` follows its argument, `all`
+                // yields a list, `timeout` yields `Result`, and `race` is only
+                // known at runtime.
+                if call.object.is_none() {
+                    match call.callee.as_str() {
+                        "Task::all" => return 3,
+                        "Task::race" => return -1,
+                        "Task::timeout" => return 7,
+                        "Task::resolve" => {
+                            return call
+                                .arguments
+                                .first()
+                                .map(|argument| self.determine_element_tag(&argument.value))
+                                .unwrap_or(6);
+                        }
+                        _ => {}
+                    }
+                }
                 if call.object.is_none()
                     && matches!(call.callee.as_str(), "Set::from_list" | "Array::filled")
                 {

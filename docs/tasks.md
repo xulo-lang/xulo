@@ -28,12 +28,12 @@ readiness document.
 | WP0 — Matrix hygiene and conformance | 5 | 5 |
 | WP1 — 64-bit integer model | 7 | 7 |
 | WP2 — Type system and semantic convergence | 12 | 12 |
-| WP3 — AOT parity and bootstrap backend | 11 | 13 |
+| WP3 — AOT parity and bootstrap backend | 12 | 13 |
 | WP4 — `defer` semantics | 5 | 5 |
 | WP5 — Stage 1 skeleton | 6 | 6 |
 | WP6 — Self-host loop | 3 | 7 |
 | WP7 — Non-gating follow-ups | 3 | 4 |
-| **Total** | **52** | **59** |
+| **Total** | **53** | **59** |
 
 ## Gates
 
@@ -97,8 +97,8 @@ package or out-of-scope section that tracks it.
       deep-copies in both paths and `move` transfers, but a plain `let b = a`
       of a value-category aggregate still aliases (the runtime erases
       struct/tuple/`Array` categories). Outside the bootstrap subset (WP7)
-- [ ] **R9** Interpreter and AOT produce identical observable behavior —
-      PARTIAL: one baseline gap (`async_tasks`) in `aot_differential_baseline.tsv`
+- [x] **R9** Interpreter and AOT produce identical observable behavior — all 30
+      top-level examples plus the stage 1 workload match byte for byte
       (WP3 R9c)
 - [x] **R10** Deterministic formatting of integers and diagnostics
 - [x] **C4** `Array<T, N>` with `.len`, indexing, iteration, and `Array::filled`
@@ -118,18 +118,18 @@ package or out-of-scope section that tracks it.
 - [x] **S11** `std::time` (interpreter and AOT)
 - [x] **B1** `xulo run` and `xulo check` for a single file
 - [x] **B2** `xupm build` for core language and `hello`
-- [ ] **B3** `xupm build` for the bootstrap subset — PARTIAL: one AOT gap
-      (`async_tasks` Task semantics, WP3 R9c)
+- [x] **B3** `xupm build` for the bootstrap subset
 - [x] **B4** AOT module tree (`mod` / `use`)
 - [x] **B5** Runtime static library and linker path
-- [ ] **B7** Linux/macOS/Windows build matrix — PARTIAL: the AOT differential
-      job is Linux-only, so macOS and Windows parity is unverified (WP3)
+- [ ] **B7** Linux/macOS/Windows build matrix — PARTIAL: Linux and macOS run the
+      full AOT differential, and Windows runs it with `ffi.xulo` parked
+      (Unix-only FFI, S8); the first Windows CI run is still pending (WP3)
 - [ ] **B8** Reproducible stage 1 build and self-compile smoke test — PARTIAL:
       B8a is done, reproducibility and the self-build await WP6
 - [x] **D1** Source spans and `file:line:column` diagnostics
 - [x] **D2** stderr writes and nonzero exit status
 - [x] **D4** Stage 1 diagnostics consistent with stage 0
-- [x] **T1** Unit and integration tests — `cargo test --workspace`: 2107 passed, 0 failed (2026-11-17)
+- [x] **T1** Unit and integration tests — `cargo test --workspace`: 2121 passed, 0 failed (2026-11-17)
 - [x] **T2** All examples run in CI
 - [ ] **T5** Stage 1 self-parse/self-check/self-build tests — PARTIAL: self-parse
       and self-check are live, the self-build is not (WP5, WP6 T5c)
@@ -249,19 +249,21 @@ Priority P1 · needed by Gate 4 · source: `stage1-readiness.md` §7 WP3, §6.6�
 - [x] **S3a** AOT lowering for `std::process::launch`, `Command`, and `Child`
       (`process`). `crates/xupm/tests/aot_differential.rs` now compares
       `examples/process.xulo` byte for byte.
-- [ ] **R9c** `async_tasks`: AOT `await` now yields its operand, so the pending
-      gap is the `Task::all`/`race`/`timeout` namespace and real timeout
-      semantics. Outside the bootstrap subset (§8 of `stage1-readiness.md`);
-      tracked in the baseline.
+- [x] **R9c** `async_tasks`: AOT lowers `Task::resolve`/`all`/`race` to their
+      already-settled values and `Task::timeout` to an elapsed-time check
+      against the limit; `examples/async_tasks.xulo` now matches `xulo run`
+      byte for byte. Regression:
+      `crates/xulo-compiler/tests/aot_syntax_coverage_tests.rs::task_combinators_follow_the_compiled_async_model`.
+      Outside the bootstrap subset (§8 of `stage1-readiness.md`).
 - [x] **C4** Verify `Array::filled` under both execution paths.
       `crates/xulo-runtime/tests/native.rs::array_filled_runs` (interpreter) and
       `crates/xulo-compiler/tests/type_system_codegen_tests.rs::array_filled_compiles`
       (AOT runtime lowering `xulo_array_filled`).
 - [ ] **B7** Run `stage1_binary_matches_the_interpreter` on macOS and Windows,
-      not only Linux. macOS is verified: the opt-in differential compares all 29
-      non-baseline examples and the stage 1 workload byte for byte on
-      2026-11-17, and CI now runs it there. Windows now runs the same
-      differential with `crates/xupm/tests/aot_differential_baseline.windows.tsv`
+      not only Linux. macOS is verified: the opt-in differential compares all 30
+      examples and the stage 1 workload byte for byte on 2026-11-17, and CI now
+      runs it there. Windows now runs the same differential with
+      `crates/xupm/tests/aot_differential_baseline.windows.tsv`
       (`ffi.xulo`, because `extern "C"` FFI stays Unix-only, S8); the first
       Windows CI run has not happened yet, so the item stays open. Windows FFI
       stays out of scope (S8).
@@ -269,8 +271,7 @@ Priority P1 · needed by Gate 4 · source: `stage1-readiness.md` §7 WP3, §6.6�
 **Verify:** `xupm build examples/collections.xulo` and
 `xupm build examples/optional_chaining.xulo` match `xulo run` byte for byte.
 `XULO_AOT_DIFFERENTIAL=1 cargo test -p xupm --test aot_differential` compares
-29 examples; the shared baseline records one entry (`async_tasks`) that cannot
-be compared yet, and Windows additionally parks `ffi.xulo`.
+all 30 examples; Windows additionally parks `ffi.xulo`.
 
 ## WP4 — `defer` semantics
 

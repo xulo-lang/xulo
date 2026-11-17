@@ -1444,6 +1444,82 @@ impl IrGenerator {
             return Ok(Operand::Local(local));
         }
 
+        // `Task` combinators under the compiled async model: an async call
+        // completes before it returns, so `Task::resolve` and `Task::all` are
+        // the identity on the already-settled value, `Task::race` takes the
+        // first argument (the first to run to completion), and `Task::timeout`
+        // compares the value's measured runtime with the limit
+        // (spec `concurrency.md`, "Task combinators").
+        if call.object.is_none()
+            && matches!(
+                call.callee.as_str(),
+                "Task::resolve" | "Task::all" | "Task::race"
+            )
+        {
+            let Some(argument) = call.arguments.first() else {
+                return Err(XuloError::new(
+                    ErrorKind::Semantic,
+                    format!("`{}` expects one argument", call.callee),
+                ));
+            };
+            let value = self.generate_expression(&argument.value)?;
+            if call.callee == "Task::race" {
+                let local = self.module.functions[func_idx].add_local(IrType::Pointer);
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::RuntimeCall {
+                        dst: Some(local),
+                        func: RuntimeFn::TaskRace,
+                        args: vec![value],
+                    });
+                return Ok(Operand::Local(local));
+            }
+            return Ok(value);
+        }
+
+        if call.object.is_none() && call.callee == "Task::timeout" {
+            let (Some(task), Some(limit)) = (call.arguments.first(), call.arguments.get(1)) else {
+                return Err(XuloError::new(
+                    ErrorKind::Semantic,
+                    "`Task::timeout` expects a task and a millisecond count".to_string(),
+                ));
+            };
+            let start = self.module.functions[func_idx].add_local(IrType::I64);
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::RuntimeCall {
+                    dst: Some(start),
+                    func: RuntimeFn::Intrinsic("xulo_time_monotonic_nanos"),
+                    args: Vec::new(),
+                });
+            let value = self.generate_expression(&task.value)?;
+            let tag = self.tag_operand_for(&task.value, &value);
+            let end = self.module.functions[func_idx].add_local(IrType::I64);
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::RuntimeCall {
+                    dst: Some(end),
+                    func: RuntimeFn::Intrinsic("xulo_time_monotonic_nanos"),
+                    args: Vec::new(),
+                });
+            let limit = self.generate_expression(&limit.value)?;
+            let local = self.module.functions[func_idx].add_local(IrType::Pointer);
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::RuntimeCall {
+                    dst: Some(local),
+                    func: RuntimeFn::TaskTimeout,
+                    args: vec![
+                        value,
+                        tag,
+                        Operand::Local(start),
+                        Operand::Local(end),
+                        limit,
+                    ],
+                });
+            return Ok(Operand::Local(local));
+        }
+
         let mut args = Vec::new();
 
         // 对于方法调用，先生成 receiver 并作为第一个参数

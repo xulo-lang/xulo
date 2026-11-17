@@ -17,6 +17,7 @@ mod process;
 mod regex;
 mod scalar;
 mod string;
+mod task;
 mod time;
 
 // 再导出各子模块的 `xulo_*`：xulo-compiler/backend.rs 按 `xulo_runtime::runtime::xulo_*`
@@ -34,6 +35,7 @@ pub use process::*;
 pub use regex::*;
 pub use scalar::*;
 pub use string::*;
+pub use task::*;
 pub use time::*;
 
 /// 字符串方法（`repeat` / `pad_start` / `pad_end`）的重复/宽度上限：编译路径
