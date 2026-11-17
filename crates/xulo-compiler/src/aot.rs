@@ -183,6 +183,10 @@ fn configure_linker(
     // MSVC link.exe：对象与静态库直接作为输入；/OPT:REF 去掉未引用段。
     cmd.arg("/NOLOGO")
         .arg("/SUBSYSTEM:CONSOLE")
+        // The stage 1 parser is recursive; the MSVC default main-thread
+        // reserve (1 MiB) overflows on the bootstrap workload, while Unix
+        // threads get 8 MiB. Reserve the same 64 MiB the CLI uses.
+        .arg("/STACK:67108864")
         .arg("/OPT:REF")
         .arg("/OPT:ICF")
         .arg(format!("/OUT:{}", exe_path.display()))
