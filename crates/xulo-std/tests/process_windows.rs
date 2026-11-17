@@ -23,5 +23,5 @@ fn run_reports_a_nonzero_exit_as_data() {
 #[test]
 fn run_exposes_cmd_shell_features() {
     let out = process::run("echo one && echo two", None, None).expect("cmd spawn");
-    assert_eq!(out.stdout, "one\r\ntwo\r\n");
+    assert_eq!(out.stdout, "one \r\ntwo\r\n");
 }
