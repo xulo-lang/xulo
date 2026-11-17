@@ -75,7 +75,12 @@ pub fn create_new(path: &str, contents: &str) -> Result<(), String> {
 }
 
 fn set_modified(path: &str, when: SystemTime) -> Result<(), String> {
-    let file = fs::File::open(path).map_err(|e| fail("set times", path, e))?;
+    // Windows refuses `SetFileTime` on a handle opened for reading only, so
+    // open for write without truncating; Unix accepts the same handle.
+    let file = fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .map_err(|e| fail("set times", path, e))?;
     file.set_modified(when)
         .map_err(|e| fail("set times", path, e))
 }
