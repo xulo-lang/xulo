@@ -209,7 +209,7 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 | L3 | `float`/`f64` arithmetic | **OK** | `f64` literals, arithmetic, and printing; `crates/xulo-cli/tests/matrix_probes/L3_float_arithmetic.xulo` | 1 |
 | L4 | `let`, `let mut`, assignment, shadowing | **OK** | Bindings, assignment, and nested-block shadowing; `crates/xulo-cli/tests/matrix_probes/L4_bindings.xulo`, `crates/xulo-semantic/tests/semantic_tests.rs` | 1 |
 | L5 | Functions, recursion, implicit return | **OK** | Recursion, implicit return, and default parameters; `crates/xulo-cli/tests/matrix_probes/L5_functions.xulo` | 1 |
-| L6 | Closures and function values | **PARTIAL** | Named-function callbacks work; an untyped lambda passed to a generic callback can fail with `E0202` | 2 |
+| L6 | Closures and function values | **OK** | An untyped lambda passed to a generic callback infers the type parameter from the other arguments (`untyped_closure_infers_generic_callback_type`, `generic_closure_argument_compiles`); `crates/xulo-semantic/tests/semantic_tests.rs`, `crates/xulo-compiler/tests/type_system_codegen_tests.rs` | 2 |
 | L7 | `if`/`else`, `while`, `for`, `match`, `break`, `continue` | **OK** | `crates/xulo-cli/tests/matrix_probes/L7_control_flow.xulo` | 1 |
 | L8 | Enums, payloads, recursive/generic enums, exhaustive `match` | **OK** | Payload and recursive generic enums; `crates/xulo-cli/tests/matrix_probes/L8_enums_match.xulo`, `examples/enums_match.xulo` | 1 |
 | L9 | Structs, `impl`, traits, explicit `Trait::method(recv)` dispatch | **OK** | `crates/xulo-cli/tests/matrix_probes/L9_structs_traits.xulo`, `examples/trait_shapes.xulo` | 1 |
@@ -577,13 +577,13 @@ PARTIAL for identity-based equality (§6.11, since resolved by L13b).
 
 **Exit:** §6.2–6.5 probes pass; no workaround needed for stage 1's AST.
 
-**Status:** partial (11 of 12). §6.2–6.5 pass in both execution paths, L18b is
+**Status:** complete (12 of 12). §6.2–6.5 pass in both execution paths, L18b is
 covered by the semantic and interpreter regression tests, D3's fine-grained
 diagnostic codes are asserted in the semantic tests, S9 aligns the std numeric
 result types, AOT narrowing slot, range failures, and regex reachability with
-`std-spec` §1.3, and L13b makes aggregate `==` structural in both execution
-paths. L6 (closure inference) is still open in `tasks.md` WP2, so the work
-package is not closed.
+`std-spec` §1.3, L13b makes aggregate `==` structural in both execution paths,
+and L6 treats an unannotated lambda's `any` parameter as a unification
+wildcard so a later argument can fix the callback's type parameter.
 
 ### WP3 — AOT parity and bootstrap backend (P1, Gate 4)
 
@@ -656,8 +656,8 @@ to the built-in lowering.
 - `copy`/`move` and use-after-move checking (L21, R8) are PARTIAL and outside the
   §2.1 subset; verify them before stage 1 relies on them.
 
-Items that gate work depends on are kept in their work packages (L6 in
-WP2; B3c, S3, R9c, B7 in WP3).
+Items that gate work depends on are kept in their work packages (B3c, S3, R9c,
+B7 in WP3).
 
 **Status:** T3f is done: §6.10 records the group counts, an owner component, and
 the gate that clears each group, and `readiness_matrix` checks that every owner

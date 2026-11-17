@@ -14254,6 +14254,16 @@ fn infer_type_bindings(
     for (param_ty, arg_ty) in param_types.iter().zip(arg_types.iter()) {
         unify_param(param_ty, arg_ty, type_params, &mut bindings)?;
     }
+    // An `any` argument carries no information: an unannotated closure's
+    // parameter type is `any` until an expected type fills it in, so binding
+    // `T = any` here would make a later, precise argument conflict. Leave the
+    // parameter free for a concrete argument to bind, and only fall back to
+    // `any` when it appeared in the signature but never got a concrete type.
+    for param in type_params {
+        if !bindings.contains_key(param) && param_types.iter().any(|t| type_mentions(t, param)) {
+            bindings.insert(param.clone(), Type::Any);
+        }
+    }
     Ok(bindings)
 }
 
@@ -14263,6 +14273,12 @@ fn unify_param(
     type_params: &[String],
     bindings: &mut std::collections::HashMap<String, Type>,
 ) -> Result<(), InferenceConflict> {
+    // `any` is the absence of a known type, not a competing solution: an
+    // unannotated closure contributes `any` for its parameters, and a later
+    // argument such as `21` must still be able to fix `T = number`.
+    if matches!(actual, Type::Any) {
+        return Ok(());
+    }
     match expected {
         Type::Named(name, _) if type_params.contains(name) => match bindings.get(name) {
             Some(existing) if existing != actual => {

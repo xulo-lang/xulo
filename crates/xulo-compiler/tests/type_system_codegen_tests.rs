@@ -310,6 +310,21 @@ fn main() {
     );
 }
 
+/// L6: an unannotated lambda passed to a generic callback infers the
+/// callback's type parameter from the other arguments instead of binding it
+/// to the lambda's provisional `any`.
+#[test]
+fn generic_closure_argument_compiles() {
+    let out = compile_and_run(
+        r#"fn apply<T>(f: fn(T): T, x: T): T { f(x) }
+fn main() {
+    print(apply(fn(v) { v * 2 }, 21))
+    print(apply(fn(v) { v + "!" }, "hi"))
+}"#,
+    );
+    assert_eq!(out, vec!["42", "hi!"]);
+}
+
 /// C4: `Array::filled<T, N>` lowers to a runtime fill in the compiled path,
 /// matching the interpreter's length, elements, and `.len`.
 #[test]

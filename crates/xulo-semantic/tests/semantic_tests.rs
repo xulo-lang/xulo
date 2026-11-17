@@ -463,6 +463,21 @@ fn generic_call_site_infers_type_argument() {
 }
 
 #[test]
+fn untyped_closure_infers_generic_callback_type() {
+    // An unannotated lambda's parameter type is `any` until an expected type
+    // fills it in; that placeholder must not fix `T = any` and reject the
+    // later, precise argument (spec `types/generics.md`, Inference).
+    let src = r#"
+        fn apply<T>(f: fn(T): T, x: T): T { f(x) }
+        fn main() {
+            let n: number = apply(fn(v) { v * 2 }, 21)
+            print(n)
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
 fn index_targets_lists() {
     assert!(analyze_src("fn main() { let xs: List<number> = [1, 2] print(xs[0]) }").is_ok());
     let err = analyze_src("fn main() { let xs: number = 1 print(xs[0]) }").unwrap_err();

@@ -27,7 +27,7 @@ readiness document.
 |---|---:|---:|
 | WP0 — Matrix hygiene and conformance | 5 | 5 |
 | WP1 — 64-bit integer model | 7 | 7 |
-| WP2 — Type system and semantic convergence | 11 | 12 |
+| WP2 — Type system and semantic convergence | 12 | 12 |
 | WP3 — AOT parity and bootstrap backend | 9 | 13 |
 | WP4 — `defer` semantics | 5 | 5 |
 | WP5 — Stage 1 skeleton | 6 | 6 |
@@ -72,8 +72,7 @@ package or out-of-scope section that tracks it.
 - [x] **L3** `float` / `f64` arithmetic
 - [x] **L4** `let`, `let mut`, assignment, shadowing
 - [x] **L5** Functions, recursion, implicit return
-- [ ] **L6** Closures and function values — PARTIAL: an untyped lambda passed to
-      a generic callback can fail with `E0202` (WP2)
+- [x] **L6** Closures and function values
 - [x] **L7** `if` / `else`, `while`, `for`, `match`, `break`, `continue`
 - [x] **L8** Enums, payloads, recursive/generic enums, exhaustive `match`
 - [x] **L9** Structs, `impl`, traits, explicit `Trait::method(recv)` dispatch
@@ -209,9 +208,11 @@ Priority P0 · needed by Gate 2/3 · source: `stage1-readiness.md` §7 WP2, §6.
       the `§6.2–6.5` probes pass
       (`crates/xulo-runtime/tests/type_system.rs`,
       `crates/xulo-compiler/tests/type_system_codegen_tests.rs`).
-- [ ] **L6** Closures: an untyped lambda passed to a generic callback can fail
-      with `E0202`. The bootstrap subset includes closures; stage 1 works around
-      this by avoiding arrow closures (`xuloc/BOOTSTRAP.md` limit 6).
+- [x] **L6** Closures: an untyped lambda passed to a generic callback no longer
+      fails with `E0202`; its provisional `any` parameter type is a unification
+      wildcard, so a later argument fixes the type parameter.
+      `crates/xulo-semantic/tests/semantic_tests.rs::untyped_closure_infers_generic_callback_type`,
+      `crates/xulo-compiler/tests/type_system_codegen_tests.rs::generic_closure_argument_compiles`.
 - [x] **L13b** Structural `==` for `List`, tuple, and `struct` values (and
       `Map`/`Set`/enums), per `stage1-readiness.md` §6.11. The runtime
       `xulo_value_equal` helper recurses through aggregates with a visited-pair
