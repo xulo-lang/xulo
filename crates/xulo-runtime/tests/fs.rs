@@ -41,10 +41,12 @@ fn scratch(label: &str) -> PathBuf {
     dir
 }
 
-/// A path safe to embed in a test program's string literal (POSIX temp paths
-/// carry no quotes or backslashes).
+/// A path safe to embed in a test program's string literal: escape Windows
+/// separators and any quotes so the source parser sees one path.
 fn p(path: &Path) -> String {
-    path.to_string_lossy().into_owned()
+    path.to_string_lossy()
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
 }
 
 #[test]
@@ -214,32 +216,41 @@ fn unknown_fs_member_is_rejected_by_the_semantic_pass() {
 #[test]
 fn fs_example() {
     let out = run_ok(include_str!("../../../examples/fs.xulo"));
-    assert_eq!(
-        out,
-        vec![
-            "written".to_string(),
-            "hello fs".to_string(),
-            "true".to_string(),
-            "file".to_string(),
-            "8".to_string(),
-            "true".to_string(),
-            "bytes written".to_string(),
-            "2".to_string(),
-            "104".to_string(),
-            "mkdir".to_string(),
-            "nested written".to_string(),
-            "[a.txt, sub]".to_string(),
-            "4".to_string(),
-            "b.txt".to_string(),
-            "copied".to_string(),
-            "renamed".to_string(),
-            "true".to_string(),
-            "temp removed".to_string(),
-            "file removed".to_string(),
-            "a removed".to_string(),
-            "d removed".to_string(),
-            "sub removed".to_string(),
-            "dir removed".to_string(),
-        ]
-    );
+    let mut expected = vec![
+        "written".to_string(),
+        "hello fs".to_string(),
+        "true".to_string(),
+        "file".to_string(),
+        "8".to_string(),
+        "true".to_string(),
+        "bytes written".to_string(),
+        "2".to_string(),
+        "104".to_string(),
+        "mkdir".to_string(),
+        "nested written".to_string(),
+        "[a.txt, sub]".to_string(),
+        "4".to_string(),
+        "b.txt".to_string(),
+        "copied".to_string(),
+        "renamed".to_string(),
+        "true".to_string(),
+        "temp removed".to_string(),
+        "file removed".to_string(),
+        "a removed".to_string(),
+        "d removed".to_string(),
+        "sub removed".to_string(),
+        "dir removed".to_string(),
+    ];
+    // `std::path` is POSIX on every host, while `fs::walk` uses the host
+    // separator; on Windows `basename` therefore returns the whole path.
+    #[cfg(windows)]
+    {
+        assert!(
+            out[13].ends_with("b.txt"),
+            "unexpected walk basename: {}",
+            out[13]
+        );
+        expected[13] = out[13].clone();
+    }
+    assert_eq!(out, expected);
 }
