@@ -600,6 +600,40 @@ impl IrGenerator {
             return Ok(Operand::Local(eq));
         }
 
+        // Structural equality for value-carrying aggregates (spec
+        // `expressions/operators.md`, "Equality"). A raw `icmp` compares the
+        // handle, which is wrong for two independently built equal lists,
+        // tuples, structs, maps, sets, and enums; route them through the
+        // runtime's recursive comparison instead.
+        if matches!(binop.operator, BinaryOperator::Eq | BinaryOperator::Neq)
+            && !self.has_float_operand(&binop.left)
+            && !self.has_float_operand(&binop.right)
+            && (self.expr_is_structural_value(&binop.left)
+                || self.expr_is_structural_value(&binop.right))
+        {
+            let left_tag = self.structural_tag_operand(&binop.left, &left);
+            let right_tag = self.structural_tag_operand(&binop.right, &right);
+            let eq = self.module.functions[func_idx].add_local(IrType::Bool);
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::RuntimeCall {
+                    dst: Some(eq),
+                    func: RuntimeFn::ValueEqual,
+                    args: vec![left, left_tag, right, right_tag],
+                });
+            if matches!(binop.operator, BinaryOperator::Neq) {
+                let negated = self.module.functions[func_idx].add_local(IrType::Bool);
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::Not {
+                        dst: negated,
+                        operand: Operand::Local(eq),
+                    });
+                return Ok(Operand::Local(negated));
+            }
+            return Ok(Operand::Local(eq));
+        }
+
         // Integral arithmetic is checked at runtime: overflow, division by
         // zero, and an out-of-range shift abort instead of wrapping, matching
         // the interpreter (spec `types/primitive-types.md`, "Overflow").
@@ -1070,6 +1104,35 @@ impl IrGenerator {
                     dst: Some(local),
                     func: RuntimeFn::SetFromList,
                     args,
+                });
+            return Ok(Operand::Local(local));
+        }
+
+        // `Array::filled<T, const N: int>(value)`: the length is a compile-time
+        // const argument, so lower it to a runtime fill of `N` copies.
+        if call.object.is_none() && call.callee == "Array::filled" {
+            let Some(length) = call.type_args.as_ref().and_then(|args| args.get(1)) else {
+                return Err(XuloError::new(
+                    ErrorKind::Semantic,
+                    "`Array::filled` requires a const length argument".to_string(),
+                ));
+            };
+            let Some(argument) = call.arguments.first() else {
+                return Err(XuloError::new(
+                    ErrorKind::Semantic,
+                    "`Array::filled` expects exactly 1 argument".to_string(),
+                ));
+            };
+            let value = self.generate_expression(&argument.value)?;
+            let tag = self.tag_operand_for(&argument.value, &value);
+            let length = self.generate_const_argument(length)?;
+            let local = self.module.functions[func_idx].add_local(IrType::Pointer);
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::RuntimeCall {
+                    dst: Some(local),
+                    func: RuntimeFn::ArrayFilled,
+                    args: vec![value, tag, length],
                 });
             return Ok(Operand::Local(local));
         }
@@ -2337,7 +2400,7 @@ impl IrGenerator {
         Ok(())
     }
 
-    fn tag_operand_for(&self, expr: &Expression, value: &Operand) -> Operand {
+    pub(super) fn tag_operand_for(&self, expr: &Expression, value: &Operand) -> Operand {
         if let Expression::Identifier { name, .. } = expr
             && let Some(tag) = self.dyn_tag_of.get(name)
         {

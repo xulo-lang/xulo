@@ -216,7 +216,7 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 | L10 | Generic functions, bounds, `where` clauses | **OK** | Inline and `where` bounds on a generic function; `crates/xulo-cli/tests/matrix_probes/L10_generics.xulo`, `examples/generics.xulo` | 2 |
 | L11 | Generic struct construction with named arguments | **OK** | The constructor infers type arguments from named field arguments and member access substitutes them; `crates/xulo-runtime/tests/type_system.rs`, `crates/xulo-compiler/tests/type_system_codegen_tests.rs` | 2 |
 | L12 | `mod`/`use`/`pub`, visibility, cross-file modules | **OK** | `crates/xulo-cli/tests/matrix_probes/L12_modules/main.xulo`, `examples/modules`; AOT module build | 1 |
-| L13 | Tuple literals, destructuring, equality | **PARTIAL** | Literals, `p.i`, destructuring, and positional writes work (`crates/xulo-cli/tests/matrix_probes/L13_tuples.xulo`). `==` compares `List`/tuple/`struct` values by identity instead of structurally (§6.11), so the workaround is to compare elements one by one. | 1 |
+| L13 | Tuple literals, destructuring, equality | **OK** | Literals, `p.i`, destructuring, positional writes, and structural equality for lists, tuples, structs, maps, sets, and enums (`crates/xulo-cli/tests/matrix_probes/L13_tuples.xulo`, `crates/xulo-runtime/tests/equality.rs`, `crates/xulo-compiler/tests/type_system_codegen_tests.rs::structural_equality_compiles`); §6.11 | 1 |
 | L14 | Tuple positional access `p.0` and `?.0` | **OK** | Reads and `let mut` writes lower to the tuple's list slot; a position outside the arity is `E0220`; both execution paths agree (`crates/xulo-runtime/tests/type_system.rs`) | 2 |
 | L15 | `Array<T, N>` with `.len` and indexed access | **OK** | Interpreter and AOT agree on `.len`, indexing, and iteration; probes cover `Array<int, 3>` and `Array<string, 2>` (`crates/xulo-compiler/tests/type_system_codegen_tests.rs`) | 4 |
 | L16 | `T?`, `?.`, `??`, null narrowing | **OK** | `crates/xulo-cli/tests/matrix_probes/L16_optionals.xulo`, `examples/optional_chaining.xulo` | 1 |
@@ -252,7 +252,7 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 | C1 | `List` with `.push`, `.pop`, `.len`, indexing, `+`, iteration | **OK** | Interpreter and AOT agree, including spread; `examples/collections.xulo` matches byte for byte (`crates/xulo-compiler/tests/type_system_codegen_tests.rs`) | 1 |
 | C2 | `Map<K, V>` with `.get`, `.set`, `.has`, `.remove`, `.size`, iteration | **OK** | Interpreter and compiled paths agree on members, projection, `Map::from_entries`, typed literals, brace-map spread, and key iteration (`crates/xulo-compiler/tests/type_system_codegen_tests.rs`, `crates/xulo-compiler/tests/aot_syntax_coverage_tests.rs`) | 4 |
 | C3 | `Set<T>` with `.insert`, `.remove`, `.has`, `.size` | **OK** | Interpreter and compiled paths agree on construction, membership, insertion, removal, size, and iteration for numbers, strings, and payload-free enums (`crates/xulo-compiler/tests/type_system_codegen_tests.rs`, `crates/xulo-compiler/tests/aot_syntax_coverage_tests.rs`) | 4 |
-| C4 | `Array<T, N>` with `.len`, indexing, iteration | **PARTIAL** | Interpreter and AOT agree on `.len`, indexing, and iteration; `Array::filled` not verified | 4 |
+| C4 | `Array<T, N>` with `.len`, indexing, iteration | **OK** | Interpreter and AOT agree on `.len`, indexing, iteration, and `Array::filled<T, N>` (`crates/xulo-runtime/tests/native.rs`, `crates/xulo-compiler/tests/type_system_codegen_tests.rs`) | 4 |
 | C5 | `string` members and UTF-8 behavior | **OK** | `crates/xulo-runtime/tests/string_methods.rs`, `crates/xulo-runtime/tests/string_introspection.rs` | 1 |
 | C6 | `StringBuilder` with `new`/`append`/`clear`/`build`/`len`/`byte_len` | **OK** | `crates/xulo-runtime/tests/native.rs` (interpreter and AOT) | 1 |
 | C7 | `str`/`fmt`/output of all bootstrap values | **OK** | `str`, `Format`, and `print` render `int`/`u64` exactly (AOT tag 10 for the unsigned slot); `crates/xulo-runtime/tests/integers.rs` and the interpreter/AOT golden suites | 2 |
@@ -505,7 +505,7 @@ Gate 5/Gate 6. These groups are also candidate rows for the capability matrix;
 the harness exists so that removing a baseline line is the visible proof that a
 fix landed.
 
-### 6.11 Structural equality compares identity for `List`/tuple/`struct` (L13, R9)
+### 6.11 Structural equality for aggregates (L13, R9)
 
 ```xulo
 struct P { x: int, y: int }
@@ -516,18 +516,18 @@ fn main() {
 }
 ```
 
-**Open.** The specification (`expressions/operators.md`, "Equality") requires
-structural equality for every value-carrying type. The interpreter's `equal`
-compares `List` and `Object` handles by `Rc::ptr_eq`, so two independently
-constructed equal values differ; the AOT path lowers `Eq` to a machine-word
-comparison, with the same result. Enum payloads and `StringBuilder` text are
-already structural. `crates/xulo-cli/tests/matrix_probes/L13_tuples.xulo` stops
-short of equality for this reason, and L13 is **PARTIAL**. Tracked as L13b in `tasks.md` WP2.
-
-Workaround for stage 1: compare elements or fields individually. The fix is a
-runtime `xulo_value_equal(left, left_tag, right, right_tag)` helper that
-recurses through lists, objects, tuples, maps, sets, and structs with a
-visited-pair guard, and an IR lowering that routes non-scalar `==`/`!=` to it.
+**Resolved.** The specification (`expressions/operators.md`, "Equality")
+requires structural equality for every value-carrying type. The interpreter's
+`equal` now recurses through lists, sets, objects (structs and maps), and enum
+payloads, comparing map/struct entries by key and sets without regard to
+insertion order. The AOT path adds the runtime
+`xulo_value_equal(left, left_tag, right, right_tag)` helper with the same
+semantics and a visited-pair guard, and the IR lowering routes structural
+`==`/`!=` to it instead of a machine-word handle comparison. The §6.11 probe
+passes in both paths. Evidence:
+`crates/xulo-runtime/tests/equality.rs`,
+`crates/xulo-compiler/tests/type_system_codegen_tests.rs::structural_equality_compiles`,
+and the updated `crates/xulo-cli/tests/matrix_probes/L13_tuples.xulo`.
 
 ## 7. Work packages and recommended order
 
@@ -547,7 +547,7 @@ open and non-gating (`tasks.md` WP7). The CI job is `conformance`; §6.10 is the
 existing test/probe, runs the `matrix_probes` corpus, and fails on an uncited
 probe. The audit itself fixed two small defects (implicit return of a trailing
 struct construction, tuple destructuring of a tuple type) and re-graded L13 to
-PARTIAL for identity-based equality (§6.11).
+PARTIAL for identity-based equality (§6.11, since resolved by L13b).
 
 ### WP1 — 64-bit integer model (P0, Gate 1/2/5)
 
@@ -577,18 +577,19 @@ PARTIAL for identity-based equality (§6.11).
 
 **Exit:** §6.2–6.5 probes pass; no workaround needed for stage 1's AST.
 
-**Status:** partial (10 of 12). §6.2–6.5 pass in both execution paths, L18b is
+**Status:** partial (11 of 12). §6.2–6.5 pass in both execution paths, L18b is
 covered by the semantic and interpreter regression tests, D3's fine-grained
-diagnostic codes are asserted in the semantic tests, and S9 aligns the std
-numeric result types, AOT narrowing slot, range failures, and regex
-reachability with `std-spec` §1.3. L6 (closure inference) and L13b (structural
-equality) are still open in `tasks.md` WP2, so the work package is not closed.
+diagnostic codes are asserted in the semantic tests, S9 aligns the std numeric
+result types, AOT narrowing slot, range failures, and regex reachability with
+`std-spec` §1.3, and L13b makes aggregate `==` structural in both execution
+paths. L6 (closure inference) is still open in `tasks.md` WP2, so the work
+package is not closed.
 
 ### WP3 — AOT parity and bootstrap backend (P1, Gate 4)
 
 - AOT runtime support for `Map` and `Set` is in place (C2, C3).
-- Known AOT parity probes now agree, including spread, ternaries, and
-  `Array.len` (C1, R9b, L15).
+- Known AOT parity probes now agree, including spread, ternaries,
+  `Array.len`, and `Array::filled` (C1, R9b, L15, C4).
 - The differential runner is in place and compares 25 examples; the five
   remaining gaps are listed in `crates/xupm/tests/aot_differential_baseline.tsv`
   (async output, plus `fs`/`http`/`path`/`process` builds).
@@ -655,8 +656,8 @@ to the built-in lowering.
 - `copy`/`move` and use-after-move checking (L21, R8) are PARTIAL and outside the
   §2.1 subset; verify them before stage 1 relies on them.
 
-Items that gate work depends on are kept in their work packages (L6, L13b in
-WP2; B3c, S3, R9c, C4, B7 in WP3).
+Items that gate work depends on are kept in their work packages (L6 in
+WP2; B3c, S3, R9c, B7 in WP3).
 
 **Status:** T3f is done: §6.10 records the group counts, an owner component, and
 the gate that clears each group, and `readiness_matrix` checks that every owner

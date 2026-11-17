@@ -903,15 +903,19 @@ fn run_enum_equality_native() {
 }
 
 #[test]
-fn run_plain_tagged_objects_keep_identity_equality() {
-    // A plain object that happens to have a `tag` key is *not* an enum: it
-    // compares by identity, while enum values still compare structurally.
+fn run_plain_tagged_objects_compare_structurally() {
+    // A plain object literal is the brace form of a `Map`, so it compares by
+    // content (spec `expressions/operators.md`, "Equality"). A `tag` key does
+    // not turn it into an enum; enum values still compare by type/variant and
+    // payload.
     let src = r#"
         enum R { Ok(number) }
         fn main() {
             let a = { tag: "Ok", value: 1 }
             let b = { tag: "Ok", value: 1 }
+            let c = { tag: "Ok", value: 2 }
             print(str(a == b))
+            print(str(a == c))
             // Enum values still compare structurally.
             let e1 = R::Ok(1)
             let e2 = R::Ok(1)
@@ -925,7 +929,11 @@ fn run_plain_tagged_objects_keep_identity_equality() {
         "stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&out.stdout), "false\ntrue\n", "");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "true\nfalse\ntrue\n",
+        ""
+    );
     let _ = std::fs::remove_file(&file);
 }
 

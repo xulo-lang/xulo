@@ -68,6 +68,8 @@ pub(crate) fn runtime_fn_name(func: &RuntimeFn) -> &'static str {
         RuntimeFn::Panic => "xulo_panic",
         RuntimeFn::StringConcat => "xulo_string_concat",
         RuntimeFn::StringEqual => "xulo_string_equal",
+        RuntimeFn::ValueEqual => "xulo_value_equal",
+        RuntimeFn::ArrayFilled => "xulo_array_filled",
         RuntimeFn::Stringify => "xulo_stringify",
         RuntimeFn::AllocObject => "xulo_alloc_object",
         RuntimeFn::AllocArray => "xulo_alloc_array",

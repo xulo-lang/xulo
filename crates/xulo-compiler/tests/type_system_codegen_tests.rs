@@ -279,3 +279,49 @@ fn main() {
     );
     assert_eq!(out, vec!["true", "x", "hi", "true"]);
 }
+
+/// L13b / R9: `==` and `!=` lower to the runtime's structural comparison for
+/// lists, tuples, structs, maps, sets, and enums instead of pointer identity.
+#[test]
+fn structural_equality_compiles() {
+    let out = compile_and_run(
+        r#"struct P { x: int, y: int }
+enum E { A, B(int) }
+fn main() {
+    print([1, 2] == [1, 2])
+    print([1, 2] != [1, 3])
+    print((1, "a") == (1, "a"))
+    print(P(x: 1, y: 2) == P(x: 1, y: 2))
+    print(P(x: 1, y: 2) == P(x: 2, y: 1))
+    let left: Map<string, int> = { a: 1, b: 2 }
+    let right: Map<string, int> = { b: 2, a: 1 }
+    print(left == right)
+    print(Set::from_list([1, 2, 3]) == Set::from_list([3, 2, 1]))
+    print(E::A == E::A)
+    print(E::B(1) == E::B(1))
+    print(E::B(1) == E::B(2))
+}"#,
+    );
+    assert_eq!(
+        out,
+        vec![
+            "true", "true", "true", "true", "false", "true", "true", "true", "true", "false",
+        ]
+    );
+}
+
+/// C4: `Array::filled<T, N>` lowers to a runtime fill in the compiled path,
+/// matching the interpreter's length, elements, and `.len`.
+#[test]
+fn array_filled_compiles() {
+    let out = compile_and_run(
+        r#"fn main() {
+    let a = Array::filled<int, 4>(7)
+    print(a)
+    print(a.len)
+    let words = Array::filled<string, 2>("x")
+    print(words)
+}"#,
+    );
+    assert_eq!(out, vec!["[7, 7, 7, 7]", "4", "[x, x]"]);
+}

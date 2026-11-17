@@ -289,10 +289,20 @@ impl Value {
 /// path render identically; this re-export keeps the `crate::value` path.
 pub use xulo_std::format_number;
 
-/// Xulo `==`: numeric/string/boolean/null compare by value, lists and objects
-/// by identity (like JS `===` on references), enums structurally (name + tag +
-/// payload, mirroring how `match` tests them).
+/// Xulo `==`: equality is structural for every value-carrying type (spec
+/// `expressions/operators.md`, "Equality"). Primitives compare by value,
+/// `List`/`Set`/tuple/`Map`/`struct` and enum payloads compare recursively,
+/// and only identity-carrying values (`Promise`, `Signal`, function values,
+/// `Ptr`, `AstNode`) compare by handle.
+///
+/// A visited-pair guard makes cyclic structures terminate: a pair already on
+/// the comparison stack is treated as equal (coinductive), matching how such
+/// values cannot be distinguished by finite observation.
 pub fn equal(a: &Value, b: &Value) -> bool {
+    equal_seen(a, b, &mut Vec::new())
+}
+
+fn equal_seen(a: &Value, b: &Value, seen: &mut Vec<(usize, usize)>) -> bool {
     match (a, b) {
         (Value::Int(x), Value::Int(y)) => x == y,
         (Value::UInt(x), Value::UInt(y)) => x == y,
@@ -311,17 +321,69 @@ pub fn equal(a: &Value, b: &Value) -> bool {
         // `Ptr` 只有地址恒等可比（spec ffi.md）；与 null 不等——可空性在
         // `Ptr?` 上由 Null 变体承载
         (Value::Ptr(x), Value::Ptr(y)) => x == y,
-        (Value::List(x), Value::List(y)) => Rc::ptr_eq(x, y),
-        (Value::Set(x), Value::Set(y)) => Rc::ptr_eq(x, y),
+        (Value::List(x), Value::List(y)) => {
+            let pair = (Rc::as_ptr(x) as usize, Rc::as_ptr(y) as usize);
+            if seen.contains(&pair) {
+                return true;
+            }
+            seen.push(pair);
+            let xs = x.borrow();
+            let ys = y.borrow();
+            let result = xs.len() == ys.len()
+                && xs
+                    .iter()
+                    .zip(ys.iter())
+                    .all(|(left, right)| equal_seen(left, right, seen));
+            seen.pop();
+            result
+        }
+        // A `Set` is unordered: same cardinality and every element of one has
+        // a structurally equal element in the other (spec
+        // `types/composite-types.md`).
+        (Value::Set(x), Value::Set(y)) => {
+            let pair = (Rc::as_ptr(x) as usize, Rc::as_ptr(y) as usize);
+            if seen.contains(&pair) {
+                return true;
+            }
+            seen.push(pair);
+            let xs = x.borrow();
+            let ys = y.borrow();
+            let result = xs.len() == ys.len()
+                && xs
+                    .iter()
+                    .all(|left| ys.iter().any(|right| equal_seen(left, right, seen)));
+            seen.pop();
+            result
+        }
         // A builder compares by its current text, like `string`
         // (spec `types/composite-types.md`).
         (Value::StringBuilder(x), Value::StringBuilder(y)) => {
             x.borrow().text() == y.borrow().text()
         }
-        (Value::Object(x), Value::Object(y)) => Rc::ptr_eq(x, y),
+        // Objects carry both `struct` fields and `Map` entries; compare by
+        // key so field/entry order does not affect equality.
+        (Value::Object(x), Value::Object(y)) => {
+            let pair = (Rc::as_ptr(x) as usize, Rc::as_ptr(y) as usize);
+            if seen.contains(&pair) {
+                return true;
+            }
+            seen.push(pair);
+            let xs = x.borrow();
+            let ys = y.borrow();
+            let result = xs.len() == ys.len()
+                && xs.iter().all(|(key, left)| {
+                    ys.iter()
+                        .find(|(other, _)| other == key)
+                        .is_some_and(|(_, right)| equal_seen(left, right, seen))
+                });
+            seen.pop();
+            result
+        }
         (Value::Promise(x), Value::Promise(y)) => Rc::ptr_eq(x, y),
         (Value::Signal(x), Value::Signal(y)) => Rc::ptr_eq(x, y),
         (Value::AstNode(x), Value::AstNode(y)) => Rc::ptr_eq(x, y),
+        (Value::Function(x), Value::Function(y)) => Rc::ptr_eq(x, y),
+        (Value::Native(x), Value::Native(y)) => Rc::ptr_eq(x, y),
         (
             Value::Enum {
                 enum_name: n1,
@@ -337,7 +399,7 @@ pub fn equal(a: &Value, b: &Value) -> bool {
             n1 == n2
                 && t1 == t2
                 && match (p1, p2) {
-                    (Some(a), Some(b)) => equal(a, b),
+                    (Some(a), Some(b)) => equal_seen(a, b, seen),
                     (None, None) => true,
                     _ => false,
                 }

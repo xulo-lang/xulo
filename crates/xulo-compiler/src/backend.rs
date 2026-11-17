@@ -89,6 +89,18 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
         returns: &[I64],
     },
     RuntimeFnDesc {
+        name: "xulo_value_equal",
+        addr: xulo_runtime::runtime::xulo_value_equal as *const u8,
+        params: &[I64, I64, I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_array_filled",
+        addr: xulo_runtime::runtime::xulo_array_filled as *const u8,
+        params: &[I64, I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
         name: "xulo_stringify",
         addr: xulo_runtime::runtime::xulo_stringify as *const u8,
         params: &[I64, I64],

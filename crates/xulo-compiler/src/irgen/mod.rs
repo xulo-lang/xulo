@@ -658,6 +658,73 @@ impl IrGenerator {
         }
     }
 
+    /// 表达式是否是结构相等候选（列表/数组/元组/对象/struct/Map/Set/枚举）：
+    /// 这些 `==`/`!=` 交给运行时递归比较，而不是裸指针恒等。
+    fn expr_is_structural_value(&self, expr: &Expression) -> bool {
+        match expr {
+            Expression::Literal {
+                value: Literal::List(_) | Literal::Object(_),
+                ..
+            }
+            | Expression::Tuple { .. }
+            | Expression::TypedMap(_)
+            | Expression::Range(_) => return true,
+            _ => {}
+        }
+        if let Some(ty) = self.infer_source_type_from_expr(expr)
+            && self.structural_type_tag(&ty).is_some()
+        {
+            return true;
+        }
+        matches!(self.determine_element_tag(expr), 3 | 4 | 7)
+    }
+
+    /// 结构值的静态标签（列表/元组/Set=3，对象/struct/Map=4，枚举=7）。
+    fn structural_type_tag(&self, ty: &Type) -> Option<i64> {
+        match ty {
+            Type::List(_) | Type::Tuple(_) => Some(3),
+            Type::Object | Type::ObjectType(_) => Some(4),
+            Type::Optional(inner) => self.structural_type_tag(inner),
+            Type::Named(name, _) => {
+                if name == "Map" {
+                    Some(4)
+                } else if name == "Set" || name == "Array" {
+                    Some(3)
+                } else {
+                    let resolved = self.resolve_type(name);
+                    if self.structs.contains_key(&resolved) {
+                        Some(4)
+                    } else if self.enums.contains_key(&resolved) {
+                        Some(7)
+                    } else {
+                        None
+                    }
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// 结构相等操作数的标签：优先使用运行时已知标签，其次静态源类型。
+    fn structural_tag_operand(&self, expr: &Expression, value: &Operand) -> Operand {
+        if let Expression::Identifier { name, .. } = expr
+            && let Some(tag) = self.dyn_tag_of.get(name)
+        {
+            return tag.clone();
+        }
+        if let Operand::Local(local) = value
+            && let Some(tag) = self.value_tags.get(local)
+        {
+            return tag.clone();
+        }
+        if let Some(ty) = self.infer_source_type_from_expr(expr)
+            && let Some(tag) = self.structural_type_tag(&ty)
+        {
+            return Operand::Const(IrValue::I64(tag));
+        }
+        self.tag_operand_for(expr, value)
+    }
+
     /// 从 AST 表达式直接推断源级类型（不依赖已生成的 IR）
     fn infer_source_type_from_expr(&self, expr: &Expression) -> Option<Type> {
         match expr {
@@ -796,6 +863,20 @@ impl IrGenerator {
                             })
                             .unwrap_or(Type::Any);
                         return Some(Type::Named("Set".to_string(), vec![element]));
+                    }
+                    if call.callee == "Array::filled" {
+                        let element = call
+                            .arguments
+                            .first()
+                            .and_then(|a| self.infer_source_type_from_expr(&a.value))
+                            .unwrap_or(Type::Any);
+                        let length = call
+                            .type_args
+                            .as_ref()
+                            .and_then(|args| args.get(1))
+                            .cloned()
+                            .unwrap_or(Type::Any);
+                        return Some(Type::Named("Array".to_string(), vec![element, length]));
                     }
                     // String inspection prelude functions.
                     match call.callee.as_str() {
@@ -1288,7 +1369,9 @@ impl IrGenerator {
                 }
             },
             Expression::Call(call) => {
-                if call.object.is_none() && call.callee == "Set::from_list" {
+                if call.object.is_none()
+                    && matches!(call.callee.as_str(), "Set::from_list" | "Array::filled")
+                {
                     return 3;
                 }
                 if call.object.is_some() && self.expr_is_set_receiver(&call.object) {

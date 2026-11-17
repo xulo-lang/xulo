@@ -27,13 +27,13 @@ readiness document.
 |---|---:|---:|
 | WP0 — Matrix hygiene and conformance | 5 | 5 |
 | WP1 — 64-bit integer model | 7 | 7 |
-| WP2 — Type system and semantic convergence | 10 | 12 |
-| WP3 — AOT parity and bootstrap backend | 8 | 13 |
+| WP2 — Type system and semantic convergence | 11 | 12 |
+| WP3 — AOT parity and bootstrap backend | 9 | 13 |
 | WP4 — `defer` semantics | 5 | 5 |
 | WP5 — Stage 1 skeleton | 6 | 6 |
 | WP6 — Self-host loop | 1 | 7 |
 | WP7 — Non-gating follow-ups | 1 | 4 |
-| **Total** | **43** | **59** |
+| **Total** | **45** | **59** |
 
 ## Gates
 
@@ -79,9 +79,8 @@ package or out-of-scope section that tracks it.
 - [x] **L9** Structs, `impl`, traits, explicit `Trait::method(recv)` dispatch
 - [x] **L10** Generic functions, bounds, `where` clauses
 - [x] **L12** `mod` / `use` / `pub`, visibility, cross-file modules
-- [ ] **L13** Tuple literals, positional access, and destructuring — PARTIAL:
-      equality is identity-based for `List`/tuple/`struct`
-      (`stage1-readiness.md` §6.11; WP2 L13b)
+- [x] **L13** Tuple literals, positional access, destructuring, and structural
+      equality for `List`/tuple/`struct` (`stage1-readiness.md` §6.11).
 - [x] **L16** `T?`, `?.`, `??`, null narrowing
 - [x] **L19** `Result` / `Error` and `?` propagation
 - [ ] **L21** `copy` / `move` and use-after-move checking — PARTIAL, outside the
@@ -101,7 +100,7 @@ package or out-of-scope section that tracks it.
 - [ ] **R9** Interpreter and AOT produce identical observable behavior —
       PARTIAL: five baseline gaps in `aot_differential_baseline.tsv` (WP3)
 - [x] **R10** Deterministic formatting of integers and diagnostics
-- [ ] **C4** `Array<T, N>` — PARTIAL: `Array::filled` is not verified (WP3)
+- [x] **C4** `Array<T, N>` with `.len`, indexing, iteration, and `Array::filled`
 - [x] **C5** `string` members and UTF-8 behavior
 - [x] **C6** `StringBuilder` with `new` / `append` / `clear` / `build` / `len` / `byte_len`
 - [x] **C7** `str` / `fmt` / `print` output for every bootstrap value
@@ -155,7 +154,7 @@ Priority P0 · needed by Gate 1/2 · source: `stage1-readiness.md` §7 WP0, §6.
       and fails on a probe that no row cites. The audit found and fixed two
       defects (a trailing struct construction was mistaken for a component and
       lost its implicit return; tuple destructuring rejected tuple types) and
-      re-graded L13 to PARTIAL for identity-based equality (§6.11).
+      re-graded L13 to PARTIAL for identity-based equality (§6.11, since resolved by L13b).
 - [x] **T3e** Add the conformance job to `.github/workflows/ci.yml` and triage
       its failures in the readiness matrix.
       Job `conformance`; the current divergences are listed with a reason in
@@ -213,10 +212,12 @@ Priority P0 · needed by Gate 2/3 · source: `stage1-readiness.md` §7 WP2, §6.
 - [ ] **L6** Closures: an untyped lambda passed to a generic callback can fail
       with `E0202`. The bootstrap subset includes closures; stage 1 works around
       this by avoiding arrow closures (`xuloc/BOOTSTRAP.md` limit 6).
-- [ ] **L13b** Structural `==` for `List`, tuple, and `struct` values (and
-      `Map`/`Set`), per `stage1-readiness.md` §6.11. Add a runtime
-      `xulo_value_equal` helper and route non-scalar `==`/`!=` through it in the
-      AOT path. Until then, compare elements individually.
+- [x] **L13b** Structural `==` for `List`, tuple, and `struct` values (and
+      `Map`/`Set`/enums), per `stage1-readiness.md` §6.11. The runtime
+      `xulo_value_equal` helper recurses through aggregates with a visited-pair
+      guard, and the AOT path routes structural `==`/`!=` through it.
+      `crates/xulo-runtime/tests/equality.rs`,
+      `crates/xulo-compiler/tests/type_system_codegen_tests.rs::structural_equality_compiles`.
 
 **Verify:** the four probes in `stage1-readiness.md` §6.2–6.5 run without a
 workaround.
@@ -244,7 +245,10 @@ Priority P1 · needed by Gate 4 · source: `stage1-readiness.md` §7 WP3, §6.6�
       (`process`).
 - [ ] **R9c** `async_tasks`: AOT `await` produces zero values. Outside the
       bootstrap subset (§8 of `stage1-readiness.md`); tracked in the baseline.
-- [ ] **C4** Verify `Array::filled` under both execution paths.
+- [x] **C4** Verify `Array::filled` under both execution paths.
+      `crates/xulo-runtime/tests/native.rs::array_filled_runs` (interpreter) and
+      `crates/xulo-compiler/tests/type_system_codegen_tests.rs::array_filled_compiles`
+      (AOT runtime lowering `xulo_array_filled`).
 - [ ] **B7** Run `stage1_binary_matches_the_interpreter` on macOS and Windows,
       not only Linux. Today the differential job is Linux-only and both other
       platforms run only the `hello` AOT smoke test, so Gate 4's assessment is

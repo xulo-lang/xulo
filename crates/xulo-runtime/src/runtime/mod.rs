@@ -108,6 +108,9 @@ thread_local! {
     /// `group(i)` 经此表取回组内容）
     static MATCH_GROUPS: RefCell<std::collections::HashMap<usize, Vec<Option<String>>>> =
         RefCell::new(std::collections::HashMap::new());
+    /// `Set` 值（与 `List`/`Array` 共用 `XuloArray` 表示）：登记数组指针，
+    /// 让结构相等知道应当按无序集合比较。
+    static SETS: RefCell<std::collections::HashSet<usize>> = RefCell::new(std::collections::HashSet::new());
 }
 
 /// 取走输出缓冲区（测试用）

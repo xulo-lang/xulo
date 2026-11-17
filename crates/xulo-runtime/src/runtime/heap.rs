@@ -531,6 +531,7 @@ fn set_find(set: &XuloArray, value: i64, tag: i64) -> Option<usize> {
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn xulo_set_from_list(values: *const XuloArray) -> *mut XuloArray {
     let set = xulo_alloc_array(0);
+    SETS.with(|sets| sets.borrow_mut().insert(set as usize));
     if values.is_null() {
         return set;
     }
@@ -617,4 +618,194 @@ pub extern "C" fn xulo_map_from_entries(entries: *const XuloArray) -> *mut XuloO
         }
     }
     object
+}
+
+/// Structural `==` for tagged values (spec `expressions/operators.md`,
+/// "Equality"): lists/arrays/tuples compare element-wise, objects (structs and
+/// maps) compare by key, enums compare type, variant, and every payload value.
+/// Sets are unordered. A visited-pair guard makes cyclic values terminate.
+const MAX_VALUE_EQUAL_DEPTH: usize = 4096;
+
+fn runtime_value_equal(
+    left: i64,
+    left_tag: i64,
+    right: i64,
+    right_tag: i64,
+    seen: &mut Vec<(usize, usize)>,
+    depth: usize,
+) -> bool {
+    if depth > MAX_VALUE_EQUAL_DEPTH {
+        return false;
+    }
+    let left_tag = if left_tag == -1 {
+        xulo_detect_tag(left)
+    } else {
+        left_tag
+    };
+    let right_tag = if right_tag == -1 {
+        xulo_detect_tag(right)
+    } else {
+        right_tag
+    };
+    match (left_tag, right_tag) {
+        (3, 3) => unsafe {
+            if left == 0 || right == 0 {
+                return left == right;
+            }
+            let lhs = &*(left as *const XuloArray);
+            let rhs = &*(right as *const XuloArray);
+            if lhs.elements.len() != rhs.elements.len() {
+                return false;
+            }
+            let pair = (left as usize, right as usize);
+            if seen.contains(&pair) {
+                return true;
+            }
+            let lhs_is_set = SETS.with(|sets| sets.borrow().contains(&pair.0));
+            let rhs_is_set = SETS.with(|sets| sets.borrow().contains(&pair.1));
+            seen.push(pair);
+            let result = if lhs_is_set || rhs_is_set {
+                lhs_is_set
+                    && rhs_is_set
+                    && lhs.elements.iter().enumerate().all(|(index, value)| {
+                        let tag = set_tag(&lhs.tags, index);
+                        rhs.elements.iter().enumerate().any(|(other, candidate)| {
+                            runtime_value_equal(
+                                *value,
+                                tag,
+                                *candidate,
+                                set_tag(&rhs.tags, other),
+                                seen,
+                                depth + 1,
+                            )
+                        })
+                    })
+            } else {
+                lhs.elements.iter().enumerate().all(|(index, value)| {
+                    runtime_value_equal(
+                        *value,
+                        set_tag(&lhs.tags, index),
+                        rhs.elements[index],
+                        set_tag(&rhs.tags, index),
+                        seen,
+                        depth + 1,
+                    )
+                })
+            };
+            seen.pop();
+            result
+        },
+        (4, 4) => unsafe {
+            if left == 0 || right == 0 {
+                return left == right;
+            }
+            let lhs = &*(left as *const XuloObject);
+            let rhs = &*(right as *const XuloObject);
+            if lhs.fields.len() != rhs.fields.len() {
+                return false;
+            }
+            let pair = (left as usize, right as usize);
+            if seen.contains(&pair) {
+                return true;
+            }
+            seen.push(pair);
+            let result = lhs.fields.iter().enumerate().all(|(index, (key, value))| {
+                let tag = lhs.field_tags.get(index).copied().unwrap_or(1);
+                rhs.fields
+                    .iter()
+                    .position(|(other, _)| other == key)
+                    .and_then(|other| {
+                        rhs.field_tags
+                            .get(other)
+                            .copied()
+                            .map(|other_tag| (other, other_tag))
+                    })
+                    .is_some_and(|(other, other_tag)| {
+                        runtime_value_equal(
+                            *value,
+                            tag,
+                            rhs.fields[other].1,
+                            other_tag,
+                            seen,
+                            depth + 1,
+                        )
+                    })
+            });
+            seen.pop();
+            result
+        },
+        (7, 7) => unsafe {
+            if left == 0 || right == 0 {
+                return left == right;
+            }
+            let lhs = &*(left as *const XuloEnum);
+            let rhs = &*(right as *const XuloEnum);
+            if lhs.variant != rhs.variant || lhs.elements.len() != rhs.elements.len() {
+                return false;
+            }
+            let same_name = match (lhs.type_name.is_null(), rhs.type_name.is_null()) {
+                (true, true) => true,
+                (false, false) => {
+                    CStr::from_ptr(lhs.type_name).to_bytes()
+                        == CStr::from_ptr(rhs.type_name).to_bytes()
+                }
+                _ => false,
+            };
+            if !same_name {
+                return false;
+            }
+            let pair = (left as usize, right as usize);
+            if seen.contains(&pair) {
+                return true;
+            }
+            seen.push(pair);
+            let result = lhs.elements.iter().enumerate().all(|(index, value)| {
+                runtime_value_equal(
+                    *value,
+                    lhs.tags.get(index).copied().unwrap_or(1),
+                    rhs.elements[index],
+                    rhs.tags.get(index).copied().unwrap_or(1),
+                    seen,
+                    depth + 1,
+                )
+            });
+            seen.pop();
+            result
+        },
+        _ => set_value_eq(left, left_tag, right, right_tag),
+    }
+}
+
+/// `==` on two tagged runtime values; returns `1` for equal.
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_value_equal(left: i64, left_tag: i64, right: i64, right_tag: i64) -> i64 {
+    i64::from(runtime_value_equal(
+        left,
+        left_tag,
+        right,
+        right_tag,
+        &mut Vec::new(),
+        0,
+    ))
+}
+
+/// `Array::filled<T, N>(value)`: a fixed array of `N` copies of `value`.
+/// The native representation is the list-shaped `XuloArray`; the static type
+/// carries the length (spec `types/composite-types.md`).
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_array_filled(value: i64, tag: i64, len: i64) -> *mut XuloArray {
+    let array = xulo_alloc_array(0);
+    if len < 0 {
+        let message = intern_string("array length must be non-negative");
+        xulo_panic(message as i64, 0);
+    }
+    let tag = if tag == -1 {
+        xulo_detect_tag(value)
+    } else {
+        tag
+    };
+    for _ in 0..len {
+        xulo_array_push(array, value, tag);
+    }
+    array
 }
