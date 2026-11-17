@@ -4204,7 +4204,7 @@ impl Analyzer {
                 format!("`{name}` is a test function and cannot be referenced"),
             ));
         }
-        Err(self.err(format!("undefined variable `{name}`")))
+        Err(self.err_code("E0101", format!("undefined variable `{name}`")))
     }
 }
 
@@ -5274,11 +5274,14 @@ impl Analyzer {
                         {
                             return Err(e);
                         }
-                        return Err(self.err(format!(
-                            "return type mismatch: expected `{}`, found `{}`",
-                            expected.name(),
-                            value_type.name()
-                        )));
+                        return Err(self.err_code(
+                            "E0203",
+                            format!(
+                                "return type mismatch: expected `{}`, found `{}`",
+                                expected.name(),
+                                value_type.name()
+                            ),
+                        ));
                     }
                 } else {
                     return Err(self.err(
@@ -5312,10 +5315,13 @@ impl Analyzer {
                         return Err(self.err_code("E0213", "a `StringBuilder` is not iterable"));
                     }
                     other => {
-                        return Err(self.err(format!(
-                            "for loop must iterate over a `List`, `Map`, or `Set`, found `{}`",
-                            other.name()
-                        )));
+                        return Err(self.err_code(
+                            "E0213",
+                            format!(
+                                "for loop must iterate over a `List`, `Map`, or `Set`, found `{}`",
+                                other.name()
+                            ),
+                        ));
                     }
                 };
                 self.table.push_scope();
@@ -7638,7 +7644,10 @@ impl Analyzer {
         match target {
             AssignTarget::Name(name) => {
                 let Some(sym) = self.table.lookup(name) else {
-                    return Err(self.err(format!("undefined variable `{name}` cannot be assigned")));
+                    return Err(self.err_code(
+                        "E0101",
+                        format!("undefined variable `{name}` cannot be assigned"),
+                    ));
                 };
                 if sym.is_const {
                     return Err(
@@ -8002,10 +8011,10 @@ impl Analyzer {
             } => {
                 let cond = self.check_expression(condition)?;
                 if !self.assignable(&cond, &Type::Boolean) {
-                    return Err(self.err(format!(
-                        "if condition must be a `bool`, found `{}`",
-                        cond.name()
-                    )));
+                    return Err(self.err_code(
+                        "E0201",
+                        format!("if condition must be a `bool`, found `{}`", cond.name()),
+                    ));
                 }
                 for e in then_branch {
                     self.check_ui_element(e)?;
@@ -8031,10 +8040,13 @@ impl Analyzer {
                         return Err(self.err_code("E0213", "a `StringBuilder` is not iterable"));
                     }
                     other => {
-                        return Err(self.err(format!(
-                            "for loop must iterate over a `List`, `Map`, or `Set`, found `{}`",
-                            other.name()
-                        )));
+                        return Err(self.err_code(
+                            "E0213",
+                            format!(
+                                "for loop must iterate over a `List`, `Map`, or `Set`, found `{}`",
+                                other.name()
+                            ),
+                        ));
                     }
                 }
                 self.table.push_scope();
@@ -12187,7 +12199,7 @@ impl Analyzer {
                 .at(call.span.clone()));
         }
         let Some(sym) = self.table.lookup(&call.callee).cloned() else {
-            return Err(self.err(format!("unknown function `{}`", call.callee)));
+            return Err(self.err_code("E0101", format!("unknown function `{}`", call.callee)));
         };
         self.record_call_callee(call, &sym);
         self.check_call_symbol(call, &sym)
@@ -12445,10 +12457,13 @@ impl Analyzer {
                             } else {
                                 format!("{required} to {expected}")
                             };
-                            return Err(self.err(format!(
-                                "function `{}` expects {range} argument(s), but {actual} were provided",
-                                call.callee
-                            )));
+                            return Err(self.err_code(
+                                "E0207",
+                                format!(
+                                    "function `{}` expects {range} argument(s), but {actual} were provided",
+                                    call.callee
+                                ),
+                            ));
                         }
                         let mut positional_types = Vec::with_capacity(positional.len());
                         let mut borrow_args: Vec<(&Expression, Option<xulo_core::ast::ParamMode>)> =
@@ -12602,9 +12617,12 @@ impl Analyzer {
         let expected = params.len();
         let actual = arguments.len();
         if actual > expected {
-            return Err(self.err(format!(
-                "function values expect at most {expected} argument(s), but {actual} were provided",
-            )));
+            return Err(self.err_code(
+                "E0207",
+                format!(
+                    "function values expect at most {expected} argument(s), but {actual} were provided"
+                ),
+            ));
         }
         for (arg, param) in arguments.iter().zip(params.iter()) {
             let arg_type = self.check_arg_value(&arg.value)?;
@@ -13786,10 +13804,13 @@ impl Analyzer {
     fn check_if(&mut self, if_expr: &IfExpr) -> SResult<Type> {
         let condition = self.check_expression(&if_expr.condition)?;
         if !self.assignable(&condition, &Type::Boolean) {
-            return Err(self.err(format!(
-                "if condition must be a `bool`, found `{}`",
-                condition.name()
-            )));
+            return Err(self.err_code(
+                "E0201",
+                format!(
+                    "if condition must be a `bool`, found `{}`",
+                    condition.name()
+                ),
+            ));
         }
         // Flow-sensitive narrowing (spec `types/composite-types.md`): a
         // comparison against `null` splits a `T?` binding — `x != null`

@@ -31,9 +31,9 @@ readiness document.
 | WP3 — AOT parity and bootstrap backend | 9 | 13 |
 | WP4 — `defer` semantics | 5 | 5 |
 | WP5 — Stage 1 skeleton | 6 | 6 |
-| WP6 — Self-host loop | 1 | 7 |
+| WP6 — Self-host loop | 2 | 7 |
 | WP7 — Non-gating follow-ups | 2 | 4 |
-| **Total** | **45** | **59** |
+| **Total** | **46** | **59** |
 
 ## Gates
 
@@ -126,8 +126,7 @@ package or out-of-scope section that tracks it.
       B8a is done, reproducibility and the self-build await WP6
 - [x] **D1** Source spans and `file:line:column` diagnostics
 - [x] **D2** stderr writes and nonzero exit status
-- [ ] **D4** Stage 1 diagnostics consistent with stage 0 — PARTIAL: stage 0 still
-      falls back to `E0003` for several corpus errors (WP6)
+- [x] **D4** Stage 1 diagnostics consistent with stage 0
 - [x] **T1** Unit and integration tests — `cargo test --workspace`: 2107 passed, 0 failed (2026-11-17)
 - [x] **T2** All examples run in CI
 - [ ] **T5** Stage 1 self-parse/self-check/self-build tests — PARTIAL: self-parse
@@ -328,13 +327,14 @@ After WP1–WP5 · needed by Gate 4/5/6 · source: `stage1-readiness.md` §7 WP6
 - [ ] **T5c** Compare stage 1 and stage 2 output on the bootstrap suite.
 - [ ] Add the bootstrap suite to CI alongside the conformance runner.
 - [ ] **B8b** Add a reproducible build and self-compile smoke test.
-- [ ] **D4** Make stage 1 diagnostics consistent with stage 0 for the
+- [x] **D4** Make stage 1 diagnostics consistent with stage 0 for the
       bootstrap subset.
       Lexical/syntax diagnostics use `E0001`/`E0002`; the checker reports
-      `E0101`/`E0201`/`E0202`/`E0211`/`E0213`/`E0215` with
-      `file:line:column`. Remaining gap: stage 0 still uses its coarse `E0003`
-      fallback for several of the same corpus errors, so the codes are not yet
-      identical.
+      `E0101`/`E0201`/`E0202`/`E0207`/`E0211`/`E0213`/`E0215` with
+      `file:line:column`. Stage 0 now reports the specific code for undefined
+      names, conditions, arity, `for` iterables, and return mismatches, and
+      `crates/xulo-cli/tests/stage1.rs::stage1_check_agrees_with_stage0_on_the_corpus`
+      compares the codes, not only accept/reject.
 
 **Verify:** `cargo test -p xulo-cli --test stage1` plus
 `XULO_AOT_DIFFERENTIAL=1 XULO_RUNTIME_LIB=$PWD/target/release/libxulo_runtime.a

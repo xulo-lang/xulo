@@ -145,11 +145,11 @@ file/line/column and exit nonzero on failure.
 **Current assessment:** **Reached (2026-11-16).** `xuloc/checker.xulo` checks
 the fixed corpus under `xuloc/corpus/` (functions, bindings, control flow,
 lists, strings, calls, return types). Stage 1 and stage 0 agree on accept/reject
-for both accepted files and all six rejected files; rejected diagnostics carry
-`file:line:column`, an `E…` code, and exit 1. Evidence:
+for both accepted files and all six rejected files, and D4 aligns their
+diagnostic codes as well; rejected diagnostics carry `file:line:column`, an `E…`
+code, and exit 1. Evidence:
 `crates/xulo-cli/tests/stage1.rs::stage1_check_agrees_with_stage0_on_the_corpus`
-and `xuloc/tests.xulo::checker_*`. Gate 3 requires accept/reject agreement, not
-identical codes; the remaining code gap is D4 (tracked in `tasks.md` WP6).
+and `xuloc/tests.xulo::checker_*`.
 
 ### Gate 4 — Native build
 
@@ -293,7 +293,7 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 | D1 | Source spans and `file:line:column` diagnostics | **OK** | `crates/xulo-core/tests/diagnostics_tests.rs`, `crates/xulo-cli/tests/integration_tests.rs` | 1 |
 | D2 | stderr writes and nonzero exit status | **OK** | `crates/xulo-cli/tests/process_exit.rs`, `crates/xulo-cli/tests/matrix_probes/R6_panic_assert.xulo` | 1 |
 | D3 | Stable error codes for the bootstrap subset | **OK** | Called constants are `E0204`; `std::regex` value paths are `E0607`, unknown module members `E0601`, and an unimported type used as a value `E0101` (std-spec `modules/regex.md`). The head/member diagnostics std-spec §1.3 named as coarse fallbacks now carry their fine-grained codes (`crates/xulo-semantic/tests/semantic_tests.rs`, `crates/xulo-compiler/tests/intrinsics_codegen_tests.rs`). | 2 |
-| D4 | Stage 1's own diagnostics are consistent with stage 0 | **PARTIAL** | Lexical/syntax use `E0001`/`E0002`; checker failures use `E0101`/`E0201`/`E0202`/`E0211`/`E0213`/`E0215` with `file:line:column` (`crates/xulo-cli/tests/stage1.rs`). Stage 0 still reports `E0003` for several of the same corpus cases, so exact codes are not aligned yet. | 3 |
+| D4 | Stage 1's own diagnostics are consistent with stage 0 | **OK** | Lexical/syntax use `E0001`/`E0002`; checker failures use `E0101`/`E0201`/`E0202`/`E0207`/`E0211`/`E0213`/`E0215` with `file:line:column`. Stage 0 now reports `E0101` for undefined names, `E0201` for conditions, `E0203` for return mismatches, `E0207` for arity, and `E0213` for non-iterables; `crates/xulo-cli/tests/stage1.rs` compares the codes in `stage1_check_agrees_with_stage0_on_the_corpus`. | 3 |
 | T1 | Unit and integration tests | **OK** | `cargo test --workspace`: 2107 passed, 0 failed (2026-11-17) | 1 |
 | T2 | All examples run in CI | **OK** | `.github/workflows/ci.yml` examples job | 1 |
 | T3 | Pinned-spec example conformance runner | **OK** | `crates/xulo-cli/tests/spec_conformance.rs`: 114 annotated examples extracted from the pinned spec, 81 pass, 33 triaged in `spec_conformance_baseline.tsv` (§6.10) | 2 |
@@ -644,10 +644,10 @@ diagnostic test; Gate 2 self-parses all six stage 1 files, discovered from
 
 **Exit:** Gate 4–6.
 
-**Status:** in progress. B8a, Gate 3, and Gate 4 are done. `xuloc` now has a
-checked bootstrap corpus and a native front end whose `tokens`/`parse`/`check`
-output matches the interpreter. Gate 5 and the code-generation/self-build items
-remain open. The native build surfaced and fixed three stage 0 defects:
+**Status:** in progress. B8a, D4, Gate 3, and Gate 4 are done. `xuloc` now has a
+checked bootstrap corpus whose diagnostics match stage 0's codes, and a native
+front end whose `tokens`/`parse`/`check` output matches the interpreter. Gate 5
+and the code-generation/self-build items remain open. The native build surfaced and fixed three stage 0 defects:
 unreachable IR after a terminating block, pointer-based `string` equality in
 the compiled path, and user methods named like string members being dispatched
 to the built-in lowering.

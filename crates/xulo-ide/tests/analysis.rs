@@ -374,7 +374,7 @@ fn diagnostics_map_errors_and_warnings() {
     let diags = semantic.diagnostics();
     assert_eq!(diags.len(), 1);
     assert_eq!(diags[0].severity, Severity::Error);
-    assert_eq!(diags[0].code.as_deref(), Some("E0003"));
+    assert_eq!(diags[0].code.as_deref(), Some("E0101"));
     assert_eq!(
         diags[0].range.start,
         pos(

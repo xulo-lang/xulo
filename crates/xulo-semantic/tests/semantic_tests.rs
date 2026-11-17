@@ -4862,7 +4862,7 @@ fn math_namespace_dot_form_is_rejected() {
         }
     "#;
     let err = analyze_src(src).unwrap_err();
-    assert_eq!(err.code(), "E0003");
+    assert_eq!(err.code(), "E0101");
     assert!(
         err.message.contains("undefined variable `Math`"),
         "unexpected message: {}",
@@ -4878,7 +4878,7 @@ fn task_namespace_dot_form_is_rejected() {
         }
     "#;
     let err = analyze_src(src).unwrap_err();
-    assert_eq!(err.code(), "E0003");
+    assert_eq!(err.code(), "E0101");
     assert!(
         err.message.contains("undefined variable `Task`"),
         "unexpected message: {}",
@@ -4900,7 +4900,7 @@ fn trait_name_dot_dispatch_is_rejected() {
         }
     "#;
     let err = analyze_src(src).unwrap_err();
-    assert_eq!(err.code(), "E0003");
+    assert_eq!(err.code(), "E0101");
     assert!(
         err.message.contains("undefined variable `Area`"),
         "unexpected message: {}",
@@ -6530,7 +6530,7 @@ fn bare_std_member_without_import_is_undefined() {
         }
     "#;
     let err = analyze_src(src).unwrap_err();
-    assert_eq!(err.code(), "E0003");
+    assert_eq!(err.code(), "E0101");
 }
 
 #[test]

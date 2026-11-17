@@ -574,7 +574,7 @@ impl Checker {
         if !self.assignable(self.current_return, actual) {
             self.fail(
                 stmt,
-                "E0201",
+                "E0203",
                 "expected `" + self.current_return + "`, found `" + actual + "`",
             )
         }
@@ -846,13 +846,13 @@ impl Checker {
         }
         if name == "str" {
             if arg_types.len != 1 {
-                self.fail(node, "E0202", "`str` expects 1 argument")
+                self.fail(node, "E0207", "`str` expects 1 argument")
             }
             return "string"
         }
         if name == "assert" {
             if arg_types.len != 2 {
-                self.fail(node, "E0202", "`assert` expects 2 arguments")
+                self.fail(node, "E0207", "`assert` expects 2 arguments")
                 return "unit"
             }
             if arg_types[0] != "bool" {
@@ -879,7 +879,7 @@ impl Checker {
         if arg_types.len != sig.params.len {
             self.fail(
                 node,
-                "E0202",
+                "E0207",
                 "`" + name + "` expects " + str(sig.params.len) + " arguments, found " + str(arg_types.len),
             )
             return sig.ret

@@ -38,6 +38,15 @@ fn stderr_of(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }
 
+/// The first `E….` code in a rendered diagnostic, if any.
+fn first_error_code(output: &Output) -> Option<String> {
+    let text = stderr_of(output);
+    let at = text.find("error[E")?;
+    let rest = &text[at + "error[".len()..];
+    let end = rest.find(']')?;
+    Some(rest[..end].to_string())
+}
+
 fn assert_success(output: &Output, context: &str) {
     assert!(
         output.status.success(),
@@ -263,6 +272,14 @@ fn stage1_check_agrees_with_stage0_on_the_corpus() {
             assert!(
                 err.starts_with(&file.display().to_string()),
                 "stage 1 diagnostic should name the file for {relative}:\n{err}"
+            );
+            // D4: the corpus codes must agree, not just the accept/reject
+            // verdict.
+            let stage0_code = first_error_code(&stage0);
+            let stage1_code = first_error_code(&stage1);
+            assert_eq!(
+                stage0_code, stage1_code,
+                "stage 0 and stage 1 disagreed on the code for {relative}"
             );
         }
     }
