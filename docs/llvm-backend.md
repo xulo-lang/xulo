@@ -265,15 +265,16 @@ cc -arch <arm64|x86_64> -o <exe> <obj> libxulo_runtime.a \
 link.exe /NOLOGO /SUBSYSTEM:CONSOLE /STACK:67108864 /OPT:REF /OPT:ICF \
    /OUT:<exe> <obj> xulo_runtime.lib \
    kernel32.lib ntdll.lib userenv.lib ws2_32.lib dbghelp.lib \
-   /DEFAULTLIB:msvcrt
+   synchronization.lib /DEFAULTLIB:msvcrt
 ```
 
 The Windows system libraries mirror `rustc --print native-static-libs` for
-the runtime archive: a Rust staticlib does not propagate its std dependencies
-to a bare `link.exe`, unlike `cc` on Unix, which supplies libc, pthreads, and
-libm implicitly. `winapi`/`windows-sys` imports resolve through `kernel32` and
-`ntdll`; the rebuildable `windows.0.52.0.lib` from the build host's Cargo
-registry is not part of a shipped runtime and is not needed.
+the runtime archive plus std's futex imports (`synchronization.lib` for
+`WaitOnAddress`/`WakeByAddress*`): a Rust staticlib does not propagate its std
+dependencies to a bare `link.exe`, unlike `cc` on Unix, which supplies libc,
+pthreads, and libm implicitly. `winapi`/`windows-sys` imports resolve through
+`kernel32` and `ntdll`; the rebuildable `windows.0.52.0.lib` from the build
+host's Cargo registry is not part of a shipped runtime and is not needed.
 
 `XULO_LINKER` overrides the linker path; on Unix `XULO_CC` is also accepted.
 

@@ -216,6 +216,10 @@ fn configure_linker(
         .arg("userenv.lib")
         .arg("ws2_32.lib")
         .arg("dbghelp.lib")
+        // std's futex-based mutex/condvar uses `WaitOnAddress` and
+        // `WakeByAddress*`, whose import library is `synchronization.lib`
+        // (`api-ms-win-core-synch-l1-2-0`), not `kernel32.lib`.
+        .arg("synchronization.lib")
         // Same dynamic CRT rustc selects for an ordinary MSVC binary.
         .arg("/DEFAULTLIB:msvcrt");
 }
