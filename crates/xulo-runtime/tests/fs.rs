@@ -216,8 +216,7 @@ fn unknown_fs_member_is_rejected_by_the_semantic_pass() {
 #[test]
 fn fs_example() {
     let out = run_ok(include_str!("../../../examples/fs.xulo"));
-    #[cfg_attr(not(windows), allow(unused_mut))]
-    let mut expected = vec![
+    let expected = vec![
         "written".to_string(),
         "hello fs".to_string(),
         "true".to_string(),
@@ -242,16 +241,5 @@ fn fs_example() {
         "sub removed".to_string(),
         "dir removed".to_string(),
     ];
-    // `std::path` is POSIX on every host, while `fs::walk` uses the host
-    // separator; on Windows `basename` therefore returns the whole path.
-    #[cfg(windows)]
-    {
-        assert!(
-            out[13].ends_with("b.txt"),
-            "unexpected walk basename: {}",
-            out[13]
-        );
-        expected[13] = out[13].clone();
-    }
     assert_eq!(out, expected);
 }
