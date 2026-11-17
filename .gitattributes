@@ -1,0 +1,4 @@
+# Keep text checkouts LF on every host. The stage 1 span tests and the
+# byte-for-byte differential compare offsets, so a CRLF checkout on Windows
+# would shift every span; Git's default there is core.autocrlf=true.
+* text=auto eol=lf
