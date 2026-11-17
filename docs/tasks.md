@@ -1,7 +1,7 @@
 # Stage 1 Bootstrap Tasks
 
 - **Status**: Living checklist
-- **Date**: 2026-11-16
+- **Date**: 2026-11-17
 - **Companion document**: [`stage1-readiness.md`](stage1-readiness.md) — rationale, evidence, and gate definitions
 - **Normative sources**: `spec@48f49b7` and `std-spec@a2e4cb7`, as pinned by this repository
 - **Scope**: the executable checklist for making stage 0 host-ready and bootstrapping stage 1
@@ -32,8 +32,8 @@ readiness document.
 | WP4 — `defer` semantics | 5 | 5 |
 | WP5 — Stage 1 skeleton | 6 | 6 |
 | WP6 — Self-host loop | 1 | 7 |
-| WP7 — Non-gating follow-ups | 0 | 4 |
-| **Total** | **42** | **59** |
+| WP7 — Non-gating follow-ups | 1 | 4 |
+| **Total** | **43** | **59** |
 
 ## Gates
 
@@ -53,6 +53,9 @@ Gates are cumulative. An open earlier gate blocks every later gate.
 - [x] **Gate 4 — Native build**: `xupm build` produces a stage 1 binary whose
       output matches `xulo run` on the bootstrap workload.
       `crates/xupm/tests/aot_differential.rs::stage1_binary_matches_the_interpreter`.
+      Reached on Linux only: the differential job does not run on macOS or
+      Windows, so B7 (WP3) remains open and this gate's evidence does not cover
+      those platforms.
 - [ ] **Gate 5 — Self-host**: stage 1 compiles itself into stage 2; stage 1 and
       stage 2 agree on the bootstrap suite and the conformance subset.
 - [ ] **Gate 6 — Conformance**: the pinned specification's checkable examples
@@ -62,30 +65,43 @@ Gates are cumulative. An open earlier gate blocks every later gate.
 
 Capabilities stage 1 may rely on today. These are not work packages; they are
 the starting point, and their evidence is recorded in `stage1-readiness.md` §5.
-Unchecked entries are open; each is tracked in a work package below.
+Checked entries are OK. Unchecked entries are PARTIAL; each names the work
+package or out-of-scope section that tracks it.
 
 - [x] **L1** UTF-8 lexing and parsing of `.xulo` files
 - [x] **L3** `float` / `f64` arithmetic
 - [x] **L4** `let`, `let mut`, assignment, shadowing
 - [x] **L5** Functions, recursion, implicit return
+- [ ] **L6** Closures and function values — PARTIAL: an untyped lambda passed to
+      a generic callback can fail with `E0202` (WP2)
 - [x] **L7** `if` / `else`, `while`, `for`, `match`, `break`, `continue`
 - [x] **L8** Enums, payloads, recursive/generic enums, exhaustive `match`
 - [x] **L9** Structs, `impl`, traits, explicit `Trait::method(recv)` dispatch
 - [x] **L10** Generic functions, bounds, `where` clauses
 - [x] **L12** `mod` / `use` / `pub`, visibility, cross-file modules
-- [ ] **L13** Tuple literals, positional access, and destructuring (equality is
-      identity-based for `List`/tuple/`struct`; see `stage1-readiness.md` §6.11)
+- [ ] **L13** Tuple literals, positional access, and destructuring — PARTIAL:
+      equality is identity-based for `List`/tuple/`struct`
+      (`stage1-readiness.md` §6.11; WP2 L13b)
 - [x] **L16** `T?`, `?.`, `??`, null narrowing
 - [x] **L19** `Result` / `Error` and `?` propagation
+- [ ] **L21** `copy` / `move` and use-after-move checking — PARTIAL, outside the
+      bootstrap subset (WP7)
 - [x] **L22** Async/await, `spawn`, `lock`, `shared` (outside the bootstrap subset)
 - [x] **L23** Attributes, `#[test]`, `#[derive]`, macros (outside the bootstrap subset)
+- [ ] **L24** UI components and `@State` / `@Environment` — PARTIAL, outside the
+      bootstrap subset (out of scope, below)
 - [x] **L25** Type aliases (`type X = …`), including alias receivers, dispatch, and function-type aliases
 - [x] **R1** Deterministic left-to-right evaluation
 - [x] **R3** UTF-8 scalar string operations
 - [x] **R4** Runtime failures with stable codes
 - [x] **R5** No panic on adversarial input; nesting guard
 - [x] **R6** `panic`, `assert`, and process exit status
+- [ ] **R8** Value/reference semantics for `copy` / `move` — PARTIAL, outside the
+      bootstrap subset (WP7)
+- [ ] **R9** Interpreter and AOT produce identical observable behavior —
+      PARTIAL: five baseline gaps in `aot_differential_baseline.tsv` (WP3)
 - [x] **R10** Deterministic formatting of integers and diagnostics
+- [ ] **C4** `Array<T, N>` — PARTIAL: `Array::filled` is not verified (WP3)
 - [x] **C5** `string` members and UTF-8 behavior
 - [x] **C6** `StringBuilder` with `new` / `append` / `clear` / `build` / `len` / `byte_len`
 - [x] **C7** `str` / `fmt` / `print` output for every bootstrap value
@@ -96,16 +112,28 @@ Unchecked entries are open; each is tracked in a work package below.
 - [x] **S5** `std::json`
 - [x] **S6** `std::regex` and `std::fmt`
 - [x] **S7** `std::net` and `std::http` (outside the bootstrap subset)
+- [ ] **S8** `extern "C"` FFI — PARTIAL: Unix only, Windows unsupported; outside
+      the bootstrap subset (out of scope, below)
 - [x] **S10** `std::math` (interpreter and AOT)
 - [x] **S11** `std::time` (interpreter and AOT)
 - [x] **B1** `xulo run` and `xulo check` for a single file
 - [x] **B2** `xupm build` for core language and `hello`
+- [ ] **B3** `xupm build` for the bootstrap subset — PARTIAL: five AOT lowering
+      gaps (WP3 B3c, S3a, R9c)
 - [x] **B4** AOT module tree (`mod` / `use`)
 - [x] **B5** Runtime static library and linker path
+- [ ] **B7** Linux/macOS/Windows build matrix — PARTIAL: the AOT differential
+      job is Linux-only, so macOS and Windows parity is unverified (WP3)
+- [ ] **B8** Reproducible stage 1 build and self-compile smoke test — PARTIAL:
+      B8a is done, reproducibility and the self-build await WP6
 - [x] **D1** Source spans and `file:line:column` diagnostics
 - [x] **D2** stderr writes and nonzero exit status
-- [x] **T1** Unit and integration tests — `cargo test --workspace`: 2106 passed, 0 failed (2026-11-16)
+- [ ] **D4** Stage 1 diagnostics consistent with stage 0 — PARTIAL: stage 0 still
+      falls back to `E0003` for several corpus errors (WP6)
+- [x] **T1** Unit and integration tests — `cargo test --workspace`: 2107 passed, 0 failed (2026-11-17)
 - [x] **T2** All examples run in CI
+- [ ] **T5** Stage 1 self-parse/self-check/self-build tests — PARTIAL: self-parse
+      and self-check are live, the self-build is not (WP5, WP6 T5c)
 - [x] **T6** Robustness/fuzz tests
 
 ## WP0 — Matrix hygiene and conformance
@@ -315,11 +343,13 @@ on stage 1 code generation and self-build.
 Not in any gate's exit criterion. Each item must still be closed or explicitly
 re-scoped before the gate it informs.
 
-- [ ] **T3f** Triage the 33 divergences in `spec_conformance_baseline.tsv` by
+- [x] **T3f** Triage the 33 divergences in `spec_conformance_baseline.tsv` by
       group: 11 context-dependent, 12 module-scope statements, 8 syntax gaps,
       2 semantic gaps. Each group names an owner component and the gate that
-      clears it in the table in `stage1-readiness.md` §6.10; the component paths
-      are checked by `readiness_matrix`.
+      clears it in the table in `stage1-readiness.md` §6.10 (module-scope and
+      context-dependent at Gate 6; syntax and semantic at Gate 5); the component
+      paths are checked by `readiness_matrix`. "Deadline" for these groups means
+      the gate named in "Cleared by"; there is no separate calendar date.
 - [ ] **T3c** Extend the runner to `// runs:` blocks with expected output.
       Implemented, but the pinned spec currently has no `runs:` examples, so
       that path has no cases yet. Add `runs:` cases under
@@ -330,8 +360,9 @@ re-scoped before the gate it informs.
 - [ ] **R8** Value/reference semantics for `copy` / `move` (PARTIAL). Same
       scope note as L21. `xuloc/` currently uses neither construct.
 
-**Verify:** `cargo test -p xulo-cli --test spec_conformance -- --nocapture`
-(for T3f) and the L21/R8 probes once they exist.
+**Verify:** `cargo test -p xulo-cli --test readiness_matrix` (T3f owner
+components), `cargo test -p xulo-cli --test spec_conformance -- --nocapture`
+(T3c), and the L21/R8 probes once they exist.
 
 ## Out of scope for stage 1 bootstrap
 

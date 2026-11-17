@@ -1,7 +1,7 @@
 # Stage 1 Bootstrap Readiness
 
 - **Status**: Living document
-- **Date**: 2026-11-16
+- **Date**: 2026-11-17
 - **Audience**: compiler/runtime maintainers, stage 1 bootstrap team
 - **Normative sources**: `spec@48f49b7` and `std-spec@a2e4cb7`, the commits pinned by this repository
 - **Scope**: the capabilities stage 0 must provide for stage 1, their current status, and the gates for calling stage 0 "host-ready"
@@ -126,9 +126,11 @@ clean `file:line:column` diagnostic and exit 1). Evidence:
 bootstrap file) and reports accurate spans. Round-trip or structural checks
 cover literals, expressions, declarations, and modules.
 
-**Current assessment:** **Reached (2026-11-16).** Stage 1 parses all five of its
-own source files (`ast`, `lexer`, `parser`, `main`, `tests`) and reports scalar
-spans and 1-based line/column. A generic `Node` plus `unknown`-free scalar
+**Current assessment:** **Reached (2026-11-16).** Stage 1 parses all six of its
+own source files (`ast`, `lexer`, `parser`, `checker`, `main`, `tests`) and
+reports scalar spans and 1-based line/column. The test discovers `xuloc/*.xulo`
+instead of listing them, so a new stage 1 source file cannot silently escape
+self-parsing. A generic `Node` plus `unknown`-free scalar
 fields replaced the earlier tuple/`unknown`/`is` design risk; the trade-offs are
 listed in `xuloc/BOOTSTRAP.md`. Evidence:
 `crates/xulo-cli/tests/stage1.rs::stage1_parses_its_own_source` and
@@ -191,8 +193,8 @@ specification's checkable examples run in the `conformance` job
 (`crates/xulo-cli/tests/spec_conformance.rs`), with known divergences recorded
 in `spec_conformance_baseline.tsv`. The checker corpus is now part of
 `cargo test --workspace`; the full bootstrap suite still waits on stage 1 code
-generation and the self-hosted build (Gates 5–6). Owners and deadlines for the
-§6.10 groups are not recorded yet (`tasks.md` T3f).
+generation and the self-hosted build (Gates 5–6). Owners and the gate that
+clears each §6.10 group are recorded in §6.10 (`tasks.md` T3f).
 
 ## 5. Capability matrix
 
@@ -261,7 +263,7 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 |----|-------------|--------|-----------------------|-----------|
 | S1 | `std::fs` read/write/stat/read_dir/walk/remove/rename/temp | **OK** | `crates/xulo-runtime/tests/fs.rs`, `examples/fs.xulo` | 1 |
 | S2 | `std::io` print/eprint/flush/read | **OK** | `crates/xulo-runtime/tests/io.rs` | 1 |
-| S3 | `std::process` args/exit/run/exec/launch | **PARTIAL** | Interpreter runtime tests pass; AOT covers `args`/`run`/`exit`, but `launch`/`Command`/`Child` have no lowering (`examples/process.xulo` is in the differential baseline) | 1 |
+| S3 | `std::process` args/exit/run/exec/launch | **PARTIAL** | Interpreter path covered by `crates/xulo-runtime/tests/process.rs` (launch, `Command`, `Child`, wait, kill, timeout); AOT covers `args`/`run`/`exit`, but `launch`/`Command`/`Child` have no lowering (`examples/process.xulo` is in the differential baseline) | 1 |
 | S4 | `std::path`, `std::os`, environment, cwd, pid | **OK** | `crates/xulo-runtime/tests/os.rs`, `crates/xulo-runtime/tests/path.rs` | 1 |
 | S5 | `std::json` parse/stringify/valid | **OK** | `crates/xulo-runtime/tests/json.rs` | 2 |
 | S6 | `std::regex` and `std::fmt` | **OK** | `crates/xulo-runtime/tests/regex.rs`, `crates/xulo-runtime/tests/fmt.rs` | 2 |
@@ -281,7 +283,7 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 | B4 | AOT module tree (`mod`/`use`) | **OK** | `crates/xulo-compiler/tests/module_system.rs`, `examples/modules` native build | 4 |
 | B5 | Runtime static library and linker path | **OK** | `.github/workflows/ci.yml` and the release workflow | 4 |
 | B6 | `xupm test` for stage 1's own tests | **OK** | `crates/xupm/tests/cli.rs::runs_stage1_test_file` runs `xuloc/tests.xulo` (10 tests); `crates/xulo-cli/tests/stage1.rs` covers the `xulo test` path | 3 |
-| B7 | Linux/macOS/Windows build matrix | **PARTIAL** | Release artifacts exist; Windows FFI is unsupported | 4 |
+| B7 | Linux/macOS/Windows build matrix | **PARTIAL** | Release artifacts exist, but the AOT differential job runs only on Linux; macOS and Windows run just the `hello` smoke test, so parity there is unverified (open B7 in `tasks.md` WP3). Windows FFI is unsupported (S8). | 4 |
 | B8 | Reproducible stage 1 build and self-compile smoke test | **PARTIAL** | B8a: `xupm build xuloc/main.xulo --release` produces a native front end that matches the interpreter (`crates/xupm/tests/aot_differential.rs::stage1_binary_matches_the_interpreter`). Reproducibility and the stage 1 self-build await WP6. | 5 |
 
 ### 5.6 Diagnostics, testing, and conformance
@@ -292,7 +294,7 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 | D2 | stderr writes and nonzero exit status | **OK** | `crates/xulo-cli/tests/process_exit.rs`, `crates/xulo-cli/tests/matrix_probes/R6_panic_assert.xulo` | 1 |
 | D3 | Stable error codes for the bootstrap subset | **OK** | Called constants are `E0204`; `std::regex` value paths are `E0607`, unknown module members `E0601`, and an unimported type used as a value `E0101` (std-spec `modules/regex.md`). The head/member diagnostics std-spec §1.3 named as coarse fallbacks now carry their fine-grained codes (`crates/xulo-semantic/tests/semantic_tests.rs`, `crates/xulo-compiler/tests/intrinsics_codegen_tests.rs`). | 2 |
 | D4 | Stage 1's own diagnostics are consistent with stage 0 | **PARTIAL** | Lexical/syntax use `E0001`/`E0002`; checker failures use `E0101`/`E0201`/`E0202`/`E0211`/`E0213`/`E0215` with `file:line:column` (`crates/xulo-cli/tests/stage1.rs`). Stage 0 still reports `E0003` for several of the same corpus cases, so exact codes are not aligned yet. | 3 |
-| T1 | Unit and integration tests | **OK** | `cargo test --workspace`: 2106 passed, 0 failed (2026-11-16) | 1 |
+| T1 | Unit and integration tests | **OK** | `cargo test --workspace`: 2107 passed, 0 failed (2026-11-17) | 1 |
 | T2 | All examples run in CI | **OK** | `.github/workflows/ci.yml` examples job | 1 |
 | T3 | Pinned-spec example conformance runner | **OK** | `crates/xulo-cli/tests/spec_conformance.rs`: 114 annotated examples extracted from the pinned spec, 81 pass, 33 triaged in `spec_conformance_baseline.tsv` (§6.10) | 2 |
 | T4 | Interpreter vs. AOT differential suite | **OK** | `crates/xupm/tests/aot_differential.rs` builds and executes every top-level example, compares stdout/stderr against `xupm run`, and fails on stale baseline entries; CI runs it on Linux after the release build. Five known gaps are recorded in `crates/xupm/tests/aot_differential_baseline.tsv` | 4 |
@@ -482,9 +484,19 @@ per case).
 | Group | Cases | Owner (component) | Cleared by |
 |---|---:|---|---|
 | Context-dependent examples | 11 | `crates/xulo-cli/tests/` (self-contained corpus) | Gate 6 |
-| Module-scope statements | 12 | `crates/xulo-parser` (top-level statements) | Gate 5 |
+| Module-scope statements | 12 | `crates/xulo-parser` (top-level statements) | Gate 6 |
 | Syntax gaps | 8 | `crates/xulo-parser` (map literals, `mut` parameters) | Gate 5 |
 | Semantic gaps | 2 | `crates/xulo-semantic` (inference, `await` in tests) | Gate 5 |
+
+"Cleared by" is the gate whose exit criterion requires the group to be gone;
+there is no separate deadline. The syntax and semantic groups are assigned to
+Gate 5 because they affect language forms the bootstrap subset allows (typed
+map literals, `mut` parameters, expected-type inference), which stage 1 and
+stage 2 must handle identically. The module-scope group is different: a
+module's top level holds declarations, stage 1's own source never executes
+statements there, so the gap does not block self-hosting and belongs to Gate 6
+(conformance). The context-dependent group is also Gate 6, because those blocks
+can never pass unchanged and need a self-contained corpus.
 
 `crates/xulo-cli/tests/readiness_matrix.rs` fails when a row names a component
 path that does not exist. That check only proves the owner is real; that the
@@ -565,12 +577,12 @@ PARTIAL for identity-based equality (§6.11).
 
 **Exit:** §6.2–6.5 probes pass; no workaround needed for stage 1's AST.
 
-**Status:** done. §6.2–6.5 pass in both execution paths, L18b is covered by the
-semantic and interpreter regression tests, D3's fine-grained diagnostic codes
-are asserted in the semantic tests, and S9 aligns the std numeric result types,
-AOT narrowing slot, range failures, and regex reachability with `std-spec`
-§1.3. Open items L6 (closure inference) and L13b (structural equality) are
-tracked in `tasks.md` WP2.
+**Status:** partial (10 of 12). §6.2–6.5 pass in both execution paths, L18b is
+covered by the semantic and interpreter regression tests, D3's fine-grained
+diagnostic codes are asserted in the semantic tests, and S9 aligns the std
+numeric result types, AOT narrowing slot, range failures, and regex
+reachability with `std-spec` §1.3. L6 (closure inference) and L13b (structural
+equality) are still open in `tasks.md` WP2, so the work package is not closed.
 
 ### WP3 — AOT parity and bootstrap backend (P1, Gate 4)
 
@@ -615,8 +627,9 @@ error for `defer` rather than dropping the operand.
 
 **Status:** done. `xuloc/` holds the generic AST, lexer, parser, first checker,
 CLI, corpus, and self-tests. Gate 1 is covered by the token/parse smoke tests and the clean
-diagnostic test; Gate 2 self-parses all five stage 1 files. `xulo test` and
-`xupm test` both run `xuloc/tests.xulo` (10 tests).
+diagnostic test; Gate 2 self-parses all six stage 1 files, discovered from
+`xuloc/*.xulo` by the test. `xulo test` and `xupm test` both run
+`xuloc/tests.xulo` (10 tests).
 
 ### WP6 — Self-host loop (after WP1–WP5)
 
@@ -637,15 +650,17 @@ to the built-in lowering.
 
 ### WP7 — Non-gating follow-ups (no gate)
 
-- Triage the 33 spec-conformance divergences by group with an owner and a
-  deadline per group (T3f). Gate 6 requires this.
+- Triage the 33 spec-conformance divergences by group with an owner and the
+  gate that clears it per group (T3f). Gate 6 requires this.
 - `copy`/`move` and use-after-move checking (L21, R8) are PARTIAL and outside the
   §2.1 subset; verify them before stage 1 relies on them.
 
 Items that gate work depends on are kept in their work packages (L6, L13b in
 WP2; B3c, S3, R9c, C4, B7 in WP3).
 
-**Status:** open. The §6.10 group counts and owners are the remaining work.
+**Status:** T3f is done: §6.10 records the group counts, an owner component, and
+the gate that clears each group, and `readiness_matrix` checks that every owner
+path exists. T3c (`runs:` cases), L21, and R8 remain open and non-gating.
 
 ## 8. Non-goals for stage 1 bootstrap
 
@@ -702,11 +717,11 @@ git submodule status
 git ls-tree HEAD spec std-spec
 ```
 
-Last recorded verification (2026-11-16):
+Last recorded verification (2026-11-17):
 
 | Check | Result |
 |-------|--------|
-| `cargo test --workspace` | 2106 passed, 0 failed |
+| `cargo test --workspace` | 2107 passed, 0 failed |
 | Examples (CI job) | Configured to run every `examples/*.xulo`; `async_tasks` uses `u64` sleep input |
 | AOT smoke tests | `hello` on macOS/Windows; `structs`, `trait_shapes`, `generics`, `modules` probed locally |
 | AOT differential suite | 25 examples compare byte for byte; 5 known gaps in `crates/xupm/tests/aot_differential_baseline.tsv` |

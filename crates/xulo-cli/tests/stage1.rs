@@ -103,18 +103,29 @@ fn stage1_parse_smoke_test() {
 }
 
 /// T5b: every stage 1 source file parses with itself.
+///
+/// The file set is discovered from `xuloc/` instead of being hard-coded, so a
+/// new stage 1 source file (for example the Gate 3 checker) is covered as soon
+/// as it lands.
 #[test]
 fn stage1_parses_its_own_source() {
     let root = repo_root();
-    for name in [
-        "ast.xulo",
-        "lexer.xulo",
-        "parser.xulo",
-        "main.xulo",
-        "tests.xulo",
-    ] {
-        let path = root.join("xuloc").join(name);
-        let out = run_stage1("parse", &path);
+    let mut sources: Vec<PathBuf> = std::fs::read_dir(root.join("xuloc"))
+        .expect("xuloc/ should exist")
+        .map(|entry| entry.expect("xuloc/ entry should be readable").path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "xulo"))
+        .collect();
+    sources.sort();
+    assert!(
+        sources.len() >= 6,
+        "expected at least the six stage 1 sources, found {sources:?}"
+    );
+    for path in &sources {
+        let name = path
+            .file_name()
+            .expect("a source path has a file name")
+            .to_string_lossy();
+        let out = run_stage1("parse", path);
         assert_success(&out, &format!("self-parse of xuloc/{name}"));
         let text = stdout_of(&out);
         assert!(
