@@ -216,6 +216,7 @@ fn unknown_fs_member_is_rejected_by_the_semantic_pass() {
 #[test]
 fn fs_example() {
     let out = run_ok(include_str!("../../../examples/fs.xulo"));
+    #[cfg_attr(not(windows), allow(unused_mut))]
     let mut expected = vec![
         "written".to_string(),
         "hello fs".to_string(),
