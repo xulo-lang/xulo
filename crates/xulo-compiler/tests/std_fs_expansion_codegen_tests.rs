@@ -31,7 +31,11 @@ fn scratch(label: &str) -> PathBuf {
 }
 
 fn p(path: &Path) -> String {
-    path.to_string_lossy().into_owned()
+    // Paths are interpolated into Xulo string literals: Windows separators
+    // must be escaped so `\` does not read as a string escape.
+    path.to_string_lossy()
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
 }
 
 #[test]
