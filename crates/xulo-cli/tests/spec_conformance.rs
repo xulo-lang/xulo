@@ -161,11 +161,15 @@ fn cases_in_file(root: &Path, path: &Path, cases: &mut Vec<Case>) {
     let Ok(text) = fs::read_to_string(path) else {
         return;
     };
+    // Case ids and the baseline are `/`-separated on every host; Windows
+    // `Path::display` would otherwise produce `\` and orphan every baseline
+    // entry.
     let rel = path
         .strip_prefix(root)
         .unwrap_or(path)
         .display()
-        .to_string();
+        .to_string()
+        .replace('\\', "/");
     let lines: Vec<&str> = text.lines().collect();
     let mut index = 0;
     while index < lines.len() {
