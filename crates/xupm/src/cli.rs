@@ -411,7 +411,7 @@ fn print_warnings(warnings: &[XuloError]) {
         let source = warning
             .file
             .as_ref()
-            .and_then(|file| std::fs::read_to_string(file).ok());
+            .and_then(|file| std::fs::read_to_string(file.as_path()).ok());
         eprintln!(
             "{}",
             xulo_core::diagnostics::render(warning, source.as_deref())
@@ -420,7 +420,11 @@ fn print_warnings(warnings: &[XuloError]) {
 }
 
 fn print_compile_error(err: &XuloError, entry: &Path) {
-    let file = err.file.clone().unwrap_or_else(|| entry.to_path_buf());
+    let file = err
+        .file
+        .as_deref()
+        .cloned()
+        .unwrap_or_else(|| entry.to_path_buf());
     let source = std::fs::read_to_string(&file).unwrap_or_default();
     let err = err.clone().with_file(file);
     eprintln!("{}", xulo_core::diagnostics::render(&err, Some(&source)));

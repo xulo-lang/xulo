@@ -327,7 +327,7 @@ fn test_xulo_error_at() {
 fn test_xulo_error_with_file() {
     use std::path::PathBuf;
     let err = XuloError::new(ErrorKind::Io, "file not found").with_file(PathBuf::from("test.xulo"));
-    assert_eq!(err.file, Some(PathBuf::from("test.xulo")));
+    assert_eq!(err.file.as_deref(), Some(&PathBuf::from("test.xulo")));
 }
 
 #[test]

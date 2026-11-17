@@ -92,7 +92,11 @@ fn rendered_run(file: &Path, backend: xulo_framework::Backend) -> ExitCode {
     match xulo_framework::run(file, backend) {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
-            let src_file = err.file.clone().unwrap_or_else(|| file.to_path_buf());
+            let src_file = err
+                .file
+                .as_deref()
+                .cloned()
+                .unwrap_or_else(|| file.to_path_buf());
             let source = std::fs::read_to_string(&src_file).unwrap_or_default();
             print_compile_error(&err, &source, &src_file);
             ExitCode::from(1)
@@ -108,7 +112,11 @@ pub fn run_file(file: &Path) -> ExitCode {
     let mut loaded = match xulo_compiler::module::load(file) {
         Ok(l) => l,
         Err(err) => {
-            let src_file = err.file.clone().unwrap_or_else(|| file.to_path_buf());
+            let src_file = err
+                .file
+                .as_deref()
+                .cloned()
+                .unwrap_or_else(|| file.to_path_buf());
             let source = std::fs::read_to_string(&src_file).unwrap_or_default();
             print_compile_error(&err, &source, &src_file);
             return ExitCode::from(1);
@@ -117,7 +125,11 @@ pub fn run_file(file: &Path) -> ExitCode {
     let warnings = match xulo_compiler::module::analyze(&mut loaded, true) {
         Ok(w) => w,
         Err(err) => {
-            let src_file = err.file.clone().unwrap_or_else(|| file.to_path_buf());
+            let src_file = err
+                .file
+                .as_deref()
+                .cloned()
+                .unwrap_or_else(|| file.to_path_buf());
             let source = std::fs::read_to_string(&src_file).unwrap_or_default();
             print_compile_error(&err, &source, &src_file);
             return ExitCode::from(1);
@@ -174,7 +186,11 @@ pub fn run_file(file: &Path) -> ExitCode {
                 module_exports.push(exports);
             }
             Err(RunError::Err(err)) => {
-                let src_file = err.file.clone().unwrap_or_else(|| module.file.clone());
+                let src_file = err
+                    .file
+                    .as_deref()
+                    .cloned()
+                    .unwrap_or_else(|| module.file.clone());
                 let source = std::fs::read_to_string(&src_file).unwrap_or_default();
                 print_compile_error(&err, &source, &src_file);
                 return ExitCode::from(1);
@@ -303,7 +319,11 @@ pub fn check_file(file: &Path) -> ExitCode {
     let mut loaded = match xulo_compiler::module::load(file) {
         Ok(l) => l,
         Err(err) => {
-            let src_file = err.file.clone().unwrap_or_else(|| file.to_path_buf());
+            let src_file = err
+                .file
+                .as_deref()
+                .cloned()
+                .unwrap_or_else(|| file.to_path_buf());
             let source = std::fs::read_to_string(&src_file).unwrap_or_default();
             print_compile_error(&err, &source, &src_file);
             return ExitCode::from(1);
@@ -316,7 +336,11 @@ pub fn check_file(file: &Path) -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(err) => {
-            let src_file = err.file.clone().unwrap_or_else(|| file.to_path_buf());
+            let src_file = err
+                .file
+                .as_deref()
+                .cloned()
+                .unwrap_or_else(|| file.to_path_buf());
             let source = std::fs::read_to_string(&src_file).unwrap_or_default();
             print_compile_error(&err, &source, &src_file);
             ExitCode::from(1)
@@ -335,7 +359,11 @@ pub fn test_file(file: &Path) -> ExitCode {
     let mut loaded = match xulo_compiler::module::load(file) {
         Ok(l) => l,
         Err(err) => {
-            let src_file = err.file.clone().unwrap_or_else(|| file.to_path_buf());
+            let src_file = err
+                .file
+                .as_deref()
+                .cloned()
+                .unwrap_or_else(|| file.to_path_buf());
             let source = std::fs::read_to_string(&src_file).unwrap_or_default();
             print_compile_error(&err, &source, &src_file);
             return ExitCode::from(1);
@@ -344,7 +372,11 @@ pub fn test_file(file: &Path) -> ExitCode {
     let warnings = match xulo_compiler::module::analyze(&mut loaded, false) {
         Ok(w) => w,
         Err(err) => {
-            let src_file = err.file.clone().unwrap_or_else(|| file.to_path_buf());
+            let src_file = err
+                .file
+                .as_deref()
+                .cloned()
+                .unwrap_or_else(|| file.to_path_buf());
             let source = std::fs::read_to_string(&src_file).unwrap_or_default();
             print_compile_error(&err, &source, &src_file);
             return ExitCode::from(1);
@@ -446,7 +478,11 @@ pub fn test_file(file: &Path) -> ExitCode {
             eprintln!("test {name} ... FAILED");
             match &run.error {
                 Some(err) => {
-                    let src_file = err.file.clone().unwrap_or_else(|| entry.file.clone());
+                    let src_file = err
+                        .file
+                        .as_deref()
+                        .cloned()
+                        .unwrap_or_else(|| entry.file.clone());
                     let source = std::fs::read_to_string(&src_file).unwrap_or_default();
                     print_compile_error(err, &source, &src_file);
                 }
@@ -1046,7 +1082,7 @@ fn print_warnings(warnings: &[XuloError], fallback_source: Option<&str>) {
         let source = w
             .file
             .as_ref()
-            .and_then(|f| std::fs::read_to_string(f).ok())
+            .and_then(|f| std::fs::read_to_string(f.as_path()).ok())
             .or_else(|| fallback_source.map(str::to_string));
         eprintln!("{}", diagnostics::render(w, source.as_deref()));
     }

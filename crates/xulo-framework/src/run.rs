@@ -58,7 +58,7 @@ pub(crate) fn execute_in(entry: &Path, interp: &Rc<Interpreter>) -> Result<Progr
         let source = warning
             .file
             .as_ref()
-            .and_then(|f| std::fs::read_to_string(f).ok());
+            .and_then(|f| std::fs::read_to_string(f.as_path()).ok());
         eprintln!(
             "{}",
             xulo_core::diagnostics::render(&warning, source.as_deref())

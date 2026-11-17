@@ -44,7 +44,7 @@ pub struct XuloError {
     pub kind: ErrorKind,
     pub message: String,
     pub span: Option<Range<usize>>,
-    pub file: Option<PathBuf>,
+    pub file: Option<Box<PathBuf>>,
     /// Fine-grained diagnostic code from the specification's error table
     /// (`spec/type-system/errors.md`), e.g. `E0230`. When absent the coarse
     /// [`ErrorKind`] code is reported instead.
@@ -89,7 +89,7 @@ impl XuloError {
     }
 
     pub fn with_file(mut self, file: PathBuf) -> Self {
-        self.file = Some(file);
+        self.file = Some(Box::new(file));
         self
     }
 
