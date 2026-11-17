@@ -57,11 +57,14 @@ fn main() {
                 Result::Err(e) => print(e.message)
             }
             // walk 递归给出根目录下的全部路径（含根本身；带宿主前缀，
-            // 示例只打条数与末段）
+            // 示例只打条数与末段）。路径规则是 POSIX 的，Windows 的 `\`
+            // 不会被 basename 拆开，所以用切片取末尾的 `b.txt` 而不是打印
+            // 整个宿主临时路径（两个进程的临时目录名不同）。
             match std::fs::walk(dir) {
                 Result::Ok(names) => {
                     print(names.len) // 4 —— 根 + a.txt + sub + sub/b.txt
-                    print(std::path::basename(names[3])) // b.txt
+                    let last = names[3]
+                    print(last.slice(last.len - 5, last.len)) // b.txt
                 }
                 Result::Err(e) => print(e.message)
             }
