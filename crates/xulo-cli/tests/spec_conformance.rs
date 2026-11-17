@@ -412,6 +412,12 @@ fn pinned_spec_examples_conform() {
 
     let mut files = Vec::new();
     collect_markdown(&spec, &mut files);
+    // The pinned spec has no `// runs:` examples today; these local cases keep
+    // the executable path covered (T3c).
+    let local = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("runs_cases");
+    collect_markdown(&local, &mut files);
     let mut cases = Vec::new();
     for file in &files {
         cases_in_file(&root, file, &mut cases);
@@ -421,6 +427,11 @@ fn pinned_spec_examples_conform() {
         cases.len() > 50,
         "expected the pinned spec to yield annotated examples, found {}",
         cases.len()
+    );
+    assert!(
+        cases.iter().any(|case| case.kind == Kind::Runs),
+        "expected at least one `// runs:` case under {}",
+        local.display()
     );
 
     let dir = std::env::temp_dir().join(format!(

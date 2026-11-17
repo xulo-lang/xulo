@@ -32,7 +32,7 @@ readiness document.
 | WP4 — `defer` semantics | 5 | 5 |
 | WP5 — Stage 1 skeleton | 6 | 6 |
 | WP6 — Self-host loop | 1 | 7 |
-| WP7 — Non-gating follow-ups | 1 | 4 |
+| WP7 — Non-gating follow-ups | 2 | 4 |
 | **Total** | **45** | **59** |
 
 ## Gates
@@ -355,11 +355,11 @@ re-scoped before the gate it informs.
       context-dependent at Gate 6; syntax and semantic at Gate 5); the component
       paths are checked by `readiness_matrix`. "Deadline" for these groups means
       the gate named in "Cleared by"; there is no separate calendar date.
-- [ ] **T3c** Extend the runner to `// runs:` blocks with expected output.
-      Implemented, but the pinned spec currently has no `runs:` examples, so
-      that path has no cases yet. Add `runs:` cases under
-      `crates/xulo-cli/tests/` (the pinned spec is a submodule and is not
-      edited here).
+- [x] **T3c** Extend the runner to `// runs:` blocks with expected output.
+      The pinned spec has no `runs:` examples, so local cases live under
+      `crates/xulo-cli/tests/runs_cases/basics.md`; the runner scans them
+      alongside the pinned spec and fails if the executable path loses all
+      cases.
 - [ ] **L21** `copy` / `move` and use-after-move checking (PARTIAL). Not in the
       §2.1 bootstrap subset; verify before stage 1 relies on it.
 - [ ] **R8** Value/reference semantics for `copy` / `move` (PARTIAL). Same

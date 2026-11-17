@@ -444,7 +444,9 @@ as a bootstrap restriction instead of silently ignoring it. Covered by
   pin. `git submodule status` is part of the pre-gate checklist.
 
 **Resolved (WP0).** `crates/xulo-cli/tests/spec_conformance.rs` now extracts
-every annotated `xulo` block from the pinned spec and checks or runs it;
+every annotated `xulo` block from the pinned spec and checks or runs it; local
+`// runs:` cases under `crates/xulo-cli/tests/runs_cases/` keep the executable
+path covered because the pinned spec has none;
 `crates/xulo-cli/tests/submodule_pins.rs` fails when the `HEAD` gitlink, the
 index, or the checked-out submodule drifts from `spec@48f49b7` /
 `std-spec@a2e4cb7`. Both run in the `conformance` CI job. Divergences are
@@ -541,8 +543,9 @@ and the updated `crates/xulo-cli/tests/matrix_probes/L13_tuples.xulo`.
 **Exit:** conformance job runs in CI and its failures are triaged in this
 matrix.
 
-**Status:** done for Gates 1–2. The `runs:` path (T3c) has no cases yet and is
-open and non-gating (`tasks.md` WP7). The CI job is `conformance`; §6.10 is the triage, and
+**Status:** done for Gates 1–2. T3c's `runs:` path is covered by
+`crates/xulo-cli/tests/runs_cases/basics.md`, which the conformance runner scans
+alongside the pinned spec. The CI job is `conformance`; §6.10 is the triage, and
 `crates/xulo-cli/tests/readiness_matrix.rs` enforces that every OK row cites an
 existing test/probe, runs the `matrix_probes` corpus, and fails on an uncited
 probe. The audit itself fixed two small defects (implicit return of a trailing
@@ -661,7 +664,8 @@ B7 in WP3).
 
 **Status:** T3f is done: §6.10 records the group counts, an owner component, and
 the gate that clears each group, and `readiness_matrix` checks that every owner
-path exists. T3c (`runs:` cases), L21, and R8 remain open and non-gating.
+path exists, and T3c's local `// runs:` cases keep the executable path covered.
+L21 and R8 remain open and non-gating.
 
 ## 8. Non-goals for stage 1 bootstrap
 
