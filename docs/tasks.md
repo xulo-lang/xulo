@@ -31,9 +31,9 @@ readiness document.
 | WP3 — AOT parity and bootstrap backend | 11 | 13 |
 | WP4 — `defer` semantics | 5 | 5 |
 | WP5 — Stage 1 skeleton | 6 | 6 |
-| WP6 — Self-host loop | 2 | 7 |
-| WP7 — Non-gating follow-ups | 2 | 4 |
-| **Total** | **50** | **59** |
+| WP6 — Self-host loop | 3 | 7 |
+| WP7 — Non-gating follow-ups | 3 | 4 |
+| **Total** | **52** | **59** |
 
 ## Gates
 
@@ -53,9 +53,8 @@ Gates are cumulative. An open earlier gate blocks every later gate.
 - [x] **Gate 4 — Native build**: `xupm build` produces a stage 1 binary whose
       output matches `xulo run` on the bootstrap workload.
       `crates/xupm/tests/aot_differential.rs::stage1_binary_matches_the_interpreter`.
-      Reached on Linux only: the differential job does not run on macOS or
-      Windows, so B7 (WP3) remains open and this gate's evidence does not cover
-      those platforms.
+      Reached on Linux and macOS (macOS verified locally on 2026-11-17); the
+      Windows job is wired but has not run yet, so B7 (WP3) remains open.
 - [ ] **Gate 5 — Self-host**: stage 1 compiles itself into stage 2; stage 1 and
       stage 2 agree on the bootstrap suite and the conformance subset.
 - [ ] **Gate 6 — Conformance**: the pinned specification's checkable examples
@@ -82,8 +81,8 @@ package or out-of-scope section that tracks it.
       equality for `List`/tuple/`struct` (`stage1-readiness.md` §6.11).
 - [x] **L16** `T?`, `?.`, `??`, null narrowing
 - [x] **L19** `Result` / `Error` and `?` propagation
-- [ ] **L21** `copy` / `move` and use-after-move checking — PARTIAL, outside the
-      bootstrap subset (WP7)
+- [x] **L21** `copy` / `move` and use-after-move checking (outside the bootstrap
+      subset; WP7)
 - [x] **L22** Async/await, `spawn`, `lock`, `shared` (outside the bootstrap subset)
 - [x] **L23** Attributes, `#[test]`, `#[derive]`, macros (outside the bootstrap subset)
 - [ ] **L24** UI components and `@State` / `@Environment` — PARTIAL, outside the
@@ -94,8 +93,10 @@ package or out-of-scope section that tracks it.
 - [x] **R4** Runtime failures with stable codes
 - [x] **R5** No panic on adversarial input; nesting guard
 - [x] **R6** `panic`, `assert`, and process exit status
-- [ ] **R8** Value/reference semantics for `copy` / `move` — PARTIAL, outside the
-      bootstrap subset (WP7)
+- [ ] **R8** Value/reference semantics for `copy` / `move` — PARTIAL: `copy`
+      deep-copies in both paths and `move` transfers, but a plain `let b = a`
+      of a value-category aggregate still aliases (the runtime erases
+      struct/tuple/`Array` categories). Outside the bootstrap subset (WP7)
 - [ ] **R9** Interpreter and AOT produce identical observable behavior —
       PARTIAL: one baseline gap (`async_tasks`) in `aot_differential_baseline.tsv`
       (WP3 R9c)
@@ -257,15 +258,19 @@ Priority P1 · needed by Gate 4 · source: `stage1-readiness.md` §7 WP3, §6.6�
       `crates/xulo-compiler/tests/type_system_codegen_tests.rs::array_filled_compiles`
       (AOT runtime lowering `xulo_array_filled`).
 - [ ] **B7** Run `stage1_binary_matches_the_interpreter` on macOS and Windows,
-      not only Linux. Today the differential job is Linux-only and both other
-      platforms run only the `hello` AOT smoke test, so Gate 4's assessment is
-      Linux-only until this closes. Windows FFI stays out of scope (S8).
+      not only Linux. macOS is verified: the opt-in differential compares all 29
+      non-baseline examples and the stage 1 workload byte for byte on
+      2026-11-17, and CI now runs it there. Windows now runs the same
+      differential with `crates/xupm/tests/aot_differential_baseline.windows.tsv`
+      (`ffi.xulo`, because `extern "C"` FFI stays Unix-only, S8); the first
+      Windows CI run has not happened yet, so the item stays open. Windows FFI
+      stays out of scope (S8).
 
 **Verify:** `xupm build examples/collections.xulo` and
 `xupm build examples/optional_chaining.xulo` match `xulo run` byte for byte.
 `XULO_AOT_DIFFERENTIAL=1 cargo test -p xupm --test aot_differential` compares
-24 examples; the baseline records one entry (`async_tasks`) that cannot be
-compared yet.
+29 examples; the shared baseline records one entry (`async_tasks`) that cannot
+be compared yet, and Windows additionally parks `ffi.xulo`.
 
 ## WP4 — `defer` semantics
 
@@ -333,7 +338,10 @@ After WP1–WP5 · needed by Gate 4/5/6 · source: `stage1-readiness.md` §7 WP6
       `xuloc/main.xulo`. The opt-in differential test rejects output drift.
 - [ ] Stage 1 builds itself, producing a stage 2 binary.
 - [ ] **T5c** Compare stage 1 and stage 2 output on the bootstrap suite.
-- [ ] Add the bootstrap suite to CI alongside the conformance runner.
+- [x] Add the bootstrap suite to CI alongside the conformance runner.
+      The `conformance` job now runs `cargo test -p xulo-cli --test stage1` and
+      `cargo test -p xupm --test cli runs_stage1_test_file`, so the corpus and
+      `xuloc/tests.xulo` gate alongside the pinned-spec runner.
 - [ ] **B8b** Add a reproducible build and self-compile smoke test.
 - [x] **D4** Make stage 1 diagnostics consistent with stage 0 for the
       bootstrap subset.
@@ -368,14 +376,26 @@ re-scoped before the gate it informs.
       `crates/xulo-cli/tests/runs_cases/basics.md`; the runner scans them
       alongside the pinned spec and fails if the executable path loses all
       cases.
-- [ ] **L21** `copy` / `move` and use-after-move checking (PARTIAL). Not in the
-      §2.1 bootstrap subset; verify before stage 1 relies on it.
-- [ ] **R8** Value/reference semantics for `copy` / `move` (PARTIAL). Same
-      scope note as L21. `xuloc/` currently uses neither construct.
+- [x] **L21** `copy` / `move` and use-after-move checking.
+      Both operators are accepted only in a `let` initializer, a call
+      argument, or a `return` (E0403), `move` requires a whole frame-owned
+      binding, and any later use of a moved binding is E0403.
+      `crates/xulo-semantic/tests/semantic_tests.rs` covers the position,
+      borrow, twice-move, and use-after-move cases.
+- [ ] **R8** Value/reference semantics for `copy` / `move` (PARTIAL). `copy`
+      deep-copies lists, maps, sets, builders, structs, enums, and tuples in
+      both paths and preserves identity-carrying values; `move` transfers the
+      value and invalidates the binding. Remaining: a plain `let b = a` of a
+      value-category aggregate still aliases, because the runtime erases the
+      struct/tuple/`Array` category that the value-semantics table needs. Same
+      scope note as L21; `xuloc/` currently uses neither construct. Evidence:
+      `crates/xulo-compiler/tests/aot_syntax_coverage_tests.rs::copy_detaches_reference_values_and_keeps_float_slots`
+      and `crates/xulo-runtime/tests/native.rs::copy_detaches_sets_enums_and_nested_containers`.
 
 **Verify:** `cargo test -p xulo-cli --test readiness_matrix` (T3f owner
 components), `cargo test -p xulo-cli --test spec_conformance -- --nocapture`
-(T3c), and the L21/R8 probes once they exist.
+(T3c), `cargo test -p xulo-semantic --test semantic_tests` (L21), and the R8
+deep-copy tests listed above.
 
 ## Out of scope for stage 1 bootstrap
 

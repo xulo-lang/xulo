@@ -789,6 +789,111 @@ pub extern "C" fn xulo_value_equal(left: i64, left_tag: i64, right: i64, right_t
     ))
 }
 
+/// `copy e` (spec `memory-and-runtime.md`, "Ownership with `copy`"): duplicate
+/// every reachable list/array/tuple, object/struct/map, enum payload, and set,
+/// so later writes through either copy stay invisible to the other. Strings are
+/// immutable and identity-carrying values (functions, tasks, views, errors) are
+/// not duplicated. A visited map keeps cyclic values finite, and the depth
+/// guard bounds adversarial nesting.
+const MAX_VALUE_COPY_DEPTH: usize = 4096;
+
+fn value_copy_too_deep() -> ! {
+    let message = intern_string("`copy` exceeded the maximum value depth");
+    xulo_panic(message as i64, 0);
+    unreachable!("xulo_panic exits the process")
+}
+
+fn runtime_value_copy(
+    value: i64,
+    tag: i64,
+    seen: &mut std::collections::HashMap<usize, i64>,
+    depth: usize,
+) -> i64 {
+    if depth > MAX_VALUE_COPY_DEPTH {
+        value_copy_too_deep();
+    }
+    let tag = if tag == -1 {
+        xulo_detect_tag(value)
+    } else {
+        tag
+    };
+    match tag {
+        3 => unsafe {
+            if value == 0 {
+                return 0;
+            }
+            let key = value as usize;
+            if let Some(copy) = seen.get(&key) {
+                return *copy;
+            }
+            let source = &*(value as *const XuloArray);
+            let copy = xulo_alloc_array(source.elements.len());
+            if SETS.with(|sets| sets.borrow().contains(&key)) {
+                SETS.with(|sets| sets.borrow_mut().insert(copy as usize));
+            }
+            seen.insert(key, copy as i64);
+            for (index, element) in source.elements.iter().copied().enumerate() {
+                let element_tag = set_tag(&source.tags, index);
+                let copied = runtime_value_copy(element, element_tag, seen, depth + 1);
+                xulo_array_push(copy, copied, element_tag);
+            }
+            copy as i64
+        },
+        4 => unsafe {
+            if value == 0 {
+                return 0;
+            }
+            let key = value as usize;
+            if let Some(copy) = seen.get(&key) {
+                return *copy;
+            }
+            let source = &*(value as *const XuloObject);
+            let copy = xulo_alloc_object(source.fields.len());
+            seen.insert(key, copy as i64);
+            for (index, (name, field)) in source.fields.iter().enumerate() {
+                let field_tag = source.field_tags.get(index).copied().unwrap_or(1);
+                let copied = runtime_value_copy(*field, field_tag, seen, depth + 1);
+                (*copy).fields.push((name.clone(), copied));
+                (*copy).field_tags.push(field_tag);
+            }
+            copy as i64
+        },
+        7 => unsafe {
+            if value == 0 {
+                return 0;
+            }
+            let key = value as usize;
+            if let Some(copy) = seen.get(&key) {
+                return *copy;
+            }
+            let source = &*(value as *const XuloEnum);
+            let copy = xulo_alloc_enum(
+                source.type_name,
+                source.variant_name,
+                source.variant,
+                source.elements.len(),
+            );
+            seen.insert(key, copy as i64);
+            for (index, element) in source.elements.iter().copied().enumerate() {
+                let element_tag = source.tags.get(index).copied().unwrap_or(1);
+                let copied = runtime_value_copy(element, element_tag, seen, depth + 1);
+                xulo_enum_set(copy, index, copied, element_tag);
+            }
+            copy as i64
+        },
+        // Strings are immutable; scalars, identity-carrying values, and regex
+        // handles keep their identity (spec "Equality and identity").
+        _ => value,
+    }
+}
+
+/// `copy e` on a tagged runtime value; returns the copied value in the same
+/// slot and tag.
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_value_copy(value: i64, tag: i64) -> i64 {
+    runtime_value_copy(value, tag, &mut std::collections::HashMap::new(), 0)
+}
+
 /// `Array::filled<T, N>(value)`: a fixed array of `N` copies of `value`.
 /// The native representation is the list-shaped `XuloArray`; the static type
 /// carries the length (spec `types/composite-types.md`).

@@ -162,9 +162,12 @@ stderr match `xulo run` for `tokens`/`parse` on `examples/fibonacci.xulo` and
 `parse` on `xuloc/main.xulo`. Evidence:
 `crates/xupm/tests/aot_differential.rs::stage1_binary_matches_the_interpreter`,
 run by the AOT differential CI job, which sets `XULO_AOT_DIFFERENTIAL=1` and
-`XULO_RUNTIME_LIB`; a plain `cargo test --workspace` does not run it. This
-assessment is **Linux-only**: the differential job runs on Linux, while macOS
-and Windows run only the `hello` AOT smoke test. Cross-platform coverage is B7
+`XULO_RUNTIME_LIB`; a plain `cargo test --workspace` does not run it. The
+assessment covers Linux and macOS: macOS was verified locally on 2026-11-17
+(all 29 non-baseline examples and the stage 1 workload match byte for byte),
+and CI now runs the differential on both hosts. Windows runs the same
+differential with a platform baseline that parks `ffi.xulo` (Unix-only FFI,
+S8); its first CI run is pending, so cross-platform coverage remains open as B7
 in `tasks.md` WP3. The remaining example-level parity gap (`async_tasks` Task
 semantics) is not used by the bootstrap workload and remains tracked separately.
 
@@ -223,7 +226,7 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 | L18 | `is` / `is not` narrowing in `if` conditions | **OK** | `if v is T` narrows the then-branch and removes covered union members from the else-branch; `is not` swaps them; untestable types are `E0222`. An assignment to the narrowed binding ends the narrowing for the rest of the branch, so the declared type is used afterwards (L18b). `crates/xulo-runtime/tests/type_system.rs` | 2 |
 | L19 | `Result`/`Error` and `?` propagation | **OK** | `?` propagation through `Result::Err`; `crates/xulo-cli/tests/matrix_probes/L19_result_question.xulo` | 1 |
 | L20 | `defer` runs at block exit in reverse registration order | **OK** | The operand registers in its block's environment without evaluation and runs in reverse at exit; `crates/xulo-runtime/tests/defer.rs` covers nesting, loops, `return`, and `?` | 3 |
-| L21 | `copy` / `move` and use-after-move checking | **PARTIAL** | Syntax/checker present; full runtime and move-invalidation behavior not verified here. Outside the §2.1 bootstrap subset | — |
+| L21 | `copy` / `move` and use-after-move checking | **OK** | Both operators are accepted only as a `let` initializer, a call argument, or a `return` operand (`E0403`); `move` requires a whole frame-owned binding and any later use of it is `E0403`. `crates/xulo-semantic/tests/semantic_tests.rs` (`move_of_a_parameter_is_e0403`, `move_of_a_part_of_a_binding_is_e0403`, `using_a_binding_after_move_is_e0403`, `moving_twice_is_e0403`, `move_outside_let_argument_or_return_is_e0403`, `copy_outside_let_argument_or_return_is_e0403`) | — |
 | L22 | Async/await, `spawn`, `lock`, `shared` | **OK** | `crates/xulo-runtime/tests/task_slots.rs`, `crates/xulo-runtime/tests/service.rs`, `examples/async_tasks.xulo`; outside the bootstrap subset | — |
 | L23 | Attributes, `#[test]`, `#[derive]`, macros | **OK** | `crates/xulo-parser/tests/attribute_tests.rs`, `crates/xulo-parser/tests/macro_syntax_tests.rs`, `crates/xulo-runtime/tests/macro_system.rs`; outside the bootstrap subset | — |
 | L24 | UI/components and `@State`/`@Environment` | **PARTIAL** | UI works in examples; `@Environment` is explicitly unsupported; outside the bootstrap subset | — |
@@ -240,8 +243,8 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 | R5 | No panic on adversarial input; nesting guard | **OK** | `crates/xulo-compiler/tests/robustness.rs`, `crates/xulo-parser/tests/parser_tests.rs` | 1 |
 | R6 | `panic`, `assert`, and process exit status | **OK** | `crates/xulo-cli/tests/matrix_probes/R6_panic_assert.xulo`, `crates/xulo-cli/tests/process_exit.rs` | 1 |
 | R7 | `defer` executes at scope exit, reverse order | **OK** | `leave_block` drains the scope queue on normal exit and `?` propagation (before `return`/`break`/`continue` pass out); `crates/xulo-runtime/tests/defer.rs` | 3 |
-| R8 | Value/reference semantics for `copy`/`move` | **PARTIAL** | Not fully verified; avoid relying on it until tested. Outside the §2.1 bootstrap subset | — |
-| R9 | Interpreter and AOT produce identical observable behavior | **PARTIAL** | `crates/xupm/tests/aot_differential.rs` compares 24 examples byte for byte, including dynamic JSON index tags, generic bool returns, HTTP server round-trips, and process `Command`/`Child` handles. The only remaining baseline entry is `async_tasks` Task semantics (`crates/xupm/tests/aot_differential_baseline.tsv`). | 4 |
+| R8 | Value/reference semantics for `copy`/`move` | **PARTIAL** | `copy` deep-copies lists, maps, sets, builders, structs, enums, and tuples in both paths, mirrors cycles, and keeps identity-carrying values shared (`crates/xulo-runtime/tests/native.rs::copy_detaches_sets_enums_and_nested_containers`, `crates/xulo-compiler/tests/aot_syntax_coverage_tests.rs::copy_detaches_reference_values_and_keeps_float_slots`); `move` transfers and invalidates the binding (L21). Remaining: a plain `let b = a` of a value-category aggregate still aliases, because the runtime erases the struct/tuple/`Array` category the value-semantics table needs. Outside the §2.1 bootstrap subset | — |
+| R9 | Interpreter and AOT produce identical observable behavior | **PARTIAL** | `crates/xupm/tests/aot_differential.rs` compares 29 examples byte for byte, including dynamic JSON index tags, generic bool returns, HTTP server round-trips, and process `Command`/`Child` handles. The only remaining baseline entry is `async_tasks` Task semantics (`crates/xupm/tests/aot_differential_baseline.tsv`). | 4 |
 | R10 | Deterministic output formatting for diagnostics and integers | **OK** | `int`/`u64` print and stringify through exact decimal formatting in both paths; `crates/xulo-runtime/tests/integers.rs` covers `u64::MAX`, `2^63`, and `-2^63` | 2 |
 
 ### 5.3 Collections and text
@@ -278,11 +281,11 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 |----|-------------|--------|-----------------------|-----------|
 | B1 | `xulo run` and `xulo check` for a single file | **OK** | `crates/xulo-cli/tests/integration_tests.rs` | 1 |
 | B2 | `xupm build` for core language and `hello` | **OK** | `.github/workflows/ci.yml`: macOS/Windows AOT smoke test | 4 |
-| B3 | `xupm build` for the bootstrap subset | **PARTIAL** | `aot_differential` compares 24 examples and `xupm build` failure exit status is covered. FS bytes, path `split`/`relative`, HTTP server types, `os::exec_path`, and process `launch`/`Command`/`Child` now lower and compare; only `async_tasks` Task semantics remain (`crates/xupm/tests/aot_differential_baseline.tsv`). | 4 |
+| B3 | `xupm build` for the bootstrap subset | **PARTIAL** | `aot_differential` compares 29 examples and `xupm build` failure exit status is covered. FS bytes, path `split`/`relative`, HTTP server types, `os::exec_path`, and process `launch`/`Command`/`Child` now lower and compare; only `async_tasks` Task semantics remain (`crates/xupm/tests/aot_differential_baseline.tsv`). | 4 |
 | B4 | AOT module tree (`mod`/`use`) | **OK** | `crates/xulo-compiler/tests/module_system.rs`, `examples/modules` native build | 4 |
 | B5 | Runtime static library and linker path | **OK** | `.github/workflows/ci.yml` and the release workflow | 4 |
 | B6 | `xupm test` for stage 1's own tests | **OK** | `crates/xupm/tests/cli.rs::runs_stage1_test_file` runs `xuloc/tests.xulo` (10 tests); `crates/xulo-cli/tests/stage1.rs` covers the `xulo test` path | 3 |
-| B7 | Linux/macOS/Windows build matrix | **PARTIAL** | Release artifacts exist, but the AOT differential job runs only on Linux; macOS and Windows run just the `hello` smoke test, so parity there is unverified (open B7 in `tasks.md` WP3). Windows FFI is unsupported (S8). | 4 |
+| B7 | Linux/macOS/Windows build matrix | **PARTIAL** | Linux and macOS run the full AOT differential; macOS verified locally on 2026-11-17 (29 examples plus the stage 1 workload). Windows now runs the same differential with `crates/xupm/tests/aot_differential_baseline.windows.tsv` (`ffi.xulo`, since FFI is Unix-only, S8), but its first CI run is pending (open B7 in `tasks.md` WP3). | 4 |
 | B8 | Reproducible stage 1 build and self-compile smoke test | **PARTIAL** | B8a: `xupm build xuloc/main.xulo --release` produces a native front end that matches the interpreter (`crates/xupm/tests/aot_differential.rs::stage1_binary_matches_the_interpreter`). Reproducibility and the stage 1 self-build await WP6. | 5 |
 
 ### 5.6 Diagnostics, testing, and conformance
@@ -296,7 +299,7 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 | T1 | Unit and integration tests | **OK** | `cargo test --workspace`: 2107 passed, 0 failed (2026-11-17) | 1 |
 | T2 | All examples run in CI | **OK** | `.github/workflows/ci.yml` examples job | 1 |
 | T3 | Pinned-spec example conformance runner | **OK** | `crates/xulo-cli/tests/spec_conformance.rs`: 114 annotated examples extracted from the pinned spec, 81 pass, 33 triaged in `spec_conformance_baseline.tsv` (§6.10) | 2 |
-| T4 | Interpreter vs. AOT differential suite | **OK** | `crates/xupm/tests/aot_differential.rs` builds and executes every top-level example, compares stdout/stderr against `xupm run`, and fails on stale baseline entries; CI runs it on Linux after the release build. Five known gaps are recorded in `crates/xupm/tests/aot_differential_baseline.tsv` | 4 |
+| T4 | Interpreter vs. AOT differential suite | **OK** | `crates/xupm/tests/aot_differential.rs` builds and executes every top-level example, compares stdout/stderr against `xupm run`, and fails on stale baseline entries; CI runs it on Linux and macOS after the release build. One shared gap (`async_tasks`) is recorded in `crates/xupm/tests/aot_differential_baseline.tsv`; Windows adds `ffi.xulo` in `crates/xupm/tests/aot_differential_baseline.windows.tsv` | 4 |
 | T5 | Stage 1 self-parse/self-check/self-build tests | **PARTIAL** | Self-parse, self-check, and interpreter smoke tests are live (`crates/xulo-cli/tests/stage1.rs`, `xuloc/tests.xulo`); self-build awaits WP6 | 2–5 |
 | T6 | Robustness/fuzz tests | **OK** | `crates/xulo-compiler/tests/robustness.rs`, `crates/xulo-parser/tests/parser_tests.rs` | 1 |
 | T7 | Spec and std-spec submodules aligned with the pin | **OK** | `crates/xulo-cli/tests/submodule_pins.rs` compares the `HEAD` gitlink, the index, and the checked-out submodule against `spec@48f49b7` / `std-spec@a2e4cb7`; CI job `conformance` | 1 |
@@ -592,10 +595,11 @@ wildcard so a later argument can fix the callback's type parameter.
 - AOT runtime support for `Map` and `Set` is in place (C2, C3).
 - Known AOT parity probes now agree, including spread, ternaries,
   `Array.len`, and `Array::filled` (C1, R9b, L15, C4).
-- The differential runner is in place and compares 24 examples; the one
-  remaining gap (`async_tasks` Task semantics) is listed in
-  `crates/xupm/tests/aot_differential_baseline.tsv`. FS bytes, path
-  `split`/`relative`, HTTP server types, `os::exec_path`, and process
+- The differential runner is in place and compares 29 examples; the one
+  remaining shared gap (`async_tasks` Task semantics) is listed in
+  `crates/xupm/tests/aot_differential_baseline.tsv`. Windows parks `ffi.xulo`
+  in `crates/xupm/tests/aot_differential_baseline.windows.tsv` (S8). FS bytes,
+  path `split`/`relative`, HTTP server types, `os::exec_path`, and process
   `launch`/`Command`/`Child` are lowered (B3c, S3a).
 - `xupm build` failures return a nonzero exit status and are covered by
   `crates/xupm/tests/cli.rs` (B3a).
@@ -646,8 +650,9 @@ diagnostic test; Gate 2 self-parses all six stage 1 files, discovered from
 
 **Status:** in progress. B8a, D4, Gate 3, and Gate 4 are done. `xuloc` now has a
 checked bootstrap corpus whose diagnostics match stage 0's codes, and a native
-front end whose `tokens`/`parse`/`check` output matches the interpreter. Gate 5
-and the code-generation/self-build items remain open. The native build surfaced and fixed three stage 0 defects:
+front end whose `tokens`/`parse`/`check` output matches the interpreter. The
+`conformance` CI job now runs the bootstrap suite beside the pinned-spec
+runner. Gate 5 and the code-generation/self-build items remain open. The native build surfaced and fixed three stage 0 defects:
 unreachable IR after a terminating block, pointer-based `string` equality in
 the compiled path, and user methods named like string members being dispatched
 to the built-in lowering.
@@ -656,8 +661,9 @@ to the built-in lowering.
 
 - Triage the 33 spec-conformance divergences by group with an owner and the
   gate that clears it per group (T3f). Gate 6 requires this.
-- `copy`/`move` and use-after-move checking (L21, R8) are PARTIAL and outside the
-  §2.1 subset; verify them before stage 1 relies on them.
+- `copy`/`move` and use-after-move checking (L21) is done; the remaining R8
+  gap is plain value-semantic binding, both outside the §2.1 subset; verify R8
+  before stage 1 relies on plain aggregate rebinding.
 
 Items that gate work depends on are kept in their work packages (R9c and B7 in
 WP3).
@@ -665,7 +671,8 @@ WP3).
 **Status:** T3f is done: §6.10 records the group counts, an owner component, and
 the gate that clears each group, and `readiness_matrix` checks that every owner
 path exists, and T3c's local `// runs:` cases keep the executable path covered.
-L21 and R8 remain open and non-gating.
+L21 is done; R8 remains open and non-gating because plain value-semantic
+binding still aliases.
 
 ## 8. Non-goals for stage 1 bootstrap
 
@@ -729,7 +736,7 @@ Last recorded verification (2026-11-17):
 | `cargo test --workspace` | 2107 passed, 0 failed |
 | Examples (CI job) | Configured to run every `examples/*.xulo`; `async_tasks` uses `u64` sleep input |
 | AOT smoke tests | `hello` on macOS/Windows; `structs`, `trait_shapes`, `generics`, `modules` probed locally |
-| AOT differential suite | 24 examples compare byte for byte; 1 known gap (`async_tasks`) in `crates/xupm/tests/aot_differential_baseline.tsv` |
+| AOT differential suite | 29 examples compare byte for byte; 1 shared gap (`async_tasks`) in `crates/xupm/tests/aot_differential_baseline.tsv`, plus `ffi.xulo` on Windows in `crates/xupm/tests/aot_differential_baseline.windows.tsv` |
 | AOT build failure | `xupm build` exits nonzero and reports the diagnostic (`crates/xupm/tests/cli.rs`) |
 | Stage 1 smoke tests | `cargo test -p xulo-cli --test stage1` — 7 passed; self-parses `xuloc/*.xulo`, clean diagnostics, `xulo test` |
 | Stage 1 under `xupm test` | `cargo test -p xupm --test cli runs_stage1_test_file` — 10 stage 1 tests passed |

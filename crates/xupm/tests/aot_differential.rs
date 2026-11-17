@@ -11,7 +11,9 @@
 //! Examples that still lack AOT lowering are listed in
 //! `tests/aot_differential_baseline.tsv`. A baseline entry must keep failing
 //! to build; once it starts building, the runner fails until the entry is
-//! removed, so the list cannot silently rot.
+//! removed, so the list cannot silently rot. Windows adds
+//! `tests/aot_differential_baseline.windows.tsv` for platform-only gaps; it is
+//! ignored on Unix.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -27,11 +29,9 @@ fn workspace_root() -> PathBuf {
     manifest_dir().join("../..")
 }
 
-fn baseline() -> BTreeMap<String, String> {
-    let path = manifest_dir().join("tests/aot_differential_baseline.tsv");
-    let text = std::fs::read_to_string(&path)
+fn read_baseline(path: &Path, entries: &mut BTreeMap<String, String>) {
+    let text = std::fs::read_to_string(path)
         .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
-    let mut entries = BTreeMap::new();
     for (index, line) in text.lines().enumerate() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -46,7 +46,39 @@ fn baseline() -> BTreeMap<String, String> {
         };
         entries.insert(name.trim().to_string(), reason.trim().to_string());
     }
+}
+
+/// The examples that cannot be compared on this host. The shared baseline is
+/// loaded everywhere; `aot_differential_baseline.windows.tsv` adds the platform
+/// gaps and is ignored on Unix, where those examples are compared normally.
+fn baseline() -> BTreeMap<String, String> {
+    let mut entries = BTreeMap::new();
+    read_baseline(
+        &manifest_dir().join("tests/aot_differential_baseline.tsv"),
+        &mut entries,
+    );
+    if cfg!(target_os = "windows") {
+        read_baseline(
+            &manifest_dir().join("tests/aot_differential_baseline.windows.tsv"),
+            &mut entries,
+        );
+    }
     entries
+}
+
+/// Every platform baseline names an example that exists, even when the current
+/// host does not apply it. A rename cannot silently leave a dead entry behind.
+fn assert_platform_baseline_names_exist(root: &Path) {
+    let path = manifest_dir().join("tests/aot_differential_baseline.windows.tsv");
+    let mut entries = BTreeMap::new();
+    read_baseline(&path, &mut entries);
+    for name in entries.keys() {
+        assert!(
+            root.join("examples").join(name).is_file(),
+            "{} names `{name}`, which is not an example",
+            path.display()
+        );
+    }
 }
 
 fn run(args: &[&str], cwd: &Path) -> Output {
@@ -94,6 +126,7 @@ fn aot_matches_interpreter_on_examples() {
     }
 
     let root = workspace_root();
+    assert_platform_baseline_names_exist(&root);
     let examples_dir = root.join("examples");
     let mut examples: Vec<PathBuf> = std::fs::read_dir(&examples_dir)
         .unwrap_or_else(|e| panic!("cannot read {}: {e}", examples_dir.display()))
@@ -160,7 +193,7 @@ fn aot_matches_interpreter_on_examples() {
         }
         assert!(
             known_failure.is_none(),
-            "{name} now matches; remove it from tests/aot_differential_baseline.tsv"
+            "{name} now matches; remove it from the active AOT differential baseline"
         );
         compared += 1;
     }

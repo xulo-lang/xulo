@@ -62,6 +62,8 @@ pub enum RuntimeFn {
     StringEqual,
     /// 结构相等：按标签递归比较列表/对象/枚举/集合
     ValueEqual,
+    /// `copy e`：按标签递归复制列表/对象/枚举/集合的内容
+    ValueCopy,
     /// `Array::filled<T, N>(value)`：N 个同值元素的新列表
     ArrayFilled,
     /// `std::http` 的服务器与 Request/Response 数据类型
@@ -183,6 +185,8 @@ pub enum RuntimeFn {
     StringBuilderByteLen,
     /// 两个 builder 的当前文本相等（内容判等）
     StringBuilderEq,
+    /// 独立复制 builder：新句柄持有相同文本，后续 append/clear 互不影响
+    StringBuilderCopy,
     /// match 字面量 pattern 判定（返回 1/0）
     LiteralMatch,
     /// 区间表达式 `0..<3` / `1..=4` 求值为列表

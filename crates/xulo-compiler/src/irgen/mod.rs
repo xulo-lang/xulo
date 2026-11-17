@@ -804,6 +804,14 @@ impl IrGenerator {
                 }
                 None
             }
+            // `move`/`copy` yield the operand's value, so the source type is
+            // unchanged. Keeping it lets `copy builder`/`copy xs` dispatch
+            // their members through the static type.
+            Expression::Unary(unop)
+                if matches!(unop.operator, UnaryOperator::Move | UnaryOperator::Copy) =>
+            {
+                self.infer_source_type_from_expr(&unop.operand)
+            }
             Expression::Tuple { items, .. } => {
                 let types = items
                     .iter()

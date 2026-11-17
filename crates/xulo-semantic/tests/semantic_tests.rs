@@ -4086,6 +4086,43 @@ fn move_outside_let_argument_or_return_is_e0403() {
 }
 
 #[test]
+fn copy_outside_let_argument_or_return_is_e0403() {
+    let src = r#"
+        fn main() {
+            let xs = [1]
+            if copy xs == xs {
+                print("same")
+            }
+        }
+    "#;
+    let err = analyze_src(src).unwrap_err();
+    assert_eq!(err.code(), "E0403");
+    assert!(err.message.contains("`copy` is only allowed"));
+}
+
+#[test]
+fn copy_in_let_argument_and_return_positions_is_legal() {
+    let src = r#"
+        fn consume(items: List<number>) {
+            print(items)
+        }
+        fn pick(): List<number> {
+            let a = [1]
+            return copy a
+        }
+        fn main() {
+            let items = [1, 2]
+            consume(copy items)
+            let b = pick()
+            let c = copy items
+            print(c)
+            print(b)
+        }
+    "#;
+    assert!(analyze_src(src).is_ok());
+}
+
+#[test]
 fn move_in_let_argument_and_return_positions_is_legal() {
     let src = r#"
         fn consume(items: List<number>) {
@@ -6891,7 +6928,9 @@ fn fs_expansion_glob_face_is_the_twenty_four() {
             exists("a")
             realpath("a")
             stat("a")
-            copy("a", "b")
+            // `copy` is a prefix operator (spec `memory-and-runtime.md`), so
+            // the glob-visible face must be called through its module path.
+            std::fs::copy("a", "b")
             rename("a", "b")
             remove("a")
             mkdir("d")

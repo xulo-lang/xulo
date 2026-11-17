@@ -162,6 +162,67 @@ fn move_and_copy_are_value_aliases() {
     assert_eq!(out, vec!["11", "6"]);
 }
 
+/// `copy` deep-copies reference values (spec `memory-and-runtime.md`,
+/// "Ownership with `copy`"). `move` keeps the operand's slot, including the
+/// F64 slot a copied `float` needs; before R8's fix the compiled path aliased
+/// lists, maps, sets, and builders, and a copied float panicked in codegen.
+#[test]
+fn copy_detaches_reference_values_and_keeps_float_slots() {
+    let out = compile_and_run(
+        r#"
+        enum Holder { Holder(List<number>) }
+
+        fn main() {
+            let xs = [1, 2, 3]
+            let ys = copy xs
+            let mut zs = ys
+            zs[0] = 9
+            print(xs[0])
+            print(ys[0])
+            print(zs[0])
+
+            let base = { a: 1, inner: [1, 2] }
+            let mut dup = copy base
+            dup.a = 5
+            dup.inner[0] = 7
+            print(base.a)
+            print(dup.a)
+            print(base.inner[0])
+            print(dup.inner[0])
+
+            let mut builder = StringBuilder::new()
+            builder.append("x")
+            let mut detached = copy builder
+            detached.append("y")
+            print(builder.build())
+            print(detached.build())
+
+            let set = Set::from_list([1, 2, 2])
+            let mut set_copy = copy set
+            set_copy.insert(3)
+            print(set.size)
+            print(set_copy.size)
+
+            let h = Holder::Holder([1])
+            let mut h2 = copy h
+            match h2 { Holder::Holder(items) => { let mut owned = items; owned[0] = 8 } }
+            match h { Holder::Holder(items) => { print(items[0]) } }
+            match h2 { Holder::Holder(items) => { print(items[0]) } }
+
+            let f = 1.5
+            let g = copy f
+            print(g)
+        }
+        "#,
+    );
+    assert_eq!(
+        out,
+        vec![
+            "1", "9", "9", "1", "5", "1", "7", "x", "xy", "2", "3", "1", "8", "1.5",
+        ]
+    );
+}
+
 // ── 循环控制 ──────────────────────────────────────────────────────────────
 
 #[test]

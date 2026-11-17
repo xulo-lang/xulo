@@ -253,21 +253,82 @@ pub(super) fn value_is_named_type(value: &Value, type_name: &str) -> bool {
     }
 }
 
-/// Deep-copy mutable containers so `copy x` detaches from the original.
+/// Deep-copy mutable containers so `copy x` detaches from the original
+/// (spec `memory-and-runtime.md`, "Ownership with `copy`"). Lists, maps, sets,
+/// structs, enums, tuples, and builders are duplicated; strings are immutable
+/// and identity-carrying values keep their identity. The visited map mirrors a
+/// cycle into the copy instead of recursing forever.
 pub(super) fn deep_copy_value(value: &Value) -> Value {
+    deep_copy_value_inner(value, &mut std::collections::HashMap::new())
+}
+
+fn deep_copy_value_inner(
+    value: &Value,
+    seen: &mut std::collections::HashMap<usize, Value>,
+) -> Value {
     match value {
         Value::List(list) => {
-            let items: Vec<Value> = list.borrow().iter().map(deep_copy_value).collect();
-            Value::List(Rc::new(RefCell::new(items)))
+            let key = Rc::as_ptr(list) as usize;
+            if let Some(copy) = seen.get(&key) {
+                return copy.clone();
+            }
+            let copy = Value::List(Rc::new(RefCell::new(Vec::new())));
+            seen.insert(key, copy.clone());
+            let items: Vec<Value> = list
+                .borrow()
+                .iter()
+                .map(|item| deep_copy_value_inner(item, seen))
+                .collect();
+            if let Value::List(out) = &copy {
+                *out.borrow_mut() = items;
+            }
+            copy
+        }
+        Value::Set(set) => {
+            let key = Rc::as_ptr(set) as usize;
+            if let Some(copy) = seen.get(&key) {
+                return copy.clone();
+            }
+            let copy = Value::Set(Rc::new(RefCell::new(Vec::new())));
+            seen.insert(key, copy.clone());
+            let items: Vec<Value> = set
+                .borrow()
+                .iter()
+                .map(|item| deep_copy_value_inner(item, seen))
+                .collect();
+            if let Value::Set(out) = &copy {
+                *out.borrow_mut() = items;
+            }
+            copy
         }
         Value::Object(fields) => {
+            let key = Rc::as_ptr(fields) as usize;
+            if let Some(copy) = seen.get(&key) {
+                return copy.clone();
+            }
+            let copy = Value::Object(Rc::new(RefCell::new(Vec::new())));
+            seen.insert(key, copy.clone());
             let items: Vec<(String, Value)> = fields
                 .borrow()
                 .iter()
-                .map(|(k, v)| (k.clone(), deep_copy_value(v)))
+                .map(|(k, v)| (k.clone(), deep_copy_value_inner(v, seen)))
                 .collect();
-            Value::Object(Rc::new(RefCell::new(items)))
+            if let Value::Object(out) = &copy {
+                *out.borrow_mut() = items;
+            }
+            copy
         }
+        Value::Enum {
+            enum_name,
+            tag,
+            payload,
+        } => Value::Enum {
+            enum_name: enum_name.clone(),
+            tag: tag.clone(),
+            payload: payload
+                .as_ref()
+                .map(|inner| Box::new(deep_copy_value_inner(inner, seen))),
+        },
         Value::StringBuilder(builder) => {
             Value::StringBuilder(Rc::new(RefCell::new(builder.borrow().clone())))
         }

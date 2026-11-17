@@ -399,6 +399,23 @@ pub extern "C" fn xulo_string_builder_new() -> i64 {
     ptr as i64
 }
 
+/// `copy builder` (spec `memory-and-runtime.md`, "Ownership with `copy`"):
+/// a fresh builder holding the same text, so appending to one never reaches
+/// the other.
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_string_builder_copy(handle: i64) -> i64 {
+    if handle == 0 {
+        return 0;
+    }
+    let source = unsafe { &*builder(handle) };
+    let copy = xulo_string_builder_new();
+    unsafe {
+        let target = &mut *builder(copy);
+        target.push_bytes(source.as_slice(), source.scalars);
+    }
+    copy
+}
+
 /// `builder.append(text)`：把文本追加到 builder（返回 `unit`，值忽略）。
 ///
 /// 一次扫描同时完成 NUL 查找和标量计数。xulo 的字符串都由 `String` /

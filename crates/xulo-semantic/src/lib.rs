@@ -9855,7 +9855,17 @@ impl Analyzer {
                 self.moved.insert(name, un.operand.span().clone());
                 Ok(operand)
             }
-            xulo_core::ast::UnaryOperator::Copy => Ok(operand),
+            xulo_core::ast::UnaryOperator::Copy => {
+                // `copy` appears in the same three positions as `move`
+                // (spec `memory-and-runtime.md`, "Ownership with `copy`").
+                if !move_pos {
+                    return Err(self.err_code(
+                        "E0403",
+                        "`copy` is only allowed in a `let` initializer, an argument, or a `return`",
+                    ));
+                }
+                Ok(operand)
+            }
         }
     }
 

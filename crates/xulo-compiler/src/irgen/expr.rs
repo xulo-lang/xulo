@@ -936,7 +936,9 @@ impl IrGenerator {
                     IrType::I64
                 }
             }
-            UnaryOperator::Move | UnaryOperator::Copy => IrType::Pointer,
+            // `move`/`copy` keep the operand's slot: a copied `float` stays an
+            // F64 slot and a copied list/struct stays a pointer.
+            UnaryOperator::Move | UnaryOperator::Copy => self.operand_slot_type(&operand),
         };
 
         // Unary minus on an integer is checked as well (`-i64::MIN` traps;
@@ -950,6 +952,52 @@ impl IrGenerator {
                     dst: Some(local),
                     func: RuntimeFn::IntNeg,
                     args: vec![operand, Operand::Const(IrValue::I64(i64::from(unsigned)))],
+                });
+            return Ok(Operand::Local(local));
+        }
+
+        // `copy` duplicates the value (spec `memory-and-runtime.md`,
+        // "Ownership with `copy`"): lists, maps, sets, structs, enums, tuples,
+        // and builders get independent storage, while identity-carrying values
+        // keep their identity.
+        if matches!(unary.operator, UnaryOperator::Copy) {
+            // A float slot already holds the value; `copy` is an identity and
+            // must not round-trip through the i64 ABI slot (that would either
+            // numerically convert the bits or need an explicit bitcast).
+            if matches!(ty, IrType::F64) {
+                let local = self.module.functions[func_idx].add_local(ty);
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::GetLocal {
+                        dst: local,
+                        src: match operand {
+                            Operand::Local(id) => id,
+                            other => {
+                                self.module.functions[func_idx].instructions.push(
+                                    Instruction::SetLocal {
+                                        dst: local,
+                                        src: other,
+                                    },
+                                );
+                                return Ok(Operand::Local(local));
+                            }
+                        },
+                    });
+                return Ok(Operand::Local(local));
+            }
+            let local = self.module.functions[func_idx].add_local(ty);
+            let (func, args) = if self.expr_is_string_builder(&unary.operand) {
+                (RuntimeFn::StringBuilderCopy, vec![operand.clone()])
+            } else {
+                let tag = self.tag_operand_for(&unary.operand, &operand);
+                (RuntimeFn::ValueCopy, vec![operand.clone(), tag])
+            };
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::RuntimeCall {
+                    dst: Some(local),
+                    func,
+                    args,
                 });
             return Ok(Operand::Local(local));
         }

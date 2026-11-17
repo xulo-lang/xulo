@@ -46,11 +46,22 @@ jobs:
       - name: Build release binary
         run: cargo build --release --workspace
 
-      - name: AOT differential examples (Linux)
-        if: runner.os == 'Linux'
+      - name: AOT differential examples (Linux and macOS)
+        if: runner.os != 'Windows'
         env:
           XULO_AOT_DIFFERENTIAL: "1"
           XULO_RUNTIME_LIB: ${{ github.workspace }}/target/release/libxulo_runtime.a
+        run: cargo test -p xupm --test aot_differential -- --nocapture
+
+      # WP3/B7: the same differential on Windows. `tests/aot_differential_baseline.windows.tsv`
+      # records the examples the platform cannot run (`extern "C"` FFI, S8); it
+      # is ignored on Unix, where those examples are compared normally.
+      - name: AOT differential examples (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          XULO_AOT_DIFFERENTIAL: "1"
+          XULO_RUNTIME_LIB: ${{ github.workspace }}\target\release\xulo_runtime.lib
         run: cargo test -p xupm --test aot_differential -- --nocapture
 
       - name: AOT smoke test (macOS)
@@ -91,6 +102,14 @@ jobs:
       # crates/xulo-cli/tests/spec_conformance_baseline.tsv.
       - name: Pinned spec examples conform
         run: cargo test -p xulo-cli --test spec_conformance -- --nocapture
+
+      # WP6: stage 1's bootstrap suite runs beside the conformance runner, so
+      # the self-host corpus is a conformance gate and not only a workspace
+      # test. `runs_stage1_test_file` covers `xupm test` on `xuloc/tests.xulo`.
+      - name: Stage 1 bootstrap suite
+        run: |
+          cargo test -p xulo-cli --test stage1 -- --nocapture
+          cargo test -p xupm --test cli runs_stage1_test_file -- --nocapture
 
   examples:
     name: Run examples

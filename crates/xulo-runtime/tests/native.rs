@@ -176,6 +176,61 @@ fn string_builder_lengths_clear_output_and_reference_semantics() {
     assert_eq!(out, vec!["5", "6", "héllo", "0", "true", "xy", "xy", "xyz"]);
 }
 
+/// R8: `copy` deep-copies every reference-carrying value, not only lists and
+/// objects (spec `memory-and-runtime.md`, "Ownership with `copy`"). The
+/// interpreter used to share `Set` and enum payloads and to skip cycle
+/// bookkeeping.
+#[test]
+fn copy_detaches_sets_enums_and_nested_containers() {
+    let out = run_ok(
+        r#"
+        enum Holder { Holder(List<number>) }
+
+        fn main() {
+            let xs = [1, 2, 3]
+            let ys = copy xs
+            let mut zs = ys
+            zs[0] = 9
+            print(xs[0])
+            print(ys[0])
+
+            let base = { a: 1, inner: [1, 2] }
+            let mut dup = copy base
+            dup.inner[0] = 7
+            print(base.inner[0])
+            print(dup.inner[0])
+
+            let set = Set::from_list([1, 2, 2])
+            let mut set_copy = copy set
+            set_copy.insert(3)
+            print(set.size)
+            print(set_copy.size)
+
+            let h = Holder::Holder([1])
+            let mut h2 = copy h
+            match h2 { Holder::Holder(items) => { let mut owned = items; owned[0] = 8 } }
+            match h { Holder::Holder(items) => { print(items[0]) } }
+            match h2 { Holder::Holder(items) => { print(items[0]) } }
+
+            let mut builder = StringBuilder::new()
+            builder.append("x")
+            let mut detached = copy builder
+            detached.append("y")
+            print(builder.build())
+            print(detached.build())
+
+            let f = 1.5
+            let g = copy f
+            print(g)
+        }
+        "#,
+    );
+    assert_eq!(
+        out,
+        vec!["1", "9", "1", "7", "2", "3", "1", "8", "x", "xy", "1.5"]
+    );
+}
+
 #[test]
 fn string_concat_and_print() {
     assert_eq!(
