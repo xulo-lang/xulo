@@ -88,7 +88,7 @@ pub fn link_executable(obj_path: &Path, exe_path: &Path, strip_all: bool) -> Res
     let runtime_lib = runtime_library_path()?;
     let mut cmd = linker_command();
     configure_linker(&mut cmd, obj_path, exe_path, &runtime_lib, strip_all);
-    let status = cmd.status().map_err(|e| {
+    let output = cmd.output().map_err(|e| {
         XuloError::new(
             ErrorKind::Codegen,
             format!(
@@ -98,10 +98,22 @@ pub fn link_executable(obj_path: &Path, exe_path: &Path, strip_all: bool) -> Res
             ),
         )
     })?;
-    if !status.success() {
+    if !output.status.success() {
+        // `link.exe` writes its LNK diagnostics to stdout, GNU ld to stderr, and
+        // a bare exit code says nothing about which symbol or library is
+        // missing. Keep both streams in the diagnostic instead of discarding
+        // them, so a failed AOT build on any host is actionable.
+        let mut detail = String::new();
+        for (label, stream) in [("stdout", &output.stdout), ("stderr", &output.stderr)] {
+            let text = String::from_utf8_lossy(stream);
+            let text = text.trim();
+            if !text.is_empty() {
+                detail.push_str(&format!("\n{label}:\n{text}"));
+            }
+        }
         return Err(XuloError::new(
             ErrorKind::Codegen,
-            format!("linker failed with status: {}", status),
+            format!("linker failed with status: {}{detail}", output.status),
         ));
     }
     Ok(())
@@ -191,7 +203,21 @@ fn configure_linker(
         .arg("/OPT:ICF")
         .arg(format!("/OUT:{}", exe_path.display()))
         .arg(obj_path)
-        .arg(runtime_lib);
+        .arg(runtime_lib)
+        // A Rust staticlib does not carry the platform libraries its std
+        // depends on into a plain `link.exe` invocation, unlike `cc` on Unix
+        // (which supplies libc/pthread/libm implicitly). This is the set
+        // `rustc --print native-static-libs` reports for the runtime archive
+        // (`windows.0.52.0.lib` is omitted: its imports already resolve
+        // through kernel32/ntdll, and the archive lives only in the build
+        // host's Cargo registry, not in a shipped runtime).
+        .arg("kernel32.lib")
+        .arg("ntdll.lib")
+        .arg("userenv.lib")
+        .arg("ws2_32.lib")
+        .arg("dbghelp.lib")
+        // Same dynamic CRT rustc selects for an ordinary MSVC binary.
+        .arg("/DEFAULTLIB:msvcrt");
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
