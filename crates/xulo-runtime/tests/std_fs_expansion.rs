@@ -33,7 +33,9 @@ fn scratch(label: &str) -> PathBuf {
 }
 
 fn p(path: &Path) -> String {
-    path.to_string_lossy().into_owned()
+    path.to_string_lossy()
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
 }
 
 #[test]
