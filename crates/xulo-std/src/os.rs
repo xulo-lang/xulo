@@ -123,15 +123,18 @@ pub fn home_dir() -> Result<String, String> {
 }
 
 /// `Os::host_name()`: the machine's name, or `Err` when the host will not say.
+#[cfg(windows)]
 pub fn host_name() -> Result<String, String> {
-    if cfg!(windows) {
-        match env::var_os("COMPUTERNAME") {
-            Some(value) if !value.is_empty() => Ok(value.to_string_lossy().into_owned()),
-            _ => Err("cannot determine the host name".to_string()),
-        }
-    } else {
-        unix_host_name().ok_or_else(|| "cannot determine the host name".to_string())
+    match env::var_os("COMPUTERNAME") {
+        Some(value) if !value.is_empty() => Ok(value.to_string_lossy().into_owned()),
+        _ => Err("cannot determine the host name".to_string()),
     }
+}
+
+/// `Os::host_name()`: the machine's name, or `Err` when the host will not say.
+#[cfg(not(windows))]
+pub fn host_name() -> Result<String, String> {
+    unix_host_name().ok_or_else(|| "cannot determine the host name".to_string())
 }
 
 #[cfg(not(windows))]
