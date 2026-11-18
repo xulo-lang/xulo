@@ -352,10 +352,13 @@ After WP1–WP5 · needed by Gate 4/5/6 · source: `stage1-readiness.md` §7 WP6
       goldens, and the reject corpus still fails with a coded diagnostic
       (`crates/xupm/tests/stage1_build.rs::stage1_compiles_the_bootstrap_corpus`).
 - [x] **B8a** Build stage 1 with stage 0's `xupm`.
+      `xuloc/` is an `xupm` package (`xuloc/xupm.toml`, entry `main.xulo`), so
       `xupm build xuloc/main.xulo --release` produces
-      `xuloc/.xupm/build/main`; the native binary matches the interpreter for
+      `xuloc/.xupm/build/xuloc`; the native binary matches the interpreter for
       `tokens`/`parse` on `examples/fibonacci.xulo` and `parse` on
       `xuloc/main.xulo`. The opt-in differential test rejects output drift.
+      `crates/xupm/tests/cli.rs::xuloc_is_a_package_project` keeps the manifest
+      and the no-file-argument check path working.
 - [x] Stage 1 builds itself, producing a stage 2 binary.
       `crates/xupm/tests/stage1_build.rs::stage1_builds_itself_into_stage2`.
 - [x] **T5c** Compare stage 1 and stage 2 output on the bootstrap suite.
@@ -451,6 +454,10 @@ These are deliberately not tracked here. They remain P2 in
 
 - Update this file whenever a task changes state; keep `stage1-readiness.md`
   in sync in the same change.
+- Semantic drift between the execution engines, the stage-comparison invariants
+  (I1–I4), and the deviation ledger are governed by
+  [`drift-governance.md`](drift-governance.md). Update its ledger in the same
+  change that fixes or introduces a divergence.
 - At each gate review, record the date, the stage 1 commit, the stage 0 commit,
   and the pinned spec commits.
 - If the bootstrap subset changes, update the affected tasks and the matching

@@ -13,7 +13,6 @@ pub const DEFAULT_ENTRY: &str = "main.xulo";
 pub struct Manifest {
     pub name: String,
     pub version: String,
-    pub edition: String,
     pub entry: PathBuf,
     /// `[workspace].members`, or `None` when this is not a workspace root.
     pub workspace_members: Option<Vec<String>>,
@@ -137,7 +136,6 @@ fn read_manifest(path: &Path, root: &Path) -> Result<Manifest, String> {
     Ok(Manifest {
         name: field("name").unwrap_or(default_name),
         version: field("version").unwrap_or_else(|| "0.1.0".to_string()),
-        edition: field("edition").unwrap_or_else(|| "2024".to_string()),
         entry: PathBuf::from(field("entry").unwrap_or_else(|| DEFAULT_ENTRY.to_string())),
         workspace_members,
         has_package: package.is_some(),

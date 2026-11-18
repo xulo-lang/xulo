@@ -10,6 +10,7 @@ front end; WP6 closes the self-host loop (Gates 5–6).
 
 | File | Role |
 |------|------|
+| `xuloc/xupm.toml` | `xupm` package manifest: name `xuloc`, entry `main.xulo`, artifact `xuloc/.xupm/build/xuloc` |
 | `xuloc/ast.xulo` | One generic `Node` shape plus the stable tree renderer |
 | `xuloc/lexer.xulo` | UTF-8 scalar scanner: tokens, spans, line/column, comments, literals, operators |
 | `xuloc/parser.xulo` | Recursive-descent parser: headers, declarations, statements, expressions, patterns, types |
@@ -84,16 +85,23 @@ Every Xulo value becomes an `XVal` tagged value, so the backend does not need
 type information; structs and enums are field tables, and methods go through a
 runtime registry. The generated `main` calls the program's `main`, if any.
 
+`xuloc/` is an ordinary `xupm` package. `xupm` discovers `xuloc/xupm.toml`,
+uses `main.xulo` as the entry, and names the artifact after the package
+(`xuloc/.xupm/build/xuloc`), so stage 1 builds and tests also work without a
+file argument.
+
 To bootstrap:
 
 ```bash
 # stage 0 builds the native stage 1 compiler
 XULO_RUNTIME_LIB="$PWD/target/release/libxulo_runtime.a" \
   target/release/xupm build xuloc/main.xulo --release
+# from inside the package the entry comes from the manifest:
+#   cd xuloc && xupm build --release
 
 # stage 1 compiles itself into stage 2 (it picks the host C compiler)
 XULO_STAGE1_OUT=xuloc/.xupm/build/stage2 \
-  xuloc/.xupm/build/main build xuloc/main.xulo
+  xuloc/.xupm/build/xuloc build xuloc/main.xulo
 ```
 
 `crates/xupm/tests/stage1_build.rs` automates the whole loop: the accept corpus,

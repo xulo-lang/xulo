@@ -302,7 +302,7 @@ fn new_project(path: &Path) -> Result<ExitCode, String> {
         .ok_or_else(|| format!("invalid package path `{}`", path.display()))?;
     std::fs::create_dir_all(path).map_err(|e| format!("cannot create {}: {e}", path.display()))?;
     let manifest = format!(
-        "[package]\nname = \"{}\"\nversion = \"0.1.0\"\nedition = \"2024\"\nentry = \"main.xulo\"\n",
+        "[package]\nname = \"{}\"\nversion = \"0.1.0\"\nentry = \"main.xulo\"\n",
         toml_escape(name)
     );
     write(&path.join(manifest::MANIFEST_FILE), &manifest)?;

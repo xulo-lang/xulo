@@ -1,0 +1,4 @@
+[package]
+name = "xuloc"
+version = "0.1.0"
+entry = "main.xulo"

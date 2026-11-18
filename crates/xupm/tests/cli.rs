@@ -75,6 +75,12 @@ fn new_creates_a_manifest_and_entry() {
     let manifest = std::fs::read_to_string(project.join("xupm.toml")).unwrap();
     assert!(manifest.contains("name = \"demo\""));
     assert!(manifest.contains("entry = \"main.xulo\""));
+    // `edition` is a Rust-ism with no meaning in Xulo; the spec does not define
+    // it and xupm does not read it, so new packages must not grow the field.
+    assert!(
+        !manifest.contains("edition"),
+        "a Xulo package manifest should not declare an edition:\n{manifest}"
+    );
     assert!(project.join("main.xulo").is_file());
 }
 
@@ -325,6 +331,43 @@ fn explicit_file_cannot_be_combined_with_a_package() {
         String::from_utf8_lossy(&out.stderr).contains("cannot be combined"),
         "stderr: {}",
         String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// WP5: the stage 1 compiler is an ordinary `xupm` package, so xupm discovers
+/// its manifest and entry without a file argument. Without `xuloc/xupm.toml`
+/// every stage 1 build silently fell back to single-file mode.
+#[test]
+fn xuloc_is_a_package_project() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("crates/xupm has a repository parent")
+        .to_path_buf();
+    let xuloc = root.join("xuloc");
+    let manifest =
+        std::fs::read_to_string(xuloc.join("xupm.toml")).expect("xuloc should have a manifest");
+    assert!(
+        manifest.contains("name = \"xuloc\""),
+        "xuloc manifest should name the package:\n{manifest}"
+    );
+    assert!(
+        manifest.contains("entry = \"main.xulo\""),
+        "xuloc manifest should declare its entry module:\n{manifest}"
+    );
+
+    // The manifest, not a file argument, locates the entry.
+    let out = run(&["check"], &xuloc);
+    assert!(
+        out.status.success(),
+        "xupm check should use the xuloc package:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("no errors"),
+        "xupm check should type-check the package entry:\n{}",
+        String::from_utf8_lossy(&out.stdout)
     );
 }
 
