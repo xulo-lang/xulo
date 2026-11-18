@@ -482,6 +482,137 @@ fn stage1_build_is_reproducible() {
     assert!(stage3.is_file(), "the stage 3 binary should exist");
 }
 
+/// The binary path reported on the `build successful:` line.
+fn reported_build_path(output: &Output) -> PathBuf {
+    let stdout = render(&output.stdout);
+    let line = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("build successful: "))
+        .unwrap_or_else(|| panic!("xupm did not report the built binary:\n{stdout}"));
+    Path::new(line.split_once(" (backend:").map_or(line, |(path, _)| path)).to_path_buf()
+}
+
+/// drift-governance §5.3: build the compiler with an explicit stage 0 backend.
+fn build_stage1_with(backend: &str) -> PathBuf {
+    let root = repo_root();
+    let lib = runtime_lib(&root);
+    let output = Command::new(XUPM)
+        .args([
+            "build",
+            "xuloc/main.xulo",
+            "--release",
+            "--backend",
+            backend,
+        ])
+        .env("XULO_RUNTIME_LIB", &lib)
+        .current_dir(&root)
+        .output()
+        .expect("xupm build should start");
+    assert_success(&output, &format!("xupm build --backend {backend}"));
+    reported_build_path(&output)
+}
+
+/// §5.3: the two stage 0 backends must produce the same stage 1 behavior and
+/// the same emitted C. Only a binary built with the `llvm` feature can run it.
+#[test]
+fn backend_cross_check() {
+    if !enabled() {
+        return;
+    }
+    if !cfg!(feature = "llvm") {
+        eprintln!("skipping the backend cross-check: this binary was built without `llvm`");
+        return;
+    }
+    let root = repo_root();
+    let work = unique_dir("backend");
+    // Both builds write `.xupm/build/xuloc`, so keep the first one aside.
+    let llvm_stage1 = {
+        let built = build_stage1_with("llvm");
+        let copy = work.join(format!("stage1_llvm{}", exe_suffix()));
+        std::fs::copy(&built, &copy).expect("copy the llvm stage 1 binary");
+        copy
+    };
+    let cranelift_stage1 = build_stage1_with("cranelift");
+
+    for file in stage1_sources(&root) {
+        let case = relative_case(&root, &file);
+        for command in ["tokens", "parse"] {
+            let left = observe(&llvm_stage1, &root, command, Path::new(&case), None, None);
+            let right = observe(
+                &cranelift_stage1,
+                &root,
+                command,
+                Path::new(&case),
+                None,
+                None,
+            );
+            assert_eq!(
+                left, right,
+                "the stage 0 backends disagree on {case} ({command})"
+            );
+        }
+    }
+
+    let c_path = work.join("cross.c");
+    let binary_path = work.join(format!("cross{}", exe_suffix()));
+    for file in accept_corpus(&root).into_iter().chain(reject_corpus(&root)) {
+        let case = relative_case(&root, &file);
+        let left = observe(&llvm_stage1, &root, "check", Path::new(&case), None, None);
+        let right = observe(
+            &cranelift_stage1,
+            &root,
+            "check",
+            Path::new(&case),
+            None,
+            None,
+        );
+        assert_eq!(
+            left, right,
+            "the stage 0 backends disagree on {case} (check)"
+        );
+    }
+
+    for file in accept_corpus(&root) {
+        let case = relative_case(&root, &file);
+        let case_path = Path::new(&case);
+        let left = observe(
+            &llvm_stage1,
+            &root,
+            "build",
+            case_path,
+            Some(&c_path),
+            Some(&binary_path),
+        );
+        let llvm_run = std::fs::metadata(&binary_path)
+            .ok()
+            .filter(|_| left.exit == Some(0))
+            .map(|_| run_program(&binary_path));
+        let right = observe(
+            &cranelift_stage1,
+            &root,
+            "build",
+            case_path,
+            Some(&c_path),
+            Some(&binary_path),
+        );
+        let cranelift_run = std::fs::metadata(&binary_path)
+            .ok()
+            .filter(|_| right.exit == Some(0))
+            .map(|_| run_program(&binary_path));
+        assert_eq!(
+            left, right,
+            "the stage 0 backends disagree on {case} (build)"
+        );
+        if let (Some(left_run), Some(right_run)) = (llvm_run, cranelift_run) {
+            assert_eq!(
+                render_lines(&left_run.stdout),
+                render_lines(&right_run.stdout),
+                "the stage 0 backends produced differently behaving programs for {case}"
+            );
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // drift-governance §5.4: the stage 0 / stage 1 differential gate
 // ---------------------------------------------------------------------------

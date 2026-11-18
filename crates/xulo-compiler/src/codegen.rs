@@ -219,8 +219,16 @@ impl CodeGen {
 
     /// 指定后端模式
     pub fn with_mode(mode: BackendMode) -> Result<Self, XuloError> {
+        Self::with_mode_and_optimization(mode, false)
+    }
+
+    /// 指定后端模式与优化级别（AOT 的 release 档传入 `true`）
+    pub fn with_mode_and_optimization(
+        mode: BackendMode,
+        optimize: bool,
+    ) -> Result<Self, XuloError> {
         Ok(CodeGen {
-            backend: CompilerModule::new(mode)?,
+            backend: CompilerModule::with_optimization(mode, optimize)?,
             builder_ctx: FunctionBuilderContext::new(),
             runtime_func_ids: HashMap::new(),
             runtime_sigs: HashMap::new(),

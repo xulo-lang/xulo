@@ -432,6 +432,20 @@ re-scoped before the gate it informs.
       `crates/xulo-runtime/tests/value_semantics.rs` and
       `crates/xulo-compiler/tests/aot_syntax_coverage_tests.rs::bindings_copy_value_aggregates_and_share_references`.
 
+- [ ] **P1 — Aggregate `const` initializers are re-evaluated at every reference
+      in AOT.** `IrGenerator::generate_const_ref` inlines the initializer
+      expression at each use, so every read of a `const List<...>` allocates a
+      fresh array and re-interns its elements. `xuloc`'s `is_keyword` scans
+      `const KEYWORDS: List<string>` (80 entries) once per identifier token and
+      `MULTI_OPS` once per operator token, which makes stage 1's `tokens` mode
+      super-linear: 22 KB of `let x = 1` lines takes 85 s, 44 KB takes 339 s,
+      against 0.5 s for the C backend and 11 s for the interpreter on the same
+      input. Disabling the `is_keyword` call in a scratch copy halves the time,
+      which isolates the effect. A fix materializes each aggregate `const` once
+      (global initialized before `main`, or a per-module lazy guard) instead of
+      inlining it; scalar constants can keep the current inlining. This is a
+      performance defect, not a semantic one, so it does not gate §5.4.
+
 **Verify:** `cargo test -p xulo-cli --test readiness_matrix` (T3f owner
 components), `cargo test -p xulo-cli --test spec_conformance -- --nocapture`
 (T3c), `cargo test -p xulo-semantic --test semantic_tests` (L21), and the R8

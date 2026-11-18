@@ -9,8 +9,9 @@
   The differential gate of §5.4 lives in
   `crates/xupm/tests/stage1_build.rs::drift_gate_reconciles_stage0_and_stage1`,
   and its ledger is `DRIFT_LEDGER` in the same file. The backend cross-check of
-  §5.3 and the CI tiers of §9 are still being introduced; until they land,
-  `crates/xupm/tests/stage1_build.rs` provides partial evidence for I1–I4.
+  §5.3 is `backend_cross_check` in the same file and needs a binary built with
+  the `llvm` feature. The CI tiers of §9 are still being introduced; until they
+  land, `crates/xupm/tests/stage1_build.rs` provides partial evidence for I1–I4.
 
 This document defines how semantic drift between Xulo execution engines is
 detected, bounded, and eventually removed. It is the authoritative description
@@ -127,7 +128,9 @@ the LLVM CI job only.
 
 An explicit `--backend llvm` on a binary without the `llvm` feature **must
 fail**. It must not warn and fall back to Cranelift, because that would compare
-Cranelift with itself and silently pass.
+Cranelift with itself and silently pass. `crates/xupm/src/cli.rs` implements
+this in `select_backend`; the harness is
+`crates/xupm/tests/stage1_build.rs::backend_cross_check`.
 
 ### 5.4 Stage 0 / stage 1 differential gate
 
@@ -230,8 +233,9 @@ XULO_STAGE1_BUILD=1 cargo test -p xupm --test stage1_build drift_gate -- --nocap
 XULO_STAGE1_BUILD=1 XULO_STAGE1_STAGE2=path/to/stage2 \
   cargo test -p xupm --test stage1_build drift_gate -- --nocapture
 
-# Stage 0 backend axis (requires a binary built with `--features llvm`).
-cargo test -p xupm --test stage1_build backend_cross_check -- --nocapture
+# Stage 0 backend axis (requires a binary built with `--features llvm`;
+# otherwise the test reports that it was skipped).
+XULO_STAGE1_BUILD=1 cargo test -p xupm --test stage1_build backend_cross_check -- --nocapture
 ```
 
 ## 11. Change procedure

@@ -17,7 +17,6 @@ use cranelift::codegen::ir::types::{F64, I64, Type};
 use cranelift::codegen::ir::{FuncRef, Function, InstBuilder, Signature};
 use cranelift::codegen::isa::TargetIsa;
 use cranelift::codegen::settings;
-#[cfg(target_os = "macos")]
 use cranelift::codegen::settings::Configurable;
 use cranelift::frontend::FunctionBuilder;
 use cranelift_jit::{JITBuilder, JITModule};
@@ -1625,6 +1624,12 @@ pub struct CompilerModule {
 impl CompilerModule {
     /// 按模式创建后端模块（JIT 会把运行时函数注册成进程内符号）
     pub fn new(mode: BackendMode) -> Result<Self, XuloError> {
+        Self::with_optimization(mode, false)
+    }
+
+    /// `optimize` 选目标代码的优化级别：AOT 的 release 档必须打开，否则
+    /// Cranelift 默认 `opt_level=none`，生成的自举编译器会慢一个数量级。
+    pub fn with_optimization(mode: BackendMode, optimize: bool) -> Result<Self, XuloError> {
         let inner = match mode {
             BackendMode::Jit => {
                 let mut builder = JITBuilder::new(cranelift_module::default_libcall_names())
@@ -1646,16 +1651,22 @@ impl CompilerModule {
                         format!("failed to get ISA builder: {}", e),
                     )
                 })?;
-                let flag_builder = settings::builder();
+                let mut flag_builder = settings::builder();
+                if optimize {
+                    flag_builder.set("opt_level", "speed").map_err(|e| {
+                        XuloError::new(
+                            ErrorKind::Codegen,
+                            format!("failed to set the optimization level: {e}"),
+                        )
+                    })?;
+                }
                 // macOS links PIE by default; Cranelift must emit PIC there.
                 #[cfg(target_os = "macos")]
-                let flag_builder = {
-                    let mut builder = flag_builder;
-                    builder.set("is_pic", "true").map_err(|e| {
+                {
+                    flag_builder.set("is_pic", "true").map_err(|e| {
                         XuloError::new(ErrorKind::Codegen, format!("failed to enable PIC: {e}"))
                     })?;
-                    builder
-                };
+                }
                 let isa = isa_builder
                     .finish(settings::Flags::new(flag_builder))
                     .map_err(|e| {

@@ -52,8 +52,14 @@ pub struct AotCodeGen {
 
 impl AotCodeGen {
     pub fn new() -> Result<Self, XuloError> {
+        Self::with_optimization(false)
+    }
+
+    /// `optimize` 对应 `BuildProfile::Release`：Cranelift 的默认级别是
+    /// `none`，不打开就没有 release 语义（自举编译器会慢一个数量级）。
+    pub fn with_optimization(optimize: bool) -> Result<Self, XuloError> {
         Ok(AotCodeGen {
-            codegen: CodeGen::with_mode(BackendMode::Aot)?,
+            codegen: CodeGen::with_mode_and_optimization(BackendMode::Aot, optimize)?,
         })
     }
 
@@ -327,17 +333,17 @@ fn emit_object(
     backend: AotBackend,
     ir: &IrModule,
     obj_path: &Path,
-    _profile: BuildProfile,
+    profile: BuildProfile,
 ) -> Result<(), XuloError> {
     match backend {
         AotBackend::Cranelift => {
-            let codegen = AotCodeGen::new()?;
+            let codegen = AotCodeGen::with_optimization(matches!(profile, BuildProfile::Release))?;
             let product = codegen.compile(ir)?;
             write_object_file(&product, obj_path)
         }
         #[cfg(feature = "llvm")]
         AotBackend::Llvm => {
-            crate::llvm::emit_object(ir, obj_path, matches!(_profile, BuildProfile::Release))
+            crate::llvm::emit_object(ir, obj_path, matches!(profile, BuildProfile::Release))
         }
         #[cfg(not(feature = "llvm"))]
         AotBackend::Llvm => unreachable!("LLVM backend resolved to Cranelift without the feature"),

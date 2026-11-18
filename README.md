@@ -54,7 +54,9 @@ cargo build --release
 
 `xupm build` 通过内置 LLVM 后端生成原生可执行文件。源码构建需要 LLVM 22
 开发库；未启用 `llvm` feature 时 `xupm` 使用 Cranelift（macOS/Windows 的
-stage 0 预览版走这条路径，也可显式 `--features cranelift`）。Windows 上 AOT
+stage 0 预览版走这条路径，也可显式 `--features cranelift`）。`xupm build
+--backend cranelift|llvm` 可显式选择后端；二进制未编译 `llvm` feature 时，显式
+指定 `--backend llvm` 会直接报错，而不是静默回退到 Cranelift。Windows 上 AOT
 链接需要 MSVC 的 `link.exe`，请在 Developer PowerShell 中运行。
 
 ```bash

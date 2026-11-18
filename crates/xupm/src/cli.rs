@@ -42,6 +42,9 @@ pub enum Commands {
         /// Build with the release optimization profile
         #[arg(long = "release")]
         release: bool,
+        /// Select the AOT backend; an explicit `llvm` requires the `llvm` feature
+        #[arg(long = "backend", value_name = "llvm|cranelift")]
+        backend: Option<String>,
     },
     /// Run the project's entry module
     Run {
@@ -102,7 +105,14 @@ fn execute(command: Commands) -> Result<ExitCode, String> {
             package,
             workspace,
             release,
-        } => build(file.as_deref(), package.as_deref(), workspace, release),
+            backend,
+        } => build(
+            file.as_deref(),
+            package.as_deref(),
+            workspace,
+            release,
+            backend.as_deref(),
+        ),
         Commands::Run { file, package } => run_project(file.as_deref(), package.as_deref()),
         Commands::Test {
             file,
@@ -314,21 +324,52 @@ fn new_project(path: &Path) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
+/// Resolve the `--backend` flag. Product builds default to LLVM; hosts without
+/// static LLVM (the stage-0 macOS and Windows previews) default to Cranelift.
+///
+/// An explicit `--backend llvm` on a binary without the `llvm` feature must
+/// fail: warning and falling back would compare Cranelift with itself and pass
+/// the backend cross-check silently (docs/drift-governance.md §5.3).
+#[cfg(feature = "llvm")]
+const DEFAULT_BACKEND: AotBackend = AotBackend::Llvm;
+#[cfg(not(feature = "llvm"))]
+const DEFAULT_BACKEND: AotBackend = AotBackend::Cranelift;
+
+#[cfg(feature = "llvm")]
+fn llvm_backend() -> Result<AotBackend, String> {
+    Ok(AotBackend::Llvm)
+}
+
+#[cfg(not(feature = "llvm"))]
+fn llvm_backend() -> Result<AotBackend, String> {
+    Err(
+        "this binary was built without the `llvm` feature; rebuild with \
+         `--features llvm`, or select `--backend cranelift`"
+            .to_string(),
+    )
+}
+
+fn select_backend(requested: Option<&str>) -> Result<AotBackend, String> {
+    match requested {
+        None => Ok(DEFAULT_BACKEND),
+        Some("cranelift") => Ok(AotBackend::Cranelift),
+        Some("llvm") => llvm_backend(),
+        Some(other) => Err(format!(
+            "unknown backend `{other}`; expected `llvm` or `cranelift`"
+        )),
+    }
+}
+
 fn build(
     file: Option<&Path>,
     package: Option<&str>,
     all: bool,
     release: bool,
+    requested_backend: Option<&str>,
 ) -> Result<ExitCode, String> {
     let targets = resolve_targets(file, package, Mode::All { all })?;
     let mut failed = false;
-    // Product builds use LLVM. Hosts without static LLVM (the stage-0 macOS
-    // and Windows previews) select Cranelift explicitly instead of relying on
-    // the warning-producing fallback.
-    #[cfg(feature = "llvm")]
-    let backend = AotBackend::Llvm;
-    #[cfg(not(feature = "llvm"))]
-    let backend = AotBackend::Cranelift;
+    let backend = select_backend(requested_backend)?;
     let profile = if release {
         BuildProfile::Release
     } else {
