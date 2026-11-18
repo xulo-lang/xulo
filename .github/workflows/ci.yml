@@ -128,6 +128,7 @@ jobs:
       - name: Stage 1 self-host build
         env:
           XULO_STAGE1_BUILD: "1"
+          XULO_STAGE1_REQUIRED: "1"
         run: cargo test -p xupm --test stage1_build -- --nocapture
 
   examples:

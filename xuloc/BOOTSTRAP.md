@@ -71,7 +71,8 @@ recurse deeply); non-Windows builds add `-lm`.
 
 The default mode is `parse`. Diagnostics use the stage 0 codes and one-line
 shape `<file>:<line>:<column>: error[E…] <kind>: <message>` (`E0001` lexical,
-`E0002` syntax, `E0004` I/O, `E0005` code generation). Semantic failures use
+`E0002` syntax, `E0004` I/O, `E0005` code generation and its external
+toolchain, such as the C compiler and linker). Semantic failures use
 `E0101` (missing name), `E0201` (type mismatch), `E0202` (argument mismatch),
 `E0211` (no common type), `E0213` (not iterable), and `E0215` (not indexable).
 All failures exit 1. `check` prints `no errors` on success, matching

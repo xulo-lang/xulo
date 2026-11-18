@@ -6,7 +6,7 @@
 - **Normative sources**: `spec@48f49b7` and `std-spec@a2e4cb7`, as pinned by this repository
 - **Companions**: [`stage1-readiness.md`](stage1-readiness.md), [`tasks.md`](tasks.md), [`../xuloc/BOOTSTRAP.md`](../xuloc/BOOTSTRAP.md)
 - **Implementation status**: the invariants and the ledger below are normative.
-  The harness commands in §10 and the CI tiers in §9 are being introduced;
+  The harness commands in §10, the CI tiers in §9, and the differential gate in §5.4 are being introduced;
   until they land, `crates/xupm/tests/stage1_build.rs` provides partial
   evidence for I1–I4.
 
@@ -73,7 +73,7 @@ cannot see.
 
 **Proves:**
 
-- stage 1's C backend faithfully compiles the compiler itself;
+- stage 1's C backend compiles the compiler itself, on this large workload;
 - the emitted C is deterministic (no hash-order, pointer, time, or path leaks);
 - there is no hidden stage-dependent behavior;
 - differences between the Cranelift/LLVM backend and the C backend are caught
@@ -111,9 +111,10 @@ meaningless.
 ### 5.2 External oracle (secondary)
 
 The pinned specification and stage 0 answer "is this correct?", which stage
-comparison cannot. This layer owns the deviation ledger in §8. It runs the
-pinned `// ok` examples and the semantic corpus through stage 0, and stage 1
-where the case is inside the bootstrap subset.
+comparison cannot. This layer runs the pinned `// ok` examples and the semantic
+corpus through stage 0, and stage 1 where the case is inside the bootstrap
+subset. Where the specification and stage 0 disagree, the specification wins
+(§7).
 
 ### 5.3 Backend cross-check (stage 0)
 
@@ -125,6 +126,18 @@ the LLVM CI job only.
 An explicit `--backend llvm` on a binary without the `llvm` feature **must
 fail**. It must not warn and fall back to Cranelift, because that would compare
 Cranelift with itself and silently pass.
+
+### 5.4 Stage 0 / stage 1 differential gate
+
+Every case in the bootstrap subset (the §5.1 inputs) is run through stage 0 and
+through stage 1's C backend, and the §6 observations are compared. Each
+observed difference must match a ledger row (§8) by ID and by case; an
+unmatched difference fails the gate. In a full run, a ledger row that matches no
+difference is stale and must be removed or reclassified.
+
+This gate is what makes §1's "no silent divergence" hold for stage 0 against
+stage 1. Without it the ledger only records the differences someone happened to
+notice.
 
 ## 6. Normalization rules
 
@@ -145,25 +158,41 @@ Two observations are compared only after all of the following hold:
 
 - A stage1/stage2 difference is **always a bug**. There is no baseline, waiver,
   or "known" list for I1–I4. The build fails.
-- A stage0/stage1 difference is either fixed or entered in the ledger (§8).
-  Both are acceptable; silence is not.
-- A missing runtime, compiler, or linker is an environment error and must
-  produce a coded diagnostic (`E0005`), never a crash.
+- A stage0/stage1 difference that has no ledger row fails the gate (§5.4).
+  A listed difference is either fixed (and its row removed) or kept with status
+  `accepted` (§8).
+- Where the specification and stage 0 disagree, the specification is
+  authoritative and the stage 0 behavior is a bug.
+- A missing runtime, compiler, or linker is a code generation environment
+  error and must produce a coded diagnostic, never a crash. It is `E0005`,
+  which BOOTSTRAP defines as code generation and its external toolchain. A
+  file I/O failure is `E0004`.
+- A gate step that cannot run fails; it never passes by skipping. The
+  conformance CI step sets `XULO_STAGE1_REQUIRED`; if `XULO_STAGE1_BUILD` is
+  missing while it is set, `crates/xupm/tests/stage1_build.rs` panics. Local
+  runs without the variables still skip.
 
 ## 8. Known deviations ledger
 
-Each entry names its evidence and the change that removes it. New entries
-require a row here in the same change. This ledger covers stage0-vs-stage1
-only; it never covers stage comparison.
+Each entry names its evidence, the cases that expose it (§5.4), and the change
+that removes it. New entries require a row here in the same change. This ledger
+covers stage0-vs-stage1 only; it never covers stage comparison.
 
-| ID | Deviation | Evidence | Status |
-|---|---|---|---|
-| D-01 | Integral `+`/`-`/`*` wrap silently in the C backend; Rust traps with `panic: integer overflow` | `xuloc/runtime.c` `xr_wrap_*` vs `crates/xulo-runtime/src/runtime/scalar.rs::xulo_int_add` | open |
-| D-02 | Float printing uses `%.15g`/`%.17g`; Rust uses shortest round-trip | `xr_format_float` vs `xulo_std::format::format_number` | open |
-| D-03 | Runtime failure text differs (`division by zero` vs `panic: division by zero`) | `xr_fail` vs `trap` | open |
-| D-04 | `u64` has no tag in the C backend and is treated as `int` | `xuloc/runtime.c` `XT_*` enum | open |
-| D-05 | R8 value semantics are not reproduced: structs are reference-shaped | `xuloc/BOOTSTRAP.md` item 20 | accepted for the bootstrap subset |
-| D-06 | A failing C compiler makes the native stage 1 abort instead of reporting `E0005` | AOT mis-tagging of `exec` output concatenation | fixed by the tag-propagation change (§11) |
+Status values:
+
+- `open`: a fix is planned; the row is removed when the fix lands.
+- `accepted`: kept on purpose for a stated scope (for example, the bootstrap
+  subset). The scope must be written in the row, and the row is re-reviewed at
+  each gate review (§13).
+
+| ID | Deviation | Evidence | Removal | Status |
+|---|---|---|---|---|
+| D-01 | Integral `+`/`-`/`*` wrap silently in the C backend; Rust traps with `panic: integer overflow` | `xuloc/runtime.c` `xr_wrap_*` vs `crates/xulo-runtime/src/runtime/scalar.rs::xulo_int_add` | C backend traps on overflow, as Rust does | open |
+| D-02 | Float printing uses `%.15g`/`%.17g`; Rust uses shortest round-trip | `xr_format_float` vs `xulo_std::format::format_number` | C backend uses the same shortest round-trip rule as `xulo_std` | open |
+| D-03 | Runtime failure text differs (`division by zero` vs `panic: division by zero`) | `xr_fail` vs `trap` | `xr_fail` prints the same `panic: ` prefix and text as `trap` | open |
+| D-04 | `u64` has no tag in the C backend and is treated as `int` | `xuloc/runtime.c` `XT_*` enum | Add a `u64` tag to the C backend, or reject `u64` with `E0005` in the bootstrap subset | open |
+| D-05 | R8 value semantics are not reproduced: structs are reference-shaped | `xuloc/BOOTSTRAP.md` item 20 | Implement value semantics, or reject the dependent constructs in the bootstrap subset. Scope: bootstrap subset only | accepted |
+| D-06 | A failing C compiler makes the native stage 1 abort instead of reporting `E0005` | AOT mis-tagging of `exec` output concatenation | Tag-propagation fix (§11); remove the row when it lands and its test passes | open |
 
 ## 9. CI tiers
 
@@ -214,6 +243,7 @@ stay in force during and after the migration: every step must keep I1–I4 green
 
 - Update the ledger in the same change that fixes or introduces a deviation.
 - Record the stage 1 commit, the stage 0 commit, and the pinned spec commits at
-  each gate review.
+  each gate review, in the "门禁评审记录" section of
+  [`stage1-readiness.md`](stage1-readiness.md).
 - When the matrix grows, update §5 in the same change.
 - Keep this document in sync with `stage1-readiness.md` §3 status vocabulary.

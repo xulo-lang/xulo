@@ -94,7 +94,7 @@ fn run_build(file: string, source: string) {
     match std::fs::write(c_path, built.source) {
         Result::Ok(_) => {}
         Result::Err(error) => {
-            fail(file, 1, 1, "E0005", "cannot write " + c_path + ": " + error.message)
+            fail(file, 1, 1, "E0004", "cannot write " + c_path + ": " + error.message)
         }
     }
     let mut binary = env_or("XULO_STAGE1_OUT", "")

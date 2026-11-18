@@ -40,6 +40,11 @@ fn enabled() -> bool {
     if std::env::var_os("XULO_STAGE1_BUILD").is_some() {
         return true;
     }
+    if std::env::var_os("XULO_STAGE1_REQUIRED").is_some() {
+        panic!(
+            "XULO_STAGE1_REQUIRED is set but XULO_STAGE1_BUILD is not; the stage 1 gate must not skip"
+        );
+    }
     eprintln!(
         "skipping stage 1 build tests (set XULO_STAGE1_BUILD=1 after \
          `cargo build -p xulo-runtime`)"
