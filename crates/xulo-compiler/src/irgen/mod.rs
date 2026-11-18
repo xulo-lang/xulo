@@ -1142,6 +1142,14 @@ impl IrGenerator {
                 {
                     return Some(field.type_.clone());
                 }
+                // 记录形状的接收者（对象字面量、`exec` 的 Ok 载荷等）：字段
+                // 类型随绑定传播到成员访问，`+` 才能按 string 拼接。
+                if let Some(Type::ObjectType(fields)) =
+                    self.infer_source_type_from_expr(&member.object)
+                    && let Some((_, ty)) = fields.iter().find(|(name, _)| name == &member.property)
+                {
+                    return Some(ty.clone());
+                }
                 if matches!(member.property.as_str(), "len" | "byte_len" | "size") {
                     return Some(Type::Number);
                 }

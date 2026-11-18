@@ -6,9 +6,11 @@
 - **Normative sources**: `spec@48f49b7` and `std-spec@a2e4cb7`, as pinned by this repository
 - **Companions**: [`stage1-readiness.md`](stage1-readiness.md), [`tasks.md`](tasks.md), [`../xuloc/BOOTSTRAP.md`](../xuloc/BOOTSTRAP.md)
 - **Implementation status**: the invariants and the ledger below are normative.
-  The harness commands in §10, the CI tiers in §9, and the differential gate in §5.4 are being introduced;
-  until they land, `crates/xupm/tests/stage1_build.rs` provides partial
-  evidence for I1–I4.
+  The differential gate of §5.4 lives in
+  `crates/xupm/tests/stage1_build.rs::drift_gate_reconciles_stage0_and_stage1`,
+  and its ledger is `DRIFT_LEDGER` in the same file. The backend cross-check of
+  §5.3 and the CI tiers of §9 are still being introduced; until they land,
+  `crates/xupm/tests/stage1_build.rs` provides partial evidence for I1–I4.
 
 This document defines how semantic drift between Xulo execution engines is
 detected, bounded, and eventually removed. It is the authoritative description
@@ -139,6 +141,12 @@ This gate is what makes §1's "no silent divergence" hold for stage 0 against
 stage 1. Without it the ledger only records the differences someone happened to
 notice.
 
+The machine-readable ledger is `DRIFT_LEDGER` in
+`crates/xupm/tests/stage1_build.rs`. Each entry is `(id, case glob, command)`,
+where the ID is a row in §8. The gate prints every difference a row explains and
+fails on the rest. With `XULO_STAGE1_FULL` set, a row that explains no difference
+also fails the gate as stale.
+
 ## 6. Normalization rules
 
 Two observations are compared only after all of the following hold:
@@ -192,13 +200,12 @@ Status values:
 | D-03 | Runtime failure text differs (`division by zero` vs `panic: division by zero`) | `xr_fail` vs `trap` | `xr_fail` prints the same `panic: ` prefix and text as `trap` | open |
 | D-04 | `u64` has no tag in the C backend and is treated as `int` | `xuloc/runtime.c` `XT_*` enum | Add a `u64` tag to the C backend, or reject `u64` with `E0005` in the bootstrap subset | open |
 | D-05 | R8 value semantics are not reproduced: structs are reference-shaped | `xuloc/BOOTSTRAP.md` item 20 | Implement value semantics, or reject the dependent constructs in the bootstrap subset. Scope: bootstrap subset only | accepted |
-| D-06 | A failing C compiler makes the native stage 1 abort instead of reporting `E0005` | AOT mis-tagging of `exec` output concatenation | Tag-propagation fix (§11); remove the row when it lands and its test passes | open |
 
 ## 9. CI tiers
 
 | Tier | Where | Contents | Budget |
 |---|---|---|---|
-| Fast | `conformance` job, PR | cached stage 2; I1/I2 on all sources and the corpus; failure paths | < 60 s cached, < 4 min cold |
+| Fast | `conformance` job, PR | cached stage 2; I1/I2 on all sources and the corpus; the §5.4 gate; failure paths | < 60 s cached, < 4 min cold |
 | Full | `main` / nightly | stage 2 rebuilt from scratch; full matrix including I4 and the semantics corpus | < 10 min |
 | LLVM cross-check | LLVM job | `--backend llvm` vs `--backend cranelift`, I1–I3 on the same matrix | < 10 min |
 
@@ -216,6 +223,13 @@ XULO_STAGE1_BUILD=1 cargo test -p xupm --test stage1_build -- --nocapture
 # Full: rebuild stage 2 from scratch and compare every input.
 XULO_STAGE1_BUILD=1 XULO_STAGE1_FULL=1 cargo test -p xupm --test stage1_build -- --nocapture
 
+# The §5.4 differential gate alone (ledger reconciliation).
+XULO_STAGE1_BUILD=1 cargo test -p xupm --test stage1_build drift_gate -- --nocapture
+
+# The same gate against a cached C-backend build of the compiler (§9's cache).
+XULO_STAGE1_BUILD=1 XULO_STAGE1_STAGE2=path/to/stage2 \
+  cargo test -p xupm --test stage1_build drift_gate -- --nocapture
+
 # Stage 0 backend axis (requires a binary built with `--features llvm`).
 cargo test -p xupm --test stage1_build backend_cross_check -- --nocapture
 ```
@@ -226,10 +240,12 @@ cargo test -p xupm --test stage1_build backend_cross_check -- --nocapture
   explicit `E0005` rejection with a test (§5.1, "expected rejection").
 - Adding a test case means adding it to the stage comparison matrix *and*, if it
   touches the bootstrap subset, to the semantic corpus.
-- Fixing a ledger entry removes the row in the same change.
-- The tag-propagation fix that closes D-06 must land before the backend
-  cross-check is made blocking, because the cross-check will otherwise report
-  the same defect twice.
+- Fixing a ledger entry removes the row in the same change, and the gate keeps
+  failing until the row and the fix agree.
+- The tag-propagation fix that closed D-06 (`std::process::exec`'s `Ok` payload
+  registers `{stdout, stderr, code}` in the bootstrap subset) must also be
+  present in the stage 0 backend before the backend cross-check is made
+  blocking, because the cross-check will otherwise report the same defect twice.
 
 ## 12. Runtime unification
 

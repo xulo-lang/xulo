@@ -777,4 +777,4 @@ pinned spec commits, and the drift-governance ledger state (see
 
 | 日期 | stage 0 / stage 1 commit | spec / std-spec | 漂移台账 | 说明 |
 |---|---|---|---|---|
-| 2026-11-18 | `3c32586` | `spec@48f49b7` / `std-spec@a2e4cb7` | D-01–D-04 open，D-05 accepted，D-06 open | 首次记录；`XULO_STAGE1_REQUIRED` 已接入 CI；drift-governance §5.4 差分门禁尚未实施 |
+| 2026-11-18 | `3c32586` | `spec@48f49b7` / `std-spec@a2e4cb7` | D-01–D-04 open，D-05 accepted | 首次记录；`XULO_STAGE1_REQUIRED` 已接入 CI；drift-governance §5.4 差分门禁已落地（`drift_gate_reconciles_stage0_and_stage1`），D-06 因标签传播修复而关闭 |

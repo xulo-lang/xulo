@@ -481,3 +481,317 @@ fn stage1_build_is_reproducible() {
     );
     assert!(stage3.is_file(), "the stage 3 binary should exist");
 }
+
+// ---------------------------------------------------------------------------
+// drift-governance §5.4: the stage 0 / stage 1 differential gate
+// ---------------------------------------------------------------------------
+
+/// Rows from `docs/drift-governance.md` §8 that may explain a stage 0 / stage 1
+/// difference. Each row is `(id, case glob, command)`; `*` matches any suffix
+/// of the case, and `*` as the command matches every command. A difference that
+/// matches no row fails the gate.
+const DRIFT_LEDGER: &[(&str, &str, &str)] = &[];
+
+/// The §6 observation for one engine and one command.
+#[derive(Debug, PartialEq, Eq)]
+struct Observation {
+    exit: Option<i32>,
+    stdout: String,
+    stderr: String,
+    /// Emitted C, compared only for `build` (§5.1's primary object).
+    c_source: Option<Vec<u8>>,
+}
+
+/// Locate the ledger row that explains a difference, if any.
+fn ledger_row<'a>(
+    ledger: &'a [(&str, &'a str, &'a str)],
+    case: &str,
+    command: &str,
+) -> Option<&'a str> {
+    ledger.iter().find_map(|(id, glob, row_command)| {
+        let case_matches = match glob.strip_suffix('*') {
+            Some(prefix) => case.starts_with(prefix),
+            None => case == *glob,
+        };
+        (case_matches && (*row_command == "*" || *row_command == command)).then_some(*id)
+    })
+}
+
+fn relative_case(root: &Path, file: &Path) -> String {
+    file.strip_prefix(root)
+        .expect("case lives inside the repository")
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+fn observe(
+    binary: &Path,
+    root: &Path,
+    command: &str,
+    file: &Path,
+    c_source: Option<&Path>,
+    binary_out: Option<&Path>,
+) -> Observation {
+    let mut cmd = Command::new(binary);
+    cmd.arg(command).arg(file).current_dir(root);
+    cmd.env_remove("XULO_STAGE1_MODE")
+        .env_remove("XULO_STAGE1_FILE");
+    if let Some(path) = c_source {
+        let _ = std::fs::remove_file(path);
+        cmd.env("XULO_STAGE1_C", path);
+    }
+    if let Some(path) = binary_out {
+        let _ = std::fs::remove_file(path);
+        cmd.env("XULO_STAGE1_OUT", path);
+    }
+    let output = cmd
+        .output()
+        .unwrap_or_else(|error| panic!("cannot run {} {command}: {error}", binary.display()));
+    Observation {
+        exit: output.status.code(),
+        stdout: render_lines(&output.stdout),
+        stderr: render_lines(&output.stderr),
+        c_source: c_source.and_then(|path| std::fs::read(path).ok()),
+    }
+}
+
+/// Compare one case/command pair and record an unmatched difference.
+fn record_difference(
+    case: &str,
+    command: &str,
+    left: &Observation,
+    right: &Observation,
+    differences: &mut Vec<String>,
+    matched: &mut Vec<&'static str>,
+) {
+    if left == right {
+        return;
+    }
+    match ledger_row(DRIFT_LEDGER, case, command) {
+        Some(id) => {
+            if !matched.contains(&id) {
+                matched.push(id);
+            }
+            eprintln!("drift: {id} explains a difference in {case} ({command})");
+        }
+        None => {
+            let mut fields = Vec::new();
+            if left.exit != right.exit {
+                fields.push(format!("exit {:?} != {:?}", left.exit, right.exit));
+            }
+            if left.stdout != right.stdout {
+                fields.push("stdout".to_string());
+            }
+            if left.stderr != right.stderr {
+                fields.push("stderr".to_string());
+            }
+            if left.c_source != right.c_source {
+                fields.push("emitted C".to_string());
+            }
+            differences.push(format!("{case} ({command}): {}", fields.join(", ")));
+        }
+    }
+}
+
+/// One §5.1 input on the stage 0 / stage 1 axis.
+struct DriftCase {
+    case: String,
+    /// Whether `build` is compared for this input. The compiler sources are
+    /// built by the self-host tests, which would multiply the gate's runtime.
+    build: bool,
+    /// Whether a successful build is expected to produce a runnable program.
+    runs: bool,
+}
+
+fn drift_cases(root: &Path) -> Vec<DriftCase> {
+    let mut cases: Vec<DriftCase> = stage1_sources(root)
+        .iter()
+        .map(|file| DriftCase {
+            case: relative_case(root, file),
+            build: false,
+            runs: false,
+        })
+        .collect();
+    cases.extend(accept_corpus(root).iter().map(|file| DriftCase {
+        case: relative_case(root, file),
+        build: true,
+        runs: true,
+    }));
+    cases.extend(reject_corpus(root).iter().map(|file| DriftCase {
+        case: relative_case(root, file),
+        build: true,
+        runs: false,
+    }));
+    cases
+}
+
+/// D-06: a C compiler that runs and fails must surface as `E0005` with both
+/// streams, not as a crash. The compiler under test plays the failing compiler:
+/// it rejects the C compiler's arguments and exits 1 with a usage line.
+#[test]
+fn a_failing_c_compiler_is_reported_as_e0005() {
+    if !enabled() {
+        return;
+    }
+    let root = repo_root();
+    let stage1 = stage1_binary();
+    let work = unique_dir("cc_fail");
+    let output = Command::new(&stage1)
+        .arg("build")
+        .arg(Path::new("xuloc/corpus/accept/basics.xulo"))
+        .current_dir(&root)
+        .env("XULO_CC", &stage1)
+        .env("XULO_STAGE1_C", work.join("basics.c"))
+        .env(
+            "XULO_STAGE1_OUT",
+            work.join(format!("basics{}", exe_suffix())),
+        )
+        .env_remove("XULO_STAGE1_MODE")
+        .env_remove("XULO_STAGE1_FILE")
+        .output()
+        .expect("stage 1 should start");
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "a failing C compiler must exit 1 instead of crashing (status {:?})",
+        output.status
+    );
+    let stderr = render_lines(&output.stderr);
+    assert!(
+        stderr.contains("error[E0005]"),
+        "the failure must be reported as E0005, got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("usage:"),
+        "the compiler's own output must be forwarded, got:\n{stderr}"
+    );
+}
+
+#[test]
+fn drift_ledger_matching_is_precise() {
+    let ledger = [
+        ("D-05", "xuloc/corpus/semantics/*", "*"),
+        ("D-01", "xuloc/corpus/accept/basics.xulo", "build"),
+    ];
+    assert_eq!(
+        ledger_row(&ledger, "xuloc/corpus/semantics/accept/x.xulo", "build"),
+        Some("D-05")
+    );
+    assert_eq!(
+        ledger_row(&ledger, "xuloc/corpus/accept/basics.xulo", "build"),
+        Some("D-01")
+    );
+    assert_eq!(
+        ledger_row(&ledger, "xuloc/corpus/accept/fibonacci.xulo", "build"),
+        None
+    );
+    assert_eq!(
+        ledger_row(&ledger, "xuloc/corpus/accept/basics.xulo", "check"),
+        None
+    );
+}
+
+/// The C-backend build of the compiler. `XULO_STAGE1_STAGE2` reuses a cached
+/// binary (§9's stage 2 cache) instead of self-building one.
+fn c_backend_binary() -> PathBuf {
+    if let Some(path) = std::env::var_os("XULO_STAGE1_STAGE2") {
+        let path = PathBuf::from(path);
+        assert!(
+            path.is_file(),
+            "XULO_STAGE1_STAGE2 points to a missing stage 2 binary: {}",
+            path.display()
+        );
+        return path;
+    }
+    stage2_binary().binary
+}
+
+/// drift-governance §5.4: every §5.1 input runs through stage 0 (the AOT build
+/// of the compiler source, which shares the Rust semantics) and through stage
+/// 1's C backend. A difference must be explained by a ledger row.
+#[test]
+fn drift_gate_reconciles_stage0_and_stage1() {
+    if !enabled() {
+        return;
+    }
+    let root = repo_root();
+    let stage0 = stage1_binary();
+    let stage1 = c_backend_binary();
+    let stage1 = &stage1;
+    let work = unique_dir("drift");
+    let c_path = work.join("drift.c");
+    let binary_path = work.join(format!("drift{}", exe_suffix()));
+    let mut differences: Vec<String> = Vec::new();
+    let mut matched: Vec<&'static str> = Vec::new();
+
+    for case in drift_cases(&root) {
+        let file = Path::new(&case.case);
+        for command in ["tokens", "parse", "check"] {
+            let left = observe(&stage0, &root, command, file, None, None);
+            let right = observe(stage1, &root, command, file, None, None);
+            record_difference(
+                &case.case,
+                command,
+                &left,
+                &right,
+                &mut differences,
+                &mut matched,
+            );
+        }
+        if !case.build {
+            continue;
+        }
+
+        let left = observe(
+            &stage0,
+            &root,
+            "build",
+            file,
+            Some(&c_path),
+            Some(&binary_path),
+        );
+        let right = observe(
+            stage1,
+            &root,
+            "build",
+            file,
+            Some(&c_path),
+            Some(&binary_path),
+        );
+        record_difference(
+            &case.case,
+            "build",
+            &left,
+            &right,
+            &mut differences,
+            &mut matched,
+        );
+
+        if case.runs && left.exit == Some(0) && right.exit == Some(0) {
+            let built = Path::new(&binary_path);
+            if built.is_file() {
+                let ran = run_program(built);
+                assert_success(&ran, &format!("running the build of {}", case.case));
+            }
+        }
+    }
+
+    // A ledger row that explains nothing is stale (full runs only, because the
+    // fast tier does not exercise the whole matrix).
+    if std::env::var_os("XULO_STAGE1_FULL").is_some() {
+        for (id, glob, command) in DRIFT_LEDGER {
+            if !matched.contains(id) {
+                differences.push(format!(
+                    "ledger row {id} ({glob}, {command}) explains no difference and is stale"
+                ));
+            }
+        }
+    }
+
+    assert!(
+        differences.is_empty(),
+        "the stage 0 / stage 1 gate found {} unexplained difference(s):\n{}",
+        differences.len(),
+        differences.join("\n")
+    );
+}

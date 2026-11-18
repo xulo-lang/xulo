@@ -2588,6 +2588,27 @@ impl IrGenerator {
                             &m.value,
                             Expression::Call(call)
                                 if call.object.is_none()
+                                    && matches!(
+                                        call.callee.as_str(),
+                                        "std::process::run" | "std::process::exec"
+                                    )
+                        ) {
+                            // `run`/`exec` 的 Ok 载荷是 `{stdout, stderr, code}`：
+                            // 字段类型必须静态可知，否则 `run.stdout +
+                            // run.stderr` 会因两侧都不像 string 而降成整数
+                            // 加法，指针相加后拼接即野指针。
+                            self.source_types.insert(
+                                bind.clone(),
+                                Type::ObjectType(vec![
+                                    ("stdout".to_string(), Type::String),
+                                    ("stderr".to_string(), Type::String),
+                                    ("code".to_string(), Type::Number),
+                                ]),
+                            );
+                        } else if matches!(
+                            &m.value,
+                            Expression::Call(call)
+                                if call.object.is_none()
                                     && call.callee == "std::fs::read_bytes"
                         ) {
                             self.source_types.insert(
