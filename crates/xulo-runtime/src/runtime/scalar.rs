@@ -24,6 +24,9 @@ pub extern "C" fn xulo_register_float(bits: i64) {
             floats.borrow_mut().push(bits);
         }
     });
+    FLOAT_VALUES.with(|values| {
+        values.borrow_mut().insert(bits);
+    });
 }
 
 /// 注册字符串指针（用于自动检测，不拥有所有权）
@@ -33,6 +36,9 @@ pub extern "C" fn xulo_register_string(ptr: *const c_char) {
         if !strings.borrow().contains(&ptr) {
             strings.borrow_mut().push(ptr);
         }
+    });
+    JIT_STRING_PTRS.with(|ptrs| {
+        ptrs.borrow_mut().insert(ptr as usize);
     });
 }
 
@@ -217,54 +223,32 @@ pub extern "C" fn xulo_print_value(value: i64, tag: i64) {
 /// 注意：value==0 无法区分 null 和 integer 0，因此不在此处判定 null
 #[unsafe(no_mangle)]
 pub extern "C" fn xulo_detect_tag(value: i64) -> i64 {
-    let ptr = value as *const c_char;
-
     // 检查是否是已知字符串（运行时创建）
-    let mut found = STRINGS.with(|strings| {
-        strings
-            .borrow()
-            .iter()
-            .any(|s| std::ptr::eq(s.as_ptr(), ptr))
-    });
+    let mut found = STRING_PTRS.with(|ptrs| ptrs.borrow().contains(&(value as usize)));
     if found {
         return 0;
     }
 
     // 检查是否是已知字符串（JIT 嵌入）
-    found = JIT_STRINGS.with(|strings| strings.borrow().iter().any(|s| std::ptr::eq(*s, ptr)));
+    found = JIT_STRING_PTRS.with(|ptrs| ptrs.borrow().contains(&(value as usize)));
     if found {
         return 0;
     }
 
     // 检查是否是已知数组
-    found = ARRAYS.with(|arrays| {
-        arrays
-            .borrow()
-            .iter()
-            .any(|a| std::ptr::eq(*a as *const c_char, ptr))
-    });
+    found = ARRAY_PTRS.with(|ptrs| ptrs.borrow().contains(&(value as usize)));
     if found {
         return 3;
     }
 
     // 检查是否是已知对象
-    found = OBJECTS.with(|objects| {
-        objects
-            .borrow()
-            .iter()
-            .any(|o| std::ptr::eq(*o as *const c_char, ptr))
-    });
+    found = OBJECT_PTRS.with(|ptrs| ptrs.borrow().contains(&(value as usize)));
     if found {
         return 4;
     }
 
     // 检查是否是已知枚举值
-    found = ENUMS.with(|enums| {
-        enums
-            .borrow()
-            .iter()
-            .any(|e| std::ptr::eq(*e as *const c_char, ptr))
-    });
+    found = ENUM_PTRS.with(|ptrs| ptrs.borrow().contains(&(value as usize)));
     if found {
         return 7;
     }
@@ -276,17 +260,13 @@ pub extern "C" fn xulo_detect_tag(value: i64) -> i64 {
     }
 
     // 检查是否是已知编译正则
-    found = REGEXPS.with(|rs| {
-        rs.borrow()
-            .iter()
-            .any(|r| std::ptr::eq(*r as *const c_char, ptr))
-    });
+    found = REGEXP_PTRS.with(|ptrs| ptrs.borrow().contains(&(value as usize)));
     if found {
         return 9;
     }
 
     // 检查是否是已知浮点数
-    found = FLOATS.with(|floats| floats.borrow().contains(&value));
+    found = FLOAT_VALUES.with(|values| values.borrow().contains(&value));
     if found {
         return 2;
     }

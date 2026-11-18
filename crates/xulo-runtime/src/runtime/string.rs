@@ -25,6 +25,9 @@ pub extern "C" fn xulo_string_concat(a: *const c_char, b: *const c_char) -> *con
         let c_str = CString::from_vec_unchecked(bytes);
         let ptr = c_str.as_ptr();
 
+        STRING_PTRS.with(|ptrs| {
+            ptrs.borrow_mut().insert(ptr as usize);
+        });
         STRINGS.with(|strings| {
             strings.borrow_mut().push(c_str);
         });
@@ -60,6 +63,9 @@ pub extern "C" fn xulo_stringify(value: i64, tag: i64) -> *const c_char {
     let c_str = CString::new(s).unwrap();
     let ptr = c_str.as_ptr();
 
+    STRING_PTRS.with(|ptrs| {
+        ptrs.borrow_mut().insert(ptr as usize);
+    });
     STRINGS.with(|strings| {
         strings.borrow_mut().push(c_str);
     });

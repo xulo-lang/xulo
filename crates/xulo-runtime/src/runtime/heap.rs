@@ -12,6 +12,9 @@ pub extern "C" fn xulo_alloc_object(size: usize) -> *mut XuloObject {
     OBJECTS.with(|objects| {
         objects.borrow_mut().push(ptr);
     });
+    OBJECT_PTRS.with(|ptrs| {
+        ptrs.borrow_mut().insert(ptr as usize);
+    });
 
     ptr
 }
@@ -27,6 +30,9 @@ pub extern "C" fn xulo_alloc_array(size: usize) -> *mut XuloArray {
 
     ARRAYS.with(|arrays| {
         arrays.borrow_mut().push(ptr);
+    });
+    ARRAY_PTRS.with(|ptrs| {
+        ptrs.borrow_mut().insert(ptr as usize);
     });
 
     ptr
@@ -51,6 +57,9 @@ pub extern "C" fn xulo_alloc_enum(
     let ptr = Box::into_raw(e);
     ENUMS.with(|enums| {
         enums.borrow_mut().push(ptr);
+    });
+    ENUM_PTRS.with(|ptrs| {
+        ptrs.borrow_mut().insert(ptr as usize);
     });
     ptr
 }

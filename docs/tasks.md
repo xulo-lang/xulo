@@ -32,8 +32,8 @@ readiness document.
 | WP4 — `defer` semantics | 5 | 5 |
 | WP5 — Stage 1 skeleton | 6 | 6 |
 | WP6 — Self-host loop | 7 | 7 |
-| WP7 — Non-gating follow-ups | 4 | 4 |
-| **Total** | **59** | **59** |
+| WP7 — Non-gating follow-ups | 6 | 6 |
+| **Total** | **61** | **61** |
 
 ## Gates
 
@@ -432,24 +432,38 @@ re-scoped before the gate it informs.
       `crates/xulo-runtime/tests/value_semantics.rs` and
       `crates/xulo-compiler/tests/aot_syntax_coverage_tests.rs::bindings_copy_value_aggregates_and_share_references`.
 
-- [ ] **P1 — Aggregate `const` initializers are re-evaluated at every reference
-      in AOT.** `IrGenerator::generate_const_ref` inlines the initializer
-      expression at each use, so every read of a `const List<...>` allocates a
-      fresh array and re-interns its elements. `xuloc`'s `is_keyword` scans
-      `const KEYWORDS: List<string>` (80 entries) once per identifier token and
-      `MULTI_OPS` once per operator token, which makes stage 1's `tokens` mode
-      super-linear: 22 KB of `let x = 1` lines takes 85 s, 44 KB takes 339 s,
-      against 0.5 s for the C backend and 11 s for the interpreter on the same
-      input. Disabling the `is_keyword` call in a scratch copy halves the time,
-      which isolates the effect. A fix materializes each aggregate `const` once
-      (global initialized before `main`, or a per-module lazy guard) instead of
-      inlining it; scalar constants can keep the current inlining. This is a
-      performance defect, not a semantic one, so it does not gate §5.4.
+- [x] **P1 — Aggregate `const` initializers are re-evaluated at every reference
+      in AOT.** Aggregate constants now get a stable slot: the entry function
+      materializes the initializer once before its body, every other reference
+      reads the slot through `RuntimeFn::ConstGet`, and the runtime keeps the
+      values in a thread-local slot table (`xulo_const_reset/get/set`) that is
+      cleared before each entry run. Scalar constants keep inlining. This
+      removes the per-reference array allocation and element re-interning that
+      made `xuloc`'s `is_keyword` scans allocate a fresh `KEYWORDS` list for
+      every identifier token. On the `tokens` probe (22 KB of `let x = 1`
+      lines) the AOT stage 1 binary drops from 101.9 s to 83.3 s. Evidence:
+      `crates/xulo-compiler/tests/const_materialization_tests.rs`
+      (`aggregate_const_initializer_runs_once_before_main`,
+      `aggregate_const_references_share_one_value`).
+
+- [x] **P2 — AOT tag auto-detection scans growing registries linearly.**
+      `xulo_detect_tag` walked the string, array, object, enum, regex, and
+      float registration vectors on every call; with per-token `str()` calls
+      this made stage 1's `tokens` mode quadratic even after P1. Each registry
+      now keeps an O(1) pointer/value membership set next to its vector,
+      maintained at the single registration/allocation site and cleared by
+      `xulo_cleanup`. Combined with P1 the `tokens` probe scales linearly:
+      14 KB 0.06 s, 22 KB 0.10 s, 44 KB 0.20 s (previously 339 s at 44 KB),
+      and its output is byte-identical to the old stage 1 binary on
+      `xuloc/lexer.xulo`. Evidence:
+      `crates/xulo-runtime/tests/tag_detection.rs`.
 
 **Verify:** `cargo test -p xulo-cli --test readiness_matrix` (T3f owner
 components), `cargo test -p xulo-cli --test spec_conformance -- --nocapture`
-(T3c), `cargo test -p xulo-semantic --test semantic_tests` (L21), and the R8
-value-semantics tests listed above.
+(T3c), `cargo test -p xulo-semantic --test semantic_tests` (L21), the R8
+value-semantics tests listed above, `cargo test -p xulo-compiler --test
+const_materialization_tests` (P1), and `cargo test -p xulo-runtime --test
+tag_detection` (P2).
 
 ## Out of scope for stage 1 bootstrap
 

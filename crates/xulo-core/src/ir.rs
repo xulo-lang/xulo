@@ -73,6 +73,12 @@ pub enum RuntimeFn {
     MarkValueArray,
     /// `Array::filled<T, N>(value)`：N 个同值元素的新列表
     ArrayFilled,
+    /// 聚合常量惰性槽：入口处按槽数重置
+    ConstReset,
+    /// 读聚合常量槽（未物化为 0）
+    ConstGet,
+    /// 写入已物化的聚合常量槽
+    ConstSet,
     /// `Task::race([t, u])`：AOT 的异步调用同步完成，取首个已结算元素
     TaskRace,
     /// `Task::timeout(t, ms)`：按实测耗时决定 `Result::Ok` 还是超时 `Err`
