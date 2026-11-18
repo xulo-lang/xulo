@@ -122,6 +122,14 @@ jobs:
           cargo test -p xulo-cli --test stage1 -- --nocapture
           cargo test -p xupm --test cli runs_stage1_test_file -- --nocapture
 
+      # WP6: stage 1 compiles the accept corpus, builds itself into stage 2,
+      # and the two compilers agree on the bootstrap suite. The C compiler is
+      # the host `clang`; the test produces the runtime library it links.
+      - name: Stage 1 self-host build
+        env:
+          XULO_STAGE1_BUILD: "1"
+        run: cargo test -p xupm --test stage1_build -- --nocapture
+
   examples:
     name: Run examples
     runs-on: ubuntu-latest

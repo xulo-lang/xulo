@@ -1,0 +1,1838 @@
+// Stage 1 code generator: generic AST -> C.
+//
+// Stage 1 is the self-hosted front end (lexer, parser, checker). Its first
+// backend lowers the same generic AST to portable C, and the host's C
+// compiler (the LLVM toolchain's `clang`, or `cc`) turns that into the
+// native binary. The generated program links `xuloc/runtime.c`, a small
+// dynamic runtime that keeps the bootstrap compiler inside one lowering scheme:
+// every expression has the same `XVal` shape and every user type is a field
+// table. That is deliberately simpler than the stage 0 IR/LLVM backend in
+// `crates/xulo-compiler`; stage 0 remains the product compiler.
+//
+// Scope:
+//   * declarations: functions, structs, enums, consts, impl methods, modules
+//     (`mod name;` is loaded relative to the entry file);
+//   * statements/expressions: let/const, assignment, return, if/else, while,
+//     for, match, calls, methods, fields, indexing, lists, tuples, the
+//     arithmetic/comparison/logical operator set, `??`, `is`, `?.`, and the
+//     print/str/assert/panic intrinsics;
+//   * the `std::fs`, `std::io`, `std::os`, and `std::process` calls stage 1
+//     itself uses.
+//
+// Deliberate limits (recorded in BOOTSTRAP.md):
+//   * no closures, templates, maps, async, `defer`, or traits;
+//   * struct values are reference-shaped objects, so value-copy semantics are
+//     not reproduced (stage 1's own code does not depend on them);
+//   * memory is leaked rather than collected; the compiler is a one-shot
+//     process.
+//
+// Exit status and diagnostics match the rest of stage 1: `compile` reports a
+// message and `main.xulo` prints it as `file:line:column: error[E0005] ...`.
+
+use ast::{Node};
+use lexer::{lex, LexResult};
+use parser::{parse, ParseResult};
+
+pub struct BuildResult {
+    pub ok: bool,
+    pub message: string,
+    pub source: string,
+}
+
+struct FnInfo {
+    name: string,
+    cname: string,
+    params: List<string>,
+    body: Node,
+}
+
+struct MethodInfo {
+    owner: string,
+    name: string,
+    cname: string,
+    params: List<string>,
+    body: Node,
+}
+
+struct StructInfo {
+    name: string,
+    fields: List<string>,
+}
+
+struct EnumInfo {
+    name: string,
+    variants: List<string>,
+}
+
+struct ConstInfo {
+    name: string,
+    cname: string,
+    expr: Node,
+}
+
+struct LocalInfo {
+    name: string,
+    cname: string,
+    depth: number,
+}
+
+struct Emitter {
+    funcs: List<FnInfo>,
+    methods: List<MethodInfo>,
+    structs: List<StructInfo>,
+    enums: List<EnumInfo>,
+    consts: List<ConstInfo>,
+    locals: List<LocalInfo>,
+    program: StringBuilder,
+    out: StringBuilder,
+    depth: number,
+    next_local: number,
+    next_tmp: number,
+    indent: number,
+    error: string,
+}
+
+fn new_emitter(): Emitter {
+    return Emitter(
+        funcs: [],
+        methods: [],
+        structs: [],
+        enums: [],
+        consts: [],
+        locals: [],
+        program: StringBuilder::new(),
+        out: StringBuilder::new(),
+        depth: 0,
+        next_local: 0,
+        next_tmp: 0,
+        indent: 1,
+        error: "",
+    )
+}
+
+// 鈹€鈹€ small string/path helpers 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+
+pub fn dir_of(path: string): string {
+    let mut i = path.len - 1
+    while i >= 0 {
+        let c = path.slice(i, i + 1)
+        if c == "/" or c == "\\" {
+            if i == 0 {
+                return path.slice(0, 1)
+            }
+            return path.slice(0, i)
+        }
+        i = i - 1
+    }
+    return "."
+}
+
+pub fn stem_of(path: string): string {
+    let mut at = path.len - 1
+    while at >= 0 {
+        let c = path.slice(at, at + 1)
+        if c == "/" or c == "\\" {
+            break
+        }
+        at = at - 1
+    }
+    let start = at + 1
+    let mut dot = path.len
+    let mut i = start
+    while i < path.len {
+        if path.slice(i, i + 1) == "." {
+            dot = i
+        }
+        i = i + 1
+    }
+    return path.slice(start, dot)
+}
+
+pub fn base_of(path: string): string {
+    let mut at = path.len - 1
+    while at >= 0 {
+        let c = path.slice(at, at + 1)
+        if c == "/" or c == "\\" {
+            return path.slice(at + 1, path.len)
+        }
+        at = at - 1
+    }
+    return path
+}
+
+pub fn join_path(dir: string, name: string): string {
+    if dir == "" or dir == "." {
+        return name
+    }
+    return dir + "/" + name
+}
+
+fn clean_number(text: string): string {
+    let mut out = StringBuilder::new()
+    for c in text.split("") {
+        if c != "_" {
+            out.append(c)
+        }
+    }
+    return out.build()
+}
+
+fn is_float_text(text: string): bool {
+    if text.len >= 2 {
+        if text.slice(0, 2) == "0x" or text.slice(0, 2) == "0X" {
+            return false
+        }
+    }
+    for c in text.split("") {
+        if c == "." or c == "e" or c == "E" {
+            return true
+        }
+    }
+    return false
+}
+
+fn hex_pad(n: number, width: number): string {
+    let digits = "0123456789ABCDEF"
+    let mut out = StringBuilder::new()
+    let mut i = width - 1
+    while i >= 0 {
+        let value = (n >> (i * 4)) & 15
+        out.append(digits.slice(value, value + 1))
+        i = i - 1
+    }
+    return out.build()
+}
+
+fn c_string(value: string): string {
+    let mut out = StringBuilder::new()
+    out.append("\"")
+    out.append(value)
+    out.append("\"")
+    return out.build()
+}
+
+fn c_join(values: List<string>): string {
+    let mut out = StringBuilder::new()
+    let mut i = 0
+    while i < values.len {
+        if i > 0 {
+            out.append(", ")
+        }
+        out.append(values[i])
+        i = i + 1
+    }
+    return out.build()
+}
+
+// 鈹€鈹€ declaration collection 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+
+impl Emitter {
+    fn fail(mut self, message: string) {
+        if self.error == "" {
+            self.error = message
+        }
+    }
+
+    fn add_function(mut self, node: Node) {
+        let mut params: List<string> = []
+        let mut body = node
+        for child in node.children {
+            if child.kind == "Param" {
+                if child.value == "self" or child.value == "mut self" {
+                    params.push("self")
+                } else {
+                    params.push(child.value)
+                }
+            } else if child.kind == "Block" {
+                body = child
+            }
+        }
+        self.funcs.push(
+            FnInfo(
+                name: node.value,
+                cname: "f_" + node.value,
+                params: params,
+                body: body,
+            ),
+        )
+    }
+
+    fn add_method(mut self, owner: string, node: Node) {
+        let mut params: List<string> = []
+        let mut body = node
+        for child in node.children {
+            if child.kind == "Param" {
+                if child.value == "self" or child.value == "mut self" {
+                    params.push("self")
+                } else {
+                    params.push(child.value)
+                }
+            } else if child.kind == "Block" {
+                body = child
+            }
+        }
+        self.methods.push(
+            MethodInfo(
+                owner: owner,
+                name: node.value,
+                cname: "m_" + owner + "_" + node.value,
+                params: params,
+                body: body,
+            ),
+        )
+    }
+
+    fn add_struct(mut self, node: Node) {
+        let mut fields: List<string> = []
+        for child in node.children {
+            if child.kind == "Field" {
+                fields.push(child.value)
+            }
+        }
+        self.structs.push(StructInfo(name: node.value, fields: fields))
+    }
+
+    fn add_enum(mut self, node: Node) {
+        let mut variants: List<string> = []
+        for child in node.children {
+            if child.kind == "Variant" {
+                variants.push(child.value)
+            }
+        }
+        self.enums.push(EnumInfo(name: node.value, variants: variants))
+    }
+
+    fn add_const(mut self, node: Node) {
+        let mut expr = node
+        for child in node.children {
+            if child.kind != "TypeName" {
+                expr = child
+            }
+        }
+        self.consts.push(
+            ConstInfo(name: node.value, cname: "g_" + node.value, expr: expr),
+        )
+    }
+
+    fn collect_program(mut self, node: Node, dir: string) {
+        if self.error != "" {
+            return
+        }
+        if node.kind == "Program" {
+            for child in node.children {
+                self.collect_program(child, dir)
+            }
+            return
+        }
+        if node.kind == "Mod" {
+            if node.children.len > 0 {
+                for child in node.children {
+                    self.collect_program(child, dir)
+                }
+                return
+            }
+            let path = join_path(dir, node.value + ".xulo")
+            match std::fs::read(path) {
+                Result::Ok(source) => {
+                    let lexed: LexResult = lex(source)
+                    if lexed.error != "" {
+                        self.fail(path + ": " + lexed.error)
+                        return
+                    }
+                    let parsed: ParseResult = parse(lexed.tokens)
+                    if parsed.error != "" {
+                        self.fail(path + ": " + parsed.error)
+                        return
+                    }
+                    for child in parsed.root.children {
+                        self.collect_program(child, dir)
+                    }
+                }
+                Result::Err(error) => {
+                    self.fail("cannot read " + path + ": " + error.message)
+                }
+            }
+            return
+        }
+        if node.kind == "Fn" {
+            self.add_function(node)
+            return
+        }
+        if node.kind == "Struct" {
+            self.add_struct(node)
+            return
+        }
+        if node.kind == "Enum" {
+            self.add_enum(node)
+            return
+        }
+        if node.kind == "Const" {
+            self.add_const(node)
+            return
+        }
+        if node.kind == "Impl" {
+            let mut owner = ""
+            for child in node.children {
+                if child.kind == "TypeName" {
+                    owner = child.value
+                }
+                if child.kind == "Fn" {
+                    self.add_method(owner, child)
+                }
+            }
+            return
+        }
+        // `use`, `type`, `trait`, `extern`, and attributes carry no runtime
+        // declaration in the bootstrap subset.
+    }
+
+    // 鈹€鈹€ naming and scopes 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+
+    fn new_local(mut self, name: string): string {
+        self.next_local = self.next_local + 1
+        let cname = "v" + str(self.next_local)
+        self.locals.push(LocalInfo(name: name, cname: cname, depth: self.depth))
+        return cname
+    }
+
+    fn lookup_local(self, name: string): string {
+        let mut i = self.locals.len - 1
+        while i >= 0 {
+            let binding = self.locals[i]
+            if binding.name == name and binding.depth <= self.depth {
+                return binding.cname
+            }
+            i = i - 1
+        }
+        return ""
+    }
+
+    fn lookup_const(self, name: string): string {
+        let mut i = self.consts.len - 1
+        while i >= 0 {
+            if self.consts[i].name == name {
+                return self.consts[i].cname
+            }
+            i = i - 1
+        }
+        return ""
+    }
+
+    fn find_function(self, name: string): string {
+        let mut i = self.funcs.len - 1
+        while i >= 0 {
+            if self.funcs[i].name == name {
+                return self.funcs[i].cname
+            }
+            i = i - 1
+        }
+        return ""
+    }
+
+    fn find_struct(self, name: string): number {
+        let mut i = self.structs.len - 1
+        while i >= 0 {
+            if self.structs[i].name == name {
+                return i
+            }
+            i = i - 1
+        }
+        return -1
+    }
+
+    fn new_tmp(mut self): string {
+        self.next_tmp = self.next_tmp + 1
+        return "t" + str(self.next_tmp)
+    }
+
+    fn line(mut self, text: string) {
+        let mut i = 0
+        while i < self.indent {
+            self.out.append("  ")
+            i = i + 1
+        }
+        self.out.append(text)
+        self.out.append("\n")
+    }
+
+    fn enter(mut self) {
+        self.depth = self.depth + 1
+    }
+
+    fn leave(mut self) {
+        if self.depth > 0 {
+            self.depth = self.depth - 1
+        }
+    }
+
+    // 鈹€鈹€ literals 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+
+    fn literal_expr(mut self, text: string): string {
+        if text == "true" {
+            return "xr_bool(1)"
+        }
+        if text == "false" {
+            return "xr_bool(0)"
+        }
+        if text == "null" {
+            return "xr_nil()"
+        }
+        let first = text.slice(0, 1)
+        if first == "\"" or first == "'" {
+            return "xr_str(" + self.emit_string_literal(text) + ")"
+        }
+        if first == "`" {
+            self.fail("template literals are not lowered by the bootstrap backend")
+            return "xr_nil()"
+        }
+        let digits = clean_number(text)
+        if is_float_text(digits) {
+            return "xr_float(" + digits + ")"
+        }
+        return "xr_int(" + digits + "LL)"
+    }
+
+    fn emit_string_literal(mut self, text: string): string {
+        let body = text.slice(1, text.len - 1)
+        let chars = body.split("")
+        let mut lit = StringBuilder::new()
+        lit.append("\"")
+        let mut i = 0
+        while i < chars.len {
+            let c = chars[i]
+            if c == "\\" and i + 1 < chars.len {
+                lit.append("\\")
+                lit.append(chars[i + 1])
+                i = i + 2
+                continue
+            }
+            if c == "\"" {
+                lit.append("\\\"")
+                i = i + 1
+                continue
+            }
+            let code = c.code_at(0)
+            if code >= 32 and code <= 126 {
+                lit.append(c)
+                i = i + 1
+                continue
+            }
+            if code < 32 {
+                lit.append("\" \"\\x")
+                lit.append(hex_pad(code, 2))
+                lit.append("\" \"")
+                i = i + 1
+                continue
+            }
+            if code <= 65535 {
+                lit.append("\\u")
+                lit.append(hex_pad(code, 4))
+                i = i + 1
+                continue
+            }
+            lit.append("\\U")
+            lit.append(hex_pad(code, 8))
+            i = i + 1
+        }
+        lit.append("\"")
+        return lit.build()
+    }
+}
+
+// 鈹€鈹€ entry point 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+
+pub fn compile(root: Node, entry: string, runtime_path: string): BuildResult {
+    let mut emitter = new_emitter()
+    emitter.collect_program(root, dir_of(entry))
+    if emitter.error != "" {
+        return BuildResult(ok: false, message: emitter.error, source: "")
+    }
+    let source = emitter.emit(runtime_path)
+    if emitter.error != "" {
+        return BuildResult(ok: false, message: emitter.error, source: "")
+    }
+    return BuildResult(ok: true, message: "", source: source)
+}
+
+fn normalize_path(path: string): string {
+    let mut out = StringBuilder::new()
+    for c in path.split("") {
+        if c == "\\" {
+            out.append("/")
+        } else {
+            out.append(c)
+        }
+    }
+    return out.build()
+}
+
+fn split_path(path: string): List<string> {
+    let mut parts: List<string> = []
+    let mut part = StringBuilder::new()
+    let chars = path.split("")
+    let mut i = 0
+    while i < chars.len {
+        let c = chars[i]
+        if c == ":" and i + 1 < chars.len and chars[i + 1] == ":" {
+            parts.push(part.build())
+            part = StringBuilder::new()
+            i = i + 2
+        } else {
+            part.append(c)
+            i = i + 1
+        }
+    }
+    parts.push(part.build())
+    return parts
+}
+
+// 鈹€鈹€ code generation 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+
+impl Emitter {
+    fn emit(mut self, runtime_path: string): string {
+        self.program = StringBuilder::new()
+        self.out = StringBuilder::new()
+        self.indent = 0
+        self.line("#define _CRT_SECURE_NO_WARNINGS")
+        self.line("#if defined(_MSC_VER)")
+        self.line("#pragma comment(linker, \"/STACK:67108864\")")
+        self.line("#endif")
+        self.line("#include " + c_string(normalize_path(base_of(runtime_path))))
+        self.line("")
+        self.line("// Generated by xuloc stage 1. Do not edit.")
+        let mut i = 0
+        while i < self.funcs.len {
+            let f = self.funcs[i]
+            self.line("XVal " + f.cname + "(long long argc, XVal *argv);")
+            i = i + 1
+        }
+        i = 0
+        while i < self.methods.len {
+            let m = self.methods[i]
+            self.line("XVal " + m.cname + "(long long argc, XVal *argv);")
+            i = i + 1
+        }
+        self.line("")
+        i = 0
+        while i < self.consts.len {
+            let c = self.consts[i]
+            self.line("static XVal " + c.cname + ";")
+            i = i + 1
+        }
+        self.program.append(self.out.build())
+        self.emit_method_registrations()
+        self.emit_globals()
+        i = 0
+        while i < self.funcs.len {
+            let f = self.funcs[i]
+            self.emit_function(f.cname, f.params, f.body)
+            i = i + 1
+        }
+        i = 0
+        while i < self.methods.len {
+            let m = self.methods[i]
+            self.emit_function(m.cname, m.params, m.body)
+            i = i + 1
+        }
+        self.emit_main()
+        return self.program.build()
+    }
+
+    fn emit_method_registrations(mut self) {
+        self.out = StringBuilder::new()
+        self.indent = 0
+        self.line("static void xr_register_user_methods(void) {")
+        self.indent = 1
+        let mut i = 0
+        while i < self.methods.len {
+            let m = self.methods[i]
+            self.line(
+                "xr_register_method("
+                    + c_string(m.owner)
+                    + ", "
+                    + c_string(m.name)
+                    + ", "
+                    + m.cname
+                    + ");",
+            )
+            i = i + 1
+        }
+        self.indent = 0
+        self.line("}")
+        self.program.append(self.out.build())
+        self.program.append("\n")
+    }
+
+    fn emit_globals(mut self) {
+        self.out = StringBuilder::new()
+        self.locals = []
+        self.depth = 0
+        self.next_local = 0
+        self.next_tmp = 0
+        self.indent = 0
+        self.line("static void xr_init_globals(void) {")
+        self.indent = 1
+        let mut i = 0
+        while i < self.consts.len {
+            let c = self.consts[i]
+            let value = self.emit_expr(c.expr)
+            self.line(c.cname + " = " + value + ";")
+            i = i + 1
+        }
+        self.indent = 0
+        self.line("}")
+        self.program.append(self.out.build())
+        self.program.append("\n")
+    }
+
+    fn emit_function(mut self, cname: string, params: List<string>, body: Node) {
+        self.out = StringBuilder::new()
+        self.locals = []
+        self.depth = 0
+        self.next_local = 0
+        self.next_tmp = 0
+        self.indent = 1
+        self.line("XVal " + cname + "(long long argc, XVal *argv) {")
+        self.line("  (void)argc;")
+        self.line("  (void)argv;")
+        let mut i = 0
+        while i < params.len {
+            let c = self.new_local(params[i])
+            self.line(
+                "  XVal "
+                    + c
+                    + " = argc > "
+                    + str(i)
+                    + " ? argv["
+                    + str(i)
+                    + "] : xr_nil();",
+            )
+            i = i + 1
+        }
+        self.emit_block_return(body)
+        self.indent = 0
+        self.line("}")
+        self.program.append(self.out.build())
+        self.program.append("\n")
+    }
+
+    fn emit_main(mut self) {
+        self.out = StringBuilder::new()
+        self.locals = []
+        self.depth = 0
+        self.next_local = 0
+        self.next_tmp = 0
+        self.indent = 0
+        self.line("int main(int argc, char **argv) {")
+        self.line("  xr_set_argv(argc, argv);")
+        self.line("  xr_register_user_methods();")
+        self.line("  xr_init_globals();")
+        let mut has_main = false
+        let mut i = 0
+        while i < self.funcs.len {
+            if self.funcs[i].name == "main" {
+                has_main = true
+            }
+            i = i + 1
+        }
+        if has_main {
+            self.line("  (void)f_main(0, NULL);")
+        }
+        self.line("  return 0;")
+        self.line("}")
+        self.program.append(self.out.build())
+        self.program.append("\n")
+    }
+
+    fn emit_block_return(mut self, block: Node) {
+        self.enter()
+        let kids = block.children
+        if kids.len == 0 {
+            self.line("return xr_nil();")
+            self.leave()
+            return
+        }
+        let mut i = 0
+        while i < kids.len - 1 {
+            self.emit_stmt(kids[i])
+            i = i + 1
+        }
+        let last = kids[kids.len - 1]
+        if last.kind == "ExprStmt" {
+            let value = self.emit_expr(last.children[0])
+            self.line("return " + value + ";")
+        } else {
+            self.emit_stmt(last)
+            self.line("return xr_nil();")
+        }
+        self.leave()
+    }
+
+    fn emit_block_value(mut self, block: Node, target: string) {
+        self.enter()
+        let kids = block.children
+        if kids.len == 0 {
+            if target != "" {
+                self.line(target + " = xr_nil();")
+            }
+            self.leave()
+            return
+        }
+        let mut i = 0
+        while i < kids.len - 1 {
+            self.emit_stmt(kids[i])
+            i = i + 1
+        }
+        let last = kids[kids.len - 1]
+        if last.kind == "ExprStmt" {
+            let expr = last.children[0]
+            if target == "" {
+                if expr.kind == "If" {
+                    self.emit_if(expr, "")
+                } else if expr.kind == "Match" {
+                    self.emit_match(expr, "")
+                } else {
+                    let value = self.emit_expr(expr)
+                    self.line("(void)(" + value + ");")
+                }
+            } else {
+                let value = self.emit_expr(expr)
+                self.line(target + " = " + value + ";")
+            }
+        } else {
+            self.emit_stmt(last)
+            if target != "" {
+                self.line(target + " = xr_nil();")
+            }
+        }
+        self.leave()
+    }
+
+    fn emit_stmt(mut self, node: Node) {
+        let kind = node.kind
+        if kind == "Let" or kind == "Const" {
+            self.emit_let(node)
+            return
+        }
+        if kind == "Assign" {
+            self.emit_assign(node)
+            return
+        }
+        if kind == "ExprStmt" {
+            let expr = node.children[0]
+            if expr.kind == "If" {
+                self.emit_if(expr, "")
+            } else if expr.kind == "Match" {
+                self.emit_match(expr, "")
+            } else {
+                let value = self.emit_expr(expr)
+                self.line("(void)(" + value + ");")
+            }
+            return
+        }
+        if kind == "Return" {
+            if node.children.len > 0 {
+                let value = self.emit_expr(node.children[0])
+                self.line("return " + value + ";")
+            } else {
+                self.line("return xr_nil();")
+            }
+            return
+        }
+        if kind == "If" {
+            self.emit_if(node, "")
+            return
+        }
+        if kind == "While" {
+            self.emit_while(node)
+            return
+        }
+        if kind == "For" {
+            self.emit_for(node)
+            return
+        }
+        if kind == "Jump" {
+            self.line(node.value + ";")
+            return
+        }
+        if kind == "Block" {
+            self.enter()
+            for child in node.children {
+                self.emit_stmt(child)
+            }
+            self.leave()
+            return
+        }
+        if kind == "Defer" {
+            self.fail("`defer` is not lowered by the bootstrap backend")
+            return
+        }
+        if kind == "Fn" {
+            self.fail("nested functions are not lowered by the bootstrap backend")
+            return
+        }
+        self.fail("unsupported statement `" + kind + "`")
+    }
+
+    fn emit_let(mut self, node: Node) {
+        let mut initializer = node
+        let mut found = false
+        for child in node.children {
+            if child.kind != "Mut" and child.kind != "TypeName" {
+                initializer = child
+                found = true
+            }
+        }
+        if !found {
+            self.fail("a binding needs an initializer")
+            return
+        }
+        let value = self.emit_expr(initializer)
+        if node.value == "" or node.value == "_" {
+            self.line("(void)(" + value + ");")
+            return
+        }
+        let cname = self.new_local(node.value)
+        self.line("XVal " + cname + " = " + value + ";")
+    }
+
+    fn emit_assign(mut self, node: Node) {
+        self.emit_assign_to(node.children[0], node.children[1])
+    }
+
+    fn emit_assign_to(mut self, target: Node, value_node: Node) {
+        if target.kind == "Name" {
+            let cname = self.lookup_local(target.value)
+            if cname == "" {
+                self.fail("cannot assign to unknown name `" + target.value + "`")
+                return
+            }
+            let value = self.emit_expr(value_node)
+            self.line(cname + " = " + value + ";")
+            return
+        }
+        if target.kind == "Member" {
+            let recv = self.emit_expr(target.children[0])
+            let value = self.emit_expr(value_node)
+            self.line(
+                "xr_set_field(" + recv + ", " + c_string(target.value) + ", " + value + ");",
+            )
+            return
+        }
+        if target.kind == "Index" {
+            let recv = self.emit_expr(target.children[0])
+            let index = self.emit_expr(target.children[1])
+            let value = self.emit_expr(value_node)
+            self.line("xr_set_index(" + recv + ", " + index + ", " + value + ");")
+            return
+        }
+        if target.kind == "Group" {
+            if target.children.len > 0 {
+                self.emit_assign_to(target.children[0], value_node)
+            }
+            return
+        }
+        self.fail("unsupported assignment target `" + target.kind + "`")
+    }
+
+    fn emit_while(mut self, node: Node) {
+        self.line("while (1) {")
+        self.indent = self.indent + 1
+        let condition = self.emit_expr(node.children[0])
+        self.line("if (!xr_cond(" + condition + ")) { break; }")
+        self.emit_block_value(node.children[1], "")
+        self.indent = self.indent - 1
+        self.line("}")
+    }
+
+    fn emit_for(mut self, node: Node) {
+        let iterable = self.emit_expr(node.children[0])
+        let it = self.new_tmp()
+        self.line("XVal " + it + " = " + iterable + ";")
+        let index = self.new_tmp()
+        self.line("long long " + index + " = 0;")
+        self.line("for (; " + index + " < xr_len(" + it + "); " + index + " += 1) {")
+        self.indent = self.indent + 1
+        self.enter()
+        if node.value != "" and node.value != "_" {
+            let cname = self.new_local(node.value)
+            self.line(
+                "XVal "
+                    + cname
+                    + " = xr_index("
+                    + it
+                    + ", xr_int("
+                    + index
+                    + "));",
+            )
+        }
+        for child in node.children[1].children {
+            self.emit_stmt(child)
+        }
+        self.leave()
+        self.indent = self.indent - 1
+        self.line("}")
+    }
+
+    fn emit_if(mut self, node: Node, target: string) {
+        let condition = self.emit_expr(node.children[0])
+        self.line("if (xr_cond(" + condition + ")) {")
+        self.indent = self.indent + 1
+        self.emit_block_value(node.children[1], target)
+        self.indent = self.indent - 1
+        if node.children.len > 2 {
+            self.line("} else {")
+            self.indent = self.indent + 1
+            let alt = node.children[2]
+            if alt.kind == "If" {
+                self.emit_if(alt, target)
+            } else {
+                self.emit_block_value(alt, target)
+            }
+            self.indent = self.indent - 1
+        }
+        self.line("}")
+    }
+
+    fn emit_match(mut self, node: Node, target: string) {
+        let value = self.emit_expr(node.children[0])
+        let scrut = self.new_tmp()
+        self.line("XVal " + scrut + " = " + value + ";")
+        let mut first = true
+        let mut i = 1
+        while i < node.children.len {
+            let arm = node.children[i]
+            let pattern = arm.children[0]
+            let mut has_guard = false
+            for child in arm.children {
+                if child.kind == "Guard" {
+                    has_guard = true
+                }
+            }
+            if has_guard {
+                self.fail("`match` guards are not lowered by the bootstrap backend")
+            }
+            let test = self.pattern_test(pattern, scrut)
+            if first {
+                self.line("if (" + test + ") {")
+                first = false
+            } else {
+                self.line("} else if (" + test + ") {")
+            }
+            self.indent = self.indent + 1
+            self.enter()
+            self.pattern_bind(pattern, scrut)
+            let body = arm.children[arm.children.len - 1]
+            if body.kind == "Block" {
+                self.emit_block_value(body, target)
+            } else {
+                let value = self.emit_expr(body)
+                if target == "" {
+                    self.line("(void)(" + value + ");")
+                } else {
+                    self.line(target + " = " + value + ";")
+                }
+            }
+            self.leave()
+            self.indent = self.indent - 1
+            i = i + 1
+        }
+        if first {
+            self.line("xr_fail(\"no match arms\");")
+        } else {
+            self.line("} else {")
+            self.indent = self.indent + 1
+            self.line("xr_fail(\"no matching arm\");")
+            self.indent = self.indent - 1
+            self.line("}")
+        }
+    }
+
+    // 鈹€鈹€ expressions 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+
+    fn emit_expr(mut self, node: Node): string {
+        let kind = node.kind
+        if kind == "Literal" {
+            return self.literal_expr(node.value)
+        }
+        if kind == "Name" {
+            return self.require_name(node.value)
+        }
+        if kind == "Path" {
+            return self.require_path(node.value)
+        }
+        if kind == "Group" {
+            if node.children.len == 0 {
+                return "xr_nil()"
+            }
+            return self.emit_expr(node.children[0])
+        }
+        if kind == "Unary" {
+            return self.emit_unary(node)
+        }
+        if kind == "Binary" {
+            return self.emit_binary(node)
+        }
+        if kind == "Ternary" {
+            return self.emit_ternary(node)
+        }
+        if kind == "Is" {
+            return self.emit_is(node)
+        }
+        if kind == "Call" {
+            return self.emit_call(node)
+        }
+        if kind == "Member" {
+            return self.emit_member(node)
+        }
+        if kind == "OptionalMember" {
+            return self.emit_optional_member(node)
+        }
+        if kind == "Index" {
+            let recv = self.emit_expr(node.children[0])
+            let index = self.emit_expr(node.children[1])
+            return "xr_index(" + recv + ", " + index + ")"
+        }
+        if kind == "List" {
+            return self.emit_list(node)
+        }
+        if kind == "Tuple" {
+            return self.emit_list(node)
+        }
+        if kind == "If" {
+            let tmp = self.new_tmp()
+            self.line("XVal " + tmp + " = xr_nil();")
+            self.emit_if(node, tmp)
+            return tmp
+        }
+        if kind == "Match" {
+            let tmp = self.new_tmp()
+            self.line("XVal " + tmp + " = xr_nil();")
+            self.emit_match(node, tmp)
+            return tmp
+        }
+        if kind == "Spread" {
+            self.fail("a spread is only valid inside a list literal")
+            return "xr_nil()"
+        }
+        if kind == "Map" {
+            self.fail("map literals are not lowered by the bootstrap backend")
+            return "xr_nil()"
+        }
+        if kind == "Closure" {
+            self.fail("closures are not lowered by the bootstrap backend")
+            return "xr_nil()"
+        }
+        self.fail("unsupported expression `" + kind + "`")
+        return "xr_nil()"
+    }
+
+    fn emit_name(self, name: string): string {
+        let binding = self.lookup_local(name)
+        if binding != "" {
+            return binding
+        }
+        let constant = self.lookup_const(name)
+        if constant != "" {
+            return constant
+        }
+        return ""
+    }
+
+    fn require_name(mut self, name: string): string {
+        let value = self.emit_name(name)
+        if value == "" {
+            self.fail("cannot lower value `" + name + "`; functions are not first-class in the bootstrap backend")
+            return "xr_nil()"
+        }
+        return value
+    }
+
+    fn emit_path(self, value: string): string {
+        let constant = self.lookup_const(value)
+        if constant != "" {
+            return constant
+        }
+        return ""
+    }
+
+    fn require_path(mut self, value: string): string {
+        let path = self.emit_path(value)
+        if path == "" {
+            self.fail("path `" + value + "` is not a value in the bootstrap backend")
+            return "xr_nil()"
+        }
+        return path
+    }
+
+    fn emit_unary(mut self, node: Node): string {
+        if node.children.len == 0 {
+            return "xr_nil()"
+        }
+        let operand = self.emit_expr(node.children[0])
+        if node.value == "!" {
+            return "xr_not(" + operand + ")"
+        }
+        if node.value == "-" {
+            return "xr_neg(" + operand + ")"
+        }
+        if node.value == "~" {
+            return "xr_bitnot(" + operand + ")"
+        }
+        if node.value == "await" or node.value == "move" or node.value == "copy" {
+            return operand
+        }
+        self.fail("unsupported unary operator `" + node.value + "`")
+        return "xr_nil()"
+    }
+
+    fn emit_binary(mut self, node: Node): string {
+        if node.children.len < 2 {
+            return "xr_nil()"
+        }
+        let op = node.value
+        if op == "and" or op == "or" or op == "??" {
+            return self.emit_short_circuit(op, node)
+        }
+        let left = self.emit_expr(node.children[0])
+        let right = self.emit_expr(node.children[1])
+        if op == "+" {
+            return "xr_add(" + left + ", " + right + ")"
+        }
+        if op == "-" {
+            return "xr_sub(" + left + ", " + right + ")"
+        }
+        if op == "*" {
+            return "xr_mul(" + left + ", " + right + ")"
+        }
+        if op == "/" {
+            return "xr_div(" + left + ", " + right + ")"
+        }
+        if op == "%" {
+            return "xr_mod(" + left + ", " + right + ")"
+        }
+        if op == "**" {
+            return "xr_pow(" + left + ", " + right + ")"
+        }
+        if op == "&" {
+            return "xr_band(" + left + ", " + right + ")"
+        }
+        if op == "|" {
+            return "xr_bor(" + left + ", " + right + ")"
+        }
+        if op == "^" {
+            return "xr_bxor(" + left + ", " + right + ")"
+        }
+        if op == "<<" {
+            return "xr_shl(" + left + ", " + right + ")"
+        }
+        if op == ">>" {
+            return "xr_shr(" + left + ", " + right + ")"
+        }
+        if op == "==" {
+            return "xr_bool(xr_eq(" + left + ", " + right + "))"
+        }
+        if op == "!=" {
+            return "xr_bool(!xr_eq(" + left + ", " + right + "))"
+        }
+        if op == "<" {
+            return "xr_lt(" + left + ", " + right + ")"
+        }
+        if op == "<=" {
+            return "xr_le(" + left + ", " + right + ")"
+        }
+        if op == ">" {
+            return "xr_gt(" + left + ", " + right + ")"
+        }
+        if op == ">=" {
+            return "xr_ge(" + left + ", " + right + ")"
+        }
+        if op == "..<" {
+            return "xr_range(" + left + ", " + right + ", 0)"
+        }
+        if op == "..=" {
+            return "xr_range(" + left + ", " + right + ", 1)"
+        }
+        self.fail("unsupported binary operator `" + op + "`")
+        return "xr_nil()"
+    }
+
+    fn emit_short_circuit(mut self, op: string, node: Node): string {
+        let left = self.emit_expr(node.children[0])
+        let tmp = self.new_tmp()
+        self.line("XVal " + tmp + " = " + left + ";")
+        let right = self.emit_expr(node.children[1])
+        if op == "and" {
+            return "(xr_cond(" + tmp + ") ? " + right + " : xr_bool(0))"
+        }
+        if op == "or" {
+            return "(xr_cond(" + tmp + ") ? xr_bool(1) : " + right + ")"
+        }
+        return "((" + tmp + ").tag == XT_NIL ? " + right + " : " + tmp + ")"
+    }
+
+    fn emit_ternary(mut self, node: Node): string {
+        if node.children.len < 3 {
+            return "xr_nil()"
+        }
+        let condition = self.emit_expr(node.children[0])
+        let tmp = self.new_tmp()
+        self.line("XVal " + tmp + " = " + condition + ";")
+        let then_value = self.emit_expr(node.children[1])
+        let else_value = self.emit_expr(node.children[2])
+        return "(xr_cond(" + tmp + ") ? " + then_value + " : " + else_value + ")"
+    }
+
+    fn emit_is(mut self, node: Node): string {
+        if node.children.len < 2 {
+            return "xr_bool(0)"
+        }
+        let value = self.emit_expr(node.children[0])
+        let ty = self.type_text(node.children[1])
+        if node.value == "is not" {
+            return "xr_bool(!xr_is(" + value + ", " + c_string(ty) + "))"
+        }
+        return "xr_bool(xr_is(" + value + ", " + c_string(ty) + "))"
+    }
+
+    fn type_text(self, node: Node): string {
+        if node.kind == "TypeName" {
+            return node.value
+        }
+        if node.kind == "OptionalType" or node.kind == "ListType" {
+            if node.children.len > 0 {
+                return self.type_text(node.children[0])
+            }
+        }
+        if node.kind == "TupleType" {
+            let mut out = StringBuilder::new()
+            out.append("(")
+            let mut i = 0
+            while i < node.children.len {
+                if i > 0 {
+                    out.append(", ")
+                }
+                out.append(self.type_text(node.children[i]))
+                i = i + 1
+            }
+            out.append(")")
+            return out.build()
+        }
+        return node.value
+    }
+
+    fn emit_member(mut self, node: Node): string {
+        let recv = self.emit_expr(node.children[0])
+        if node.value == "len" {
+            return "xr_int(xr_len(" + recv + "))"
+        }
+        if node.value == "byte_len" {
+            return "xr_int(xr_byte_len(" + recv + "))"
+        }
+        return "xr_get_field(" + recv + ", " + c_string(node.value) + ")"
+    }
+
+    fn emit_optional_member(mut self, node: Node): string {
+        let recv = self.emit_expr(node.children[0])
+        if node.value == "len" {
+            return "xr_int(xr_len(" + recv + "))"
+        }
+        return "xr_get_field_opt(" + recv + ", " + c_string(node.value) + ")"
+    }
+
+    fn emit_list(mut self, node: Node): string {
+        let tmp = self.new_tmp()
+        self.line("XVal " + tmp + " = xr_list_new();")
+        let mut i = 0
+        while i < node.children.len {
+            let child = node.children[i]
+            if child.kind == "Spread" {
+                let value = self.emit_expr(child.children[0])
+                self.line("xr_list_extend(" + tmp + ", " + value + ");")
+            } else {
+                let value = self.emit_expr(child)
+                self.line("xr_list_push(" + tmp + ", " + value + ");")
+            }
+            i = i + 1
+        }
+        return tmp
+    }
+
+    fn arg_expr(mut self, node: Node): string {
+        if node.kind == "Arg" {
+            if node.children.len == 0 {
+                return "xr_nil()"
+            }
+            return self.emit_expr(node.children[0])
+        }
+        return self.emit_expr(node)
+    }
+
+    fn one_arg(mut self, node: Node, name: string): string {
+        if node.children.len != 2 {
+            self.fail("`" + name + "` expects one argument")
+            return "xr_nil()"
+        }
+        return self.arg_expr(node.children[1])
+    }
+
+    fn eval_args(mut self, children: List<Node>, start: number): List<string> {
+        let values: List<string> = []
+        let mut i = start
+        while i < children.len {
+            let value = self.arg_expr(children[i])
+            let tmp = self.new_tmp()
+            self.line("XVal " + tmp + " = " + value + ";")
+            values.push(tmp)
+            i = i + 1
+        }
+        return values
+    }
+
+    fn value_array(self, values: List<string>): string {
+        if values.len == 0 {
+            return "NULL"
+        }
+        return "(XVal[]){" + c_join(values) + "}"
+    }
+
+    fn name_array(self, names: List<string>): string {
+        if names.len == 0 {
+            return "NULL"
+        }
+        let mut out = StringBuilder::new()
+        out.append("(const char*[]){")
+        let mut i = 0
+        while i < names.len {
+            if i > 0 {
+                out.append(", ")
+            }
+            out.append(c_string(names[i]))
+            i = i + 1
+        }
+        out.append("}")
+        return out.build()
+    }
+
+    fn emit_call(mut self, node: Node): string {
+        if node.children.len == 0 {
+            return "xr_nil()"
+        }
+        let callee = node.children[0]
+        if callee.kind == "Member" or callee.kind == "OptionalMember" {
+            return self.emit_method_call(node)
+        }
+        if callee.kind == "Name" or callee.kind == "Path" {
+            return self.emit_named_call(node)
+        }
+        self.fail("only named functions and methods are callable in the bootstrap backend")
+        return "xr_nil()"
+    }
+
+    fn emit_method_call(mut self, node: Node): string {
+        let callee = node.children[0]
+        let recv_expr = self.emit_expr(callee.children[0])
+        let recv = self.new_tmp()
+        self.line("XVal " + recv + " = " + recv_expr + ";")
+        let args = self.eval_args(node.children, 1)
+        return "xr_method("
+            + recv
+            + ", "
+            + c_string(callee.value)
+            + ", "
+            + str(args.len)
+            + ", "
+            + self.value_array(args)
+            + ")"
+    }
+
+    fn emit_named_call(mut self, node: Node): string {
+        let callee = node.children[0]
+        let name = callee.value
+        if callee.kind == "Name" {
+            let builtin = self.emit_builtin(node, name)
+            if builtin != "" {
+                return builtin
+            }
+            let struct_index = self.find_struct(name)
+            if struct_index >= 0 {
+                return self.emit_struct_call(node, struct_index)
+            }
+            let binding = self.lookup_local(name)
+            if binding != "" {
+                self.fail("calling a local value is not lowered by the bootstrap backend")
+                return "xr_nil()"
+            }
+            let fn_cname = self.find_function(name)
+            if fn_cname != "" {
+                let args = self.eval_args(node.children, 1)
+                return fn_cname
+                    + "("
+                    + str(args.len)
+                    + ", "
+                    + self.value_array(args)
+                    + ")"
+            }
+            self.fail("cannot lower call to `" + name + "`")
+            return "xr_nil()"
+        }
+        return self.emit_path_call(node)
+    }
+
+    fn emit_builtin(mut self, node: Node, name: string): string {
+        if name == "print" {
+            return "xr_print(" + self.one_arg(node, name) + ")"
+        }
+        if name == "println" {
+            return "xr_print(" + self.one_arg(node, name) + ")"
+        }
+        if name == "eprintln" or name == "eprint" {
+            return "xr_eprintln(" + self.one_arg(node, name) + ")"
+        }
+        if name == "str" {
+            return "xr_str_of(" + self.one_arg(node, name) + ")"
+        }
+        if name == "len" {
+            return "xr_int(xr_len(" + self.one_arg(node, name) + "))"
+        }
+        if name == "panic" {
+            if node.children.len < 2 {
+                return "xr_panic(xr_str(\"panic\"))"
+            }
+            return "xr_panic(" + self.arg_expr(node.children[1]) + ")"
+        }
+        if name == "assert" {
+            if node.children.len == 2 {
+                return "xr_assert("
+                    + self.arg_expr(node.children[1])
+                    + ", xr_str(\"assertion failed\"))"
+            }
+            if node.children.len >= 3 {
+                return "xr_assert("
+                    + self.arg_expr(node.children[1])
+                    + ", "
+                    + self.arg_expr(node.children[2])
+                    + ")"
+            }
+            self.fail("`assert` expects a condition")
+            return "xr_nil()"
+        }
+        return ""
+    }
+
+    fn emit_struct_call(mut self, node: Node, struct_index: number): string {
+        let info = self.structs[struct_index]
+        let fields = info.fields
+        let mut names: List<string> = []
+        let mut values: List<string> = []
+        let mut i = 0
+        while i < fields.len {
+            names.push(fields[i])
+            values.push("xr_nil()")
+            i = i + 1
+        }
+        let mut position = 0
+        i = 1
+        while i < node.children.len {
+            let child = node.children[i]
+            let mut target = position
+            let mut value_node = child
+            if child.kind == "Arg" {
+                value_node = child.children[0]
+                target = -1
+                let mut f = 0
+                while f < fields.len {
+                    if fields[f] == child.value {
+                        target = f
+                    }
+                    f = f + 1
+                }
+                if target < 0 {
+                    self.fail(
+                        "unknown field `"
+                            + child.value
+                            + "` in `"
+                            + info.name
+                            + "`",
+                    )
+                    return "xr_nil()"
+                }
+            } else {
+                position = position + 1
+                if target >= fields.len {
+                    self.fail("too many fields in `" + info.name + "`")
+                    return "xr_nil()"
+                }
+            }
+            let value = self.emit_expr(value_node)
+            let tmp = self.new_tmp()
+            self.line("XVal " + tmp + " = " + value + ";")
+            values[target] = tmp
+            i = i + 1
+        }
+        return "xr_struct("
+            + c_string(info.name)
+            + ", "
+            + str(fields.len)
+            + ", "
+            + self.name_array(names)
+            + ", "
+            + self.value_array(values)
+            + ")"
+    }
+
+    fn emit_path_call(mut self, node: Node): string {
+        let path = node.children[0].value
+        let args = self.eval_args(node.children, 1)
+        if path == "std::fs::read" {
+            if args.len != 1 {
+                self.fail("`std::fs::read` expects one argument")
+                return "xr_nil()"
+            }
+            return "xr_fs_read(" + args[0] + ")"
+        }
+        if path == "std::fs::write" {
+            if args.len != 2 {
+                self.fail("`std::fs::write` expects two arguments")
+                return "xr_nil()"
+            }
+            return "xr_fs_write(" + args[0] + ", " + args[1] + ")"
+        }
+        if path == "std::fs::mkdir" {
+            if args.len != 1 {
+                self.fail("`std::fs::mkdir` expects one argument")
+                return "xr_nil()"
+            }
+            return "xr_fs_mkdir(" + args[0] + ")"
+        }
+        if path == "std::io::println" {
+            if args.len != 1 {
+                self.fail("`std::io::println` expects one argument")
+                return "xr_nil()"
+            }
+            return "xr_print(" + args[0] + ")"
+        }
+        if path == "std::io::eprintln" or path == "std::io::eprint" {
+            if args.len != 1 {
+                self.fail("`std::io::eprintln` expects one argument")
+                return "xr_nil()"
+            }
+            return "xr_eprintln(" + args[0] + ")"
+        }
+        if path == "std::os::getenv" {
+            if args.len != 1 {
+                self.fail("`std::os::getenv` expects one argument")
+                return "xr_nil()"
+            }
+            return "xr_os_getenv(" + args[0] + ")"
+        }
+        if path == "std::os::platform" {
+            return "xr_os_platform()"
+        }
+        if path == "std::process::args" {
+            return "xr_process_args()"
+        }
+        if path == "std::process::exit" {
+            if args.len != 1 {
+                self.fail("`std::process::exit` expects one argument")
+                return "xr_nil()"
+            }
+            return "xr_process_exit(" + args[0] + ")"
+        }
+        if path == "std::process::run" {
+            if args.len != 1 {
+                self.fail("`std::process::run` expects one argument")
+                return "xr_nil()"
+            }
+            return "xr_process_run(" + args[0] + ")"
+        }
+        if path == "std::process::exec" {
+            if args.len < 2 {
+                self.fail("`std::process::exec` expects a program and an argument list")
+                return "xr_nil()"
+            }
+            return "xr_process_exec(" + args[0] + ", " + args[1] + ")"
+        }
+        let parts = split_path(path)
+        if parts.len == 2 {
+            if parts[0] == "StringBuilder" and parts[1] == "new" {
+                return "xr_static_method(\"StringBuilder\", \"new\", 0, NULL)"
+            }
+            return "xr_variant("
+                + c_string(parts[0])
+                + ", "
+                + c_string(parts[1])
+                + ", "
+                + str(args.len)
+                + ", "
+                + self.value_array(args)
+                + ")"
+        }
+        self.fail("cannot lower call to `" + path + "`")
+        return "xr_nil()"
+    }
+
+    // 鈹€鈹€ patterns 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+
+    fn pattern_is_variant(self, value: string): bool {
+        let parts = split_path(value)
+        if parts.len != 2 {
+            return false
+        }
+        let mut i = self.enums.len - 1
+        while i >= 0 {
+            if self.enums[i].name == parts[0] {
+                let mut v = 0
+                while v < self.enums[i].variants.len {
+                    if self.enums[i].variants[v] == parts[1] {
+                        return true
+                    }
+                    v = v + 1
+                }
+            }
+            i = i - 1
+        }
+        return false
+    }
+
+    fn pattern_test(mut self, pattern: Node, scrut: string): string {
+        let kind = pattern.kind
+        if kind == "Wildcard" {
+            return "1"
+        }
+        if kind == "NamePattern" {
+            if self.pattern_is_variant(pattern.value) {
+                return "xr_is_variant(" + scrut + ", " + c_string(pattern.value) + ")"
+            }
+            return "1"
+        }
+        if kind == "LiteralPattern" {
+            return self.literal_pattern_test(pattern.value, scrut)
+        }
+        if kind == "VariantPattern" {
+            return "xr_is_variant(" + scrut + ", " + c_string(pattern.value) + ")"
+        }
+        if kind == "TypePattern" {
+            return "xr_is(" + scrut + ", " + c_string(type_pattern_type(pattern.value)) + ")"
+        }
+        if kind == "OrPattern" {
+            let mut out = StringBuilder::new()
+            out.append("(")
+            let mut i = 0
+            while i < pattern.children.len {
+                if i > 0 {
+                    out.append(" || ")
+                }
+                out.append(self.pattern_test(pattern.children[i], scrut))
+                i = i + 1
+            }
+            out.append(")")
+            return out.build()
+        }
+        self.fail("unsupported pattern `" + kind + "`")
+        return "1"
+    }
+
+    fn literal_pattern_test(mut self, value: string, scrut: string): string {
+        let exclusive = value.split("..<")
+        if exclusive.len == 2 {
+            return "(xr_cond(xr_ge("
+                + scrut
+                + ", "
+                + self.literal_expr(exclusive[0])
+                + ")) && xr_cond(xr_lt("
+                + scrut
+                + ", "
+                + self.literal_expr(exclusive[1])
+                + ")))"
+        }
+        let inclusive = value.split("..=")
+        if inclusive.len == 2 {
+            return "(xr_cond(xr_ge("
+                + scrut
+                + ", "
+                + self.literal_expr(inclusive[0])
+                + ")) && xr_cond(xr_le("
+                + scrut
+                + ", "
+                + self.literal_expr(inclusive[1])
+                + ")))"
+        }
+        return "xr_eq(" + scrut + ", " + self.literal_expr(value) + ")"
+    }
+
+    fn pattern_bind(mut self, pattern: Node, scrut: string) {
+        let kind = pattern.kind
+        if kind == "Wildcard" or kind == "LiteralPattern" {
+            return
+        }
+        if kind == "NamePattern" {
+            if pattern.value == "_" or self.pattern_is_variant(pattern.value) {
+                return
+            }
+            let cname = self.new_local(pattern.value)
+            self.line("XVal " + cname + " = " + scrut + ";")
+            return
+        }
+        if kind == "VariantPattern" {
+            let mut i = 0
+            while i < pattern.children.len {
+                let payload = pattern.children[i]
+                if payload.kind == "PatternPayload" {
+                    let mut p = 0
+                    while p < payload.children.len {
+                        let value = "xr_payload(" + scrut + ", " + str(p) + ")"
+                        self.pattern_bind(payload.children[p], value)
+                        p = p + 1
+                    }
+                }
+                i = i + 1
+            }
+            return
+        }
+        if kind == "TypePattern" {
+            let name = type_pattern_name(pattern.value)
+            if name != "" and name != "_" {
+                let cname = self.new_local(name)
+                self.line("XVal " + cname + " = " + scrut + ";")
+            }
+            return
+        }
+        if kind == "OrPattern" {
+            let mut i = 0
+            while i < pattern.children.len {
+                self.pattern_bind(pattern.children[i], scrut)
+                i = i + 1
+            }
+            return
+        }
+        self.fail("unsupported pattern `" + kind + "`")
+    }
+}
+
+// 鈹€鈹€ pattern text helpers 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+
+fn type_pattern_name(value: string): string {
+    let words = value.split(" ")
+    let mut i = words.len - 1
+    while i >= 0 {
+        if words[i] != "" {
+            return words[i]
+        }
+        i = i - 1
+    }
+    return ""
+}
+
+fn type_pattern_type(value: string): string {
+    let words = value.split(" ")
+    let mut i = 0
+    while i < words.len {
+        if words[i] != "" {
+            return words[i]
+        }
+        i = i + 1
+    }
+    return value
+}
+

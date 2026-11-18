@@ -31,9 +31,9 @@ readiness document.
 | WP3 — AOT parity and bootstrap backend | 13 | 13 |
 | WP4 — `defer` semantics | 5 | 5 |
 | WP5 — Stage 1 skeleton | 6 | 6 |
-| WP6 — Self-host loop | 3 | 7 |
+| WP6 — Self-host loop | 7 | 7 |
 | WP7 — Non-gating follow-ups | 4 | 4 |
-| **Total** | **55** | **59** |
+| **Total** | **59** | **59** |
 
 ## Gates
 
@@ -56,10 +56,17 @@ Gates are cumulative. An open earlier gate blocks every later gate.
       Reached on Linux, macOS, and Windows (macOS verified locally on
       2026-11-17; the Windows differential and stage 1 build pass locally and
       in CI, closing B7 in WP3).
-- [ ] **Gate 5 — Self-host**: stage 1 compiles itself into stage 2; stage 1 and
+- [x] **Gate 5 — Self-host**: stage 1 compiles itself into stage 2; stage 1 and
       stage 2 agree on the bootstrap suite and the conformance subset.
-- [ ] **Gate 6 — Conformance**: the pinned specification's checkable examples
-      and the bootstrap suite run in CI.
+      `crates/xupm/tests/stage1_build.rs::stage1_builds_itself_into_stage2` and
+      `::stage1_and_stage2_agree_on_the_bootstrap_suite` (tokens/parse of every
+      stage 1 source, check verdicts and diagnostics for the accept/reject
+      corpus, and the corpus programs' runtime output).
+- [x] **Gate 6 — Conformance**: the pinned specification's checkable examples
+      and the bootstrap suite run in CI. The `conformance` job runs the
+      pinned-spec runner, the stage 1 suite, and the opt-in self-host build
+      (`XULO_STAGE1_BUILD=1`); deviations stay triaged in
+      `spec_conformance_baseline.tsv` (§6.10).
 
 ## Baseline capabilities
 
@@ -126,15 +133,19 @@ package or out-of-scope section that tracks it.
 - [x] **B7** Linux/macOS/Windows build matrix — Linux and Windows run the full
       AOT differential in CI, and macOS is verified locally; Windows parks
       `ffi.xulo` (Unix-only FFI, S8) and passes locally and in CI on 2026-11-17
-- [ ] **B8** Reproducible stage 1 build and self-compile smoke test — PARTIAL:
-      B8a is done, reproducibility and the self-build await WP6
+- [x] **B8** Reproducible stage 1 build and self-compile smoke test — B8a builds
+      the native front end; B8b in WP6 shows two stage 1 builds emit identical
+      C and that stage 2 regenerates exactly the translation unit that built it
+      (`crates/xupm/tests/stage1_build.rs::stage1_build_is_reproducible`)
 - [x] **D1** Source spans and `file:line:column` diagnostics
 - [x] **D2** stderr writes and nonzero exit status
 - [x] **D4** Stage 1 diagnostics consistent with stage 0
-- [x] **T1** Unit and integration tests — `cargo test --workspace`: 2129 passed, 0 failed (2026-11-17)
+- [x] **T1** Unit and integration tests — `cargo test --workspace`: 2065 passed, 0 failed (2026-11-18)
 - [x] **T2** All examples run in CI
-- [ ] **T5** Stage 1 self-parse/self-check/self-build tests — PARTIAL: self-parse
-      and self-check are live, the self-build is not (WP5, WP6 T5c)
+- [x] **T5** Stage 1 self-parse/self-check/self-build tests — self-parse,
+      self-check, the self-build (stage 2), and the stage 1/stage 2
+      differential live in `crates/xulo-cli/tests/stage1.rs`,
+      `xuloc/tests.xulo`, and `crates/xupm/tests/stage1_build.rs`
 - [x] **T6** Robustness/fuzz tests
 
 ## WP0 — Matrix hygiene and conformance
@@ -335,21 +346,32 @@ Can start in parallel with WP1–WP4 · needed by Gate 1/2 · source:
 
 After WP1–WP5 · needed by Gate 4/5/6 · source: `stage1-readiness.md` §7 WP6
 
-- [ ] Stage 1 checks and compiles a fixed bootstrap corpus.
-      Checker portion is live (`xuloc check` over `xuloc/corpus/accept` and
-      `xuloc/corpus/reject`); code generation for the corpus is still open.
+- [x] Stage 1 checks and compiles a fixed bootstrap corpus.
+      `xuloc/backend.xulo` lowers the generic AST to portable C and links
+      `xuloc/runtime.c`; the accept corpus compiles and prints its checked-in
+      goldens, and the reject corpus still fails with a coded diagnostic
+      (`crates/xupm/tests/stage1_build.rs::stage1_compiles_the_bootstrap_corpus`).
 - [x] **B8a** Build stage 1 with stage 0's `xupm`.
       `xupm build xuloc/main.xulo --release` produces
       `xuloc/.xupm/build/main`; the native binary matches the interpreter for
       `tokens`/`parse` on `examples/fibonacci.xulo` and `parse` on
       `xuloc/main.xulo`. The opt-in differential test rejects output drift.
-- [ ] Stage 1 builds itself, producing a stage 2 binary.
-- [ ] **T5c** Compare stage 1 and stage 2 output on the bootstrap suite.
+- [x] Stage 1 builds itself, producing a stage 2 binary.
+      `crates/xupm/tests/stage1_build.rs::stage1_builds_itself_into_stage2`.
+- [x] **T5c** Compare stage 1 and stage 2 output on the bootstrap suite.
+      `::stage1_and_stage2_agree_on_the_bootstrap_suite` compares tokens and
+      parse trees for every `xuloc/*.xulo`, check verdicts/diagnostics for the
+      accept and reject corpus, and the runtime output of every corpus build.
 - [x] Add the bootstrap suite to CI alongside the conformance runner.
-      The `conformance` job now runs `cargo test -p xulo-cli --test stage1` and
-      `cargo test -p xupm --test cli runs_stage1_test_file`, so the corpus and
-      `xuloc/tests.xulo` gate alongside the pinned-spec runner.
-- [ ] **B8b** Add a reproducible build and self-compile smoke test.
+      The `conformance` job runs `cargo test -p xulo-cli --test stage1`,
+      `cargo test -p xupm --test cli runs_stage1_test_file`, and the opt-in
+      `XULO_STAGE1_BUILD=1 cargo test -p xupm --test stage1_build`, so the
+      corpus, `xuloc/tests.xulo`, and the self-host loop gate alongside the
+      pinned-spec runner.
+- [x] **B8b** Add a reproducible build and self-compile smoke test.
+      `::stage1_build_is_reproducible` builds `basics.xulo` twice and compares
+      the generated C byte for byte, then builds the compiler with stage 2 and
+      requires the stage 2 translation unit to match stage 1's exactly.
 - [x] **D4** Make stage 1 diagnostics consistent with stage 0 for the
       bootstrap subset.
       Lexical/syntax diagnostics use `E0001`/`E0002`; the checker reports
@@ -361,10 +383,18 @@ After WP1–WP5 · needed by Gate 4/5/6 · source: `stage1-readiness.md` §7 WP6
 
 **Verify:** `cargo test -p xulo-cli --test stage1` plus
 `XULO_AOT_DIFFERENTIAL=1 XULO_RUNTIME_LIB=$PWD/target/release/libxulo_runtime.a
-cargo test -p xupm --test aot_differential stage1_binary_matches_the_interpreter`.
+cargo test -p xupm --test aot_differential stage1_binary_matches_the_interpreter`,
+and the WP6 self-host runner:
 
-**Exit:** Gate 4, Gate 5, Gate 6. Gate 4 is reached; Gates 5–6 remain blocked
-on stage 1 code generation and self-build.
+```bash
+XULO_STAGE1_BUILD=1 cargo test -p xupm --test stage1_build -- --nocapture
+```
+
+It needs a C compiler (set `XULO_CC` when the host `clang` is not on `PATH`)
+and builds the matching `xulo-runtime` static library itself. The self-build is
+CPU-heavy: the full runner takes roughly four minutes on Windows.
+
+**Exit:** Gate 4, Gate 5, Gate 6 — all reached (2026-11-18).
 
 ## WP7 — Non-gating follow-ups
 
