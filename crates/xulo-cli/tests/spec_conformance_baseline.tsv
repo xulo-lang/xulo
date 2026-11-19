@@ -7,7 +7,7 @@ spec/concurrency.md:280 ok	`AppState` (shared type) is declared only in the surr
 spec/concurrency.md:282 error	`AppState` (shared type) is declared only in the surrounding prose, so E0410 cannot be exercised
 spec/error-handling.md:262 ok	`poll` is declared only in the surrounding prose
 spec/error-handling.md:31 ok	`User`/`LoadError` are declared only in the surrounding prose
-spec/expressions/calls.md:60 ok	module-scope expression statement (the `render(...)` call) is a syntax error (E0002)
+spec/expressions/calls.md:58 ok	module-scope expression statement is a syntax error (E0002)
 spec/expressions/literals.md:192 ok	typed map literal `Map<K, V>{ ... }` is a syntax error
 spec/expressions/literals.md:196 error	typed map literal `Map<K, V>{ ... }` is a syntax error, so E0221 is unreachable
 spec/expressions/literals.md:217 ok	parenthesized map literal `({ a: 1 })` is a syntax error

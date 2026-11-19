@@ -34,12 +34,6 @@ fn keeps_pub_use_list_inline() {
 }
 
 #[test]
-fn keeps_destructure_inline() {
-    let out = fmt("fn main(){ @Store const {user,theme} = store() }");
-    assert!(out.contains("@Store const { user, theme } = store()"));
-}
-
-#[test]
 fn no_space_in_call_index_and_member() {
     let out = fmt("fn main(){let xs=[1,2]\nxs[0]=9\nprint(xs[0])\nprint(user.name)}");
     assert!(out.contains("xs[0] = 9"));
@@ -62,8 +56,8 @@ fn ternary_spacing() {
 
 #[test]
 fn empty_block_stays_inline() {
-    let out = fmt("fn main(): View { }\nfn empty() { }");
-    assert!(out.contains("fn main(): View { }"));
+    let out = fmt("fn main(): number { }\nfn empty() { }");
+    assert!(out.contains("fn main(): number { }"));
     assert!(out.contains("fn empty() { }"));
 }
 

@@ -448,7 +448,6 @@ fn to_symbol_kind(kind: OutlineKind) -> SymbolKind {
         OutlineKind::Method => SymbolKind::METHOD,
         OutlineKind::Variable => SymbolKind::VARIABLE,
         OutlineKind::Constant => SymbolKind::CONSTANT,
-        OutlineKind::State | OutlineKind::Store => SymbolKind::PROPERTY,
         OutlineKind::Trait => SymbolKind::INTERFACE,
         OutlineKind::TypeAlias => SymbolKind::STRUCT,
         OutlineKind::Enum => SymbolKind::ENUM,

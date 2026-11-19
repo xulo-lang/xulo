@@ -1,7 +1,6 @@
 // Readiness probe L9 (§5.1): structs, inherent `impl` methods, traits, and
 // explicit `Trait::method(recv)` dispatch. `scale` relies on the implicit
-// return of a struct construction, which is a plain call expression, not a
-// component invocation.
+// return of a struct construction, which is a plain call expression.
 // @expect
 // 6
 // 6

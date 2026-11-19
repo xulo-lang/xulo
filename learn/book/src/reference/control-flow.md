@@ -37,7 +37,7 @@ for i in 1..=10 {     // 范围（闭区间，含右端）
 ## `while` 循环
 
 ```xulo
-let count = 0
+let mut count = 0
 while count < 10 {
   count = count + 1
 }
@@ -69,7 +69,7 @@ match result {
 ## 异常：`throw` / `try` / `catch`
 
 ```xulo
-fn fetch_user(id: string): async {
+async fn fetch_user(id: string) {
   try {
     let response = await fetch("/api/users/" + id)
     return await response.json()

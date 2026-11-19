@@ -194,7 +194,6 @@ impl Interpreter {
                 seen.remove(&id);
                 Ok(format!("Set([{}])", parts.join(", ")))
             }
-            Value::Signal(cell) => render(&cell.borrow(), seen),
             other => Ok(other.format()),
         }
     }

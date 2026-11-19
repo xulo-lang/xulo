@@ -4,15 +4,15 @@ use pest::iterators::Pair;
 
 use xulo_core::ast::{
     ArrowBody, ArrowClosure, AssignTarget, BinaryOp, BinaryOperator, Block, Call, CallArg,
-    CallValue, ComponentStmt, EnumRef, ExprStmt, Expression, FnExpr, IfExpr, IndexExpr, IsExpr,
-    Literal, LockExpr, MacroCallExpr, MatchArm, MatchBody, MatchExpr, MatchPattern, MemberAccess,
-    NullishExpr, ObjectField, Param, PatternBinder, QuoteExpr, QuotePiece, RangeExpr, SpawnBody,
-    SpawnExpr, SpawnField, SpawnTarget, Statement, TernaryExpr, Type, TypedMap, TypedMapEntry,
-    UnaryOp, UnaryOperator,
+    CallValue, EnumRef, ExprStmt, Expression, FnExpr, IfExpr, IndexExpr, IsExpr, Literal, LockExpr,
+    MacroCallExpr, MatchArm, MatchBody, MatchExpr, MatchPattern, MemberAccess, NullishExpr,
+    ObjectField, Param, PatternBinder, QuoteExpr, QuotePiece, RangeExpr, SpawnBody, SpawnExpr,
+    SpawnField, SpawnTarget, Statement, TernaryExpr, Type, TypedMap, TypedMapEntry, UnaryOp,
+    UnaryOperator,
 };
 use xulo_core::error::{ErrorKind, XuloError};
 
-use super::build::{block, to_ui_elements};
+use super::build::block;
 use super::types::{R, check_rule, single, type_expr};
 use super::{Rule, err, span_of};
 
@@ -751,33 +751,6 @@ fn variant_path(pair: Pair<'_, Rule>) -> R<Expression> {
     }))
 }
 
-pub(crate) fn component_call(pair: Pair<'_, Rule>) -> R<Expression> {
-    let span = span_of(&pair);
-    let mut inner = pair.into_inner();
-    let name_pair = next(&mut inner, Rule::identifier);
-    let name_span = span_of(&name_pair);
-    let name = name_pair.as_str().to_string();
-    let mut args = Vec::new();
-    let mut children = Vec::new();
-    let mut type_args = None;
-    for p in inner {
-        match p.as_rule() {
-            Rule::call_type_args => type_args = Some(call_type_args(p)?),
-            Rule::argument_list => args = argument_list(p)?,
-            Rule::component_block => children = to_ui_elements(p)?,
-            _ => unreachable!("component_call child {:?}", p.as_rule()),
-        }
-    }
-    Ok(Expression::Component(ComponentStmt {
-        name,
-        name_span,
-        args,
-        children,
-        span,
-        type_args,
-    }))
-}
-
 fn function_expression(pair: Pair<'_, Rule>) -> R<Expression> {
     let span = span_of(&pair);
     let mut is_async = false;
@@ -1148,7 +1121,6 @@ fn argument(pair: Pair<'_, Rule>) -> R<CallArg> {
     for p in pair.into_inner() {
         match p.as_rule() {
             Rule::ident_raw => name = Some(p.as_str().to_string()),
-            Rule::dollar_place => value = Some(dollar_place(p)?),
             Rule::expression => value = Some(expression(p)?),
             _ => unreachable!("argument child {:?}", p.as_rule()),
         }
@@ -1157,53 +1129,6 @@ fn argument(pair: Pair<'_, Rule>) -> R<CallArg> {
         name,
         value: value.expect("argument has a value"),
     })
-}
-
-/// `$place` in argument position: a `$`-prefixed binding reference. A dotted
-/// or indexed place is kept as its rendered text so the checker rejects it
-/// (spec: binding.md — only a single state cell may be bound).
-fn dollar_place(pair: Pair<'_, Rule>) -> R<Expression> {
-    let span = span_of(&pair);
-    let place = single(pair);
-    Ok(Expression::Binding {
-        name: place_text(place),
-        span,
-    })
-}
-
-fn place_text(pair: Pair<'_, Rule>) -> String {
-    match pair.as_rule() {
-        Rule::place => {
-            let mut text = String::new();
-            for p in pair.into_inner() {
-                match p.as_rule() {
-                    Rule::place_primary => text.push_str(&place_text(p)),
-                    Rule::place_op => text.push_str(&place_op_text(p)),
-                    _ => unreachable!("place child {:?}", p.as_rule()),
-                }
-            }
-            text
-        }
-        Rule::place_primary => {
-            let inner = single(pair);
-            match inner.as_rule() {
-                Rule::ident_raw => inner.as_str().to_string(),
-                Rule::place => format!("({})", place_text(inner)),
-                _ => unreachable!("place_primary {:?}", inner.as_rule()),
-            }
-        }
-        Rule::place_op => place_op_text(pair),
-        _ => unreachable!("place {:?}", pair.as_rule()),
-    }
-}
-
-fn place_op_text(pair: Pair<'_, Rule>) -> String {
-    let inner = single(pair);
-    match inner.as_rule() {
-        Rule::ident_raw | Rule::integer_literal => format!(".{}", inner.as_str()),
-        Rule::expression => format!("[{}]", inner.as_str()),
-        _ => unreachable!("place_op {:?}", inner.as_rule()),
-    }
 }
 
 /// The left-hand side of an assignment. The grammar takes any expression

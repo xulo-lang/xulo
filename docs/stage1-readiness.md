@@ -3,7 +3,7 @@
 - **Status**: Living document
 - **Date**: 2026-11-17
 - **Audience**: compiler/runtime maintainers, stage 1 bootstrap team
-- **Normative sources**: `spec@48f49b7` and `std-spec@a2e4cb7`, the commits pinned by this repository
+- **Normative sources**: `spec@815edad` and `std-spec@a2e4cb7`, the commits pinned by this repository
 - **Scope**: the capabilities stage 0 must provide for stage 1, their current status, and the gates for calling stage 0 "host-ready"
 
 This is a bootstrap-readiness document, not a language specification. The
@@ -12,7 +12,7 @@ document only records what stage 1 needs from stage 0, what exists today, and
 what is still missing. The executable checklist derived from this document is
 [`tasks.md`](tasks.md); keep the two in sync.
 
-> **Repository state note.** The superproject pins `spec@48f49b7` and
+> **Repository state note.** The superproject pins `spec@815edad` and
 > `std-spec@a2e4cb7`, but a working tree can be checked out at a different
 > submodule commit. Run `git submodule status` before using this matrix.
 > Evaluating against a stale specification checkout produces false mismatches
@@ -69,8 +69,8 @@ front end, not for UI or network applications:
   `std::regex` if needed.
 - `#[test]` and `assert` for stage 1's own tests.
 
-Explicitly **not required** for the bootstrap subset: UI/components,
-`@State`/`@Environment`, renderers, LSP, formatter comments, async tasks,
+Explicitly **not required** for the bootstrap subset: UI libraries and
+renderers (the language defines no UI layer), LSP, formatter comments, async tasks,
 `spawn`/`lock`/`shared`, macros, `std::net`, `std::http`, package registry,
 and non-Unix FFI. These may remain P2 and must not block Gate 1 or Gate 2.
 
@@ -233,7 +233,6 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 | L21 | `copy` / `move` and use-after-move checking | **OK** | Both operators are accepted only as a `let` initializer, a call argument, or a `return` operand (`E0403`); `move` requires a whole frame-owned binding and any later use of it is `E0403`. `crates/xulo-semantic/tests/semantic_tests.rs` (`move_of_a_parameter_is_e0403`, `move_of_a_part_of_a_binding_is_e0403`, `using_a_binding_after_move_is_e0403`, `moving_twice_is_e0403`, `move_outside_let_argument_or_return_is_e0403`, `copy_outside_let_argument_or_return_is_e0403`) | — |
 | L22 | Async/await, `spawn`, `lock`, `shared` | **OK** | `crates/xulo-runtime/tests/task_slots.rs`, `crates/xulo-runtime/tests/service.rs`, `examples/async_tasks.xulo`; outside the bootstrap subset | — |
 | L23 | Attributes, `#[test]`, `#[derive]`, macros | **OK** | `crates/xulo-parser/tests/attribute_tests.rs`, `crates/xulo-parser/tests/macro_syntax_tests.rs`, `crates/xulo-runtime/tests/macro_system.rs`; outside the bootstrap subset | — |
-| L24 | UI/components and `@State`/`@Environment` | **PARTIAL** | UI works in examples; `@Environment` is explicitly unsupported; outside the bootstrap subset | — |
 | L25 | Type aliases (`type X = …`) | **OK** | Alias resolution, alias receivers in trait dispatch, and function-type aliases; `crates/xulo-semantic/tests/semantic_tests.rs` (`type_alias_is_resolved`, `trait_dispatch_resolves_type_aliases`, `call_value_alias_aliases_callable`), `crates/xulo-parser/tests/parser_tests.rs` (`type_alias`). Allowed by the subset, not yet used by `xuloc/` | — |
 
 ### 5.2 Runtime semantics
@@ -302,11 +301,11 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 | D4 | Stage 1's own diagnostics are consistent with stage 0 | **OK** | Lexical/syntax use `E0001`/`E0002`; checker failures use `E0101`/`E0201`/`E0202`/`E0207`/`E0211`/`E0213`/`E0215` with `file:line:column`. Stage 0 now reports `E0101` for undefined names, `E0201` for conditions, `E0203` for return mismatches, `E0207` for arity, and `E0213` for non-iterables; `crates/xulo-cli/tests/stage1.rs` compares the codes in `stage1_check_agrees_with_stage0_on_the_corpus`. | 3 |
 | T1 | Unit and integration tests | **OK** | `cargo test --workspace`: 2129 passed, 0 failed (2026-11-17) | 1 |
 | T2 | All examples run in CI | **OK** | `.github/workflows/ci.yml` examples job | 1 |
-| T3 | Pinned-spec example conformance runner | **OK** | `crates/xulo-cli/tests/spec_conformance.rs`: 114 annotated examples extracted from the pinned spec, 81 pass, 33 triaged in `spec_conformance_baseline.tsv` (§6.10) | 2 |
+| T3 | Pinned-spec example conformance runner | **OK** | `crates/xulo-cli/tests/spec_conformance.rs`: 111 annotated examples extracted from the pinned spec, 78 pass, 33 triaged in `spec_conformance_baseline.tsv` (§6.10) | 2 |
 | T4 | Interpreter vs. AOT differential suite | **OK** | `crates/xupm/tests/aot_differential.rs` builds and executes every top-level example, compares stdout/stderr against `xupm run`, and fails on stale baseline entries; CI runs it on Linux and Windows after the release build, and macOS is verified locally. The shared baseline is empty; Windows parks `ffi.xulo` in `crates/xupm/tests/aot_differential_baseline.windows.tsv` | 4 |
 | T5 | Stage 1 self-parse/self-check/self-build tests | **OK** | Self-parse, self-check, and interpreter smoke tests are live (`crates/xulo-cli/tests/stage1.rs`, `xuloc/tests.xulo`); `crates/xupm/tests/stage1_build.rs` covers the corpus builds, the self-built stage 2, and the stage 1/stage 2 differential (T5c). | 2–5 |
 | T6 | Robustness/fuzz tests | **OK** | `crates/xulo-compiler/tests/robustness.rs`, `crates/xulo-parser/tests/parser_tests.rs` | 1 |
-| T7 | Spec and std-spec submodules aligned with the pin | **OK** | `crates/xulo-cli/tests/submodule_pins.rs` compares the `HEAD` gitlink, the index, and the checked-out submodule against `spec@48f49b7` / `std-spec@a2e4cb7`; CI job `conformance` | 1 |
+| T7 | Spec and std-spec submodules aligned with the pin | **OK** | `crates/xulo-cli/tests/submodule_pins.rs` compares the `HEAD` gitlink, the index, and the checked-out submodule against `spec@815edad` / `std-spec@a2e4cb7`; CI job `conformance` | 1 |
 
 ## 6. Known blocking defects
 
@@ -454,14 +453,14 @@ every annotated `xulo` block from the pinned spec and checks or runs it; local
 `// runs:` cases under `crates/xulo-cli/tests/runs_cases/` keep the executable
 path covered because the pinned spec has none;
 `crates/xulo-cli/tests/submodule_pins.rs` fails when the `HEAD` gitlink, the
-index, or the checked-out submodule drifts from `spec@48f49b7` /
+index, or the checked-out submodule drifts from `spec@815edad` /
 `std-spec@a2e4cb7`. Both run in the `conformance` CI job. Divergences are
 recorded in §6.10 rather than in this section.
 
 ### 6.10 Spec examples that still diverge (T3)
 
 `spec_conformance_baseline.tsv` lists each diverging example with a reason. The
-list currently holds 33 of 114 annotated examples; 81 pass. Counted from the
+list currently holds 33 of 111 annotated examples; 78 pass. Counted from the
 baseline reasons, they fall into four groups (11 + 12 + 8 + 2 = 33):
 
 - **Context-dependent examples (11).** The block calls or names a declaration
@@ -685,8 +684,8 @@ L21 and R8 are done and non-gating.
 
 The following are deliberately out of scope until the bootstrap loop works:
 
-- UI components, renderers, `@State`/`@Environment`, and the terminal/webview
-  backends.
+- UI libraries and renderers. The language has no component layer; UI is built
+  from ordinary types and functions in a library.
 - LSP, IDE integration, and the formatter's comment handling.
 - Async tasks, `spawn`/`lock`/`shared`, networking (`std::net`, `std::http`),
   and package registry work.
@@ -777,4 +776,4 @@ pinned spec commits, and the drift-governance ledger state (see
 
 | 日期 | stage 0 / stage 1 commit | spec / std-spec | 漂移台账 | 说明 |
 |---|---|---|---|---|
-| 2026-11-18 | `3c32586` | `spec@48f49b7` / `std-spec@a2e4cb7` | D-01–D-04 open，D-05 accepted | 首次记录；`XULO_STAGE1_REQUIRED` 已接入 CI；drift-governance §5.4 差分门禁已落地（`drift_gate_reconciles_stage0_and_stage1`），D-06 因标签传播修复而关闭 |
+| 2026-11-18 | `3c32586` | `spec@815edad` / `std-spec@a2e4cb7` | D-01–D-04 open，D-05 accepted | 首次记录；`XULO_STAGE1_REQUIRED` 已接入 CI；drift-governance §5.4 差分门禁已落地（`drift_gate_reconciles_stage0_and_stage1`），D-06 因标签传播修复而关闭 |

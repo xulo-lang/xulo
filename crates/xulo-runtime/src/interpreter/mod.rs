@@ -6,10 +6,9 @@ use corosensei::stack::DefaultStack;
 use corosensei::{Coroutine, Yielder};
 
 use xulo_core::ast::{
-    AssignTarget, AssignValue, Attribute, BinaryOp, BinaryOperator, BindingPattern, Block, Call,
-    ComponentStmt, EffectStmt, EnumDef, Expression, FnDef, ForStmt, IfExpr, ImplDecl, LetBinding,
-    Literal, MatchExpr, ObjectField, Param, Program, ReturnStmt, Statement, StoreStmt, StructDef,
-    TryStmt, Type, UiElement, UnaryOperator, impl_fn_name,
+    AssignTarget, AssignValue, Attribute, BinaryOp, BinaryOperator, Block, Call, EnumDef,
+    Expression, FnDef, ForStmt, IfExpr, ImplDecl, Literal, MatchExpr, ObjectField, Param, Program,
+    ReturnStmt, Statement, StructDef, TryStmt, Type, UnaryOperator, impl_fn_name,
 };
 use xulo_core::error::{ErrorKind, XuloError};
 
@@ -194,32 +193,11 @@ pub struct Interpreter {
     /// share the representation but keep reference semantics, so only these
     /// are copied when a binding takes them (R8).
     value_lists: RefCell<std::collections::HashSet<usize>>,
-    /// `@Memo let` value cache keyed by the binding's `name_span.start`: each
-    /// site holds `(deps values, cached result)` entries, scanned by value
-    /// equality. Live for the whole run (the native runtime has no re-render
-    /// loop, so repeated calls with unchanged deps reuse the cached value).
-    memo_cache: RefCell<std::collections::HashMap<usize, Vec<MemoEntry>>>,
-    /// The render tree the entry `main` produced when it returns a `View`
-    /// (see [`Interpreter::take_root_view`]). Kept out of `out` so rendering
-    /// hosts can pick it up after execution.
-    view: RefCell<Option<Value>>,
-    /// The entry module's scope, kept so the UI host can re-invoke `main` to
-    /// re-render (see [`Interpreter::rerender_main`]).
-    entry_env: RefCell<Option<Rc<RefCell<Env>>>>,
-    /// `@State` cells keyed by their binding site (source offset), so a
-    /// re-render reuses the cell instead of re-initializing it: state survives
-    /// across `rerender_main` calls. Multiple instances of the same component
-    /// share a cell (no instance identity is tracked yet).
-    state_store: RefCell<std::collections::HashMap<usize, Rc<RefCell<Value>>>>,
     /// Services started by `spawn.process`, kept alive for the whole run:
     /// a service is not bound to the block that started it (spec
     /// `concurrency.md`, service lifetime).
     services: RefCell<Vec<Rc<ServiceInstance>>>,
 }
-
-/// A cached `@Memo` result: the dependency values it was computed from, plus
-/// the computed value. Scanned by value equality (the entry lists are short).
-type MemoEntry = (Vec<Value>, Value);
 
 /// Pointer-identity side table for constructor-built instances: object ptr ->
 /// (weak handle to the defining module's bindings, struct name).
@@ -968,16 +946,12 @@ impl Interpreter {
             mem_used: Rc::new(Cell::new(0)),
             mem_seen: Rc::new(RefCell::new(std::collections::HashSet::new())),
             depth_quota: Rc::new(Cell::new(None)),
-            memo_cache: RefCell::new(std::collections::HashMap::new()),
             struct_names: RefCell::new(Vec::new()),
             enum_names: RefCell::new(Vec::new()),
             struct_fields: RefCell::new(std::collections::HashMap::new()),
             extern_params: RefCell::new(std::collections::HashMap::new()),
             instance_types: RefCell::new(std::collections::HashMap::new()),
             value_lists: RefCell::new(std::collections::HashSet::new()),
-            view: RefCell::new(None),
-            entry_env: RefCell::new(None),
-            state_store: RefCell::new(std::collections::HashMap::new()),
             services: RefCell::new(Vec::new()),
         };
         // The built-in data types construct with named fields like a struct
@@ -1115,7 +1089,6 @@ impl Interpreter {
             Err(RunError::Throw(v)) => return Err(self.uncaught(&v)),
         }
         if let Some(main) = main_fn(program) {
-            *self.entry_env.borrow_mut() = Some(global.clone());
             self.run_main(main, &global)?;
         } else {
             // No `main` (e.g. a script of top-level statements): still drain the
@@ -1127,31 +1100,15 @@ impl Interpreter {
     }
 
     /// Invoke `main`, draining the async task queue afterward. A rejected async
-    /// `main` surfaces like any other uncaught error. A `View` `main` runs
-    /// headlessly: its render value is produced and dropped (the JS path hands
-    /// it to `__xulo_mount`, which needs an external runtime the native one
-    /// does not have).
-    ///
-    /// When `main` declares a `View` return type the produced render value is
-    /// kept in `self.view`, retrievable via [`Interpreter::take_root_view`], so
-    /// a rendering host (the UI framework) can pick it up after execution.
+    /// `main` surfaces like any other uncaught error.
     fn run_main(&self, main: &FnDef, global: &Rc<RefCell<Env>>) -> Result<(), XuloError> {
-        let is_view = matches!(
-            &main.return_type,
-            Some(Type::Named(name, _)) if name == "View"
-        );
         let result = self.call_fn(main, &[], global);
         self.drive();
         match result {
             Ok(Value::Promise(promise)) => {
                 let state = promise.borrow();
                 match &state.state {
-                    crate::value::PromiseState::Fulfilled(v) => {
-                        if is_view {
-                            *self.view.borrow_mut() = Some(v.clone());
-                        }
-                        Ok(())
-                    }
+                    crate::value::PromiseState::Fulfilled(_) => Ok(()),
                     crate::value::PromiseState::Rejected(e) => Err(match e {
                         RunError::Err(e) => e.clone(),
                         RunError::Propagate(v) => stray_propagate(v),
@@ -1163,12 +1120,7 @@ impl Interpreter {
                     )),
                 }
             }
-            Ok(view) => {
-                if is_view {
-                    *self.view.borrow_mut() = Some(view);
-                }
-                Ok(())
-            }
+            Ok(_) => Ok(()),
             Err(RunError::Err(e)) => Err(e),
             Err(RunError::Propagate(v)) => Err(stray_propagate(&v)),
             Err(RunError::Throw(v)) => Err(self.uncaught(&v)),
@@ -1186,9 +1138,6 @@ impl Interpreter {
     ) -> Result<ModuleExports, RunError> {
         let global = self.setup_module(program, imports)?;
         if run_main && let Some(main) = main_fn(program) {
-            // Remember the entry scope so the UI host can re-invoke `main`
-            // later to re-render (see [`Interpreter::rerender_main`]).
-            *self.entry_env.borrow_mut() = Some(global.clone());
             self.run_main(main, &global).map_err(RunError::Err)?;
         } else {
             // A module without `main` (any dependency module, or a no-main
@@ -1457,7 +1406,6 @@ impl Interpreter {
             Ok(global) => global,
             Err(e) => return self.failed_run(e),
         };
-        *self.entry_env.borrow_mut() = Some(global.clone());
         self.test_timed_out.set(false);
         self.test_deadline.set(
             test.timeout_ms()
@@ -1563,41 +1511,6 @@ impl Interpreter {
     /// Take the collected `print` lines so far (e.g. across executed modules).
     pub fn take_output(&self) -> Vec<String> {
         self.out.take()
-    }
-
-    /// Take the render tree the entry `main` produced, if it declared a `View`
-    /// return type. A non-`View` `main` (or a program without `main`) leaves
-    /// the slot empty. The value is a render tree of opaque `{ name, props }`
-    /// nodes; the UI framework converts it into a widget tree.
-    pub fn take_root_view(&self) -> Option<Value> {
-        self.view.take()
-    }
-
-    /// Invoke a callable value (a UI callback such as `Button.onClick`) with
-    /// no arguments. State cells the callback writes to are shared with the
-    /// component that declared them, so a following
-    /// [`Interpreter::rerender_main`] observes the update.
-    pub fn invoke(&self, callee: &Value) -> Result<Value, RunError> {
-        self.call_value_with_values(callee, &[])
-    }
-
-    /// Re-invoke the entry `main` to rebuild the render tree, reusing the
-    /// `@State` cells created by the previous run (see [`Interpreter::exec_state`]).
-    /// Returns a copy of the freshly rendered tree (which stays in the
-    /// interpreter for [`Interpreter::take_root_view`]); `None` when the
-    /// program has no `View` `main` to re-render.
-    pub fn rerender_main(&self, program: &Program) -> Result<Option<Value>, RunError> {
-        let main = match main_fn(program) {
-            Some(main) => main,
-            None => return Ok(None),
-        };
-        let entry_env = self
-            .entry_env
-            .borrow()
-            .clone()
-            .ok_or_else(|| RunError::err("entry module was not executed", 0..0))?;
-        self.run_main(main, &entry_env).map_err(RunError::Err)?;
-        Ok(self.view.borrow().clone())
     }
 
     /// Append a line to the interpreter's output buffer. Used by native
@@ -1804,10 +1717,6 @@ fn main_fn(program: &Program) -> Option<&FnDef> {
     })
 }
 
-fn is_component_return(ret: &Option<Type>) -> bool {
-    matches!(ret, Some(Type::Named(n, _)) if n == "View")
-}
-
 /// Gather a module's exports: named bindings, from the bindings already
 /// defined by running its statements.
 fn collect_exports(
@@ -1966,12 +1875,6 @@ fn novel_value_bytes(
         }
         Value::Native(_) => {
             *bytes = bytes.saturating_add(64);
-        }
-        Value::Signal(cell) => {
-            if seen.insert(Rc::as_ptr(cell) as usize) {
-                *bytes = bytes.saturating_add(32);
-                novel_value_bytes(&cell.borrow(), depth - 1, seen, bytes);
-            }
         }
         Value::Promise(promise) => {
             if seen.insert(Rc::as_ptr(promise) as usize) {

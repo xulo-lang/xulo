@@ -1,272 +1,173 @@
 # 附录：完整示例
 
-> 一个多文件 UI 应用的完整示例，覆盖枚举、类型别名、Store、组件、Props、事件、双向绑定与异步。
+> 一个多文件命令行程序的完整示例：用 `struct` 表达数据，用 `enum` 与 `match` 分类，用 `Result` 处理校验失败，并通过模块拆分入口、模型、存储与报表。
 >
-> 依赖 `@xulo/ui` / `@xulo/store` 等外部运行时，以及目标平台的全局 API（如 `fetch`）。本示例展示语言的目标形态；当前编译器对外部 API 的调用在纯静态检查（`xulo check`）下可能提示「未声明 / 不可调用」，属预期行为。
+> 界面不是语言层的一部分；如果程序需要 UI，应由库基于这里的普通值构建。
 
 ## 文件结构
 
 ```text
-project/
-├── main.xulo          # 应用入口
-├── stores/
-│   └── app.xulo       # 全局状态
-├── components/
-│   └── button.xulo    # 自定义组件
-└── pages/
-    └── profile.xulo   # 页面组件
+inventory/
+├── main.xulo          # 命令行入口
+├── model.xulo         # 数据模型与校验
+├── store.xulo         # 内存集合操作
+└── report.xulo        # 输出格式化
 ```
 
-## `types.xulo`（共享类型）
+## `model.xulo`（数据模型与校验）
 
 ```xulo
-// 枚举
-pub enum Theme {
-  Light
-  Dark
-  System
+pub enum Category {
+  Tool
+  Book
+  Food
 }
 
-pub enum Status {
-  Active
-  Inactive
-  Pending
+pub struct Item {
+  pub id: string
+  pub name: string
+  pub quantity: number
+  pub category: Category
 }
 
-// 类型别名
-pub type User = {
-  id: string
-  name: string
-  email: string
-  status: Status
-}
-
-pub type Result<T> = {
-  data: T?
-  error: string?
-}
-```
-
-## `stores/app.xulo`
-
-```xulo
-import { create_store } from "@xulo/store"
-import type { User, Theme } from "../types"
-
-type AppState = {
-  user: User?
-  theme: Theme
-  notifications: List<string>
-  loading: bool
-  error: string?
-}
-
-// ✅ 对象字面量用括号包裹
-fn set_user(state: AppState, user: User?): AppState {
-  ({ ...state, user: user, loading: false })
-}
-
-fn set_theme(state: AppState, theme: Theme): AppState {
-  ({ ...state, theme: theme })
-}
-
-fn set_loading(state: AppState, loading: bool): AppState {
-  ({ ...state, loading: loading })
-}
-
-fn set_error(state: AppState, error: string): AppState {
-  ({ ...state, error: error, loading: false })
-}
-
-fn add_notification(state: AppState, message: string): AppState {
-  ({ ...state, notifications: state.notifications + [message] })
-}
-
-// 注意：当前实现暂不支持显式泛型调用（`create_store<AppState>`），故省略类型实参。
-pub const use_app_store = create_store(
-  {
-    user: null,
-    theme: Theme::Light,
-    notifications: [],
-    loading: false,
-    error: null
-  },
-  {
-    set_user: set_user,
-    set_theme: set_theme,
-    set_loading: set_loading,
-    set_error: set_error,
-    add_notification: add_notification
+pub fn make_item(
+  id: string,
+  name: string,
+  quantity: number,
+  category: Category
+): Result<Item, string> {
+  if id == "" {
+    Result::Err("id must not be empty")
+  } else if quantity < 0 {
+    Result::Err("quantity must be non-negative")
+  } else {
+    Result::Ok(Item(id: id, name: name, quantity: quantity, category: category))
   }
-)
+}
 
-// ✅ 异步函数直接调用 use_app_store()，不使用 @Store
-pub fn fetch_user(id: string): async {
-  const store = use_app_store()
-
-  store.actions.set_loading(true)
-  try {
-    let response = await fetch("/api/users/" + id)
-    let data = await response.json()
-    store.actions.set_user(data)
-    store.actions.add_notification("User loaded: " + data.name)
-  } catch (e) {
-    store.actions.set_error(e.message)
+pub fn category_label(category: Category): string {
+  match category {
+    Category::Tool => "tool"
+    Category::Book => "book"
+    Category::Food => "food"
   }
+}
+
+pub fn describe(item: Item): string {
+  item.name + " (" + item.id + ") x" + str(item.quantity) + " [" + category_label(item.category) + "]"
 }
 ```
 
-## `components/button.xulo`
+## `store.xulo`（集合操作）
 
 ```xulo
-import type { Theme } from "../types"
+import type { Item } from "./model"
 
-pub enum ButtonVariant {
-  Primary
-  Secondary
-  Outline
-  Ghost
+pub struct Inventory {
+  pub items: List<Item>
 }
 
-pub fn PrimaryButton(
-  label: string,
-  onClick: fn()? = null,
-  disabled: bool? = false
-): View {
-  Button(
-    variant: ButtonVariant::Primary,
-    onClick: onClick,
-    disabled: disabled,
-    width: "100%"
-  ) {
-    Text(label, weight: "bold")
-  }
+pub fn empty(): Inventory {
+  Inventory(items: [])
 }
 
-pub fn OutlineButton(
-  label: string,
-  onClick: fn()? = null
-): View {
-  Button(variant: ButtonVariant::Outline, onClick: onClick) {
-    Text(label)
-  }
-}
-```
-
-## `pages/profile.xulo`
-
-```xulo
-import { use_app_store, fetch_user } from "../stores/app"
-import { PrimaryButton, OutlineButton } from "../components/button"
-import type { User, Theme, Status } from "../types"
-
-type Props = {
-  id: string
+pub fn add(inventory: Inventory, item: Item): Inventory {
+  Inventory(items: inventory.items + [item])
 }
 
-pub fn UserProfile(props: Props): View {
-  // ✅ @State/@Store/@Effect 只能在返回 View 的函数顶层使用
-  @State let editing: bool = false
-  @State let edit_name: string = ""
-  @Store const { user, theme, loading, error } = use_app_store()
-  @Store const { set_theme, add_notification } = use_app_store()
-
-  @Effect fn() {
-    fetch_user(props.id)
-  }
-
-  // 当 user 变化时更新编辑字段
-  @Effect fn() {
-    if user != null {
-      edit_name = user.name
+pub fn find(inventory: Inventory, id: string): Item? {
+  for item in inventory.items {
+    if item.id == id {
+      return item
     }
-  }, [user]
+  }
+  null
+}
 
-  Card(radius: "lg", shadow: "sm") {
-    VStack(spacing: 16) {
-      HStack {
-        Text("User Profile", weight: "bold", size: 24)
-        Spacer()
-        Button(onClick: fn() {
-          let new_theme = match theme {
-            Theme::Light => Theme::Dark
-            Theme::Dark => Theme::Light
-            Theme::System => Theme::Light
-          }
-          set_theme(new_theme)
-        }) {
-          Text(match theme {
-            Theme::Light => "🌙"
-            Theme::Dark => "☀️"
-            Theme::System => "💻"
-          })
-        }
-      }
+pub fn total_quantity(inventory: Inventory): number {
+  let mut total = 0
+  for item in inventory.items {
+    total = total + item.quantity
+  }
+  total
+}
+```
 
-      if loading {
-        Text("Loading...", color: "$theme.text.secondary")
-      } else if error != null {
-        Text("Error: " + error, color: "$theme.danger")
-      } else if user != null {
-        VStack(spacing: 8) {
-          if editing {
-            Input(value: $edit_name)
-            HStack(spacing: 12) {
-              PrimaryButton(label: "Save", onClick: fn() {
-                // 保存逻辑
-                editing = false
-                add_notification("Name updated to: " + edit_name)
-              })
-              OutlineButton(label: "Cancel", onClick: fn() {
-                editing = false
-                edit_name = user?.name ?? ""
-              })
-            }
-          } else {
-            Text(user.name, weight: "bold", size: 18)
-            Text(user.email, color: "$theme.text.secondary")
-            Text("Status: " + match user.status {
-              Status::Active => "🟢 Active"
-              Status::Inactive => "🔴 Inactive"
-              Status::Pending => "🟡 Pending"
-            })
-            PrimaryButton(label: "Edit Profile", onClick: fn() {
-              editing = true
-            })
-          }
-        }
-      } else {
-        Text("User not found", color: "$theme.warning")
-      }
+## `report.xulo`（格式化输出）
+
+```xulo
+import type { Item } from "./model"
+import { describe } from "./model"
+import type { Inventory } from "./store"
+import { total_quantity } from "./store"
+
+pub fn header(): string {
+  "== Inventory =="
+}
+
+pub fn line(item: Item): string {
+  "- " + describe(item)
+}
+
+pub fn summary(inventory: Inventory): string {
+  "total quantity: " + str(total_quantity(inventory))
+}
+```
+
+## `main.xulo`（入口）
+
+```xulo
+import { make_item, describe, Category } from "./model"
+import type { Inventory } from "./store"
+import { empty, add, find } from "./store"
+import { header, line, summary } from "./report"
+
+fn add_one(
+  inventory: Inventory,
+  id: string,
+  name: string,
+  quantity: number,
+  category: Category
+): Inventory {
+  match make_item(id, name, quantity, category) {
+    Result::Ok(item) => add(inventory, item)
+    Result::Err(reason) => {
+      print("skip " + id + ": " + reason)
+      inventory
     }
   }
 }
-```
 
-## `main.xulo`
+fn main() {
+  let mut inventory = empty()
+  inventory = add_one(inventory, "p-1", "Hammer", 3, Category::Tool)
+  inventory = add_one(inventory, "p-2", "Notebook", 12, Category::Book)
+  inventory = add_one(inventory, "p-3", "Coffee", -1, Category::Food)   // 被拒绝
 
-```xulo
-import { Screen, VStack, Center } from "@xulo/ui"
-import { UserProfile } from "./pages/profile"
-import { use_app_store } from "./stores/app"
-import type { Theme } from "./types"
+  print(header())
+  for item in inventory.items {
+    print(line(item))
+  }
+  print(summary(inventory))
 
-fn main(): View {
-  @Store const { theme } = use_app_store()
-
-  Screen(
-    background: match theme {
-      Theme::Light => "#ffffff"
-      Theme::Dark => "#1a1a2e"
-      Theme::System => "#f5f5f5"
-    }
-  ) {
-    Center {
-      VStack(spacing: 24) {
-        Text("Xulo App", weight: "bold", size: 28)
-        UserProfile(id: "123")
-      }
-    }
+  let found = find(inventory, "p-2")
+  if found != null {
+    print("lookup: " + describe(found))
   }
 }
+```
+
+## 运行
+
+```bash
+xulo run main.xulo
+```
+
+```text
+skip p-3: quantity must be non-negative
+== Inventory ==
+- Hammer (p-1) x3 [tool]
+- Notebook (p-2) x12 [book]
+total quantity: 15
+lookup: Notebook (p-2) x12 [book]
 ```

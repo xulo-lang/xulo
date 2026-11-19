@@ -26,10 +26,7 @@ pub(super) fn stmt_has_closure(stmt: &Statement) -> bool {
         // A `#[test] fn` body is inert: nothing can reach it, so its closures
         // never exist at run time.
         Statement::Test(_) => false,
-        Statement::Let(l) => {
-            l.value.as_ref().is_some_and(expr_has_closure)
-                || l.memo_deps.iter().flatten().any(expr_has_closure)
-        }
+        Statement::Let(l) => l.value.as_ref().is_some_and(expr_has_closure),
         Statement::Return(r) => r.value.as_ref().is_some_and(expr_has_closure),
         Statement::For(f) => expr_has_closure(&f.iterable) || block_has_closure(&f.body),
         Statement::While(w) => expr_has_closure(&w.condition) || block_has_closure(&w.body),
@@ -51,7 +48,6 @@ pub(super) fn stmt_has_closure(stmt: &Statement) -> bool {
         // Import items declare signatures; their bindings hold native
         // extern closures, never source closures.
         | Statement::ExternBlock(_)
-        | Statement::Environment(_)
         | Statement::Trait(_)
         | Statement::Break
         | Statement::Continue => false,
@@ -72,13 +68,6 @@ pub(super) fn stmt_has_closure(stmt: &Statement) -> bool {
             | xulo_core::ast::ExportItem::Trait(_)
             | xulo_core::ast::ExportItem::Names(_) => false,
         },
-        Statement::State(s) => s.binding.value.as_ref().is_some_and(expr_has_closure),
-        Statement::Store(s) => expr_has_closure(&s.value),
-        Statement::Effect(_) => true,
-        Statement::Component(c) => {
-            c.args.iter().any(|a| expr_has_closure(&a.value))
-                || c.children.iter().any(ui_has_closure)
-        }
         Statement::Impl(_) => true,
     }
 }
@@ -97,9 +86,7 @@ pub(super) fn expr_has_closure(expr: &Expression) -> bool {
             | Literal::Boolean(_)
             | Literal::Null => false,
         },
-        Expression::Identifier { .. } | Expression::EnumRef(_) | Expression::Binding { .. } => {
-            false
-        }
+        Expression::Identifier { .. } | Expression::EnumRef(_) => false,
         Expression::BinaryOp(b) => expr_has_closure(&b.left) || expr_has_closure(&b.right),
         Expression::Unary(u) => expr_has_closure(&u.operand),
         Expression::Call(c) => {
@@ -133,10 +120,6 @@ pub(super) fn expr_has_closure(expr: &Expression) -> bool {
         Expression::CallValue(c) => {
             expr_has_closure(&c.callee) || c.arguments.iter().any(|a| expr_has_closure(&a.value))
         }
-        Expression::Component(c) => {
-            c.args.iter().any(|a| expr_has_closure(&a.value))
-                || c.children.iter().any(ui_has_closure)
-        }
         Expression::Tuple { items, .. } => items.iter().any(expr_has_closure),
         Expression::TypedMap(tm) => tm
             .entries
@@ -165,31 +148,5 @@ pub(super) fn match_body_has_closure(body: &xulo_core::ast::MatchBody) -> bool {
     match body {
         xulo_core::ast::MatchBody::Expr(e) => expr_has_closure(e),
         xulo_core::ast::MatchBody::Block(b) => block_has_closure(b),
-    }
-}
-
-pub(super) fn ui_has_closure(el: &xulo_core::ast::UiElement) -> bool {
-    match el {
-        xulo_core::ast::UiElement::Component(c) => {
-            c.args.iter().any(|a| expr_has_closure(&a.value))
-                || c.children.iter().any(ui_has_closure)
-        }
-        xulo_core::ast::UiElement::Text(_) => false,
-        xulo_core::ast::UiElement::Expr(e) => expr_has_closure(e),
-        xulo_core::ast::UiElement::If {
-            condition,
-            then_branch,
-            else_branch,
-        } => {
-            expr_has_closure(condition)
-                || then_branch.iter().any(ui_has_closure)
-                || else_branch
-                    .as_ref()
-                    .is_some_and(|branch| branch.iter().any(ui_has_closure))
-        }
-        xulo_core::ast::UiElement::For { iterable, body, .. } => {
-            expr_has_closure(iterable) || body.iter().any(ui_has_closure)
-        }
-        xulo_core::ast::UiElement::Group(children) => children.iter().any(ui_has_closure),
     }
 }

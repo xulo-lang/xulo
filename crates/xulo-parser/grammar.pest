@@ -34,7 +34,7 @@ keyword = _{ kw_word ~ !ident_part }
 // guard and lex as identifiers. The same holds for `int` and `in`: `int` is
 // written first or it would lose its tail to `in` and lex as an identifier.
 // The twenty primitive-type words plus `extern` are the spec's (spec
-// `lexical-structure.md`, 61 keywords); `View` and `Range` are not keywords.
+// `lexical-structure.md`, 61 keywords); `Range` is not a keyword.
 // `isize` is written before `is` (and `usize` before any shorter `u*`
 // spelling) so the trie's first-terminal rule cannot clip the long form.
 kw_word = _{
@@ -282,14 +282,6 @@ identifier_list = { identifier ~ ("," ~ identifier)* ~ ","? }
 
 const_decl = { attribute_list? ~ pub_marker? ~ kw_const ~ identifier ~ (":" ~ type_expr)? ~ "=" ~ expression }
 
-// Component declarations (meaningful only at the top level of a component
-// body; the checker enforces that).
-component_decl = { state_decl | store_decl | effect_decl | environment_decl }
-state_decl = { "@" ~ identifier ~ kw_let ~ identifier ~ (":" ~ type_expr)? ~ "=" ~ expression }
-store_decl = { "@" ~ identifier ~ kw_let ~ "{" ~ identifier_list ~ "}" ~ "=" ~ expression }
-effect_decl = { "@" ~ identifier ~ expression ~ ("," ~ expression)? }
-environment_decl = { "@" ~ identifier ~ kw_let ~ identifier ~ ":" ~ type_expr }
-
 // ============================================================
 // 6. Types
 // ============================================================
@@ -339,8 +331,7 @@ where_item = { identifier ~ ":" ~ trait_bound }
 
 statement = { inner_statement ~ ";"? }
 inner_statement = {
-      component_decl
-    | let_decl
+      let_decl
     | const_decl
     | fn_decl
     | return_stmt
@@ -349,7 +340,6 @@ inner_statement = {
     | defer_stmt
     | for_stmt
     | while_stmt
-    | component_call
     | expr_stmt_or_assignment
 }
 
@@ -434,8 +424,7 @@ call_type_args = { "<" ~ type_list? ~ gt_close }
 // The `::` lookahead keeps `Foo::bar(x)` from being read as a named argument
 // `Foo:` + a failed `:bar(x)` value: without it, the named-arg prefix consumes
 // the first colon of `::` and the whole call argument fails.
-argument = { (ident_raw ~ !("::") ~ ":")? ~ (dollar_place | expression) }
-dollar_place = { "$" ~ place }
+argument = { (ident_raw ~ !("::") ~ ":")? ~ expression }
 place = { place_primary ~ place_op* }
 place_primary = { ident_raw | "(" ~ place ~ ")" }
 place_op = { "." ~ (ident_raw | integer_literal) | "[" ~ expression ~ "]" }
@@ -496,10 +485,6 @@ path_member = { identifier | kw_copy | ("new" ~ !ident_part) }
 variant_path = { path_head ~ ("::" ~ path_member)+ ~ variant_call_args? }
 variant_call_args = { "(" ~ argument_list? ~ ")" }
 argument_list = { argument ~ ("," ~ argument)* ~ ","? }
-
-component_call = { identifier ~ call_type_args? ~ ("(" ~ argument_list? ~ ")")? ~ component_block }
-component_block = { "{" ~ child_item* ~ "}" }
-child_item = { for_stmt | component_call | expression }
 
 function_expression = { kw_async? ~ kw_fn ~ "(" ~ closure_param_list? ~ ")"
     ~ (":" ~ type_expr)? ~ block }
@@ -603,7 +588,7 @@ token_ident = @{ ident_raw }
 token_operator = @{
     "..<" | "..=" | "..." | "**" | "==" | "!=" | "<=" | ">=" | "=>" | ":=" | "::"
     | "?." | "??" | "=" | "+" | "-" | "*" | "/" | "%" | "^" | "~" | "<"
-    | ">" | "|" | "&" | "?" | "!" | "." | ":" | "@" | "#" | "$" | ";"
+    | ">" | "|" | "&" | "?" | "!" | "." | ":" | "#" | "$" | ";"
     | "," | "(" | ")" | "{" | "}" | "[" | "]"
 }
 

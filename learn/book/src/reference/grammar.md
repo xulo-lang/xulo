@@ -1,15 +1,15 @@
 # 形式语法（EBNF）
 
-> 形式语法正本见仓库 `docs/xulo-ebnf.md`。本节为与当前实现对齐的修订版，差异见文末清单。
+> 形式语法正本见仓库 `spec/grammar.md`。本节为与本书内容对齐的简化版，差异见文末清单。
 
 ```text
-(* Xulo Language Grammar v1.0 *)
+(* Xulo Language Grammar (simplified) *)
 
 (* ============================================================
    0. Document Root
    ============================================================ *)
 
-document            = { import_stmt | pub_stmt | type_def | enum_def | fn_def | const_stmt | let_stmt } ;
+document            = { import_stmt | pub_stmt | type_def | struct_def | enum_def | fn_def | const_stmt | let_stmt } ;
 module              = document ;
 
 (* ============================================================
@@ -28,7 +28,6 @@ module              = document ;
 
 identifier          = (letter | "_") { letter | digit | "_" } ;  (* 关键字与保留字不可用作标识符，见 §lexical *)
 type_identifier     = uppercase_letter { letter | digit | "_" } ;
-component_name      = uppercase_letter { letter | digit | "_" } ;
 
 string_literal      = '"' { character - '"' } '"' ;
 number_literal      = digit { digit } [ "." digit { digit } ] ;
@@ -64,15 +63,16 @@ primary_type        = "string"
 type_args           = "<" type_expr { "," type_expr } ">" ;
 
 field_list          = field_def { "," field_def } [ "," ] ;
-field_def           = identifier ":" type_expr ;
+field_def           = [ "pub" ] identifier ":" type_expr ;
 
 param_type_list     = type_expr { "," type_expr } ;
 
 (* ============================================================
-   4. Type Definitions (type alias, enum)
+   4. Type Definitions (type alias, struct, enum)
    ============================================================ *)
 
 type_def            = "type" identifier [ type_params ] "=" type_expr ;
+struct_def          = "struct" identifier [ type_params ] "{" [ field_list ] "}" ;
 enum_def            = "enum" identifier [ type_params ] "{" enum_body "}" ;
 enum_body           = enum_member { "," enum_member } [ "," ] ;
  enum_member         = identifier [ "(" [ payload_param { "," payload_param } ] ")" ] ;
@@ -86,14 +86,19 @@ type_param          = identifier ;
    ============================================================ *)
 
 const_stmt          = "const" identifier [ ":" type_expr ] "=" expr ;
-let_stmt            = "let" identifier [ ":" type_expr ] [ "=" expr ] ;
+let_stmt            = "let" ( ( "mut" identifier [ ":" type_expr ] )
+                            | identifier [ ":" type_expr ]
+                            | "{" identifier_list "}"
+                            | "(" identifier_list ")" ) "=" expr ;
+
+identifier_list     = identifier { "," identifier } [ "," ] ;
 
 (* ============================================================
    6. Functions
    ============================================================ *)
 
-fn_def              = "fn" identifier [ type_params ] "(" [ param_list ] ")"
-                        [ ":" ( "async" [ type_expr ] | type_expr ) ] block ;  (* ": async" makes an async fn *)
+fn_def              = [ "async" ] "fn" identifier [ type_params ] "(" [ param_list ] ")"
+                        [ ":" type_expr ] block ;
 param_list          = param_def { "," param_def } [ "," ] ;
 param_def           = identifier ":" type_expr [ "=" expr ] ;  (* default value *)
 
@@ -113,10 +118,6 @@ stmt                = const_stmt
                     | throw_stmt
                     | expr_stmt
                     | block
-                    | component_stmt
-                    | state_stmt
-                    | store_stmt
-                    | effect_stmt
                     ;
 
 expr_stmt           = expr [ ";" ] ;
@@ -138,19 +139,7 @@ try_stmt            = "try" block "catch" "(" identifier ")" block ;
 throw_stmt          = "throw" expr ;
 
 (* ============================================================
-   9. State / Store / Effect (UI-only contexts)
-   ============================================================ *)
-
-state_stmt          = "@State" ("let" | "const") identifier ":" type_expr [ "=" expr ] ;
-store_stmt          = "@Store" [ "const" ] binding_pattern "=" expr ;
-effect_stmt         = "@Effect" fn_expr [ "," "[" [ expr_list ] "]" ] ;
-
-binding_pattern     = identifier
-                    | "{" [ binding_field { "," binding_field } [ "," ] ] "}" ;
-binding_field       = identifier [ ":" identifier ] ;
-
-(* ============================================================
-   10. Expressions
+   9. Expressions
    ============================================================ *)
 
 expr                = ternary_expr ;
@@ -195,7 +184,7 @@ primary_expr        = string_literal
                     | "_"
                     ;
 
-fn_expr             = "fn" "(" [ param_list ] ")" [ ":" ( "async" [ type_expr ] | type_expr ) ] block ;
+fn_expr             = [ "async" ] "fn" "(" [ param_list ] ")" [ ":" type_expr ] block ;
 
 match_expr          = "match" expr "{" { match_arm } "}" ;
 match_arm           = match_pattern "=>" expr ;
@@ -206,7 +195,7 @@ match_pattern       = "_"
                     | type_identifier "::" identifier [ "(" [ identifier { "," identifier } ] ")" ] ; (* enum payload *)
 
 (* ============================================================
-   11. Call Arguments & Field Initializers
+   10. Call Arguments & Field Initializers
    ============================================================ *)
 
 arg_list            = arg { "," arg } [ "," ] ;
@@ -218,7 +207,7 @@ field_init          = identifier ":" expr
                     ;
 
 (* ============================================================
-   12. Lists & Expressions Lists
+   11. Lists & Expression Lists
    ============================================================ *)
 
 expr_list           = element_expr { "," element_expr } [ "," ] ;
@@ -227,28 +216,7 @@ element_expr        = expr
                     ;
 
 (* ============================================================
-   13. UI Component Block (syntax sugar for children)
-   ============================================================ *)
-
-component_stmt      = component_call [ component_block ] ;
-
-component_block     = "{" { ui_element } "}" ;
-
-(* UI Element: only UI-specific constructs *)
-ui_element          = component_stmt
-                    | text_literal_expr
-                    | expression            (* string / View / List<View> *)
-                    | if_stmt
-                    | for_stmt
-                    | "{" { ui_element } "}"
-                    ;
-
-text_literal_expr   = string_literal ;   (* naked string literal in UI block *)
-
-component_call      = identifier [ type_args ] [ "(" [ arg_list ] ")" ] ;
-
-(* ============================================================
-   14. Import / Export (Module System)
+   12. Import / Export (Module System)
    ============================================================ *)
 
 import_stmt         = "import" [ "type" ] import_spec [ "from" string_literal ]  (* "import type" is erased at runtime *)
@@ -264,30 +232,29 @@ import_name         = identifier [ "as" identifier ] ;
 
 pub_stmt            = "pub" pub_spec ;
 
-pub_spec            = ( "const" | "let" | "fn" | "type" | "enum" | "trait" ) declaration
+pub_spec            = ( "const" | "let" | "fn" | "type" | "struct" | "enum" | "trait" ) declaration
                     | "use" "{" pub_name_list "}" ;
 
 pub_name_list       = identifier { "," identifier } [ "," ] ;
 
 (* ============================================================
-   15. Full Source File
+   13. Full Source File
    ============================================================ *)
 
-source_file         = { ( import_stmt | pub_stmt | type_def | enum_def | fn_def | const_stmt | let_stmt ) } ;
+source_file         = { ( import_stmt | pub_stmt | type_def | struct_def | enum_def | fn_def | const_stmt | let_stmt ) } ;
 ```
 
 ## 与规范源的差异
 
-本修订版相对 `docs/xulo-ebnf.md` 的改动：
+本简化版相对 `spec/grammar.md` 的改动：
 
-1. `ui_element` 移除了 `state_stmt` / `store_stmt` / `effect_stmt` —— 装饰器只能在返回 `View` 的函数顶层使用（见 [变量与状态](variables-and-state.md)），不能嵌套在 UI 块内。
-2. `import_stmt` 移除了 `"import" "type" "*" "as" identifier`（无 `from`）的草案形式。
+1. 只保留本书用到的核心子集，省略了模块树（`mod` / `use`）、`trait` / `impl`、属性、FFI、宏与并发等产生式。
+2. `import_stmt` 保留书内使用的 `import ... from "..."` 写法，未列出规范源中的 `use` 路径形式。
+3. `document` 与 `source_file` 合并列出顶层声明，不区分根模块与子模块。
 
 ## 实现与语法的已知差异
 
 | 语法 | 实现 | 说明 |
 |------|------|------|
-| `@Environment` 语句 | 支持 | 语法未列（缺漏）；写法 `@Environment let name: Type` |
-| `$name` 绑定实参 | 支持 | `arg` 未列 binding 形式（缺漏）；用于 `@State`/`@Store` 变量 |
 | 相等 / 比较优先级 | 合并为一层 | 实现把 `== !=` 与 `< > <= >=` 合并在同一左结合层 |
 | 显式泛型调用 `foo<T>()` | 不支持 | 仅支持调用处类型推断（见 [函数](functions.md)） |

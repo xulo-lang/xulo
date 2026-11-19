@@ -7,8 +7,8 @@ use symbol_table::{Symbol, SymbolKind, SymbolTable};
 use xulo_core::ast::{
     AssignStmt, AssignTarget, AssignValue, Attribute, AttributeValue, BinaryOperator, Block, Call,
     CallArg, EnumPayloadParam, EnumVariant, ExportItem, Expression, FnBound, FnDef, GenericParam,
-    GenericParamKind, IfExpr, ImplDecl, LetBinding, Literal, ObjectField, PathHead, Program,
-    Statement, TraitDecl, Type, TypeAlias, UiElement, UseDecl, UseTarget, impl_fn_name,
+    GenericParamKind, IfExpr, ImplDecl, Literal, ObjectField, PathHead, Program, Statement,
+    TraitDecl, Type, TypeAlias, UseDecl, UseTarget, impl_fn_name,
 };
 use xulo_core::error::{ErrorKind, XuloError};
 
@@ -168,9 +168,9 @@ fn builtin_type_arity(name: &str) -> Option<usize> {
         // foreign-handle type `Ptr` (spec ffi.md) are non-generic too; they
         // arrive as `Named` heads because they are not parser keywords.
         "usize" | "isize" | "Ptr" => Some(0),
-        // `View` and `Range` are primitive but UpperCamelCase, and `Error` is
+        // `Range` is primitive but UpperCamelCase, and `Error` is
         // a prelude type (spec `types/primitive-types.md`).
-        "View" | "Error" | "Range" | "Format" => Some(0),
+        "Error" | "Range" | "Format" => Some(0),
         _ => None,
     }
 }
@@ -2146,9 +2146,6 @@ pub struct Analyzer {
     list_concat: Vec<Range<usize>>,
     /// Depth of enclosing async functions; `await` is only valid when > 0.
     async_depth: usize,
-    /// Depth of enclosing `View`-returning functions; `@State`/`@Store`/
-    /// `@Effect`/`@Environment` are only valid when > 0.
-    component_depth: usize,
     /// Borrows whose call returned a `Task`: they end where control passes an
     /// `await` of that task in the same block, or at the block's end (spec
     /// `memory-and-runtime.md`, Span end).
@@ -2263,16 +2260,6 @@ pub struct Analyzer {
     /// Non-fatal diagnostics raised during analysis (e.g. ignored return
     /// values); surfaced by the CLI after a successful compile.
     warnings: Vec<XuloError>,
-    /// Per-component stack of names declared by the component's *render* code
-    /// (plain `let`s and nested function declarations in the function body).
-    /// These live inside the `__component(...)` render closure at runtime, so
-    /// `@Effect`/`@State`/`@Store` setup code (hoisted above it) may not
-    /// reference them.
-    render_locals: Vec<std::collections::HashSet<String>>,
-    /// Set while checking an `@Effect` closure (and its deps): identifiers that
-    /// resolve to render-scoped locals are rejected (they are out of scope when
-    /// the effect runs).
-    in_effect: bool,
     /// Depth of enclosing `for`/`while` loops; `break`/`continue` are only
     /// valid when > 0.
     in_loop: usize,
@@ -2329,21 +2316,13 @@ pub struct Analyzer {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UseKind {
     Variable,
-    State,
-    Store,
     Function,
-    /// A UI component invocation: either a user-declared component factory
-    /// function (then [`UseRecord::def`] is set) or a builtin component such
-    /// as `View`/`Text`/`Row` (no definition).
-    Component,
 }
 
 impl UseKind {
     fn of(symbol: &symbol_table::Symbol) -> Self {
         match &symbol.kind {
             SymbolKind::Variable => UseKind::Variable,
-            SymbolKind::State => UseKind::State,
-            SymbolKind::Store => UseKind::Store,
             SymbolKind::Function(..) => UseKind::Function,
         }
     }
@@ -3020,7 +2999,6 @@ fn run_analysis(
         std_calls: Vec::new(),
         list_concat: Vec::new(),
         async_depth: 0,
-        component_depth: 0,
         pending_borrows: Vec::new(),
         block_id: 0,
         next_block_id: 1,
@@ -3054,8 +3032,6 @@ fn run_analysis(
         exported_symbols: Vec::new(),
         extern_imports: HashMap::new(),
         warnings: Vec::new(),
-        render_locals: Vec::new(),
-        in_effect: false,
         in_loop: 0,
         in_defer: 0,
         current_span: 0..0,
@@ -3296,10 +3272,10 @@ fn run_analysis(
                             .with_code("E0609"),
                     );
                 } else if let Some(rt) = &f.return_type
-                    && !matches!(rt, Type::Named(n, _) if n == "View" || n == "unit")
+                    && !matches!(rt, Type::Named(n, _) if n == "unit")
                 {
                     analyzer.first_error = Some(
-                        XuloError::new(ErrorKind::Semantic, "`main` must return unit or View")
+                        XuloError::new(ErrorKind::Semantic, "`main` must return unit")
                             .at(f.name_span.clone())
                             .with_code("E0609"),
                     );
@@ -3623,29 +3599,8 @@ fn walk_stmt(stmt: &mut Statement, f: &mut dyn FnMut(&mut Expression)) {
         }
         Statement::Throw(e) => walk_expr(e, f),
         Statement::Export(e) => walk_export(&mut e.item, f),
-        Statement::State(s) => {
-            if let Some(value) = &mut s.binding.value {
-                walk_expr(value, f);
-            }
-        }
-        Statement::Store(s) => walk_expr(&mut s.value, f),
-        Statement::Effect(e) => {
-            walk_block(&mut e.closure.body, f);
-            if let Some(deps) = &mut e.deps {
-                for dep in deps {
-                    walk_expr(dep, f);
-                }
-            }
-        }
-        Statement::Environment(_) => {}
         // An extern block carries types only: no expressions to walk.
         Statement::ExternBlock(_) => {}
-        Statement::Component(c) => {
-            for arg in &mut c.args {
-                walk_expr(&mut arg.value, f);
-            }
-            walk_ui_elements(&mut c.children, f);
-        }
         Statement::Impl(imp) => {
             for method in &mut imp.methods {
                 walk_block(&mut method.body, f);
@@ -3675,37 +3630,6 @@ fn walk_export(item: &mut ExportItem, f: &mut dyn FnMut(&mut Expression)) {
         | ExportItem::Enum(_)
         | ExportItem::Struct(_)
         | ExportItem::Trait(_) => {}
-    }
-}
-
-fn walk_ui_elements(elements: &mut [UiElement], f: &mut dyn FnMut(&mut Expression)) {
-    for element in elements {
-        match element {
-            UiElement::Component(c) => {
-                for arg in &mut c.args {
-                    walk_expr(&mut arg.value, f);
-                }
-                walk_ui_elements(&mut c.children, f);
-            }
-            UiElement::Expr(e) => walk_expr(e, f),
-            UiElement::If {
-                condition,
-                then_branch,
-                else_branch,
-            } => {
-                walk_expr(condition, f);
-                walk_ui_elements(then_branch, f);
-                if let Some(els) = else_branch {
-                    walk_ui_elements(els, f);
-                }
-            }
-            UiElement::For { iterable, body, .. } => {
-                walk_expr(iterable, f);
-                walk_ui_elements(body, f);
-            }
-            UiElement::Group(g) => walk_ui_elements(g, f),
-            UiElement::Text(_) => {}
-        }
     }
 }
 
@@ -3793,12 +3717,6 @@ fn walk_expr(expr: &mut Expression, f: &mut dyn FnMut(&mut Expression)) {
                 walk_expr(&mut arg.value, f);
             }
         }
-        Expression::Component(c) => {
-            for arg in &mut c.args {
-                walk_expr(&mut arg.value, f);
-            }
-            walk_ui_elements(&mut c.children, f);
-        }
         Expression::Tuple { items, .. } => {
             for item in items {
                 walk_expr(item, f);
@@ -3838,7 +3756,7 @@ fn walk_expr(expr: &mut Expression, f: &mut dyn FnMut(&mut Expression)) {
                 }
             }
         }
-        Expression::Identifier { .. } | Expression::EnumRef(_) | Expression::Binding { .. } => {}
+        Expression::Identifier { .. } | Expression::EnumRef(_) => {}
     }
 }
 
@@ -4161,21 +4079,10 @@ impl Analyzer {
 }
 
 impl Analyzer {
-    /// Resolve a name to its symbol, rejecting references from inside an
-    /// `@Effect` closure to bindings that live only in the component's render
-    /// code: those are hoisted above the render closure and are not in scope
-    /// when the effect runs. A `#[test] fn`'s identifier is declared but binds no
-    /// value, so mentioning it is the E0107 reference ban (spec testing.md).
+    /// Resolve a name to its symbol. A `#[test] fn`'s identifier is declared
+    /// but binds no value, so mentioning it is the E0107 reference ban
+    /// (spec testing.md).
     fn lookup_symbol(&self, name: &str) -> SResult<Symbol> {
-        let render_scoped = self
-            .render_locals
-            .last()
-            .is_some_and(|locals| locals.contains(name));
-        if self.in_effect && render_scoped {
-            return Err(self.err(format!(
-                "`@Effect` closures cannot reference `{name}`: it is declared inside the component body and is out of scope when the effect runs"
-            )));
-        }
         if let Some(sym) = self.table.lookup(name) {
             self.mark_name_used(name);
             return Ok(sym.clone());
@@ -4952,17 +4859,6 @@ impl Analyzer {
             }
             Statement::Test(t) => self.check_test(&t.func),
             Statement::Let(binding) => {
-                if binding.memo {
-                    self.require_fn_body_top_level("@Memo")?;
-                    if binding.value.is_none() {
-                        return Err(self.err("@Memo requires an initializer: `@Memo let x = expr`"));
-                    }
-                    if let Some(deps) = &binding.memo_deps {
-                        for dep in deps {
-                            self.check_expression(dep)?;
-                        }
-                    }
-                }
                 if let Some(annotation) = &binding.type_annotation {
                     self.check_type(annotation)?;
                 }
@@ -5393,11 +5289,6 @@ impl Analyzer {
             Statement::Mod(m) => self.check_mod(m),
             Statement::Use(u) => self.check_use(u),
             Statement::Export(export) => self.check_export(export),
-            Statement::State(state) => self.check_state(&state.binding),
-            Statement::Store(store) => self.check_store(store),
-            Statement::Effect(effect) => self.check_effect(effect),
-            Statement::Environment(env) => self.check_environment(env),
-            Statement::Component(component) => self.check_component(component),
             Statement::Break => {
                 if self.in_loop == 0 {
                     return Err(self.err("`break` may only be used inside a `for` or `while` loop"));
@@ -5663,11 +5554,10 @@ impl Analyzer {
         self.declared_return = f.return_type.is_some();
         let saved_async = self.async_depth;
         self.async_depth = if f.is_async { saved_async + 1 } else { 0 };
-        // This function is its own scope: decorators are only legal at the top
-        // level of a `View` function (itself), never inside a nested
-        // function, and `await` needs this function to be `async` (docs §12).
-        // `no_await_depth` is a property of the *current* function's if/match
-        // arms, so a nested function body must not inherit it.
+        // This function is its own scope: `await` needs this function to be
+        // `async` (docs §12). `no_await_depth` is a property of the *current*
+        // function's if/match arms, so a nested function body must not inherit
+        // it.
         let saved_no_await = self.no_await_depth;
         self.no_await_depth = 0;
         // A nested `fn` declared inside a lock body runs later, outside the
@@ -5678,39 +5568,14 @@ impl Analyzer {
         // inherit the enclosing closure's capture rules.
         let saved_closure = self.closure_depth;
         self.closure_depth = 0;
-        let is_component = self.is_component_type(&return_type);
-        let saved_component = self.component_depth;
         let saved_block = self.block_depth;
-        self.component_depth = if is_component { 1 } else { 0 };
         self.block_depth = 0;
-        if is_component {
-            // Top-level `let`s and nested `fn` declarations of a component body
-            // become part of the render closure at codegen time, so they are
-            // off-limits to hoisted setup code (`@Effect`/`@State`/`@Store`).
-            let mut render_locals = std::collections::HashSet::new();
-            for stmt in &f.body.statements {
-                match stmt {
-                    Statement::Let(b) => {
-                        render_locals.insert(b.name.clone());
-                    }
-                    Statement::Fn(nested) => {
-                        render_locals.insert(nested.name.clone());
-                    }
-                    _ => {}
-                }
-            }
-            self.render_locals.push(render_locals);
-        }
         // Moves do not cross function boundaries: a binding of the same name
         // in another body is a different binding.
         let saved_moved = std::mem::take(&mut self.moved);
         let result = self.check_block_implicit(&f.body);
         self.moved = saved_moved;
-        if is_component {
-            self.render_locals.pop();
-        }
         self.block_depth = saved_block;
-        self.component_depth = saved_component;
         self.async_depth = saved_async;
         self.no_await_depth = saved_no_await;
         self.lock_depth = saved_lock;
@@ -5827,10 +5692,7 @@ impl Analyzer {
         self.declared_return = f.return_type.is_some();
         let saved_async = self.async_depth;
         self.async_depth = if f.is_async { saved_async + 1 } else { 0 };
-        // A closure is its own (ordinary) function: `@State`/`@Store`/
-        // `@Effect`/`@Environment` are not allowed inside it, even when the
-        // closure appears at the top level of a `View` function (docs §12).
-        let saved_component = self.component_depth;
+        // A closure is its own (ordinary) function.
         let saved_block = self.block_depth;
         let saved_no_await = self.no_await_depth;
         // A closure body runs when it is called, not at the point of the
@@ -5839,7 +5701,6 @@ impl Analyzer {
         // Inside a closure, every captured binding is part of the closure's
         // own value: only a `let mut` binding may be written through one.
         self.closure_depth += 1;
-        self.component_depth = 0;
         self.block_depth = 0;
         self.no_await_depth = 0;
         self.lock_depth = 0;
@@ -5850,7 +5711,6 @@ impl Analyzer {
         self.closure_depth -= 1;
         self.no_await_depth = saved_no_await;
         self.lock_depth = saved_lock;
-        self.component_depth = saved_component;
         self.block_depth = saved_block;
         self.async_depth = saved_async;
         self.current_return = saved;
@@ -7608,7 +7468,7 @@ impl Analyzer {
         let Some(sym) = self.table.lookup(name) else {
             return Ok(());
         };
-        if !matches!(sym.kind, SymbolKind::Variable | SymbolKind::State) {
+        if !matches!(sym.kind, SymbolKind::Variable) {
             return Ok(());
         }
         if self.closure_depth > 0 && sym.is_param {
@@ -7661,10 +7521,7 @@ impl Analyzer {
                     ));
                 }
                 match &sym.kind {
-                    SymbolKind::Variable | SymbolKind::State => Ok(sym.type_.clone()),
-                    SymbolKind::Store => Err(self.err(format!(
-                        "cannot assign to `{name}`: store bindings are read-only"
-                    ))),
+                    SymbolKind::Variable => Ok(sym.type_.clone()),
                     SymbolKind::Function(..) => {
                         Err(self.err(format!("cannot assign to `{name}`: it is a function")))
                     }
@@ -7741,342 +7598,6 @@ impl Analyzer {
                         Err(self.err(format!("cannot assign into `{}` by index", other.name())))
                     }
                 }
-            }
-        }
-    }
-
-    /// `@State` / `@Store` / `@Effect` / `@Environment` are only valid at the
-    /// top level of a function whose return type is `View` (docs §12).
-    fn require_component_top_level(&self, what: &str) -> SResult<()> {
-        if self.component_depth == 0 {
-            return Err(self.err(format!(
-                "`{what}` may only be used at the top level of a function returning `View`"
-            )));
-        }
-        if self.block_depth > 0 {
-            return Err(self.err(format!("`{what}` may not be used inside a nested block")));
-        }
-        Ok(())
-    }
-
-    /// `@Memo` is a general computation optimization: allowed at the top level
-    /// of any function body (not only `View` components), never in a nested
-    /// block or at module scope.
-    fn require_fn_body_top_level(&self, what: &str) -> SResult<()> {
-        if self.current_return.is_none() {
-            return Err(self.err(format!(
-                "`{what}` may only be used at the top level of a function body"
-            )));
-        }
-        if self.block_depth > 0 {
-            return Err(self.err(format!("`{what}` may not be used inside a nested block")));
-        }
-        Ok(())
-    }
-
-    /// Is this type `View` (optionally wrapped in `async`)?
-    fn is_component_type(&self, ty: &Type) -> bool {
-        match self.resolve_alias(ty, 0) {
-            Type::Named(n, _) => n == "View",
-            Type::Async(inner) => matches!(inner.as_ref(), Type::Named(n, _) if n == "View"),
-            _ => false,
-        }
-    }
-
-    fn check_state(&mut self, binding: &LetBinding) -> SResult<()> {
-        self.require_component_top_level("@State")?;
-        if let Some(annotation) = &binding.type_annotation {
-            self.check_type(annotation)?;
-        }
-        let value_type = match &binding.value {
-            Some(value) => self.check_expression(value)?,
-            None => binding.type_annotation.clone().unwrap_or(Type::Any),
-        };
-        if let Some(annotation) = &binding.type_annotation {
-            let literal_ok = match &binding.value {
-                Some(value) => self.literal_matches(value, annotation),
-                None => false,
-            };
-            if !self.assignable(&value_type, annotation) && !literal_ok {
-                return Err(self.err_code(
-                    "E0201",
-                    format!(
-                        "cannot bind a value of type `{}` to `@State {}: {}`",
-                        value_type.name(),
-                        binding.name,
-                        annotation.name()
-                    ),
-                ));
-            }
-        }
-        let declared = self.table.declare_with_def(
-            Symbol {
-                name: binding.name.clone(),
-                type_: binding.type_annotation.clone().unwrap_or(value_type),
-                kind: SymbolKind::State,
-                is_shared: false,
-                is_param: false,
-                is_const: binding.is_const,
-                is_mutable: true,
-            },
-            Some(binding.name_span.clone()),
-        );
-        if !declared {
-            return Err(self.err(format!(
-                "binding `{}` is already declared in this scope",
-                binding.name
-            )));
-        }
-        Ok(())
-    }
-
-    fn check_store(&mut self, store: &xulo_core::ast::StoreStmt) -> SResult<()> {
-        self.require_component_top_level("@Store")?;
-        let value_type = self.check_expression(&store.value)?;
-        match &store.pattern {
-            xulo_core::ast::BindingPattern::Ident(name) => {
-                // A plain binding keeps the value's inferred type (like
-                // `@State`); only destructured store fields stay `Any`, since
-                // their shape is not statically known.
-                if !self.table.declare(Symbol {
-                    name: name.clone(),
-                    type_: value_type.clone(),
-                    kind: SymbolKind::Store,
-                    is_shared: false,
-                    is_param: false,
-                    is_const: true,
-                    is_mutable: false,
-                }) {
-                    return Err(self.err(format!(
-                        "binding `{name}` is already declared in this scope"
-                    )));
-                }
-            }
-            xulo_core::ast::BindingPattern::Destructure(fields) => {
-                for (name, alias) in fields {
-                    let local = alias.clone().unwrap_or_else(|| name.clone());
-                    if !self.table.declare(Symbol {
-                        name: local.clone(),
-                        type_: Type::Any,
-                        kind: SymbolKind::Store,
-                        is_shared: false,
-                        is_param: false,
-                        is_const: true,
-                        is_mutable: false,
-                    }) {
-                        return Err(self.err(format!(
-                            "binding `{local}` is already declared in this scope"
-                        )));
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn check_effect(&mut self, effect: &xulo_core::ast::EffectStmt) -> SResult<()> {
-        self.require_component_top_level("@Effect")?;
-        // The runtime calls the closure with no arguments (`__effect(fn)`), so
-        // parameters would silently bind `undefined`; reject them up front.
-        if let Some(first) = effect.closure.params.first() {
-            return Err(self.err(format!(
-                "`@Effect` closures take no parameters (found `{}`): the runtime calls them without arguments",
-                first.name
-            )));
-        }
-        let saved = self.in_effect;
-        self.in_effect = true;
-        let result = (|| {
-            self.check_fn_expr(&effect.closure)?;
-            if let Some(deps) = &effect.deps {
-                for dep in deps {
-                    self.check_expression(dep)?;
-                }
-            }
-            Ok(())
-        })();
-        self.in_effect = saved;
-        result
-    }
-
-    fn check_environment(&mut self, env: &xulo_core::ast::EnvStmt) -> SResult<()> {
-        self.require_component_top_level("@Environment")?;
-        self.check_type(&env.type_)?;
-        if !self.table.declare_with_def(
-            Symbol {
-                name: env.name.clone(),
-                type_: env.type_.clone(),
-                kind: SymbolKind::Store,
-                is_shared: false,
-                is_param: false,
-                is_const: true,
-                is_mutable: false,
-            },
-            Some(env.name_span.clone()),
-        ) {
-            return Err(self.err(format!(
-                "binding `{}` is already declared in this scope",
-                env.name
-            )));
-        }
-        Ok(())
-    }
-
-    fn check_component(&mut self, component: &xulo_core::ast::ComponentStmt) -> SResult<()> {
-        // Uppercase calls lower to UI components (`Name({ key: value })`);
-        // props are not validated against a function signature (see
-        // `component_call_props_are_loosely_typed`).
-        // Components declare no type parameters — a written `CallTypeArgs`
-        // list is `E0807` (spec `expressions/calls.md`, `ComponentCall`).
-        if component.type_args.is_some() {
-            return Err(self
-                .err_code(
-                    "E0807",
-                    format!("`{}` accepts no type arguments", component.name),
-                )
-                .at(component.span.clone()));
-        }
-        self.record_component_use(component);
-        for arg in &component.args {
-            self.check_arg_value(&arg.value)?;
-        }
-        self.block_depth += 1;
-        let mut result = Ok(());
-        for child in &component.children {
-            if let Err(e) = self.check_ui_element(child) {
-                result = Err(e);
-                break;
-            }
-        }
-        self.block_depth -= 1;
-        result
-    }
-
-    /// Record the component name as a name-use so editor tooling (hover /
-    /// go-to-definition) can target it. A component whose name resolves to a
-    /// user-declared factory function records that symbol (so the definition
-    /// jumps to it); otherwise it is treated as a builtin component
-    /// (`View`/`Text`/`Row`/...) with no definition.
-    fn record_component_use(&mut self, component: &xulo_core::ast::ComponentStmt) {
-        let name = &component.name;
-        let span = component.name_span.clone();
-        // A component invocation colors like `View` regardless of whether the
-        // name resolves to a user factory function (its `def` still enables
-        // go-to-definition). Only the *kind* differs from a plain call.
-        let def = self.table.lookup_def(name).flatten().cloned();
-        let type_ = self
-            .lookup_symbol(name)
-            .map(|symbol| symbol.type_)
-            .unwrap_or_else(|_| Type::Named("View".to_string(), Vec::new()));
-        self.resolutions.push(UseRecord {
-            span,
-            name: name.clone(),
-            kind: UseKind::Component,
-            type_: Some(type_),
-            def,
-        });
-    }
-
-    fn check_ui_element(&mut self, el: &xulo_core::ast::UiElement) -> SResult<()> {
-        match el {
-            xulo_core::ast::UiElement::Component(c) => self.check_component(c),
-            xulo_core::ast::UiElement::Text(_) => Ok(()),
-            xulo_core::ast::UiElement::Expr(e) => {
-                let ty = self.check_expression(e)?;
-                let allowed = match &ty {
-                    Type::String | Type::Any => true,
-                    other if self.is_component_type(other) => true,
-                    // A list/optional child forwards ready-made children (e.g.
-                    // a `children: list<View>` parameter); only element
-                    // types that can themselves be children make sense.
-                    Type::Optional(inner) => self.is_component_type(inner),
-                    Type::List(inner) => {
-                        self.is_component_type(inner)
-                            || matches!(inner.as_ref(), Type::String | Type::Any)
-                    }
-                    _ => false,
-                };
-                if !allowed {
-                    return Err(self.err(format!(
-                        "component children must be strings, components, or lists of components, found `{}`",
-                        ty.name()
-                    )));
-                }
-                Ok(())
-            }
-            xulo_core::ast::UiElement::If {
-                condition,
-                then_branch,
-                else_branch,
-            } => {
-                let cond = self.check_expression(condition)?;
-                if !self.assignable(&cond, &Type::Boolean) {
-                    return Err(self.err_code(
-                        "E0201",
-                        format!("if condition must be a `bool`, found `{}`", cond.name()),
-                    ));
-                }
-                for e in then_branch {
-                    self.check_ui_element(e)?;
-                }
-                if let Some(els) = else_branch {
-                    for e in els {
-                        self.check_ui_element(e)?;
-                    }
-                }
-                Ok(())
-            }
-            xulo_core::ast::UiElement::For {
-                iter_var,
-                iter_var_span,
-                iterable,
-                body,
-            } => {
-                let iterable_type = self.check_expression(iterable)?;
-                match iterable_type {
-                    Type::List(_) | Type::Any | Type::Object => {}
-                    Type::Named(name, _) if name == "Map" || name == "Set" || name == "Array" => {}
-                    Type::Named(name, _) if name == "StringBuilder" => {
-                        return Err(self.err_code("E0213", "a `StringBuilder` is not iterable"));
-                    }
-                    other => {
-                        return Err(self.err_code(
-                            "E0213",
-                            format!(
-                                "for loop must iterate over a `List`, `Map`, or `Set`, found `{}`",
-                                other.name()
-                            ),
-                        ));
-                    }
-                }
-                self.table.push_scope();
-                self.table.declare_with_def(
-                    Symbol {
-                        name: iter_var.clone(),
-                        type_: Type::Any,
-                        kind: SymbolKind::Variable,
-                        is_shared: false,
-                        is_param: false,
-                        is_const: false,
-                        is_mutable: true,
-                    },
-                    Some(iter_var_span.clone()),
-                );
-                let mut result = Ok(());
-                for e in body {
-                    if let Err(err) = self.check_ui_element(e) {
-                        result = Err(err);
-                        break;
-                    }
-                }
-                self.table.pop_scope();
-                result
-            }
-            xulo_core::ast::UiElement::Group(group) => {
-                for e in group {
-                    self.check_ui_element(e)?;
-                }
-                Ok(())
             }
         }
     }
@@ -9214,7 +8735,7 @@ impl Analyzer {
     /// span) for editor tooling. The bulk of the work happens in
     /// [`Analyzer::check_expression_inner`]; the recording is deliberately
     /// done here, on success, so a failed check never leaves a type entry.
-    /// Check one call/component argument value: the argument is a move
+    /// Check one call argument value: the argument is a move
     /// position, so `move x` may appear whole inside it (spec
     /// `memory-and-runtime.md`, E0403).
     fn check_arg_value(&mut self, value: &Expression) -> SResult<Type> {
@@ -9331,16 +8852,6 @@ impl Analyzer {
             }
             Expression::Await { expr: operand, .. } => self.check_await(operand),
             Expression::FnExpr(f) => self.check_fn_expr(f),
-            Expression::Binding { name, .. } => {
-                let sym = self.lookup_symbol(name)?;
-                self.record_use(expr.span().clone(), name, &sym);
-                match sym.kind {
-                    SymbolKind::State | SymbolKind::Store => Ok(sym.type_.clone()),
-                    _ => Err(self.err(format!(
-                        "`$` binding requires a `@State` or `@Store` variable, but `{name}` is not"
-                    ))),
-                }
-            }
             Expression::Spread { .. } => {
                 Err(self.err("`...` spread is only allowed inside list or object literals"))
             }
@@ -9376,15 +8887,6 @@ impl Analyzer {
                         format!("expression of type `{}` is not callable", other.name()),
                     )),
                 }
-            }
-            Expression::Component(c) => {
-                for arg in &c.args {
-                    self.check_arg_value(&arg.value)?;
-                }
-                for el in &c.children {
-                    self.check_ui_element(el)?;
-                }
-                Ok(Type::Named("View".to_string(), Vec::new()))
             }
             Expression::Tuple { items, .. } => {
                 let mut types = Vec::with_capacity(items.len());
@@ -9452,7 +8954,6 @@ impl Analyzer {
                 self.declared_return = arrow.return_type.is_some();
                 let saved_async = self.async_depth;
                 self.async_depth = if arrow.is_async { saved_async + 1 } else { 0 };
-                let saved_component = self.component_depth;
                 let saved_block = self.block_depth;
                 let saved_no_await = self.no_await_depth;
                 let saved_lock = self.lock_depth;
@@ -9461,7 +8962,6 @@ impl Analyzer {
                 let saved_defer = self.in_defer;
                 self.in_defer = 0;
                 self.closure_depth += 1;
-                self.component_depth = 0;
                 self.block_depth = 0;
                 self.no_await_depth = 0;
                 self.lock_depth = 0;
@@ -9475,7 +8975,6 @@ impl Analyzer {
                 self.closure_depth -= 1;
                 self.no_await_depth = saved_no_await;
                 self.lock_depth = saved_lock;
-                self.component_depth = saved_component;
                 self.block_depth = saved_block;
                 self.async_depth = saved_async;
                 self.current_return = saved_return;
@@ -12215,20 +11714,9 @@ impl Analyzer {
         self.check_call_symbol(call, &sym)
     }
 
-    /// Shared call validation against a resolved symbol: effect-scope guard,
-    /// then per-symbol-kind argument/arity/type checks.
+    /// Shared call validation against a resolved symbol: per-symbol-kind
+    /// argument/arity/type checks.
     fn check_call_symbol(&mut self, call: &Call, sym: &Symbol) -> SResult<Type> {
-        if self.in_effect
-            && self
-                .render_locals
-                .last()
-                .is_some_and(|locals| locals.contains(&call.callee))
-        {
-            return Err(self.err(format!(
-                "`@Effect` closures cannot reference `{}`: it is declared inside the component body and is out of scope when the effect runs",
-                call.callee
-            )));
-        }
         match &sym.kind {
             SymbolKind::Function(
                 type_params,
@@ -12601,9 +12089,6 @@ impl Analyzer {
                 // A call through a function value takes no type arguments.
                 self.no_type_args(call)?;
                 self.check_fn_value_args(&params, ret, &call.arguments)
-            }
-            SymbolKind::State | SymbolKind::Store => {
-                Err(self.err_code("E0204", format!("`{}` is not a function", call.callee)))
             }
         }
     }

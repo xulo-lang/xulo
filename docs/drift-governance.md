@@ -3,7 +3,7 @@
 - **Status**: Living document
 - **Date**: 2026-11-18
 - **Audience**: compiler and runtime maintainers, stage 1 bootstrap team
-- **Normative sources**: `spec@48f49b7` and `std-spec@a2e4cb7`, as pinned by this repository
+- **Normative sources**: `spec@815edad` and `std-spec@a2e4cb7`, as pinned by this repository
 - **Companions**: [`stage1-readiness.md`](stage1-readiness.md), [`tasks.md`](tasks.md), [`../xuloc/BOOTSTRAP.md`](../xuloc/BOOTSTRAP.md)
 - **Implementation status**: the invariants and the ledger below are normative.
   The differential gate of §5.4 lives in

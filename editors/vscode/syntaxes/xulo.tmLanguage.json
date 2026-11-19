@@ -8,8 +8,6 @@
     { "include": "#templates" },
     { "include": "#numbers" },
     { "include": "#attributes" },
-    { "include": "#component-annotations" },
-    { "include": "#bindings" },
     { "include": "#declarations" },
     { "include": "#reserved" },
     { "include": "#primitive-types" },
@@ -153,20 +151,6 @@
         { "include": "#numbers" },
         { "include": "#types" }
       ]
-    },
-    "component-annotations": {
-      "match": "(@)([A-Za-z_][A-Za-z0-9_]*)",
-      "captures": {
-        "1": { "name": "punctuation.definition.annotation.xulo" },
-        "2": { "name": "storage.modifier.component.xulo" }
-      }
-    },
-    "bindings": {
-      "match": "(\\$)([A-Za-z_][A-Za-z0-9_]*)",
-      "captures": {
-        "1": { "name": "punctuation.definition.binding.xulo" },
-        "2": { "name": "variable.other.binding.xulo" }
-      }
     },
     "declarations": {
       "patterns": [

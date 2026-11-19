@@ -707,6 +707,23 @@ fn check_accepts_circular_import() {
 }
 
 #[test]
+fn run_rejects_main_returning_a_value() {
+    let (dir, entry) = temp_dir(
+        &[("main.xulo", "fn main(): number { return 1 }\n")],
+        "main.xulo",
+    );
+    let out = Command::new(BIN).arg("run").arg(&entry).output().unwrap();
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0609"), "stderr: {stderr}");
+    assert!(
+        stderr.contains("`main` must return unit"),
+        "stderr: {stderr}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn type_only_enum_import_still_binds_the_value() {
     // The enum's *type* is imported `use type`; its runtime value comes from
     // the executing module (enums register by name in the interpreter), so
@@ -1278,77 +1295,6 @@ fn run_optional_chaining_on_null() {
 }
 
 #[test]
-fn run_component_state_and_effect() {
-    let file = temp_file(
-        "comp.xulo",
-        r#"
-        fn main(): View {
-            @State let count: number = 0
-            @Effect fn() { print("mounted") }
-            count = count + 1
-            print("count=" + str(count))
-        }
-        "#,
-    );
-    let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
-    assert!(
-        out.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert_eq!(String::from_utf8_lossy(&out.stdout), "mounted\ncount=1\n");
-    let _ = std::fs::remove_file(&file);
-}
-
-#[test]
-fn check_rejects_decorator_outside_component() {
-    let file = temp_file("bad.xulo", "fn main() { @State let count: number = 0 }");
-    let out = Command::new(BIN).arg("check").arg(&file).output().unwrap();
-    assert!(!out.status.success());
-    assert!(String::from_utf8_lossy(&out.stderr).contains("returning `View`"));
-    let _ = std::fs::remove_file(&file);
-}
-
-#[test]
-fn run_component_loop_var_shadowing() {
-    let file = temp_file(
-        "shadow.xulo",
-        r#"
-        fn main(): View {
-            @State let x: number = 0
-            let ys = [1, 2, 3]
-            for x in ys { print(x) }
-        }
-        "#,
-    );
-    let out = Command::new(BIN).arg("run").arg(&file).output().unwrap();
-    assert!(
-        out.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert_eq!(String::from_utf8_lossy(&out.stdout), "1\n2\n3\n");
-    let _ = std::fs::remove_file(&file);
-}
-
-#[test]
-fn check_rejects_effect_capturing_render_local() {
-    let file = temp_file(
-        "bad.xulo",
-        r#"
-        fn main(): View {
-            let a = 5
-            @Effect fn() { print(a) }
-        }
-        "#,
-    );
-    let out = Command::new(BIN).arg("check").arg(&file).output().unwrap();
-    assert!(!out.status.success());
-    assert!(String::from_utf8_lossy(&out.stderr).contains("@Effect"));
-    let _ = std::fs::remove_file(&file);
-}
-
-#[test]
 fn run_negative_and_float_arithmetic() {
     let file = temp_file(
         "neg.xulo",
@@ -1905,51 +1851,6 @@ fn native_run_async_rejected_main_is_uncaught() {
         stderr.contains("uncaught exception: kaboom"),
         "stderr: {stderr}"
     );
-}
-
-#[test]
-fn native_run_ui_component_headless() {
-    // The full UI example runs natively: `@State`, `@Effect`, component blocks,
-    // `$` binding — the tree builds and effects fire, with no DOM to mount.
-    let (ok, stdout, stderr) = native_run(
-        &[
-            (
-                "xupm.toml",
-                "[dependencies]\n\"@xulo/ui\" = { version = \"1.2\", alias = \"ui\" }\n",
-            ),
-            (
-                "main.xulo",
-                "use ui::{Screen, VStack, HStack, Text, Button, Input};\n\
-                 fn Counter(): View {\n\
-                     @State let count: number = 0\n\
-                     @Effect fn() { print(\"mounted\") }\n\
-                     VStack(spacing: 8) {\n\
-                         Text(\"Count: \" + str(count))\n\
-                         HStack(spacing: 4) {\n\
-                             Button(onClick: fn() { count = count + 1 }) { Text(\"+\") }\n\
-                             Button(onClick: fn() { count = count - 1 }) { Text(\"-\") }\n\
-                         }\n\
-                     }\n\
-                 }\n\
-                 fn NameField(): View {\n\
-                     @State let name: string = \"\"\n\
-                     VStack {\n\
-                         Input(value: $name)\n\
-                         Text(\"Hello, \" + name)\n\
-                     }\n\
-                 }\n\
-                 fn main(): View {\n\
-                     Screen {\n\
-                         Counter()\n\
-                         NameField()\n\
-                     }\n\
-                 }\n",
-            ),
-        ],
-        "main.xulo",
-    );
-    assert!(ok, "stderr: {stderr}");
-    assert_eq!(stdout, "mounted\n");
 }
 
 #[test]

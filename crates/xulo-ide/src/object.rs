@@ -17,8 +17,6 @@ pub enum OutlineKind {
     Method,
     Variable,
     Constant,
-    State,
-    Store,
     Trait,
     TypeAlias,
     Enum,
@@ -33,8 +31,6 @@ impl OutlineKind {
             Self::Method => "method",
             Self::Variable => "variable",
             Self::Constant => "constant",
-            Self::State => "state",
-            Self::Store => "store",
             Self::Trait => "trait",
             Self::TypeAlias => "type_alias",
             Self::Enum => "enum",
@@ -131,29 +127,6 @@ fn outline_statement(
             index,
             source,
         )),
-        Statement::State(s) => Some(sym(
-            s.binding.name.clone(),
-            OutlineKind::State,
-            &s.binding.name_span,
-            None,
-            Vec::new(),
-            index,
-            source,
-        )),
-        Statement::Store(_) => {
-            // `@Store` bindings have no recorded name span yet, so they are not
-            // outlined (a plain name and `{ a, b: c }` destructure alike).
-            None
-        }
-        Statement::Environment(e) => Some(sym(
-            e.name.clone(),
-            OutlineKind::Variable,
-            &e.name_span,
-            None,
-            Vec::new(),
-            index,
-            source,
-        )),
         Statement::TypeAlias(alias) => Some(sym(
             alias.name.clone(),
             OutlineKind::TypeAlias,
@@ -204,8 +177,6 @@ fn outline_statement(
         | Statement::Throw(_)
         | Statement::Mod(_)
         | Statement::Use(_)
-        | Statement::Effect(_)
-        | Statement::Component(_)
         | Statement::Struct(_)
         | Statement::Defer(_)
         // A `#[test] fn` binds no value (spec testing.md): no navigable symbol.

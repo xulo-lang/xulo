@@ -4,6 +4,26 @@ All notable changes to Xulo are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Aligned with `spec@815edad` (specification 0.2.0), which removes the component
+layer from the language.
+
+### Removed
+
+- The component/UI language layer: `View`, `@State`, `@Store`, `@Effect`,
+  `@Environment`, component declarations and blocks, `$` binding arguments, and
+  the `@` token.
+- `main` must now return `unit`; `fn main(): View` is rejected.
+- Diagnostic codes `E0701`–`E0799` (reserved and never reused).
+- The UI crates (`xulo-framework`, `xulo-ui`, `xulo-ui-wasm`,
+  `xulo-render-core`, `xulo-renderer-terminal`, `xulo-renderer-skia`,
+  `xulo-renderer-webview`) and the CLI `--render`, `webview`, and `skia`
+  options/features.
+
+UI construction remains possible with ordinary `struct`, `enum`, and `fn`
+values, and is left to a future standard-library `std/ui` module.
+
 ## [0.1.0] - 2026-11-14
 
 First public release, stage 0: the Rust bootstrap toolchain.

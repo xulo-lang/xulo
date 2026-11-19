@@ -2,22 +2,13 @@
 
 > 本节面向想要修改 / 理解编译器的读者，与语言规范正文相对独立。
 
-## UI Block vs 代码块的区分
+## 代码块与对象字面量的区分
 
-**问题：** `VStack { Text("Hello") }` 中的 `{ }` 是 UI Children 列表，而 `fn main() { let x = 5 }` 中的 `{ }` 是普通代码块。
+**问题：** `fn main() { let x = 5 }` 中的 `{ }` 是普通代码块，而 `{ name: "lyy" }` 是表达式位置的对象字面量。
 
-**解决方案：** 在 AST 层面区分两种节点类型。
+**解决方案：** 在 AST 层面区分两种节点类型，并由上下文决定解析路径。
 
 ```text
-// UI Block — 只能包含 UI 元素
-UIBlock {
-  children: Vec<UIElement>  // Component, Text, Expr, if, for, Group
-}
-
-// UIElement::Expr 承载组件块内的「表达式子元素」，语义阶段限定其类型为
-// string / View / Any / List<View|string|Any> 之一；list 渲染为
-// 嵌套数组，由运行时渲染器展平（与 if/for 产物同一约定）。
-
 // 代码块 — 只能包含普通语句
 Block {
   statements: Vec<Statement>  // let, fn, if, for, return, expr
@@ -26,9 +17,9 @@ Block {
 
 **解析策略：**
 
-- `ComponentName { ... }` → 解析为 UI Block（大写标识符 + `(`/`{` 触发）
-- `fn` 函数体 → 解析为普通 Block
-- `if` / `for` / `while` 的 `{ }` → 根据上下文决定（组件块内为 UI 元素，其余为代码块）
+- `fn` 函数体、`if` / `for` / `while` 的 `{ }` → 解析为普通 Block
+- 表达式位置的 `{ ... }` → 按块表达式解析，其尾部表达式是块的值
+- `{ 字段: 表达式, ... }` 形状 → 对象字面量；有歧义时用 `({ ... })` 包裹
 
 ## 隐式返回与分号
 
@@ -66,7 +57,7 @@ fn add(a: number, b: number): number {
 | 词法分析 | 独立 Lexer | 生成 Token 流，不区分上下文 |
 | 类型解析 | 上下文感知 | 解析类型时识别 `T?`、`T \| U`、`List<T>` |
 | 表达式解析 | Pratt Parser | 处理优先级、三目、函数调用 |
-| UI Block 解析 | 专用解析器 | 只允许 UI 元素，禁止普通语句 |
+| 块解析 | 上下文感知 | 区分语句块、块表达式与对象字面量 |
 | 语义分析 | 访问者模式 | 类型检查、作用域、生命周期 |
 | 模块加载 | 图加载 + 原生运行时 | 依赖拓扑序、循环检测、导出符号/类型跨模块校验 |
 

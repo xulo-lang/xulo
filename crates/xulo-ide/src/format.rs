@@ -250,8 +250,7 @@ fn no_space_before_unary(prev: Option<Token>) -> bool {
 fn no_space_after(t: Token) -> bool {
     matches!(
         t,
-        Token::At
-            | Token::Dollar
+        Token::Dollar
             | Token::Hash
             | Token::LParen
             | Token::LBracket
@@ -327,7 +326,6 @@ fn is_expr_start(t: Option<Token>) -> bool {
             | Some(Token::Null)
             | Some(Token::LParen)
             | Some(Token::Bang)
-            | Some(Token::At)
             | Some(Token::Minus)
             | Some(Token::Plus)
     )

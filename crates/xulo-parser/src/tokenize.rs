@@ -55,7 +55,6 @@ pub const OPERATORS: &[(&str, Token)] = &[
     ("!", Token::Bang),
     (".", Token::Dot),
     (":", Token::Colon),
-    ("@", Token::At),
     ("#", Token::Hash),
     ("$", Token::Dollar),
     (";", Token::Semicolon),

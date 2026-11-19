@@ -32,8 +32,8 @@ impl Area for Rectangle {
     }
 }
 
-fn panel(): View {
-    @State let count: number = 0
+fn panel() {
+    let count: number = 0
     print(count)
 }
 
@@ -82,12 +82,12 @@ fn functions_declare() {
 }
 
 #[test]
-fn state_is_property_const_is_constant() {
+fn let_is_variable_const_is_constant() {
     let tokens = tokens(SAMPLE);
-    let start = nth(SAMPLE, "@State let count", 0) + 11;
-    assert!(tokens.contains(&token(start, start + 5, TokenType::Property, true)));
+    let start = nth(SAMPLE, "let count", 0) + 4;
+    assert!(tokens.contains(&token(start, start + 5, TokenType::Variable, true)));
     let use_start = nth(SAMPLE, "count", 1);
-    assert!(tokens.contains(&token(use_start, use_start + 5, TokenType::Property, false)));
+    assert!(tokens.contains(&token(use_start, use_start + 5, TokenType::Variable, false)));
     let start = nth(SAMPLE, "const LIMIT", 0) + 6;
     assert!(
         tokens.contains(&token(start, start + 5, TokenType::Constant, true)),

@@ -99,10 +99,6 @@ pub enum Value {
     },
     /// A builtin (`print`, `str`).
     Native(NativeFn),
-    /// A `@State` reactive cell: reads dereference to the inner value and
-    /// assignments write it back (the equivalent of `__signal(...).get/set`).
-    /// Held in the environment so identifier lookups can unwrap it.
-    Signal(Rc<RefCell<Value>>),
     /// An in-flight `async` call: the result of running an async function. Await
     /// tasks register themselves in `Promise.awaiters` and the scheduler
     /// resumes them in FIFO order once the promise settles.
@@ -201,7 +197,6 @@ impl Value {
             Value::StringBuilder(_) => "a `StringBuilder`".into(),
             Value::Object(_) => "an `object`".into(),
             Value::Function(_) | Value::Native(_) => "a function".into(),
-            Value::Signal(_) => "a signal".into(),
             Value::Enum { .. } => "an enum value".into(),
             Value::Promise(_) => "a promise".into(),
             Value::AstNode(_) => "an `ast::AstNode`".into(),
@@ -252,7 +247,6 @@ impl Value {
                 seen.remove(&id);
                 format!("Set([{}])", parts.join(", "))
             }
-            Value::Signal(cell) => cell.borrow().format_seen(seen),
             Value::StringBuilder(builder) => builder.borrow().text().to_string(),
             Value::Object(fields) => {
                 let id = Rc::as_ptr(fields) as usize;
@@ -292,8 +286,8 @@ pub use xulo_std::format_number;
 /// Xulo `==`: equality is structural for every value-carrying type (spec
 /// `expressions/operators.md`, "Equality"). Primitives compare by value,
 /// `List`/`Set`/tuple/`Map`/`struct` and enum payloads compare recursively,
-/// and only identity-carrying values (`Promise`, `Signal`, function values,
-/// `Ptr`, `AstNode`) compare by handle.
+/// and only identity-carrying values (`Promise`, function values, `Ptr`,
+/// `AstNode`) compare by handle.
 ///
 /// A visited-pair guard makes cyclic structures terminate: a pair already on
 /// the comparison stack is treated as equal (coinductive), matching how such
@@ -380,7 +374,6 @@ fn equal_seen(a: &Value, b: &Value, seen: &mut Vec<(usize, usize)>) -> bool {
             result
         }
         (Value::Promise(x), Value::Promise(y)) => Rc::ptr_eq(x, y),
-        (Value::Signal(x), Value::Signal(y)) => Rc::ptr_eq(x, y),
         (Value::AstNode(x), Value::AstNode(y)) => Rc::ptr_eq(x, y),
         (Value::Function(x), Value::Function(y)) => Rc::ptr_eq(x, y),
         (Value::Native(x), Value::Native(y)) => Rc::ptr_eq(x, y),

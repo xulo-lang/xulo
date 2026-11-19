@@ -274,13 +274,10 @@ fn removed_export_lexes_as_reserved() {
 }
 
 #[test]
-fn tokenizes_at_and_dollar() {
-    let tokens = tokenize("@State let x = 0 $name").unwrap();
+fn tokenizes_dollar_operator() {
+    let tokens = tokenize("$name").unwrap();
     let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
-    assert_eq!(
-        kinds,
-        vec![At, Ident, Let, Ident, Assign, Number, Dollar, Ident, EOF]
-    );
+    assert_eq!(kinds, vec![Dollar, Ident, EOF]);
 }
 
 #[test]

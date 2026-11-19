@@ -291,7 +291,7 @@ impl IrGenerator {
                 push_unique(refs, &l.name);
                 self.collect_scope_stmts(&l.body.statements, binds, refs, children_free);
             }
-            // 字面量 / 枚举引用 / Binding / TypedMap / Component：无自由局部变量
+            // 字面量 / 枚举引用 / TypedMap：无自由局部变量
             //（列表/对象字面量的元素仍需遍历）
             Expression::Literal { value, .. } => match value {
                 Literal::List(elems) => {

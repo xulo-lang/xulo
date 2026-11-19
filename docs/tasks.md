@@ -3,7 +3,7 @@
 - **Status**: Living checklist
 - **Date**: 2026-11-17
 - **Companion document**: [`stage1-readiness.md`](stage1-readiness.md) — rationale, evidence, and gate definitions
-- **Normative sources**: `spec@48f49b7` and `std-spec@a2e4cb7`, as pinned by this repository
+- **Normative sources**: `spec@815edad` and `std-spec@a2e4cb7`, as pinned by this repository
 - **Scope**: the executable checklist for making stage 0 host-ready and bootstrapping stage 1
 
 This file is the execution view of `stage1-readiness.md`. The readiness document
@@ -93,8 +93,6 @@ package or out-of-scope section that tracks it.
       subset; WP7)
 - [x] **L22** Async/await, `spawn`, `lock`, `shared` (outside the bootstrap subset)
 - [x] **L23** Attributes, `#[test]`, `#[derive]`, macros (outside the bootstrap subset)
-- [ ] **L24** UI components and `@State` / `@Environment` — PARTIAL, outside the
-      bootstrap subset (out of scope, below)
 - [x] **L25** Type aliases (`type X = …`), including alias receivers, dispatch, and function-type aliases
 - [x] **R1** Deterministic left-to-right evaluation
 - [x] **R3** UTF-8 scalar string operations
@@ -153,7 +151,7 @@ package or out-of-scope section that tracks it.
 Priority P0 · needed by Gate 1/2 · source: `stage1-readiness.md` §7 WP0, §6.9
 
 - [x] **T7** Add a CI check that `git submodule status` matches the pinned
-      `spec@48f49b7` and `std-spec@a2e4cb7` commits.
+      `spec@815edad` and `std-spec@a2e4cb7` commits.
       `crates/xulo-cli/tests/submodule_pins.rs`.
 - [x] **T3a** Add a conformance runner that extracts `// ok` blocks from the
       pinned specification and runs them through stage 0.
@@ -165,8 +163,8 @@ Priority P0 · needed by Gate 1/2 · source: `stage1-readiness.md` §7 WP0, §6.
       `crates/xulo-cli/tests/readiness_matrix.rs` requires every OK row to cite
       an existing path, runs the `crates/xulo-cli/tests/matrix_probes/` corpus,
       and fails on a probe that no row cites. The audit found and fixed two
-      defects (a trailing struct construction was mistaken for a component and
-      lost its implicit return; tuple destructuring rejected tuple types) and
+      defects (a trailing struct construction lost its implicit return; tuple
+      destructuring rejected tuple types) and
       re-graded L13 to PARTIAL for identity-based equality (§6.11, since resolved by L13b).
 - [x] **T3e** Add the conformance job to `.github/workflows/ci.yml` and triage
       its failures in the readiness matrix.
@@ -456,8 +454,8 @@ value-semantics tests listed above.
 These are deliberately not tracked here. They remain P2 in
 `stage1-readiness.md` §8 and must not block Gate 1 or Gate 2:
 
-- **L24** UI components, renderers, `@State` / `@Environment`, terminal/webview
-  backends.
+- UI libraries and renderers (the language defines no UI layer; UI is a library
+  concern).
 - LSP, IDE integration, and formatter comment handling.
 - Async tasks, `spawn` / `lock` / `shared`, `std::net`, `std::http`, package
   registry.

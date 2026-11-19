@@ -87,7 +87,6 @@ pub enum Token {
     /// A reserved-for-future-use word (see `RESERVED_WORDS`): it lexes as a
     /// token instead of an identifier so it can never be used as a name.
     Reserved,
-    At,
     /// `#`, the attribute opener (`#[test]`, `#[derive(Debug)]`).
     Hash,
     Dollar,
@@ -258,7 +257,6 @@ impl Token {
             Token::Reserved => "`<reserved keyword>`",
             Token::Break => "`break`",
             Token::Continue => "`continue`",
-            Token::At => "`@`",
             Token::Hash => "`#`",
             Token::Dollar => "`$`",
             Token::Number => "number",

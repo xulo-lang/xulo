@@ -302,25 +302,3 @@ fn test_impl_decl() {
     assert_eq!(impl_decl.trait_name, "Display");
     assert_eq!(impl_decl.type_name, "User");
 }
-
-#[test]
-fn test_binding_pattern_ident() {
-    let pattern = BindingPattern::Ident("x".to_string());
-    assert!(matches!(pattern, BindingPattern::Ident(s) if s == "x"));
-}
-
-#[test]
-fn test_binding_pattern_destructure() {
-    let pattern = BindingPattern::Destructure(vec![
-        ("a".to_string(), None),
-        ("b".to_string(), Some("c".to_string())),
-    ]);
-    match pattern {
-        BindingPattern::Destructure(bindings) => {
-            assert_eq!(bindings.len(), 2);
-            assert_eq!(bindings[0], ("a".to_string(), None));
-            assert_eq!(bindings[1], ("b".to_string(), Some("c".to_string())));
-        }
-        _ => panic!("expected destructure"),
-    }
-}

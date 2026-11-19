@@ -119,15 +119,12 @@ fn test_let_binding_basic() {
         is_const: false,
         is_mutable: false,
         is_shared: false,
-        memo: false,
-        memo_deps: None,
         tuple_names: None,
         object_destructuring: None,
         attributes: Vec::new(),
     };
     assert_eq!(binding.name, "x");
     assert!(!binding.is_const);
-    assert!(!binding.memo);
 }
 
 #[test]
@@ -143,45 +140,11 @@ fn test_let_binding_const() {
         is_const: true,
         is_mutable: false,
         is_shared: false,
-        memo: false,
-        memo_deps: None,
         tuple_names: None,
         object_destructuring: None,
         attributes: Vec::new(),
     };
     assert!(binding.is_const);
-}
-
-#[test]
-fn test_let_binding_memo() {
-    let binding = LetBinding {
-        name: "cached".to_string(),
-        name_span: 6..12,
-        type_annotation: None,
-        value: Some(Expression::Identifier {
-            name: "expensive".to_string(),
-            span: 15..24,
-        }),
-        is_const: false,
-        is_mutable: false,
-        is_shared: false,
-        memo: true,
-        memo_deps: Some(vec![
-            Expression::Identifier {
-                name: "dep1".to_string(),
-                span: 31..35,
-            },
-            Expression::Identifier {
-                name: "dep2".to_string(),
-                span: 37..41,
-            },
-        ]),
-        tuple_names: None,
-        object_destructuring: None,
-        attributes: Vec::new(),
-    };
-    assert!(binding.memo);
-    assert_eq!(binding.memo_deps.as_ref().unwrap().len(), 2);
 }
 
 #[test]

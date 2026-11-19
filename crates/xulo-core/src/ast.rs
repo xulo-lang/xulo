@@ -29,11 +29,6 @@ pub enum Statement {
     Try(TryStmt),
     Throw(Expression),
     Export(ExportStmt),
-    State(StateStmt),
-    Store(StoreStmt),
-    Effect(EffectStmt),
-    Environment(EnvStmt),
-    Component(ComponentStmt),
     Trait(TraitDecl),
     Impl(ImplDecl),
     Break,
@@ -334,14 +329,6 @@ pub struct LetBinding {
     /// `let x = shared expr`: the initializer is a shared (concurrently
     /// accessible) value (spec: concurrency.md).
     pub is_shared: bool,
-    /// `@Memo` value memoization: `@Memo([deps]) let x = expr`. The native
-    /// interpreter caches the computed value per (site, deps) and reuses it
-    /// when the deps are unchanged; the JS target recomputes on every render
-    /// (documented no-op for now).
-    pub memo: bool,
-    /// The memo dependency expressions (`None` only when `memo` is `false`; a
-    /// bare `@Memo` is normalized to an empty list = cache forever).
-    pub memo_deps: Option<Vec<Expression>>,
     /// Tuple destructuring: `let (a, b, c) = expr`. When `Some`, the binding
     /// destructures the right-hand side into the listed names. `name` is set
     /// to a synthetic empty string for tuple patterns.
@@ -353,84 +340,6 @@ pub struct LetBinding {
     pub object_destructuring: Option<Vec<(String, Option<String>)>>,
     /// Declaration attributes written before `pub`/`let`/`const`.
     pub attributes: Vec<Attribute>,
-}
-
-/// A `@State` declaration: reactive local state inside a `View` function.
-#[derive(Debug, Clone, PartialEq)]
-pub struct StateStmt {
-    pub binding: LetBinding,
-}
-
-/// A `@Store` declaration: destructure reactive store bindings.
-#[derive(Debug, Clone, PartialEq)]
-pub struct StoreStmt {
-    pub pattern: BindingPattern,
-    pub value: Expression,
-}
-
-/// The left-hand side of a `@Store` binding: `name` or `{ a, b: c }`.
-#[derive(Debug, Clone, PartialEq)]
-pub enum BindingPattern {
-    Ident(String),
-    Destructure(Vec<(String, Option<String>)>),
-}
-
-/// A `@Effect` declaration: a closure plus an optional dependency array.
-#[derive(Debug, Clone, PartialEq)]
-pub struct EffectStmt {
-    pub closure: FnExpr,
-    pub deps: Option<Vec<Expression>>,
-}
-
-/// An `@Environment` declaration: reads an injected value of the given type.
-#[derive(Debug, Clone, PartialEq)]
-pub struct EnvStmt {
-    pub name: String,
-    /// Source span of the binding name (for name-related diagnostics).
-    pub name_span: Range<usize>,
-    pub type_: Type,
-}
-
-/// A UI component invocation: `Component(args) { children }`.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ComponentStmt {
-    pub name: String,
-    /// The byte span of `name` (for editor tooling: hover/go-to-definition on
-    /// component sites).
-    pub name_span: Range<usize>,
-    pub args: Vec<CallArg>,
-    pub children: Vec<UiElement>,
-    /// Source span of the whole invocation (name through children block).
-    pub span: Range<usize>,
-    /// A written `CallTypeArgs` list (`Text<int>("Hi") { … }`); components
-    /// declare no type parameters, so the checker rejects it with `E0807`.
-    pub type_args: Option<Vec<Type>>,
-}
-
-/// A single element in a UI block (component, text, expression, if, for, or grouping).
-#[derive(Debug, Clone, PartialEq)]
-pub enum UiElement {
-    Component(ComponentStmt),
-    Text(String),
-    /// A bare expression child (e.g. a forwarded `children` variable, a member
-    /// access, or a call). The semantic phase constrains its type to a string,
-    /// a component, or a list of components; a list value renders as a nested
-    /// array that the consumer flattens (the same convention the compiled
-    /// `if`/`for` output uses).
-    Expr(Expression),
-    If {
-        condition: Expression,
-        then_branch: Vec<UiElement>,
-        else_branch: Option<Vec<UiElement>>,
-    },
-    For {
-        iter_var: String,
-        /// Source span of the loop variable name (for name-related diagnostics).
-        iter_var_span: Range<usize>,
-        iterable: Expression,
-        body: Vec<UiElement>,
-    },
-    Group(Vec<UiElement>),
 }
 
 /// The left-hand side of an assignment: a plain name, a member access, or an
@@ -793,15 +702,6 @@ pub enum Expression {
     /// Calling a function value held in an arbitrary expression:
     /// `xs[0](10)`, `getHandler()(event)`, `(fn() {...})(5)`.
     CallValue(Box<CallValue>),
-    /// A `$name` binding reference to a `@State`/`@Store` variable.
-    Binding {
-        name: String,
-        span: Range<usize>,
-    },
-    /// A UI component invocation with a children block, used as a value:
-    /// `VStack { Text("a") }`. In statement and child position the parser
-    /// lowers this to `Statement::Component` / `UiElement::Component`.
-    Component(ComponentStmt),
     /// A tuple literal: `(a, b, c)` (at least two elements).
     Tuple {
         items: Vec<Expression>,
@@ -841,7 +741,6 @@ impl Expression {
         match self {
             Expression::Literal { span, .. }
             | Expression::Identifier { span, .. }
-            | Expression::Binding { span, .. }
             | Expression::Await { span, .. }
             | Expression::Spread { span, .. } => span,
             Expression::BinaryOp(b) => &b.span,
@@ -857,7 +756,6 @@ impl Expression {
             Expression::Range(r) => &r.span,
             Expression::FnExpr(f) => &f.span,
             Expression::CallValue(c) => &c.span,
-            Expression::Component(c) => &c.span,
             Expression::Tuple { span, .. } => span,
             Expression::TypedMap(t) => &t.span,
             Expression::Is(i) => &i.span,
@@ -1271,7 +1169,7 @@ pub enum Type {
     /// The loose, dynamic `object` type (object literals).
     Object,
     /// A named type: an alias, an enum, a generic application, or a stdlib
-    /// type (`User`, `View`). The second field carries the written type
+    /// type (`User`, `Point`). The second field carries the written type
     /// arguments of an application — `Map<string, int>` is
     /// `Named("Map", [Type::String, Type::Number])` — and is empty when no argument list
     /// was written. Argument well-formedness (count, bare names, bounds) is

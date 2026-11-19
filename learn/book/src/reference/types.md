@@ -1,6 +1,6 @@
 # 数据与类型
 
-> 相关：[变量与状态](variables-and-state.md) · [函数](functions.md) · [速查表](../cheatsheet.md)
+> 相关：[变量与绑定](variables-and-state.md) · [函数](functions.md) · [速查表](../cheatsheet.md)
 
 ## 基础类型
 
@@ -22,7 +22,26 @@ T | U          // 联合类型（TS 风格）
 T & U          // 交叉类型（TS 风格）
 ```
 
-`number` 统一表示整数与浮点；`print(...)` 与 `List<T>` 是内建能力。`View` 是内建**标记类型**：编译器用它识别「返回该类型的函数即 UI 组件」，本身无运行时实现，具体组件由标准库 `@xulo/ui` 提供（见 [UI 组件](ui.md)）。
+`number` 统一表示整数与浮点；`print(...)`、`str(...)` 与 `List<T>` 是内建能力；`unit` 是空类型，`unknown` 跳过检查。
+
+## 结构体（struct）
+
+```xulo
+struct User {
+  name: string
+  age: number
+  email: string?
+}
+
+let alice = User(name: "Alice", age: 30)
+let mut bob = User(name: "Bob", age: 25)
+bob.age = 26
+```
+
+- `struct` 声明具名记录类型，字段写作 `name: type`
+- 用命名实参构造：`User(name: "Alice", age: 30)`；可选字段（`T?`）可以省略
+- 字段用 `.` 访问；给字段赋值需要 `let mut` 绑定
+- 字段默认私有；要让其他模块读取或构造，字段需标记 `pub`
 
 ## 类型别名（统一使用 `type`，无 `interface`）
 
@@ -46,7 +65,7 @@ type UserWithRole = User & {
 }
 
 // 泛型
-type Result<T> = {
+type Page<T> = {
   data: T?
   error: string?
 }

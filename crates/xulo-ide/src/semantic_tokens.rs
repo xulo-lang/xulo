@@ -44,10 +44,9 @@ impl Analysis {
     /// Semantic tokens for this document: identifier-level highlights merged
     /// from the checker's resolutions (every name-use plus `let` declaration
     /// sites) and the AST's declaration sites (top-level and nested `fn`s,
-    /// `@State`/`@Environment` bindings, type aliases, enums and their
-    /// variants, traits and their methods, `impl` methods, `for`/`catch`
-    /// bindings). Types never overlap after flattening, so the LSP delta
-    /// encoding stays valid.
+    /// type aliases, enums and their variants, traits and their methods,
+    /// `impl` methods, `for`/`catch` bindings). Types never overlap after
+    /// flattening, so the LSP delta encoding stays valid.
     pub fn semantic_tokens(&self) -> Vec<SemanticToken> {
         let mut tokens: Vec<SemanticToken> = Vec::new();
         if let Some(result) = &self.result {
@@ -71,10 +70,7 @@ impl Analysis {
 fn use_kind_token_type(kind: UseKind) -> Option<TokenType> {
     Some(match kind {
         UseKind::Variable => TokenType::Variable,
-        UseKind::State => TokenType::Property,
-        UseKind::Store => TokenType::Property,
         UseKind::Function => TokenType::Function,
-        UseKind::Component => TokenType::Class,
     })
 }
 
@@ -89,9 +85,7 @@ fn decl(tokens: &mut Vec<SemanticToken>, span: ByteRange<usize>, token_type: Tok
 }
 
 /// Every naming declaration reachable through the statement tree, carrying its
-/// kind and byte span. `@Store` bindings (a destructure pattern with no name
-/// span) contribute nothing at the declaration site; their *uses* still color
-/// via the checker's resolutions.
+/// kind and byte span.
 fn collect_decls(statements: &[Statement], tokens: &mut Vec<SemanticToken>) {
     for statement in statements {
         match statement {
@@ -108,10 +102,6 @@ fn collect_decls(statements: &[Statement], tokens: &mut Vec<SemanticToken>) {
                 binding.name_span.clone(),
                 binding_kind(binding.is_const),
             ),
-            Statement::State(state) => {
-                decl(tokens, state.binding.name_span.clone(), TokenType::Property);
-            }
-            Statement::Environment(env) => decl(tokens, env.name_span.clone(), TokenType::Variable),
             Statement::TypeAlias(alias) => decl(tokens, alias.name_span.clone(), TokenType::Type),
             Statement::Enum(enum_def) => {
                 decl(tokens, enum_def.name_span.clone(), TokenType::Enum);
@@ -155,8 +145,6 @@ fn collect_decls(statements: &[Statement], tokens: &mut Vec<SemanticToken>) {
                 ExportItem::Struct(_) => {}
                 ExportItem::Names(_) => {}
             },
-            // No name span on the store pattern; nothing to declare.
-            Statement::Store(_) => {}
             Statement::ExternBlock(block) => {
                 for item in &block.items {
                     decl(tokens, item.name_span.clone(), TokenType::Function);
@@ -187,8 +175,6 @@ fn collect_decls(statements: &[Statement], tokens: &mut Vec<SemanticToken>) {
             | Statement::Throw(_)
             | Statement::Mod(_)
             | Statement::Use(_)
-            | Statement::Effect(_)
-            | Statement::Component(_)
             | Statement::Struct(_)
             | Statement::Break
             | Statement::Continue => {}

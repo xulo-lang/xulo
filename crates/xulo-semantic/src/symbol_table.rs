@@ -6,10 +6,6 @@ use xulo_core::ast::{FnBound, GenericParam, Param, Type};
 #[derive(Debug, Clone, PartialEq)]
 pub enum SymbolKind {
     Variable,
-    /// A `@State` variable (reactive, mutable component state).
-    State,
-    /// A `@Store` binding (reactive store-derived value).
-    Store,
     Function(
         Vec<String>,
         Vec<Param>,

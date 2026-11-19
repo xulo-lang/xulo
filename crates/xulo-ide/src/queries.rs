@@ -34,10 +34,10 @@ pub struct HoverInfo {
     pub kind: String,
     pub type_name: Option<String>,
     pub def: Option<Range>,
-    /// A rendered declaration preview (e.g. `fn Card(title: string): View` or
+    /// A rendered declaration preview (e.g. `fn greet(name: string): string` or
     /// the source line of a `let` binding), when the declaration is known.
     pub signature: Option<String>,
-    /// The parameters of the declared function/component: `(name, type)`.
+    /// The parameters of the declared function: `(name, type)`.
     pub params: Vec<(String, String)>,
     /// Doc/comment lines above the declaration, when any.
     pub comment: Option<String>,
@@ -158,21 +158,14 @@ impl Analysis {
         })
     }
 
-    /// Fill in the declaration preview for a resolved name: a function/component
-    /// shows its signature, parameters and doc comment; a variable shows the
-    /// comment above its binding. Only the builtin `View` protocol gets a doc
-    /// description; other components resolve from the `xulo ui` library (or the
-    /// workspace) or have none.
+    /// Fill in the declaration preview for a resolved name: a function shows
+    /// its signature, parameters and doc comment; a variable shows the comment
+    /// above its binding.
     fn enrich_from_def(&self, info: &mut HoverInfo, def: Option<&std::ops::Range<usize>>) {
-        if info.kind == "component"
-            && let Some(doc) = builtin_component_doc(&info.name)
-        {
-            info.comment = Some(doc.to_string());
-        }
         let Some(def) = def else {
             return;
         };
-        if (info.kind == "function" || info.kind == "component")
+        if info.kind == "function"
             && let Some(f) = self.fn_by_span(def)
         {
             info.signature = Some(signature_of(f));
@@ -235,8 +228,8 @@ impl Analysis {
         }
     }
 
-    /// The `FnDef` whose `name_span` is exactly `span` (a resolved function /
-    /// component definition site), searching top-level and nested declarations.
+    /// The `FnDef` whose `name_span` is exactly `span` (a resolved function
+    /// definition site), searching top-level and nested declarations.
     fn fn_by_span(&self, span: &std::ops::Range<usize>) -> Option<&xulo_core::ast::FnDef> {
         let program = self.program.as_ref()?;
         find_fn(&program.statements, span)
@@ -297,15 +290,12 @@ fn resolve_record(result: &AnalysisResult, byte: usize) -> Option<&UseRecord> {
 fn kind_name(kind: UseKind) -> String {
     match kind {
         UseKind::Variable => "variable".into(),
-        UseKind::State => "state".into(),
-        UseKind::Store => "store".into(),
         UseKind::Function => "function".into(),
-        UseKind::Component => "component".into(),
     }
 }
 
-/// Render a function/component's declaration signature:
-/// `fn Card(title: string): View`.
+/// Render a function's declaration signature:
+/// `fn greet(name: string): string`.
 fn signature_of(f: &xulo_core::ast::FnDef) -> String {
     let params: Vec<String> = f
         .params
@@ -486,17 +476,6 @@ fn find_fn_expr_covering(
             }
             None
         }
-        _ => None,
-    }
-}
-
-/// The doc description of the one component protocol the xulo core defines
-/// (`View`). Every other component (`Text`, `Button`, `VStack`, ...) belongs to
-/// the `xulo ui` library — it has no builtin description here, and if it is not
-/// imported into the workspace it simply has no preview to show.
-fn builtin_component_doc(name: &str) -> Option<&'static str> {
-    match name {
-        "View" => Some("The `View` component protocol: the root layout container of a component."),
         _ => None,
     }
 }

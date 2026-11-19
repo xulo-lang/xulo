@@ -1,6 +1,6 @@
 //! Repository-state gate (WP0, `docs/tasks.md` T7).
 //!
-//! The readiness matrix is written against `spec@48f49b7` and
+//! The readiness matrix is written against `spec@815edad` and
 //! `std-spec@a2e4cb7`. A working tree detached at another submodule commit
 //! silently invalidates probes (the document calls this out in its repository
 //! state note), so CI must fail when the checkout drifts from the pin.
@@ -20,7 +20,7 @@ use std::process::Command;
 
 /// The submodule commits this repository's matrix is written against.
 const PINS: [(&str, &str); 2] = [
-    ("spec", "48f49b7d2dbee6fe1fd49ca5d7ff68cbed328963"),
+    ("spec", "815edad14a9f129e289eb855126ec8e774150735"),
     ("std-spec", "a2e4cb70b108745bdb58a554424b5500cf50933d"),
 ];
 

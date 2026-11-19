@@ -189,10 +189,6 @@ fn grammar_covers_the_syntax_the_lexer_defines() {
         raw.contains("punctuation.definition.attribute.xulo"),
         "no `#[name]` attribute rule"
     );
-    assert!(
-        raw.contains("storage.modifier.component.xulo"),
-        "no `@State` component-annotation rule"
-    );
     // Block comments and both quote styles exist in the lexer.
     assert!(raw.contains("comment.block.xulo"), "no block-comment rule");
     assert!(raw.contains("string.quoted.single.xulo"), "no '…' rule");

@@ -783,135 +783,6 @@ fn optional_chaining_allows_null_base() {
 }
 
 #[test]
-fn component_type_is_recognized() {
-    let src = "fn main(): View { }";
-    assert!(analyze_src(src).is_ok());
-}
-
-#[test]
-fn state_is_allowed_in_component_function() {
-    let src = r#"
-        fn main(): View {
-            @State let count: number = 0
-        }
-    "#;
-    assert!(analyze_src(src).is_ok());
-}
-
-#[test]
-fn decorators_rejected_outside_component() {
-    let err = analyze_src("fn main() { @State let count: number = 0 }").unwrap_err();
-    assert!(err.message.contains("returning `View`"));
-
-    let err = analyze_src("async fn helper() { @State let count = 0 }").unwrap_err();
-    assert!(err.message.contains("returning `View`"));
-}
-
-#[test]
-fn decorators_rejected_in_nested_block() {
-    let err =
-        analyze_src("fn main(): View { if true { @State let count: number = 0 } }").unwrap_err();
-    assert!(err.message.contains("nested block"));
-}
-
-#[test]
-fn effect_and_store_and_environment_in_component() {
-    let src = r#"
-        fn use_app_store(): Map<string, unknown> { return { user: null } }
-        fn main(): View {
-            @State let editing: bool = false
-            @Store let { user } = use_app_store()
-            @Environment let router: Map<string, unknown>
-            @Effect fn() { print(user) }
-            @Effect fn() { }, [editing]
-        }
-    "#;
-    assert!(analyze_src(src).is_ok());
-}
-
-#[test]
-fn dollar_binding_requires_state_or_store() {
-    let src = r#"
-        fn main(): View {
-            @State let name: string = ""
-            Input(value: $name)
-        }
-    "#;
-    assert!(analyze_src(src).is_ok());
-
-    let err =
-        analyze_src("fn main(): View { let name: string = \"\" Input(value: $name) }").unwrap_err();
-    assert!(err.message.contains("`$` binding"));
-}
-
-#[test]
-fn state_cannot_be_redeclared() {
-    let err = analyze_src("fn main(): View { @State let x: number = 0 @State let x: number = 1 }")
-        .unwrap_err();
-    assert!(err.message.contains("already declared"));
-}
-
-#[test]
-fn component_children_are_type_checked() {
-    let src = r#"
-        fn main(): View {
-            VStack {
-                if 1 > 0 { Text("ok") }
-                for x in [1, 2] { Text("x") }
-            }
-        }
-    "#;
-    assert!(analyze_src(src).is_ok());
-
-    let err = analyze_src("fn main(): View { VStack { for x in 5 { Text(\"x\") } } }").unwrap_err();
-    assert!(err.message.contains("must iterate over a `List`"));
-}
-
-#[test]
-fn expr_child_accepts_string_and_component_lists() {
-    // A string variable as a bare child renders like a `Text`.
-    assert!(
-        analyze_src("fn main(): View { @State let name: string = \"Xulo\" VStack { name } }")
-            .is_ok()
-    );
-
-    // A member access yielding a string is also a valid child.
-    assert!(analyze_src(
-        "struct User { name: string }\nfn main(): View { @State let u: User = User(name: \"a\") VStack { u.name } }"
-    )
-    .is_ok());
-
-    // The documented custom-component pattern: a `children: List<View>`
-    // parameter is forwarded as a bare element.
-    let src = r#"
-        fn MyCard(title: string, children: List<View>): View {
-            VStack {
-                Text(title, weight: "bold")
-                children
-            }
-        }
-    "#;
-    assert!(analyze_src(src).is_ok());
-}
-
-#[test]
-fn expr_child_rejects_non_renderable_types() {
-    for src in [
-        "fn main(): View { @State let n: number = 0 VStack { n } }",
-        "fn main(): View { @State let ok: bool = true VStack { ok } }",
-        "fn main(): View { @State let xs: List<number> = [1, 2] VStack { xs } }",
-    ] {
-        let err = analyze_src(src).unwrap_err();
-        assert!(
-            err.message
-                .contains("component children must be strings, components, or lists of components"),
-            "unexpected message: {}",
-            err.message
-        );
-    }
-}
-
-#[test]
 fn await_rejected_inside_value_position_if() {
     let err = analyze_src(
         "async fn work() { 42 }\nasync fn main() { let ok = true let x = if ok { await work() } else { 0 } }",
@@ -959,103 +830,6 @@ fn await_rejected_in_non_async_closure_inside_async_fn() {
 #[test]
 fn await_allowed_in_async_closure() {
     let src = "async fn main() { let g = async fn() { 42 } let v = await g() print(v) }";
-    assert!(analyze_src(src).is_ok());
-}
-
-#[test]
-fn decorators_rejected_in_closure_inside_component() {
-    let err = analyze_src(
-        "fn main(): View { fn handle() { @State let count: number = 0 } print(\"x\") }",
-    )
-    .unwrap_err();
-    assert!(err.message.contains("returning `View`"));
-}
-
-#[test]
-fn decorators_rejected_in_anonymous_closure_inside_component() {
-    let err = analyze_src("fn main(): View { let handle = fn() { @State let count: number = 0 } }")
-        .unwrap_err();
-    assert!(err.message.contains("returning `View`"));
-}
-
-#[test]
-fn effect_cannot_capture_render_local() {
-    let err = analyze_src(
-        r#"
-        fn main(): View {
-            let a = 5
-            @Effect fn() { print("a=" + a) }
-        }
-    "#,
-    )
-    .unwrap_err();
-    assert!(
-        err.message
-            .contains("`@Effect` closures cannot reference `a`")
-    );
-}
-
-#[test]
-fn effect_cannot_capture_render_local_via_deps() {
-    let err = analyze_src(
-        r#"
-        fn main(): View {
-            let a = 5
-            @Effect fn() { print(1) }, [a]
-        }
-    "#,
-    )
-    .unwrap_err();
-    assert!(
-        err.message
-            .contains("`@Effect` closures cannot reference `a`")
-    );
-}
-
-#[test]
-fn effect_cannot_call_render_local_function() {
-    let err = analyze_src(
-        r#"
-        fn main(): View {
-            fn helper() { print("h") }
-            @Effect fn() { helper() }
-        }
-    "#,
-    )
-    .unwrap_err();
-    assert!(
-        err.message
-            .contains("`@Effect` closures cannot reference `helper`")
-    );
-}
-
-#[test]
-fn effect_can_capture_state_store_and_env() {
-    let src = r#"
-        fn use_app_store(): Map<string, unknown> { return { user: null } }
-        fn main(): View {
-            @State let count: number = 0
-            @Store let { user } = use_app_store()
-            @Environment let router: Map<string, unknown>
-            @Effect fn() {
-                let u = user
-                let r = router
-                print(count)
-                print(u == r)
-            }
-        }
-    "#;
-    assert!(analyze_src(src).is_ok());
-}
-
-#[test]
-fn effect_local_let_is_allowed() {
-    let src = r#"
-        fn main(): View {
-            @State let count: number = 0
-            @Effect fn() { let x = count + 1 print(x) }
-        }
-    "#;
     assert!(analyze_src(src).is_ok());
 }
 
@@ -1260,25 +1034,6 @@ fn nested_async_fn_inside_if_arm_can_await() {
 }
 
 #[test]
-fn effect_closure_rejects_parameters() {
-    let err = analyze_src(
-        r#"
-        fn main(): View {
-            @Effect fn(x: number) { print(str(x)) }
-            Screen { }
-        }
-        "#,
-    )
-    .unwrap_err();
-    assert!(
-        err.message
-            .contains("`@Effect` closures take no parameters"),
-        "got: {}",
-        err.message
-    );
-}
-
-#[test]
 fn index_assignment_is_type_checked_on_typed_list() {
     assert!(
         analyze_src("fn main() { let mut xs: List<number> = [1] xs[0] = 5 print(xs) }").is_ok()
@@ -1330,55 +1085,11 @@ fn nested_generic_list_indexing_types_check() {
 }
 
 #[test]
-fn state_assignment_is_type_checked_inside_component() {
-    let ok = r#"
-        fn main(): View { @State let n: number = 0 n = 1 VStack { Text(str(n)) } }
-    "#;
-    assert!(analyze_src(ok).is_ok());
-    let bad = r#"
-        fn main(): View { @State let n: number = 0 n = "x" VStack { Text(str(n)) } }
-    "#;
-    let err = analyze_src(bad).unwrap_err();
-    assert!(
-        err.message
-            .contains("cannot assign a value of type `string` to `n")
-    );
-}
-
-#[test]
-fn store_destructure_is_immutable() {
-    let src = r#"
-        fn make_store(): Map<string, unknown> { let o = { theme: { x: 1 } } o }
-        fn main(): View { @Store let { theme } = make_store() theme = { x: 2 } VStack { Text("x") } }
-    "#;
-    let err = analyze_src(src).unwrap_err();
-    assert!(err.message.contains("cannot assign to `theme`"));
-}
-
-#[test]
 fn for_loop_variable_is_scoped_to_the_loop() {
     let src = "fn main() { for i in 0..<3 { print(i) } print(i) }";
     let err = analyze_src(src).unwrap_err();
     assert!(err.message.contains("undefined variable `i`"));
     assert!(analyze_src("fn main() { for i in 0..<3 { print(i) } }").is_ok());
-}
-
-#[test]
-fn component_call_props_are_loosely_typed() {
-    // Inside a `View` body an uppercase call is a render statement
-    // (`Statement::Component`); props are not validated against the function
-    // signature there. An ordinary function body keeps call checking.
-    let ok = r#"
-        fn Counter(x: number): View { VStack { Text(str(x)) } }
-        fn main(): View { Counter(x: "a") }
-    "#;
-    assert!(analyze_src(ok).is_ok());
-
-    let strict = r#"
-        fn Counter(x: number): string { str(x) }
-        fn main(): string { Counter(x: "a") }
-    "#;
-    assert!(analyze_src(strict).is_err());
 }
 
 #[test]
@@ -1765,16 +1476,6 @@ fn main_rejects_required_parameters() {
     // Defaulted parameters are fine: both runtimes fall back to the default.
     assert!(analyze_src("fn main(x: number = 5) { print(str(x)) }").is_ok());
     assert!(analyze_src("fn main() { print(1) }").is_ok());
-}
-
-#[test]
-fn store_destructure_binds_fields() {
-    // `@Store let { n } = …` binds each destructured field; the binding is
-    // usable inside the component body (its shape is statically `Any`).
-    assert!(
-        analyze_src("fn main(): View { @Store let { n } = { n: 5 } VStack { Text(str(n + 1)) } }")
-            .is_ok()
-    );
 }
 
 #[test]
@@ -2255,48 +1956,6 @@ fn dispatch_annotations_are_applied_to_the_ast() {
 }
 
 #[test]
-fn component_names_are_recorded_as_uses() {
-    let src = r#"
-        fn Card(title: string): View {
-            View {
-                Text(title)
-            }
-        }
-        fn main() {
-            View {
-                Card("hi")
-                Text("x")
-            }
-        }
-    "#;
-    let program = parse_program(src).unwrap();
-    let result = xulo_semantic::analyze_with(&program, &[], &[], &[]).unwrap();
-
-    let use_of = |name: &str| {
-        result
-            .resolutions
-            .iter()
-            .find(|r| r.name == name)
-            .expect("resolution recorded")
-    };
-
-    // User component factory: colors like a component, definition still jumps.
-    let card = use_of("Card");
-    assert_eq!(card.kind, xulo_semantic::UseKind::Component);
-    assert_eq!(card.type_.as_ref().map(|t| t.name()), Some("View".into()));
-    assert!(card.def.is_some(), "user component has a definition");
-
-    // Builtin components: no definition, kind `Component`.
-    let text = use_of("Text");
-    assert_eq!(text.kind, xulo_semantic::UseKind::Component);
-    assert!(text.def.is_none(), "builtin component has no definition");
-
-    // The component name span points at the name token.
-    let span = card.span.clone();
-    assert_eq!(&src[span], "Card");
-}
-
-#[test]
 fn partial_analysis_keeps_resolutions_on_error() {
     let src = r#"
         fn main() {
@@ -2331,33 +1990,6 @@ fn analyze_with_still_fails_fast() {
     let program = parse_program(src).unwrap();
     let result = xulo_semantic::analyze_with(&program, &[], &[], &[]);
     assert!(result.is_err(), "analyze_with keeps the fail-fast contract");
-}
-
-#[test]
-fn memo_requires_initializer() {
-    let src = r#"
-        fn main() {
-            @Memo let x: number
-        }
-    "#;
-    assert!(analyze_src(src).is_err());
-}
-
-#[test]
-fn memo_requires_function_body_top_level() {
-    // Module scope is not a function body.
-    let global = "@Memo let x = 1\n";
-    assert!(analyze_src(global).is_err());
-
-    // A nested block inside a function is not the body's top level.
-    let nested = r#"
-        fn main() {
-            if true {
-                @Memo let x = 1
-            }
-        }
-    "#;
-    assert!(analyze_src(nested).is_err());
 }
 
 #[test]
@@ -3316,11 +2948,12 @@ fn bare_generic_name_is_e0230() {
 #[test]
 fn arguments_on_a_non_generic_name_are_e0230() {
     // The primitive words are keywords now (spec `lexical-structure.md`), so
-    // a written argument list after one is a syntax error; `View` keeps the
-    // E0230 shape check for a zero-arity non-keyword name.
+    // a written argument list after one is a syntax error; a zero-arity user
+    // type keeps the E0230 shape check.
     let src = r#"
+        type User = number
         fn main() {
-            let x: View<int> = 1
+            let x: User<int> = 1
             print(str(x))
         }
     "#;
@@ -3328,7 +2961,7 @@ fn arguments_on_a_non_generic_name_are_e0230() {
     assert_eq!(err.code(), "E0230");
     assert!(
         err.message
-            .contains("`View` expects 0 generic arguments, found 1"),
+            .contains("`User` expects 0 generic arguments, found 1"),
         "unexpected message: {}",
         err.message
     );
@@ -5664,7 +5297,6 @@ fn e0807_reaches_every_non_generic_call_path() {
             "enum-ctor",
             "enum Shape { Circle(number) }\nfn main() { print(str(Shape::Circle<number>(2.5))) }",
         ),
-        ("component", "fn main() { Text<number>(\"Hi\") { } }"),
         (
             "fn-value",
             "fn get(): fn(number): number { return fn(x: number): number { x * 2 } }\nfn main() { let f = get() let n = f<number>(1) print(str(n)) }",

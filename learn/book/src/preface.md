@@ -1,31 +1,33 @@
 # 前言
 
-Xulo 是一门 UI First 编程语言，语法吸收 Rust、Swift、TypeScript 的设计精华。
+Xulo 是一门静态类型系统编程语言，语法吸收 Rust、Swift、TypeScript 的设计精华。语言本身不内建 UI 框架：界面构造是库的关注点（未来的 `std/ui`），由普通的 `struct`、`enum` 与 `fn` 值搭建。
 
 编译管线：
 
 ```text
-.xulo 文件 → 词法分析 (Token) → 语法分析 (AST) → 语义检查 → 代码生成 (JS) → node 运行
+.xulo 文件 → 词法分析 (Token) → 语法分析 (AST) → 语义检查 → 原生运行时执行
 ```
 
 ## 设计目标
 
-- **UI 优先**：把 UI 组件、响应式状态、副作用作为一等语言特性（`View`、`@State`、`@Store`、`@Effect`）。
-- **风格融合**：变量绑定取 TypeScript，函数与枚举取 Rust/Swift，状态管理取 SwiftUI/Zustand。
-- **小而完整**：用 Rust + [pest](https://pest.rs) 实现一个能真正编译运行的前端，生成现代 JavaScript。
+- **系统语言优先**：类型检查、模块边界、可变性默认值与枚举匹配的完整性由语言保证，读者跳过代码也能依赖这些结构性质。
+- **风格融合**：变量绑定取 TypeScript，函数与枚举取 Rust/Swift，模块用显式的 `pub`。
+- **小而完整**：用 Rust + [pest](https://pest.rs) 实现一个能真正编译运行的前端，由原生运行时执行。
+- **UI 属于库**：语言不定义视图树或状态原语；需要界面的程序像使用其他库一样导入库，用普通类型和函数构造数据。
 
-## 本书与 `docs/` 的关系
+## 本书与 `spec/` 的关系
 
-本手册（`learn/book`）是**面向使用者的整理版手册**；仓库根目录的 `docs/xulo-syntax.md` 与 `docs/xulo-ebnf.md` 是**底层语言规范源**。
+本手册（`learn/book`）是**面向使用者的整理版手册**；仓库根目录的 `spec/` 是**底层语言规范源**。
 
-- 手册内容从规范源整理而来，并已按当前实现做了一致性修正（例如 `import type` 的写法、`@State` 使用位置限制等）。
-- 形式语法（EBNF）的正本见 `docs/xulo-ebnf.md`；本手册的 [形式语法（EBNF）](reference/grammar.md) 一节提供与实现对齐的修订版，并附差异说明。
+- 手册内容从规范源整理而来，并已按当前实现做了一致性修正（例如 `import type` 的写法、`let` 默认不可变而 `let mut` 才可赋值等）。
+- 形式语法（EBNF）的正本见 `spec/grammar.md`；本手册的 [形式语法（EBNF）](reference/grammar.md) 一节提供与实现对齐的简化版，并附差异说明。
 
 ## 语法风格来源
 
 | 特性 | 风格来源 |
 |------|---------|
 | 变量绑定 `const`/`let` | TypeScript |
+| 可变绑定 `let mut` | Rust |
 | 函数 `fn` | Rust |
 | 类型标注 `: Type` | TypeScript / Swift |
 | 隐式返回 | Rust |
@@ -35,11 +37,7 @@ Xulo 是一门 UI First 编程语言，语法吸收 Rust、Swift、TypeScript �
 | 枚举 `enum`（含关联数据） | Swift / Rust |
 | 模块 `import`/`pub` | TypeScript |
 | `if` 表达式、`match` | Rust / Swift |
-| `@State` / `@Effect` | SwiftUI |
-| `@Store` | 新设计（Zustand 风格） |
-| `$` 绑定 | SwiftUI |
 | `async`/`await` | TypeScript |
-| 组件块语法 `{ ... }` | SwiftUI |
 | 应用入口 `main` | Rust/Go |
 | 对象字面量 `({ ... })` | 自定义（消除歧义） |
 

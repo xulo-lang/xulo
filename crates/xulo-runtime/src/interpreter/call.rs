@@ -1605,11 +1605,7 @@ impl Interpreter {
                 env.borrow_mut().define(name, Value::Int(*value), false);
             }
             self.bind_callee_args(&env, &func.params, bound)?;
-            let result = if is_component_return(&func.return_type) {
-                self.run_component_body(&func.body, &env)
-            } else {
-                self.run_body(&func.body, &env, func.return_type.is_some())
-            };
+            let result = self.run_body(&func.body, &env, func.return_type.is_some());
             match result {
                 Err(RunError::Propagate(v)) => Ok(v),
                 other => other,
@@ -1641,11 +1637,7 @@ impl Interpreter {
         }
         let env = Env::child(&func.closure);
         self.bind_callee_args(&env, &func.params, args)?;
-        let result = if is_component_return(&func.return_type) {
-            self.run_component_body(&func.body, &env)
-        } else {
-            self.run_body(&func.body, &env, func.return_type.is_some())
-        };
+        let result = self.run_body(&func.body, &env, func.return_type.is_some());
         // The call boundary: a `?` in flight becomes this function's return
         // value (spec `error-handling.md`) — `Result::Err` returned whole,
         // `null` for an optional operand, exactly as a `return` written at
@@ -1695,11 +1687,7 @@ impl Interpreter {
             }
             let env = Env::child(call_env);
             self.bind_callee_args(&env, &f.params, bound)?;
-            if is_component_return(&f.return_type) {
-                self.run_component_body(&f.body, &env)
-            } else {
-                self.run_body(&f.body, &env, f.return_type.is_some())
-            }
+            self.run_body(&f.body, &env, f.return_type.is_some())
         })();
         self.call_depth.set(depth);
         // The call boundary: a `?` in flight becomes this function's return
@@ -1736,41 +1724,6 @@ impl Interpreter {
                 Flow::Continue | Flow::LoopContinue => Ok(Value::Null),
                 Flow::Return(v) => Ok(v),
                 Flow::Break => Ok(Value::Null),
-            }
-        })();
-        self.leave_block(env, result)
-    }
-
-    /// Execute a component function body. Reactive declarations hoist before
-    /// the render section runs, and the trailing render block is evaluated as
-    /// the component's tree value (the JS output wraps the same block in
-    /// `__component(() => ...)`). An explicit `return` beats the implicit
-    /// render value; a trailing expression only counts without a `;`, exactly
-    /// like the codegen's `return <expr>`.
-    pub(super) fn run_component_body(
-        &self,
-        body: &Block,
-        env: &Rc<RefCell<Env>>,
-    ) -> Result<Value, RunError> {
-        let result = (|| {
-            if let Some(last) = body.statements.last() {
-                for stmt in &body.statements[..body.statements.len() - 1] {
-                    match self.exec_stmt(stmt, env)? {
-                        Flow::Continue | Flow::LoopContinue => {}
-                        Flow::Return(v) => return Ok(v),
-                        Flow::Break => return Ok(Value::Null),
-                    }
-                }
-                match last {
-                    Statement::Component(block) => self.eval_component_stmt(block, env),
-                    Statement::Expr(es) if !es.has_semicolon => self.eval(&es.expr, env),
-                    other => {
-                        self.exec_stmt(other, env)?;
-                        Ok(Value::Null)
-                    }
-                }
-            } else {
-                Ok(Value::Null)
             }
         })();
         self.leave_block(env, result)

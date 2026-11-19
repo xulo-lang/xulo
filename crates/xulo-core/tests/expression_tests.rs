@@ -90,15 +90,6 @@ fn test_expression_span_spread() {
 }
 
 #[test]
-fn test_expression_span_binding() {
-    let expr = Expression::Binding {
-        name: "count".to_string(),
-        span: 0..5,
-    };
-    assert_eq!(expr.span(), &(0..5));
-}
-
-#[test]
 fn test_expression_span_member() {
     let expr = Expression::Member(Box::new(MemberAccess {
         object: Expression::Identifier {

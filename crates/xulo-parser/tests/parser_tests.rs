@@ -2,7 +2,7 @@
 //! lowered-AST shape checks, negative cases, and the nesting-depth limit.
 
 use xulo_core::ast::{
-    Expression, Literal, MatchBody, MatchPattern, PathHead, Statement, Type, UiElement, UseTarget,
+    Expression, Literal, MatchBody, MatchPattern, PathHead, Statement, Type, UseTarget,
 };
 use xulo_parser::{MAX_NEST_DEPTH, parse_program};
 
@@ -814,83 +814,10 @@ fn match_body_shapes() {
     assert!(matches!(m.arms[1].value, MatchBody::Block(_)));
 }
 
-// ---------------------------------------------------------------
-// Components and UI
-// ---------------------------------------------------------------
-
-#[test]
-fn component_fn_with_state_and_children() {
-    let src = r#"fn Counter(): View {
-  @State let count: number = 0
-  VStack(spacing: 8) {
-    Text(str(count))
-    Button("Inc", onClick: fn() { count = count + 1 })
-  }
-}"#;
-    let p = parse_ok(src);
-    let Statement::Fn(f) = &p.statements[0] else {
-        panic!();
-    };
-    assert_eq!(f.body.statements.len(), 2);
-    assert!(matches!(f.body.statements[0], Statement::State(_)));
-    match &f.body.statements[1] {
-        Statement::Component(c) => {
-            assert_eq!(c.name, "VStack");
-            assert_eq!(c.args.len(), 1);
-            assert_eq!(c.children.len(), 2);
-        }
-        other => panic!("expected component, got {other:?}"),
-    }
-}
-
-#[test]
-fn ui_block_children_for_and_if() {
-    let src = "fn V(): View { VStack { for x in xs { Text(x) } if ok { Text(\"y\") } } }";
-    let p = parse_ok(src);
-    let Statement::Fn(f) = &p.statements[0] else {
-        panic!();
-    };
-    let Statement::Component(c) = &f.body.statements[0] else {
-        panic!("expected component body, got {:?}", f.body.statements[0]);
-    };
-    assert_eq!(c.children.len(), 2);
-    assert!(matches!(c.children[0], UiElement::For { .. }));
-    assert!(matches!(c.children[1], UiElement::If { .. }));
-}
-
-#[test]
-fn bare_component_call_without_args() {
-    let p = parse_ok("fn V(): View { Card { Text(\"hi\") } }");
-    let Statement::Fn(f) = &p.statements[0] else {
-        panic!();
-    };
-    let Statement::Component(c) = &f.body.statements[0] else {
-        panic!();
-    };
-    assert_eq!(c.name, "Card");
-    assert_eq!(c.children.len(), 1);
-}
-
-#[test]
-fn component_decl_variants() {
-    let src = "fn V(): View { @State let n: number = 0 @Store let { count } = store @Environment let theme: string @Effect fn() { print(n) }, [n] Text(str(n)) }";
-    let p = parse_ok(src);
-    let Statement::Fn(f) = &p.statements[0] else {
-        panic!();
-    };
-    assert!(matches!(f.body.statements[0], Statement::State(_)));
-    assert!(matches!(f.body.statements[1], Statement::Store(_)));
-    assert!(matches!(f.body.statements[2], Statement::Environment(_)));
-    assert!(matches!(f.body.statements[3], Statement::Effect(_)));
-    assert!(matches!(f.body.statements[4], Statement::Component(_)));
-}
-
 /// A trailing struct construction in an ordinary function is a call
-/// expression, so it stays the implicit return value instead of becoming a
-/// component statement (spec `components/view-syntax.md`: only a call with a
-/// children block is a `ComponentCall`).
+/// expression, so it stays the implicit return value.
 #[test]
-fn trailing_struct_construction_is_not_a_component() {
+fn trailing_struct_construction_is_an_expression() {
     let p = parse_ok("struct P { x: int } fn make(): P { P(x: 5) }");
     let Statement::Fn(f) = &p.statements[1] else {
         panic!("expected fn");
@@ -902,19 +829,8 @@ fn trailing_struct_construction_is_not_a_component() {
     );
 }
 
-/// The `View` body is the one place where a plain uppercase call is a render
-/// statement; the same shape must still become `Statement::Component` there.
 #[test]
-fn view_body_plain_call_is_a_component_statement() {
-    let p = parse_ok("fn V(): View { Text(\"hi\") }");
-    let Statement::Fn(f) = &p.statements[0] else {
-        panic!("expected fn");
-    };
-    assert!(matches!(f.body.statements[0], Statement::Component(_)));
-}
-
-#[test]
-fn if_condition_block_is_not_swallowed_by_component_call() {
+fn if_condition_block_is_not_swallowed() {
     // regression: a bare identifier + block in a condition must be `if`'s block
     parse_ok("fn f() { if x { g() } else { h() } }");
 }
@@ -1077,7 +993,7 @@ fn optional_type_postfix() {
 #[test]
 fn deep_else_chain_does_not_backtrack_exponentially() {
     let src = format!(
-        "fn main(): View {{ Screen {{ {} Text(\"x\") {} }} }}",
+        "fn main() {{ {} print(\"x\") {} }}",
         "if true { ".repeat(40),
         " } else { ".repeat(39) + " }"
     );

@@ -58,9 +58,11 @@ fn greet(name: string = "stranger"): string {
 ### 命名参数
 
 ```xulo
-fn Button(label: string, variant: string = "primary"): View
+fn format_label(label: string, variant: string = "primary"): string {
+  variant + ": " + label
+}
 
-Button(variant: "outline", label: "Submit")  // ✅ 命名参数，可乱序
+format_label(variant: "outline", label: "Submit")  // ✅ 命名参数，可乱序
 ```
 
 - 调用时可用命名参数 `greet(name: "X")`；一旦使用命名参数，所有实参都须命名，且可乱序
@@ -103,8 +105,8 @@ fn main() {
   print(apply(double, 3))   // 6
   print(add5(10))           // 15
 
-  // 异步闭包：fn(): async
-  let work = fn(): async { 42 }
+  // 异步闭包：async fn(...)
+  let work = async fn(): number { 42 }
   let v = await work()      // 42
 }
 ```
@@ -116,4 +118,4 @@ fn main() {
 - 调用函数值时只用位置实参，数量必须精确匹配；具名实参不支持
 - 函数值可从任意表达式中调用：`xs[0](10)`、`get_fn()(x)`、`(f)(5)`
 - `fn(...)` 出现在语句位置（如块末用于隐式返回）时按匿名函数表达式解析
-- 异步闭包写作 `fn(): async [类型]`，调用返回 Promise，可用 `await`
+- 异步闭包以 `async` 前缀声明，写作 `async fn(参数): 返回类型 { ... }`，调用返回 `Task<T>`，可用 `await`

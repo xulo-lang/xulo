@@ -562,10 +562,6 @@ fn decl_span(program: &Program, name: &str) -> Option<ByteRange<usize>> {
             Statement::TypeAlias(a) if a.name == name => return Some(a.name_span.clone()),
             Statement::Enum(e) if e.name == name => return Some(e.name_span.clone()),
             Statement::Trait(t) if t.name == name => return Some(t.name_span.clone()),
-            Statement::State(s) if s.binding.name == name => {
-                return Some(s.binding.name_span.clone());
-            }
-            Statement::Environment(e) if e.name == name => return Some(e.name_span.clone()),
             _ => {}
         }
     }

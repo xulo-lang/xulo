@@ -1,7 +1,7 @@
 //! AOT 语法覆盖：补足 codegen 路径（JIT 与 AOT 共用 lowering）尚未覆盖的
 //! 语法面——位运算/取模/幂、continue、const、解构、默认与命名参数、下标与
 //! 字段赋值、match 绑定/具名 payload/泛型枚举、多模块执行，以及 irgen 明确
-//! 拒绝的语法（match guard / or-pattern / range-pattern / UI 声明）的报错。
+//! 拒绝的语法（match guard / or-pattern / range-pattern）的报错。
 
 use std::path::Path;
 use xulo_compiler::aot::AotCodeGen;
@@ -712,23 +712,6 @@ fn match_range_pattern_is_rejected() {
     );
     assert!(
         err.message.contains("range, struct, type, or or-patterns"),
-        "unexpected error: {}",
-        err.message
-    );
-}
-
-#[test]
-fn ui_state_declaration_is_rejected() {
-    let err = compile_err(
-        r#"
-        fn main(): View {
-            @State let count: number = 0
-            Text("x")
-        }
-        "#,
-    );
-    assert!(
-        err.message.contains("UI state/effect/component"),
         "unexpected error: {}",
         err.message
     );

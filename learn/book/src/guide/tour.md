@@ -34,10 +34,10 @@ fn add(a: number, b: number): number {
 }
 
 // 可选 / 默认参数，命名实参
-fn Button(label: string, variant: string = "primary"): View {
-  // ...
+fn label(name: string, variant: string = "primary"): string {
+  variant + ": " + name
 }
-Button(variant: "outline", label: "Submit")
+label(variant: "outline", name: "Submit")
 ```
 
 ## 控制流
@@ -54,27 +54,34 @@ let label = match theme {
 }
 ```
 
-## 响应式状态
+## 结构体与普通状态
 
 ```xulo
-fn Counter(): View {
-  @State let count: number = 0
+struct Counter {
+  count: number
+}
 
-  VStack {
-    Text("Count: " + str(count))
-    Button(onClick: fn() { count = count + 1 }) {
-      Text("+")
-    }
+fn next(counter: Counter): Counter {
+  Counter(count: counter.count + 1)
+}
+
+fn main() {
+  let mut counter = Counter(count: 0)
+  let mut i = 0
+  while i < 3 {
+    counter = next(counter)
+    i = i + 1
   }
+  print("count = " + str(counter.count))
 }
 ```
 
-`@State` 是响应式信号，赋值触发重渲染；`@Store` / `@Effect` / `@Environment` 提供全局状态、副作用与环境注入。详见 [变量与状态](../reference/variables-and-state.md)。
+状态就是普通的可变绑定与普通值；Xulo 不内建状态原语。详见 [变量与绑定](../reference/variables-and-state.md)。
 
 ## 异步
 
 ```xulo
-fn fetch_user(id: string): async {
+async fn fetch_user(id: string) {
   try {
     let response = await fetch("/api/users/" + id)
     return await response.json()

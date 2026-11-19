@@ -36,19 +36,6 @@ impl IrGenerator {
                 }
                 Ok(())
             }
-            // UI 运行期（组件挂载、@State/@Effect、渲染）尚无 AOT 实现：
-            // 静默跳过会产出「成功但什么都不做」的二进制，这里明确拒绝。
-            // UI 运行期（组件挂载、@State/@Effect、渲染）尚无 AOT 实现：
-            // 静默跳过会产出「成功但什么都不做」的二进制，这里明确拒绝。
-            Statement::State(_)
-            | Statement::Effect(_)
-            | Statement::Environment(_)
-            | Statement::Component(_)
-            | Statement::Store(_) => Err(XuloError::new(
-                ErrorKind::Semantic,
-                "AOT codegen does not support UI state/effect/component declarations; run UI programs with `xulo run`"
-                    .to_string(),
-            )),
             // The interpreter implements block-exit `defer`; the AOT backend
             // does not yet. Reject rather than drop the operand silently (a
             // binary that skips cleanup would diverge from `xulo run`).

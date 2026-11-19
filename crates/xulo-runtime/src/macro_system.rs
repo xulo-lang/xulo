@@ -929,31 +929,6 @@ fn collect_stmt_names(stmt: &Statement, set: &mut std::collections::HashSet<Stri
             set.insert(t.name.clone());
         }
         Statement::Use(u) => collect_use_names(&u.target, set),
-        Statement::State(s) if !s.binding.name.is_empty() => {
-            set.insert(s.binding.name.clone());
-        }
-        Statement::Store(s) => match &s.pattern {
-            xulo_core::ast::BindingPattern::Ident(name) => {
-                set.insert(name.clone());
-            }
-            xulo_core::ast::BindingPattern::Destructure(fields) => {
-                for (field, alias) in fields {
-                    set.insert(alias.clone().unwrap_or_else(|| field.clone()));
-                }
-            }
-        },
-        Statement::Effect(e) => {
-            for p in &e.closure.params {
-                set.insert(p.name.clone());
-            }
-        }
-        Statement::Component(c) => {
-            for arg in &c.args {
-                if let Some(name) = &arg.name {
-                    set.insert(name.clone());
-                }
-            }
-        }
         Statement::Mod(m) => {
             set.insert(m.name.clone());
             if let Some(body) = &m.body {
@@ -2738,11 +2713,6 @@ fn map_statement(
             if let Some(v) = &mut b.value {
                 map_expr(v, f)?;
             }
-            if let Some(deps) = &mut b.memo_deps {
-                for d in deps {
-                    map_expr(d, f)?;
-                }
-            }
         }
         Statement::Return(r) => {
             if let Some(v) = &mut r.value {
@@ -2795,29 +2765,6 @@ fn map_statement(
             }
             _ => {}
         },
-        Statement::State(s) => {
-            if let Some(v) = &mut s.binding.value {
-                map_expr(v, f)?;
-            }
-        }
-        Statement::Store(s) => map_expr(&mut s.value, f)?,
-        Statement::Effect(e) => {
-            map_block(&mut e.closure.body, f)?;
-            if let Some(deps) = &mut e.deps {
-                for d in deps {
-                    map_expr(d, f)?;
-                }
-            }
-        }
-        Statement::Environment(_) => {}
-        Statement::Component(c) => {
-            for arg in &mut c.args {
-                map_expr(&mut arg.value, f)?;
-            }
-            for child in &mut c.children {
-                map_ui_element(child, f)?;
-            }
-        }
         Statement::Mod(m) => {
             if let Some(body) = &mut m.body {
                 for stmt in body {
@@ -2841,54 +2788,6 @@ fn map_assign(
     match &mut assign.value {
         xulo_core::ast::AssignValue::Expr(e) => map_expr(e, f),
         xulo_core::ast::AssignValue::Assign(inner) => map_assign(inner, f),
-    }
-}
-
-fn map_ui_element(
-    element: &mut xulo_core::ast::UiElement,
-    f: &mut dyn FnMut(&mut Expression) -> Result<(), XuloError>,
-) -> Result<(), XuloError> {
-    match element {
-        xulo_core::ast::UiElement::Expr(e) => map_expr(e, f),
-        xulo_core::ast::UiElement::If {
-            condition,
-            then_branch,
-            else_branch,
-        } => {
-            map_expr(condition, f)?;
-            for child in then_branch {
-                map_ui_element(child, f)?;
-            }
-            if let Some(else_branch) = else_branch {
-                for child in else_branch {
-                    map_ui_element(child, f)?;
-                }
-            }
-            Ok(())
-        }
-        xulo_core::ast::UiElement::For { iterable, body, .. } => {
-            map_expr(iterable, f)?;
-            for child in body {
-                map_ui_element(child, f)?;
-            }
-            Ok(())
-        }
-        xulo_core::ast::UiElement::Group(children) => {
-            for child in children {
-                map_ui_element(child, f)?;
-            }
-            Ok(())
-        }
-        xulo_core::ast::UiElement::Component(c) => {
-            for arg in &mut c.args {
-                map_expr(&mut arg.value, f)?;
-            }
-            for child in &mut c.children {
-                map_ui_element(child, f)?;
-            }
-            Ok(())
-        }
-        xulo_core::ast::UiElement::Text(_) => Ok(()),
     }
 }
 
@@ -2970,14 +2869,6 @@ fn map_expr(
                 map_expr(&mut arg.value, f)?;
             }
         }
-        Expression::Component(c) => {
-            for arg in &mut c.args {
-                map_expr(&mut arg.value, f)?;
-            }
-            for child in &mut c.children {
-                map_ui_element(child, f)?;
-            }
-        }
         Expression::Tuple { items, .. } => {
             for item in items {
                 map_expr(item, f)?;
@@ -3019,7 +2910,7 @@ fn map_expr(
                 }
             }
         }
-        Expression::Identifier { .. } | Expression::EnumRef(_) | Expression::Binding { .. } => {}
+        Expression::Identifier { .. } | Expression::EnumRef(_) => {}
     }
     f(expr)
 }

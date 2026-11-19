@@ -104,7 +104,7 @@ fn adjacent_closers_fail_with_a_note_to_insert_the_space() {
 }
 
 #[test]
-fn type_args_attach_to_method_enum_and_component_callees() {
+fn type_args_attach_to_method_and_enum_callees() {
     let call = main_call("fn main() { obj.m<number>(1) }");
     assert_eq!(call.method.as_deref(), Some("m"));
     assert_eq!(call.type_args, Some(vec![Type::Number]));
@@ -112,19 +112,6 @@ fn type_args_attach_to_method_enum_and_component_callees() {
     let call = main_call("fn main() { Color::Red<number>() }");
     assert_eq!(call.callee, "Color::Red");
     assert_eq!(call.type_args, Some(vec![Type::Number]));
-
-    let p = parse_ok("fn main() { Text<number>(\"Hi\") { } }");
-    let Statement::Fn(f) = &p.statements[0] else {
-        panic!("expected fn");
-    };
-    let Statement::Component(c) = &f.body.statements[0] else {
-        panic!(
-            "expected component statement, got {:?}",
-            f.body.statements[0]
-        );
-    };
-    assert_eq!(c.name, "Text");
-    assert_eq!(c.type_args, Some(vec![Type::Number]));
 }
 
 #[test]

@@ -1,186 +1,80 @@
-# 变量与状态
+# 变量与绑定
 
-> 相关：[数据与类型](types.md) · [UI 组件](ui.md) · [应用结构](application.md)
+> 相关：[数据与类型](types.md) · [函数](functions.md) · [应用结构](application.md)
 
-Xulo 的绑定分两类：普通变量（`let` / `const`）与响应式状态（`@State` / `@Store` / `@Environment` / `@Effect`）。后三者是语言关键字（不是装饰器），只能在返回类型为 `View` 的组件函数顶层使用。
+Xulo 用 `let`、`let mut` 与 `const` 声明绑定。`let` 默认不可变，只有 `let mut` 引入的绑定（以及经它到达的字段、下标）可以赋值。
 
-## 变量绑定（TypeScript 风格）
+## `let` 与 `let mut`
 
 ```xulo
-const APP_NAME = "Xulo"       // 常量（不可变）
-let count = 0                 // 变量（可变）
+let count = 0                 // 不可变绑定；类型推断为 number
 let name: string = "Alice"    // 带类型标注
+let mut total = 0             // 可变绑定
 let maybe: string? = null     // 可选类型
 ```
 
 **规则：**
 
-- `const` = 不可变绑定；`let` = 可变绑定
-- 类型在变量名后，用 `:` 分隔（TS 风格）
-- 类型可推断，标注可省略
-- 赋值语句 `count = count + 1` 修改可变绑定；给 `const` 赋值是语义错误
+- 形式为 `let 名字 = 表达式` 或 `let 名字: 类型 = 表达式`；初始化表达式必须提供
+- 类型标注写在名字之后，用 `:` 分隔（TS 风格）；可推断时可省略
+- `let` 不可变；`let mut` 可变。`mut` 属于绑定形态，不属于类型
+- 绑定从声明结束处生效，直到所在代码块结束
 
-## 局部状态 `@State`（SwiftUI 风格）
-
-```xulo
-@State let count: number = 0
-@State let name: string = ""
-@State let is_active: bool = true
-```
-
-- `@State` 只能在 UI 组件（返回 `View` 的函数）顶层声明
-- 触发 UI 重新渲染
-- 编译为响应式信号：读取 `.get()`，写入 `.set()`
-
-## 全局状态 `@Store`（Zustand 风格）
-
-### 定义 Store
+## `const`（编译期常量）
 
 ```xulo
-// stores/app.xulo
-import { create_store } from "@xulo/store"
-
-type AppState = {
-  user: User?
-  theme: Theme
-  notifications: List<string>
-  loading: bool
-}
-
-// ✅ 对象字面量用括号包裹，避免歧义
-fn set_user(state: AppState, user: User?): AppState {
-  ({ ...state, user: user })
-}
-
-fn set_theme(state: AppState, theme: Theme): AppState {
-  ({ ...state, theme: theme })
-}
-
-// 注意：当前实现暂不支持显式泛型调用（`create_store<AppState>`），故省略类型实参。
-pub const use_app_store = create_store(
-  {
-    user: null,
-    theme: Theme::Light,
-    notifications: [],
-    loading: false
-  },
-  {
-    set_user: set_user,
-    set_theme: set_theme
-  }
-)
+const APP_NAME = "Xulo"
+const MAX_COUNT: number = 100
 ```
 
-### 使用 Store
+- `const` 引入编译期常量，同样不可变；没有 `const mut`
+- 初始化表达式必须是常量表达式：字面量、对其他 `const` 的引用，或它们的算术 / 比较运算
+- 调用函数（包括内建函数）不属于常量表达式
+- 可在模块顶层或代码块内声明
+
+## 赋值
 
 ```xulo
-import { use_app_store } from "../stores/app"
+let mut n = 0
+n = n + 1
 
-fn Home(): View {
-  @Store const { user, theme, loading } = use_app_store()
-  @Store const { set_theme } = use_app_store()
-
-  VStack {
-    Text("User: " + user?.name)
-    Button(onClick: fn() { set_theme(Theme::Dark) }) {
-      Text("Dark mode")
-    }
-  }
-}
+let mut xs = [1, 2, 3]
+xs[0] = 9
 ```
 
-- `@Store` 解构取值（`{ user }`）和取函数（`{ set_user }`）
-- 依赖追踪与重渲染由外部 store 运行时接管
+- 赋值形式为 `位置 = 表达式`；位置必须由 `let mut` 绑定（或其字段 / 下标）支撑
+- 赋值的结果是 `unit`，通常作为语句使用
+- 给 `let` 或 `const` 赋值是语义错误
+- 没有复合赋值与自增 / 自减运算符：写完整的 `n = n + 1`
 
-## 环境注入 `@Environment`
+## 作用域与遮蔽
 
 ```xulo
-@Environment let router: Router
-router.push("/about")
+let x = 1
+
+if true {
+  let x = 2      // 内层遮蔽外层绑定
+  print(x)       // 2
+}
+
+print(x)         // 1
 ```
 
-- 从外部运行时注入一个值（编译为 `__env("Router")`）
-- 同样仅在 `View` 组件函数顶层可用
+- 同一个代码块内不能重复声明同名绑定；嵌套代码块中可以遮蔽
+- 绑定不提升：在声明之前读取同一块中的名字是语义错误
+- 闭包捕获的是捕获时刻的绑定；之后出现的同名声明不会改变已捕获的名字
 
-## 副作用 `@Effect`（SwiftUI 风格）
+## 解构绑定
+
+`struct` 值可以用一条声明拆成多个不可变绑定：
 
 ```xulo
-@Effect fn() {
-  // 组件挂载时执行
-  fetch_user(id)
-}
+struct Point { x: number, y: number }
 
-@Effect fn() {
-  // 依赖变化时重新执行
-  fetch_user(id)
-}, [id]
-
-@Effect fn() {
-  // 清理函数
-  setup_subscription()
-  return fn() {
-    cleanup_subscription()
-  }
-}
+let p = Point(x: 1, y: 2)
+let { x, y } = p
+print(x + y)     // 3
 ```
 
-- `@Effect` 在组件挂载时执行
-- 支持依赖数组 `[id]`
-- 支持返回清理函数
-
-## 双向绑定 `$`（SwiftUI 风格）
-
-```xulo
-// 双向绑定（用 $ 前缀）
-Input(value: $name)
-Checkbox(checked: $is_active)
-
-// 等价于
-Input(value: name, onInput: fn(e) {
-  name = e.value
-})
-```
-
-- `$` 前缀表示双向绑定
-- 只能用于 `@State` 或 `@Store` 变量
-- 编译为 `{ value, onChange }`（`@State` 的写方向通过信号 `.set()` 生效）
-
-## 状态 / 副作用使用限制
-
-> **`@State`、`@Store`、`@Effect`、`@Environment` 只能在返回类型为 `View` 的函数顶层使用。**
-
-### ✅ 正确用法（UI 组件中）
-
-```xulo
-fn UserProfile(): View {
-  @Store const { user, loading } = use_app_store()
-  @State let editing: bool = false
-  @Effect fn() { fetch_user(id) }
-
-  VStack { ... }
-}
-```
-
-### ❌ 错误用法（普通函数 / 异步函数 / 嵌套块）
-
-```xulo
-fn helper_function() {
-  @Store const { user } = use_app_store()  // ❌ 禁止
-  @State let count = 0                   // ❌ 禁止
-}
-
-fn main(): View {
-  if true {
-    @State let x = 0                     // ❌ 禁止（嵌套块）
-  }
-}
-```
-
-### 规则总结
-
-| 语法 | 允许的位置 | 禁止的位置 |
-|------|-----------|-----------|
-| `@State` | 仅 `fn ...(): View` 顶层 | 普通函数、异步函数、嵌套块 |
-| `@Store` | 仅 `fn ...(): View` 顶层 | 普通函数、异步函数、嵌套块 |
-| `@Effect` | 仅 `fn ...(): View` 顶层 | 普通函数、异步函数、嵌套块 |
-| `@Environment` | 仅 `fn ...(): View` 顶层 | 普通函数、异步函数、嵌套块 |
+- 解构只展开一层字段；字段名即绑定名，不支持重命名
+- `let mut` 不会让解构出的各个绑定可变；需要修改时保留原值，或直接声明 `let mut p`

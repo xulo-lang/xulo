@@ -10,10 +10,6 @@ impl Interpreter {
         match expr {
             Expression::Literal { value, .. } => self.eval_literal(value, env),
             Expression::Identifier { name, span } => match env.borrow().get(name) {
-                // A `@State` read unwraps to the cell's value (`__signal().get()`);
-                // a shadowing plain binding in an inner scope resolves first, so
-                // loop variables and block locals read the raw value.
-                Some(Value::Signal(cell)) => Ok(cell.borrow().clone()),
                 Some(v) => Ok(v),
                 None => Err(RunError::err(
                     format!("undefined variable `{name}`"),
@@ -204,7 +200,6 @@ impl Interpreter {
                 let callee = self.eval(&cv.callee, env)?;
                 self.call_value(&callee, &cv.arguments, env)
             }
-            Expression::Component(c) => self.eval_component_stmt(c, env),
             Expression::Tuple { items, .. } => {
                 let mut out = Vec::with_capacity(items.len());
                 for item in items {
@@ -425,42 +420,6 @@ impl Interpreter {
                 call.span.clone(),
             )),
             Expression::Quote(q) => self.eval_quote(q, env),
-            Expression::Binding { name, span } => {
-                // `$name` two-way binding, mirroring the JS shape
-                // `{ value: ...get(), onChange: v => ...set(v) }`. For a signal the
-                // onChange writes the cell; for a plain binding it is a no-op.
-                match env.borrow().get(name) {
-                    Some(Value::Signal(cell)) => {
-                        let setter_cell = cell.clone();
-                        let setter = Rc::new(
-                            move |_interp: &Interpreter,
-                                  args: &[Value]|
-                                  -> Result<Value, RunError> {
-                                let next = args.first().cloned().unwrap_or(Value::Null);
-                                *setter_cell.borrow_mut() = next;
-                                Ok(Value::Null)
-                            },
-                        );
-                        Ok(Value::Object(Rc::new(RefCell::new(vec![
-                            ("value".to_string(), cell.borrow().clone()),
-                            ("onChange".to_string(), Value::Native(setter)),
-                        ]))))
-                    }
-                    Some(v) => Ok(Value::Object(Rc::new(RefCell::new(vec![
-                        ("value".to_string(), v),
-                        (
-                            "onChange".to_string(),
-                            Value::Native(Rc::new(|_interp: &Interpreter, _args: &[Value]| {
-                                Ok(Value::Null)
-                            })),
-                        ),
-                    ])))),
-                    None => Err(RunError::err(
-                        format!("undefined variable `{name}`"),
-                        span.clone(),
-                    )),
-                }
-            }
         }
     }
 

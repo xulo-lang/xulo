@@ -3,18 +3,16 @@ use std::ops::Range;
 use pest::iterators::Pair;
 
 use xulo_core::ast::{
-    AssignStmt, AssignValue, AttributeArg, AttributeValue, BindingPattern, Block, ComponentStmt,
-    DeferBody, DeferStmt, EffectStmt, EnumDef, EnumPayloadParam, EnumVariant, EnvStmt, ExportItem,
-    ExportStmt, ExprStmt, Expression, ExternBlockDecl, ExternItem, FnBound, FnDef, ForStmt,
-    GenericParam, GenericParamKind, ImplDecl, LetBinding, ModDecl, Param, ParamMode, PathHead,
-    ReturnStmt, StateStmt, Statement, StoreStmt, StructDef, StructField, TestDef, TestOption,
-    TraitDecl, TraitMethod, Type, TypeAlias, UiElement, UseDecl, UseEntry, UseTarget, WhileStmt,
+    AssignStmt, AssignValue, AttributeArg, AttributeValue, Block, DeferBody, DeferStmt, EnumDef,
+    EnumPayloadParam, EnumVariant, ExportItem, ExportStmt, ExprStmt, Expression, ExternBlockDecl,
+    ExternItem, FnBound, FnDef, ForStmt, GenericParam, GenericParamKind, ImplDecl, LetBinding,
+    ModDecl, Param, ParamMode, PathHead, ReturnStmt, Statement, StructDef, StructField, TestDef,
+    TestOption, TraitDecl, TraitMethod, Type, TypeAlias, UseDecl, UseEntry, UseTarget, WhileStmt,
 };
 use xulo_core::error::XuloError;
 
 use super::expr::{
-    assign_target, component_call, decode_float, decode_integer, decode_string, expression,
-    ternary_entry,
+    assign_target, decode_float, decode_integer, decode_string, expression, ternary_entry,
 };
 use super::types::{R, check_rule, single, type_expr};
 use super::{Rule, err, span_of};
@@ -263,10 +261,6 @@ fn fn_decl(pair: Pair<'_, Rule>) -> R<FnDef> {
         }
     }
     let body = body.expect("fn_decl has a body");
-    let body = match &return_type {
-        Some(Type::Named(name, _)) if name == "View" => view_body(body),
-        _ => body,
-    };
     Ok(FnDef {
         name,
         name_span,
@@ -1053,8 +1047,6 @@ fn mut_binding(pair: Pair<'_, Rule>) -> R<LetBinding> {
         is_const: false,
         is_mutable: true,
         is_shared,
-        memo: false,
-        memo_deps: None,
         tuple_names: None,
         object_destructuring: None,
         attributes: Vec::new(),
@@ -1098,8 +1090,6 @@ fn simple_binding(pair: Pair<'_, Rule>) -> R<LetBinding> {
         is_const: false,
         is_mutable,
         is_shared,
-        memo: false,
-        memo_deps: None,
         tuple_names: None,
         object_destructuring: None,
         attributes: Vec::new(),
@@ -1129,8 +1119,6 @@ fn destructuring_binding(pair: Pair<'_, Rule>) -> R<LetBinding> {
         is_const: false,
         is_mutable: false,
         is_shared: false,
-        memo: false,
-        memo_deps: None,
         tuple_names,
         object_destructuring,
         attributes: Vec::new(),
@@ -1164,150 +1152,10 @@ fn const_decl(pair: Pair<'_, Rule>) -> R<LetBinding> {
         is_const: true,
         is_mutable: false,
         is_shared: false,
-        memo: false,
-        memo_deps: None,
         tuple_names: None,
         object_destructuring: None,
         attributes,
     })
-}
-
-fn component_decl(pair: Pair<'_, Rule>) -> R<Statement> {
-    let inner = single(pair);
-    match inner.as_rule() {
-        Rule::state_decl => state_decl(inner),
-        Rule::store_decl => store_decl(inner),
-        Rule::effect_decl => effect_decl(inner),
-        Rule::environment_decl => environment_decl(inner),
-        _ => unreachable!("component_decl {:?}", inner.as_rule()),
-    }
-}
-
-fn check_deco(pair: &Pair<'_, Rule>, expected: &str) -> R<()> {
-    let deco = pair
-        .clone()
-        .into_inner()
-        .find(|p| p.as_rule() == Rule::identifier)
-        .expect("component decl has a decorator name");
-    let name = deco.as_str();
-    if name == expected {
-        Ok(())
-    } else {
-        Err(err(
-            format!(
-                "unknown component declaration `@{name}`: expected `@State`, `@Store`, `@Effect`, or `@Environment`"
-            ),
-            span_of(&deco),
-        ))
-    }
-}
-
-fn state_decl(pair: Pair<'_, Rule>) -> R<Statement> {
-    check_deco(&pair, "State")?;
-    let mut name = String::new();
-    let mut name_span = 0..0;
-    let mut type_annotation = None;
-    let mut value = None;
-    let mut seen_let = false;
-    for p in pair.into_inner() {
-        match p.as_rule() {
-            Rule::identifier if !seen_let => {
-                // The decorator name (`State`), already validated.
-            }
-            Rule::kw_let => seen_let = true,
-            Rule::identifier => {
-                name = p.as_str().to_string();
-                name_span = span_of(&p);
-            }
-            Rule::type_expr => type_annotation = Some(type_expr(p)?),
-            Rule::expression => value = Some(expression(p)?),
-            _ => unreachable!("state_decl child {:?}", p.as_rule()),
-        }
-    }
-    let binding = LetBinding {
-        name,
-        name_span,
-        type_annotation,
-        value,
-        is_const: false,
-        is_mutable: false,
-        is_shared: false,
-        memo: false,
-        memo_deps: None,
-        tuple_names: None,
-        object_destructuring: None,
-        attributes: Vec::new(),
-    };
-    Ok(Statement::State(StateStmt { binding }))
-}
-
-fn store_decl(pair: Pair<'_, Rule>) -> R<Statement> {
-    check_deco(&pair, "Store")?;
-    let mut names = Vec::new();
-    let mut value = None;
-    for p in pair.into_inner() {
-        match p.as_rule() {
-            Rule::identifier => {}
-            Rule::kw_let => {}
-            Rule::identifier_list => {
-                names = p.into_inner().map(|q| q.as_str().to_string()).collect();
-            }
-            Rule::expression => value = Some(expression(p)?),
-            _ => unreachable!("store_decl child {:?}", p.as_rule()),
-        }
-    }
-    Ok(Statement::Store(StoreStmt {
-        pattern: BindingPattern::Destructure(names.into_iter().map(|n| (n, None)).collect()),
-        value: value.expect("store_decl has a value"),
-    }))
-}
-
-fn effect_decl(pair: Pair<'_, Rule>) -> R<Statement> {
-    check_deco(&pair, "Effect")?;
-    let deco_span = span_of(&pair);
-    let mut exprs = Vec::new();
-    for p in pair.into_inner() {
-        match p.as_rule() {
-            Rule::identifier => {}
-            Rule::expression => exprs.push(p),
-            _ => unreachable!("effect_decl child {:?}", p.as_rule()),
-        }
-    }
-    let mut exprs = exprs.into_iter();
-    let closure_expr = expression(exprs.next().expect("effect_decl has a closure"))?;
-    let Expression::FnExpr(closure) = closure_expr else {
-        return Err(err("`@Effect` expects a function expression", deco_span));
-    };
-    let deps = exprs.next().map(expression).transpose()?;
-    Ok(Statement::Effect(EffectStmt {
-        closure: *closure,
-        deps: deps.map(|d| vec![d]),
-    }))
-}
-
-fn environment_decl(pair: Pair<'_, Rule>) -> R<Statement> {
-    check_deco(&pair, "Environment")?;
-    let mut name = String::new();
-    let mut name_span = 0..0;
-    let mut type_ = None;
-    let mut seen_let = false;
-    for p in pair.into_inner() {
-        match p.as_rule() {
-            Rule::identifier if !seen_let => {}
-            Rule::kw_let => seen_let = true,
-            Rule::identifier => {
-                name = p.as_str().to_string();
-                name_span = span_of(&p);
-            }
-            Rule::type_expr => type_ = Some(type_expr(p)?),
-            _ => unreachable!("environment_decl child {:?}", p.as_rule()),
-        }
-    }
-    Ok(Statement::Environment(EnvStmt {
-        name,
-        name_span,
-        type_: type_.expect("environment_decl has a type"),
-    }))
 }
 
 fn return_stmt(pair: Pair<'_, Rule>) -> R<ReturnStmt> {
@@ -1401,7 +1249,6 @@ pub(crate) fn assignment_value(pair: Pair<'_, Rule>) -> R<AssignValue> {
 fn inner_statement(pair: Pair<'_, Rule>) -> R<Statement> {
     let pair = single(pair);
     match pair.as_rule() {
-        Rule::component_decl => component_decl(pair),
         Rule::let_decl => let_decl(pair).map(Statement::Let),
         Rule::const_decl => const_decl(pair).map(Statement::Let),
         Rule::fn_decl => fn_decl(pair).map(Statement::Fn),
@@ -1411,11 +1258,6 @@ fn inner_statement(pair: Pair<'_, Rule>) -> R<Statement> {
         Rule::defer_stmt => defer_stmt(pair).map(Statement::Defer),
         Rule::for_stmt => for_stmt(pair).map(Statement::For),
         Rule::while_stmt => while_stmt(pair).map(Statement::While),
-        Rule::component_call => {
-            let span = span_of(&pair);
-            let expr = component_call(pair)?;
-            statement_from_expr(expr, span)
-        }
         Rule::expr_stmt_or_assignment => {
             let span = span_of(&pair);
             let mut inner = pair.into_inner();
@@ -1441,39 +1283,13 @@ fn inner_statement(pair: Pair<'_, Rule>) -> R<Statement> {
     }
 }
 
-/// Lower an expression in statement position. Only the form with a children
-/// block reaches here as `Expression::Component`; a plain uppercase call is an
-/// ordinary call expression (spec: components/view-syntax.md, "Component
-/// invocations"). A component body is the one place where such a call is a
-/// render statement, and [`view_body`] rewrites it there, so a normal function
-/// that ends with `Point(x: 1, y: 2)` keeps its implicit return value.
+/// Lower an expression in statement position.
 pub(crate) fn statement_from_expr(expr: Expression, span: Range<usize>) -> R<Statement> {
-    match expr {
-        Expression::Component(c) => Ok(Statement::Component(c)),
-        other => Ok(Statement::Expr(ExprStmt {
-            expr: other,
-            has_semicolon: false,
-            span,
-        })),
-    }
-}
-
-/// Rewrite the top-level statements of a `View`-returning body: an uppercase
-/// plain call such as `Text("Hi")` is a component invocation there, exactly as
-/// the argument-list-and-block form is (spec: components/view-syntax.md).
-fn view_body(body: Block) -> Block {
-    Block {
-        statements: body
-            .statements
-            .into_iter()
-            .map(|stmt| match stmt {
-                Statement::Expr(es) if is_upper_plain_call(&es.expr) => {
-                    Statement::Component(component_from_call(es.expr))
-                }
-                other => other,
-            })
-            .collect(),
-    }
+    Ok(Statement::Expr(ExprStmt {
+        expr,
+        has_semicolon: false,
+        span,
+    }))
 }
 
 pub(crate) fn block(pair: Pair<'_, Rule>) -> R<Block> {
@@ -1675,150 +1491,6 @@ fn path_head(pair: Pair<'_, Rule>) -> R<PathHead> {
         Rule::identifier => PathHead::Name(inner.as_str().to_string()),
         _ => unreachable!("path_head alternative {:?}", inner.as_rule()),
     })
-}
-
-// ============================================================
-// UI lowering
-// ============================================================
-
-pub(crate) fn to_ui_elements(component_block: Pair<'_, Rule>) -> R<Vec<UiElement>> {
-    let mut out = Vec::new();
-    for item in component_block.into_inner() {
-        check_rule(&item, Rule::child_item)?;
-        let item = single(item);
-        match item.as_rule() {
-            Rule::for_stmt => out.push(ui_for(for_stmt(item)?)?),
-            Rule::component_call => {
-                let expr = component_call(item)?;
-                out.push(to_ui_element(expr)?);
-            }
-            Rule::expression => out.push(to_ui_element(expression(item)?)?),
-            _ => unreachable!("child_item {:?}", item.as_rule()),
-        }
-    }
-    Ok(out)
-}
-
-fn ui_for(f: ForStmt) -> R<UiElement> {
-    Ok(UiElement::For {
-        iter_var: f.iter_var,
-        iter_var_span: f.iter_var_span,
-        iterable: f.iterable,
-        body: statements_to_ui(&f.body)?,
-    })
-}
-
-fn statements_to_ui(block: &Block) -> R<Vec<UiElement>> {
-    block.statements.iter().map(statement_to_ui).collect()
-}
-
-fn statement_to_ui(stmt: &Statement) -> R<UiElement> {
-    match stmt {
-        Statement::Component(c) => Ok(UiElement::Component(c.clone())),
-        Statement::For(f) => Ok(UiElement::For {
-            iter_var: f.iter_var.clone(),
-            iter_var_span: f.iter_var_span.clone(),
-            iterable: f.iterable.clone(),
-            body: statements_to_ui(&f.body)?,
-        }),
-        Statement::Expr(es) => match &es.expr {
-            Expression::Literal {
-                value: xulo_core::ast::Literal::String(s),
-                ..
-            } => Ok(UiElement::Text(s.clone())),
-            Expression::Component(c) => Ok(UiElement::Component(c.clone())),
-            Expression::If(i) => Ok(UiElement::If {
-                condition: i.condition.clone(),
-                then_branch: statements_to_ui(&i.then_branch)?,
-                else_branch: i.else_branch.as_ref().map(statements_to_ui).transpose()?,
-            }),
-            e if is_upper_plain_call(e) => Ok(UiElement::Component(component_from_call(e.clone()))),
-            e => Ok(UiElement::Expr(e.clone())),
-        },
-        other => Err(err(
-            format!("`{}` is not allowed in a UI block", stmt_kind(other)),
-            0..0,
-        )),
-    }
-}
-
-fn stmt_kind(stmt: &Statement) -> &'static str {
-    match stmt {
-        Statement::Fn(_) => "fn declaration",
-        Statement::Test(_) => "test declaration",
-        Statement::Let(_) => "let binding",
-        Statement::Return(_) => "return",
-        Statement::Assign(_) => "assignment",
-        Statement::TypeAlias(_) => "type alias",
-        Statement::Enum(_) => "enum declaration",
-        Statement::Struct(_) => "struct declaration",
-        Statement::Block(_) => "block",
-        Statement::Try(_) => "try",
-        Statement::Throw(_) => "throw",
-        Statement::Mod(_) => "module declaration",
-        Statement::Use(_) => "use declaration",
-        Statement::ExternBlock(_) => "extern block",
-        Statement::Export(_) => "pub declaration",
-        Statement::State(_) => "@State",
-        Statement::Store(_) => "@Store",
-        Statement::Effect(_) => "@Effect",
-        Statement::Environment(_) => "@Environment",
-        Statement::Trait(_) => "trait declaration",
-        Statement::Impl(_) => "impl block",
-        Statement::Break => "break",
-        Statement::Continue => "continue",
-        Statement::Defer(_) => "defer",
-        Statement::Component(_) | Statement::Expr(_) | Statement::For(_) | Statement::While(_) => {
-            unreachable!("allowed in UI blocks")
-        }
-    }
-}
-
-fn to_ui_element(expr: Expression) -> R<UiElement> {
-    match &expr {
-        Expression::Component(c) => Ok(UiElement::Component(c.clone())),
-        Expression::Literal {
-            value: xulo_core::ast::Literal::String(s),
-            ..
-        } => Ok(UiElement::Text(s.clone())),
-        Expression::If(i) => Ok(UiElement::If {
-            condition: i.condition.clone(),
-            then_branch: statements_to_ui(&i.then_branch)?,
-            else_branch: i.else_branch.as_ref().map(statements_to_ui).transpose()?,
-        }),
-        _ if is_upper_plain_call(&expr) => Ok(UiElement::Component(component_from_call(expr))),
-        _ => Ok(UiElement::Expr(expr)),
-    }
-}
-
-/// True for a plain call whose callee is a single uppercase identifier — the
-/// `Text("Hi")` invocation form that carries no children block.
-fn is_upper_plain_call(expr: &Expression) -> bool {
-    match expr {
-        Expression::Call(c) => {
-            c.object.is_none()
-                && !c.callee.contains("::")
-                && c.callee
-                    .chars()
-                    .next()
-                    .is_some_and(|ch| ch.is_ascii_uppercase())
-        }
-        _ => false,
-    }
-}
-
-fn component_from_call(expr: Expression) -> ComponentStmt {
-    let Expression::Call(c) = expr else {
-        unreachable!("component_from_call requires a Call");
-    };
-    ComponentStmt {
-        name: c.callee.clone(),
-        name_span: c.callee_span.clone().unwrap_or_else(|| c.span.clone()),
-        args: c.arguments.clone(),
-        children: Vec::new(),
-        span: c.span.clone(),
-        type_args: c.type_args.clone(),
-    }
 }
 
 fn next<'i>(inner: &mut impl Iterator<Item = Pair<'i, Rule>>, rule: Rule) -> Pair<'i, Rule> {

@@ -46,8 +46,6 @@ fn adversarial_corpus_does_not_panic() {
         "enum E { A( fn main() { B }",
         "match 1 { _ => 1 }",
         "fn main() { match 1 { _ => } }",
-        "@State let x = 1",
-        "View { }",
         "$ $ $",
         "async fn f() { await await await x }",
         "fn main() { try { } catch (e) { } }",
@@ -66,7 +64,6 @@ fn adversarial_corpus_does_not_panic() {
         "fn main() { let x = 1 ??? 2 }",
         "fn main() { match 1 { 1 => 2, } }",
         "fn main() { if true { while true { for i in 0..<5 { match 1 { _ => 1 } } } } }",
-        "@Store const { } = f()",
         "enum E { A( ) }",
         "fn main() { let f: fn( = x }",
         "a?.?.b",
@@ -98,88 +95,12 @@ fn token_soup_fuzz_does_not_panic() {
     }
 
     let atoms = [
-        "fn",
-        "let",
-        "const",
-        "print",
-        "if",
-        "else",
-        "while",
-        "for",
-        "in",
-        "return",
-        "match",
-        "enum",
-        "type",
-        "import",
-        "export",
-        "from",
-        "async",
-        "await",
-        "try",
-        "catch",
-        "throw",
-        "null",
-        "true",
-        "false",
-        "View",
-        "Screen",
-        "@State",
-        "@Store",
-        "@Effect",
-        "@Environment",
-        "$name",
-        "xulomain",
-        "_",
-        "$",
-        "str",
-        "{",
-        "}",
-        "(",
-        ")",
-        "[",
-        "]",
-        ":",
-        ";",
-        ",",
-        ".",
-        "\"s\"",
-        "42",
-        "3.14",
-        "0..<5",
-        "::",
-        "?.",
-        "??",
-        "=>",
-        "->",
-        "==",
-        "!=",
-        "<",
-        ">",
-        "<=",
-        ">=",
-        "&&",
-        "+",
-        "-",
-        "*",
-        "/",
-        "?:",
-        "=",
-        "foo",
-        "bar",
-        "baz",
-        "T",
-        "U",
-        "string",
-        "number",
-        "boolean",
-        "list",
-        "object",
-        "\\n",
-        "\\t",
-        " ",
-        "  ",
-        "世",
+        "fn", "let", "const", "print", "if", "else", "while", "for", "in", "return", "match",
+        "enum", "type", "import", "export", "from", "async", "await", "try", "catch", "throw",
+        "null", "true", "false", "$name", "xulomain", "_", "$", "str", "{", "}", "(", ")", "[",
+        "]", ":", ";", ",", ".", "\"s\"", "42", "3.14", "0..<5", "::", "?.", "??", "=>", "->",
+        "==", "!=", "<", ">", "<=", ">=", "&&", "+", "-", "*", "/", "?:", "=", "foo", "bar", "baz",
+        "T", "U", "string", "number", "boolean", "list", "object", "\\n", "\\t", " ", "  ", "世",
         "😀",
     ];
 
@@ -228,20 +149,6 @@ fn deep_nesting_does_not_panic() {
         " }".repeat(40)
     );
     on_big_stack(move || compile_quiet(&ifs));
-
-    let ui = format!(
-        "fn main(): View {{ {} Text(\"x\") {} }}",
-        "Screen { ".repeat(40),
-        " }".repeat(40)
-    );
-    on_big_stack(move || compile_quiet(&ui));
-
-    let ui_else_if = format!(
-        "fn main(): View {{ Screen {{ {} Text(\"x\") {} }} }}",
-        "if true { ".repeat(40),
-        " } else { ".repeat(39) + " }"
-    );
-    on_big_stack(move || compile_quiet(&ui_else_if));
 }
 
 /// Beyond the parser's nesting budget the compiler must reject with a clean
@@ -265,36 +172,6 @@ fn extreme_nesting_returns_error_not_crash() {
         .join()
         .unwrap()
         .expect("extreme nesting must not panic");
-    let err = outcome.unwrap_err();
-    assert!(
-        err.message.contains("nesting is too deep"),
-        "expected nesting error, got: {}",
-        err.message
-    );
-}
-
-/// UI component nesting must hit the same depth budget as statements and
-/// expressions: hostile `VStack { VStack { ... } }` input (which recurses
-/// through `ui_elements`, historically unguarded) must be rejected with a
-/// diagnostic, never overflow the stack.
-#[test]
-fn extreme_ui_nesting_returns_error_not_crash() {
-    let src = format!(
-        "fn main(): View {{ {} Text(\"x\") {} }}",
-        "Screen { ".repeat(10_000),
-        " }".repeat(10_000)
-    );
-    let outcome = std::thread::Builder::new()
-        .stack_size(64 * 1024 * 1024)
-        .spawn(move || {
-            panic::catch_unwind(AssertUnwindSafe(move || {
-                xulo_compiler::compile(&src, Path::new("fuzz.xulo"))
-            }))
-        })
-        .unwrap()
-        .join()
-        .unwrap()
-        .expect("extreme UI nesting must not panic");
     let err = outcome.unwrap_err();
     assert!(
         err.message.contains("nesting is too deep"),

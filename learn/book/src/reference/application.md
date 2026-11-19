@@ -1,24 +1,10 @@
 # 应用结构
 
-> 相关：[模块系统](modules.md) · [UI 组件](ui.md) · [变量与状态](variables-and-state.md)
+> 相关：[模块系统](modules.md) · [变量与绑定](variables-and-state.md) · [函数](functions.md)
 
 ## 应用入口：`main`
 
-`fn main()` 是 Xulo 应用的入口点，根据返回值类型决定身份：
-
-### UI 应用（返回 `View`）
-
-```xulo
-fn main(): View {
-  Screen {
-    VStack {
-      Text("Hello, World!")
-    }
-  }
-}
-```
-
-### CLI 脚本（无返回值）
+`main` 是可执行程序的入口，必须无参数，并返回 `unit`。三种合法写法：
 
 ```xulo
 fn main() {
@@ -26,35 +12,56 @@ fn main() {
 }
 ```
 
-### 规则
+```xulo
+fn main(): unit {
+  print("Hello from Xulo")
+}
+```
 
-- `fn main(): View` → 根组件，返回 UI（由外部运行时通过 `__xulo_mount` 钩子挂载/渲染）
-- `fn main()` (void) → 逻辑入口，执行脚本
-- 一个文件只能有一个 `main` 函数
-- 有 `main` 的文件是可执行应用，无 `main` 的文件是库模块
+```xulo
+async fn main() {
+  let data = await load_data()
+  print(data)
+}
+```
+
+**规则：**
+
+- 返回类型可省略（等价于 `unit`），也可显式写 `unit`；其他返回类型都不合法
+- `main` 不接收参数，声明在根模块的文件作用域
+- 一个程序只有一个入口 `main`；有 `main` 的文件是可执行应用，没有 `main` 的文件是库模块
+- `main` 可以标记为 `pub`，但不影响它作为入口的身份
+- 程序正常结束退出码为 0；运行时失败以非零状态结束
 
 ### 运行行为
 
-| 文件类型 | `xulo run` 行为 |
+| 程序形态 | `xulo run` 行为 |
 |---------|----------------|
-| 有 `fn main(): View` | 生成 JS，通过 `__xulo_mount` 钩子交由外部 UI 运行时挂载/渲染 |
-| 有 `fn main()` | 执行脚本，输出到终端 |
-| 无 `main` | 视为库模块，仅导出供其他文件使用 |
+| 有 `fn main()` 或 `fn main(): unit` | 执行程序，输出到终端 |
+| 有 `async fn main()` | 异步执行入口，等待其任务完成 |
+| 无 `main` | 视为库模块，仅导出供其他模块使用 |
 
-## 响应式运行时
+## 应用与库
 
-当代码用到 `@State` / `@Store` / `@Effect` / `@Environment` / 组件时，编译器会在输出内联一个最小响应式运行时：
+入口文件通过 `import` 组合其他模块；被导入的文件不需要 `main`：
 
-- `__signal(v)` → `{ get, set }` 响应式信号
-- `__effect(fn, deps)` → 副作用（挂载时运行，信号变化重跑）
-- `__component(render)` → 组件渲染器
-- `__env(name)` → 环境值查找
+```xulo
+// math.xulo —— 库模块
+pub fn add(a: number, b: number): number { a + b }
+pub const PI = 3.14
 
-`fn main(): View` 生成的挂载钩子：
+// main.xulo —— 应用入口
+import { add, PI } from "./math"
 
-```js
-const __xulo_main = main();
-if (typeof __xulo_mount === "function") __xulo_mount(__xulo_main);
+fn main() {
+  print(add(1, PI))
+}
 ```
 
-真正的渲染 / 更新由外部 UI 运行时（如 `@xulo/ui`）负责。
+- 只有入口文件声明 `main`；库模块导出 `pub` 声明供入口或其他模块使用
+- 导入的函数保留参数名，因此可以按名称传参
+- 本地模块由原生运行时按依赖顺序初始化，最后执行入口 `main`
+
+## UI 是库的关注点
+
+语言层没有专门的 UI 入口或特殊返回类型。需要界面的程序导入一个库，由库基于普通的 `struct`、`enum` 与函数值构建界面；当前仓库不提供这样的库，未来由 `std/ui` 承担。

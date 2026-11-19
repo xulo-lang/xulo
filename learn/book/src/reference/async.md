@@ -1,25 +1,25 @@
 # 异步
 
-> 相关：[控制流](control-flow.md) · [变量与状态](variables-and-state.md)
+> 相关：[控制流](control-flow.md) · [变量与绑定](variables-and-state.md) · [应用结构](application.md)
 
 ## `async` / `await`（TypeScript 风格）
 
 ```xulo
-fn fetch_user(id: string): async {
+async fn fetch_user(id: string) {
   let response = await fetch("/api/users/" + id)
   let data = await response.json()
   return data
 }
 ```
 
-- `: async` 返回标注声明异步函数（等价 JS `async function`）
-- `await` 只能出现在异步函数内；对非 Promise（非 `async` 返回）值使用 `await` 是语义错误
+- 在 `fn` 前写 `async` 声明异步函数；调用它得到一个任务，结果用 `await` 取出
+- `await` 只能出现在异步函数或异步闭包内；对非任务值使用 `await` 是语义错误
 - `throw <expr>` 抛出异常
 
 ## `try` / `catch`
 
 ```xulo
-fn fetch_user(id: string): async {
+async fn fetch_user(id: string) {
   try {
     let response = await fetch("/api/users/" + id)
     return await response.json()
@@ -33,29 +33,14 @@ fn fetch_user(id: string): async {
 ## 异步闭包
 
 ```xulo
-fn main(): async {
-  let work = fn(): async { 21 * 2 }
+async fn main() {
+  let work = async fn(): number { 21 * 2 }
   print(await work())   // 42
 }
 ```
 
-异步闭包写作 `fn(): async [类型]`，调用返回 Promise，可用 `await`。
+异步闭包以 `async` 前缀声明，写作 `async fn(参数): 返回类型 { ... }`；调用返回 `Task<T>`，可用 `await`。
 
-## 异步函数中的状态限制
+## 异步入口
 
-异步函数**不能**使用 `@State`、`@Store`、`@Effect`、`@Environment`。异步操作应通过**直接调用 Store API**：
-
-```xulo
-// ✅ 正确：直接调用 use_app_store()
-pub fn fetch_user(id: string): async {
-  const store = use_app_store()
-  store.actions.set_loading(true)
-  let data = await fetch("/api/users/" + id).json()
-  store.actions.set_user(data)
-}
-
-// ❌ 错误：在异步函数里使用 @Store 装饰器
-pub fn fetch_user(id: string): async {
-  @Store const { set_user } = use_app_store()  // ❌ 禁止
-}
-```
+`main` 也可以声明为 `async fn main()`；运行时执行入口并等待其任务完成。详见 [应用结构](application.md)。
