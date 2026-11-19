@@ -11,8 +11,6 @@ pub enum Token {
     Else,
     For,
     In,
-    Print,
-    Println,
     Type,
     Enum,
     Null,
@@ -71,19 +69,18 @@ pub enum Token {
     Xor,
     Async,
     Await,
-    Try,
-    Catch,
-    Throw,
-    Import,
     Pub,
     Use,
-    From,
     As,
     Trait,
     Where,
     Impl,
     Mut,
     Struct,
+    /// A keyword from the specification's closed set (spec
+    /// `lexical-structure.md`) that has no dedicated kind above: the primitive
+    /// type names, `defer`, `move`, `self`, `super`, `spawn`, and so on.
+    Keyword,
     /// A reserved-for-future-use word (see `RESERVED_WORDS`): it lexes as a
     /// token instead of an identifier so it can never be used as a name.
     Reserved,
@@ -93,9 +90,11 @@ pub enum Token {
     EOF,
 }
 
-/// Words reserved for future language features. They are not keywords yet, but
-/// can never be used as identifiers (checked in `from_keyword`), keeping the
-/// door open for later syntax without breaking reserved-word code.
+/// Words reserved for future language features (spec `lexical-structure.md`
+/// §Reserved Words). They are not keywords, but can never be used as
+/// identifiers (checked in `from_keyword`), keeping the door open for later
+/// syntax without breaking reserved-word code. Every keyword is excluded:
+/// `defer`, `move`, `mod`, `self`, `spawn`, and `super` are keywords.
 pub const RESERVED_WORDS: &[&str] = &[
     "abstract",
     "actor",
@@ -107,9 +106,8 @@ pub const RESERVED_WORDS: &[&str] = &[
     "channel",
     "class",
     "debugger",
-    "defer",
-    "deinit",
     "default",
+    "deinit",
     "delete",
     "derive",
     "doc",
@@ -119,7 +117,6 @@ pub const RESERVED_WORDS: &[&str] = &[
     "extension",
     "fallthrough",
     "final",
-    "finally",
     "function",
     "generic",
     "generator",
@@ -136,7 +133,6 @@ pub const RESERVED_WORDS: &[&str] = &[
     "macro",
     "meta",
     "module",
-    "move",
     "new",
     "open",
     "override",
@@ -147,11 +143,8 @@ pub const RESERVED_WORDS: &[&str] = &[
     "ref",
     "rethrows",
     "select",
-    "self",
     "sender",
-    "spawn",
     "static",
-    "super",
     "switch",
     "task",
     "this",
@@ -167,8 +160,9 @@ pub const RESERVED_WORDS: &[&str] = &[
 ];
 
 impl Token {
-    /// Map a keyword / type-name string to its token. Returns `None` for
-    /// ordinary identifiers.
+    /// Map a word to its token: a keyword from the specification's closed set,
+    /// a reserved word, or `None` for an ordinary identifier. `print` and
+    /// `println` are prelude intrinsics, not keywords, so they return `None`.
     pub fn from_keyword(s: &str) -> Option<Token> {
         Some(match s {
             "fn" => Token::Fn,
@@ -179,8 +173,6 @@ impl Token {
             "else" => Token::Else,
             "for" => Token::For,
             "in" => Token::In,
-            "print" => Token::Print,
-            "println" => Token::Println,
             "type" => Token::Type,
             "enum" => Token::Enum,
             "null" => Token::Null,
@@ -190,13 +182,8 @@ impl Token {
             "or" => Token::Or,
             "async" => Token::Async,
             "await" => Token::Await,
-            "try" => Token::Try,
-            "catch" => Token::Catch,
-            "throw" => Token::Throw,
-            "import" => Token::Import,
             "pub" => Token::Pub,
             "use" => Token::Use,
-            "from" => Token::From,
             "as" => Token::As,
             "trait" => Token::Trait,
             "where" => Token::Where,
@@ -206,11 +193,14 @@ impl Token {
             "break" => Token::Break,
             "continue" => Token::Continue,
             "true" | "false" => Token::Boolean,
+            // The remaining keywords of the spec's 61-word set.
+            "bool" | "copy" | "defer" | "extern" | "f32" | "f64" | "float" | "i8" | "i16"
+            | "i32" | "i64" | "int" | "is" | "isize" | "lock" | "mod" | "move" | "not"
+            | "number" | "panic" | "self" | "shared" | "spawn" | "string" | "super" | "u8"
+            | "u16" | "u32" | "u64" | "unit" | "unknown" | "usize" => Token::Keyword,
             _ => {
-                // A reserved word is not a keyword yet, but it is already
-                // forbidden as an identifier (docs §lexical). The set is the
-                // union of the "future keywords" table and the alphabetical
-                // reserved list; `_` stays a wildcard identifier instead.
+                // A reserved word is not a keyword, but it is already
+                // forbidden as an identifier (spec `lexical-structure.md`).
                 if RESERVED_WORDS.contains(&s) {
                     return Some(Token::Reserved);
                 }
@@ -230,8 +220,6 @@ impl Token {
             Token::Else => "`else`",
             Token::For => "`for`",
             Token::In => "`in`",
-            Token::Print => "`print`",
-            Token::Println => "`println`",
             Token::Type => "`type`",
             Token::Enum => "`enum`",
             Token::Null => "`null`",
@@ -241,19 +229,15 @@ impl Token {
             Token::Or => "`or`",
             Token::Async => "`async`",
             Token::Await => "`await`",
-            Token::Try => "`try`",
-            Token::Catch => "`catch`",
-            Token::Throw => "`throw`",
-            Token::Import => "`import`",
             Token::Pub => "`pub`",
             Token::Use => "`use`",
-            Token::From => "`from`",
             Token::As => "`as`",
             Token::Trait => "`trait`",
             Token::Where => "`where`",
             Token::Impl => "`impl`",
             Token::Mut => "`mut`",
             Token::Struct => "`struct`",
+            Token::Keyword => "keyword",
             Token::Reserved => "`<reserved keyword>`",
             Token::Break => "`break`",
             Token::Continue => "`continue`",

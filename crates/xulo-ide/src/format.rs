@@ -30,13 +30,13 @@ pub fn format(source: &str) -> Result<String, XuloError> {
             (gap.contains('\n'), gap.matches('\n').count() >= 2)
         };
 
-        // A `{` starts an inline group (import spec / `pub use` / destructure)
-        // when it directly follows `import`/`const`/`let`/`use`, e.g.
-        // `import { a } from ...` or `pub use { a, b }`.
+        // A `{` starts an inline group (`pub use` / destructure) when it
+        // directly follows `const`/`let`/`use`, e.g. `pub use { a, b }` or
+        // `let { x, y } = point`.
         let is_inline_open = cur == Token::LBrace
             && matches!(
                 prev,
-                Some(Token::Import) | Some(Token::Const) | Some(Token::Let) | Some(Token::Use)
+                Some(Token::Const) | Some(Token::Let) | Some(Token::Use)
             );
 
         // A `}` closes a block: drop the indent level before laying out its line.
@@ -60,13 +60,11 @@ pub fn format(source: &str) -> Result<String, XuloError> {
                 && !matches!(
                     cur,
                     Token::Else
-                        | Token::Catch
                         | Token::Semicolon
                         | Token::RParen
                         | Token::Comma
                         | Token::Dot
                         | Token::QuestionDot
-                        | Token::From
                         | Token::Assign
                 ));
 
@@ -170,11 +168,7 @@ fn needs_space(
     if cur == Token::LParen
         && matches!(
             prev,
-            Some(Token::Ident)
-                | Some(Token::Reserved)
-                | Some(Token::Print)
-                | Some(Token::Println)
-                | Some(Token::Fn)
+            Some(Token::Ident) | Some(Token::Reserved) | Some(Token::Fn)
         )
     {
         return false;

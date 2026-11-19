@@ -22,12 +22,6 @@ fn normalizes_spacing_around_operators() {
 }
 
 #[test]
-fn keeps_import_spec_inline() {
-    let out = fmt("import {createStore} from \"@xulo/store\"\nfn main(){print(1)}");
-    assert!(out.contains("import { createStore } from \"@xulo/store\""));
-}
-
-#[test]
 fn keeps_pub_use_list_inline() {
     let out = fmt("pub use {add,PI}\nfn main(){print(1)}");
     assert!(out.contains("pub use { add, PI }"));

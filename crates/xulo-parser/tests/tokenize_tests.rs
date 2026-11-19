@@ -1,4 +1,4 @@
-use xulo_lexer::token::{Token, Token::*};
+use xulo_lexer::token::{RESERVED_WORDS, Token, Token::*};
 use xulo_parser::OPERATORS;
 use xulo_parser::tokenize;
 
@@ -14,11 +14,14 @@ fn tokenizes_literals() {
 
 #[test]
 fn tokenizes_keywords_and_types() {
+    // `number` is one of the spec's 61 keywords, not an identifier.
     let tokens = tokenize("fn main(): number { }").unwrap();
     let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
     assert_eq!(
         kinds,
-        vec![Fn, Ident, LParen, RParen, Colon, Ident, LBrace, RBrace, EOF]
+        vec![
+            Fn, Ident, LParen, RParen, Colon, Keyword, LBrace, RBrace, EOF
+        ]
     );
 }
 
@@ -110,15 +113,76 @@ fn unterminated_block_comment_is_an_error() {
 
 #[test]
 fn tokenizes_reserved_words() {
-    // A representative sample from both reserved lists: they must lex to
-    // `Reserved`, never to an identifier. `struct` is now a keyword, not reserved.
-    let tokens = tokenize("class switch case yield spawn _").unwrap();
+    // A representative sample of the spec's reserved list: they must lex to
+    // `Reserved`, never to an identifier. `struct` is a keyword, not reserved,
+    // and `spawn` is a keyword too (spec `lexical-structure.md`).
+    let tokens = tokenize("class switch case yield export _").unwrap();
     let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
     assert_eq!(
         kinds,
         vec![Reserved, Reserved, Reserved, Reserved, Reserved, Ident, EOF]
     );
     assert_eq!(tokens[0].text, "class");
+}
+
+/// The specification's closed keyword set (spec `lexical-structure.md`, 61
+/// words). Keep this in step with `grammar.pest`'s `kw_word` rule.
+const SPEC_KEYWORDS: &[&str] = &[
+    "and", "as", "async", "await", "bool", "break", "const", "continue", "copy", "defer", "else",
+    "enum", "extern", "f32", "f64", "false", "float", "fn", "for", "i8", "i16", "i32", "i64", "if",
+    "impl", "in", "int", "is", "isize", "let", "lock", "match", "mod", "move", "mut", "not",
+    "number", "null", "or", "panic", "pub", "return", "self", "shared", "spawn", "string",
+    "struct", "super", "trait", "true", "type", "u8", "u16", "u32", "u64", "unit", "unknown",
+    "use", "usize", "where", "while",
+];
+
+#[test]
+fn every_spec_keyword_lexes_as_a_keyword() {
+    assert_eq!(SPEC_KEYWORDS.len(), 61);
+    for word in SPEC_KEYWORDS {
+        let tokens = tokenize(word).unwrap();
+        assert_eq!(tokens.len(), 2, "input {word:?}");
+        assert!(
+            tokens[0].kind != Ident && tokens[0].kind != Reserved,
+            "{word:?} lexed as {:?}",
+            tokens[0].kind
+        );
+    }
+}
+
+#[test]
+fn every_spec_reserved_word_lexes_as_reserved() {
+    // Spec `lexical-structure.md` §Reserved Words; every keyword is excluded.
+    let reserved = "abstract actor arguments associatedtype bench case cfg channel class \
+                    debugger default deinit delete derive do doc eval export extension \
+                    fallthrough final function generator generic global guard init \
+                    instanceof interface isolated iterator lazy library local macro meta \
+                    module new open override package priv protocol receiver ref rethrows \
+                    select sender static switch task this typealias unowned unsafe var \
+                    virtual void weak with yield";
+    let words: Vec<&str> = reserved.split_whitespace().collect();
+    assert_eq!(words.len(), 61);
+    assert_eq!(RESERVED_WORDS.len(), words.len());
+    for word in words {
+        assert!(!SPEC_KEYWORDS.contains(&word), "{word:?} is a keyword");
+        assert!(RESERVED_WORDS.contains(&word), "{word:?} is not listed");
+        let tokens = tokenize(word).unwrap();
+        assert_eq!(tokens[0].kind, Reserved, "{word:?}");
+        assert_eq!(tokens[0].text, word);
+    }
+    // No keyword may be reserved: they are separate closed sets.
+    for word in SPEC_KEYWORDS {
+        assert!(!RESERVED_WORDS.contains(word), "{word:?} is reserved");
+    }
+}
+
+#[test]
+fn removed_constructs_lex_as_ordinary_names() {
+    // `try`/`catch`/`throw` have no syntax, and `import`/`from` are ordinary
+    // identifiers again (spec `lexical-structure.md`).
+    let tokens = tokenize("try catch throw import from").unwrap();
+    let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
+    assert_eq!(kinds, vec![Ident, Ident, Ident, Ident, Ident, EOF]);
 }
 
 #[test]
@@ -129,10 +193,17 @@ fn tokenizes_new_keywords() {
 }
 
 #[test]
-fn tokenizes_type_keywords_as_idents() {
-    let tokens = tokenize("string number boolean object list").unwrap();
+fn tokenizes_primitive_type_keywords() {
+    // The primitive type names are keywords. `boolean`, `object`, and `list`
+    // are not in the language, so they stay ordinary identifiers.
+    let tokens = tokenize("string number bool int float unit unknown boolean object list").unwrap();
     let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
-    assert_eq!(kinds, vec![Ident, Ident, Ident, Ident, Ident, EOF]);
+    assert_eq!(
+        kinds,
+        vec![
+            Keyword, Keyword, Keyword, Keyword, Keyword, Keyword, Keyword, Ident, Ident, Ident, EOF
+        ]
+    );
 }
 
 #[test]
@@ -222,11 +293,12 @@ fn range_in_for_is_lexed() {
 }
 
 #[test]
-fn tokenizes_phase3_keywords() {
+fn tokenizes_async_and_visibility_keywords() {
+    // `try`/`catch`/`throw`/`import`/`from` were removed from the language, so
+    // they are ordinary identifiers now (spec `lexical-structure.md`).
     let tokens = tokenize(
         "async fn f(): async { await g() } try { throw 1 } catch (e) { } \
-         import { a as b } from \"./m\" import * as ns from \"./n\" \
-         import type { T } from \"./t\" pub fn main() { }",
+         import { a as b } from \"./m\" pub fn main() { }",
     )
     .unwrap();
     let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
@@ -234,10 +306,9 @@ fn tokenizes_phase3_keywords() {
         kinds,
         vec![
             Async, Fn, Ident, LParen, RParen, Colon, Async, LBrace, Await, Ident, LParen, RParen,
-            RBrace, Try, LBrace, Throw, Number, RBrace, Catch, LParen, Ident, RParen, LBrace,
-            RBrace, Import, LBrace, Ident, As, Ident, RBrace, From, String, Import, Star, As,
-            Ident, From, String, Import, Type, LBrace, Ident, RBrace, From, String, Pub, Fn, Ident,
-            LParen, RParen, LBrace, RBrace, EOF
+            RBrace, Ident, LBrace, Ident, Number, RBrace, Ident, LParen, Ident, RParen, LBrace,
+            RBrace, Ident, LBrace, Ident, As, Ident, RBrace, Ident, String, Pub, Fn, Ident, LParen,
+            RParen, LBrace, RBrace, EOF
         ]
     );
 }
@@ -249,7 +320,7 @@ fn tokenizes_pub_keyword() {
     assert_eq!(
         kinds,
         vec![
-            Pub, Fn, Ident, LParen, Ident, Colon, Ident, RParen, Colon, Ident, LBrace, Return,
+            Pub, Fn, Ident, LParen, Ident, Colon, Keyword, RParen, Colon, Keyword, LBrace, Return,
             Ident, RBrace, EOF
         ]
     );
@@ -597,11 +668,18 @@ fn quoted_strings_do_not_interpolate() {
 }
 
 #[test]
-fn println_is_a_keyword_token() {
-    let tokens = tokenize("println(x)").unwrap();
+fn print_and_println_are_ordinary_names() {
+    // They are prelude intrinsics, not keywords (spec `lexical-structure.md`).
+    let tokens = tokenize("print(x) println(y)").unwrap();
     let kinds: Vec<Token> = tokens.iter().map(|t| t.kind).collect();
-    assert_eq!(kinds, vec![Println, LParen, Ident, RParen, EOF]);
-    assert_eq!(tokens[0].text, "println");
+    assert_eq!(
+        kinds,
+        vec![
+            Ident, LParen, Ident, RParen, Ident, LParen, Ident, RParen, EOF
+        ]
+    );
+    assert_eq!(tokens[0].text, "print");
+    assert_eq!(tokens[4].text, "println");
 }
 
 #[test]

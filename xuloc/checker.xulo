@@ -8,8 +8,7 @@
 //
 // It deliberately reports "not supported yet" (E0003) for declarations it does
 // not understand instead of silently accepting them. Structs, enums, traits,
-// impls, modules, generics, closures, components, and `match` arrive in later
-// WP6 slices.
+// impls, modules, generics, closures, and `match` arrive in later WP6 slices.
 //
 // Types are canonical strings (`number`, `string`, `bool`, `unit`, `unknown`,
 // `null`, `List<T>`, `T?`) so comparisons never depend on structural equality.

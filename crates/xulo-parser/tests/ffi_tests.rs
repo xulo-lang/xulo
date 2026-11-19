@@ -230,8 +230,8 @@ fn tokenize_extern_declarations() {
     assert_eq!(
         kinds,
         vec![
-            Pub, Ident, String, LBrace, Fn, Ident, LParen, Ident, Colon, Ident, RParen, Colon,
-            Ident, Semicolon, RBrace, EOF
+            Pub, Keyword, String, LBrace, Fn, Ident, LParen, Ident, Colon, Keyword, RParen, Colon,
+            Keyword, Semicolon, RBrace, EOF
         ]
     );
 }

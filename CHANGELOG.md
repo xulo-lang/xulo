@@ -24,6 +24,14 @@ layer from the language.
 UI construction remains possible with ordinary `struct`, `enum`, and `fn`
 values, and is left to a future standard-library `std/ui` module.
 
+### Changed
+
+- The formatter/editor token layer now classifies exactly the specification's
+  closed keyword set and reserved list (spec `lexical-structure.md`):
+  `print`/`println` are ordinary prelude names, `try`/`catch`/`throw`/
+  `import`/`from` lex as identifiers, and `defer`/`move`/`self`/`spawn`/
+  `super` are keywords rather than reserved words.
+
 ## [0.1.0] - 2026-11-14
 
 First public release, stage 0: the Rust bootstrap toolchain.

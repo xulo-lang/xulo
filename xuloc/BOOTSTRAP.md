@@ -154,7 +154,7 @@ return type, and operators check their operand types. The fixed corpus in
 requires stage 1 and stage 0 to agree on accept/reject for every file.
 
 The checker is not yet a full bootstrap checker. `match`, enums, structs,
-traits, impls, generics, modules, closures, and components report E0003
+traits, impls, generics, modules, and closures report E0003
 ("not supported yet") rather than being silently accepted.
 
 ## Workarounds and deliberate limits
@@ -196,49 +196,45 @@ so stage 2 does not inherit them silently.
    quotes and `+` so that the bootstrap source stays readable to the small
    parser. Nested block comments are not used either; comments do not nest.
 
-8. **No component calls.** An identifier followed by a `{ ... }` child block is
-   not parsed as `ComponentCall`. Stage 1 emits tokens and a tree from ordinary
-   files and does not parse `.xulo` UI examples.
-
-9. **No destructuring binding in stage 1's source.** The parser skips a
+8. **No destructuring binding in stage 1's source.** The parser skips a
    `let { ... }` or `let ( ... )` pattern, but stage 1 itself binds one name at
    a time and compares optionals to `null` or uses `??`.
 
-10. **No struct patterns in `match`.** Variant payloads and literals are
+9. **No struct patterns in `match`.** Variant payloads and literals are
     parsed; stage 1 matches `Result::Ok(value)`/`Result::Err(_)` and plain names
     only.
 
-11. **Match arms carry expressions or blocks, not statements.** A `return` in
+10. **Match arms carry expressions or blocks, not statements.** A `return` in
     an arm is therefore written `=> { return ... }`. This is the language rule,
     not a stage 1 extension; it is called out because it is easy to trip over
     while writing bootstrap code.
 
-12. **String scanning is character based.** The lexer splits the source once
+11. **String scanning is character based.** The lexer splits the source once
     with `split("")`, then indexes the resulting list, so token spans are O(1)
     per character. It does not use `string.code_at` inside the hot loop.
 
-13. **`mut self` is the mutation tool.** `Lexer` and `Parser` keep their cursor
+12. **`mut self` is the mutation tool.** `Lexer` and `Parser` keep their cursor
     and error state in struct fields and mutate them with `mut self` methods;
     recursive calls such as `self.expr()` work on the caller's binding. This is
     the proven L9/L10 pattern stage 1 relies on.
 
-14. **Scope exit does not use `pop`/`truncate`.** `checker.xulo` records a
+13. **Scope exit does not use `pop`/`truncate`.** `checker.xulo` records a
     scope id per binding and keeps an active-scope count. Leaving a block only
     decrements the count, so old bindings become invisible without list
     removal. This keeps the checker inside the AOT-lowered list operations.
 
-15. **Types are canonical strings.** `checker.xulo` represents `number`,
+14. **Types are canonical strings.** `checker.xulo` represents `number`,
     `string`, `bool`, `unit`, `unknown`, `null`, `List<T>`, and `T?` as strings.
     Type comparison is therefore string equality, avoiding the structural
     equality gap for tuples/lists and keeping the checker small.
 
-16. **AOT-safe members only.** The native build (Gate 4/B8a) does not lower the
+15. **AOT-safe members only.** The native build (Gate 4/B8a) does not lower the
     list members `.includes` and `.join`; the lexer uses an explicit keyword
     loop and a `StringBuilder` loop for token text. The interpreter accepts
     both forms, but stage 1's own source stays inside the subset its native
     binary can execute.
 
-17. **The backend lowers a smaller subset than stage 0.** `xuloc/backend.xulo`
+16. **The backend lowers a smaller subset than stage 0.** `xuloc/backend.xulo`
     handles functions, structs, enums, consts, `impl` methods, modules,
     `if`/`while`/`for`/`match`, calls, fields, indexing, lists, tuples,
     operators, `??`, `is`, `?.`, and the `std::fs`/`std::io`/`std::os`/
@@ -246,18 +242,18 @@ so stage 2 does not inherit them silently.
     async, and traits are rejected with `E0005`. Stage 1's own source avoids
     all of them.
 
-18. **The self-build needs the native stage 1 binary.** Running `build` under
+17. **The self-build needs the native stage 1 binary.** Running `build` under
     `xulo run` exceeds the Rust interpreter's call-depth limit (128) while
     emitting `parser.xulo`/`backend.xulo`. Build stage 1 with `xupm` and let
     that binary compile itself; the interpreted `tokens`/`parse`/`check` paths
     are still fine. This is a stage 0 limit, not a stage 1 semantic change.
 
-19. **`and`/`or` must not carry side effects under the native path.** Stage 0's
+18. **`and`/`or` must not carry side effects under the native path.** Stage 0's
     Cranelift build does not short-circuit them on Windows, so stage 1 writes
     guards as nested `if`s instead of `a and may_panic()`. The generated C does
     short-circuit, but the source stays safe under both paths.
 
-20. **The bootstrap runtime is deliberately dynamic.** `xuloc/runtime.c`
+19. **The bootstrap runtime is deliberately dynamic.** `xuloc/runtime.c`
     represents every value as a tagged `XVal`, keeps structs as field tables,
     dispatches methods through a registry, and leaks memory (the compiler is a
     one-shot process). Struct values are reference-shaped, so the R8
@@ -268,13 +264,12 @@ so stage 2 does not inherit them silently.
 
 - `check` is a first semantic pass over the generic AST, not a typed tree. It
   covers the Gate 3 corpus; structs, enums, traits, impls, generics, modules,
-  closures, components, and `match` still report E0003. `build` therefore does
-  not depend on `check`; it lowers the parsed program directly.
+  closures, and `match` still report E0003. `build` therefore does not depend
+  on `check`; it lowers the parsed program directly.
 - The C backend and the self-host loop are implemented (Gates 5–6), but the
   backend's subset is the bootstrap subset listed above.
-- Postfix `?`, arrow closures, call-site type arguments, components, macros
-  beyond attributes, and `spawn`/`lock` are outside the parser's accepted
-  subset.
+- Postfix `?`, arrow closures, call-site type arguments, macros beyond
+  attributes, and `spawn`/`lock` are outside the parser's accepted subset.
 - The parser recovers only by stopping at the first error. That is enough for
   Gate 1/2 diagnostics; stage 1's checker work will need recovery.
 - The tests read `xuloc/*.xulo` relative to the repository root, like the
