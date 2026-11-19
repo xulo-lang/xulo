@@ -35,6 +35,9 @@ pub extern "C" fn xulo_regex_compile(
             Ok(re) => {
                 let ptr = Box::into_raw(Box::new(re));
                 REGEXPS.with(|rs| rs.borrow_mut().push(ptr));
+                REGEXP_PTRS.with(|ptrs| {
+                    ptrs.borrow_mut().insert(ptr as usize);
+                });
                 let e = xulo_alloc_enum(c"Result".as_ptr(), c"Ok".as_ptr(), 0, 1);
                 xulo_enum_set(e, 0, ptr as i64, 9);
                 e

@@ -124,6 +124,24 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
         returns: &[I64],
     },
     RuntimeFnDesc {
+        name: "xulo_const_reset",
+        addr: xulo_runtime::runtime::xulo_const_reset as *const u8,
+        params: &[I64],
+        returns: &[],
+    },
+    RuntimeFnDesc {
+        name: "xulo_const_get",
+        addr: xulo_runtime::runtime::xulo_const_get as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_const_set",
+        addr: xulo_runtime::runtime::xulo_const_set as *const u8,
+        params: &[I64, I64],
+        returns: &[],
+    },
+    RuntimeFnDesc {
         name: "xulo_task_race",
         addr: xulo_runtime::runtime::xulo_task_race as *const u8,
         params: &[I64],

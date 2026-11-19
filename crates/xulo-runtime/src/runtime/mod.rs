@@ -4,6 +4,7 @@ use std::os::raw::c_char;
 
 use crate::value::format_number;
 
+mod consts;
 mod fmt;
 mod fs;
 mod heap;
@@ -22,6 +23,7 @@ mod time;
 
 // 再导出各子模块的 `xulo_*`：xulo-compiler/backend.rs 按 `xulo_runtime::runtime::xulo_*`
 // 路径取函数地址，这里保持该路径不变（`no_mangle` 符号本身与模块布局无关）。
+pub use consts::*;
 pub use fmt::*;
 pub use fs::*;
 pub use heap::*;
@@ -90,12 +92,18 @@ pub struct XuloClosure {
 
 thread_local! {
     static OBJECTS: RefCell<Vec<*mut XuloObject>> = const { RefCell::new(Vec::new()) };
+    static OBJECT_PTRS: RefCell<std::collections::HashSet<usize>> = RefCell::new(std::collections::HashSet::new());
     static ENUMS: RefCell<Vec<*mut XuloEnum>> = const { RefCell::new(Vec::new()) };
+    static ENUM_PTRS: RefCell<std::collections::HashSet<usize>> = RefCell::new(std::collections::HashSet::new());
     static ARRAYS: RefCell<Vec<*mut XuloArray>> = const { RefCell::new(Vec::new()) };
+    static ARRAY_PTRS: RefCell<std::collections::HashSet<usize>> = RefCell::new(std::collections::HashSet::new());
     static STRINGS: RefCell<Vec<CString>> = const { RefCell::new(Vec::new()) };
+    static STRING_PTRS: RefCell<std::collections::HashSet<usize>> = RefCell::new(std::collections::HashSet::new());
     static FLOATS: RefCell<Vec<i64>> = const { RefCell::new(Vec::new()) };
+    static FLOAT_VALUES: RefCell<std::collections::HashSet<i64>> = RefCell::new(std::collections::HashSet::new());
     /// JIT 嵌入的字符串指针（仅记录地址，不拥有所有权）
     static JIT_STRINGS: RefCell<Vec<*const c_char>> = const { RefCell::new(Vec::new()) };
+    static JIT_STRING_PTRS: RefCell<std::collections::HashSet<usize>> = RefCell::new(std::collections::HashSet::new());
     /// 输出缓冲区（用于测试捕获 print 输出）
     static OUTPUT: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     /// 活跃的闭包捕获单元
@@ -108,6 +116,7 @@ thread_local! {
     static CLOSURE_PTRS: RefCell<std::collections::HashSet<usize>> = RefCell::new(std::collections::HashSet::new());
     /// 活跃的编译正则（JIT/AOT 侧 RegExp 值的所有者）
     static REGEXPS: RefCell<Vec<*mut xulo_std::regex::RegExp>> = const { RefCell::new(Vec::new()) };
+    static REGEXP_PTRS: RefCell<std::collections::HashSet<usize>> = RefCell::new(std::collections::HashSet::new());
     /// 正则匹配对象的捕获组（match 对象本身是普通 XuloObject，
     /// `group(i)` 经此表取回组内容）
     static MATCH_GROUPS: RefCell<std::collections::HashMap<usize, Vec<Option<String>>>> =
@@ -245,6 +254,9 @@ fn format_value(value: i64, tag: i64) -> String {
 fn intern_string(s: impl Into<String>) -> *const c_char {
     let c_str = CString::new(s.into()).unwrap();
     let ptr = c_str.as_ptr();
+    STRING_PTRS.with(|ptrs| {
+        ptrs.borrow_mut().insert(ptr as usize);
+    });
     STRINGS.with(|strings| {
         strings.borrow_mut().push(c_str);
     });
@@ -276,6 +288,10 @@ pub extern "C" fn xulo_cleanup() {
             }
         }
     });
+    ARRAY_PTRS.with(|ptrs| ptrs.borrow_mut().clear());
+    OBJECT_PTRS.with(|ptrs| ptrs.borrow_mut().clear());
+    ENUM_PTRS.with(|ptrs| ptrs.borrow_mut().clear());
+    REGEXP_PTRS.with(|ptrs| ptrs.borrow_mut().clear());
 
     CLOSURES.with(|closures| {
         for ptr in closures.borrow_mut().drain(..) {
@@ -316,6 +332,7 @@ pub extern "C" fn xulo_cleanup() {
     STRINGS.with(|strings| {
         strings.borrow_mut().clear();
     });
+    STRING_PTRS.with(|ptrs| ptrs.borrow_mut().clear());
     string::clear_builders();
 
     // std::math::to_fixed 交给编译产物的字符串由 xulo-std 持有，一并释放。

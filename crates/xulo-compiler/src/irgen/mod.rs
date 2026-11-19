@@ -86,6 +86,10 @@ pub struct IrGenerator {
     consts: HashMap<String, ConstDef>,
     /// const 内联的递归栈（自引用检测）
     const_stack: Vec<String>,
+    /// 聚合常量惰性槽的数量（程序入口处重置运行时槽表）
+    const_slot_count: i64,
+    /// 是否正在生成入口的常量初始化段（该段内常量引用按需惰性物化）
+    emitting_const_init: bool,
     /// FFI 导入：解析后的本地名 -> `IrModule.externs` 下标（extern 块按
     /// 模块解析前缀后登记；调用点在局部绑定之后、用户函数之前查这张表）
     extern_map: HashMap<String, usize>,
@@ -222,6 +226,8 @@ struct ConstDef {
     tag: i64,
     /// 初始化表达式可静态判定的源级类型（仅字面量/取负）
     ty: Option<Type>,
+    /// 聚合常量的惰性槽下标（标量不使用）
+    slot: i64,
 }
 
 /// A macro implementation is compile-time only: the AOT backend does not emit
@@ -266,6 +272,8 @@ impl IrGenerator {
             current_module: String::new(),
             consts: HashMap::new(),
             const_stack: Vec::new(),
+            const_slot_count: 0,
+            emitting_const_init: false,
             extern_map: HashMap::new(),
         }
     }
@@ -499,6 +507,13 @@ impl IrGenerator {
         // 8. 派生 `#[derive(Debug)]` 正文：所有目标注册完成后生成，
         //    嵌套派生/手写 Debug 的互相引用都能解析。
         self.generate_derived_bodies(programs)?;
+
+        // 9. 聚合常量在入口处按声明序物化一次：先清空槽表，再逐个求值并
+        //    写入。函数体里的常量引用只需读槽（JIT 反复执行入口时也不会
+        //    读到上一次程序的槽值）。
+        if self.const_slot_count > 0 {
+            self.emit_const_initializers()?;
+        }
 
         Ok(self.module.clone())
     }
