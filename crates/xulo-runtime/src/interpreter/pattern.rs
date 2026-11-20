@@ -170,7 +170,19 @@ pub(super) fn pattern_matches(
             false
         }
         xulo_core::ast::MatchPattern::Struct { name, bindings, .. } => {
-            if let Value::Enum {
+            if let Value::Object(fields) = scrutinee {
+                // The checker pinned the scrutinee to this struct type, so the
+                // fields are the declared ones, in declaration order.
+                let fields = fields.borrow();
+                for (i, sub) in bindings.iter().enumerate() {
+                    if let xulo_core::ast::MatchPattern::Binding { name, .. } = sub {
+                        let value = fields.get(i).map(|(_, v)| v.clone()).unwrap_or(Value::Null);
+                        env.borrow_mut()
+                            .define(name, interp.value_bind_copy(value), true);
+                    }
+                }
+                true
+            } else if let Value::Enum {
                 enum_name, payload, ..
             } = scrutinee
                 && enum_name == name

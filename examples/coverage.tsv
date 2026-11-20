@@ -177,7 +177,7 @@ PatternAlt	patterns/match_patterns.xulo	1 | 2	-
 LiteralPattern	patterns/match_patterns.xulo	"zero"	-
 RangePattern	patterns/match_patterns.xulo	3..<10	-
 VariantPattern	patterns/match_patterns.xulo	Shape::Circle(r)	-
-StructPattern	-	-	error-only: 解析器接受 `P(x, y)`，但 checker 不绑定字段、解释器只匹配枚举（docs/tasks.md T8）
+StructPattern	types/structs.xulo	Point(x, y)	-
 TypePattern	patterns/match_patterns.xulo	string s	-
 PatternType	patterns/match_patterns.xulo	string s	-
 PatternDesignator	patterns/match_patterns.xulo	bool b	-

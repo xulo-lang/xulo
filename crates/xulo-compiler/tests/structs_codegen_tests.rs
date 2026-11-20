@@ -187,3 +187,37 @@ fn test_structs_aot_object_references_runtime() {
         "tag-blind xulo_to_string must no longer be referenced"
     );
 }
+
+/// Struct deconstruction in `match`: `Point(x, y)` binds the fields in
+/// declaration order on the compiled path (spec control-flow.md, "Patterns").
+#[test]
+fn struct_pattern_binds_fields_on_the_compiled_path() {
+    let out = compile_and_run(
+        r#"
+struct Point {
+    x: int,
+    y: int
+}
+
+struct Named {
+    label: string,
+    n: int
+}
+
+fn main() {
+    let p = Point(x: 3, y: 4)
+    match p {
+        Point(x, y) => print(x * 10 + y)
+    }
+    match p {
+        Point(_, y) => print(y)
+    }
+    let v = Named(label: "id-", n: 7)
+    match v {
+        Named(label, n) => print(label + str(n))
+    }
+}
+"#,
+    );
+    assert_eq!(out, vec!["34", "4", "id-7"]);
+}

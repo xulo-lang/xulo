@@ -107,8 +107,6 @@ XULO_BLESS=1 cargo test -p xulo-cli --test examples
 覆盖表只能机械校验「文本出现过」。以下缺口不在它的证明范围内，修改语料时
 不要误以为已经被门禁覆盖：
 
-- `StructPattern`（`P(x, y)` 解构结构体）解析器接受，但 checker 不绑定字段、
-  解释器只匹配枚举 —— 覆盖表里唯一的 `error-only:` 行（`docs/tasks.md` T8）。
 - 文档注释（`spec/documentation-comments.md` 的提取模型 / 标签 / 包索引）尚未
   实现；示例里的 `///`、`//!` 只是 trivia，`basics/lexical.xulo` 只演示了词法层。
 - AOT 后端还有 11 处已知差距（10 个 `@no-aot all:` + 1 个 `@no-aot windows:`），

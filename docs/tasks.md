@@ -311,7 +311,9 @@ Priority P1 · needed by Gate 3 and the bootstrap corpus · source:
       - `mut` parameters were declared `is_const`, so assigning to one was
         rejected as "binding is immutable" — fixed in `crates/xulo-semantic`;
       - `StructPattern` is parsed but unimplemented (§6.12), recorded as the one
-        `error-only:` row;
+        `error-only:` row; implemented later on all three paths (checker binds
+        the fields, the interpreter and AOT deconstruct the object), so the row
+        now points at `types/structs.xulo`;
       - `PathHead` is covered by both heads: `modules/inline/main.xulo` uses
         `use self::inner as i` at the file level and `use super::twice` inside a
         nested inline module (an earlier note claimed `super::` panicked the

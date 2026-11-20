@@ -40,4 +40,15 @@ fn main() {
     // 对象字面量标注类型时按字段检查
     let checked: Point = { x: 1, y: 2 }
     print(checked.len())
+
+    // 结构体解构：`Point(x, y)` 按声明序绑定字段（`_` 丢弃）
+    match p {
+        Point(x, y) => print(x * 10 + y) // 34
+    }
+    match p {
+        Point(_, y) => print(y) // 4
+    }
+    match u {
+        User(name, age, nick) => print(name, age, nick == null) // lyy 30 true
+    }
 }

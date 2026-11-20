@@ -7654,3 +7654,79 @@ fn std_numeric_results_name_their_spec_type() {
         assert!(err.message.contains(expected), "{source}: {}", err.message);
     }
 }
+
+#[test]
+fn struct_pattern_binds_fields_in_declaration_order() {
+    let src = r#"
+        struct Point { x: int, y: int }
+        fn main() {
+            let p = Point(x: 1, y: 2)
+            match p {
+                Point(x, y) => print(x + y)
+            }
+        }
+    "#;
+    analyze_src(src).unwrap_or_else(|e| panic!("{}", e.message));
+}
+
+#[test]
+fn struct_pattern_rejects_a_field_count_mismatch() {
+    let err = analyze_src(
+        r#"
+        struct Point { x: int, y: int }
+        fn main() {
+            let p = Point(x: 1, y: 2)
+            match p {
+                Point(a, b, c) => print(a)
+            }
+        }
+        "#,
+    )
+    .unwrap_err();
+    assert!(err.message.contains("has 2 fields"), "{}", err.message);
+}
+
+#[test]
+fn struct_pattern_requires_a_struct_type() {
+    let err = analyze_src(
+        r#"
+        enum Shape { Dot }
+        fn main() {
+            let s = Shape::Dot
+            match s {
+                Shape(a) => print(a)
+            }
+        }
+        "#,
+    )
+    .unwrap_err();
+    assert!(err.message.contains("requires a struct"), "{}", err.message);
+}
+
+#[test]
+fn struct_pattern_field_type_flows_into_the_binding() {
+    // `label` is a `string`: concatenation is allowed, arithmetic is not.
+    let ok = r#"
+        struct Named { label: string, n: int }
+        fn main() {
+            let v = Named(label: "id-", n: 7)
+            match v {
+                Named(label, n) => print(label + str(n))
+            }
+        }
+    "#;
+    analyze_src(ok).unwrap_or_else(|e| panic!("{}", e.message));
+    let err = analyze_src(
+        r#"
+        struct Named { label: string, n: int }
+        fn main() {
+            let v = Named(label: "id-", n: 7)
+            match v {
+                Named(label, n) => print(label - n)
+            }
+        }
+        "#,
+    )
+    .unwrap_err();
+    assert!(err.message.contains("`-`"), "{}", err.message);
+}

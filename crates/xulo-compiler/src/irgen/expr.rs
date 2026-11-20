@@ -2666,6 +2666,75 @@ impl IrGenerator {
                         .push(Instruction::Label(next_label));
                     dangling_next = true;
                 }
+                // 结构体模式 `P(x, y)`：结构体在运行时就是普通对象、没有类型
+                // 标签，语义层已把 scrutinee 钉在该 struct 类型上，所以这个臂
+                // 直接匹配，按声明序取字段（spec control-flow.md "Patterns"）。
+                MatchPattern::Struct { name, bindings, .. } => {
+                    let fields = self.structs.get(name).cloned().unwrap_or_default();
+                    // 没有类型测试：直接落到本臂（先给上一块补终止指令）
+                    self.module.functions[func_idx]
+                        .instructions
+                        .push(Instruction::Jump(body_label));
+                    self.module.functions[func_idx]
+                        .instructions
+                        .push(Instruction::Label(body_label));
+                    for (i, sub) in bindings.iter().enumerate() {
+                        let MatchPattern::Binding { name: bind, .. } = sub else {
+                            continue;
+                        };
+                        let Some(field) = fields.get(i) else {
+                            continue;
+                        };
+                        let key = self.module.functions[func_idx].add_local(IrType::Pointer);
+                        let key_idx = self.module.add_string(field.name.clone());
+                        self.module.functions[func_idx]
+                            .instructions
+                            .push(Instruction::Const {
+                                dst: key,
+                                value: IrValue::String(key_idx),
+                            });
+                        let raw = self.module.functions[func_idx].add_local(IrType::Pointer);
+                        self.module.functions[func_idx].instructions.push(
+                            Instruction::RuntimeCall {
+                                dst: Some(raw),
+                                func: RuntimeFn::ObjectGet,
+                                args: vec![scrut_op.clone(), Operand::Local(key)],
+                            },
+                        );
+                        let tag = self.module.functions[func_idx].add_local(IrType::I64);
+                        self.module.functions[func_idx].instructions.push(
+                            Instruction::RuntimeCall {
+                                dst: Some(tag),
+                                func: RuntimeFn::ObjectGetTag,
+                                args: vec![scrut_op.clone(), Operand::Local(key)],
+                            },
+                        );
+                        if self.boxed_names.contains(bind) {
+                            let cell = self.module.functions[func_idx].add_local(IrType::Pointer);
+                            self.module.functions[func_idx].instructions.push(
+                                Instruction::RuntimeCall {
+                                    dst: Some(cell),
+                                    func: RuntimeFn::AllocCell,
+                                    args: vec![Operand::Local(raw)],
+                                },
+                            );
+                            self.locals.insert(bind.clone(), cell);
+                            self.boxed_logical.insert(bind.clone(), IrType::Pointer);
+                        } else {
+                            self.locals.insert(bind.clone(), raw);
+                        }
+                        self.dyn_tag_of.insert(bind.clone(), Operand::Local(tag));
+                        self.source_types.insert(bind.clone(), field.type_.clone());
+                    }
+                    self.generate_match_arm_body(arm, result_local)?;
+                    self.module.functions[func_idx]
+                        .instructions
+                        .push(Instruction::Jump(end_label));
+                    self.module.functions[func_idx]
+                        .instructions
+                        .push(Instruction::Label(next_label));
+                    dangling_next = true;
+                }
                 MatchPattern::Literal(lit) => {
                     let (lit_val, lit_tag) = self.literal_pattern_operand(lit)?;
                     let cmp = self.module.functions[func_idx].add_local(IrType::I64);

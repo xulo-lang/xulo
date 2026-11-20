@@ -10069,7 +10069,89 @@ impl Analyzer {
                     }
                 }
                 xulo_core::ast::MatchPattern::Or { .. } => {}
-                xulo_core::ast::MatchPattern::Struct { .. } => {}
+                xulo_core::ast::MatchPattern::Struct {
+                    name,
+                    bindings,
+                    span,
+                } => {
+                    let entry = self
+                        .type_entry(name)
+                        .ok_or_else(|| self.err(format!("unknown type `{name}`")))?
+                        .clone();
+                    let fields = match &entry.kind {
+                        TypeEntryKind::Struct(fields) => fields.clone(),
+                        _ => {
+                            return Err(self
+                                .err(format!(
+                                    "pattern `{name}(…)` requires a struct, but `{name}` is not a struct"
+                                ))
+                                .at(span.clone()));
+                        }
+                    };
+                    let struct_type = Type::Named(name.clone(), Vec::new());
+                    if !self.assignable(&value_type, &struct_type) {
+                        return Err(self.err(format!(
+                            "match arm pattern `{}` does not match value of type `{}` (expected `{}`)",
+                            pattern_name(arm),
+                            value_type.name(),
+                            struct_type.name()
+                        )));
+                    }
+                    if fields.len() != bindings.len() {
+                        return Err(self
+                            .err(format!(
+                                "pattern binds {} values but struct `{name}` has {} fields",
+                                bindings.len(),
+                                fields.len()
+                            ))
+                            .at(span.clone()));
+                    }
+                    self.generics.extend(entry.type_params.iter().cloned());
+                    self.table.push_scope();
+                    for (field, sub) in fields.iter().zip(bindings.iter()) {
+                        let binder = match sub {
+                            xulo_core::ast::MatchPattern::Wildcard => continue,
+                            xulo_core::ast::MatchPattern::Binding { name: binder, .. } => binder,
+                            _ => {
+                                return Err(self
+                                    .err(format!(
+                                        "struct pattern fields bind by name; nested patterns are not supported yet (`{0}.{1}`)",
+                                        name, field.0
+                                    ))
+                                    .at(span.clone()));
+                            }
+                        };
+                        self.table.declare_with_def(
+                            Symbol {
+                                name: binder.clone(),
+                                type_: self.resolve_alias(&field.1, 0),
+                                kind: SymbolKind::Variable,
+                                is_shared: false,
+                                is_param: false,
+                                is_const: true,
+                                is_mutable: false,
+                            },
+                            Some(span.clone()),
+                        );
+                    }
+                    let t = {
+                        if let Some(guard) = &arm.guard {
+                            let guard_type = self.check_expression(guard)?;
+                            if !self.assignable(&guard_type, &Type::Boolean) {
+                                return Err(self.err(format!(
+                                    "match guard must be a `bool`, found `{}`",
+                                    guard_type.name()
+                                )));
+                            }
+                        }
+                        self.check_match_body(&arm.value)?
+                    };
+                    self.table.pop_scope();
+                    self.generics
+                        .truncate(self.generics.len().saturating_sub(entry.type_params.len()));
+                    arm_types.push(t);
+                    continue;
+                }
                 xulo_core::ast::MatchPattern::Enum(r) => {
                     let enum_type = self.check_enum_ref(r.enum_name.clone(), &r.variant)?;
                     if !self.assignable(&value_type, &enum_type) {

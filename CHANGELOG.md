@@ -39,6 +39,14 @@ values, and is left to a future standard-library `std/ui` module.
 
 ### Added
 
+- Struct deconstruction in `match` (`Point(x, y)`) now works on all three paths:
+  the checker validates the struct type and field count and binds each field
+  with its declared type, the interpreter deconstructs the object by
+  declaration order, and the AOT backend reads the fields through `ObjectGet`.
+  The grammar gate's last `error-only:` row (`examples/coverage.tsv`,
+  `StructPattern`) now points at `examples/types/structs.xulo`. Nested patterns
+  inside a struct slot (`Shape::Dot(Point(x, y))`) remain unsupported and are
+  rejected with a clear diagnostic.
 - `examples/std/` now covers the 38 standard-library members the grammar gate
   could not see: `math_extra.xulo` (trig/log/`trunc`/`clamp`/`sign`, the integer
   bit ops, `random`), `fs_extra.xulo` (temporary creators, exclusive create,
