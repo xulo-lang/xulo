@@ -63,6 +63,11 @@ values, and is left to a future standard-library `std/ui` module.
 
 ### Fixed
 
+- AOT: nested tuple positional access (`nested.0.0`) now resolves the element
+  type through every level, and a tuple returned from or passed to a function
+  keeps its array tag instead of printing as a raw pointer. `types/tuples.xulo`
+  no longer carries `@no-aot`. Regression:
+  `crates/xulo-compiler/tests/aot_syntax_coverage_tests.rs::nested_tuple_access_and_tuple_pass_return`.
 - AOT: `+` on a string or list bound from an enum payload no longer goes
   through the dynamic-number path. `match std::fs::read(p) { Result::Ok(dir) =>`
   used to hand a float to `xulo_string_concat`, so `dir + "/file"` crashed (or

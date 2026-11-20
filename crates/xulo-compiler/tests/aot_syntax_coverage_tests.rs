@@ -410,6 +410,28 @@ fn tuple_destructure_from_list_and_call() {
     assert_eq!(out, vec!["1", "2", "300"]);
 }
 
+/// Tuple positional access must resolve through nested tuple types, and a
+/// tuple that crosses a call boundary (argument and return) must keep its
+/// array tag instead of printing the raw pointer.
+#[test]
+fn nested_tuple_access_and_tuple_pass_return() {
+    let out = compile_and_run(
+        r#"
+        fn pair(): (int, string) { (1, "one") }
+        fn swap(t: (int, string)): (string, int) { (t.1, t.0) }
+        fn main() {
+            print(pair().0)
+            let (n, word) = pair()
+            print(n, word)
+            let nested = ((1, 2), "x")
+            print(nested.0.0, nested.0.1, nested.1)
+            print(swap((3, "three")))
+        }
+        "#,
+    );
+    assert_eq!(out, vec!["1", "1 one", "1 2 x", "[three, 3]"]);
+}
+
 #[test]
 fn object_destructure_binds_fields() {
     let out = compile_and_run(

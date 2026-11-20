@@ -322,14 +322,15 @@ Priority P1 · needed by Gate 3 and the bootstrap corpus · source:
       The AOT differential then measured the new corpus and recorded these gaps
       with `@no-aot` (each one must keep failing, so closing it forces a diff):
       `defer`, match guard/or/range/type patterns, `spawn`/`lock`/service,
-      nested tuple access and tuple pass/return, trait dispatch through a
-      generic parameter, and failure-path reporting (the interpreter buffers
-      `print` and writes `error[E0006]`, the native runtime writes `panic: …`;
-      see T13). Block-scoped shadowing, `f32` arithmetic, and the `Error("…")`
-      constructor were closed later: the AOT path now restores bindings at every
-      nested block, gives `f32`/`f64` bindings an F64 slot, and builds the
-      `{ message }` object `Error("…")` denotes, so all three agree with the
-      interpreter and their markers are gone.
+      trait dispatch through a generic parameter, and failure-path reporting
+      (the interpreter buffers `print` and writes `error[E0006]`, the native
+      runtime writes `panic: …`; see T13). Block-scoped shadowing, `f32`
+      arithmetic, the `Error("…")` constructor, and nested tuple access plus
+      tuple pass/return were closed later: the AOT path now restores bindings at
+      every nested block, gives `f32`/`f64` bindings an F64 slot, builds the
+      `{ message }` object `Error("…")` denotes, and resolves tuple positional
+      access through nested element types and tags tuple returns as arrays, so
+      all four agree with the interpreter and their markers are gone.
 - [x] **T9** Measure stage 1 against the same corpus.
       `xuloc/main.xulo` gained a `scan` mode; `XULO_STAGE1_MODE=scan
       XULO_STAGE1_DIR=examples xulo run xuloc/main.xulo` prints one line per file

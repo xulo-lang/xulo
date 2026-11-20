@@ -1178,6 +1178,15 @@ impl IrGenerator {
                 None
             }
             Expression::Member(member) => {
+                // 元组位置访问 `p.0`：元素类型是元组写出的第 i 个类型。递归
+                // 走这里，`nested.0.0` 才能逐层拿到元素类型并继续按位置读。
+                if let Ok(index) = member.property.parse::<usize>()
+                    && let Some(Type::Tuple(items)) =
+                        self.infer_source_type_from_expr(&member.object)
+                    && let Some(item) = items.get(index)
+                {
+                    return Some(item.clone());
+                }
                 // 结构体字段类型
                 if let Some(recv_ty) = self.struct_name_of_expr(&member.object)
                     && let Some(fields) = self.structs.get(&recv_ty)
@@ -1706,7 +1715,7 @@ impl IrGenerator {
                         Type::Number => -1,
                         Type::Boolean => 5,
                         Type::Null => 6,
-                        Type::List(_) => 3,
+                        Type::List(_) | Type::Tuple(_) => 3,
                         Type::Object | Type::ObjectType(_) => 4,
                         Type::Named(_, _) => {
                             // 泛型参数：无法在编译期确定具体类型，使用运行时自动检测
@@ -1789,7 +1798,7 @@ impl IrGenerator {
                 // runtime tag registry distinguishes them.
                 Some(Type::Number) => -1,
                 Some(Type::Boolean) => 5,
-                Some(Type::List(_)) => 3,
+                Some(Type::List(_) | Type::Tuple(_)) => 3,
                 Some(Type::Object | Type::ObjectType(_)) => 4,
                 _ => -1,
             },
@@ -1803,7 +1812,7 @@ impl IrGenerator {
                         Type::Number => -1,
                         Type::Boolean => 5,
                         Type::Null => 6,
-                        Type::List(_) => 3,
+                        Type::List(_) | Type::Tuple(_) => 3,
                         Type::Object | Type::ObjectType(_) => 4,
                         _ => -1,
                     };
@@ -1820,7 +1829,7 @@ impl IrGenerator {
                         Type::Number => -1,
                         Type::Boolean => 5,
                         Type::Null => 6,
-                        Type::List(_) => 3,
+                        Type::List(_) | Type::Tuple(_) => 3,
                         Type::Object | Type::ObjectType(_) => 4,
                         // 可选字段可能是 null，运行时自动检测
                         _ => -1,
