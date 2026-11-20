@@ -2439,6 +2439,18 @@ impl IrGenerator {
         block: &Block,
         result_local: LocalId,
     ) -> Result<bool, XuloError> {
+        // 分支是独立作用域：分支内的 `let` 只遮蔽该分支
+        let scope = self.enter_block();
+        let result = self.generate_if_branch_inner(block, result_local);
+        self.leave_block(scope);
+        result
+    }
+
+    fn generate_if_branch_inner(
+        &mut self,
+        block: &Block,
+        result_local: LocalId,
+    ) -> Result<bool, XuloError> {
         let func_idx = self.current_func.unwrap();
         let last = block.statements.len().checked_sub(1);
         for (index, statement) in block.statements.iter().enumerate() {
@@ -2901,6 +2913,18 @@ impl IrGenerator {
     /// 一个 match 臂的求值：分支体的末表达式写入结果槽；f64 结果在按位
     /// 模式进 Pointer 槽前注册位模式
     pub(super) fn generate_match_arm_body(
+        &mut self,
+        arm: &MatchArm,
+        result_local: LocalId,
+    ) -> Result<(), XuloError> {
+        // 臂是独立作用域：模式绑定与臂内的 `let` 不泄漏到后面的语句
+        let scope = self.enter_block();
+        let result = self.generate_match_arm_body_inner(arm, result_local);
+        self.leave_block(scope);
+        result
+    }
+
+    fn generate_match_arm_body_inner(
         &mut self,
         arm: &MatchArm,
         result_local: LocalId,

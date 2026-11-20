@@ -328,9 +328,11 @@ impl IrGenerator {
         self.module.functions[func_idx]
             .instructions
             .push(Instruction::Label(then_label));
+        let scope = self.enter_block();
         for stmt in &if_expr.then_branch.statements {
             self.generate_statement(stmt)?;
         }
+        self.leave_block(scope);
         // 分支可能以 break/continue（Jump）或 return 收尾：已有终结指令就不再
         // 追加 Jump(end)，否则同一块里出现双终结指令（codegen 验证器必错）
         let then_has_terminator = self.module.functions[func_idx]
@@ -352,9 +354,11 @@ impl IrGenerator {
             .instructions
             .push(Instruction::Label(else_label));
         if let Some(else_branch) = &if_expr.else_branch {
+            let scope = self.enter_block();
             for stmt in &else_branch.statements {
                 self.generate_statement(stmt)?;
             }
+            self.leave_block(scope);
         }
         let else_has_terminator = self.module.functions[func_idx]
             .instructions
@@ -529,9 +533,11 @@ impl IrGenerator {
             self.module.functions[func_idx]
                 .instructions
                 .push(Instruction::Label(body_label));
+            let scope = self.enter_block();
             for stmt in &for_stmt.body.statements {
                 self.generate_statement(stmt)?;
             }
+            self.leave_block(scope);
 
             // 跳转到 continue 标签
             self.module.functions[func_idx]
@@ -689,9 +695,11 @@ impl IrGenerator {
                         src: copied,
                     });
             }
+            let scope = self.enter_block();
             for stmt in &for_stmt.body.statements {
                 self.generate_statement(stmt)?;
             }
+            self.leave_block(scope);
 
             // Jump to continue
             self.module.functions[func_idx]
@@ -771,9 +779,11 @@ impl IrGenerator {
         self.module.functions[func_idx]
             .instructions
             .push(Instruction::Label(body_label));
+        let scope = self.enter_block();
         for stmt in &while_stmt.body.statements {
             self.generate_statement(stmt)?;
         }
+        self.leave_block(scope);
         // 语句块可能以非终结指令收尾（如末尾是赋值），补跳转接住 fall-through；
         // 已以 break/return 等终结则不再追加，避免双终结指令
         let last_is_terminator = self.module.functions[func_idx]

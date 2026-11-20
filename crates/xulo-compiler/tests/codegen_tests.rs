@@ -532,3 +532,48 @@ fn main() {
     );
     assert_eq!(output, vec!["true", "false"]);
 }
+
+/// A `let` inside a nested block shadows only that block: the outer binding is
+/// visible again after it (spec `statements/let-and-assignment.md`).
+#[test]
+fn test_codegen_block_shadowing_restores_the_outer_binding() {
+    let out = compile_and_run(
+        r#"
+fn main() {
+    let name = "xulo"
+    if name == "xulo" {
+        let name = name + "!"
+        print(name)
+    }
+    print(name)
+    let mut total = 1
+    for _ in 0..<2 {
+        let total = total + 10
+        print(total)
+    }
+    print(total)
+}
+"#,
+    );
+    assert_eq!(out, vec!["xulo!", "xulo", "11", "11", "1"]);
+}
+
+/// `f32`/`f64` annotations get an F64 slot, so the values print as floats
+/// instead of their bit patterns as integers.
+#[test]
+fn test_codegen_fixed_width_float_annotations_print_as_floats() {
+    let out = compile_and_run(
+        r#"
+fn main() {
+    let single: f32 = 0.5
+    let double: f64 = 2.5
+    print(single * 4.0)
+    print(double * 2.0)
+    print(single + single)
+    print(double / 2.0)
+    print(single < 1.0)
+}
+"#,
+    );
+    assert_eq!(out, vec!["2", "5", "1", "1.25", "true"]);
+}

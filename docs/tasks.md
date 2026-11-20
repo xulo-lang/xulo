@@ -32,8 +32,8 @@ readiness document.
 | WP4 — `defer` semantics | 5 | 5 |
 | WP5 — Stage 1 skeleton | 6 | 6 |
 | WP6 — Self-host loop | 7 | 7 |
-| WP7 — Non-gating follow-ups | 8 | 8 |
-| **Total** | **63** | **63** |
+| WP7 — Non-gating follow-ups | 8 | 9 |
+| **Total** | **63** | **64** |
 
 ## Gates
 
@@ -322,12 +322,13 @@ Priority P1 · needed by Gate 3 and the bootstrap corpus · source:
       The AOT differential then measured the new corpus and recorded these gaps
       with `@no-aot` (each one must keep failing, so closing it forces a diff):
       `defer`, match guard/or/range/type patterns, `spawn`/`lock`/service,
-      block-scoped shadowing (the inner `let` writes through to the outer
-      binding), `f32` arithmetic (the result lands in an integer slot), nested
-      tuple access and tuple pass/return, trait dispatch through a generic
-      parameter, the `Error("…")` constructor, and failure-path reporting (the
-      interpreter buffers `print` and writes `error[E0006]`, the native runtime
-      writes `panic: …`).
+      nested tuple access and tuple pass/return, trait dispatch through a
+      generic parameter, the `Error("…")` constructor, and failure-path
+      reporting (the interpreter buffers `print` and writes `error[E0006]`, the
+      native runtime writes `panic: …`). Block-scoped shadowing and `f32`
+      arithmetic, both wrong-result gaps, were closed later: the AOT path now
+      restores bindings at every nested block and gives `f32`/`f64` bindings an
+      F64 slot, so both agree with the interpreter and their markers are gone.
 - [x] **T9** Measure stage 1 against the same corpus.
       `xuloc/main.xulo` gained a `scan` mode; `XULO_STAGE1_MODE=scan
       XULO_STAGE1_DIR=examples xulo run xuloc/main.xulo` prints one line per file
@@ -556,6 +557,18 @@ tag_detection` (P2).
       `IrFunction::exported` records. Both backends use the helper, and
       `crates/xulo-compiler/tests/aot_symbols.rs` pins the namespacing, the
       `main` entry, and the unmangled extern export.
+
+- [ ] **T12** Enforce the `f32` format in both engines.
+      `spec/types/primitive-types.md` requires IEEE-754 semantics "for their
+      format", so an `f32` literal must round to binary32 and every `f32`
+      arithmetic result must land back in binary32 before it is printed or
+      promoted. Today both the interpreter and the AOT path compute in `f64`:
+      `let o: f32 = 0.8` prints `0.8` instead of `0.800000011920929`, and
+      `1.0f32 / 3.0` keeps all the double's digits. `types/float_math.xulo`
+      stays on values both formats represent exactly, so it does not gate this.
+      Fix the coercion at the binding site and the rounding after each
+      operation, then add a differential example with a value that differs
+      between the two formats.
 
 ## Out of scope for stage 1 bootstrap
 

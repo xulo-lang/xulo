@@ -18,6 +18,16 @@ use xulo_core::ir::*;
 
 use crate::module::LoadedModules;
 
+/// 一个嵌套块的绑定快照：进入块时记下、离开时恢复，让块内的 `let` 只遮蔽
+/// 本块（spec `statements/let-and-assignment.md` "Shadowing"）。只有名字到
+/// 绑定的映射需要恢复；按 `LocalId` 索引的表里，内层槽位离开块后自然失效。
+pub(super) struct BlockScope {
+    locals: HashMap<String, LocalId>,
+    source_types: HashMap<String, Type>,
+    dyn_tag_of: HashMap<String, Operand>,
+    boxed_logical: HashMap<String, IrType>,
+}
+
 /// IR 生成器
 pub struct IrGenerator {
     module: IrModule,
@@ -240,6 +250,24 @@ fn is_macro_function(f: &FnDef) -> bool {
 }
 
 impl IrGenerator {
+    /// 进入嵌套块：快照名字绑定，供 [`Self::leave_block`] 恢复遮蔽。
+    pub(super) fn enter_block(&self) -> BlockScope {
+        BlockScope {
+            locals: self.locals.clone(),
+            source_types: self.source_types.clone(),
+            dyn_tag_of: self.dyn_tag_of.clone(),
+            boxed_logical: self.boxed_logical.clone(),
+        }
+    }
+
+    /// 离开嵌套块：恢复块外的可见绑定。
+    pub(super) fn leave_block(&mut self, scope: BlockScope) {
+        self.locals = scope.locals;
+        self.source_types = scope.source_types;
+        self.dyn_tag_of = scope.dyn_tag_of;
+        self.boxed_logical = scope.boxed_logical;
+    }
+
     pub fn new() -> Self {
         IrGenerator {
             module: IrModule::new(),
@@ -2368,6 +2396,13 @@ impl IrGenerator {
             None => IrType::Void,
             Some(t) => match t {
                 Type::Boolean => IrType::Bool,
+                // `f32`/`f64` 是定宽浮点：槽位必须是 F64，否则浮点字面量会被
+                // 写进指针槽、算术退化成整数（算出来的位模式当整数打印）。
+                Type::Named(name, args)
+                    if args.is_empty() && matches!(name.as_str(), "f32" | "f64") =>
+                {
+                    IrType::F64
+                }
                 Type::String
                 | Type::Null
                 | Type::Object
