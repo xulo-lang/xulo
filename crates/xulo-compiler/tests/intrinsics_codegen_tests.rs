@@ -31,35 +31,13 @@ fn references_symbol(bytes: &[u8], symbol: &str) -> bool {
         .any(|window| window == symbol.as_bytes())
 }
 
-/// examples/math_time.xulo 全文：AOT 编译路径的输出必须与解释器逐行一致
-const MATH_TIME_EXAMPLE: &str = include_str!("../../../examples/math_time.xulo");
+/// examples/std/math_time.xulo 全文：AOT 编译路径的输出必须与解释器逐行一致
+const MATH_TIME_EXAMPLE: &str = include_str!("../../../examples/std/math_time.xulo");
 
 #[test]
 fn test_math_time_example_matches_interpreter() {
     let out = compile_and_run(MATH_TIME_EXAMPLE);
-    let expected: Vec<String> = [
-        "3.141592653589793 2.718281828459045 6.283185307179586",
-        "Infinity",
-        "3 4 4",
-        "42",
-        "3 9",
-        "1024",
-        "1.4142135623730951",
-        "3.14",
-        "0 1",
-        "1",
-        "true",
-        "true",
-        "true",
-        "2026-10-26T12:00:00.000Z",
-        "true",
-        "2026 10 26 12",
-        "1",
-    ]
-    .iter()
-    .map(|s| s.to_string())
-    .collect();
-    assert_eq!(out, expected);
+    assert_eq!(out, xulo_examples::expected_lines("std/math_time.xulo"));
 }
 
 #[test]
@@ -1053,46 +1031,13 @@ fn main() {
     );
 }
 
-/// examples/fmt.xulo 全文：AOT/JIT 编译路径的输出必须与解释器逐行一致
-const FMT_EXAMPLE: &str = include_str!("../../../examples/fmt.xulo");
+/// examples/std/fmt.xulo 全文：AOT/JIT 编译路径的输出必须与解释器逐行一致
+const FMT_EXAMPLE: &str = include_str!("../../../examples/std/fmt.xulo");
 
 #[test]
 fn test_fmt_example_matches_interpreter() {
     let out = compile_and_run(FMT_EXAMPLE);
-    let expected: Vec<String> = [
-        "hello, world",
-        "42 / 2.5",
-        "\"a\\tb\"",
-        "€ / true",
-        "Point(x: 1, y: 2)",
-        "12345:2:false",
-        "12345:1:false",
-        "12345:2:true",
-        "255 ff FF 100 101",
-        "0xff 0XFF 0o100 0b101",
-        "-42",
-        "2.500000",
-        "3.14",
-        "1.234500e+03",
-        "0.1",
-        "1e-07",
-        "NaN",
-        "  Infinity",
-        "hi      |",
-        "-0003.10",
-        "   +3.10",
-        "0x0000ff",
-        "hel",
-        "[1, 2]",
-        "100%",
-        "42",
-        "ff",
-        "no directives",
-    ]
-    .iter()
-    .map(|s| s.to_string())
-    .collect();
-    assert_eq!(out, expected, "unexpected output for examples/fmt.xulo");
+    assert_eq!(out, xulo_examples::expected_lines("std/fmt.xulo"));
 }
 
 /// `std::fmt` 的文本动词咨询用户 `Display`/`Debug`：`Format` 来自指令的

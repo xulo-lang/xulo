@@ -1,0 +1,31 @@
+// `move` / `copy`：显式声明值的转移与复制
+//
+// - `move e` 取得整个绑定的所有权（对引用型值不复制存储）；它作用于绑定，
+//   不接受字段、元素或计算出的值
+// - `copy e` 复制值（引用型值得到独立存储）
+// - 两者都是表达式，类型与操作数相同，可以出现在任意表达式位置
+
+fn sum(xs: List<int>, extra: int): int {
+    xs[0] + xs[1] + extra
+}
+
+fn main() {
+    let xs = [1, 2, 3]
+
+    // 转移：`xs` 之后不再可用
+    let owned = move xs
+    print(owned)
+
+    // 复制：两份是独立的存储
+    let detached = copy owned
+    let mut a = copy detached
+    a[0] = 99
+    print(a[0], detached[0])
+
+    // 再转移一次整绑定
+    let again = move owned
+    print(again)
+
+    // 函数实参也可以显式转移/复制
+    print(sum(move again, 10))
+}

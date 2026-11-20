@@ -1,5 +1,0 @@
-# Additional examples that cannot be compared on Windows. The shared
-# `aot_differential_baseline.tsv` still applies; entries here override it for
-# `cfg(target_os = "windows")` only.
-# Format: example.xulo<TAB>reason
-ffi.xulo	`extern "C"` FFI is Unix-only (S8); Windows reports it as unsupported, so there is no native path to compare

@@ -1,0 +1,16 @@
+body
+defer 2
+defer 1
+7
+returning early
+early defer
+1
+falling through
+early defer
+2
+iteration 0
+iteration 0 done
+iteration 1
+iteration 1 done
+iteration 2
+iteration 2 done

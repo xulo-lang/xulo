@@ -1,0 +1,44 @@
+// 绑定：`let` / `let mut` / `const` / 类型标注 / 遮蔽 / 解构
+//
+// - `let` 绑定不可变，`let mut` 可重新赋值；默认参数与字段同样要求可变 place
+// - `const` 是编译期常量，可以带类型标注
+// - 同名遮蔽（shadowing）会创建新绑定，旧绑定不再可见
+// - 解构绑定两种形状：`{ ... }` 取对象字段、`( ... )` 取元组位置
+
+const GREETING: string = "hello"
+const LIMIT = 3
+
+fn main() {
+    // 不可变与可变
+    let name = "xulo"
+    let mut count = 0
+    count = count + 1
+    count = count + LIMIT
+    print(name, count)
+
+    // 显式类型标注
+    let typed: int = 40
+    let ratio: float = 0.5
+    print(typed, ratio)
+
+    // `:=` 与 `let x: T = e` 等价，只是省掉类型
+    let guessed := typed + 2
+    print(guessed)
+
+    // 常量参与表达式
+    print(GREETING, LIMIT * 2)
+
+    // 解构对象：`{ a, b }` 按字段名取值
+    let point = { x: 1, y: 2 }
+    let { x, y } = point
+    print(x + y)
+
+    // 解构元组：`( first, second )` 按位置取值
+    let pair = (10, "ten")
+    let (count_at, word) = pair
+    print(count_at, word)
+
+    // 字段按名字匹配，与书写顺序无关
+    let { a, b } = { a: 3, b: 4 }
+    print(a * b)
+}

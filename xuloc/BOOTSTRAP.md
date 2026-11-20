@@ -38,7 +38,7 @@ compiled binary's argv or two environment variables:
 
 ```bash
 # Interpreter path (Gate 1/2)
-XULO_STAGE1_MODE=tokens XULO_STAGE1_FILE=examples/fibonacci.xulo \
+XULO_STAGE1_MODE=tokens XULO_STAGE1_FILE=examples/functions/fibonacci.xulo \
   target/debug/xulo run xuloc/main.xulo
 
 XULO_STAGE1_MODE=parse XULO_STAGE1_FILE=xuloc/parser.xulo \
@@ -47,9 +47,14 @@ XULO_STAGE1_MODE=parse XULO_STAGE1_FILE=xuloc/parser.xulo \
 XULO_STAGE1_MODE=check XULO_STAGE1_FILE=xuloc/corpus/accept/basics.xulo \
   target/debug/xulo run xuloc/main.xulo
 
+# Corpus scan: one line per .xulo file, `<path>\t<lexer>\t<parser>`.
+# This is what the T9 ratchet measures (docs/tasks.md WP3b).
+XULO_STAGE1_MODE=scan XULO_STAGE1_DIR=examples \
+  target/debug/xulo run xuloc/main.xulo
+
 # Native path once a binary exists
-xuloc tokens examples/fibonacci.xulo
-xuloc parse examples/fibonacci.xulo
+xuloc tokens examples/functions/fibonacci.xulo
+xuloc parse examples/functions/fibonacci.xulo
 xuloc check xuloc/corpus/accept/basics.xulo
 xuloc build xuloc/corpus/accept/basics.xulo
 ```
@@ -63,6 +68,8 @@ default. The pieces are overridable:
 | `XULO_STAGE1_OUT` | Output binary path |
 | `XULO_STAGE1_C` | Generated C path |
 | `XULO_STAGE1_RUNTIME` | Runtime source (default `xuloc/runtime.c`, resolved from the working directory) |
+| `XULO_STAGE1_DIR` | Directory scanned by `XULO_STAGE1_MODE=scan` |
+| `XULO_STAGE1_SKIP` | Semicolon-separated paths the scan reports as `skipped` (inputs that exhaust the interpreter's call depth) |
 | `XULO_CC` | C compiler; when unset stage 1 tries `clang`, then `cc`, then the standard LLVM install on Windows |
 
 The generated C includes the runtime by base name and is compiled with

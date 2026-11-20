@@ -1,0 +1,32 @@
+// `Set<T>`：用 `Set::from_list` 构造，成员操作与相等比较
+//
+// - 语言没有集合字面量：`{}` 属于 `Map`
+// - `.size` / `.has(v)` / `.insert(v)` / `.remove(v)`
+// - 集合无序，语言不规定迭代顺序；相等比较与顺序无关
+// - 元素类型必须是可哈希的：string、int、float、bool、无载荷枚举
+
+fn main() {
+    let s = Set::from_list([1, 2, 2, 3])
+    print(s.size)
+    print(s.has(2), s.has(9))
+
+    let mut mutable = Set::from_list(["a", "b"])
+    print(mutable.insert("c"))
+    // 已存在的元素返回 false
+    print(mutable.insert("a"))
+    print(mutable.size)
+
+    print(mutable.remove("b"))
+    print(mutable.remove("zzz"))
+    print(mutable.size)
+
+    // 相等与插入顺序无关
+    let one = Set::from_list([1, 2, 3])
+    let two = Set::from_list([3, 2, 1])
+    print(one == two)
+    print(one == Set::from_list([1, 2]))
+
+    // 空集合也需要元素类型
+    let empty: Set<string> = Set::from_list([])
+    print(empty.size)
+}

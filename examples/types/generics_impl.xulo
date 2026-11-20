@@ -1,0 +1,89 @@
+// 泛型进阶：泛型 `impl`、内联 bound、`where` 多 bound、const 泛型参数
+//
+// - `impl<T: Bound> Type<T> { ... }` 给泛型类型加固有方法
+// - `impl<T: Bound> Trait for Type<T>` 给泛型类型实现 trait
+// - 函数签名后面可以跟 `where T: A + B`，多 bound 用 `+` 连接
+// - `const N: int` 是 const 泛型参数；用到它的 `Array<T, N>` 需要显式类型实参
+//
+// @no-aot all: AOT 不支持经泛型参数的 trait 派发（`Area::area(x)`，x: T）
+
+trait Area {
+    fn area(self): number
+}
+
+trait Named {
+    fn label(self): string
+}
+
+struct Sq {
+    side: number
+}
+
+impl Area for Sq {
+    fn area(self): number {
+        self.side * self.side
+    }
+}
+
+impl Named for Sq {
+    fn label(self): string {
+        "square"
+    }
+}
+
+// 内联 bound
+fn measure<T: Area>(x: T): number {
+    Area::area(x)
+}
+
+// `where` 子句 + 多 bound
+fn describe<T>(x: T): string where T: Area + Named {
+    Named::label(x) + " of area " + str(Area::area(x))
+}
+
+// 泛型类型的固有 impl
+struct Palette<T> {
+    items: List<T>
+}
+
+impl<T: Area> Palette<T> {
+    fn total(self): number {
+        let mut sum = 0
+        for item in self.items {
+            sum = sum + Area::area(item)
+        }
+        sum
+    }
+}
+
+// 泛型 trait 实现
+struct Box2<T> {
+    v: T
+}
+
+impl<T: Area> Area for Box2<T> {
+    fn area(self): number {
+        Area::area(self.v)
+    }
+}
+
+// const 泛型参数
+fn width<const N: int>(): int {
+    N
+}
+
+fn filled<const N: int>(): Array<int, N> {
+    Array::filled<int, N>(7)
+}
+
+fn main() {
+    print(measure(Sq(side: 2)))
+    print(describe(Sq(side: 3)))
+    print(Palette(items: [Sq(side: 1), Sq(side: 2)]).total())
+    print(Area::area(Box2(v: Sq(side: 4))))
+
+    // 调用处显式给出 const 实参
+    print(width<3>())
+    let arr = filled<3>()
+    print(arr.len, arr[0])
+}

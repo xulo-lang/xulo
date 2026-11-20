@@ -26,3 +26,6 @@ toml = "0.8"
 xulo-cli = { workspace = true }
 xulo-compiler = { workspace = true }
 xulo-core = { workspace = true }
+
+[dev-dependencies]
+xulo-examples = { path = "../xulo-examples" }

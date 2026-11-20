@@ -1,0 +1,29 @@
+// 可见性：`pub` 声明、`pub` 字段、模块外不可见
+//
+// - `pub struct` / `pub enum` / `pub trait` / `pub fn` / `pub const` 才能被
+//   其他模块使用
+// - 字段默认私有，`pub` 字段才能在声明模块外读写
+// - 私有字段只能在声明它的模块里构造和访问
+mod widgets {
+    pub struct Card {
+        pub title: string
+        secret: int
+    }
+
+    pub fn make(title: string): Card {
+        // 私有字段只在声明模块内可见
+        Card(title: title, secret: 42)
+    }
+
+    pub fn reveal(card: Card): int {
+        card.secret
+    }
+}
+
+fn main() {
+    let card = widgets::make("hello")
+    // `pub` 字段可以读
+    print(card.title)
+    // 私有字段只能通过模块自己的函数访问
+    print(widgets::reveal(card))
+}

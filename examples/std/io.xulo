@@ -1,0 +1,24 @@
+// `std::io`：显式的标准输出 / 错误输出 / flush
+//
+// - `std::io::print` / `println` 写 stdout，`eprint` / `eprintln` 写 stderr
+// - 它们都返回 `Result<unit, Error>`：写失败可以检查，也可以只丢弃
+// - `flush` 把缓冲推给操作系统
+// - 预置的 `print` / `println` / `eprintln` 是这些调用的便捷包装
+
+fn main() {
+    std::io::println("stdout line")
+    std::io::print("partial ")
+    std::io::println("line")
+    std::io::eprintln("stderr line")
+    std::io::flush()
+
+    // 显式处理写入结果
+    match std::io::println("checked") {
+        Result::Ok(_) => print("write ok")
+        Result::Err(e) => print(e.message)
+    }
+
+    // 是否连接终端取决于运行环境（`std::io::stdout_is_tty()`），输出会随
+    // 环境变化，因此这里不把它写进期望输出。
+    print("done")
+}

@@ -1,0 +1,15 @@
+true
+true
+hi
+bad
+3
+ping
+$((2 + 3))
+true
+captured
+`printf captured` child handle is spent
+true
+yes
+`sleep` timed out after 300 ms
+killed
+-1

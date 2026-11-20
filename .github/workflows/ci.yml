@@ -55,9 +55,9 @@ jobs:
           XULO_RUNTIME_LIB: ${{ github.workspace }}/target/release/libxulo_runtime.a
         run: cargo test -p xupm --test aot_differential -- --nocapture
 
-      # WP3/B7: the same differential on Windows. `tests/aot_differential_baseline.windows.tsv`
-      # records the examples the platform cannot run (`extern "C"` FFI, S8); it
-      # is ignored on Unix, where those examples are compared normally.
+      # WP3/B7: the same differential on Windows. The examples themselves declare
+      # their platform gaps (`extern "C"` FFI is `@no-aot windows`, S8); nothing
+      # is parked in a separate list that Unix would have to ignore.
       - name: AOT differential examples (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -71,8 +71,8 @@ jobs:
         run: |
           set -euo pipefail
           XULO_RUNTIME_LIB="$PWD/target/release/libxulo_runtime.a" \
-            target/release/xupm build examples/hello.xulo --release
-          test "$(examples/.xupm/build/hello)" = "Hello, world!"
+            target/release/xupm build examples/basics/hello.xulo --release
+          test "$(examples/basics/.xupm/build/hello)" = "Hello, world!"
 
       - name: AOT smoke test (Windows)
         if: runner.os == 'Windows'
@@ -80,8 +80,8 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $env:XULO_RUNTIME_LIB = "$PWD\target\release\xulo_runtime.lib"
-          & target\release\xupm.exe build examples\hello.xulo --release
-          $out = & examples\.xupm\build\hello.exe
+          & target\release\xupm.exe build examples\basics\hello.xulo --release
+          $out = & examples\basics\.xupm\build\hello.exe
           if ($out -ne "Hello, world!") { throw "AOT smoke test failed: $out" }
 
   conformance:
@@ -127,6 +127,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The coverage gate reads spec/grammar.md's production index.
+          submodules: recursive
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -134,16 +137,11 @@ jobs:
       - name: Build CLI
         run: cargo build --release -p xulo-cli
 
-      - name: Run all examples
-        run: |
-          set -e
-          for f in examples/*.xulo; do
-            echo "== Running $f =="
-            target/release/xulo run "$f" > /dev/null
-          done
-
-      - name: Run module example
-        run: target/release/xulo run examples/modules/main.xulo > /dev/null
+      # T2/T8: the examples gate discovers every program unit, checks it, runs
+      # it, compares stdout/stderr with the recorded sidecar, and proves the
+      # coverage table matches the grammar's production index.
+      - name: Examples gate
+        run: XULO_BIN=target/release/xulo cargo test -p xulo-cli --test examples -- --nocapture
 
   llvm-backend:
     runs-on: ubuntu-22.04
@@ -186,5 +184,5 @@ jobs:
 
       - name: Build and run an LLVM executable
         run: |
-          target/release/xupm build examples/hello.xulo --release
-          test "$(examples/.xupm/build/hello)" = "Hello, world!"
+          target/release/xupm build examples/basics/hello.xulo --release
+          test "$(examples/basics/.xupm/build/hello)" = "Hello, world!"

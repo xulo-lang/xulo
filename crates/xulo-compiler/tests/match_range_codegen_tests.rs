@@ -147,10 +147,10 @@ fn main() {
     assert_eq!(out, lines(&["8", "3"]));
 }
 
-/// examples/control_flow.xulo 全文：JIT 输出与解释器逐行一致
+/// examples/basics/control_flow.xulo 全文：JIT 输出与解释器逐行一致
 #[test]
 fn control_flow_example_matches_interpreter() {
-    let out = compile_and_run(include_str!("../../../examples/control_flow.xulo"));
+    let out = compile_and_run(include_str!("../../../examples/basics/control_flow.xulo"));
     assert_eq!(
         out,
         lines(&[

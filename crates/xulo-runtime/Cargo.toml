@@ -16,3 +16,4 @@ serde_json.workspace = true
 [dev-dependencies]
 xulo-parser = { workspace = true }
 xulo-semantic = { workspace = true }
+xulo-examples = { path = "../xulo-examples" }

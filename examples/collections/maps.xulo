@@ -1,0 +1,41 @@
+// `Map<K, V>`：`{}` 字面量、`Map<K, V>{ "k": v }` 显式类型、成员与迭代
+//
+// - `{ a: 1 }` 是对象字面量；要 Map 语义就标注类型或写 `Map<string, int>{ ... }`
+// - `.get(k)` 缺失返回 `null`（不是失败），`.set(k, v)` 插入或覆盖
+// - `.has` / `.remove` / `.size` / `.keys()` / `.values()` / `.entries()`
+// - `for k in m` 按插入顺序遍历键
+
+fn main() {
+    // 带类型标注的对象字面量就是 Map
+    let mut counts: Map<string, int> = { apples: 2, pears: 1 }
+    print(counts.size)
+    print(counts.get("apples"), counts.get("plums"))
+
+    counts.set("plums", 5)
+    print(counts.has("plums"), counts.size)
+
+    // 覆盖已有键
+    counts.set("apples", 10)
+    print(counts.get("apples"))
+
+    // 删除并返回旧值
+    print(counts.remove("pears"), counts.size)
+
+    // 键 / 值 / 条目
+    print(counts.keys())
+    print(counts.values())
+    print(counts.entries())
+
+    // 遍历键
+    for key in counts {
+        print(key)
+    }
+
+    // 显式 `Map<K, V>{ ... }` 形式：键是表达式，所以字符串要加引号
+    let typed = Map<string, int>{ "a": 1, "b": 2 }
+    print(typed.get("b"))
+
+    // 空 Map 需要一个类型才能推断值类型
+    let empty: Map<string, unknown> = {}
+    print(empty.size, empty.get("missing") == null)
+}

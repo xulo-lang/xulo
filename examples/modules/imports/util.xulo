@@ -1,0 +1,15 @@
+// 文件模块的支撑单元：`mod util;` 会加载同目录的 `util.xulo`
+//
+// 这里的声明都被 `main.xulo` 通过 `use` 引入。
+
+pub const PI: float = 3.14
+
+pub type Meters = int
+
+pub fn add(a: int, b: int): int {
+    a + b
+}
+
+pub fn square(n: int): int {
+    n * n
+}

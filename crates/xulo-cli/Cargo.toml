@@ -18,3 +18,4 @@ xulo-compiler = { workspace = true }
 xulo-ide = { workspace = true }
 
 [dev-dependencies]
+xulo-examples = { path = "../xulo-examples" }

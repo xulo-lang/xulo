@@ -138,8 +138,12 @@ package or out-of-scope section that tracks it.
 - [x] **D1** Source spans and `file:line:column` diagnostics
 - [x] **D2** stderr writes and nonzero exit status
 - [x] **D4** Stage 1 diagnostics consistent with stage 0
-- [x] **T1** Unit and integration tests — `cargo test --workspace`: 2065 passed, 0 failed (2026-11-18)
-- [x] **T2** All examples run in CI
+- [x] **T1** Unit and integration tests — `cargo test --workspace` is green; the
+      count grows with the corpus, so record it from CI rather than here
+- [x] **T2** All examples run in CI — `crates/xulo-cli/tests/examples.rs`
+      discovers every program unit, runs `xulo check`, executes it, and compares
+      stdout/stderr with the `<name>.expected` sidecar; the CI `examples` job
+      drives it with the release binary
 - [x] **T5** Stage 1 self-parse/self-check/self-build tests — self-parse,
       self-check, the self-build (stage 2), and the stage 1/stage 2
       differential live in `crates/xulo-cli/tests/stage1.rs`,
@@ -242,12 +246,14 @@ Priority P1 · needed by Gate 4 · source: `stage1-readiness.md` §7 WP3, §6.6�
 - [x] **C2** Add AOT runtime support for `Map`.
 - [x] **C3** Add AOT runtime support for `Set`.
 - [x] **C1** Fix list spread lowering in the AOT path
-      (`examples/collections.xulo`).
+      (`examples/collections/collections.xulo`).
 - [x] **R9b** Fix nested ternary lowering in the AOT path
-      (`examples/optional_chaining.xulo`).
+      (`examples/types/optional_chaining.xulo`).
 - [x] **L15** Fix `Array<T, N>.len` in the AOT path.
-- [x] **T4** Add a differential runner that builds every non-interactive
-      example both ways and compares output.
+- [x] **T4** Add a differential runner that builds every example program both
+      ways and compares output. Discovery and the `@no-aot` / `@skip-aot` /
+      `@no-run` directives come from `crates/xulo-examples`, shared with the
+      `examples` gate, and a `@no-aot` marker that starts building fails the run.
 - [x] **B3a** Verify that `xupm build` failures return a nonzero exit status;
       fix the pipeline if they do not.
 - [x] **G3** Make the `§6.6–6.7` probes pass.
@@ -259,10 +265,10 @@ Priority P1 · needed by Gate 4 · source: `stage1-readiness.md` §7 WP3, §6.6�
       Regression: `crates/xulo-compiler/tests/type_system_codegen_tests.rs::http_data_types_compile`.
 - [x] **S3a** AOT lowering for `std::process::launch`, `Command`, and `Child`
       (`process`). `crates/xupm/tests/aot_differential.rs` now compares
-      `examples/process.xulo` byte for byte.
+      `examples/std/process.xulo` byte for byte.
 - [x] **R9c** `async_tasks`: AOT lowers `Task::resolve`/`all`/`race` to their
       already-settled values and `Task::timeout` to an elapsed-time check
-      against the limit; `examples/async_tasks.xulo` now matches `xulo run`
+      against the limit; `examples/concurrency/async_tasks.xulo` now matches `xulo run`
       byte for byte. Regression:
       `crates/xulo-compiler/tests/aot_syntax_coverage_tests.rs::task_combinators_follow_the_compiled_async_model`.
       Outside the bootstrap subset (§8 of `stage1-readiness.md`).
@@ -271,22 +277,64 @@ Priority P1 · needed by Gate 4 · source: `stage1-readiness.md` §7 WP3, §6.6�
       `crates/xulo-compiler/tests/type_system_codegen_tests.rs::array_filled_compiles`
       (AOT runtime lowering `xulo_array_filled`).
 - [x] **B7** Run `stage1_binary_matches_the_interpreter` on macOS and Windows,
-      not only Linux. macOS is verified: the opt-in differential compares all 30
-      examples and the stage 1 workload byte for byte on 2026-11-17, and CI runs
-      it there. Windows runs the same differential with
-      `crates/xupm/tests/aot_differential_baseline.windows.tsv`
-      (`ffi.xulo`, because `extern "C"` FFI stays Unix-only, S8). The Windows
-      link now names the Rust runtime's system libraries
+      not only Linux. macOS is verified: the opt-in differential compares the
+      example corpus and the stage 1 workload byte for byte on 2026-11-17, and CI
+      runs it there. Windows runs the same differential; `ffi.xulo` declares
+      `// @no-aot windows:` because `extern "C"` FFI stays Unix-only (S8). The
+      Windows link now names the Rust runtime's system libraries
       (`kernel32`/`ntdll`/`userenv`/`ws2_32`/`dbghelp`/`synchronization` plus
-      `/DEFAULTLIB:msvcrt`), and `examples/fs.xulo` no longer prints its host
-      temp path, so all 29 comparable examples and the stage 1 native build pass
+      `/DEFAULTLIB:msvcrt`), and `examples/std/fs.xulo` no longer prints its host
+      temp path, so the comparable examples and the stage 1 native build pass
       byte for byte locally and in CI on 2026-11-17. Windows FFI stays out of
       scope (S8).
 
-**Verify:** `xupm build examples/collections.xulo` and
-`xupm build examples/optional_chaining.xulo` match `xulo run` byte for byte.
+**Verify:** `xupm build examples/collections/collections.xulo` and
+`xupm build examples/types/optional_chaining.xulo` match `xulo run` byte for byte.
 `XULO_AOT_DIFFERENTIAL=1 cargo test -p xupm --test aot_differential` compares
-all 30 examples; Windows additionally parks `ffi.xulo`.
+every discovered program.
+
+## WP3b — Example corpus as the syntax gate
+
+Priority P1 · needed by Gate 3 and the bootstrap corpus · source:
+`stage1-readiness.md` §5 T8/T9, §6.12
+
+- [x] **T8** Make `examples/` cover the whole grammar, and prove it.
+      `examples/coverage.tsv` maps all 194 nonterminals of `spec/grammar.md`'s
+      production index to an example plus a probe string;
+      `crates/xulo-cli/tests/examples.rs::coverage_table_accounts_for_grammar`
+      fails on a missing row, a stale path, an absent probe, or an exemption
+      without a reason. Discovered while building the corpus:
+      - `spawn.on(expr)` never parsed (`spawn_target` assumed the expression was
+        the first child of the pair, but `kw_on` is a non-silent token) — fixed in
+        `crates/xulo-parser/src/expr.rs`, regression
+        `spawn_on_target_keeps_its_expression`;
+      - `mut` parameters were declared `is_const`, so assigning to one was
+        rejected as "binding is immutable" — fixed in `crates/xulo-semantic`;
+      - `StructPattern` is parsed but unimplemented (§6.12), recorded as the one
+        `error-only:` row;
+      - `super::` inside a `use` in a file module panics the module loader
+        (`crates/xulo-cli/src/cli.rs`, `export_maps[target]`), so no example uses
+        it; `PathHead` is covered by `self::`.
+      The AOT differential then measured the new corpus and recorded these gaps
+      with `@no-aot` (each one must keep failing, so closing it forces a diff):
+      `defer`, match guard/or/range/type patterns, `spawn`/`lock`/service,
+      block-scoped shadowing (the inner `let` writes through to the outer
+      binding), `f32` arithmetic (the result lands in an integer slot), nested
+      tuple access and tuple pass/return, trait dispatch through a generic
+      parameter, the `Error("…")` constructor, and failure-path reporting (the
+      interpreter buffers `print` and writes `error[E0006]`, the native runtime
+      writes `panic: …`).
+- [x] **T9** Measure stage 1 against the same corpus.
+      `xuloc/main.xulo` gained a `scan` mode; `XULO_STAGE1_MODE=scan
+      XULO_STAGE1_DIR=examples xulo run xuloc/main.xulo` prints one line per file
+      with the lexer and parser verdict. `crates/xulo-cli/tests/stage1.rs::
+      stage1_example_corpus_tracks_baseline` compares that with
+      `crates/xulo-cli/tests/stage1_examples_baseline.tsv` and fails when a listed
+      gap starts passing. Current baseline: 62 files, 11 parser gaps and 1
+      call-depth crash (`std/net.xulo` nests four `match` levels), 0 lexer gaps.
+
+**Verify:** `cargo test -p xulo-cli --test examples`,
+`cargo test -p xulo-cli --test stage1 stage1_example_corpus_tracks_baseline`.
 
 ## WP4 — `defer` semantics
 
@@ -327,7 +375,7 @@ Can start in parallel with WP1–WP4 · needed by Gate 1/2 · source:
 - [x] **T5a** Smoke test: stage 1 parses a fixed example and prints
       spans/tokens.
       `crates/xulo-cli/tests/stage1.rs` runs `tokens` and `parse` on
-      `examples/fibonacci.xulo` and asserts spans and node positions.
+      `examples/functions/fibonacci.xulo` and asserts spans and node positions.
 - [x] **T5b** Smoke test: stage 1 parses its own source.
       The same test parses every `xuloc/*.xulo`; `xuloc/tests.xulo` repeats
       the check through its own `#[test]` functions.
@@ -353,7 +401,7 @@ After WP1–WP5 · needed by Gate 4/5/6 · source: `stage1-readiness.md` §7 WP6
       `xuloc/` is an `xupm` package (`xuloc/xupm.toml`, entry `main.xulo`), so
       `xupm build xuloc/main.xulo --release` produces
       `xuloc/.xupm/build/xuloc`; the native binary matches the interpreter for
-      `tokens`/`parse` on `examples/fibonacci.xulo` and `parse` on
+      `tokens`/`parse` on `examples/functions/fibonacci.xulo` and `parse` on
       `xuloc/main.xulo`. The opt-in differential test rejects output drift.
       `crates/xupm/tests/cli.rs::xuloc_is_a_package_project` keeps the manifest
       and the no-file-argument check path working.

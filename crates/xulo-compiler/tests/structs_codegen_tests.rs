@@ -31,7 +31,7 @@ fn references_symbol(bytes: &[u8], symbol: &str) -> bool {
         .any(|window| window == symbol.as_bytes())
 }
 
-/// examples/structs.xulo 全文：AOT 编译路径的输出必须与解释器逐行一致
+/// examples/types/structs.xulo 全文：AOT 编译路径的输出必须与解释器逐行一致
 const STRUCTS_EXAMPLE: &str = r#"
 struct Point { x: number, y: number }
 

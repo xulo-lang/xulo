@@ -1,0 +1,28 @@
+hello, world
+42 / 2.5
+"a\tb"
+€ / true
+Point(x: 1, y: 2)
+12345:2:false
+12345:1:false
+12345:2:true
+255 ff FF 100 101
+0xff 0XFF 0o100 0b101
+-42
+2.500000
+3.14
+1.234500e+03
+0.1
+1e-07
+NaN
+  Infinity
+hi      |
+-0003.10
+   +3.10
+0x0000ff
+hel
+[1, 2]
+100%
+42
+ff
+no directives

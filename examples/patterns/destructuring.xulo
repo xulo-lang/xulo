@@ -1,0 +1,29 @@
+// 解构：`let { ... }` 取对象字段、`let ( ... )` 取元组位置
+//
+// - 两种形状要求初始化器形状匹配：对象字面量 / 元组
+// - 解构得到的绑定与普通 `let` 一样不可变
+// - 解构可以与类型标注、嵌套解构组合
+
+fn point(): (int, int) {
+    (3, 4)
+}
+
+fn main() {
+    // 元组解构
+    let (x, y) = point()
+    print(x + y)
+
+    // 对象解构
+    let user = { name: "xulo", age: 3 }
+    let { name, age } = user
+    print(name, age)
+
+    // 嵌套：先解构元组，再解构里面的对象
+    let entry = ({ id: 1 }, "first")
+    let (record, label) = entry
+    let { id } = record
+    print(id, label)
+
+    // 解构后仍可使用原绑定
+    print(user.name, user.age)
+}

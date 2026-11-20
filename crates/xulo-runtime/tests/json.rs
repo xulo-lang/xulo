@@ -250,23 +250,12 @@ fn json_member_and_arity_errors_are_semantic() {
     );
 }
 
-/// `examples/json.xulo` 全文经解释器运行的输出逐行固定（示例即测试）。
+/// `examples/std/json.xulo` 全文经解释器运行的输出逐行固定（示例即测试）。
 #[test]
 fn json_example() {
-    let out = run_ok(include_str!("../../../examples/json.xulo"));
+    let out = run_ok(include_str!("../../../examples/std/json.xulo"));
     assert_eq!(
-        out,
-        vec![
-            "1 true x null".to_string(),
-            "x".to_string(),
-            "b".to_string(),
-            r#"[1,"two",false,null,2.5]"#.to_string(),
-            r#"{"n":3,"name":"x"}"#.to_string(),
-            "{\n  \"a\": 1\n}".to_string(),
-            "true".to_string(),
-            "false".to_string(),
-            "parse failed".to_string(),
-            "indent outside 0..=8".to_string(),
-        ]
+        out.join("\n"),
+        xulo_examples::expected_text("std/json.xulo")
     );
 }

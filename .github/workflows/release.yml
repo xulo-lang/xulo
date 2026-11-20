@@ -48,9 +48,9 @@ jobs:
           set -e
           target/release/xulo --version
           target/release/xupm --version
-          test "$(target/release/xulo run examples/hello.xulo)" = "Hello, world!"
-          target/release/xupm build examples/hello.xulo --release
-          test "$(examples/.xupm/build/hello)" = "Hello, world!"
+          test "$(target/release/xulo run examples/basics/hello.xulo)" = "Hello, world!"
+          target/release/xupm build examples/basics/hello.xulo --release
+          test "$(examples/basics/.xupm/build/hello)" = "Hello, world!"
 
       - name: Package release
         run: |
@@ -101,10 +101,10 @@ jobs:
           set -euo pipefail
           target/aarch64-apple-darwin/release/xulo --version
           target/aarch64-apple-darwin/release/xupm --version
-          test "$(target/aarch64-apple-darwin/release/xulo run examples/hello.xulo)" = "Hello, world!"
+          test "$(target/aarch64-apple-darwin/release/xulo run examples/basics/hello.xulo)" = "Hello, world!"
           XULO_RUNTIME_LIB="$PWD/target/aarch64-apple-darwin/release/libxulo_runtime.a" \
-            target/aarch64-apple-darwin/release/xupm build examples/hello.xulo --release
-          test "$(examples/.xupm/build/hello)" = "Hello, world!"
+            target/aarch64-apple-darwin/release/xupm build examples/basics/hello.xulo --release
+          test "$(examples/basics/.xupm/build/hello)" = "Hello, world!"
 
       - name: Package release
         run: |
@@ -154,11 +154,11 @@ jobs:
           $ErrorActionPreference = "Stop"
           & target\release\xulo.exe --version
           & target\release\xupm.exe --version
-          $out = & target\release\xulo.exe run examples\hello.xulo
+          $out = & target\release\xulo.exe run examples\basics\hello.xulo
           if ($out -ne "Hello, world!") { throw "xulo run failed: $out" }
           $env:XULO_RUNTIME_LIB = "$PWD\target\release\xulo_runtime.lib"
-          & target\release\xupm.exe build examples\hello.xulo --release
-          $out = & examples\.xupm\build\hello.exe
+          & target\release\xupm.exe build examples\basics\hello.xulo --release
+          $out = & examples\basics\.xupm\build\hello.exe
           if ($out -ne "Hello, world!") { throw "xupm build failed: $out" }
 
       - name: Package release

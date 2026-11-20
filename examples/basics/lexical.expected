@@ -1,0 +1,13 @@
+42
+255 10 15 42
+1.5 2 1000
+single double it's say "hi"
+tab	here quote"q backslash\ line
+break
+A👋
+one 2 two 2
+nested inner 6
+escaped ${not_interpolated}
+7
+3 3
+[0, 9]

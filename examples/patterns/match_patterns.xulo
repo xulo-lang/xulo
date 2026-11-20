@@ -1,0 +1,87 @@
+// 模式：字面量、区间、枚举载荷、or、类型、binder、通配与 guard
+//
+// - 字面量模式覆盖整数、浮点、字符串、`bool` 与 `null`
+// - 区间模式：`0..<5` 与 `5..=9`（半开 / 闭合），操作数必须是数字字面量
+// - `Shape::Circle(r)` 解构枚举载荷，`Direction::East` 匹配无载荷变体
+// - `0 | 1` 是 or 模式；`string s` 是带 binder 的类型模式
+// - 每个分支可以带 `if` guard，只有模式匹配后才会求值
+//
+// @no-aot all: AOT 后端尚未下降 guard / or / 区间 / 类型模式（irgen/expr.rs）
+
+enum Direction {
+    North
+    South
+    East
+}
+
+enum Shape {
+    Circle(radius: number)
+    Rect(width: number, height: number)
+}
+
+fn classify(n: int): string {
+    match n {
+        0 => "zero"
+        1 | 2 => "small"
+        3..<10 => "medium"
+        10..=99 => "large"
+        _ => "huge"
+    }
+}
+
+fn graded(score: int): string {
+    match score {
+        s if s >= 90 => "A"
+        s if s >= 80 => "B"
+        _ => "C"
+    }
+}
+
+fn area(shape: Shape): number {
+    match shape {
+        Shape::Circle(r) => 3.14 * r * r
+        Shape::Rect(w, h) => w * h
+    }
+}
+
+fn describe(value: unknown): string {
+    match value {
+        null => "nothing"
+        bool b => `bool ${b}`
+        int i => `int ${i}`
+        float f => `float ${f}`
+        string s => s
+        _ => "other"
+    }
+}
+
+fn main() {
+    print(classify(0), classify(2), classify(7), classify(42), classify(1000))
+    print(graded(95), graded(85), graded(70))
+
+    print(area(Shape::Circle(2)))
+    print(area(Shape::Rect(3, 4)))
+
+    print(describe(null))
+    print(describe(true))
+    print(describe(7))
+    print(describe(1.5))
+    print(describe("xulo"))
+
+    let dir = Direction::East
+    print(match dir {
+        Direction::North => "north"
+        Direction::South => "south"
+        Direction::East => "east"
+    })
+
+    // 括号可以给单个模式分组
+    match 5 {
+        (n) => print(n * 2)
+    }
+
+    // 绑定模式：`other` 捕获任意值
+    match "anything" {
+        other => print(other)
+    }
+}

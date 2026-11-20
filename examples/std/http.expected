@@ -1,0 +1,17 @@
+xulo
+demo
+null
+200 hello, xulo
+201 text/plain; charset=utf-8 done
+application/json {"ok":true}
+404 none gone
+200
+ok
+200 hello, xulo
+404 not found
+server stopped
+true
+GET /health
+POST /greet
+GET /missing
+

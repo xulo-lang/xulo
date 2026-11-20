@@ -1,0 +1,22 @@
+// 运行时失败：`panic` 终止程序并写出原因
+//
+// - `panic("文本")` 是表达式，可以在任意表达式位置终止当前程序
+// - 诊断以 `error[E0006] runtime: ...` 写到 stderr，退出码为 1
+// - 解释器把 `print` 的输出收集到程序正常结束才写出，所以失败路径上只有诊断
+//
+// @no-aot all: 失败路径的两条路径不比较——解释器写 `error[E0006]` 并丢弃已收集的
+// stdout，原生运行时写 `panic: …` 并保留 stdout
+// @panic cannot continue
+
+fn check(ok: bool) {
+    if ok {
+        return
+    }
+    panic("cannot continue")
+}
+
+fn main() {
+    print("before")
+    check(false)
+    print("never reached")
+}

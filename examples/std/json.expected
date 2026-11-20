@@ -1,0 +1,12 @@
+1 true x null
+x
+b
+[1,"two",false,null,2.5]
+{"n":3,"name":"x"}
+{
+  "a": 1
+}
+true
+false
+parse failed
+indent outside 0..=8

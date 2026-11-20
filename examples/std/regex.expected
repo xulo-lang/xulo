@@ -1,0 +1,17 @@
+true
+false
+regex parse error:
+    [a-z
+    ^
+error: unclosed character class
+unknown flag `z`
+42-7 42 7
+42-7
+8-9
+example.ada
+f[oo] b[oo]
+3 hel
+true
+failed
+ada@example.com
+none

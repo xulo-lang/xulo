@@ -1,0 +1,44 @@
+// 元组：元组字面量、元组类型、位置访问、解构、比较、可变字段
+//
+// - `(a, b)` 至少两个元素才是元组；`(e)` 只是分组
+// - 类型写作 `(int, string)`，位置访问用 `.0` / `.1`
+// - 元组按值比较：`==` 逐位置比较
+// - 元组是值类型：赋值与传参复制整个元组
+//
+// @no-aot all: AOT 的元组支持不完整——嵌套位置访问与按元组返回/传参结果错误
+
+fn pair(): (int, string) {
+    (1, "one")
+}
+
+fn swap(t: (int, string)): (string, int) {
+    (t.1, t.0)
+}
+
+fn main() {
+    let p: (int, string) = (10, "ten")
+    print(p.0, p.1)
+
+    // 函数返回值直接取位置
+    print(pair().0)
+
+    // 解构
+    let (n, word) = pair()
+    print(n, word)
+
+    // 元组比较
+    print((1, 2) == (1, 2))
+    print((1, 2) == (2, 1))
+
+    // 嵌套元组
+    let nested = ((1, 2), "x")
+    print(nested.0.0, nested.0.1, nested.1)
+
+    // 可变元组的字段赋值
+    let mut counter: (int, int) = (1, 2)
+    counter.0 = 5
+    print(counter.0 + counter.1)
+
+    // 元组作为参数与返回值
+    print(swap((3, "three")))
+}

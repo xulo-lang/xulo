@@ -2,7 +2,7 @@
 //! lowered-AST shape checks, negative cases, and the nesting-depth limit.
 
 use xulo_core::ast::{
-    Expression, Literal, MatchBody, MatchPattern, PathHead, Statement, Type, UseTarget,
+    Expression, Literal, MatchBody, MatchPattern, PathHead, SpawnTarget, Statement, Type, UseTarget,
 };
 use xulo_parser::{MAX_NEST_DEPTH, parse_program};
 
@@ -710,6 +710,41 @@ fn spawn_and_lock() {
         panic!();
     };
     assert!(matches!(f.body.statements[2], Statement::Expr(_)));
+}
+
+/// `.on(expr)` is the dispatched spawn target; `kw_on` is a non-silent token,
+/// so the target expression must be picked out of the pair (regression: every
+/// `.on(...)` spawn failed with `expected expression, found kw_on`).
+#[test]
+fn spawn_on_target_keeps_its_expression() {
+    let p = parse_ok(
+        "async fn f() { let a = spawn.on(\"worker\") async { work() } let b = spawn .on(pick()) async { work() } }",
+    );
+    let Statement::Fn(f) = &p.statements[0] else {
+        panic!();
+    };
+    let Statement::Let(a) = &f.body.statements[0] else {
+        panic!();
+    };
+    let Some(Expression::Spawn(spawn)) = &a.value else {
+        panic!("expected a spawn expression, got {:?}", a.value);
+    };
+    assert!(
+        matches!(&spawn.target, SpawnTarget::On(expr) if matches!(&**expr, Expression::Literal { .. })),
+        "expected an `.on(\"worker\")` target, got {:?}",
+        spawn.target
+    );
+    let Statement::Let(b) = &f.body.statements[1] else {
+        panic!();
+    };
+    let Some(Expression::Spawn(spawn)) = &b.value else {
+        panic!("expected a spawn expression");
+    };
+    assert!(
+        matches!(&spawn.target, SpawnTarget::On(expr) if matches!(&**expr, Expression::Call(_))),
+        "expected an `.on(pick())` target, got {:?}",
+        spawn.target
+    );
 }
 
 #[test]

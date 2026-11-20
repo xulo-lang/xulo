@@ -1,0 +1,36 @@
+// `Array<T, N>`：内联定长数组
+//
+// - 类型是 `Array<T, N>`，长度是类型的一部分，不能增删元素
+// - 构造：`Array::filled<T, N>(value)`，或把长度正好为 N 的列表字面量标注成数组
+// - `a[i]` / `a[i] = v`、`.len`、`for x in a`（按下标顺序）
+// - 数组是值类型：绑定、赋值、传参都复制整个数组
+
+fn sum(xs: Array<int, 3>): int {
+    let mut total = 0
+    for x in xs {
+        total = total + x
+    }
+    total
+}
+
+fn main() {
+    // 显式构造：3 个 7
+    let filled = Array::filled<int, 3>(7)
+    print(filled.len, filled[0], filled[2])
+
+    // 字面量标注成数组（长度必须等于 N）
+    let literal: Array<int, 3> = [1, 2, 3]
+    print(literal[1])
+
+    // 下标赋值需要可变 place
+    let mut writable: Array<int, 2> = [0, 0]
+    writable[1] = 9
+    print(writable[0], writable[1])
+
+    // 数组作为参数按值传递
+    print(sum(literal))
+
+    // 空数组
+    let none: Array<int, 0> = []
+    print(none.len)
+}

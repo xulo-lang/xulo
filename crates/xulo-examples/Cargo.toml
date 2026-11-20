@@ -1,0 +1,7 @@
+[package]
+name = "xulo-examples"
+version.workspace = true
+edition.workspace = true
+description = "Test support for the examples/ corpus: discovery, header directives, output sidecars"
+
+[dependencies]

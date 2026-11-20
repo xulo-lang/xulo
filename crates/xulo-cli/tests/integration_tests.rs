@@ -50,7 +50,7 @@ fn build_executable(entry: &std::path::Path, exe: &std::path::Path) {
     }
 }
 
-/// `examples/os.xulo` 经 `xulo run` 的输出逐行固定。走子进程而不是
+/// `examples/std/os.xulo` 经 `xulo run` 的输出逐行固定。走子进程而不是
 /// 解释器内联跑：chdir/setenv 是进程全局状态，不该波及并行测试线程。
 #[test]
 fn run_os_example() {
@@ -61,7 +61,7 @@ fn run_os_example() {
         .to_path_buf();
     let out = Command::new(BIN)
         .arg("run")
-        .arg(root.join("examples/os.xulo"))
+        .arg(root.join("examples/std/os.xulo"))
         .output()
         .unwrap();
     assert!(
@@ -71,11 +71,11 @@ fn run_os_example() {
     );
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
-        "true\nmoved\nback\nset\nhello\nunset\nnull\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n"
+        xulo_examples::expected_lines("std/os.xulo").join("\n") + "\n"
     );
 }
 
-/// `examples/http.xulo` 经 `xulo run` 的完整往返：数据段 + 自拉起服务器
+/// `examples/std/http.xulo` 经 `xulo run` 的完整往返：数据段 + 自拉起服务器
 /// 子进程的真实 fetch/request/404 + kill/wait。只能走 CLI——示例用
 /// argv/exec_path 把自己再拉起一份当服务器（serve 会阻塞，客户端与服务端
 /// 必须分进程）。
@@ -88,7 +88,7 @@ fn run_http_example() {
         .to_path_buf();
     let out = Command::new(BIN)
         .arg("run")
-        .arg(root.join("examples/http.xulo"))
+        .arg(root.join("examples/std/http.xulo"))
         .output()
         .unwrap();
     assert!(
@@ -98,7 +98,7 @@ fn run_http_example() {
     );
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
-        "xulo\ndemo\nnull\n200 hello, xulo\n201 text/plain; charset=utf-8 done\napplication/json {\"ok\":true}\n404 none gone\n200\nok\n200 hello, xulo\n404 not found\nserver stopped\ntrue\nGET /health\nPOST /greet\nGET /missing\n\n"
+        xulo_examples::expected_lines("std/http.xulo").join("\n") + "\n"
     );
 }
 
@@ -2369,7 +2369,7 @@ fn build_path_dependency_executable() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// AOT 编译 `examples/control_flow.xulo` 并直接执行产物，输出须与解释器
+/// AOT 编译 `examples/basics/control_flow.xulo` 并直接执行产物，输出须与解释器
 /// `xulo run` 逐字节一致（覆盖字面量 pattern、Range 列表、if/while 里的
 /// break/continue 流转）。链接静态运行时，归档未构建时跳过。
 #[test]
@@ -2384,7 +2384,7 @@ fn build_control_flow_matches_interpreter_output() {
         eprintln!("skipping: {} not built", staticlib.display());
         return;
     }
-    let src = root.join("examples/control_flow.xulo");
+    let src = root.join("examples/basics/control_flow.xulo");
     let interp = Command::new(BIN).arg("run").arg(&src).output().unwrap();
     assert!(
         interp.status.success(),
@@ -2417,7 +2417,7 @@ fn build_control_flow_matches_interpreter_output() {
     let _ = std::fs::remove_file(&exe);
 }
 
-/// AOT 编译 `examples/trait_shapes.xulo`：`Trait::method(recv)` 静态派发
+/// AOT 编译 `examples/types/trait_shapes.xulo`：`Trait::method(recv)` 静态派发
 /// 与 `str()` 的 `Display` 派发都要能落地产物，输出与解释器逐字节一致。
 #[test]
 fn build_trait_shapes_matches_interpreter_output() {
@@ -2431,7 +2431,7 @@ fn build_trait_shapes_matches_interpreter_output() {
         eprintln!("skipping: {} not built", staticlib.display());
         return;
     }
-    let src = root.join("examples/trait_shapes.xulo");
+    let src = root.join("examples/types/trait_shapes.xulo");
     let interp = Command::new(BIN).arg("run").arg(&src).output().unwrap();
     assert!(
         interp.status.success(),
@@ -2590,7 +2590,7 @@ fn main() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// AOT 编译 `examples/std.xulo`（`std::io` / `std::math` / `std::time` /
+/// AOT 编译 `examples/std/std.xulo`（`std::io` / `std::math` / `std::time` /
 /// `std::fs`）并执行
 /// 产物；工作目录设为临时目录，避免示例写出的文件落进仓库。
 #[test]
@@ -2605,7 +2605,7 @@ fn build_std_example_matches_interpreter_output() {
         eprintln!("skipping: {} not built", staticlib.display());
         return;
     }
-    let src = root.join("examples/std.xulo");
+    let src = root.join("examples/std/std.xulo");
     let work = std::env::temp_dir().join(format!(
         "xulo_std_work_{}_{}",
         std::process::id(),

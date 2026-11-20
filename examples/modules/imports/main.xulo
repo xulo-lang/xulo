@@ -1,0 +1,22 @@
+// 文件模块与导入：`mod`、`use` 分组、别名、`use type`
+//
+// - `mod util;` 从同目录的 `util.xulo` 加载模块
+// - `use util::{add, PI}` 引入多个值；`use util as u` 起别名
+// - `use type util::Meters` 只把名字引入类型位置（不会产生值绑定）
+// - 模块成员默认私有，`pub` 才对外可见
+mod util;
+
+use util::{add, PI};
+use util as u;
+use type util::Meters;
+
+fn perimeter(side: Meters): Meters {
+    side * 4
+}
+
+fn main() {
+    print(add(2, 3))
+    print(PI)
+    print(u::square(4))
+    print(perimeter(u::square(2)))
+}

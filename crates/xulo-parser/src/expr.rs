@@ -964,11 +964,16 @@ fn task_spawn(pair: Pair<'_, Rule>, span: Range<usize>) -> R<SpawnExpr> {
 
 fn spawn_target(pair: Pair<'_, Rule>) -> R<SpawnTarget> {
     let text = pair.as_str().to_string();
-    let inner = pair.into_inner().next();
-    if let Some(e) = inner {
-        check_rule(&e, Rule::expression)?;
-        Ok(SpawnTarget::On(Box::new(expression(e)?)))
-    } else if text.starts_with(".thread") {
+    // `.on(expr)` carries the target expression; `kw_on` is a non-silent
+    // token in the grammar, so pick the expression out instead of assuming it
+    // is the first child.
+    if let Some(e) = pair
+        .into_inner()
+        .find(|inner| inner.as_rule() == Rule::expression)
+    {
+        return Ok(SpawnTarget::On(Box::new(expression(e)?)));
+    }
+    if text.starts_with(".thread") {
         Ok(SpawnTarget::Thread)
     } else {
         Ok(SpawnTarget::Process)

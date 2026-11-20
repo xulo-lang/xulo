@@ -1,0 +1,27 @@
+// `xulo test` 的报表：通过、失败、跳过如何呈现（退出码非 0 是预期）
+//
+// - 每个测试一行 `test <name> ... ok|FAILED|skipped (原因)`
+// - 末尾是 `<passed> passed, <failed> failed, <skipped> skipped` 摘要
+// - 有失败时退出码为 1，失败原因写进 stderr
+//
+// @skip-aot all: 这是测试载体的例子，入口是 `xulo test`，没有可运行的程序
+// @test-expect 1 passed, 1 failed
+
+fn add(a: int, b: int): int {
+    a + b
+}
+
+#[test]
+fn addition_works() {
+    assert(add(2, 3) == 5, "2 + 3 = 5")
+}
+
+// 故意失败的测试：演示 FAILED 行与摘要里的 failed 计数
+#[test]
+fn addition_does_not_commute_with_three() {
+    assert(add(1, 1) == 3, "one plus one is three")
+}
+
+fn main() {
+    print(add(2, 3))
+}

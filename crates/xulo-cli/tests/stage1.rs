@@ -61,7 +61,7 @@ fn assert_success(output: &Output, context: &str) {
 #[test]
 fn stage1_tokens_smoke_test() {
     let root = repo_root();
-    let out = run_stage1("tokens", &root.join("examples/fibonacci.xulo"));
+    let out = run_stage1("tokens", &root.join("examples/functions/fibonacci.xulo"));
     assert_success(&out, "stage1 tokens");
     let text = stdout_of(&out);
     assert!(
@@ -87,7 +87,7 @@ fn stage1_tokens_smoke_test() {
 #[test]
 fn stage1_parse_smoke_test() {
     let root = repo_root();
-    let out = run_stage1("parse", &root.join("examples/fibonacci.xulo"));
+    let out = run_stage1("parse", &root.join("examples/functions/fibonacci.xulo"));
     assert_success(&out, "stage1 parse");
     let text = stdout_of(&out);
     assert!(
@@ -283,4 +283,196 @@ fn stage1_check_agrees_with_stage0_on_the_corpus() {
             );
         }
     }
+}
+
+/// T9: the stage 1 lexer/parser is measured against the example corpus, and
+/// the gaps are a shrinking baseline.
+///
+/// The scan runs in one process; `crash` rows are skipped in that pass and
+/// probed one by one, because a deep `match` nest exhausts the interpreter's
+/// call depth and would otherwise hide every later file. A baseline row that
+/// starts passing fails the test, so the list can only shrink.
+#[test]
+fn stage1_example_corpus_tracks_baseline() {
+    use std::collections::BTreeMap;
+
+    let root = repo_root();
+    let corpus = xulo_examples::load(&root);
+    let baseline = stage1_baseline();
+
+    let examples = root.join("examples");
+    // Scan output is relative to the repository root (`examples/basics/...`);
+    // corpus paths are absolute. Both normalize to `<group>/<file>.xulo`.
+    let relative = |path: &Path| -> String {
+        let text = path.to_string_lossy().replace('\\', "/");
+        if let Some(rest) = text.strip_prefix("examples/") {
+            return rest.to_string();
+        }
+        text.strip_prefix(&format!(
+            "{}/",
+            examples.to_string_lossy().replace('\\', "/")
+        ))
+        .unwrap_or(&text)
+        .to_string()
+    };
+
+    // Crash rows are named with the host's separator so the scan can match the
+    // paths its own walk produces.
+    let separator = std::path::MAIN_SEPARATOR.to_string();
+    let skip: Vec<String> = baseline
+        .iter()
+        .filter(|(_, (stage, _))| stage == "crash")
+        .map(|(path, _)| {
+            format!(
+                "examples{}{path}",
+                std::path::MAIN_SEPARATOR,
+                path = path.replace('/', &separator)
+            )
+        })
+        .collect();
+
+    let out = Command::new(BIN)
+        .arg("run")
+        .arg("xuloc/main.xulo")
+        .current_dir(&root)
+        .env("XULO_STAGE1_MODE", "scan")
+        .env("XULO_STAGE1_DIR", "examples")
+        .env("XULO_STAGE1_SKIP", skip.join(";"))
+        .output()
+        .expect("xulo run should start");
+    assert!(
+        out.status.success(),
+        "the stage 1 scan failed:\n{}\n{}",
+        stdout_of(&out),
+        stderr_of(&out)
+    );
+
+    let mut seen: BTreeMap<String, (String, String)> = BTreeMap::new();
+    for line in stdout_of(&out).lines() {
+        let mut fields = line.trim_end().split('\t');
+        let path = fields.next().unwrap_or("");
+        let lex = fields.next().unwrap_or("");
+        let parse = fields.next().unwrap_or("");
+        if path.is_empty() {
+            continue;
+        }
+        seen.insert(
+            relative(Path::new(path)),
+            (lex.to_string(), parse.to_string()),
+        );
+    }
+
+    let mut problems: Vec<String> = Vec::new();
+    for file in &corpus.files {
+        let path = relative(file);
+        let (_, (stage, _)) = match baseline.iter().find(|(known, _)| **known == path) {
+            Some(entry) => entry,
+            None => continue,
+        };
+        if stage == "crash" {
+            continue;
+        }
+        let Some((lex, parse)) = seen.get(&path) else {
+            problems.push(format!("{path}: the stage 1 scan did not report it"));
+            continue;
+        };
+        let (status, kind) = if stage == "tokens" {
+            (lex, "lexer")
+        } else {
+            (parse, "parser")
+        };
+        if status == "ok" {
+            problems.push(format!(
+                "{path}: the stage 1 {kind} now accepts it; remove its baseline row"
+            ));
+        }
+    }
+
+    for file in &corpus.files {
+        let path = relative(file);
+        if baseline.contains_key(&path) {
+            continue;
+        }
+        let Some((lex, parse)) = seen.get(&path) else {
+            problems.push(format!("{path}: the stage 1 scan did not report it"));
+            continue;
+        };
+        if lex != "ok" {
+            problems.push(format!(
+                "{path}: stage 1 lexer rejects it ({lex}); record the gap in tests/stage1_examples_baseline.tsv"
+            ));
+        }
+        if parse != "ok" {
+            problems.push(format!(
+                "{path}: stage 1 parser rejects it ({parse}); record the gap in tests/stage1_examples_baseline.tsv"
+            ));
+        }
+    }
+
+    // A `crash` row must still crash; otherwise the scan no longer needs the skip.
+    for (path, (stage, _)) in &baseline {
+        if stage != "crash" {
+            continue;
+        }
+        let file = examples.join(path);
+        let probe = Command::new(BIN)
+            .arg("run")
+            .arg("xuloc/main.xulo")
+            .current_dir(&root)
+            .env("XULO_STAGE1_MODE", "parse")
+            .env("XULO_STAGE1_FILE", &file)
+            .output()
+            .expect("xulo run should start");
+        if probe.status.success() {
+            problems.push(format!(
+                "{path}: stage 1 parses it now; remove its `crash` baseline row"
+            ));
+            continue;
+        }
+        let err = stderr_of(&probe);
+        if !err.contains("call depth exceeded") {
+            problems.push(format!(
+                "{path}: expected a call-depth failure, got:\n{err}"
+            ));
+        }
+    }
+
+    assert!(
+        problems.is_empty(),
+        "stage 1's example coverage moved:\n\n{}",
+        problems.join("\n")
+    );
+}
+
+fn stage1_baseline() -> std::collections::BTreeMap<String, (String, String)> {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/stage1_examples_baseline.tsv");
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+    let mut rows = std::collections::BTreeMap::new();
+    for (number, line) in text.lines().enumerate() {
+        let line = line.trim_end();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let fields: Vec<&str> = line.split('\t').collect();
+        assert_eq!(
+            fields.len(),
+            3,
+            "{}:{}: expected `path<TAB>stage<TAB>reason`",
+            path.display(),
+            number + 1
+        );
+        let stage = fields[1];
+        assert!(
+            stage == "tokens" || stage == "parse" || stage == "crash",
+            "{}:{}: stage must be tokens, parse, or crash",
+            path.display(),
+            number + 1
+        );
+        rows.insert(
+            fields[0].to_string(),
+            (stage.to_string(), fields[2].to_string()),
+        );
+    }
+    rows
 }

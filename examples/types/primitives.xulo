@@ -1,0 +1,36 @@
+// 定点与浮点基本类型：i8…i64、u8…u64、isize/usize、f32/f64
+//
+// - `number` 是 `int | float` 的别名；带宽度后缀的类型是定宽标量
+// - 定宽类型有自己的取值范围，算术保持该类型（不会自动提升成 `number`）
+// - `usize` / `isize` 的宽度随目标平台（指针宽度）
+// - `u64` 的上界超出了有符号 64 位范围
+
+fn main() {
+    // 有符号
+    let a: i8 = 127
+    let b: i16 = -32768
+    let c: i32 = -2147483648
+    let d: i64 = -9223372036854775807
+    print(a, b, c, d)
+
+    // 无符号
+    let e: u8 = 255
+    let f: u16 = 65535
+    let g: u32 = 4294967295
+    let h: u64 = 18446744073709551615
+    print(e, f, g, h)
+
+    // 指针宽度
+    let offset: usize = 64
+    let delta: isize = -64
+    print(offset, delta)
+
+    // 浮点：f32 / f64
+    let ratio: f32 = 0.5
+    let precise: f64 = 2.5
+    print(ratio, precise)
+
+    // 定宽类型参与算术，结果仍是该类型
+    print(a + 1)
+    print(e - 1)
+}

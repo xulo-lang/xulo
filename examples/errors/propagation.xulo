@@ -1,0 +1,40 @@
+// `Result` 与 `?`：把失败沿调用链向上传递，最后由调用方处理
+//
+// - `Result<T, E>` 是内建泛型枚举，变体是 `Result::Ok` / `Result::Err`
+// - `e?` 在 `Ok` 上取值、在 `Err` 上立即返回该错误
+// - 错误类型通常是 `Error`，`Error("文本")` 的 `.message` 是原文
+// - `?` 也可以用在 `main` 里；错误会成为进程的退出失败
+// - `?` 也可以用在 `main` 里；错误会成为进程的退出失败
+//
+// @no-aot all: AOT 后端没有 `Error("…")` 构造函数（语义检查报 undefined function）
+
+fn parse(v: int): Result<int, Error> {
+    if v < 0 {
+        return Result::Err(Error("bad input"))
+    }
+    Result::Ok(v)
+}
+
+fn double(v: int): Result<int, Error> {
+    let x = parse(v)?
+    Result::Ok(x * 2)
+}
+
+fn main() {
+    match double(21) {
+        Result::Ok(v) => print(v)
+        Result::Err(e) => print(e.message)
+    }
+
+    // 负输入在 `parse` 处失败，`?` 把它交给这里的 match
+    match double(-1) {
+        Result::Ok(_) => print("ok")
+        Result::Err(e) => print(e.message)
+    }
+
+    // 只要错误码，不关心内容
+    match double(-2) {
+        Result::Ok(_) => print("ok")
+        Result::Err(_) => print("caught")
+    }
+}

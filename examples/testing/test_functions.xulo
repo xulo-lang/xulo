@@ -9,7 +9,10 @@
 //   名字也不绑定任何值（引用它会报 E0107）
 // - `assert(cond, msg)` 是内建断言：条件为假时以 `panic(msg)` 终止
 //
-// 运行：xulo test examples/test_functions.xulo
+// 运行：xulo test examples/testing/test_functions.xulo
+//
+// @skip-aot all: 这是测试载体的例子，入口是 `xulo test`，没有可运行的程序
+// @test-expect 6 passed, 0 failed, 1 skipped
 
 fn add(a: number, b: number): number {
     return a + b
@@ -28,12 +31,6 @@ fn addition_works() {
 #[test]
 fn addition_is_commutative() {
     assert(add(4, 7) == add(7, 4), "commutative")
-}
-
-// 故意失败的测试：演示 FAILED 输出（`xulo test` 退出码为 1）
-#[test]
-fn addition_works_sometimes() {
-    assert(add(1, 1) == 3, "one plus one is three")
 }
 
 // 异步测试：`#[test] async fn` 的主体可以 `await`；任务正常完成即通过

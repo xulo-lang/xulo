@@ -1,3 +1,0 @@
-# Examples that cannot be compared yet because `xupm run` rejects them or
-# `xupm build` cannot lower them. Remove an entry once both paths succeed.
-# Format: example.xulo<TAB>reason

@@ -1,0 +1,50 @@
+// 参数：默认值、具名实参、`mut self`、`shared` 参数、`mut` 参数
+//
+// - 默认值在调用处按需求值，具名实参可以打乱顺序，未提供时用默认值
+// - `mut self` 让方法把接收者当作可写 place（`bump` 直接改字段）
+// - `shared` 参数只接受共享绑定（`let s = shared ...`）
+// - `mut` 参数要求实参是一个可写 place，callee 以借用方式访问它
+struct Counter {
+    n: int
+}
+
+impl Counter {
+    fn bump(mut self) {
+        self.n = self.n + 1
+    }
+
+    fn value(self): int {
+        self.n
+    }
+}
+
+fn doubled(x: mut int): int {
+    x * 2
+}
+
+fn greet(name: string, punct: string = "!"): string {
+    name + punct
+}
+
+fn take(x: shared string): string {
+    x
+}
+
+fn main() {
+    let mut c = Counter(n: 0)
+    c.bump()
+    c.bump()
+    print(c.value())
+
+    // `mut` 参数：实参必须是可写 place（不能直接写 `doubled(10)`）
+    let mut n = 10
+    print(doubled(n))
+
+    // 默认值与具名实参
+    print(greet("hi"))
+    print(greet(punct: "?", name: "hey"))
+
+    // `shared` 参数只接受共享绑定
+    let s = shared "shared"
+    print(take(s))
+}

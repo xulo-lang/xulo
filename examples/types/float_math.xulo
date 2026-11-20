@@ -1,0 +1,16 @@
+// 浮点算术：`f32` 与 `f64` 在表达式里保持各自的宽度
+//
+// - 定宽浮点参与算术后仍是该类型，打印形态与 `number` 的浮点一致
+// - `f32` 的结果按单精度计算，再参与 `f64` 运算时提升
+//
+// @no-aot all: AOT 把 `f32` 算术结果落进整数槽，打印出错误的值（待修）
+
+fn main() {
+    let single: f32 = 0.5
+    let double: f64 = 2.5
+    print(single * 4.0)
+    print(double * 2.0)
+    print(single + single)
+    print(double / 2.0)
+    print(single < 1.0)
+}

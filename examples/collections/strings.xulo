@@ -1,0 +1,41 @@
+// 字符串与 `StringBuilder`
+//
+// - `string` 是 UTF-8 文本：`.len` 是标量个数，`.byte_len` 是字节数
+// - `.code_at(i)` 取码位，`.slice(start, end)` 取标量子串，`.bytes()` 取 `List<u8>`
+// - `+` 拼接字符串，`==` 按内容比较
+// - `StringBuilder` 是引用型的可变缓冲：`.append` / `.clear` / `.build`
+
+fn main() {
+    let text = "héllo"
+    // 5 个码位，6 个 UTF-8 字节
+    print(text.len, text.byte_len)
+
+    let hello = "hello"
+    print(hello.code_at(1))
+    print(hello.slice(1, 4))
+    print(hello.bytes())
+    print(hello + " " + "world")
+    print(hello == "hello", hello == "hellO")
+
+    // 模板插值是一个表达式，可以参与拼接
+    let name = "xulo"
+    print(`hi ${name}` + "!")
+
+    // StringBuilder：逐段累积，最后一次性取文本
+    let mut builder = StringBuilder::new()
+    builder.append("count=")
+    builder.append(str(3))
+    builder.append(" items")
+    print(builder.len, builder.byte_len)
+    print(builder.build())
+
+    // build 返回当前文本的副本：之后的 append 不影响它
+    let snapshot = builder.build()
+    builder.append("!")
+    print(snapshot)
+    print(builder.build())
+
+    // clear 清空缓冲
+    builder.clear()
+    print(builder.len, builder.build() == "")
+}

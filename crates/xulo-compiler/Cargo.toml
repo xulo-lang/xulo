@@ -29,3 +29,4 @@ llvm-dynamic = ["llvm", "inkwell/llvm22-1-prefer-dynamic"]
 llvm-static = ["llvm", "inkwell/llvm22-1-force-static"]
 
 [dev-dependencies]
+xulo-examples = { path = "../xulo-examples" }

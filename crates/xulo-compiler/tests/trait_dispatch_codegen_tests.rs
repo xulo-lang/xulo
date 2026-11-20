@@ -42,7 +42,7 @@ fn lines(expected: &[&str]) -> Vec<String> {
 /// impl 查表（小数不能被当成整数位模式打印）。
 #[test]
 fn explicit_trait_dispatch_matches_interpreter() {
-    let out = compile_and_run(include_str!("../../../examples/trait_shapes.xulo"));
+    let out = compile_and_run(include_str!("../../../examples/types/trait_shapes.xulo"));
     assert_eq!(
         out,
         lines(&[

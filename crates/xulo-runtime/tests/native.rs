@@ -242,7 +242,7 @@ fn string_concat_and_print() {
 #[test]
 fn hello_example() {
     assert_eq!(
-        run_ok(include_str!("../../../examples/hello.xulo")),
+        run_ok(include_str!("../../../examples/basics/hello.xulo")),
         vec!["Hello, world!"]
     );
 }
@@ -250,7 +250,7 @@ fn hello_example() {
 #[test]
 fn if_else_example() {
     assert_eq!(
-        run_ok(include_str!("../../../examples/if_else.xulo")),
+        run_ok(include_str!("../../../examples/basics/if_else.xulo")),
         vec![
             "7",
             "two is not greater than three",
@@ -266,7 +266,7 @@ fn if_else_example() {
 #[test]
 fn fibonacci_example() {
     assert_eq!(
-        run_ok(include_str!("../../../examples/fibonacci.xulo")),
+        run_ok(include_str!("../../../examples/functions/fibonacci.xulo")),
         vec!["0", "1", "1", "2", "3", "5", "8", "13", "21", "34"]
     );
 }

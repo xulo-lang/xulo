@@ -1,0 +1,30 @@
+// `std::hint`：告诉优化器的提示，不改变程序语义
+//
+// - `black_box(v)` 原样返回 `v`，阻止编译器穿透它做优化
+// - `likely(c)` / `unlikely(c)` 原样返回条件
+// - `spin_loop()` 是忙等循环的处理器提示，没有可观察效果
+// - 模块是纯的：不读写时钟、文件、环境或进程，结果只取决于实参
+
+fn classify(n: int): string {
+    if std::hint::likely(n > 0) {
+        "positive"
+    } else {
+        "non-positive"
+    }
+}
+
+fn main() {
+    // black_box 的返回值与输入相同
+    print(std::hint::black_box(41) + 1)
+    print(std::hint::black_box("text"))
+
+    // 条件提示原样返回条件
+    print(std::hint::likely(true), std::hint::unlikely(false))
+
+    // 忙等：值是 unit
+    std::hint::spin_loop()
+    print("spun")
+
+    print(classify(std::hint::black_box(3)))
+    print(classify(-1))
+}

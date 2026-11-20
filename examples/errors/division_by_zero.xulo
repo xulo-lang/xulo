@@ -1,0 +1,16 @@
+// 除零：整数除以零是运行时失败，不是编译错误
+//
+// - `x / 0` 在 check 阶段通过，运行时以 `error[E0006] runtime: ... division by zero`
+//   终止，退出码为 1
+// - 失败信息写在 stderr；解释器收集的 stdout 在失败路径上不会写出
+//
+// @no-aot all: 失败路径的两条路径不比较——解释器写 `error[E0006]` 并丢弃已收集的
+// stdout，原生运行时写 `panic: …` 并保留 stdout
+// @panic division by zero
+
+fn main() {
+    print("before")
+    let zero = 0
+    print(10 / zero)
+    print("never reached")
+}

@@ -2,6 +2,8 @@
 // 句柄与 Command 规格（spec modules/process.md）。非零退出是数据；只有
 // 启动失败、捕获超限、超时与句柄复用才是 Err。`exit` 会带走整个进程，
 // 只在注释里出现：std::process::exit(0)
+//
+// @no-run windows: 示例经 `sh -c` 调用 printf/cat/sleep，Windows 上只做 `xulo check`
 fn main() {
     // args()：argv[0] 是启动本进程的程序路径（宿主相关，只检查形状）
     let argv = std::process::args()

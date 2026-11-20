@@ -1,0 +1,56 @@
+// 类型别名与类型构造：`type`、函数类型、可选、联合、交叉、字面量类型
+//
+// - `type` 只能做模块级声明，可以带类型参数
+// - `T?` 是可选类型，`T | U` 是联合，`T & U` 是交叉
+// - 字面量类型（`"v1"`）把值域限制到具体字面量
+// - `unit` 只能作为返回类型（没有值），`unknown` 是顶层类型
+// - 函数类型写作 `fn(参数类型): 返回类型`
+
+type Id = int
+type Mapper = fn(number): number
+type Maybe<T> = T?
+type Version = "v1" | "v2"
+type Named = string & Display
+type Opaque = unknown
+
+fn pick(v: int | string): string {
+    if v is int {
+        "int"
+    } else {
+        "string"
+    }
+}
+
+fn apply(f: Mapper, x: number): number {
+    f(x)
+}
+
+fn noop(): unit {
+    // unit 没有值：这里是空返回
+}
+
+fn main() {
+    let id: Id = 4
+    print(apply(fn(n: number): number { n + 1 }, id))
+
+    // 别名展开成可选类型
+    let missing: Maybe<string> = null
+    print(missing ?? "none")
+
+    // 联合类型 + `is` 收窄
+    print(pick(3), pick("x"))
+
+    // 字面量类型
+    let version: Version = "v1"
+    print(version)
+
+    // 交叉类型：值必须同时满足两部分。当前实现只在类型位置接受交叉类型，
+    // 给具体值标注它会被拒绝，因此这里只做声明（见 coverage.tsv）。
+    print("intersection alias declared")
+
+    // unknown：只能整体传递，需要 `is` 才能收窄
+    let opaque: Opaque = 1
+    print(opaque is int, opaque is not string)
+
+    noop()
+}

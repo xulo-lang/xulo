@@ -8,6 +8,11 @@
 //   * under `xulo run`: set XULO_STAGE1_MODE=tokens|parse and
 //                       XULO_STAGE1_FILE=<file>
 //
+// A third form scans a whole tree and reports, per file, whether the stage 1
+// lexer and parser accept it. The example corpus gate drives this:
+//
+//   XULO_STAGE1_MODE=scan XULO_STAGE1_DIR=examples xulo run xuloc/main.xulo
+//
 // The default mode is `parse`. Diagnostics go to stderr in the stage 0 shape
 // `<file>:<line>:<column>: error: <message>` and the process exits 1.
 
@@ -155,6 +160,7 @@ fn env_or(name: string, fallback: string): string {
 fn usage() {
     std::io::eprintln("usage: xuloc <tokens|parse|check|build> <file>")
     std::io::eprintln("   or: XULO_STAGE1_MODE=tokens|parse|check|build XULO_STAGE1_FILE=<file> xulo run xuloc/main.xulo")
+    std::io::eprintln("   or: XULO_STAGE1_MODE=scan XULO_STAGE1_DIR=<dir> xulo run xuloc/main.xulo")
 }
 
 fn kind_label(code: string): string {
@@ -234,15 +240,122 @@ fn run_parse(file: string, source: string) {
     print(render(result.root, 0))
 }
 
+fn has_xulo_suffix(path: string): bool {
+    let size = path.len
+    if size < 5 {
+        return false
+    }
+    return path.slice(size - 5, size) == ".xulo"
+}
+
+/// Whether `path` is listed in the semicolon-separated `XULO_STAGE1_SKIP`.
+///
+/// The corpus gate uses this for inputs that crash the stage 1 parser (deep
+/// nesting exhausts the interpreter's call depth if it is a call frame; the
+/// skip keeps the rest of the tree measurable).
+fn skipped(path: string): bool {
+    let list = env_or("XULO_STAGE1_SKIP", "")
+    if list == "" {
+        return false
+    }
+    for item in split_on(list, ";") {
+        if item == path {
+            return true
+        }
+    }
+    return false
+}
+
+fn split_on(text: string, separator: string): List<string> {
+    let mut parts: List<string> = []
+    if separator == "" {
+        parts.push(text)
+        return parts
+    }
+    let sep_size = separator.len
+    let mut start = 0
+    let mut index = 0
+    while index + sep_size <= text.len {
+        if text.slice(index, index + sep_size) == separator {
+            parts.push(text.slice(start, index))
+            index = index + sep_size
+            start = index
+        } else {
+            index = index + 1
+        }
+    }
+    parts.push(text.slice(start, text.len))
+    return parts
+}
+
+/// One line per file: `<path>\t<lexer status>\t<parser status>`.
+///
+/// A lexer failure makes the parser column `skipped`, so a file that cannot be
+/// tokenized is not also reported as a parse failure. Lines go through
+/// `std::io::println`, so a crash still leaves every earlier line on stdout.
+fn scan_file(file: string) {
+    if skipped(file) {
+        std::io::println(file + "\tskipped\tskipped")
+        return
+    }
+    match std::fs::read(file) {
+        Result::Ok(source) => {
+            let lexed: LexResult = lex(source)
+            let mut lex_status = "ok"
+            if lexed.error != "" {
+                lex_status = "error E0001 " + lexed.error
+            }
+            let mut parse_status = "skipped"
+            if lexed.error == "" {
+                let parsed: ParseResult = parse(lexed.tokens)
+                if parsed.error != "" {
+                    parse_status = "error E0002 " + parsed.error
+                } else {
+                    parse_status = "ok"
+                }
+            }
+            std::io::println(file + "\t" + lex_status + "\t" + parse_status)
+        }
+        Result::Err(error) => {
+            std::io::println(file + "\terror E0004 " + error.message + "\tskipped")
+        }
+    }
+}
+
+/// Scan every `.xulo` file under `dir`, in the host's walk order.
+fn run_scan(dir: string) {
+    match std::fs::walk(dir) {
+        Result::Ok(paths) => {
+            for path in paths {
+                if has_xulo_suffix(path) {
+                    scan_file(path)
+                }
+            }
+        }
+        Result::Err(error) => {
+            fail(dir, 1, 1, "E0004", error.message)
+        }
+    }
+}
+
 fn main() {
     let args = std::process::args()
     let mut mode = env_or("XULO_STAGE1_MODE", "parse")
     let mut file = env_or("XULO_STAGE1_FILE", "")
+    let mut dir = env_or("XULO_STAGE1_DIR", "")
     if args.len >= 3
         and (args[1] == "tokens" or args[1] == "parse" or args[1] == "check" or args[1] == "build")
     {
         mode = args[1]
         file = args[2]
+    }
+    if mode == "scan" {
+        if dir == "" {
+            usage()
+            std::process::exit(1)
+        }
+        run_scan(dir)
+        return
     }
     if file == "" {
         usage()

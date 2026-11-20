@@ -1,0 +1,14 @@
+var/log/app.log
+/etc/hosts
+true
+false
+/etc
+hosts
+.tar
+archive.tar
+notes.md
+p/q/r
+/home/x main.go .go
+../logs
+/
+null

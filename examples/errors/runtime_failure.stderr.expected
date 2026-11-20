@@ -1,0 +1,3 @@
+error[E0006] runtime: uncaught exception: cannot continue
+ ==> \\?\E:\xulo-projects\xulo\examples\errors\runtime_failure.xulo
+

@@ -13,10 +13,10 @@ cargo build --release
 
 ```bash
 # 编译并运行
-xulo run examples/hello.xulo
+xulo run examples/basics/hello.xulo
 
 # 仅做词法/语法/语义检查
-xulo check examples/fibonacci.xulo
+xulo check examples/functions/fibonacci.xulo
 
 # 格式化（基于 token 流重排空格；注意：注释会被丢弃）
 xulo fmt file.xulo

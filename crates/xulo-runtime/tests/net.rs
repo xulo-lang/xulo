@@ -298,25 +298,9 @@ fn timeouts_expire_as_errors_and_stay_reusable() {
     assert_eq!(out, vec!["accept timeout", "connect timeout/refused"]);
 }
 
-/// `examples/net.xulo` 全文经解释器运行的输出逐行固定（示例即测试）。
+/// `examples/std/net.xulo` 全文经解释器运行的输出逐行固定（示例即测试）。
 #[test]
 fn net_example() {
-    let out = run_ok(include_str!("../../../examples/net.xulo"));
-    assert_eq!(
-        out,
-        vec![
-            "true".to_string(),
-            "4".to_string(),
-            "ping".to_string(),
-            "4".to_string(),
-            "pong".to_string(),
-            "read timed out".to_string(),
-            "write side closed".to_string(),
-            "eof".to_string(),
-            "true".to_string(),
-            "client closed".to_string(),
-            "peer closed".to_string(),
-            "server closed".to_string(),
-        ]
-    );
+    let out = run_ok(include_str!("../../../examples/std/net.xulo"));
+    assert_eq!(out, xulo_examples::expected_lines("std/net.xulo"));
 }

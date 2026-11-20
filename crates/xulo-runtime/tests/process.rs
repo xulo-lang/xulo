@@ -375,28 +375,9 @@ fn glob_and_alias_imports_reach_the_process_surface() {
     assert_eq!(aliased, vec!["alias".to_string()], "{aliased:?}");
 }
 
-/// `examples/process.xulo` 全文经解释器运行的输出逐行固定（示例即测试）。
+/// `examples/std/process.xulo` 全文经解释器运行的输出逐行固定（示例即测试）。
 #[test]
 fn process_example() {
-    let out = run_ok(include_str!("../../../examples/process.xulo"));
-    assert_eq!(
-        out,
-        vec![
-            "true".to_string(),
-            "true".to_string(),
-            "hi".to_string(),
-            "bad".to_string(),
-            "3".to_string(),
-            "ping".to_string(),
-            "$((2 + 3))".to_string(),
-            "true".to_string(),
-            "captured".to_string(),
-            "`printf captured` child handle is spent".to_string(),
-            "true".to_string(),
-            "yes".to_string(),
-            "`sleep` timed out after 300 ms".to_string(),
-            "killed".to_string(),
-            "-1".to_string(),
-        ]
-    );
+    let out = run_ok(include_str!("../../../examples/std/process.xulo"));
+    assert_eq!(out, xulo_examples::expected_lines("std/process.xulo"));
 }

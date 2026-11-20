@@ -69,7 +69,7 @@ cargo build -p xulo-runtime --release
 LLVM_SYS_221_PREFIX=/usr/lib/llvm-22 \
   cargo build --release -p xupm --features distribution
 
-target/release/xupm build examples/hello.xulo --release
+target/release/xupm build examples/basics/hello.xulo --release
 ```
 
 构建时可用 `XULO_RUNTIME_LIB=/path/to/libxulo_runtime.a` 指定运行时静态库；
@@ -92,10 +92,10 @@ VSCode：用 F5 或「Run Extension」调试启动 `editors/vscode/`（见 `.vsc
 
 ```bash
 # 编译并运行（Rust 原生解释器，不经过 Node.js）
-xulo run examples/hello.xulo
+xulo run examples/basics/hello.xulo
 
 # 仅做词法/语法/语义检查
-xulo check examples/fibonacci.xulo
+xulo check examples/functions/fibonacci.xulo
 
 # 格式化（就地改写；注意：注释会被丢弃）
 xulo fmt file.xulo
@@ -109,42 +109,32 @@ xulo
 
 ### 示例
 
-`examples/` 下每个 `.xulo` 都可通过 `xulo run examples/<文件>` 直接运行：
+`examples/` 按语法类别分目录，同时是 stage 0 的语法门禁与 stage 1 的自举语料：
+每个程序都被 `cargo test --workspace` 中的 `examples` 门禁检查、运行，并与
+`.expected` 侧车文件比对输出。索引、头部指令和覆盖表见
+[`examples/README.md`](examples/README.md)。
 
-| 文件 | 展示的语法 |
-|------|-----------|
-| `hello.xulo` | 最小程序：函数、`print`、字符串字面量 |
-| `operators.xulo` | 全部运算符：算术 / 比较 / 逻辑 / 位与移位 / 一元 / 优先级结合性 / 三目与 `??` |
-| `if_else.xulo` | `if` / `else if` / `else`、嵌套分支、`if` 表达式 |
-| `for.xulo` | `for` 迭代：闭合 `1..=5` 与半开 `0..<3` 区间、列表、嵌套、`break` / `continue` |
-| `control_flow.xulo` | `while`、`if` 表达式、`match`、区间 |
-| `fibonacci.xulo` | 递归 + `for` 列表迭代 |
-| `closures_hof.xulo` | 匿名函数 / 闭包（捕获、可变捕获）/ 高阶函数 / 函数值调用 |
-| `generics.xulo` | 泛型函数（调用处推断类型实参） |
-| `enums_match.xulo` | `enum`（含关联数据、泛型）+ `match` 表达式 |
-| `structs.xulo` | `struct` 字段与可省字段、固有 `impl` 方法、`#[derive(Debug)]`、映射字面量类型标注 |
-| `trait_shapes.xulo` | `trait` + `impl Trait for T` 显式派发 `Trait::method(recv)` |
-| `templates.xulo` | 反引号模板字面量 `${...}`、转义、多行、嵌套、Unicode |
-| `collections.xulo` | 列表 / 对象：下标、`+` 拼接、`...` 展开、成员访问 |
-| `optional_chaining.xulo` | `T?` 可选类型、`?.`、`??`、三目、`and` / `or` / `!` |
-| `math_time.xulo` | `std::math::`（常量、取整、幂与开方、`to_fixed`）与 `std::time::`（时钟与 UTC 日历）命名空间 |
-| `time.xulo` | `std::time::`：墙上/单调时钟、`sleep` 任务、UTC 日历（`from_parts` / `format` / `parse` / `parts` / `weekday`） |
-| `std.xulo` | `std` 标准库：`std::math::` / `std::time::` / `std::fs::` / `std::io::`（`Result` 与 `match` 错误处理） |
-| `json.xulo` | `std::json::`：`parse` / `stringify`（含缩进）/ `valid`，语法错误是 `Result::Err` |
-| `path.xulo` | `std::path::`：拼接、拆解、换扩展名、规范化、相对化（纯字符串运算） |
-| `os.xulo` | `std::os::`：工作目录、环境变量、临时/家目录、进程与宿主身份 |
-| `fs.xulo` | `std::fs::`：读写、`stat` 元数据、`read_dir` / `walk`、字节读写、`temp_file`、复制改名 |
-| `net.xulo` | `std::net::`：TCP 监听/连接/接受、双向读写、半关闭、读超时（单进程回环） |
-| `regex.xulo` | `std::regex::`：`RegExp::compile`、`test` / `find` / `find_all`、字符串 `replace`（`use` 导入与 `?` 传播） |
-| `process.xulo` | `std::process::`：`args` / `run` / `exec`、`launch` 与 `Child` 句柄、`Command` 规格、超时与 kill |
-| `http.xulo` | `std::http::`：`Request` / `Response` 数据与 handler、`fetch` / `request`、`listen` / `serve`（自拉起子进程跑完整往返） |
-| `fmt.xulo` | `std::fmt::`：`format` 模板指令（`%v %s %q %t %c %d %x %X %o %b %f %e %E %g %G`、旗标/宽度/精度） |
-| `ffi.xulo` | `extern "C"` 导入 libc 符号与 `as` 别名、`Ptr` / `Ptr?` 与 `!= null` 收窄、具名参数与省略补 null、`pub extern fn` 导出 |
-| `async_tasks.xulo` | `async` / `await`、`Time::sleep`、`Task::resolve` / `all` / `race` / `timeout` |
-| `test_functions.xulo` | `#[test] fn` 测试函数 + `assert` |
-| `macros.xulo` | 过程宏：`#[macro]` / `#[macro_attr]` / `#[macro_derive(Target)]` 定义、函数宏 `name!`、派生宏 `#[derive]`、属性宏 `#[name]`、`ast::quote!` 与 `${…}` 洞 |
-| `modules/main.xulo` | `mod` / `use` 跨文件模块（见 `examples/modules/`） |
+| 目录 | 内容 |
+|------|------|
+| `basics/` | `hello`、词法（字面量/转义/模板/注释）、绑定与解构、运算符、模板、`if`/`for`/`while`/`match` 控制流 |
+| `functions/` | 递归、闭包与高阶函数、泛型函数、参数（默认/具名/`mut`/`shared`）、`defer`、`move`/`copy` |
+| `types/` | `struct`、`enum`、`trait`、可选类型与可选链、类型别名与联合/交叉/字面量类型、元组、定宽数值类型、泛型 `impl` 与 const 泛型 |
+| `patterns/` | `match` 模式（字面量/区间/or/类型/guard）、`let` 解构 |
+| `collections/` | 列表与对象、`Map`、`Set`、`Array<T, N>`、字符串与 `StringBuilder` |
+| `modules/` | 跨文件模块、内联 `mod`、`use` 分组/别名/glob、`use type`、可见性 |
+| `concurrency/` | `async`/`await`、`Task` 组合、`spawn` 五种形式、service、`shared`/`lock` |
+| `macros/` | 函数宏、派生宏、属性宏、`ast::quote!` |
+| `testing/` | `#[test]` 选项组与 `xulo test` 报表 |
+| `ffi/` | `extern "C"`、`Ptr`、`pub extern fn` |
+| `errors/` | `Result` 与 `?` 传播、`panic`、除零、静态类型错误 |
+| `std/` | `std` 各模块：`io` / `hint` / `math` / `time` / `fmt` / `json` / `regex` / `path` / `fs` / `process` / `os` / `net` / `http` |
 
+运行任意程序：
+
+```bash
+xulo run examples/basics/hello.xulo
+xulo run examples/modules/main.xulo      # 多文件程序单元
+```
 ## 语言速览
 
 ```xulo

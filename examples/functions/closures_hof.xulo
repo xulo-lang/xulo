@@ -44,4 +44,18 @@ fn main() {
     // 函数值可从任意表达式中调用
     let fs = [fn(): number { 1 }, fn(): number { 2 }]
     print(fs[0]())
+
+    // 箭头闭包：`(参数): 返回类型 => 表达式`，单个参数可以省掉括号与类型
+    let triple = (x: number): number => x * 3
+    print(triple(4))
+    let square = x => x * x
+    print(square(5))
+    let join = (a: string, b: string) => a + b
+    print(join("a", "b"))
+
+    // 箭头闭包的块体
+    let clamp = (x: number): number => {
+        if x < 0 { 0 } else { x }
+    }
+    print(clamp(-3))
 }

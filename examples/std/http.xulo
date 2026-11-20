@@ -2,7 +2,7 @@
 // Response 是纯数据，handler 不经 socket 就能测；serve 会阻塞到监听套接
 // 字出错为止——所以客户端与服务器分两个进程跑（spec 明文规定）。本文件
 // 是一份完整往返：把自己再拉起一份当服务器（XUL_HTTP_ROLE=serve），父进程
-// 当客户端取三个响应后收掉它。`xulo run examples/http.xulo` 即可复现。
+// 当客户端取三个响应后收掉它。`xulo run examples/std/http.xulo` 即可复现。
 use std::http::{Request, Response};
 use std::os::exec_path;
 use std::process::{args, Command};

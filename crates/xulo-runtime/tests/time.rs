@@ -81,26 +81,9 @@ fn domain_violations_are_runtime_failures_that_stop_the_program() {
     assert!(err.message.contains("real instant"), "{}", err.message);
 }
 
-/// `examples/time.xulo` 全文经解释器运行的输出逐行固定（示例即测试）。
+/// `examples/std/time.xulo` 全文经解释器运行的输出逐行固定（示例即测试）。
 #[test]
 fn time_example() {
-    let out = run_ok(include_str!("../../../examples/time.xulo"));
-    assert_eq!(
-        out,
-        vec![
-            "true".to_string(),
-            "true".to_string(),
-            "true".to_string(),
-            "true".to_string(),
-            "awake".to_string(),
-            "2026-10-26T12:00:00.000Z".to_string(),
-            "true".to_string(),
-            "2026 10 26".to_string(),
-            "12 0 0 0".to_string(),
-            "1".to_string(),
-            "4".to_string(),
-            "2026-10-26T00:00:00.000Z".to_string(),
-            "not a date".to_string(),
-        ]
-    );
+    let out = run_ok(include_str!("../../../examples/std/time.xulo"));
+    assert_eq!(out, xulo_examples::expected_lines("std/time.xulo"));
 }

@@ -1372,6 +1372,7 @@ dependencies = [
  "rustyline",
  "xulo-compiler",
  "xulo-core",
+ "xulo-examples",
  "xulo-ide",
  "xulo-parser",
  "xulo-runtime",
@@ -1391,6 +1392,7 @@ dependencies = [
  "inkwell",
  "target-lexicon 0.13.5",
  "xulo-core",
+ "xulo-examples",
  "xulo-parser",
  "xulo-runtime",
  "xulo-semantic",
@@ -1399,6 +1401,10 @@ dependencies = [
 
 [[package]]
 name = "xulo-core"
+version = "0.1.0"
+
+[[package]]
+name = "xulo-examples"
 version = "0.1.0"
 
 [[package]]
@@ -1433,6 +1439,7 @@ dependencies = [
  "corosensei",
  "serde_json",
  "xulo-core",
+ "xulo-examples",
  "xulo-parser",
  "xulo-semantic",
  "xulo-std",
@@ -1463,6 +1470,7 @@ dependencies = [
  "xulo-cli",
  "xulo-compiler",
  "xulo-core",
+ "xulo-examples",
 ]
 
 [[package]]
