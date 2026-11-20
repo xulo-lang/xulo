@@ -9,8 +9,19 @@
    0. Document Root
    ============================================================ *)
 
-document            = { import_stmt | pub_stmt | type_def | struct_def | enum_def | fn_def | const_stmt | let_stmt } ;
-module              = document ;
+program              = { header_item } { declaration } [ entry ] ;
+header_item          = mod_decl | use_decl | pub_use ;
+declaration          = pub_decl
+                     | type_def
+                     | struct_def
+                     | enum_def
+                     | fn_def
+                     | const_stmt
+                     | let_stmt
+                     ;
+pub_decl             = "pub" ( type_def | struct_def | enum_def | fn_def | const_stmt | let_stmt ) ;
+entry                = [ "pub" ] [ "async" ] "fn" "main" "(" ")" [ ":" type_expr ] block ;
+module               = program ;
 
 (* ============================================================
    1. Comments (handled by lexer)
@@ -48,10 +59,13 @@ union_type          = intersection_type { "|" intersection_type } ;
 intersection_type   = primary_type { "&" primary_type } ;
 primary_type        = "string"
                     | "number"
+                    | "int"
+                    | "float"
                     | "bool"
+                    | "unit"
+                    | "unknown"
                     | "null"
-                    | "object"
-                    | type_identifier [ type_args ]      (* generic named type, e.g. Result<number> *)
+                    | type_identifier [ type_args ]      (* generic named type, e.g. Result<int, string> *)
                     | string_literal                     (* string literal type *)
                     | type_expr "?"                      (* optional type *)
                     | "List" "<" type_expr ">"         (* generic list *)
@@ -114,8 +128,7 @@ stmt                = const_stmt
                     | for_stmt
                     | while_stmt
                     | return_stmt
-                    | try_stmt
-                    | throw_stmt
+                    | defer_stmt
                     | expr_stmt
                     | block
                     ;
@@ -134,9 +147,7 @@ while_stmt          = "while" expr block ;
 
 return_stmt         = "return" [ expr ] ;
 
-try_stmt            = "try" block "catch" "(" identifier ")" block ;
-
-throw_stmt          = "throw" expr ;
+defer_stmt          = "defer" expr ;
 
 (* ============================================================
    9. Expressions
@@ -177,7 +188,7 @@ primary_expr        = string_literal
                     | match_expr
                     | fn_expr                          (* anonymous function / closure *)
                     | "(" expr ")"
-                    | "{" [ field_init_list ] "}"  (* object literal *)
+                    | "{" [ field_init_list ] "}"  (* map literal *)
                     | "[" [ expr_list ] "]"        (* list literal *)
                     | "{" block "}"                (* block expression *)
                     | identifier
@@ -216,45 +227,36 @@ element_expr        = expr
                     ;
 
 (* ============================================================
-   12. Import / Export (Module System)
+   12. Modules (mod / use / pub use)
    ============================================================ *)
 
-import_stmt         = "import" [ "type" ] import_spec [ "from" string_literal ]  (* "import type" is erased at runtime *)
-                    | "import" [ "type" ] string_literal
-                    ;
+mod_decl            = [ "pub" ] "mod" identifier ( "{" { header_item } { declaration } "}" | ";" ) ;
 
-import_spec         = "*" "as" identifier
-                    | "{" import_name_list "}"
-                    | identifier "as" identifier ;
+use_decl            = "use" [ "type" ] use_target ";" ;
 
-import_name_list    = import_name { "," import_name } [ "," ] ;
-import_name         = identifier [ "as" identifier ] ;
+use_target          = use_path | use_group | use_glob ;
 
-pub_stmt            = "pub" pub_spec ;
+path_head           = package_name | identifier | "self" | "super" ;
+package_name        = identifier { "-" identifier } ;
 
-pub_spec            = ( "const" | "let" | "fn" | "type" | "struct" | "enum" | "trait" ) declaration
-                    | "use" "{" pub_name_list "}" ;
+use_path            = path_head "::" identifier { "::" identifier } [ "as" identifier ]
+                    | path_head "as" identifier ;          (* one-segment form requires `as` *)
 
-pub_name_list       = identifier { "," identifier } [ "," ] ;
+use_group           = path_head "::" "{" [ use_entry { "," use_entry } [ "," ] ] "}" ;
+use_entry           = identifier [ "as" identifier ] ;
+use_glob            = path_head "::" "*" ;
 
-(* ============================================================
-   13. Full Source File
-   ============================================================ *)
-
-source_file         = { ( import_stmt | pub_stmt | type_def | struct_def | enum_def | fn_def | const_stmt | let_stmt ) } ;
+pub_use             = "pub" "use" ( use_target | "{" [ identifier { "," identifier } [ "," ] ] "}" ) ";" ;
 ```
+
+> 完整路径与包名规则见 `spec/modules/import-export.md`。`use` 的路径段之间用 `::`；字符串说明符与 `import ... from` 已不在语言中。
 
 ## 与规范源的差异
 
 本简化版相对 `spec/grammar.md` 的改动：
 
-1. 只保留本书用到的核心子集，省略了模块树（`mod` / `use`）、`trait` / `impl`、属性、FFI、宏与并发等产生式。
-2. `import_stmt` 保留书内使用的 `import ... from "..."` 写法，未列出规范源中的 `use` 路径形式。
-3. `document` 与 `source_file` 合并列出顶层声明，不区分根模块与子模块。
+1. 只保留本书用到的核心子集，省略了属性、`trait` / `impl`、FFI、宏与并发等产生式。
+2. 类型、模式与表达式产生式做了合并简化，完整形式以 `spec/grammar.md` 为准。
+3. 顶层声明与入口 `main` 分别列出，不展开每个声明内部的可选属性与可见性修饰。
 
-## 实现与语法的已知差异
-
-| 语法 | 实现 | 说明 |
-|------|------|------|
-| 相等 / 比较优先级 | 合并为一层 | 实现把 `== !=` 与 `< > <= >=` 合并在同一左结合层 |
-| 显式泛型调用 `foo<T>()` | 不支持 | 仅支持调用处类型推断（见 [函数](functions.md)） |
+语法有歧义时以 `spec/grammar.md` 为准；本书的示例只用于说明用法。

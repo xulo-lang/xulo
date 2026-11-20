@@ -14,6 +14,6 @@
 | **隐式返回** | 函数体末尾无分号表达式作为返回值 | [函数](reference/functions.md) |
 | **命名参数** | 按参数名传参（可乱序） | [函数](reference/functions.md) |
 | **解构** | `let { a, b } = expr` 取字段绑定 | [变量与绑定](reference/variables-and-state.md) |
-| **模块** | 一个 `.xulo` 文件，可 `import`/导出（`pub`） | [模块系统](reference/modules.md) |
-| **IIFE** | 立即执行函数表达式；每个模块编译为返回导出对象的 IIFE | [编译器实现要点](appendix/implementation.md) |
+| **模块** | 由 `mod` 声明、用 `use` 绑定其导出的 `.xulo` 文件 | [模块系统](reference/modules.md) |
+| **入口（Entry）** | 根模块中无参数、返回 `unit` 的 `main` | [应用结构](reference/application.md) |
 | **形式语法** | EBNF 描述的语言文法 | [形式语法](reference/grammar.md) |

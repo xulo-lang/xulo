@@ -26,6 +26,11 @@ values, and is left to a future standard-library `std/ui` module.
 
 ### Changed
 
+- The `README` and `learn/book` guide now describe the UI-less 0.2.0 language:
+  `mod` / `use` / `pub use` instead of `import ... from`, `Result<T, E>` and `?`
+  instead of `try` / `catch` / `throw`, the specification's 61-keyword and
+  reserved-word tables, `int`/`float`/`number` distinctions, and the current
+  stage 1 self-hosting status.
 - The formatter/editor token layer now classifies exactly the specification's
   closed keyword set and reserved list (spec `lexical-structure.md`):
   `print`/`println` are ordinary prelude names, `try`/`catch`/`throw`/

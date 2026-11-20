@@ -2,74 +2,109 @@
 
 > 相关：[应用结构](application.md) · [完整示例](../appendix/example.md)
 
-## 导入 / 导出（`pub`）
+Xulo 的包是一棵由 `mod` 声明的模块树。`mod` 声明模块，`use` 把路径上的名字绑定到当前文件，`pub` 决定名字是否进入模块接口。路径统一用 `::`，不再有字符串说明符，也没有 `import ... from`。
+
+## 声明与文件
 
 ```xulo
-// 导出（pub 声明）
-pub fn add(a: number, b: number): number {
-  a + b
+// main.xulo
+mod form;
+mod internal;
+
+use form::validate;
+
+mod tests {
+  use form::validate;
 }
 
-pub const PI = 3.14
-
-pub type User = {
-  name: string
+fn main() {
+  print(validate("x"))
 }
-
-pub enum Status {
-  Active
-  Inactive
-}
-
-// 名称再导出
-pub use { add, PI }
-
-// 导入
-import { add, PI } from "math"
-import type { User } from "types"
-import * as math from "math"
-import "core"
 ```
 
-**导入形式：**
+- `mod form;` 声明一个子模块，并认领文件 `form.xulo`（嵌套模块声明为 `form/fields.xulo` 等）
+- `mod tests { ... }` 在当前位置内联声明模块，花括号内同样以 `mod` / `use` 头开始
+- `mod` 与 `use` 是**头部形式**：写在文件其他顶层声明之前；写在函数体内是 `E0605`
+- `pub mod form;` 把命名空间 `form` 导出，其他模块可写 `form::...`
+
+## `use`：把名字绑定到当前文件
+
+```xulo
+use form::validate;                    // 绑定 validate
+use lsp-server::router::Router;        // 包名中的连字符保持原样
+use lsp-server::router::Router as R;   // 别名只改变本地名字
+use net::{Client, Request};            // 分组
+use form::{validate, fields::Field};   // 分组条目可以继续走子路径
+use lsp-server::*;                     // 通配：绑定目标的所有导出
+use type net::User;                    // 仅类型位置可用（运行时擦除）
+```
 
 | 形式 | 含义 |
 |------|------|
-| `import { a, b as c } from "..."` | 命名导入 |
-| `import type { T } from "..."` | 仅类型导入（运行时擦除） |
-| `import * as ns from "..."` | 命名空间导入 |
-| `import "..."` | 副作用导入 |
+| `use a::b;` | 绑定最后一段 `b` |
+| `use a::b as c;` | 绑定为 `c` |
+| `use a::{b, c as d};` | 分组绑定 |
+| `use a::*;` | 绑定 `a` 的全部导出 |
+| `use type a::T;` | 只在类型位置可见的类型绑定 |
 
-**导出形式：** 两种，全部以 `pub` 开头——`pub fn/const/let/type/enum`（声明级）、`pub use { a, b }`（名称再导出）。
+- 路径每一段都必须存在，绑定的名字必须是目标的导出：未知名 `E0601`，私有名 `E0602`
+- `use` 不会重新导出，也不会改变目标模块的接口
+- 只有一段的路径（如 `use lsp-server as ls;`）必须写 `as`，绑定的是命名空间本身
 
-## `pub` 关键字（公开可见性）
+## `pub` 与再导出
 
-`pub` 是声明级修饰符，把声明标记为公开（对其他模块可见）：
+`pub` 是声明级修饰符：
 
 ```xulo
-pub fn add(a: number, b: number): number { a + b }
+pub fn add(a: int, b: int): int { a + b }
+pub struct User { pub name: string, age: int }
+pub enum Status { Active, Inactive }
+pub trait Shape { fn area(self): float }
+pub type Score = int
 pub const PI = 3.14
-pub enum Status { Active Inactive }
-pub type User = { name: string }
+pub let app_name = "xulo"
+pub mod form;
 ```
 
-- `pub fn/let/const/type/enum` 只影响跨模块可见性，模块内照常使用。
-- `pub use { a, b }` 把本模块已声明的名称再导出（通常配合 `import` 做转发），语义与 Re-export 一致。
-- `pub fn main`、`fn main` 都被识别为程序入口。
+`pub use` 把路径上的名字绑定到当前文件**并**加入接口：
 
-> 注意：`import type` 写在 `import` 之后（`import type { ... }`），而非花括号内（`import { type ... }` 暂不支持）。
-> 历史：`export` 与 `default` 关键字均已移除并成为保留字（Xulo 没有默认导出）；跨模块导出统一用上面的 `pub` 形态，导入统一按名称。旧代码的 `export default fn main` 直接改写为 `pub fn main` 即可。
+```xulo
+pub use net::http::Client;
+pub use net::http::Request as Req;
+pub use net::{Response, Body};
+pub use lsp-server::*;
+pub use { add, PI };        // 再导出本文件已有的名字
+```
 
-## 导入解析规则
+- 路径形式读取目标导出，未知 / 私有分别报 `E0601` / `E0602`
+- 本地形式 `pub use { a, b }` 中的名字必须已经属于本模块接口，否则报错
 
-- 相对路径或本地存在的模块名（如 `./math`、`math`）→ 解析为本地 `.xulo` 文件，由原生运行时加载。
-- 其余说明符（如 `@xulo/ui`）→ 视为外部包，按 `xupm.toml` 的依赖映射解析；只有版本、没有本地源码的依赖暴露不透明面，其成员绑定为 `null` 占位符。不经过 Node.js / ESM。
-- `import type` 只供类型检查；运行时仅当导入名同时是运行时值（如 `enum`）时保留其值绑定，以便 `Kind::Admin` 可用，否则完全擦除；`pub enum` 同时导出运行时值与类型。
-- 本地模块由原生运行时按拓扑序初始化，入口文件执行其 `main()`。
-- 循环导入（A → B → A）会被拒绝。
+## 可见性与初始化
 
-## 跨模块调用
+- 未标 `pub` 的声明只在声明它的模块内可见
+- 结构体字段默认私有；跨模块读取或构造字段时需要 `pub`
+- 模块按依赖顺序初始化；被 `use` 的名字若需要运行时值，会在使用前完成初始化
+- 循环依赖在类型检查阶段被拒绝
 
-- 导入的函数保留参数名，支持具名实参调用。
-- 导入不存在的导出名报语义错误。
-- `trait` 是可导出的类型成员（`pub trait`），用 `import type { Trait } from "./mod"` 引入；`impl` 块不跨模块移植，需在引用该特征的模块内本地声明。
+## 入口与库
+
+带 `main` 的根模块是可执行程序；没有 `main` 的文件是库模块。入口文件通过 `mod` 组合其他文件，通过 `use` 取用它们的导出：
+
+```xulo
+// math.xulo —— 库模块
+pub fn add(a: int, b: int): int { a + b }
+pub const PI = 3.14
+
+// main.xulo —— 应用入口
+mod math;
+use math::{add, PI};
+
+fn main() {
+  print(add(1, PI))
+}
+```
+
+- 入口只声明一次，位于根模块的文件作用域
+- 只有根模块的 `main` 被当作入口；子模块中的同名函数只是普通函数
+- 导入的函数保留参数名，因此可以按名称传参
+- 详细规则见 `spec/modules/`（`source-files.md` 与 `import-export.md`）

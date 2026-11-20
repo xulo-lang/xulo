@@ -36,6 +36,6 @@
 | `...` | [表达式](reference/expressions.md) |
 | `type` / `enum` | [数据与类型](reference/types.md) |
 | `async` / `await` | [异步](reference/async.md) |
-| `try` / `catch` / `throw` | [控制流](reference/control-flow.md) |
-| `import` / `pub` | [模块系统](reference/modules.md) |
+| `Result` / `?` / `panic` | [控制流](reference/control-flow.md) |
+| `mod` / `use` / `pub` | [模块系统](reference/modules.md) |
 | `main` | [应用结构](reference/application.md) |

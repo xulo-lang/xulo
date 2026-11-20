@@ -55,30 +55,39 @@ match value {
 
 - 各分支的尾部表达式必须相互兼容（与 `if` 两分支的规则一致）：类型互不兼容时静态报错
 - 分支间分隔可选逗号或换行，两者均可
-- 泛型枚举的 payload（`Result<T> { Success(T) ... }`）在 arm 内被擦除为 `any`，可安全地与其他分支的类型合并
 - 支持枚举成员与 payload 绑定：
 
 ```xulo
-let result = Result::Success(42)
+let result = Result::Ok(42)
 match result {
-  Result::Success(value) => print("Got: " + value)
-  Result::Error(msg) => print("Error: " + msg)
+  Result::Ok(value) => print("Got: " + str(value))
+  Result::Err(msg) => print("Error: " + msg)
 }
 ```
 
-## 异常：`throw` / `try` / `catch`
+## 错误处理：`Result` 与 `?`
+
+语言没有 `try` / `catch` / `throw`。可恢复的失败是普通值：函数返回内建的 `Result<T, E>`，调用者用 `match` 检查，或用后缀 `?` 提前返回：
 
 ```xulo
-async fn fetch_user(id: string) {
-  try {
-    let response = await fetch("/api/users/" + id)
-    return await response.json()
-  } catch (e) {
-    print("Error: " + e.message)
-    return null
+fn half(n: int): Result<int, string> {
+  if n % 2 == 0 { Result::Ok(n / 2) } else { Result::Err("odd input") }
+}
+
+fn doubled_half(n: int): int {
+  match half(n) {
+    Result::Ok(v) => v * 2
+    Result::Err(reason) => { print(reason); 0 }
   }
+}
+
+fn quarter(n: int): Result<int, string> {
+  let h = half(n)?      // Err 时整个函数返回该 Result::Err
+  Result::Ok(h / 2)
 }
 ```
 
-- `throw <expr>` 抛出异常
-- `try { ... } catch (e) { ... }` 捕获异常
+- `Result::Ok(value)` / `Result::Err(error)` 是仅有的两个变体
+- `?` 用于 `Result<T, E>` 或 `T?`：成功时取出值，失败时从外层函数提前返回
+- 不可恢复的失败用 `panic(...)`；它没有处理器
+- 详细规则见 `spec/error-handling.md`

@@ -61,7 +61,7 @@ pub fn describe(item: Item): string {
 ## `store.xulo`（集合操作）
 
 ```xulo
-import type { Item } from "./model"
+use type model::Item;
 
 pub struct Inventory {
   pub items: List<Item>
@@ -96,10 +96,10 @@ pub fn total_quantity(inventory: Inventory): number {
 ## `report.xulo`（格式化输出）
 
 ```xulo
-import type { Item } from "./model"
-import { describe } from "./model"
-import type { Inventory } from "./store"
-import { total_quantity } from "./store"
+use type model::Item;
+use model::describe;
+use type store::Inventory;
+use store::total_quantity;
 
 pub fn header(): string {
   "== Inventory =="
@@ -117,10 +117,14 @@ pub fn summary(inventory: Inventory): string {
 ## `main.xulo`（入口）
 
 ```xulo
-import { make_item, describe, Category } from "./model"
-import type { Inventory } from "./store"
-import { empty, add, find } from "./store"
-import { header, line, summary } from "./report"
+mod model;
+mod store;
+mod report;
+
+use model::{make_item, describe, Category};
+use type store::Inventory;
+use store::{empty, add, find};
+use report::{header, line, summary};
 
 fn add_one(
   inventory: Inventory,

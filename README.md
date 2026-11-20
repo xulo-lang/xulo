@@ -122,7 +122,7 @@ xulo
 | `closures_hof.xulo` | 匿名函数 / 闭包（捕获、可变捕获）/ 高阶函数 / 函数值调用 |
 | `generics.xulo` | 泛型函数（调用处推断类型实参） |
 | `enums_match.xulo` | `enum`（含关联数据、泛型）+ `match` 表达式 |
-| `structs.xulo` | `struct` 字段与可省字段、固有 `impl` 方法、`#[derive(Debug)]`、对象字面量类型标注 |
+| `structs.xulo` | `struct` 字段与可省字段、固有 `impl` 方法、`#[derive(Debug)]`、映射字面量类型标注 |
 | `trait_shapes.xulo` | `trait` + `impl Trait for T` 显式派发 `Trait::method(recv)` |
 | `templates.xulo` | 反引号模板字面量 `${...}`、转义、多行、嵌套、Unicode |
 | `collections.xulo` | 列表 / 对象：下标、`+` 拼接、`...` 展开、成员访问 |
@@ -143,7 +143,7 @@ xulo
 | `async_tasks.xulo` | `async` / `await`、`Time::sleep`、`Task::resolve` / `all` / `race` / `timeout` |
 | `test_functions.xulo` | `#[test] fn` 测试函数 + `assert` |
 | `macros.xulo` | 过程宏：`#[macro]` / `#[macro_attr]` / `#[macro_derive(Target)]` 定义、函数宏 `name!`、派生宏 `#[derive]`、属性宏 `#[name]`、`ast::quote!` 与 `${…}` 洞 |
-| `modules/main.xulo` | `mod` / `import` 跨文件模块（见 `examples/modules/`） |
+| `modules/main.xulo` | `mod` / `use` 跨文件模块（见 `examples/modules/`） |
 
 ## 语言速览
 
@@ -166,27 +166,28 @@ fn main() {
         print(x)
     }
 
-    let person = { name: "lyy", age: 30 }   // 对象字面量
+    let person = { name: "lyy", age: 30 }   // 映射字面量
     print(person)
 }
 ```
 
 ### 支持的特性
 
-- 字面量：数字 `123` `3.14`、字符串 `"..."` / `'...'`、布尔 `true`/`false`、列表 `[...]`、对象 `{ key: value, ... }`
+- 字面量：数字 `123` `3.14`、字符串 `"..."` / `'...'`、布尔 `true`/`false`、列表 `[...]`、映射 `{ key: value, ... }`
 - 变量绑定：`let` / `const`，可选类型注解；赋值语句
 - 函数：`fn name(p: number): number { ... }`，隐式/显式返回、递归、泛型（调用处推断）、可选/默认/命名参数、匿名函数（闭包）
-- 类型：`string` `number` `bool` `int` `float` `List<T>` `Map<K, V>` `null` `T?` `T | U` `T & U`、字符串字面量联合、函数类型 `fn(...): T`、类型别名 `type`、枚举 `enum`（含关联数据、泛型）
-- 控制流：`if` / `else if` / `else`（表达式与语句）、`for x in list`、`for i in 0..<n` / `for i in 0..=n`（区间：`..<` 排他上界、`..=` 闭合含上界）、`while`、`match`、`and`/`or`/`!`、三目、`throw`/`try`/`catch`
-- 表达式：成员访问、下标、`?.`、`??`、列表/对象展开 `...`
-- 异步：`: async` 返回标注、`await`
-- 模块系统：`import` / `pub`（named/namespace/type-only/bare；`pub` 声明、`pub use { a, b }` 两种导出形态），按依赖拓扑序加载，循环检测、导出符号/类型跨模块校验
+- 类型：`string` `number` `int` `float` `bool` `List<T>` `Map<K, V>` `Set<T>` `Array<T, N>` `null` `T?` `T | U` `T & U`、字符串字面量联合、函数类型 `fn(...): T`、类型别名 `type`、枚举 `enum`（含关联数据、泛型）
+- 控制流：`if` / `else if` / `else`（表达式与语句）、`for x in list`、`for i in 0..<n` / `for i in 0..=n`（区间：`..<` 排他上界、`..=` 闭合含上界）、`while`、`match`、`and`/`or`/`!`、三目、`defer`
+- 表达式：成员访问、下标、`?.`、`??`、列表/映射展开 `...`
+- 错误处理：内建 `Result<T, E>`、后缀 `?` 传播、`panic(...)`；没有 `try` / `catch` / `throw`
+- 异步：`async fn`、异步闭包、`await`
+- 模块系统：`mod` / `use` / `pub use`（路径、分组、通配、`use type`；`pub` 声明与再导出），按依赖拓扑序加载，循环检测、导出符号/类型跨模块校验
 ### 未实现 / 限制
 
-- `fmt` 为基于 token 流的格式化器：会丢弃注释，且匹配/对象字面量的换行风格以源码为基准（不做智能重排）
+- `fmt` 为基于 token 流的格式化器：会丢弃注释，且匹配/映射字面量的换行风格以源码为基准（不做智能重排）
 - `repl` 为会话式 REPL：每轮用原生解释器重新编译并执行整个会话（无状态持久化到语言内部，靠重放保持跨条目变量），支持 `exit` / `clear`；行编辑走 rustyline（方向键历史、Tab 补全）
 - 调用函数必须在调用点之前已声明（不支持前向引用）
-- 原生运行时（`xulo run`）为 MVP：支持核心语言（字面量、变量、函数/闭包/递归、if/else、for/while、match、枚举、列表/对象、try/catch、`?.`/`??`/`...`、`print`/`println`/`str`）、`async`/`await`（协同调度）、本地 `import`/`pub` 导出（named/namespace）。`main` 必须返回 `unit`。原生 `print` 对列表/对象的输出格式为 `[1, 2]` / `{ k: v }`。
+- 原生运行时（`xulo run`）为 MVP：支持核心语言（字面量、变量、函数/闭包/递归、if/else、for/while、match、枚举、列表/映射、`Result`/`?`、`?.`/`??`/`...`、`print`/`println`/`str`）、`async`/`await`（协同调度）、本地 `mod`/`use`/`pub` 导出。`main` 必须返回 `unit`。原生 `print` 对列表/映射的输出格式为 `[1, 2]` / `{ k: v }`。
 - `++`/`--` 自增运算符不在语言中
 
 ## 测试
@@ -199,21 +200,21 @@ cargo test
 
 CI（GitHub Actions，见 `.github/workflows/ci.yml`）执行 `cargo fmt --check` → `cargo clippy --all-targets -- -D warnings` → `cargo test` → 遍历运行全部 examples。
 
-所有语义错误与警告均带源码定位（`--> file:line:col` + caret），诊断码见 `src/error.rs`（`E0001`-`E0005`、警告 `W0001`）。
+所有语义错误与警告均带源码定位（`--> file:line:col` + caret），诊断码见 `crates/xulo-core/src/error.rs`（`E0001`-`E0006`、警告 `W0001`）。
 
 ## 路线图：Stage 1（自举）准备度
 
 stage 1 指用 Xulo 自身编写的编译器/工具链，stage 2 是 stage 1 编译自身。stage 0
-当前已足以支撑解释器上的 stage 1 原型（Gate 1），但正式自举仍被若干 P0 缺口
-阻塞。各项能力是否就绪、阻塞项、工作包与验收门禁见
+已经支撑完整自举回路：Gate 1–6 全部达成（解释器原型、自解析、自检查、原生构建、
+自举与规范一致性）。各项能力的证据、工作包与验收门禁见
 [`docs/stage1-readiness.md`](docs/stage1-readiness.md)；可勾选的任务清单见
 [`docs/tasks.md`](docs/tasks.md)：
 
-- 已具备：核心语法/解释器、模块、struct/enum/trait/泛型、`Result`/`?`、
-  解释器侧 List/Map/Set、std 的 fs/io/process/os/path/json/regex/fmt、基础 AOT。
-- 主要阻塞：`int` 仍以 `f64` 承载、缺少 `unknown` 顶类型与 `is` 收窄、
-  缺少元组 `p.0`、泛型 struct 构造、AOT 缺 Map/Set 且与解释器存在输出差异、
-  `defer` 执行时机错误、无规范一致性测试 runner。
+- 已具备：核心语法/解释器、`mod`/`use` 模块、struct/enum/trait/泛型、
+  `Result`/`?`、64 位 `int`、`unknown` 与 `is` 收窄、元组、List/Map/Set、
+  std 的 fs/io/process/os/path/json/regex/fmt/hint、AOT 与 stage 1 自举。
+- 仍属 P2 / 非门禁：LSP 与格式化器注释、async 任务的完整调度、
+  `std::net`/`std::http` 之外的网络与包注册表、非 Unix FFI、UI 库（语言不定义 UI 层）。
 
 ## 项目结构
 
@@ -224,7 +225,6 @@ stage 1 指用 Xulo 自身编写的编译器/工具链，stage 2 是 stage 1 编
 │   ├── xulo-lexer/             # Token 类型（词法规则在 grammar.pest）
 │   ├── xulo-parser/            # 词法 + 语法分析（pest, grammar.pest）
 │   ├── xulo-semantic/          # 语义检查 + 符号表 + 名称解析记录（供编辑器查询）
-│   ├── xulo-codegen/           # 生成 JavaScript（已废弃，保留但不再参与执行路径）
 │   ├── xulo-compiler/          # 前端管线 compile() + 多文件模块加载/分析
 │   ├── xulo-runtime/           # 原生树遍历解释器（xulo run 默认路径）
 │   ├── xulo-std/               # 标准库原生实现：Math/Time 纯语义 + 编译路径 extern "C" 入口

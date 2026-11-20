@@ -19,7 +19,7 @@ Xulo 是一门静态类型系统编程语言，语法吸收 Rust、Swift、TypeS
 
 本手册（`learn/book`）是**面向使用者的整理版手册**；仓库根目录的 `spec/` 是**底层语言规范源**。
 
-- 手册内容从规范源整理而来，并已按当前实现做了一致性修正（例如 `import type` 的写法、`let` 默认不可变而 `let mut` 才可赋值等）。
+- 手册内容从规范源整理而来，并已按当前实现做了一致性修正（例如 `use type` 的写法、`let` 默认不可变而 `let mut` 才可赋值等）。
 - 形式语法（EBNF）的正本见 `spec/grammar.md`；本手册的 [形式语法（EBNF）](reference/grammar.md) 一节提供与实现对齐的简化版，并附差异说明。
 
 ## 语法风格来源
@@ -35,11 +35,11 @@ Xulo 是一门静态类型系统编程语言，语法吸收 Rust、Swift、TypeS
 | 泛型 `<T>` | TypeScript / Rust |
 | 联合类型 `T \| U` / 交叉类型 `T & U` | TypeScript |
 | 枚举 `enum`（含关联数据） | Swift / Rust |
-| 模块 `import`/`pub` | TypeScript |
+| 模块 `mod`/`use`/`pub` | Rust |
 | `if` 表达式、`match` | Rust / Swift |
 | `async`/`await` | TypeScript |
 | 应用入口 `main` | Rust/Go |
-| 对象字面量 `({ ... })` | 自定义（消除歧义） |
+| 映射字面量 `{ ... }` / `({ ... })` | 自定义（消除与块表达式的歧义） |
 
 ## 如何阅读本书
 

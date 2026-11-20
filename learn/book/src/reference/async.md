@@ -5,28 +5,28 @@
 ## `async` / `await`（TypeScript 风格）
 
 ```xulo
-async fn fetch_user(id: string) {
-  let response = await fetch("/api/users/" + id)
-  let data = await response.json()
-  return data
+async fn fetch_value(): int {
+  let v = await compute()
+  v
 }
 ```
 
 - 在 `fn` 前写 `async` 声明异步函数；调用它得到一个任务，结果用 `await` 取出
 - `await` 只能出现在异步函数或异步闭包内；对非任务值使用 `await` 是语义错误
-- `throw <expr>` 抛出异常
 
-## `try` / `catch`
+## 异步失败：`Result` 与 `?`
+
+异步代码没有单独的异常机制。失败通过返回 `Result<T, E>` 表达，`?` 也可以出现在异步函数体内：
 
 ```xulo
-async fn fetch_user(id: string) {
-  try {
-    let response = await fetch("/api/users/" + id)
-    return await response.json()
-  } catch (e) {
-    print("Error: " + e.message)
-    return null
-  }
+async fn fetch_user(id: string): Result<string, Error> {
+  let response = await fetch("/api/users/" + id)?
+  response.json()
+}
+
+async fn load_name(id: string): Result<string, Error> {
+  let user = await fetch_user(id)?
+  Result::Ok(user)
 }
 ```
 

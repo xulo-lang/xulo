@@ -43,15 +43,16 @@ async fn main() {
 
 ## 应用与库
 
-入口文件通过 `import` 组合其他模块；被导入的文件不需要 `main`：
+入口文件通过 `mod` 声明子模块，并用 `use` 取用它们的导出；被组合的文件不需要 `main`：
 
 ```xulo
 // math.xulo —— 库模块
-pub fn add(a: number, b: number): number { a + b }
+pub fn add(a: int, b: int): int { a + b }
 pub const PI = 3.14
 
 // main.xulo —— 应用入口
-import { add, PI } from "./math"
+mod math;
+use math::{add, PI};
 
 fn main() {
   print(add(1, PI))
@@ -59,8 +60,8 @@ fn main() {
 ```
 
 - 只有入口文件声明 `main`；库模块导出 `pub` 声明供入口或其他模块使用
-- 导入的函数保留参数名，因此可以按名称传参
-- 本地模块由原生运行时按依赖顺序初始化，最后执行入口 `main`
+- `use` 绑定的函数保留参数名，因此可以按名称传参
+- 模块由原生运行时按依赖顺序初始化，最后执行入口 `main`
 
 ## UI 是库的关注点
 

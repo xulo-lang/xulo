@@ -75,13 +75,16 @@ fn first<T>(list: List<T>): T {
   list[0]
 }
 
-// 调用处推断类型实参：first([1, 2, 3]) 把 T 绑定为 number
+// 调用处推断类型实参：first([1, 2, 3]) 把 T 绑定为 int
 let n: number = first([1, 2, 3])
 let s: string = first(["a"])      // ✅ T = string
-let bad: string = first([1, 2])   // ❌ 推断 T = number，与 string 不兼容
+let bad: string = first([1, 2])   // ❌ 推断 T = int，与 string 不兼容
+
+// 也可以显式写类型实参
+let m = first<int>([4, 5, 6])
 ```
 
-> 当前实现支持**调用处推断**泛型实参；**显式**类型实参（`first<number>(...)`）暂不支持。
+> 泛型类型实参既可以由调用处推断，也可以显式写在调用上（`first<int>(...)`）；两者冲突时按规范的统一规则报错。
 
 ## 匿名函数 / 闭包（Function Values）
 

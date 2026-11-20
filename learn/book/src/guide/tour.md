@@ -19,9 +19,9 @@ enum Theme {
   System
 }
 
-enum Result<T> {           // 带关联数据的泛型枚举
+enum Outcome<T> {          // 带关联数据的泛型枚举
   Success(T)
-  Error(string)
+  Failure(string)
 }
 ```
 
@@ -78,17 +78,14 @@ fn main() {
 
 状态就是普通的可变绑定与普通值；Xulo 不内建状态原语。详见 [变量与绑定](../reference/variables-and-state.md)。
 
-## 异步
+## 异步与错误处理
+
+语言没有 `try` / `catch`。失败通过 `Result<T, E>` 返回，用 `match` 或 `?` 处理：
 
 ```xulo
-async fn fetch_user(id: string) {
-  try {
-    let response = await fetch("/api/users/" + id)
-    return await response.json()
-  } catch (e) {
-    print("Error: " + e.message)
-    return null
-  }
+async fn fetch_user(id: string): Result<string, Error> {
+  let response = await fetch("/api/users/" + id)?
+  response.json()
 }
 ```
 
@@ -96,11 +93,13 @@ async fn fetch_user(id: string) {
 
 ```xulo
 // math.xulo
-pub fn add(a: number, b: number): number { a + b }
+pub fn add(a: int, b: int): int { a + b }
 pub const PI = 3.14
 
 // main.xulo
-import { add, PI } from "./math"
+mod math;
+use math::{add, PI};
+
 fn main() { print(add(1, PI)) }
 ```
 

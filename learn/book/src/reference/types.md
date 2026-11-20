@@ -5,24 +5,28 @@
 ## 基础类型
 
 ```xulo
-string         // 字符串
-number         // 数字（整数和浮点统一）
+string         // UTF-8 字符串
+int            // 64 位有符号整数；整数字面量默认是 int
+float          // 64 位 IEEE-754 浮点；浮点字面量默认是 float
+number         // int | float 的联合类型
 bool           // 布尔值
-int            // number 的别名（同为 number）
-float          // number 的别名（同为 number）
-i8 i16 i32 i64 // 定宽数值层（拼写保留，语义并入 number）
-u8 u16 u32 u64 // 定宽数值层（拼写保留，语义并入 number）
-f32 f64        // 定宽数值层（拼写保留，语义并入 number）
+i8 i16 i32 i64 // 定宽有符号整数
+u8 u16 u32 u64 // 定宽无符号整数
+f32 f64        // 定宽浮点
+isize usize    // 指针宽度整数
 unit           // 空类型（`fn f(): unit`）
-unknown        // 未知类型（跳过检查）
-List<T>        // 列表（泛型）
-null           // 空值
-T?             // 可选类型（Swift 风格，等价于 T | null）
-T | U          // 联合类型（TS 风格）
-T & U          // 交叉类型（TS 风格）
+unknown        // 顶类型（跳过检查）
+null           // 空值；类型为 null
+List<T>        // 列表
+Map<K, V>      // 映射
+Set<T>         // 集合
+Array<T, N>    // 定长数组
+T?             // 可选类型（等价于 T | null）
+T | U          // 联合类型
+T & U          // 交叉类型
 ```
 
-`number` 统一表示整数与浮点；`print(...)`、`str(...)` 与 `List<T>` 是内建能力；`unit` 是空类型，`unknown` 跳过检查。
+`int` 与 `float` 是独立类型，`number` 是它们的联合；`print(...)`、`println(...)`、`str(...)` 是 prelude 内建函数；`unit` 是空类型，`unknown` 是顶类型。
 
 ## 结构体（struct）
 
@@ -88,9 +92,9 @@ enum Theme {
 ### 带关联数据的枚举（Swift/Rust 风格）
 
 ```xulo
-enum Result<T> {
+enum Outcome<T> {
   Success(T)
-  Error(string)
+  Failure(string)
 }
 
 enum Action {
@@ -131,10 +135,10 @@ match theme {
   Theme::System => "💻"
 }
 
-let result = Result::Success(42)
+let result = Result::Ok(42)          // Result<T, E> 是内建类型
 match result {
-  Result::Success(value) => print("Got: " + value)
-  Result::Error(msg) => print("Error: " + msg)
+  Result::Ok(value) => print("Got: " + str(value))
+  Result::Err(msg) => print("Error: " + msg)
 }
 ```
 
@@ -147,7 +151,7 @@ match result {
 
 ## 特征（trait）
 
-`trait` 声明一组方法签名，作为「能力」契约；`impl Trait for Type` 为某个具名类型提供这些方法的实现。`self`（保留字）作为接收者，标记该方法为「实例方法」。
+`trait` 声明一组方法签名，作为「能力」契约；`impl Trait for Type` 为某个具名类型提供这些方法的实现。`self` 是关键字，作为接收者，标记该方法为「实例方法」。
 
 ```xulo
 trait Area {
@@ -188,4 +192,4 @@ fn describe<T: Area>(t: T): number {
 - 派发接收者必须是**静态具名类型**：`Trait::method(recv)` 的 `recv` 需要在调用点能解析出具体的具名类型，且该类型已注册 `impl`，否则报「does not implement trait」。
 - `impl` 方法必须实现 trait 声明的全部方法，且签名（含 `self`）与声明的参数/返回类型双向可赋值。
 - 泛型参数的值在运行时被擦除，因此 `T: Trait` 约束下无法做派发调用——只有具名类型的实例可以。
-- `trait` 是可导出的模块成员（`pub trait`），可被其他模块 `import type` 引入后再本地实现。
+- `trait` 是可导出的模块成员（`pub trait`），可被其他模块 `use type` 引入后再本地实现。

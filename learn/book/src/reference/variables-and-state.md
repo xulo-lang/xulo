@@ -7,7 +7,7 @@ Xulo 用 `let`、`let mut` 与 `const` 声明绑定。`let` 默认不可变，�
 ## `let` 与 `let mut`
 
 ```xulo
-let count = 0                 // 不可变绑定；类型推断为 number
+let count = 0                 // 不可变绑定；类型推断为 int
 let name: string = "Alice"    // 带类型标注
 let mut total = 0             // 可变绑定
 let maybe: string? = null     // 可选类型

@@ -60,7 +60,7 @@ fn main() {
         print(x)
     }
 
-    let person = { name: "lyy", age: 30 }   // 对象字面量
+    let person = { name: "lyy", age: 30 }   // 映射字面量
     print(person)
 
     print(fib(10))              // 55
@@ -73,4 +73,4 @@ fn main() {
 cargo test
 ```
 
-覆盖词法、语法、语义、代码生成以及端到端（真实调用 `node`）测试。
+覆盖词法、语法、语义、原生解释器、AOT 以及 CLI 端到端测试。
