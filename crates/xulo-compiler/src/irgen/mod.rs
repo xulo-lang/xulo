@@ -52,6 +52,9 @@ pub struct IrGenerator {
     func_generic_params: HashMap<String, Vec<xulo_core::ast::GenericParam>>,
     label_map: HashMap<String, Label>,
     loop_stack: Vec<LoopContext>,
+    /// 每个词法块登记的 `defer` 操作数（栈顶是当前块）。离开块时逆序求值；
+    /// `return`/`break`/`continue` 在跳转前先下降对应的队列。
+    defer_blocks: Vec<Vec<DeferBody>>,
     /// struct 定义（结构体构造需要字段顺序与默认值）
     structs: HashMap<String, Vec<StructField>>,
     /// `Type::method` -> IR 函数（impl 固有方法）
@@ -108,6 +111,9 @@ pub struct IrGenerator {
 struct LoopContext {
     break_label: Label,
     continue_label: Label,
+    /// 循环体块在 `defer_blocks` 中的下标：`break`/`continue` 要在跳出前
+    /// 运行循环体及更深块的 defer，但不运行再外层块的。
+    defer_depth: usize,
 }
 
 /// 进入闭包体前保存的外层作用域状态
@@ -121,6 +127,7 @@ struct ScopeSnapshot {
     dyn_tag_of: HashMap<String, Operand>,
     value_tags: HashMap<LocalId, Operand>,
     loop_stack: Vec<LoopContext>,
+    defer_blocks: Vec<Vec<DeferBody>>,
     boxed_names: HashSet<String>,
     boxed_logical: HashMap<String, IrType>,
     closure_env: Option<LocalId>,
@@ -251,7 +258,8 @@ fn is_macro_function(f: &FnDef) -> bool {
 
 impl IrGenerator {
     /// 进入嵌套块：快照名字绑定，供 [`Self::leave_block`] 恢复遮蔽。
-    pub(super) fn enter_block(&self) -> BlockScope {
+    pub(super) fn enter_block(&mut self) -> BlockScope {
+        self.defer_blocks.push(Vec::new());
         BlockScope {
             locals: self.locals.clone(),
             source_types: self.source_types.clone(),
@@ -260,12 +268,90 @@ impl IrGenerator {
         }
     }
 
-    /// 离开嵌套块：恢复块外的可见绑定。
-    pub(super) fn leave_block(&mut self, scope: BlockScope) {
+    /// 离开嵌套块：按逆序求值本块登记的 `defer`，再恢复块外的可见绑定。
+    pub(super) fn leave_block(&mut self, scope: BlockScope) -> Result<(), XuloError> {
+        let result = self.emit_current_block_defers();
+        self.defer_blocks.pop();
         self.locals = scope.locals;
         self.source_types = scope.source_types;
         self.dyn_tag_of = scope.dyn_tag_of;
         self.boxed_logical = scope.boxed_logical;
+        result
+    }
+
+    /// 当前块是否已由 `return`/`break`/`continue` 终结。终结后本块不可达，
+    /// 不再追加 defer 指令（否则同一 IR 块出现双终结指令）。
+    fn current_block_terminated(&self) -> bool {
+        self.current_func
+            .and_then(|idx| self.module.functions[idx].instructions.last())
+            .is_some_and(|i| {
+                matches!(
+                    i,
+                    Instruction::Return(_) | Instruction::Jump(_) | Instruction::Branch { .. }
+                )
+            })
+    }
+
+    /// 求值当前块登记的 defer（逆序），并清空本块队列。
+    fn emit_current_block_defers(&mut self) -> Result<(), XuloError> {
+        if self.current_block_terminated() {
+            return Ok(());
+        }
+        let defers = match self.defer_blocks.last_mut() {
+            Some(block) => std::mem::take(block),
+            None => return Ok(()),
+        };
+        self.emit_defer_list(&defers)
+    }
+
+    /// 离开函数/闭包（`return` 或隐式返回）前，从最内层到最外层运行所有
+    /// 活动块的 defer。
+    pub(super) fn emit_all_defers(&mut self) -> Result<(), XuloError> {
+        let blocks = self.defer_blocks.clone();
+        for defers in blocks.iter().rev() {
+            self.emit_defer_list(defers)?;
+        }
+        Ok(())
+    }
+
+    /// `break`/`continue` 前运行从当前块到 `depth`（含循环体块）的 defer；
+    /// 更外层的块不离开，因此不动。
+    pub(super) fn emit_defers_down_to(&mut self, depth: usize) -> Result<(), XuloError> {
+        let blocks = self.defer_blocks.clone();
+        for defers in blocks.iter().skip(depth).rev() {
+            self.emit_defer_list(defers)?;
+        }
+        Ok(())
+    }
+
+    fn emit_defer_list(&mut self, defers: &[DeferBody]) -> Result<(), XuloError> {
+        for body in defers.iter().rev() {
+            self.emit_defer_body(body)?;
+        }
+        Ok(())
+    }
+
+    /// 求值一个 defer 操作数并丢弃其值。块形式是独立作用域，块内登记
+    /// 的嵌套 defer 在块尾运行。
+    fn emit_defer_body(&mut self, body: &DeferBody) -> Result<(), XuloError> {
+        match body {
+            DeferBody::Expr(expr) => {
+                self.generate_expression(expr)?;
+            }
+            DeferBody::Block(block) => {
+                let scope = self.enter_block();
+                let mut result = Ok(());
+                for stmt in &block.statements {
+                    if let Err(err) = self.generate_statement(stmt) {
+                        result = Err(err);
+                        break;
+                    }
+                }
+                self.leave_block(scope)?;
+                result?;
+            }
+        }
+        Ok(())
     }
 
     pub fn new() -> Self {
@@ -282,6 +368,7 @@ impl IrGenerator {
             func_generic_params: HashMap::new(),
             label_map: HashMap::new(),
             loop_stack: Vec::new(),
+            defer_blocks: Vec::new(),
             structs: HashMap::new(),
             methods: HashMap::new(),
             trait_impls: HashMap::new(),

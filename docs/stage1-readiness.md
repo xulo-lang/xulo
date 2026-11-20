@@ -439,9 +439,9 @@ Actual: `first`, `second`, `body`. Expected: `body`, `second`, `first`.
 
 **Resolved (WP4).** The interpreter now registers the operand without
 evaluating it, drains each scope's queue in reverse at block exit, and runs it
-before `return`, `break`, `continue`, and `?`. The AOT backend rejects `defer`
-as a bootstrap restriction instead of silently ignoring it. Covered by
-`crates/xulo-runtime/tests/defer.rs` and
+before `return`, `break`, `continue`, and `?`. The AOT backend lowers the same
+per-block queue (including loop `break`/`continue` and closure bodies). Covered
+by `crates/xulo-runtime/tests/defer.rs` and
 `crates/xulo-compiler/tests/aot_syntax_coverage_tests.rs`.
 
 ### 6.9 No automated spec conformance and a possibly stale submodule (T3, T7)
@@ -651,8 +651,8 @@ program compares byte for byte.
 
 **Exit:** §6.8 probe passes; stage 1 can use `defer` for cleanup.
 
-**Status:** done (L20a, L20b, R7, B3b, G4). The AOT backend reports a clear
-error for `defer` rather than dropping the operand.
+**Status:** done (L20a, L20b, R7, B3b, G4). Both execution paths lower `defer`
+through a per-block queue; `defer.xulo` is part of the AOT differential.
 
 ### WP5 — Stage 1 skeleton (can start in parallel)
 

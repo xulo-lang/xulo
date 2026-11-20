@@ -346,6 +346,8 @@ impl IrGenerator {
         self.value_tags.clear();
         self.uint_range_names.clear();
         self.closure_env = None;
+        self.defer_blocks.clear();
+        let body_scope = self.enter_block();
 
         // 捕获分析：被嵌套字面量自由引用的绑定需要装箱（cell 承载）
         let capture = self.analyze_scope(&f.params, &f.body);
@@ -426,15 +428,18 @@ impl IrGenerator {
                         if self.determine_element_tag(&expr_stmt.expr) == 2 {
                             self.emit_register_float(operand.clone());
                         }
+                        self.emit_all_defers()?;
                         self.module.functions[func_idx]
                             .instructions
                             .push(Instruction::Return(Some(operand)));
                     } else {
+                        self.emit_all_defers()?;
                         self.module.functions[func_idx]
                             .instructions
                             .push(Instruction::Return(None));
                     }
                 } else {
+                    self.emit_all_defers()?;
                     self.module.functions[func_idx]
                         .instructions
                         .push(Instruction::Return(None));
@@ -442,6 +447,7 @@ impl IrGenerator {
             }
         }
 
+        self.leave_block(body_scope)?;
         Ok(())
     }
 
@@ -741,6 +747,7 @@ impl IrGenerator {
         self.closure_env = Some(LocalId(0));
         self.boxed_names = body_boxed;
         self.boxed_logical = env_logical;
+        let body_scope = self.enter_block();
 
         // env 槽加载：cell 指针 → 本地 Pointer 槽
         for (i, name) in capture.free.iter().enumerate() {
@@ -809,15 +816,18 @@ impl IrGenerator {
                         if self.determine_element_tag(&expr_stmt.expr) == 2 {
                             self.emit_register_float(operand.clone());
                         }
+                        self.emit_all_defers()?;
                         self.module.functions[func_id]
                             .instructions
                             .push(Instruction::Return(Some(operand)));
                     } else {
+                        self.emit_all_defers()?;
                         self.module.functions[func_id]
                             .instructions
                             .push(Instruction::Return(None));
                     }
                 } else {
+                    self.emit_all_defers()?;
                     self.module.functions[func_id]
                         .instructions
                         .push(Instruction::Return(None));
@@ -825,6 +835,7 @@ impl IrGenerator {
             }
         }
 
+        self.leave_block(body_scope)?;
         self.restore_scope(snap);
         Ok(())
     }
@@ -841,6 +852,7 @@ impl IrGenerator {
             dyn_tag_of: std::mem::take(&mut self.dyn_tag_of),
             value_tags: std::mem::take(&mut self.value_tags),
             loop_stack: std::mem::take(&mut self.loop_stack),
+            defer_blocks: std::mem::take(&mut self.defer_blocks),
             boxed_names: std::mem::take(&mut self.boxed_names),
             boxed_logical: std::mem::take(&mut self.boxed_logical),
             closure_env: self.closure_env.take(),
@@ -858,6 +870,7 @@ impl IrGenerator {
         self.dyn_tag_of = snap.dyn_tag_of;
         self.value_tags = snap.value_tags;
         self.loop_stack = snap.loop_stack;
+        self.defer_blocks = snap.defer_blocks;
         self.boxed_names = snap.boxed_names;
         self.boxed_logical = snap.boxed_logical;
         self.closure_env = snap.closure_env;

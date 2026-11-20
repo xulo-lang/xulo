@@ -3,8 +3,6 @@
 // - `defer e` 与 `defer { ... }` 都合法；值被丢弃
 // - 离开块时按登记顺序的逆序执行（后进先出）
 // - 函数提前 `return`、循环里 `break`/`continue` 都会触发当前块的 defer
-//
-// @no-aot all: AOT 后端尚未下降 `defer`（crates/xulo-compiler/src/irgen/stmt.rs）
 
 fn work(): int {
     defer print("defer 1")

@@ -109,12 +109,12 @@ XULO_BLESS=1 cargo test -p xulo-cli --test examples
 
 - 文档注释（`spec/documentation-comments.md` 的提取模型 / 标签 / 包索引）尚未
   实现；示例里的 `///`、`//!` 只是 trivia，`basics/lexical.xulo` 只演示了词法层。
-- AOT 后端还有 7 处已知差距（6 个 `@no-aot all:` + 1 个 `@no-aot windows:`），
+- AOT 后端还有 6 处已知差距（5 个 `@no-aot all:` + 1 个 `@no-aot windows:`），
   另有 2 个 `@skip-aot`（测试载体）。差分测试要求标记过的程序**继续失败**，
-  修好后必须同步删标记。清单见 `docs/tasks.md` T8：`defer`、match
+  修好后必须同步删标记。清单见 `docs/tasks.md` T8：match
   guard/or/区间/类型模式、`spawn`/`lock`/service、泛型 trait 派发、
-  失败路径报告、Windows FFI。块级遮蔽、`f32` 运算、`Error("…")` 构造与
-  嵌套元组/元组传参与返回已经修好，标记已删。
+  失败路径报告、Windows FFI。块级遮蔽、`f32` 运算、`Error("…")` 构造、
+  嵌套元组/元组传参与返回、`defer` 已经修好，标记已删。
 - 失败路径报告仍不一致，且不是实现疏漏：解释器经 CLI 渲染完整诊断
   （`error[E0006]` + 源码位置 + 片段）并丢弃缓冲区里的 stdout，原生运行时只有
   `panic: …` 且 stdout 已经流式写出。要做到逐字节一致，得把诊断（含源码片段）

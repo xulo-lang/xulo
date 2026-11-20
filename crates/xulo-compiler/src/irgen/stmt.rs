@@ -20,30 +20,38 @@ impl IrGenerator {
             Statement::Export(_) => Ok(()), // 已处理
             Statement::Break => {
                 if let Some(ctx) = self.loop_stack.last() {
+                    let break_label = ctx.break_label;
+                    let depth = ctx.defer_depth;
+                    self.emit_defers_down_to(depth)?;
                     let func_idx = self.current_func.unwrap();
                     self.module.functions[func_idx]
                         .instructions
-                        .push(Instruction::Jump(ctx.break_label));
+                        .push(Instruction::Jump(break_label));
                 }
                 Ok(())
             }
             Statement::Continue => {
                 if let Some(ctx) = self.loop_stack.last() {
+                    let continue_label = ctx.continue_label;
+                    let depth = ctx.defer_depth;
+                    self.emit_defers_down_to(depth)?;
                     let func_idx = self.current_func.unwrap();
                     self.module.functions[func_idx]
                         .instructions
-                        .push(Instruction::Jump(ctx.continue_label));
+                        .push(Instruction::Jump(continue_label));
                 }
                 Ok(())
             }
-            // The interpreter implements block-exit `defer`; the AOT backend
-            // does not yet. Reject rather than drop the operand silently (a
-            // binary that skips cleanup would diverge from `xulo run`).
-            Statement::Defer(_) => Err(XuloError::new(
-                ErrorKind::Semantic,
-                "AOT codegen does not support `defer` (bootstrap restriction); run programs using `defer` with `xulo run`"
-                    .to_string(),
-            )),
+            // `defer` registers its operand now and runs it when the enclosing
+            // block is left (`leave_block`, or before `return`/`break`/`continue`).
+            // The operand is not evaluated at registration time, matching the
+            // interpreter (spec `statements/return-and-block.md`).
+            Statement::Defer(d) => {
+                if let Some(block) = self.defer_blocks.last_mut() {
+                    block.push(d.body.clone());
+                }
+                Ok(())
+            }
             _ => Ok(()), // 其他语句暂时忽略
         }
     }
@@ -297,10 +305,12 @@ impl IrGenerator {
             if self.determine_element_tag(value) == 2 {
                 self.emit_register_float(operand.clone());
             }
+            self.emit_all_defers()?;
             self.module.functions[func_idx]
                 .instructions
                 .push(Instruction::Return(Some(operand)));
         } else {
+            self.emit_all_defers()?;
             self.module.functions[func_idx]
                 .instructions
                 .push(Instruction::Return(None));
@@ -332,7 +342,7 @@ impl IrGenerator {
         for stmt in &if_expr.then_branch.statements {
             self.generate_statement(stmt)?;
         }
-        self.leave_block(scope);
+        self.leave_block(scope)?;
         // 分支可能以 break/continue（Jump）或 return 收尾：已有终结指令就不再
         // 追加 Jump(end)，否则同一块里出现双终结指令（codegen 验证器必错）
         let then_has_terminator = self.module.functions[func_idx]
@@ -358,7 +368,7 @@ impl IrGenerator {
             for stmt in &else_branch.statements {
                 self.generate_statement(stmt)?;
             }
-            self.leave_block(scope);
+            self.leave_block(scope)?;
         }
         let else_has_terminator = self.module.functions[func_idx]
             .instructions
@@ -453,6 +463,7 @@ impl IrGenerator {
         self.loop_stack.push(LoopContext {
             break_label: end_label,
             continue_label,
+            defer_depth: self.defer_blocks.len(),
         });
 
         // 生成范围循环的 IR
@@ -537,7 +548,7 @@ impl IrGenerator {
             for stmt in &for_stmt.body.statements {
                 self.generate_statement(stmt)?;
             }
-            self.leave_block(scope);
+            self.leave_block(scope)?;
 
             // 跳转到 continue 标签
             self.module.functions[func_idx]
@@ -699,7 +710,7 @@ impl IrGenerator {
             for stmt in &for_stmt.body.statements {
                 self.generate_statement(stmt)?;
             }
-            self.leave_block(scope);
+            self.leave_block(scope)?;
 
             // Jump to continue
             self.module.functions[func_idx]
@@ -755,6 +766,7 @@ impl IrGenerator {
         self.loop_stack.push(LoopContext {
             break_label: end_label,
             continue_label,
+            defer_depth: self.defer_blocks.len(),
         });
 
         // 循环开始：先补一条跳转终结前一块（codegen 的 Label 会开新块）
@@ -783,7 +795,7 @@ impl IrGenerator {
         for stmt in &while_stmt.body.statements {
             self.generate_statement(stmt)?;
         }
-        self.leave_block(scope);
+        self.leave_block(scope)?;
         // 语句块可能以非终结指令收尾（如末尾是赋值），补跳转接住 fall-through；
         // 已以 break/return 等终结则不再追加，避免双终结指令
         let last_is_terminator = self.module.functions[func_idx]

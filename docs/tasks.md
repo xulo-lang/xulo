@@ -321,16 +321,17 @@ Priority P1 · needed by Gate 3 and the bootstrap corpus · source:
         now part of the corpus).
       The AOT differential then measured the new corpus and recorded these gaps
       with `@no-aot` (each one must keep failing, so closing it forces a diff):
-      `defer`, match guard/or/range/type patterns, `spawn`/`lock`/service,
+      match guard/or/range/type patterns, `spawn`/`lock`/service,
       trait dispatch through a generic parameter, and failure-path reporting
       (the interpreter buffers `print` and writes `error[E0006]`, the native
       runtime writes `panic: …`; see T13). Block-scoped shadowing, `f32`
-      arithmetic, the `Error("…")` constructor, and nested tuple access plus
-      tuple pass/return were closed later: the AOT path now restores bindings at
-      every nested block, gives `f32`/`f64` bindings an F64 slot, builds the
-      `{ message }` object `Error("…")` denotes, and resolves tuple positional
-      access through nested element types and tags tuple returns as arrays, so
-      all four agree with the interpreter and their markers are gone.
+      arithmetic, the `Error("…")` constructor, nested tuple access plus
+      tuple pass/return, and `defer` were closed later: the AOT path now
+      restores bindings at every nested block, gives `f32`/`f64` bindings an
+      F64 slot, builds the `{ message }` object `Error("…")` denotes, resolves
+      tuple positional access through nested element types and tags tuple
+      returns as arrays, and drains per-block `defer` queues on every block
+      exit, so all five agree with the interpreter and their markers are gone.
 - [x] **T9** Measure stage 1 against the same corpus.
       `xuloc/main.xulo` gained a `scan` mode; `XULO_STAGE1_MODE=scan
       XULO_STAGE1_DIR=examples xulo run xuloc/main.xulo` prints one line per file
@@ -355,13 +356,15 @@ Priority P1 · needed by Gate 3 · source: `stage1-readiness.md` §7 WP4, §6.8
       propagation.
 - [x] **B3b** Decide whether the AOT path supports `defer`; if not, document it
       as a bootstrap restriction instead of silently executing it immediately.
+      The AOT path now lowers `defer` with its own per-block queue (closing the
+      T8 gap), so the bootstrap restriction is gone.
 - [x] **G4** Make the `§6.8` probe pass.
 
 **Verify:** `defer print("first")` / `defer print("second")` / `print("body")`
 prints `body`, `second`, `first`. Covered by
-`crates/xulo-runtime/tests/defer.rs`; the AOT backend rejects `defer` with a
-named bootstrap-restriction diagnostic (no silent skip), tested in
-`crates/xulo-compiler/tests/aot_syntax_coverage_tests.rs`.
+`crates/xulo-runtime/tests/defer.rs` and, on the AOT path, by
+`crates/xulo-compiler/tests/aot_syntax_coverage_tests.rs::defer_runs_at_block_exit_in_reverse`
+and `::defer_runs_on_break_continue_and_return`.
 
 ## WP5 — Stage 1 skeleton
 

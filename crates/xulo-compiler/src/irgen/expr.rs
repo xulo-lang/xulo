@@ -46,6 +46,9 @@ impl IrGenerator {
         self.module.functions[func_idx]
             .instructions
             .push(Instruction::Label(err_label));
+        // `?` leaves the function too: run the active block defers first
+        // (spec `statements/return-and-block.md`).
+        self.emit_all_defers()?;
         self.module.functions[func_idx]
             .instructions
             .push(Instruction::Return(Some(scrut_op.clone())));
@@ -2474,7 +2477,7 @@ impl IrGenerator {
         // 分支是独立作用域：分支内的 `let` 只遮蔽该分支
         let scope = self.enter_block();
         let result = self.generate_if_branch_inner(block, result_local);
-        self.leave_block(scope);
+        self.leave_block(scope)?;
         result
     }
 
@@ -2952,7 +2955,7 @@ impl IrGenerator {
         // 臂是独立作用域：模式绑定与臂内的 `let` 不泄漏到后面的语句
         let scope = self.enter_block();
         let result = self.generate_match_arm_body_inner(arm, result_local);
-        self.leave_block(scope);
+        self.leave_block(scope)?;
         result
     }
 

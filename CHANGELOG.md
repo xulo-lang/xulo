@@ -63,6 +63,13 @@ values, and is left to a future standard-library `std/ui` module.
 
 ### Fixed
 
+- AOT: `defer` now lowers to a per-block queue instead of being rejected. The
+  operand runs in reverse registration order when its block exits, including
+  before `return` and `?` propagation, and on loop `break`/`continue`; nested
+  blocks, closures, and match arm blocks drain their own queues.
+  `functions/defer.xulo` no longer carries `@no-aot`. Regression:
+  `crates/xulo-compiler/tests/aot_syntax_coverage_tests.rs::defer_runs_at_block_exit_in_reverse`
+  and `::defer_runs_on_break_continue_and_return`.
 - AOT: nested tuple positional access (`nested.0.0`) now resolves the element
   type through every level, and a tuple returned from or passed to a function
   keeps its array tag instead of printing as a raw pointer. `types/tuples.xulo`

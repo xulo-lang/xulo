@@ -740,19 +740,145 @@ fn match_range_pattern_is_rejected() {
 }
 
 #[test]
-fn defer_is_rejected() {
-    let err = compile_err(
+fn defer_runs_at_block_exit_in_reverse() {
+    let out = compile_and_run(
         r#"
-        fn main() {
-            defer print("cleanup")
+        fn work(): int {
+            defer print("defer 1")
+            defer {
+                print("defer 2")
+            }
             print("body")
+            7
+        }
+        fn early(flag: bool): int {
+            defer print("early defer")
+            if flag {
+                print("returning early")
+                return 1
+            }
+            print("falling through")
+            2
+        }
+        fn main() {
+            print(work())
+            print(early(true))
+            print(early(false))
+            for i in 0..<3 {
+                defer print(`iteration ${i} done`)
+                print(`iteration ${i}`)
+            }
         }
         "#,
     );
-    assert!(
-        err.message.contains("does not support `defer`"),
-        "unexpected error: {}",
-        err.message
+    assert_eq!(
+        out,
+        vec![
+            "body",
+            "defer 2",
+            "defer 1",
+            "7",
+            "returning early",
+            "early defer",
+            "1",
+            "falling through",
+            "early defer",
+            "2",
+            "iteration 0",
+            "iteration 0 done",
+            "iteration 1",
+            "iteration 1 done",
+            "iteration 2",
+            "iteration 2 done",
+        ]
+    );
+}
+
+#[test]
+fn defer_runs_on_question_propagation() {
+    let out = compile_and_run(
+        r#"
+        fn parse(v: int): Result<int, Error> {
+            if v < 0 {
+                return Result::Err(Error("bad"))
+            }
+            Result::Ok(v)
+        }
+        fn double(v: int): Result<int, Error> {
+            defer print("cleanup")
+            let x = parse(v)?
+            print("body")
+            Result::Ok(x * 2)
+        }
+        fn main() {
+            match double(21) {
+                Result::Ok(v) => print(v)
+                Result::Err(e) => print(e.message)
+            }
+            match double(-1) {
+                Result::Ok(_) => print("ok")
+                Result::Err(e) => print(e.message)
+            }
+        }
+        "#,
+    );
+    assert_eq!(out, vec!["body", "cleanup", "42", "cleanup", "bad"]);
+}
+
+#[test]
+fn defer_runs_on_break_continue_and_return() {
+    let out = compile_and_run(
+        r#"
+        fn early(flag: bool): int {
+            defer print("outer defer")
+            for i in 0..<3 {
+                defer print(`loop ${i}`)
+                if flag and i == 1 {
+                    return 9
+                }
+                print(`step ${i}`)
+            }
+            4
+        }
+        fn main() {
+            for i in 0..<4 {
+                defer print(`d${i}`)
+                if i == 1 {
+                    continue
+                }
+                if i == 3 {
+                    break
+                }
+                print(`b${i}`)
+            }
+            print(early(true))
+            print(early(false))
+        }
+        "#,
+    );
+    assert_eq!(
+        out,
+        vec![
+            "b0",
+            "d0",
+            "d1",
+            "b2",
+            "d2",
+            "d3",
+            "step 0",
+            "loop 0",
+            "loop 1",
+            "outer defer",
+            "9",
+            "step 0",
+            "loop 0",
+            "step 1",
+            "loop 1",
+            "step 2",
+            "loop 2",
+            "outer defer",
+            "4",
+        ]
     );
 }
 
