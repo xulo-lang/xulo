@@ -158,7 +158,8 @@ impl IrGenerator {
         self.func_generic_params
             .insert(name.to_string(), f.generic_params.clone());
 
-        let func = IrFunction::new(name.to_string(), params, return_type);
+        let mut func = IrFunction::new(name.to_string(), params, return_type);
+        func.exported = f.abi.is_some();
         Ok(self.module.add_function(func))
     }
 }

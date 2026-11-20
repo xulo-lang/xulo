@@ -58,6 +58,23 @@ pub(crate) fn aot_symbol_name(name: &str) -> String {
     symbol
 }
 
+/// 用户函数在原生目标文件里的链接符号。
+///
+/// 入口点必须是 `main`（C 运行时按该名字调用），`pub extern "C" fn` 导出保持
+/// 声明名（宿主按该名字链接）；其余函数统一加 `xulo_fn_` 前缀，这样用户写
+/// `fn read(...)`、`fn listen(...)` 也不会撞上 libc/Winsock 的同名导入
+/// （否则链接期 `LNK2005: listen already defined`）。
+pub(crate) fn aot_function_symbol(name: &str, is_entry: bool, exported: bool) -> String {
+    let sanitized = aot_symbol_name(name);
+    if is_entry {
+        "main".to_string()
+    } else if exported {
+        sanitized
+    } else {
+        format!("xulo_fn_{sanitized}")
+    }
+}
+
 /// RuntimeFn -> 运行时符号名（JIT/AOT/LLVM 后端共用一份映射）。
 pub(crate) fn runtime_fn_name(func: &RuntimeFn) -> &'static str {
     match func {
@@ -281,7 +298,8 @@ impl CodeGen {
         for (idx, func) in ir_module.functions.iter().enumerate() {
             let sig = self.create_signature(func, idx == ir_module.entry_point.0);
             let symbol = if aot {
-                let base = aot_symbol_name(&func.name);
+                let base =
+                    aot_function_symbol(&func.name, idx == ir_module.entry_point.0, func.exported);
                 let count = {
                     let count = used_symbols.entry(base.clone()).or_insert(0);
                     *count += 1;

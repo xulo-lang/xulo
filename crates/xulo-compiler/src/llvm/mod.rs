@@ -178,7 +178,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
     fn declare_functions(&mut self) -> Result<(), XuloError> {
         let mut used: HashMap<String, usize> = HashMap::new();
         for (idx, func) in self.ir.functions.iter().enumerate() {
-            let base = aot_symbol_name(&func.name);
+            let base = aot_function_symbol(&func.name, idx == self.ir.entry_point.0, func.exported);
             let count = {
                 let entry = used.entry(base.clone()).or_insert(0);
                 *entry += 1;

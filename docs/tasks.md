@@ -32,8 +32,8 @@ readiness document.
 | WP4 — `defer` semantics | 5 | 5 |
 | WP5 — Stage 1 skeleton | 6 | 6 |
 | WP6 — Self-host loop | 7 | 7 |
-| WP7 — Non-gating follow-ups | 7 | 8 |
-| **Total** | **62** | **63** |
+| WP7 — Non-gating follow-ups | 8 | 8 |
+| **Total** | **63** | **63** |
 
 ## Gates
 
@@ -541,17 +541,19 @@ value-semantics tests listed above, `cargo test -p xulo-compiler --test
 const_materialization_tests` (P1), and `cargo test -p xulo-runtime --test
 tag_detection` (P2).
 
-- [ ] **T11** AOT: mangle user function symbols.
-      The native backend emits each user `fn` under its source name, so a
+- [x] **T11** AOT: namespace user function symbols.
+      The native backend emitted each user `fn` under its source name, so a
       function called `listen`, `connect`, `accept`, `read`, `write`, `open`, or
-      `close` collides with the C library / Winsock import of the same name and
-      the link fails (`LNK2005: listen already defined`). Found while writing
-      `examples/std/net_shutdown.xulo`, whose handshake helpers had to be
-      renamed to `open_listener`; any user code that names a function after a
-      libc call hits the same wall. Fix by prefixing user symbols at emission
-      (`xulo_fn_<name>`) while keeping `pub extern "C" fn` exports and the entry
-      point unmangled; add a codegen test that links a program defining
-      `fn read(...)`.
+      `close` collided with the C library / Winsock import of the same name and
+      the link failed (`LNK2005: listen already defined`). Found while writing
+      `examples/std/net_shutdown.xulo`, whose handshake helper had to be named
+      `open_listener`. User functions now emit as `xulo_fn_<name>`
+      (`crates/xulo-compiler/src/codegen.rs::aot_function_symbol`); the entry
+      point stays `main` (the C runtime calls it) and `pub extern "C" fn`
+      exports keep the declared name (a host links against it), which
+      `IrFunction::exported` records. Both backends use the helper, and
+      `crates/xulo-compiler/tests/aot_symbols.rs` pins the namespacing, the
+      `main` entry, and the unmangled extern export.
 
 ## Out of scope for stage 1 bootstrap
 

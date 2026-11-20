@@ -62,6 +62,11 @@ values, and is left to a future standard-library `std/ui` module.
   Regression:
   `crates/xulo-compiler/tests/codegen_tests.rs::test_codegen_string_concat_with_match_payload_binding`
   and `::test_codegen_list_concat_with_match_payload_binding`.
+- AOT: user functions now emit as `xulo_fn_<name>`, so a program may define
+  `fn read(…)`, `fn listen(…)`, or any other name that libc/Winsock also uses
+  without the link failing with `LNK2005: listen already defined`. The entry
+  point stays `main` and `pub extern "C" fn` exports keep their declared name.
+  Regression: `crates/xulo-compiler/tests/aot_symbols.rs`.
 - AOT: `string.split` with a compiled `RegExp` was lowered as a string
   separator, so `"ada, bob".split(re)` split into characters. The intrinsic now
   carries the argument's tag and dispatches to `RegExp::split` for a regex

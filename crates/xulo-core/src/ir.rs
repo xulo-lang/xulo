@@ -499,6 +499,10 @@ pub struct IrFunction {
     /// 闭包入口：签名固定为 `(env, a0..a7) -> i64`，经 CallIndirect 间接调用。
     /// 实参少于 8 个时由调用方以 0 补齐；无返回值时也返回 0。
     pub closure_entry: bool,
+    /// `pub extern "abi" fn` 导出（spec ffi.md）：链接符号保持声明名，宿主按该
+    /// 名字链接；其余用户函数在 AOT 目标文件里带命名空间前缀，避免与
+    /// libc/Winsock 的同名符号冲突。
+    pub exported: bool,
     /// 下一个可用的 LocalId，从 params.len() 开始以避免与参数冲突
     next_local_id: usize,
 }
@@ -553,6 +557,7 @@ impl IrFunction {
             instructions: Vec::new(),
             labels: Vec::new(),
             closure_entry: false,
+            exported: false,
             next_local_id,
         }
     }
