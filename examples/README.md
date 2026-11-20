@@ -17,7 +17,7 @@
 | `types/` | `struct`/`enum`/`trait`、可选类型与可选链、类型别名（含联合/交叉/字面量类型）、元组、定宽数值类型、泛型 `impl`/`where`/const 泛型 |
 | `patterns/` | 字面量、区间、or、类型、binder、guard 与 `let` 解构 |
 | `collections/` | 列表/对象、`Map`、`Set`、`Array<T, N>`、字符串成员与 `StringBuilder` |
-| `modules/` | 跨文件模块、内联 `mod`、`use` 分组/别名/glob、`use type`、`pub` 可见性 |
+| `modules/` | 跨文件模块、内联与嵌套 `mod`、`use self::` / `use super::`、`use` 分组/别名/glob、`use type`、`pub` 可见性 |
 | `concurrency/` | `async`/`await`、`Task` 组合、`spawn` 四种目标 + service、`shared`/`lock` |
 | `macros/` | 函数宏、派生宏、属性宏、`ast::quote!` |
 | `testing/` | `#[test]` 声明与选项组、`xulo test` 报表 |
@@ -77,7 +77,9 @@ XULO_BLESS=1 cargo test -p xulo-cli --test examples
 ```
 
 - 第 2 列是相对本目录的路径，`-` 表示豁免；
-- 第 3 列是必须在文件里出现的字面文本（`-` 表示无法机械探测）；
+- 第 3 列是必须在文件里出现的**有辨识度的源码片段**（`-` 表示无法机械探测）。
+  不要用 `{`、`(`、`=>` 这类在半个语料里都出现的字符串——那样只能证明
+  「这一行有个例子」，不能证明「这个语法被演示过」；
 - 豁免（第 2 列为 `-`）必须在第 4 列给出 `trivia:` / `terminal:` /
   `abstract:` / `error-only:` / `reserved:` 开头的理由。
 
@@ -87,6 +89,25 @@ XULO_BLESS=1 cargo test -p xulo-cli --test examples
 **边界**：这张表能证明「每条 production 都有归属、每条归属都真实存在」，
 不能证明语义覆盖 —— 那部分靠 review。已知的实现缺口用 `error-only:` 标注
 （当前是 `StructPattern`），并记录在 `docs/tasks.md` 的 T8 里。
+
+## 已知缺口
+
+覆盖表只能机械校验「文本出现过」。以下缺口不在它的证明范围内，修改语料时
+不要误以为已经被门禁覆盖：
+
+- `StructPattern`（`P(x, y)` 解构结构体）解析器接受，但 checker 不绑定字段、
+  解释器只匹配枚举 —— 覆盖表里唯一的 `error-only:` 行（`docs/tasks.md` T8）。
+- 文档注释（`spec/documentation-comments.md` 的提取模型 / 标签 / 包索引）尚未
+  实现；示例里的 `///`、`//!` 只是 trivia，`basics/lexical.xulo` 只演示了词法层。
+- AOT 后端还有 11 处已知差距（10 个 `@no-aot all:` + 1 个 `@no-aot windows:`），
+  另有 2 个 `@skip-aot`（测试载体）。差分测试要求标记过的程序**继续失败**，
+  修好后必须同步删标记。清单见 `docs/tasks.md` T8：`defer`、match
+  guard/or/区间/类型模式、`spawn`/`lock`/service、块级遮蔽、`f32` 运算、嵌套元组、
+  泛型 trait 派发、`Error("…")` 构造函数、失败路径报告、Windows FFI。
+  其中块级遮蔽与 `f32` 是**结果错误**，不只是未实现。
+- stage 1 自举解析器在 13 个语料文件上有差距，记录在
+  `crates/xulo-cli/tests/stage1_examples_baseline.tsv`；新增示例若解析不了，
+  要么补解析器，要么进基线（基线只能缩短）。
 
 ## stage 1 语料
 

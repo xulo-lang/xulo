@@ -2,18 +2,19 @@
 #
 # 第 1 列：`spec/grammar.md` Production index 里的非终结符（顺序与 index 一致）
 # 第 2 列：覆盖它的例子（相对 `examples/`），`-` 表示豁免
-# 第 3 列：必须在例子源码里出现的字面文本，`-` 表示无法机械探测
+# 第 3 列：必须在该例子里出现、且能标识该语法的源码片段（不要用 `{`、`(`、
+#         `=>` 这类到处都有的字符串）；`-` 表示无法机械探测
 # 第 4 列：豁免理由（第 2 列为 `-` 时必填，且必须以 trivia:/terminal:/
 #         abstract:/error-only:/reserved: 开头）
 #
 # 由 crates/xulo-cli/tests/examples.rs::coverage_table_accounts_for_grammar 校验：
 # 与 Production index 双向差集、路径存在、probe 出现、无重复行。
 SourceFile	basics/hello.xulo	fn main	-
-TokenSequence	basics/hello.xulo	print	-
+TokenSequence	basics/hello.xulo	print("Hello, world!")	-
 Skipped	-	-	trivia: 空白与注释由词法层跳过，没有独立的语法形态
 Whitespace	-	-	trivia: 同上
 Comment	basics/lexical.xulo	/*	-
-Token	basics/hello.xulo	fn main	-
+Token	basics/hello.xulo	"Hello, world!"	-
 Identifier	basics/hello.xulo	main	-
 IdentStart	-	-	abstract: 词法字符类，只约束标识符首字符
 IdentPart	-	-	abstract: 词法字符类，只约束标识符后续字符
@@ -21,48 +22,48 @@ Letter	-	-	abstract: 词法字符类
 Digit	-	-	abstract: 词法字符类
 HexDigit	basics/lexical.xulo	0xff	-
 OctDigit	basics/lexical.xulo	0o17	-
-Keyword	basics/control_flow.xulo	while	-
+Keyword	basics/control_flow.xulo	while n * n < 50	-
 ReservedWord	-	-	reserved: 只在作为非法标识符时才有意义，正面程序不会出现
 Literal	basics/lexical.xulo	1.5	-
-IntegerLiteral	basics/lexical.xulo	42	-
+IntegerLiteral	basics/lexical.xulo	0o17, 42	-
 FloatLiteral	basics/lexical.xulo	1000.0	-
-DecInt	basics/lexical.xulo	42	-
+DecInt	basics/lexical.xulo	0o17, 42	-
 HexInt	basics/lexical.xulo	0xff	-
 BinInt	basics/lexical.xulo	0b1010	-
 OctInt	basics/lexical.xulo	0o17	-
-BooleanLiteral	basics/if_else.xulo	true	-
-NullLiteral	types/optional_chaining.xulo	null	-
+BooleanLiteral	basics/if_else.xulo	let has_ticket = true	-
+NullLiteral	types/optional_chaining.xulo	let none: string? = null	-
 StringLiteral	basics/lexical.xulo	"double"	-
 StringChar	basics/lexical.xulo	single	-
-EscapeSeq	basics/lexical.xulo	\t	-
-TemplateLiteral	basics/lexical.xulo	`one 	-
-TemplateText	basics/lexical.xulo	one 	-
+EscapeSeq	basics/lexical.xulo	tab\there	-
+TemplateLiteral	basics/lexical.xulo	`one ${1 + 1}	-
+TemplateText	basics/lexical.xulo	`one ${1 + 1} two	-
 TemplateEscape	basics/lexical.xulo	\${	-
 Interpolation	basics/lexical.xulo	${1 + 1}	-
 DQuote	basics/lexical.xulo	"double"	-
 SQuote	basics/lexical.xulo	'single'	-
 Backslash	basics/lexical.xulo	backslash\\	-
-Backtick	basics/lexical.xulo	`	-
-Operator	basics/operators.xulo	*	-
-WordOperator	basics/operators.xulo	 and 	-
+Backtick	basics/lexical.xulo	`nested	-
+Operator	basics/operators.xulo	2 ** 10	-
+WordOperator	basics/operators.xulo	true and false	-
 SymbolOperator	basics/operators.xulo	<<	-
-Delimiter	basics/hello.xulo	(	-
-Program	basics/hello.xulo	fn main	-
+Delimiter	basics/hello.xulo	fn main() {	-
+Program	basics/hello.xulo	fn main() {	-
 HeaderItem	modules/imports/main.xulo	mod util;	-
-Declaration	types/structs.xulo	struct	-
-Entry	basics/hello.xulo	fn main	-
-EntryPoint	basics/hello.xulo	fn main	-
+Declaration	types/structs.xulo	struct Point {	-
+Entry	basics/hello.xulo	fn main() {	-
+EntryPoint	basics/hello.xulo	fn main() {	-
 ModDecl	modules/imports/main.xulo	mod util;	-
 ModuleBody	modules/inline/main.xulo	mod inner {	-
 UseDecl	modules/imports/main.xulo	use util::	-
 PubUse	modules/inline/main.xulo	pub use	-
-UseTarget	modules/imports/main.xulo	 as u	-
+UseTarget	modules/imports/main.xulo	use util as u;	-
 UsePath	modules/imports/main.xulo	util::{	-
 UseGroup	modules/imports/main.xulo	{add, PI}	-
 UseGlob	modules/inline/main.xulo	use tools::*	-
-UseEntry	modules/imports/main.xulo	add	-
+UseEntry	modules/imports/main.xulo	use util::{add, PI}	-
 PubUseLocal	modules/inline/main.xulo	pub use { hi }	-
-PathHead	modules/inline/main.xulo	self::inner	-
+PathHead	modules/inline/main.xulo	use super::twice	-
 Path	modules/inline/main.xulo	inner::K	-
 PackageName	-	-	abstract: 包名只出现在跨包路径里，示例语料都是单包程序
 AttributeName	testing/test_functions.xulo	#[test]	-
@@ -71,8 +72,8 @@ AttributeArgs	testing/test_functions.xulo	(skip = "not implemented yet")	-
 AttributeArg	testing/test_functions.xulo	should_panic =	-
 AttributeValue	testing/test_functions.xulo	"one plus one is three"	-
 AttributeList	macros/macros.xulo	#[derive(Debug, Model)]	-
-FnDecl	basics/hello.xulo	fn main	-
-AbiTag	ffi/ffi.xulo	"C"	-
+FnDecl	basics/hello.xulo	fn main() {	-
+AbiTag	ffi/ffi.xulo	extern "C" {	-
 ExternBlock	ffi/ffi.xulo	extern "C" {	-
 ExternItem	ffi/ffi.xulo	fn abs	-
 ExternParamList	ffi/ffi.xulo	(x: i32)	-
@@ -83,12 +84,12 @@ Parameter	functions/params.xulo	x: mut int	-
 Receiver	functions/params.xulo	mut self	-
 StructDecl	types/structs.xulo	struct Point	-
 FieldList	types/structs.xulo	{ x: number, y: number }	-
-Field	types/structs.xulo	x: number	-
+Field	types/structs.xulo	struct Point { x: number, y: number }	-
 EnumDecl	types/enums_match.xulo	enum Direction	-
 VariantList	types/enums_match.xulo	North	-
 Variant	types/enums_match.xulo	South	-
 VariantPayload	types/enums_match.xulo	Rect(width: number, height: number)	-
-NameTypeList	types/enums_match.xulo	(number)	-
+NameTypeList	types/enums_match.xulo	Circle(number)	-
 NamedPayload	types/enums_match.xulo	width: number	-
 TraitDecl	types/trait_shapes.xulo	trait Area	-
 TraitMethods	types/trait_shapes.xulo	fn area(self): number;	-
@@ -96,8 +97,8 @@ TraitMethod	types/trait_shapes.xulo	fn perimeter(self): number	-
 ImplDecl	types/structs.xulo	impl Point	-
 TypeAlias	types/aliases.xulo	type Id = int	-
 LetDecl	basics/bindings.xulo	let name = "xulo"	-
-MutableBinding	basics/bindings.xulo	let mut count	-
-SimpleBinding	basics/bindings.xulo	:=	-
+MutableBinding	basics/bindings.xulo	let mut count = 0	-
+SimpleBinding	basics/bindings.xulo	let guessed := typed + 2	-
 DestructuringBinding	basics/bindings.xulo	let { x, y }	-
 IdentifierList	basics/bindings.xulo	{ x, y }	-
 ConstDecl	basics/bindings.xulo	const GREETING	-
@@ -105,13 +106,13 @@ TestDecl	testing/test_functions.xulo	#[test]	-
 TestOptions	testing/test_functions.xulo	#[test(skip = "not implemented yet")]	-
 TestOption	testing/test_functions.xulo	timeout = 1000	-
 TestExpectation	testing/test_functions.xulo	should_panic = "one plus one is three"	-
-Type	basics/bindings.xulo	: int	-
+Type	basics/bindings.xulo	let typed: int = 40	-
 UnionType	types/aliases.xulo	"v1" | "v2"	-
 IntersectionType	types/aliases.xulo	string & Display	-
-PostfixType	types/optional_chaining.xulo	string?	-
-PrimaryType	types/primitives.xulo	u64	-
+PostfixType	types/optional_chaining.xulo	let maybe: string? = "xulo"	-
+PrimaryType	types/primitives.xulo	let h: u64 = 18446744073709551615	-
 NamedType	types/aliases.xulo	Id	-
-PrimitiveType	types/primitives.xulo	i8	-
+PrimitiveType	types/primitives.xulo	let a: i8 = 127	-
 LiteralType	types/aliases.xulo	"v1"	-
 TypeArgs	types/generics_impl.xulo	<T: Area>	-
 TypeList	types/generics_impl.xulo	Array<int, N>	-
@@ -127,25 +128,25 @@ WhereItem	types/generics_impl.xulo	T: Area + Named	-
 Expression	basics/operators.xulo	1 + 2 * 3	-
 AssignmentExpression	basics/lexical.xulo	a = b = 3	-
 TernaryExpression	basics/operators.xulo	? "pass" : "fail"	-
-LogicalOrExpression	basics/operators.xulo	 or 	-
-LogicalAndExpression	basics/operators.xulo	 and 	-
-NullishExpression	basics/operators.xulo	??	-
-EqualityExpression	basics/operators.xulo	==	-
+LogicalOrExpression	basics/operators.xulo	false or true	-
+LogicalAndExpression	basics/operators.xulo	true and false	-
+NullishExpression	basics/operators.xulo	maybe ?? "default"	-
+EqualityExpression	basics/operators.xulo	3 == 3	-
 IsExpression	types/aliases.xulo	 is int	-
-RelationalExpression	basics/operators.xulo	<=	-
+RelationalExpression	basics/operators.xulo	5 <= 5, 4 >= 6	-
 RangeExpression	basics/control_flow.xulo	0..<3	-
 BitOrExpression	basics/operators.xulo	6 | 3	-
 BitXorExpression	basics/operators.xulo	6 ^ 3	-
 BitAndExpression	basics/operators.xulo	6 & 3	-
 ShiftExpression	basics/operators.xulo	1 << 4	-
-AdditiveExpression	basics/operators.xulo	a + b	-
-MultiplicativeExpression	basics/operators.xulo	a * b	-
+AdditiveExpression	basics/operators.xulo	print(a + b)	-
+MultiplicativeExpression	basics/operators.xulo	print(a * b)	-
 PowerExpression	basics/operators.xulo	2 ** 10	-
 UnaryExpression	basics/operators.xulo	~0	-
-PostfixExpression	collections/collections.xulo	xs[0]	-
-PostfixOperand	basics/hello.xulo	print(	-
+PostfixExpression	collections/collections.xulo	print(xs[0])	-
+PostfixOperand	basics/hello.xulo	print("Hello, world!")	-
 CallTypeArgs	types/generics_impl.xulo	width<3>()	-
-PrimaryExpression	basics/hello.xulo	print(	-
+PrimaryExpression	basics/hello.xulo	"Hello, world!"	-
 MacroCall	macros/macros.xulo	answer!()	-
 MacroArgumentList	macros/macros.xulo	answer!()	-
 QuoteCall	macros/macros.xulo	ast::quote!	-
@@ -154,24 +155,24 @@ QuoteHole	macros/macros.xulo	${input.target.name}	-
 PathExpr	modules/inline/main.xulo	inner::K	-
 PanicExpression	errors/runtime_failure.xulo	panic("cannot continue")	-
 Place	basics/lexical.xulo	xs[1] = 9	-
-ArgumentList	basics/hello.xulo	print(	-
+ArgumentList	basics/hello.xulo	("Hello, world!")	-
 Argument	functions/params.xulo	punct: "?"	-
-ListLiteral	collections/collections.xulo	[1, 2, 3]	-
+ListLiteral	collections/collections.xulo	let xs = [1, 2, 3]	-
 ListElement	collections/collections.xulo	[1, 2, 3]	-
 Spread	collections/collections.xulo	...head	-
-MapLiteral	collections/collections.xulo	{ a: 1 }	-
+MapLiteral	collections/collections.xulo	let base = { a: 1 }	-
 TypedMap	collections/maps.xulo	Map<string, int>{	-
-BraceMap	collections/collections.xulo	{ a: 1 }	-
-MapEntry	collections/collections.xulo	a: 1	-
-MapField	collections/collections.xulo	name:	-
+BraceMap	collections/collections.xulo	let base = { a: 1 }	-
+MapEntry	collections/collections.xulo	let base = { a: 1 }	-
+MapField	collections/collections.xulo	{ name: "x", roles:	-
 TupleLiteral	types/tuples.xulo	(10, "ten")	-
 ClosureExpression	functions/closures_hof.xulo	fn(v: number)	-
 FunctionExpression	functions/closures_hof.xulo	fn(): number { 1 }	-
-ArrowClosure	functions/closures_hof.xulo	=>	-
+ArrowClosure	functions/closures_hof.xulo	=> x * 3	-
 ArrowParams	functions/closures_hof.xulo	(x: number): number =>	-
 ClosureParamList	functions/closures_hof.xulo	(a: string, b: string) =>	-
 ClosureParam	functions/closures_hof.xulo	(a: string, b: string)	-
-Pattern	patterns/match_patterns.xulo	=>	-
+Pattern	patterns/match_patterns.xulo	(n) =>	-
 PatternAlt	patterns/match_patterns.xulo	1 | 2	-
 LiteralPattern	patterns/match_patterns.xulo	"zero"	-
 RangePattern	patterns/match_patterns.xulo	3..<10	-
@@ -181,21 +182,21 @@ TypePattern	patterns/match_patterns.xulo	string s	-
 PatternType	patterns/match_patterns.xulo	string s	-
 PatternDesignator	patterns/match_patterns.xulo	bool b	-
 PatternList	patterns/match_patterns.xulo	Shape::Rect(w, h)	-
-Statement	basics/hello.xulo	print(	-
+Statement	basics/hello.xulo	print("Hello, world!")	-
 StatementEnd	basics/lexical.xulo	let inferred := 7;	-
-ReturnStmt	functions/fibonacci.xulo	return	-
-BreakStmt	basics/for.xulo	break	-
-ContinueStmt	basics/for.xulo	continue	-
+ReturnStmt	functions/fibonacci.xulo	return n	-
+BreakStmt	basics/for.xulo	if row * col > 4 { break }	-
+ContinueStmt	basics/for.xulo	if row == col { continue }	-
 DeferStmt	functions/defer.xulo	defer	-
 Assignment	basics/lexical.xulo	xs[1] = 9	-
-ExpressionStatement	basics/hello.xulo	print(	-
-Block	basics/if_else.xulo	{	-
-IfExpression	basics/if_else.xulo	if 	-
-MatchExpression	patterns/match_patterns.xulo	match 	-
-MatchArmList	patterns/match_patterns.xulo	=>	-
-MatchArm	patterns/match_patterns.xulo	=>	-
+ExpressionStatement	basics/hello.xulo	print("Hello, world!")	-
+Block	basics/if_else.xulo	if 2 > 3 {	-
+IfExpression	basics/if_else.xulo	let parity = if n % 2 == 0 { "even" } else { "odd" }	-
+MatchExpression	patterns/match_patterns.xulo	match n {	-
+MatchArmList	patterns/match_patterns.xulo	_ => "huge"	-
+MatchArm	patterns/match_patterns.xulo	0 => "zero"	-
 Guard	patterns/match_patterns.xulo	if s >= 90	-
-ForStmt	basics/for.xulo	for 	-
+ForStmt	basics/for.xulo	for i in 0..<3	-
 WhileStmt	basics/control_flow.xulo	while 	-
 SpawnExpression	concurrency/spawn_lock.xulo	spawn async	-
 SpawnTarget	concurrency/spawn_lock.xulo	spawn.thread	-

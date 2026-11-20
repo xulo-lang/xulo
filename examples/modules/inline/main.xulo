@@ -1,10 +1,19 @@
-// 内联模块：`mod name { ... }`、`use self::...`、`use` 分组、`pub use`
+// 内联模块：`mod name { ... }`、嵌套模块、`use self::` / `use super::`、`pub use`
 //
 // - `mod inner { ... }` 在同一个文件里声明一个模块
 // - `use self::inner as i` 给模块起别名；`use inner::{hi}` 引入成员
-// - `pub use { hi }` 把引入的名字重新导出
+// - 嵌套模块的 `use super::twice` 指向父模块；`pub use { hi }` 把引入的名字重新导出
 // - `pub fn` / `pub const` 才能被模块外使用
 mod inner {
+    // 嵌套模块：header（`mod` / `use`）在前，声明在后
+    mod detail {
+        use super::twice;
+
+        pub fn quadruple(n: int): int {
+            twice(twice(n))
+        }
+    }
+
     pub fn hi(): string {
         "hi"
     }
@@ -13,6 +22,10 @@ mod inner {
 
     pub fn twice(n: int): int {
         n * 2
+    }
+
+    pub fn quadruple(n: int): int {
+        detail::quadruple(n)
     }
 }
 
@@ -33,6 +46,7 @@ fn main() {
     print(inner::K)
     print(hi())
     print(inner::twice(i::K))
+    print(inner::quadruple(3))
 
     // glob 导入把 `tools` 的公开名字直接带进当前作用域
     print(tool())

@@ -312,9 +312,11 @@ Priority P1 · needed by Gate 3 and the bootstrap corpus · source:
         rejected as "binding is immutable" — fixed in `crates/xulo-semantic`;
       - `StructPattern` is parsed but unimplemented (§6.12), recorded as the one
         `error-only:` row;
-      - `super::` inside a `use` in a file module panics the module loader
-        (`crates/xulo-cli/src/cli.rs`, `export_maps[target]`), so no example uses
-        it; `PathHead` is covered by `self::`.
+      - `PathHead` is covered by both heads: `modules/inline/main.xulo` uses
+        `use self::inner as i` at the file level and `use super::twice` inside a
+        nested inline module (an earlier note claimed `super::` panicked the
+        module loader; that no longer reproduces, and the nested-module form is
+        now part of the corpus).
       The AOT differential then measured the new corpus and recorded these gaps
       with `@no-aot` (each one must keep failing, so closing it forces a diff):
       `defer`, match guard/or/range/type patterns, `spawn`/`lock`/service,
@@ -330,7 +332,7 @@ Priority P1 · needed by Gate 3 and the bootstrap corpus · source:
       with the lexer and parser verdict. `crates/xulo-cli/tests/stage1.rs::
       stage1_example_corpus_tracks_baseline` compares that with
       `crates/xulo-cli/tests/stage1_examples_baseline.tsv` and fails when a listed
-      gap starts passing. Current baseline: 62 files, 11 parser gaps and 1
+      gap starts passing. Current baseline: 62 files, 12 parser gaps and 1
       call-depth crash (`std/net.xulo` nests four `match` levels), 0 lexer gaps.
 
 **Verify:** `cargo test -p xulo-cli --test examples`,

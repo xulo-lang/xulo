@@ -788,7 +788,7 @@ Last recorded verification (2026-11-18):
 | Stage 1 under `xupm test` | `cargo test -p xupm --test cli runs_stage1_test_file` — 10 stage 1 tests passed |
 | Stage 1 native build | `cargo test -p xupm --test aot_differential stage1_binary_matches_the_interpreter` (with `XULO_AOT_DIFFERENTIAL=1`) — interpreter and native output agree |
 | Stage 1 checker | `cargo test -p xulo-cli --test stage1 stage1_check_agrees_with_stage0_on_the_corpus` — 2 accept + 6 reject files agree with stage 0 |
-| Stage 1 corpus ratchet | `cargo test -p xulo-cli --test stage1 stage1_example_corpus_tracks_baseline` — 62 files scanned, 11 parser gaps + 1 call-depth crash recorded in `tests/stage1_examples_baseline.tsv` |
+| Stage 1 corpus ratchet | `cargo test -p xulo-cli --test stage1 stage1_example_corpus_tracks_baseline` — 62 files scanned, 12 parser gaps + 1 call-depth crash recorded in `tests/stage1_examples_baseline.tsv` |
 | Stage 1 self-host (WP6) | `XULO_STAGE1_BUILD=1 cargo test -p xupm --test stage1_build` — 4 passed (corpus, stage 2 self-build, T5c differential, B8b reproducible build) in about four minutes |
 
 ## 10. Maintenance

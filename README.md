@@ -122,7 +122,7 @@ xulo
 | `patterns/` | `match` 模式（字面量/区间/or/类型/guard）、`let` 解构 |
 | `collections/` | 列表与对象、`Map`、`Set`、`Array<T, N>`、字符串与 `StringBuilder` |
 | `modules/` | 跨文件模块、内联 `mod`、`use` 分组/别名/glob、`use type`、可见性 |
-| `concurrency/` | `async`/`await`、`Task` 组合、`spawn` 五种形式、service、`shared`/`lock` |
+| `concurrency/` | `async`/`await`、`Task` 组合、`spawn` 四种目标 + service、`shared`/`lock` |
 | `macros/` | 函数宏、派生宏、属性宏、`ast::quote!` |
 | `testing/` | `#[test]` 选项组与 `xulo test` 报表 |
 | `ffi/` | `extern "C"`、`Ptr`、`pub extern fn` |
