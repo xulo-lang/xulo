@@ -150,13 +150,29 @@ pub extern "C" fn xulo_string_ends_with(s: *const c_char, suffix: *const c_char)
 
 /// `split(sep)`: the pieces between occurrences of `sep` (a piece may be
 /// empty; a `sep` that never occurs yields one piece — the whole string). An
-/// empty `sep` splits into single characters.
+/// empty `sep` splits into single characters. When `sep_tag` is 9 the argument
+/// is a compiled `RegExp` and the split follows its matches instead (spec
+/// `modules/regex.md`).
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn xulo_string_split(s: *const c_char, sep: *const c_char) -> *mut XuloArray {
+pub extern "C" fn xulo_string_split(
+    s: *const c_char,
+    sep: *const c_char,
+    sep_tag: i64,
+) -> *mut XuloArray {
     let s = unsafe { str_arg(s) };
-    let sep = unsafe { str_arg(sep) };
     let arr = xulo_alloc_array(0);
+    if sep_tag == 9 {
+        if !sep.is_null() {
+            let re = unsafe { &*(sep as *const xulo_std::regex::RegExp) };
+            for part in re.split(&s) {
+                let piece = intern_string(part);
+                xulo_array_push(arr, piece as i64, 0);
+            }
+        }
+        return arr;
+    }
+    let sep = unsafe { str_arg(sep) };
     if sep.is_empty() {
         for ch in s.chars() {
             let piece = intern_string(ch.to_string());

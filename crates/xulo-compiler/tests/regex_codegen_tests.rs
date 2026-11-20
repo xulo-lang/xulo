@@ -246,3 +246,34 @@ fn main() {
     );
     assert_eq!(out, vec!["42"]);
 }
+
+// -- split：字符串分隔符与编译后的 RegExp 共用同一个成员 --
+
+#[test]
+fn string_split_accepts_a_separator_string() {
+    let out = compile_and_run(
+        r#"
+fn main() {
+    print("a,b,c".split(","))
+    print("abc".split(""))
+}
+"#,
+    );
+    assert_eq!(out, vec!["[a, b, c]", "[a, b, c]"]);
+}
+
+#[test]
+fn string_split_follows_a_compiled_regexp() {
+    let out = compile_and_run(
+        r#"
+use std::regex::{RegExp, RegexError};
+fn main() {
+    match RegExp::compile(", *") {
+        Result::Ok(re) => print("ada, bob,cyd".split(re))
+        Result::Err(e) => print(e.message)
+    }
+}
+"#,
+    );
+    assert_eq!(out, vec!["[ada, bob, cyd]"]);
+}

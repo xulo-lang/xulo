@@ -58,6 +58,30 @@ fn main() {{
     let _ = fs::remove_dir_all(&dir);
 }
 
+#[test]
+fn temp_dir_in_payload_concatenates_on_the_compiled_path() {
+    let dir = scratch("tempin");
+    let base = p(&dir);
+    let out = compile_and_run(&format!(
+        r#"
+fn main() {{
+    match std::fs::temp_dir_in("{base}", "case") {{
+        Result::Ok(d) => {{
+            let file = d + "/n.txt"
+            match std::fs::write(file, "hi") {{ Result::Ok(_) => print("wrote") Result::Err(e) => print(e.message) }}
+            match std::fs::remove(file) {{ Result::Ok(_) => print("removed") Result::Err(e) => print(e.message) }}
+            match std::fs::remove_dir(d) {{ Result::Ok(_) => print("dir") Result::Err(e) => print(e.message) }}
+        }}
+        Result::Err(e) => print(e.message)
+    }}
+}}
+"#,
+        base = base
+    ));
+    assert_eq!(out, vec!["wrote", "removed", "dir"]);
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[cfg(unix)]
 #[test]
 fn stat_touch_times_mode_on_the_compiled_path() {

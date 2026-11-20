@@ -1,0 +1,43 @@
+// std::math 的其余成员：反三角与双曲补充、对数家族、整数位运算、随机数
+//
+// 浮点结果一律经 `to_fixed` 定成固定小数位，避免两条执行路径的浮点文本
+// 格式差异；随机数只断言取值范围（`random_int` 的上下界都是闭区间）。
+fn main() {
+    // 反三角与正切：acos/asin/atan/atan2/tan
+    print(std::math::to_fixed(std::math::acos(0.5), 6)) // 1.047198
+    print(std::math::to_fixed(std::math::asin(0.5), 6)) // 0.523599
+    print(std::math::to_fixed(std::math::atan(1.0), 6)) // 0.785398
+    print(std::math::to_fixed(std::math::atan2(1.0, 1.0), 6)) // 0.785398
+    print(std::math::to_fixed(std::math::tan(0.0), 6)) // 0.000000
+
+    // 指数与对数家族：cbrt/exp/expm1/hypot/log10/log1p/log2
+    print(std::math::to_fixed(std::math::cbrt(27.0), 6)) // 3.000000
+    print(std::math::to_fixed(std::math::exp(0.0), 6)) // 1.000000
+    print(std::math::to_fixed(std::math::expm1(0.0), 6)) // 0.000000
+    print(std::math::to_fixed(std::math::hypot(3.0, 4.0), 6)) // 5.000000
+    print(std::math::to_fixed(std::math::log10(1000.0), 6)) // 3.000000
+    print(std::math::to_fixed(std::math::log1p(0.0), 6)) // 0.000000
+    print(std::math::to_fixed(std::math::log2(8.0), 6)) // 3.000000
+
+    // 向零取整：trunc 与 floor 在负数上不同
+    print(std::math::trunc(3.7), std::math::trunc(-3.7)) // 3 -3
+
+    // 夹取与符号：clamp 落在闭区间内，sign 归一成 -1 / 0 / 1
+    print(std::math::clamp(10, 0, 5), std::math::clamp(-3, 0, 5)) // 5 0
+    print(std::math::sign(-7.5), std::math::sign(0.0), std::math::sign(2)) // -1 0 1
+
+    // 整数位运算：计数、循环移位、回绕
+    print(std::math::pop_count(255)) // 8
+    print(std::math::count_leading_zeros(1)) // 63
+    print(std::math::count_trailing_zeros(8)) // 3
+    print(std::math::rotate_left(1, 4)) // 16
+    print(std::math::rotate_right(16, 4)) // 1
+    print(std::math::wrapping_add(9223372036854775807, 1)) // 最小值
+    print(std::math::wrapping_sub(-9223372036854775808, 1)) // 最大值
+    print(std::math::wrapping_mul(9223372036854775807, 2)) // -2
+
+    // 随机数：范围断言，`random_int` 含上界
+    print(std::math::random() >= 0.0 and std::math::random() < 1.0) // true
+    let roll = std::math::random_int(10, 13)
+    print(roll >= 10 and roll <= 13) // true
+}

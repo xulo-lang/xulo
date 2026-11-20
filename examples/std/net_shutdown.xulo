@@ -1,0 +1,66 @@
+// std::net::sock_shutdown：同时关闭读端与写端，对端读到 EOF
+//
+// 握手链拆成几个小函数：stage 1 的递归下降解析器既不能解析 `?`（基线里的
+// `errors/propagation.xulo`），也扛不住四层嵌套 `match`（`std/net.xulo` 因此
+// 进基线），所以每一步各用一个 `match`，嵌套不超过两层。
+fn open_listener(): Result<(number, string), Error> {
+    match std::net::tcp_listen("127.0.0.1:0") {
+        Result::Ok(server) => match std::net::sock_local_addr(server) {
+            Result::Ok(addr) => { return Result::Ok((server, addr)) }
+            Result::Err(e) => { return Result::Err(e) }
+        },
+        Result::Err(e) => { return Result::Err(e) }
+    }
+}
+
+fn session(server: number, client: number, peer: number) {
+    match std::net::sock_write(client, "x") {
+        Result::Ok(n) => print(n) // 1
+        Result::Err(e) => print(e.message)
+    }
+    match std::net::sock_read(peer, 8) {
+        Result::Ok(text) => print(text ?? "eof") // x
+        Result::Err(e) => print(e.message)
+    }
+
+    // 整个方向都关闭：此后 client 读到 EOF
+    match std::net::sock_shutdown(peer) {
+        Result::Ok(_) => print("shutdown: ok")
+        Result::Err(e) => print(e.message)
+    }
+    match std::net::sock_read(client, 8) {
+        Result::Ok(text) => print(text ?? "eof") // eof
+        Result::Err(e) => print(e.message)
+    }
+
+    match std::net::sock_close(client) {
+        Result::Ok(_) => print("client closed")
+        Result::Err(e) => print(e.message)
+    }
+    match std::net::sock_close(peer) {
+        Result::Ok(_) => print("peer closed")
+        Result::Err(e) => print(e.message)
+    }
+    match std::net::sock_close(server) {
+        Result::Ok(_) => print("server closed")
+        Result::Err(e) => print(e.message)
+    }
+}
+
+fn step(pair: (number, string)) {
+    let (server, addr) = pair
+    match std::net::tcp_connect(addr) {
+        Result::Ok(client) => match std::net::tcp_accept(server) {
+            Result::Ok(peer) => session(server, client, peer),
+            Result::Err(e) => print(e.message),
+        },
+        Result::Err(e) => print(e.message),
+    }
+}
+
+fn main() {
+    match open_listener() {
+        Result::Ok(pair) => step(pair),
+        Result::Err(e) => print(e.message),
+    }
+}

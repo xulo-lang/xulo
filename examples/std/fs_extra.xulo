@@ -1,0 +1,90 @@
+// std::fs 的其余成员：临时目录/文件、独占创建、字节追加、时间与权限、真实路径
+//
+// 路径本身宿主相关，不打印；临时文件建在 `std::os::tmp_dir()` 下，结束时清理。
+// 每个阶段一个 `match`、嵌套不超过两层：stage 1 的递归下降解析器既不能解析 `?`
+//（基线里的 `errors/propagation.xulo`），也扛不住四层嵌套 `match`。
+fn exclusive_create(dir: string) {
+    let fresh = std::path::join(dir, "fresh.txt")
+    match std::fs::create_new(fresh, "first") {
+        Result::Ok(_) => print("create_new: ok")
+        Result::Err(e) => print(e.message)
+    }
+    match std::fs::create_new(fresh, "second") {
+        Result::Ok(_) => print("create_new: unexpected re-create")
+        Result::Err(_) => print("create_new: exclusive")
+    }
+    match std::fs::remove(fresh) {
+        Result::Ok(_) => print("removed")
+        Result::Err(e) => print(e.message)
+    }
+}
+
+fn dir_part() {
+    match std::fs::temp_dir_in(std::os::tmp_dir(), "xulo-extra") {
+        Result::Ok(dir) => {
+            print("temp_dir_in: ok")
+            exclusive_create(dir)
+            match std::fs::remove_dir(dir) {
+                Result::Ok(_) => print("dir removed")
+                Result::Err(e) => print(e.message)
+            }
+        }
+        Result::Err(e) => print(e.message)
+    }
+}
+
+fn file_part(file: string) {
+    // append_bytes：两次追加，read_bytes 读回字节列表
+    match std::fs::append_bytes(file, [104, 105]) {
+        Result::Ok(_) => print("append_bytes: ok")
+        Result::Err(e) => print(e.message)
+    }
+    match std::fs::append_bytes(file, [33]) {
+        Result::Ok(_) => print("append_bytes: ok")
+        Result::Err(e) => print(e.message)
+    }
+    match std::fs::read_bytes(file) {
+        Result::Ok(bytes) => print(bytes) // [104, 105, 33]
+        Result::Err(e) => print(e.message)
+    }
+
+    // touch：只更新时间戳，成功仍是 Ok
+    match std::fs::touch(file) {
+        Result::Ok(_) => print("touch: ok")
+        Result::Err(e) => print(e.message)
+    }
+
+    // set_times：显式设置修改时间（毫秒时间戳）
+    match std::fs::set_times(file, 1700000000000) {
+        Result::Ok(_) => print("set_times: ok")
+        Result::Err(e) => print(e.message)
+    }
+
+    // set_mode：POSIX 权限位；Windows 上同样返回 Ok（无实际改动）
+    match std::fs::set_mode(file, 0o644) {
+        Result::Ok(_) => print("set_mode: ok")
+        Result::Err(e) => print(e.message)
+    }
+
+    // realpath：解析成绝对路径，内容与宿主相关，只看是否非空
+    match std::fs::realpath(file) {
+        Result::Ok(resolved) => print(resolved != "")
+        Result::Err(e) => print(e.message)
+    }
+
+    match std::fs::remove(file) {
+        Result::Ok(_) => print("removed")
+        Result::Err(e) => print(e.message)
+    }
+}
+
+fn main() {
+    dir_part()
+    match std::fs::temp_file_in(std::os::tmp_dir(), "xulo-probe") {
+        Result::Ok(file) => {
+            print("temp_file_in: ok")
+            file_part(file)
+        }
+        Result::Err(e) => print(e.message)
+    }
+}

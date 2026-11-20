@@ -86,4 +86,7 @@ fn main() {
         }
         Result::Err(e) => print(e.message)
     }
+
+    // 显式退出码：`exit` 不返回（`never`），只能放在最后一行
+    std::process::exit(0)
 }

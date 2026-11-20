@@ -496,19 +496,29 @@ impl IrGenerator {
         let left = self.generate_expression(&binop.left)?;
         let right = self.generate_expression(&binop.right)?;
 
+        // 字符串/列表拼接要在 dyn 数值归一之前定型：match 绑定的 payload
+        // 名字在 `dyn_tag_of` 里，若先经 `xulo_as_f64` 变成 f64，拼接分支
+        // 再把它当指针解引用就会崩（或把两个指针相加后当字符串）。
+        let string_add = matches!(binop.operator, BinaryOperator::Add)
+            && (self.is_string_like(&binop.left) || self.is_string_like(&binop.right));
+        let array_add = matches!(binop.operator, BinaryOperator::Add)
+            && (self.is_array_like_expr(&binop.left) || self.is_array_like_expr(&binop.right));
+
         // match 绑定参与的数值运算：payload 的 int/f64 标签运行时才知道，
         // 两侧先经 xulo_as_f64 归一到 f64
-        let dyn_math = matches!(
-            binop.operator,
-            BinaryOperator::Add
-                | BinaryOperator::Sub
-                | BinaryOperator::Mul
-                | BinaryOperator::Div
-                | BinaryOperator::Lt
-                | BinaryOperator::Gt
-                | BinaryOperator::Lte
-                | BinaryOperator::Gte
-        ) && (self.expr_is_dyn(&binop.left) || self.expr_is_dyn(&binop.right));
+        let dyn_math = !(string_add || array_add)
+            && matches!(
+                binop.operator,
+                BinaryOperator::Add
+                    | BinaryOperator::Sub
+                    | BinaryOperator::Mul
+                    | BinaryOperator::Div
+                    | BinaryOperator::Lt
+                    | BinaryOperator::Gt
+                    | BinaryOperator::Lte
+                    | BinaryOperator::Gte
+            )
+            && (self.expr_is_dyn(&binop.left) || self.expr_is_dyn(&binop.right));
         let (left, right) = if dyn_math {
             let left = match &binop.left {
                 Expression::Identifier { name, .. } if self.is_dyn_name(name) => {
@@ -530,9 +540,7 @@ impl IrGenerator {
         // String/array concatenation is decided by source-level types, not the
         // IR slot type: struct fields are Pointer slots that hold numbers, so
         // `self.x + dx` must lower to integer Add, not StringConcat.
-        if matches!(binop.operator, BinaryOperator::Add)
-            && (self.is_string_like(&binop.left) || self.is_string_like(&binop.right))
-        {
+        if string_add {
             let local = self.module.functions[func_idx].add_local(IrType::Pointer);
             self.module.functions[func_idx]
                 .instructions
@@ -544,9 +552,7 @@ impl IrGenerator {
             return Ok(Operand::Local(local));
         }
 
-        if matches!(binop.operator, BinaryOperator::Add)
-            && (self.is_array_like_expr(&binop.left) || self.is_array_like_expr(&binop.right))
-        {
+        if array_add {
             let local = self.module.functions[func_idx].add_local(IrType::Pointer);
             self.module.functions[func_idx]
                 .instructions
@@ -1874,7 +1880,16 @@ impl IrGenerator {
                 "build" if receiver_is_builder => Some(RuntimeFn::StringBuilderBuild),
                 "starts_with" if !receiver_is_struct => Some(RuntimeFn::StringStartsWith),
                 "ends_with" if !receiver_is_struct => Some(RuntimeFn::StringEndsWith),
-                "split" if !receiver_is_struct => Some(RuntimeFn::StringSplit),
+                // `split(sep)`: a string separator, or a compiled `RegExp`
+                // (payload tag 9) — the runtime gets the tag to tell them apart.
+                "split" if !receiver_is_struct => {
+                    let tag = match (call.arguments.first(), args.last()) {
+                        (Some(arg), Some(value)) => self.tag_operand_for(&arg.value, value),
+                        _ => Operand::Const(IrValue::I64(0)),
+                    };
+                    args.push(tag);
+                    Some(RuntimeFn::StringSplit)
+                }
                 "pad_start" if !receiver_is_struct => Some(RuntimeFn::StringPadStart),
                 "pad_end" if !receiver_is_struct => Some(RuntimeFn::StringPadEnd),
                 "repeat" if !receiver_is_struct => Some(RuntimeFn::StringRepeat),

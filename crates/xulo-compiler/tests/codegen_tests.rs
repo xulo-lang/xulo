@@ -461,6 +461,53 @@ fn main() {
     assert_eq!(output, vec!["true", "false", "true"]);
 }
 
+/// A `+` whose operand is bound from an enum payload must stay a string
+/// concatenation. The payload tag is only known at runtime, so the dynamic
+/// numeric path (`xulo_as_f64`) used to rewrite the operand first and hand a
+/// float to `xulo_string_concat`, which then read a bogus pointer.
+#[test]
+fn test_codegen_string_concat_with_match_payload_binding() {
+    let output = compile_and_run(
+        r#"
+enum Box {
+    Text(s: string)
+}
+
+fn main() {
+    let b = Box::Text("hi")
+    match b {
+        Box::Text(s) => {
+            print(s + "!")
+            print("!" + s)
+        }
+    }
+}
+"#,
+    );
+    assert_eq!(output, vec!["hi!", "!hi"]);
+}
+
+/// The same gate for lists: a payload bound to a list keeps `+` as a list
+/// concatenation instead of being folded into a number.
+#[test]
+fn test_codegen_list_concat_with_match_payload_binding() {
+    let output = compile_and_run(
+        r#"
+enum Bag {
+    Items(xs: List<int>)
+}
+
+fn main() {
+    let b = Bag::Items([1, 2])
+    match b {
+        Bag::Items(xs) => print(xs + [3])
+    }
+}
+"#,
+    );
+    assert_eq!(output, vec!["[1, 2, 3]"]);
+}
+
 /// A user method keeps its name when a string member has the same name.
 /// `starts_with` on a struct receiver must dispatch to the `impl`, not to the
 /// built-in string member.

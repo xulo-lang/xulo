@@ -23,7 +23,7 @@
 | `testing/` | `#[test]` 声明与选项组、`xulo test` 报表 |
 | `ffi/` | `extern "C"`、`Ptr`、`pub extern fn` |
 | `errors/` | `Result` 与 `?`、`panic`、除零、静态类型错误 |
-| `std/` | `std` 各模块的完整用法 |
+| `std/` | `std` 各模块的代表性用法（成员级缺口见「已知缺口」） |
 
 ## 入口判据
 
@@ -90,6 +90,18 @@ XULO_BLESS=1 cargo test -p xulo-cli --test examples
 不能证明语义覆盖 —— 那部分靠 review。已知的实现缺口用 `error-only:` 标注
 （当前是 `StructPattern`），并记录在 `docs/tasks.md` 的 T8 里。
 
+`coverage.tsv` 只覆盖语法。标准库成员另有一张门禁：
+`crates/xulo-cli/tests/examples.rs::std_members_are_exercised_by_the_corpus`
+按 `std::<module>::<member>` 把 `std-spec/signature-index.md`（146 行 / 143 个
+不同名字，`format`、`parse`、`read` 各属两个模块）与语料对齐；`string.*` 伪成员
+按 `.方法(` 匹配，注释里的提及不算数，`type …` 行（`Child`、`Server`、
+`RegexMatch` 等只通过类型推断使用）豁免，`std-spec` 子模块缺失时跳过。原先有
+38 个可调用成员没有被调用，现在都由 `std/math_extra.xulo`（23 个 `std::math`）、
+`std/fs_extra.xulo`（8 个 `std::fs`）、`std/io_extra.xulo`（5 个 `std::io`）、
+`std/net_shutdown.xulo`（`sock_shutdown`）和 `std/regex.xulo`（字符串成员
+`split`）覆盖。这些成员在语义层、解释器和 AOT 后端里都已实现（逐个探测过，
+两条路径输出一致），补示例**不需要** `@no-aot` 标记。
+
 ## 已知缺口
 
 覆盖表只能机械校验「文本出现过」。以下缺口不在它的证明范围内，修改语料时
@@ -107,7 +119,9 @@ XULO_BLESS=1 cargo test -p xulo-cli --test examples
   其中块级遮蔽与 `f32` 是**结果错误**，不只是未实现。
 - stage 1 自举解析器在 13 个语料文件上有差距，记录在
   `crates/xulo-cli/tests/stage1_examples_baseline.tsv`；新增示例若解析不了，
-  要么补解析器，要么进基线（基线只能缩短）。
+  要么补解析器，要么进基线（基线只能缩短）。它还有两层嵌套解析上限和
+  「不支持 `?`」两条限制：`std/fs_extra.xulo`、`std/net_shutdown.xulo` 为此
+  把流程拆成小函数（注释里写明了原因），不要再把它们合回深层 `match`。
 
 ## stage 1 语料
 

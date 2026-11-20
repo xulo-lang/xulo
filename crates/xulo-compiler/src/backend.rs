@@ -503,7 +503,7 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
     RuntimeFnDesc {
         name: "xulo_string_split",
         addr: xulo_runtime::runtime::xulo_string_split as *const u8,
-        params: &[I64, I64],
+        params: &[I64, I64, I64],
         returns: &[I64],
     },
     RuntimeFnDesc {

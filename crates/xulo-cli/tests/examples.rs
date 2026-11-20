@@ -398,3 +398,122 @@ fn backticked_production(cell: &str) -> Option<String> {
     }
     Some(name.to_string())
 }
+
+/// Drop comments so a member named only in prose does not satisfy the check.
+///
+/// `//` inside a string literal also truncates the line; no member is referenced
+/// after a URL in the corpus, and a false cut fails loudly instead of passing.
+fn code_only(source: &str) -> String {
+    let mut out = String::with_capacity(source.len());
+    let mut block = false;
+    for line in source.lines() {
+        let mut rest = line;
+        loop {
+            if block {
+                match rest.find("*/") {
+                    Some(end) => {
+                        rest = &rest[end + 2..];
+                        block = false;
+                    }
+                    None => {
+                        rest = "";
+                        break;
+                    }
+                }
+            } else {
+                match rest.find("/*") {
+                    Some(start) => {
+                        out.push_str(&rest[..start]);
+                        rest = &rest[start + 2..];
+                        block = true;
+                    }
+                    None => break,
+                }
+            }
+        }
+        if let Some(cut) = rest.find("//") {
+            rest = &rest[..cut];
+        }
+        out.push_str(rest);
+        out.push('\n');
+    }
+    out
+}
+
+/// Every member `std-spec/signature-index.md` lists is reached from the corpus
+/// by its qualified name (`std::math::acos`) or, for the `string.*` pseudo
+/// members, by the method call (`.split(`).
+///
+/// This is presence of a qualified call in the sources, the same standard as
+/// `coverage.tsv`: it cannot prove the semantics are right, only that no member
+/// silently drops out of every example. Type rows (`type …`, e.g. `Child`,
+/// `Server`, `RegexMatch`) are exempt because they are used through inference
+/// without being spelled out. Skipped when the `std-spec` submodule is absent.
+#[test]
+fn std_members_are_exercised_by_the_corpus() {
+    let index_path = repo_root().join("std-spec").join("signature-index.md");
+    let Ok(index) = std::fs::read_to_string(&index_path) else {
+        eprintln!(
+            "skipped: {} is not checked out (submodule absent)",
+            index_path.display()
+        );
+        return;
+    };
+
+    let corpus = corpus();
+    let mut code = String::new();
+    for file in &corpus.files {
+        let source = std::fs::read_to_string(file)
+            .unwrap_or_else(|e| panic!("cannot read {}: {e}", file.display()));
+        code.push_str(&code_only(&source));
+    }
+
+    let mut missing = Vec::new();
+    let mut checked = 0usize;
+    for line in index.lines() {
+        // `| \`member\` | signature | \`std::module\` |`
+        let Some(cell) = line.strip_prefix("| `") else {
+            continue;
+        };
+        let Some(close) = cell.find('`') else {
+            continue;
+        };
+        let name = &cell[..close];
+        let after_name = &cell[close + 1..];
+        let Some(bar) = after_name.find('|') else {
+            continue;
+        };
+        let signature = after_name[bar + 1..].trim_start();
+        let Some(module_at) = line.find("`std::") else {
+            continue;
+        };
+        let module_start = module_at + "`std::".len();
+        let Some(module_len) = line[module_start..].find('`') else {
+            continue;
+        };
+        let module = &line[module_start..module_start + module_len];
+        // Types are used through inference; only callables and constants must
+        // appear by name.
+        if signature.starts_with("type") {
+            continue;
+        }
+        checked += 1;
+        let needle = match name.strip_prefix("string.") {
+            Some(method) => format!(".{method}("),
+            None => format!("std::{module}::{name}"),
+        };
+        if !code.contains(&needle) {
+            missing.push(format!("{module}::{name}"));
+        }
+    }
+
+    assert!(
+        checked > 100,
+        "the signature index parsed as {checked} members; the table format changed"
+    );
+    assert!(
+        missing.is_empty(),
+        "standard-library members with no example call:\n  {}\n\nexamples/README.md and docs/tasks.md T10 describe the coverage rule",
+        missing.join("\n  ")
+    );
+}

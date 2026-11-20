@@ -1,0 +1,35 @@
+// std::io 的其余成员：stderr 写入、tty 检测、stdin 的两种读
+//
+// `eprint` 写 stderr，所以本文件带 `io_extra.stderr.expected`。门禁用
+// `Command::output()` 起子进程：stdin 为空（EOF）、stdout 是管道，因此两个
+// tty 检测都是 false；在终端里直接 `xulo run` 时 stdin 是 tty，本程序会跳过
+// 读取（不会等输入），此时输出与侧车不同。
+fn main() {
+    // eprint：写 stderr；失败返回 Result::Err
+    match std::io::eprint("io_extra: stderr line\n") {
+        Result::Ok(_) => print("eprint: ok")
+        Result::Err(e) => print(e.message)
+    }
+    match std::io::flush() {
+        Result::Ok(_) => null
+        Result::Err(e) => print(e.message)
+    }
+
+    // tty 检测：捕获运行时为 false
+    print(std::io::stdin_is_tty()) // false
+    print(std::io::stdout_is_tty()) // false
+
+    // stdin 已到 EOF 时的两种读：都返回 Ok(null)
+    if std::io::stdin_is_tty() {
+        print("stdin is a terminal; reads skipped")
+    } else {
+        match std::io::read_line() {
+            Result::Ok(text) => print(text == null) // true
+            Result::Err(e) => print(e.message)
+        }
+        match std::io::read_n(8) {
+            Result::Ok(text) => print(text == null) // true
+            Result::Err(e) => print(e.message)
+        }
+    }
+}

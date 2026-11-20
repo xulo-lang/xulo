@@ -68,6 +68,14 @@ fn main() {
         Result::Err(e) => print(e.message)
     }
 
+    // 按正则切分：`split` 返回 List<string>（与 `std::path::split` 不是同一个成员）
+    match RegExp::compile(", *") {
+        Result::Ok(re) => {
+            print("ada, bob,cyd".split(re)) // [ada, bob, cyd]
+        }
+        Result::Err(e) => print(e.message)
+    }
+
     // 字符串辅助方法：len / slice / bytes
     print("abc".len, "hello".slice(0, 3)) // 3 hel
 

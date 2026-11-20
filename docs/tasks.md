@@ -32,8 +32,8 @@ readiness document.
 | WP4 — `defer` semantics | 5 | 5 |
 | WP5 — Stage 1 skeleton | 6 | 6 |
 | WP6 — Self-host loop | 7 | 7 |
-| WP7 — Non-gating follow-ups | 6 | 6 |
-| **Total** | **61** | **61** |
+| WP7 — Non-gating follow-ups | 7 | 8 |
+| **Total** | **62** | **63** |
 
 ## Gates
 
@@ -506,12 +506,52 @@ re-scoped before the gate it informs.
       `xuloc/lexer.xulo`. Evidence:
       `crates/xulo-runtime/tests/tag_detection.rs`.
 
+- [x] **T10** Cover the `std` surface in `examples/std/`, and measure it.
+      The corpus gate proves grammar coverage only: `examples/coverage.tsv` maps
+      every production of `spec/grammar.md` to an example, but nothing compared
+      the corpus with `std-spec/signature-index.md` (146 member rows, 143
+      distinct names — `format`, `parse`, and `read` each appear in two
+      modules). Comparing that index with the expressions actually written in
+      `examples/` left 38 callable members uncalled; they are now covered by
+      `examples/std/math_extra.xulo` (23 `std::math`),
+      `examples/std/fs_extra.xulo` (8 `std::fs`),
+      `examples/std/io_extra.xulo` (5 `std::io`),
+      `examples/std/net_shutdown.xulo` (`sock_shutdown`), and
+      `examples/std/regex.xulo` (the string member `split`;
+      `std::path::split` is a different member). `process::Child`,
+      `http::Server`, and `regex::RegexMatch` are never spelled out but are used
+      through inference, so they are not gaps. All 38 also have an AOT lowering
+      (`crates/xulo-compiler/src/irgen/mod.rs::intrinsic_lowering`, plus the
+      `split` method path) and produce output identical to the interpreter, so
+      the new examples need no `@no-aot` marker.
+      `crates/xulo-cli/tests/examples.rs::std_members_are_exercised_by_the_corpus`
+      then compares the index with the corpus by `std::<module>::<member>`
+      (`.split(` for the `string.*` pseudo members), ignores comments so a
+      member named only in prose does not count, skips `type …` rows, and skips
+      when the `std-spec` submodule is absent. Non-gating: no gate's exit
+      criterion names the standard-library surface. Writing the examples found
+      two AOT lowering bugs, both fixed with regressions: `+` on a payload-bound
+      string/list went through the dynamic-number path, and `string.split` with
+      a compiled `RegExp` was lowered as a separator string.
+
 **Verify:** `cargo test -p xulo-cli --test readiness_matrix` (T3f owner
 components), `cargo test -p xulo-cli --test spec_conformance -- --nocapture`
 (T3c), `cargo test -p xulo-semantic --test semantic_tests` (L21), the R8
 value-semantics tests listed above, `cargo test -p xulo-compiler --test
 const_materialization_tests` (P1), and `cargo test -p xulo-runtime --test
 tag_detection` (P2).
+
+- [ ] **T11** AOT: mangle user function symbols.
+      The native backend emits each user `fn` under its source name, so a
+      function called `listen`, `connect`, `accept`, `read`, `write`, `open`, or
+      `close` collides with the C library / Winsock import of the same name and
+      the link fails (`LNK2005: listen already defined`). Found while writing
+      `examples/std/net_shutdown.xulo`, whose handshake helpers had to be
+      renamed to `open_listener`; any user code that names a function after a
+      libc call hits the same wall. Fix by prefixing user symbols at emission
+      (`xulo_fn_<name>`) while keeping `pub extern "C" fn` exports and the entry
+      point unmangled; add a codegen test that links a program defining
+      `fn read(...)`.
 
 ## Out of scope for stage 1 bootstrap
 

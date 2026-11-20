@@ -37,6 +37,38 @@ values, and is left to a future standard-library `std/ui` module.
   `import`/`from` lex as identifiers, and `defer`/`move`/`self`/`spawn`/
   `super` are keywords rather than reserved words.
 
+### Added
+
+- `examples/std/` now covers the 38 standard-library members the grammar gate
+  could not see: `math_extra.xulo` (trig/log/`trunc`/`clamp`/`sign`, the integer
+  bit ops, `random`), `fs_extra.xulo` (temporary creators, exclusive create,
+  byte append, times/mode, `realpath`), `io_extra.xulo` (`eprint`, the tty
+  probes, the EOF reads), `net_shutdown.xulo` (`sock_shutdown`), `exit` in
+  `process.xulo`, and a `split` example in `regex.xulo`. Every one builds
+  natively and prints what the interpreter prints.
+- `crates/xulo-cli/tests/examples.rs::std_members_are_exercised_by_the_corpus`
+  keeps that coverage honest: it walks every row of
+  `std-spec/signature-index.md`, ignores comments, exempts `type …` rows, and
+  fails when a callable member has no `std::<module>::<member>` call (or
+  `.method(` for the `string.*` pseudo members). It skips when the `std-spec`
+  submodule is not checked out.
+
+### Fixed
+
+- AOT: `+` on a string or list bound from an enum payload no longer goes
+  through the dynamic-number path. `match std::fs::read(p) { Result::Ok(dir) =>`
+  used to hand a float to `xulo_string_concat`, so `dir + "/file"` crashed (or
+  concatenated two raw pointers when both operands were payload bindings).
+  Regression:
+  `crates/xulo-compiler/tests/codegen_tests.rs::test_codegen_string_concat_with_match_payload_binding`
+  and `::test_codegen_list_concat_with_match_payload_binding`.
+- AOT: `string.split` with a compiled `RegExp` was lowered as a string
+  separator, so `"ada, bob".split(re)` split into characters. The intrinsic now
+  carries the argument's tag and dispatches to `RegExp::split` for a regex
+  payload. Regression:
+  `crates/xulo-compiler/tests/regex_codegen_tests.rs::string_split_follows_a_compiled_regexp`
+  and `::string_split_accepts_a_separator_string`.
+
 ## [0.1.0] - 2026-11-14
 
 First public release, stage 0: the Rust bootstrap toolchain.

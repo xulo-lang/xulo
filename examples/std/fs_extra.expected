@@ -1,0 +1,14 @@
+temp_dir_in: ok
+create_new: ok
+create_new: exclusive
+removed
+dir removed
+temp_file_in: ok
+append_bytes: ok
+append_bytes: ok
+[104, 105, 33]
+touch: ok
+set_times: ok
+set_mode: ok
+true
+removed
