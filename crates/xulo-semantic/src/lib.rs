@@ -2585,9 +2585,12 @@ fn collect_inline_faces(
 ) {
     out.insert(
         module_id.to_string(),
-        module_face(&Program {
-            statements: statements.to_vec(),
-        }, module_id),
+        module_face(
+            &Program {
+                statements: statements.to_vec(),
+            },
+            module_id,
+        ),
     );
     for statement in statements {
         if let Statement::Mod(m) = statement
