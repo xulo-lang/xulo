@@ -32,8 +32,8 @@ readiness document.
 | WP4 — `defer` semantics | 5 | 5 |
 | WP5 — Stage 1 skeleton | 6 | 6 |
 | WP6 — Self-host loop | 7 | 7 |
-| WP7 — Non-gating follow-ups | 8 | 9 |
-| **Total** | **63** | **64** |
+| WP7 — Non-gating follow-ups | 9 | 10 |
+| **Total** | **64** | **65** |
 
 ## Gates
 
@@ -323,12 +323,13 @@ Priority P1 · needed by Gate 3 and the bootstrap corpus · source:
       with `@no-aot` (each one must keep failing, so closing it forces a diff):
       `defer`, match guard/or/range/type patterns, `spawn`/`lock`/service,
       nested tuple access and tuple pass/return, trait dispatch through a
-      generic parameter, the `Error("…")` constructor, and failure-path
-      reporting (the interpreter buffers `print` and writes `error[E0006]`, the
-      native runtime writes `panic: …`). Block-scoped shadowing and `f32`
-      arithmetic, both wrong-result gaps, were closed later: the AOT path now
-      restores bindings at every nested block and gives `f32`/`f64` bindings an
-      F64 slot, so both agree with the interpreter and their markers are gone.
+      generic parameter, and failure-path reporting (the interpreter buffers
+      `print` and writes `error[E0006]`, the native runtime writes `panic: …`;
+      see T13). Block-scoped shadowing, `f32` arithmetic, and the `Error("…")`
+      constructor were closed later: the AOT path now restores bindings at every
+      nested block, gives `f32`/`f64` bindings an F64 slot, and builds the
+      `{ message }` object `Error("…")` denotes, so all three agree with the
+      interpreter and their markers are gone.
 - [x] **T9** Measure stage 1 against the same corpus.
       `xuloc/main.xulo` gained a `scan` mode; `XULO_STAGE1_MODE=scan
       XULO_STAGE1_DIR=examples xulo run xuloc/main.xulo` prints one line per file
@@ -569,6 +570,21 @@ tag_detection` (P2).
       Fix the coercion at the binding site and the rounding after each
       operation, then add a differential example with a value that differs
       between the two formats.
+
+- [ ] **T13** Decide the failure-path reporting contract.
+      Two examples stay `@no-aot` because a runtime failure prints different
+      things on the two paths, and neither is a bug in the lowering:
+      the interpreter's CLI renders `error[E0006] runtime: …` with a source
+      snippet (` --> path:line:col`) and drops the buffered stdout, while the
+      native runtime streams stdout as it runs and prints `panic: <message>`.
+      Byte parity therefore needs one of: (a) the compiler embedding the
+      rendered diagnostic (message, canonical path, source line, caret) in the
+      binary and having the runtime print it before exiting, (b) a
+      runtime-only message contract that the interpreter also adopts for
+      failures (losing the snippet), or (c) keeping the two formats and
+      teaching the differential to compare a normalized failure shape for
+      examples that declare it. Pick one before `errors/runtime_failure.xulo`
+      and `errors/division_by_zero.xulo` can leave the gap list.
 
 ## Out of scope for stage 1 bootstrap
 

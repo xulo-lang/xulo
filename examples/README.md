@@ -109,12 +109,16 @@ XULO_BLESS=1 cargo test -p xulo-cli --test examples
 
 - 文档注释（`spec/documentation-comments.md` 的提取模型 / 标签 / 包索引）尚未
   实现；示例里的 `///`、`//!` 只是 trivia，`basics/lexical.xulo` 只演示了词法层。
-- AOT 后端还有 9 处已知差距（8 个 `@no-aot all:` + 1 个 `@no-aot windows:`），
+- AOT 后端还有 8 处已知差距（7 个 `@no-aot all:` + 1 个 `@no-aot windows:`），
   另有 2 个 `@skip-aot`（测试载体）。差分测试要求标记过的程序**继续失败**，
   修好后必须同步删标记。清单见 `docs/tasks.md` T8：`defer`、match
   guard/or/区间/类型模式、`spawn`/`lock`/service、嵌套元组、泛型 trait 派发、
-  `Error("…")` 构造函数、失败路径报告、Windows FFI。块级遮蔽与 `f32` 运算的
-  两个**结果错误**已经修好，标记已删。
+  失败路径报告、Windows FFI。块级遮蔽、`f32` 运算与 `Error("…")` 构造已经修好，
+  标记已删。
+- 失败路径报告仍不一致，且不是实现疏漏：解释器经 CLI 渲染完整诊断
+  （`error[E0006]` + 源码位置 + 片段）并丢弃缓冲区里的 stdout，原生运行时只有
+  `panic: …` 且 stdout 已经流式写出。要做到逐字节一致，得把诊断（含源码片段）
+  编进二进制，属于设计取舍 —— 见 `docs/tasks.md` T13。
 - `f32` 目前只是标注：两个字面量与算术都不做 binary32 舍入，两个执行路径都
   按 `f64` 计算（`spec/types/primitive-types.md` 要求按各自格式的 IEEE-754
   语义）。`types/float_math.xulo` 只用两种格式都精确的值，所以输出不受影响；

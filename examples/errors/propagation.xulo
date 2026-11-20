@@ -4,9 +4,6 @@
 // - `e?` 在 `Ok` 上取值、在 `Err` 上立即返回该错误
 // - 错误类型通常是 `Error`，`Error("文本")` 的 `.message` 是原文
 // - `?` 也可以用在 `main` 里；错误会成为进程的退出失败
-// - `?` 也可以用在 `main` 里；错误会成为进程的退出失败
-//
-// @no-aot all: AOT 后端没有 `Error("…")` 构造函数（语义检查报 undefined function）
 
 fn parse(v: int): Result<int, Error> {
     if v < 0 {

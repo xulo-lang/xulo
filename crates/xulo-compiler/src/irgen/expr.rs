@@ -1125,6 +1125,38 @@ impl IrGenerator {
             return self.generate_print_multi(call);
         }
 
+        // `Error("msg")` —— 内置错误对象，唯一字段 `message` 保存原文
+        // （spec error-handling.md）。它不在 `self.structs` 里（没有源码声明），
+        // 所以在这里直接构造对象，与解释器的 Value::Object 形状一致。
+        if call.object.is_none() && call.callee == "Error" && call.arguments.len() == 1 {
+            let value = self.generate_expression(&call.arguments[0].value)?;
+            let tag = self.tag_operand_for(&call.arguments[0].value, &value);
+            let object = self.module.functions[func_idx].add_local(IrType::Pointer);
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::RuntimeCall {
+                    dst: Some(object),
+                    func: RuntimeFn::AllocObject,
+                    args: vec![Operand::Const(IrValue::I64(1))],
+                });
+            let key = self.module.functions[func_idx].add_local(IrType::Pointer);
+            let key_idx = self.module.add_string("message".to_string());
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::Const {
+                    dst: key,
+                    value: IrValue::String(key_idx),
+                });
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::RuntimeCall {
+                    dst: None,
+                    func: RuntimeFn::ObjectSet,
+                    args: vec![Operand::Local(object), Operand::Local(key), value, tag],
+                });
+            return Ok(Operand::Local(object));
+        }
+
         // 结构体构造：Point(x: 1) -> NewObject（类型名按模块解析）
         if call.object.is_none()
             && call.method.is_none()

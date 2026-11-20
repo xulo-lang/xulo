@@ -577,3 +577,36 @@ fn main() {
     );
     assert_eq!(out, vec!["2", "5", "1", "1.25", "true"]);
 }
+
+/// `Error("text")` builds the built-in error object, so `?` propagation and
+/// `e.message` work on the compiled path (spec error-handling.md).
+#[test]
+fn test_codegen_error_constructor_and_propagation() {
+    let out = compile_and_run(
+        r#"
+fn parse(v: int): Result<int, Error> {
+    if v < 0 {
+        return Result::Err(Error("bad input"))
+    }
+    Result::Ok(v)
+}
+
+fn double(v: int): Result<int, Error> {
+    let x = parse(v)?
+    Result::Ok(x * 2)
+}
+
+fn main() {
+    match double(21) {
+        Result::Ok(v) => print(v)
+        Result::Err(e) => print(e.message)
+    }
+    match double(-1) {
+        Result::Ok(_) => print("ok")
+        Result::Err(e) => print(e.message)
+    }
+}
+"#,
+    );
+    assert_eq!(out, vec!["42", "bad input"]);
+}
