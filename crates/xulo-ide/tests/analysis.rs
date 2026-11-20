@@ -415,6 +415,37 @@ fn f(): number {
 }
 
 #[test]
+fn same_file_modules_resolve_without_a_loader_world() {
+    // The editor analyzes one file with no loader world behind it. A `mod`
+    // declared in that same file is still known — its body is in the buffer —
+    // so `use self::inner as i` binds a namespace (`i::hi()` is a module path,
+    // not an enum) and `use tools::*` imports the module's public names
+    // instead of leaving `tool` unknown.
+    let src = "\
+mod inner {
+    pub fn hi(): string { \"hi\" }
+    pub const K: int = 2
+}
+
+mod tools {
+    pub fn tool(): string { \"tool\" }
+}
+
+use self::inner as i;
+use tools::*;
+
+fn main() {
+    print(i::hi())
+    print(i::K)
+    print(tool())
+}
+";
+    let analysis = analyze_source(src);
+    let diags = analysis.diagnostics();
+    assert!(diags.is_empty(), "{diags:?}");
+}
+
+#[test]
 fn queries_are_noops_without_successful_analysis() {
     let analysis = analyze_source("let x =");
     assert!(analysis.program().is_none());

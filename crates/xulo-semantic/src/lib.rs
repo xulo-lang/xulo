@@ -2294,6 +2294,10 @@ pub struct Analyzer {
     /// Local namespace bindings: `mod` names and `use … as` aliases, each
     /// mapped to the module id it names.
     namespaces: HashMap<String, String>,
+    /// Interfaces of the inline `mod name { … }` bodies in the buffer being
+    /// checked, keyed by module id (root included). Only populated when there
+    /// is no loader world — editor partial analysis still knows these modules.
+    inline_faces: HashMap<String, ModuleFace>,
     /// `use`-bound value/type names -> (origin module id, kind), for the
     /// initialization-order check (E0611).
     use_origins: HashMap<String, (String, FaceKind)>,
@@ -2567,6 +2571,30 @@ pub fn child_module_id(module_id: &str, name: &str) -> String {
         name.to_string()
     } else {
         format!("{module_id}::{name}")
+    }
+}
+
+/// Interfaces of the inline `mod name { … }` bodies nested in `statements`,
+/// keyed by module id — including `module_id` itself. The loader builds this
+/// map from files; editor partial analysis has no loader, but an inline module
+/// is entirely inside the buffer, so its face is still knowable.
+fn collect_inline_faces(
+    statements: &[Statement],
+    module_id: &str,
+    out: &mut HashMap<String, ModuleFace>,
+) {
+    out.insert(
+        module_id.to_string(),
+        module_face(&Program {
+            statements: statements.to_vec(),
+        }, module_id),
+    );
+    for statement in statements {
+        if let Statement::Mod(m) = statement
+            && let Some(body) = &m.body
+        {
+            collect_inline_faces(body, &child_module_id(module_id, &m.name), out);
+        }
     }
 }
 
@@ -3042,6 +3070,13 @@ fn run_analysis(
         world: world.cloned(),
         module_id: world.map(|w| w.current.clone()).unwrap_or_default(),
         namespaces: HashMap::new(),
+        inline_faces: if world.is_none() {
+            let mut faces = HashMap::new();
+            collect_inline_faces(&program.statements, "", &mut faces);
+            faces
+        } else {
+            HashMap::new()
+        },
         use_origins: HashMap::new(),
         use_bound: std::cell::RefCell::new(HashMap::new()),
         glob_unused: std::cell::RefCell::new(Vec::new()),
@@ -5852,7 +5887,7 @@ impl Analyzer {
                     }
                     return self.bind_std_glob(module, u);
                 }
-                let Some(face) = self.world.as_ref().and_then(|w| w.modules.get(&id)) else {
+                let Some(face) = self.module_face_by_id(&id) else {
                     if self.lenient {
                         // Editor partial mode has no face to enumerate:
                         // bind nothing rather than failing the document (the
@@ -5876,7 +5911,7 @@ impl Analyzer {
                 }
                 if u.is_pub {
                     // A glob re-export is the whole module's interface.
-                    if let Some(face) = self.world.as_ref().and_then(|w| w.modules.get(&id)) {
+                    if let Some(face) = self.module_face_by_id(&id) {
                         for (n, sym) in &face.exports {
                             self.exported_symbols.push((n.clone(), sym.clone()));
                         }
@@ -6077,25 +6112,23 @@ impl Analyzer {
         {
             return self.bind_external_name(local, &start, u);
         }
-        if self.lenient && self.world.is_none() {
+        if self.lenient && self.world.is_none() && !self.inline_faces.contains_key(&start) {
             // Editor partial mode: no faces to walk. Bind the last member
             // under `local` — typed from the caller's seed when it has one,
             // opaquely otherwise — instead of failing the whole document.
+            // Inline modules of this same buffer do have a face
+            // (`inline_faces`), so those paths take the normal walk below.
             let member = segments.last().map(|s| s.as_str()).unwrap_or(local);
             return self.bind_degraded_member(local, member, &start, u);
         }
         let mut current = start.clone();
         for (i, seg) in segments.iter().enumerate() {
             let last = i + 1 == segments.len();
-            let entry = self
-                .world
-                .as_ref()
-                .and_then(|w| w.modules.get(&current))
-                .map(|face| {
-                    let child = face.children.get(seg).cloned();
-                    let info = face.names.get(seg).copied();
-                    (child, info)
-                });
+            let entry = self.module_face_by_id(&current).map(|face| {
+                let child = face.children.get(seg).cloned();
+                let info = face.names.get(seg).copied();
+                (child, info)
+            });
             let Some((child, info)) = entry else {
                 return Err(self
                     .err_code(
@@ -6492,6 +6525,16 @@ impl Analyzer {
         Ok(())
     }
 
+    /// The face of module `id`: the loader's world when it has one, otherwise
+    /// an inline module of the buffer being checked (editor partial analysis).
+    fn module_face_by_id(&self, id: &str) -> Option<ModuleFace> {
+        self.world
+            .as_ref()
+            .and_then(|w| w.modules.get(id))
+            .cloned()
+            .or_else(|| self.inline_faces.get(id).cloned())
+    }
+
     /// Bind one resolved member of module `module_id` under `local`.
     fn bind_member(
         &mut self,
@@ -6501,11 +6544,7 @@ impl Analyzer {
         local: &str,
         u: &xulo_core::ast::UseDecl,
     ) -> SResult<()> {
-        let face = self
-            .world
-            .as_ref()
-            .and_then(|w| w.modules.get(module_id))
-            .cloned();
+        let face = self.module_face_by_id(module_id);
         let Some(face) = face else {
             return Err(self
                 .err_code("E0607", format!("cannot resolve `{member}`"))
@@ -12589,12 +12628,7 @@ impl Analyzer {
                 .push((call.span.clone(), format!("{ns}::{member}")));
             return Ok(Some(ty));
         }
-        let Some(face) = self
-            .world
-            .as_ref()
-            .and_then(|w| w.modules.get(&module))
-            .cloned()
-        else {
+        let Some(face) = self.module_face_by_id(&module) else {
             if self.lenient {
                 // Editor partial mode: no face to consult. Record the path
                 // head (its span starts the call) so go-to-definition can
@@ -12802,12 +12836,7 @@ impl Analyzer {
                 },
             }));
         }
-        let Some(face) = self
-            .world
-            .as_ref()
-            .and_then(|w| w.modules.get(&module))
-            .cloned()
-        else {
+        let Some(face) = self.module_face_by_id(&module) else {
             if self.lenient {
                 // Editor partial mode: the head is a namespace but no face
                 // exists to read the member from — read opaquely instead of
