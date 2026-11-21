@@ -29,6 +29,14 @@ JS 代码生成已废弃并移除：工具链只使用 `xulo-runtime` 的原生�
 | `docs/` | 只改文档 | `docs/git-branch-convention` |
 | `chore/` | 构建、CI、依赖 | `chore/ci-macos` |
 
+- **不设 `merge/` 类型**：前缀描述改动的性质，合并本身不是改动。只有需要同时
+  验证多个分支的组合时，才从最新 `master` 建临时 `integrate/<topic>`，测试通过
+  后快进合并并删除；不要在 `integrate/` 上做功能改动。
+- **先 rebase 再测，测的就是合并后的树**：`git fetch origin`、`git rebase
+  origin/master`，然后在**该分支**上跑验证。`git switch master && git merge
+  --ff-only <branch>` 得到的树与刚验证的分支完全相同，所以不需要单独的 merge
+  分支，也不需要“先合并到某处再测”。
+- `master` 只用 `--ff-only` 快进合并，不产生 merge commit；推送后由 CI 再兜底。
 - 一个分支只做一件事；提交信息沿用 `<type>(<scope>): <summary>`
   （例如 `feat(xuloc): 补齐 std::fs`）。
 - 推送前跑过本文件的“验证”命令；不要 force-push 共享分支。

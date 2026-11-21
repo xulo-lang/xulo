@@ -38,7 +38,13 @@ docs: 约定 Git 分支工作流
 
 ## 合并前检查
 
+先 rebase 到最新 `origin/master`，在分支上跑检查——这棵树与合并后的 `master`
+相同：
+
 ```bash
+git fetch origin
+git rebase origin/master
+
 cargo fmt --all -- --check
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
@@ -50,5 +56,22 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test -p xulo-cli --test stage1
 XULO_STAGE1_BUILD=1 cargo test -p xupm --test stage1_build
 ```
+
+## 合并
+
+`master` 只用 `--ff-only` 快进合并，不产生 merge commit：
+
+```bash
+git switch master
+git pull --ff-only origin master
+git merge --ff-only <branch>
+git push origin master
+git push origin --delete <branch>
+git branch -d <branch>
+```
+
+不设 `merge/` 类型。只有需要同时验证多个分支的组合时，才建临时
+`integrate/<topic>`：把分支合入它、测试通过后再快进到 `master`，不要直接在
+`integrate/` 上做功能改动。
 
 约定细节、测试位置与禁止事项见 [`AGENTS.md`](AGENTS.md)。
