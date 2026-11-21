@@ -106,7 +106,7 @@ jobs:
 
       # WP6: stage 1's bootstrap suite runs beside the conformance runner, so
       # the self-host corpus is a conformance gate and not only a workspace
-      # test. `runs_stage1_test_file` covers `xupm test` on `xuloc/tests.xulo`.
+      # test. `runs_stage1_test_file` covers `xupm test` on `xuloc/src/tests.xulo`.
       - name: Stage 1 bootstrap suite
         run: |
           cargo test -p xulo-cli --test stage1 -- --nocapture

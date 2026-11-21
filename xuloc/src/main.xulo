@@ -11,7 +11,7 @@
 // A third form scans a whole tree and reports, per file, whether the stage 1
 // lexer and parser accept it. The example corpus gate drives this:
 //
-//   XULO_STAGE1_MODE=scan XULO_STAGE1_DIR=examples xulo run xuloc/main.xulo
+//   XULO_STAGE1_MODE=scan XULO_STAGE1_DIR=examples xulo run xuloc/src/main.xulo
 //
 // The default mode is `parse`. Diagnostics go to stderr in the stage 0 shape
 // `<file>:<line>:<column>: error: <message>` and the process exits 1.
@@ -83,7 +83,15 @@ fn run_build(file: string, source: string) {
     if parsed.error != "" {
         fail(file, parsed.line, parsed.column, "E0002", parsed.error)
     }
-    let runtime_path = env_or("XULO_STAGE1_RUNTIME", "xuloc/runtime.c")
+    // Reject a program only when the checker understood all of it and found a
+    // confirmed error. `complete == false` means it hit a construct or name it
+    // does not model (structs, modules, std calls, generics), so code
+    // generation gets the final say instead of a false rejection.
+    let checked: CheckResult = check(parsed.root)
+    if !checked.ok and checked.complete {
+        fail(file, checked.line, checked.column, checked.code, checked.message)
+    }
+    let runtime_path = env_or("XULO_STAGE1_RUNTIME", "xuloc/runtime/runtime.c")
     let built: BuildResult = compile(parsed.root, file, base_of(runtime_path))
     if !built.ok {
         fail(file, 1, 1, "E0005", built.message)
@@ -159,8 +167,8 @@ fn env_or(name: string, fallback: string): string {
 
 fn usage() {
     std::io::eprintln("usage: xuloc <tokens|parse|check|build> <file>")
-    std::io::eprintln("   or: XULO_STAGE1_MODE=tokens|parse|check|build XULO_STAGE1_FILE=<file> xulo run xuloc/main.xulo")
-    std::io::eprintln("   or: XULO_STAGE1_MODE=scan XULO_STAGE1_DIR=<dir> xulo run xuloc/main.xulo")
+    std::io::eprintln("   or: XULO_STAGE1_MODE=tokens|parse|check|build XULO_STAGE1_FILE=<file> xulo run xuloc/src/main.xulo")
+    std::io::eprintln("   or: XULO_STAGE1_MODE=scan XULO_STAGE1_DIR=<dir> xulo run xuloc/src/main.xulo")
 }
 
 fn kind_label(code: string): string {
@@ -343,11 +351,18 @@ fn main() {
     let mut mode = env_or("XULO_STAGE1_MODE", "parse")
     let mut file = env_or("XULO_STAGE1_FILE", "")
     let mut dir = env_or("XULO_STAGE1_DIR", "")
-    if args.len >= 3
-        and (args[1] == "tokens" or args[1] == "parse" or args[1] == "check" or args[1] == "build")
-    {
-        mode = args[1]
-        file = args[2]
+    // Nested `if`s, not `a and (b or c)`: the C backend evaluates the right
+    // side of a nested short-circuit eagerly, and `args[1]` is out of bounds
+    // when the binary is called without arguments.
+    if args.len >= 3 {
+        if args[1] == "tokens"
+            or args[1] == "parse"
+            or args[1] == "check"
+            or args[1] == "build"
+        {
+            mode = args[1]
+            file = args[2]
+        }
     }
     if mode == "scan" {
         if dir == "" {

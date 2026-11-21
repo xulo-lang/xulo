@@ -20,6 +20,11 @@ use ast::{Node};
 
 pub struct CheckResult {
     pub ok: bool,
+    /// Whether the checker saw the whole program with constructs it models.
+    /// `false` means it reached a declaration, type, or call it cannot judge
+    /// (E0003, an unknown type name, a std/module function, a method call), so
+    /// a failure is "not checked", not a confirmed error.
+    pub complete: bool,
     pub code: string,
     pub message: string,
     pub line: number,
@@ -45,6 +50,7 @@ pub struct Checker {
     active_scopes: number,
     next_scope: number,
     current_return: string,
+    complete: bool,
     error: string,
     code: string,
     line: number,
@@ -59,6 +65,7 @@ pub fn check(root: Node): CheckResult {
         active_scopes: 0,
         next_scope: 1,
         current_return: "unit",
+        complete: true,
         error: "",
         code: "",
         line: 1,
@@ -71,6 +78,7 @@ pub fn check(root: Node): CheckResult {
     }
     return CheckResult(
         ok: checker.error == "",
+        complete: checker.complete,
         code: checker.code,
         message: checker.error,
         line: checker.line,
@@ -87,6 +95,9 @@ impl Checker {
             self.code = code
             self.line = node.line
             self.column = node.column
+        }
+        if code == "E0003" {
+            self.complete = false
         }
     }
 
@@ -159,6 +170,7 @@ impl Checker {
         }
         if node.kind == "OptionalType" {
             if node.children.len == 0 {
+                self.complete = false
                 self.fail(node, "E0101", "an optional type needs an inner type")
                 return "unknown"
             }
@@ -209,9 +221,14 @@ impl Checker {
                 }
                 i = i + 1
             }
+            self.complete = false
             self.fail(node, "E0101", "`" + name + "` needs a type argument")
             return "unknown"
         }
+        // Struct, enum, alias, generic parameter, and imported types are not
+        // modeled here; the name is unknown to the checker, not necessarily
+        // wrong, so `build` must not reject on this alone.
+        self.complete = false
         self.fail(node, "E0101", "unknown type `" + name + "`")
         return "unknown"
     }
@@ -263,6 +280,10 @@ impl Checker {
         }
         if actual == "null" {
             return self.is_optional(expected)
+        }
+        if self.is_optional(expected) {
+            // `T` fits `T?`: the optional adds null to the domain.
+            return self.assignable(self.optional_inner(expected), actual)
         }
         if self.is_optional(actual) and self.is_optional(expected) {
             return self.assignable(self.optional_inner(expected), self.optional_inner(actual))
@@ -821,6 +842,8 @@ impl Checker {
         }
         let callee = node.children[0]
         if callee.kind != "Name" and callee.kind != "Path" {
+            // Method calls are outside the checker's subset.
+            self.complete = false
             self.fail(callee, "E0204", "this expression is not callable")
             return "unknown"
         }
@@ -870,6 +893,8 @@ impl Checker {
             if self.lookup(name) != "" {
                 self.fail(node, "E0204", "`" + name + "` is not callable")
             } else {
+                // A std/module/static function the checker does not collect.
+                self.complete = false
                 self.fail(node, "E0101", "cannot find function `" + name + "`")
             }
             return "unknown"

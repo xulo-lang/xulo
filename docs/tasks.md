@@ -44,11 +44,11 @@ Gates are cumulative. An open earlier gate blocks every later gate.
       diagnostic. `crates/xulo-cli/tests/stage1.rs`.
 - [x] **Gate 2 — Self-parse**: stage 1 parses its own source (or a fixed
       nontrivial bootstrap file) with accurate spans.
-      `crates/xulo-cli/tests/stage1.rs` parses `xuloc/*.xulo` itself.
+      `crates/xulo-cli/tests/stage1.rs` parses `xuloc/src/*.xulo` itself.
 - [x] **Gate 3 — Self-check**: stage 1 type-checks a nontrivial bootstrap file
       and agrees with stage 0 on accept/reject; diagnostics carry
       file/line/column and exit nonzero.
-      `xuloc/checker.xulo` + `xuloc/corpus/`; verified by
+      `xuloc/src/checker.xulo` + `xuloc/corpus/`; verified by
       `crates/xulo-cli/tests/stage1.rs::stage1_check_agrees_with_stage0_on_the_corpus`.
 - [x] **Gate 4 — Native build**: `xupm build` produces a stage 1 binary whose
       output matches `xulo run` on the bootstrap workload.
@@ -149,7 +149,7 @@ package or out-of-scope section that tracks it.
 - [x] **T5** Stage 1 self-parse/self-check/self-build tests — self-parse,
       self-check, the self-build (stage 2), and the stage 1/stage 2
       differential live in `crates/xulo-cli/tests/stage1.rs`,
-      `xuloc/tests.xulo`, and `crates/xupm/tests/stage1_build.rs`
+      `xuloc/src/tests.xulo`, and `crates/xupm/tests/stage1_build.rs`
 - [x] **T6** Robustness/fuzz tests
 
 ## WP0 — Matrix hygiene and conformance
@@ -343,8 +343,8 @@ Priority P1 · needed by Gate 3 and the bootstrap corpus · source:
       the differential compares a normalized failure shape for examples that
       declare `@aot-failure-shape`.
 - [x] **T9** Measure stage 1 against the same corpus.
-      `xuloc/main.xulo` gained a `scan` mode; `XULO_STAGE1_MODE=scan
-      XULO_STAGE1_DIR=examples xulo run xuloc/main.xulo` prints one line per file
+      `xuloc/src/main.xulo` gained a `scan` mode; `XULO_STAGE1_MODE=scan
+      XULO_STAGE1_DIR=examples xulo run xuloc/src/main.xulo` prints one line per file
       with the lexer and parser verdict. `crates/xulo-cli/tests/stage1.rs::
       stage1_example_corpus_tracks_baseline` compares that with
       `crates/xulo-cli/tests/stage1_examples_baseline.tsv` and fails when a listed
@@ -382,10 +382,10 @@ Can start in parallel with WP1–WP4 · needed by Gate 1/2 · source:
 `stage1-readiness.md` §7 WP5
 
 - [x] Create the agreed `xuloc/` location and a lexer written in Xulo.
-      `xuloc/ast.xulo` and `xuloc/lexer.xulo`; run with
-      `XULO_STAGE1_MODE=tokens XULO_STAGE1_FILE=<file> xulo run xuloc/main.xulo`.
+      `xuloc/src/ast.xulo` and `xuloc/src/lexer.xulo`; run with
+      `XULO_STAGE1_MODE=tokens XULO_STAGE1_FILE=<file> xulo run xuloc/src/main.xulo`.
 - [x] Add a parser written in Xulo that runs under `xulo run`.
-      `xuloc/parser.xulo` and `xuloc/main.xulo`; `parse` mode prints the
+      `xuloc/src/parser.xulo` and `xuloc/src/main.xulo`; `parse` mode prints the
       generic AST tree with scalar spans.
 - [x] Limit the source to rows marked OK/PARTIAL and record every workaround
       in `xuloc/BOOTSTRAP.md`.
@@ -397,7 +397,7 @@ Can start in parallel with WP1–WP4 · needed by Gate 1/2 · source:
       `crates/xulo-cli/tests/stage1.rs` runs `tokens` and `parse` on
       `examples/functions/fibonacci.xulo` and asserts spans and node positions.
 - [x] **T5b** Smoke test: stage 1 parses its own source.
-      The same test parses every `xuloc/*.xulo`; `xuloc/tests.xulo` repeats
+      The same test parses every `xuloc/src/*.xulo`; `xuloc/src/tests.xulo` repeats
       the check through its own `#[test]` functions.
 - [x] **B6** Verify `xupm test` runs stage 1's own `#[test]` functions.
       `crates/xupm/tests/cli.rs::runs_stage1_test_file` and
@@ -413,29 +413,29 @@ Can start in parallel with WP1–WP4 · needed by Gate 1/2 · source:
 After WP1–WP5 · needed by Gate 4/5/6 · source: `stage1-readiness.md` §7 WP6
 
 - [x] Stage 1 checks and compiles a fixed bootstrap corpus.
-      `xuloc/backend.xulo` lowers the generic AST to portable C and links
-      `xuloc/runtime.c`; the accept corpus compiles and prints its checked-in
+      `xuloc/src/backend.xulo` lowers the generic AST to portable C and links
+      `xuloc/runtime/runtime.c`; the accept corpus compiles and prints its checked-in
       goldens, and the reject corpus still fails with a coded diagnostic
       (`crates/xupm/tests/stage1_build.rs::stage1_compiles_the_bootstrap_corpus`).
 - [x] **B8a** Build stage 1 with stage 0's `xupm`.
-      `xuloc/` is an `xupm` package (`xuloc/xupm.toml`, entry `main.xulo`), so
-      `xupm build xuloc/main.xulo --release` produces
+      `xuloc/` is an `xupm` package (`xuloc/xupm.toml`, entry `src/main.xulo`), so
+      `xupm build xuloc/src/main.xulo --release` produces
       `xuloc/.xupm/build/xuloc`; the native binary matches the interpreter for
       `tokens`/`parse` on `examples/functions/fibonacci.xulo` and `parse` on
-      `xuloc/main.xulo`. The opt-in differential test rejects output drift.
+      `xuloc/src/main.xulo`. The opt-in differential test rejects output drift.
       `crates/xupm/tests/cli.rs::xuloc_is_a_package_project` keeps the manifest
       and the no-file-argument check path working.
 - [x] Stage 1 builds itself, producing a stage 2 binary.
       `crates/xupm/tests/stage1_build.rs::stage1_builds_itself_into_stage2`.
 - [x] **T5c** Compare stage 1 and stage 2 output on the bootstrap suite.
       `::stage1_and_stage2_agree_on_the_bootstrap_suite` compares tokens and
-      parse trees for every `xuloc/*.xulo`, check verdicts/diagnostics for the
+      parse trees for every `xuloc/src/*.xulo`, check verdicts/diagnostics for the
       accept and reject corpus, and the runtime output of every corpus build.
 - [x] Add the bootstrap suite to CI alongside the conformance runner.
       The `conformance` job runs `cargo test -p xulo-cli --test stage1`,
       `cargo test -p xupm --test cli runs_stage1_test_file`, and the opt-in
       `XULO_STAGE1_BUILD=1 cargo test -p xupm --test stage1_build`, so the
-      corpus, `xuloc/tests.xulo`, and the self-host loop gate alongside the
+      corpus, `xuloc/src/tests.xulo`, and the self-host loop gate alongside the
       pinned-spec runner.
 - [x] **B8b** Add a reproducible build and self-compile smoke test.
       `::stage1_build_is_reproducible` builds `basics.xulo` twice and compares
@@ -521,7 +521,7 @@ re-scoped before the gate it informs.
       `xulo_cleanup`. Combined with P1 the `tokens` probe scales linearly:
       14 KB 0.06 s, 22 KB 0.10 s, 44 KB 0.20 s (previously 339 s at 44 KB),
       and its output is byte-identical to the old stage 1 binary on
-      `xuloc/lexer.xulo`. Evidence:
+      `xuloc/src/lexer.xulo`. Evidence:
       `crates/xulo-runtime/tests/tag_detection.rs`.
 
 - [x] **T10** Cover the `std` surface in `examples/std/`, and measure it.

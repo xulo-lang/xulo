@@ -6,7 +6,7 @@ use std::process::ExitCode;
 /// recursive-descent parser.
 ///
 /// Unix gives a process's main thread 8 MiB, but Windows gives it 1 MiB, and
-/// the bootstrap workload (`xuloc/tests.xulo` parsing its own sources) recurses
+/// the bootstrap workload (`xuloc/src/tests.xulo` parsing its own sources) recurses
 /// well past that. The native backends reserve the same amount (`link.exe`
 /// `/STACK`, or the platform default on Unix), so every entry point that runs
 /// Xulo code requests it explicitly instead of inheriting the host default.

@@ -135,7 +135,7 @@ XULO_BLESS=1 cargo test -p xulo-cli --test examples
 ## stage 1 语料
 
 ```bash
-XULO_STAGE1_MODE=scan XULO_STAGE1_DIR=examples xulo run xuloc/main.xulo
+XULO_STAGE1_MODE=scan XULO_STAGE1_DIR=examples xulo run xuloc/src/main.xulo
 ```
 
 每行一个文件：`<path>\t<lexer 状态>\t<parser 状态>`。`XULO_STAGE1_SKIP`

@@ -1,6 +1,6 @@
 // Stage 1 bootstrap runtime.
 //
-// The stage 1 backend (`xuloc/backend.xulo`) lowers the generic AST to C, not
+// The stage 1 backend (`xuloc/src/backend.xulo`) lowers the generic AST to C, not
 // to typed machine code: every expression has the same `XVal` shape and every
 // user type is a field table. This file is the small runtime that C program
 // links against. It is deliberately not the product runtime
@@ -13,7 +13,7 @@
 //
 // Compile as part of the generated translation unit:
 //     cc -O1 generated.c -o program
-// `xuloc/runtime.c` has no `main` and no platform SDK dependency beyond libc.
+// `xuloc/runtime/runtime.c` has no `main` and no platform SDK dependency beyond libc.
 
 // `popen`/`pclose` (and `lstat`) are POSIX, but strict `-std=c11` hides them
 // behind a feature-test macro. Ask for the 2008 POSIX surface explicitly.
@@ -36,6 +36,7 @@
 #else
 #include <dirent.h>
 #include <fcntl.h>
+#include <dirent.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -1120,13 +1121,15 @@ XVal xr_str_of(XVal v) {
     return xr_str_n(buffer, len);
 }
 
+// `std::io::println` returns `Result<unit, Error>`; the prelude `print` uses
+// `xr_print_args` and returns unit.
 XVal xr_print(XVal v) {
     XVal s = xr_str_of(v);
     XStr *str = xr_as_str(s);
     fwrite(str->data, 1, (size_t)str->bytes, stdout);
     fputc('\n', stdout);
     fflush(stdout);
-    return xr_nil();
+    return xr_ok(xr_nil());
 }
 
 XVal xr_eprintln(XVal v) {
@@ -1136,7 +1139,60 @@ XVal xr_eprintln(XVal v) {
     fwrite(str->data, 1, (size_t)str->bytes, stderr);
     fputc('\n', stderr);
     fflush(stderr);
+    return xr_ok(xr_nil());
+}
+
+// The prelude `print` / `println` / `eprint` / `eprintln` are variadic: each
+// value renders with `xr_str_of`, consecutive values are separated by one
+// space, and the line terminator is written once.
+static void xr_write_values(FILE *stream, long long n, XVal *values) {
+    for (long long i = 0; i < n; i += 1) {
+        if (i > 0) {
+            fputc(' ', stream);
+        }
+        XVal s = xr_str_of(values[i]);
+        XStr *str = xr_as_str(s);
+        fwrite(str->data, 1, (size_t)str->bytes, stream);
+    }
+}
+
+XVal xr_print_args(long long n, XVal *args) {
+    xr_write_values(stdout, n, args);
+    fputc('\n', stdout);
+    fflush(stdout);
     return xr_nil();
+}
+
+XVal xr_eprint_args(long long n, XVal *args) {
+    fflush(stdout);
+    xr_write_values(stderr, n, args);
+    fputc('\n', stderr);
+    fflush(stderr);
+    return xr_nil();
+}
+
+// `std::io::print` and friends take exactly one string and write it with no
+// rendering or spacing of their own (std-spec `modules/io.md`).
+XVal xr_io_print(XVal v) {
+    XVal s = xr_str_of(v);
+    XStr *str = xr_as_str(s);
+    fwrite(str->data, 1, (size_t)str->bytes, stdout);
+    fflush(stdout);
+    return xr_ok(xr_nil());
+}
+
+XVal xr_io_eprint(XVal v) {
+    XVal s = xr_str_of(v);
+    XStr *str = xr_as_str(s);
+    fflush(stdout);
+    fwrite(str->data, 1, (size_t)str->bytes, stderr);
+    fflush(stderr);
+    return xr_ok(xr_nil());
+}
+
+XVal xr_io_flush(void) {
+    fflush(stdout);
+    return xr_ok(xr_nil());
 }
 
 // ── StringBuilder ────────────────────────────────────────────────────────
@@ -1227,6 +1283,14 @@ XVal xr_method(XVal recv, const char *name, long long n, XVal *args) {
     }
     if (strcmp(name, "code_at") == 0 && recv.tag == XT_STR) {
         return xr_str_code_at(recv, args[0].i);
+    }
+    if (strcmp(name, "bytes") == 0 && recv.tag == XT_STR) {
+        XStr *s = xr_as_str(recv);
+        XVal out = xr_list_new();
+        for (long long i = 0; i < s->bytes; i += 1) {
+            xr_list_push(out, xr_int((unsigned char)s->data[i]));
+        }
+        return out;
     }
     if (strcmp(name, "split") == 0 && recv.tag == XT_STR) {
         XStr *s = xr_as_str(recv);
@@ -1574,6 +1638,47 @@ XVal xr_fs_mkdir(XVal path) {
         return xr_err(message);
     }
     return xr_ok(xr_nil());
+}
+
+#ifndef _WIN32
+static void xr_walk_collect(XVal out, const char *path) {
+    DIR *dir = opendir(path);
+    if (dir == NULL) {
+        return;
+    }
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        const char *name = entry->d_name;
+        if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
+            continue;
+        }
+        size_t size = strlen(path) + strlen(name) + 2;
+        char *child = (char *)xr_alloc(size);
+        snprintf(child, size, "%s/%s", path, name);
+        struct stat info;
+        int is_dir = stat(child, &info) == 0 && S_ISDIR(info.st_mode);
+        if (is_dir) {
+            xr_walk_collect(out, child);
+        } else {
+            xr_list_push(out, xr_str(child));
+        }
+    }
+    closedir(dir);
+}
+#endif
+
+XVal xr_fs_walk(XVal dir) {
+    if (dir.tag != XT_STR) {
+        return xr_err("std::fs::walk expects a string path");
+    }
+#ifdef _WIN32
+    (void)dir;
+    return xr_err("std::fs::walk is not supported on this host");
+#else
+    XVal out = xr_list_new();
+    xr_walk_collect(out, xr_as_str(dir)->data);
+    return xr_ok(out);
+#endif
 }
 
 XVal xr_os_getenv(XVal name) {

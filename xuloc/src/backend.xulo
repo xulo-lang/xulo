@@ -3,24 +3,28 @@
 // Stage 1 is the self-hosted front end (lexer, parser, checker). Its first
 // backend lowers the same generic AST to portable C, and the host's C
 // compiler (the LLVM toolchain's `clang`, or `cc`) turns that into the
-// native binary. The generated program links `xuloc/runtime.c`, a small
+// native binary. The generated program links `xuloc/runtime/runtime.c`, a small
 // dynamic runtime that keeps the bootstrap compiler inside one lowering scheme:
 // every expression has the same `XVal` shape and every user type is a field
 // table. That is deliberately simpler than the stage 0 IR/LLVM backend in
 // `crates/xulo-compiler`; stage 0 remains the product compiler.
 //
 // Scope:
-//   * declarations: functions, structs, enums, consts, impl methods, modules
-//     (`mod name;` is loaded relative to the entry file);
+//   * declarations: functions, structs, enums, traits, consts, impl methods,
+//     modules (`mod name;` is loaded relative to the entry file);
 //   * statements/expressions: let/const, assignment, return, if/else, while,
-//     for, match, calls, methods, fields, indexing, lists, tuples, the
-//     arithmetic/comparison/logical operator set, `??`, `is`, `?.`, and the
-//     print/str/assert/panic intrinsics;
+//     for, match, calls, methods, fields, indexing, lists, tuples, templates,
+//     the arithmetic/comparison/logical operator set, `??`, `is`, `?.`, and
+//     the variadic print/str/assert/panic intrinsics;
+//   * module-qualified declarations resolve by their final segment, because
+//     declaration collection flattens modules into one namespace;
+//   * a `Trait::method(receiver, …)` call dispatches through the runtime
+//     method registry on the receiver's struct type;
 //   * the `std::fs`, `std::io`, `std::os`, and `std::process` calls stage 1
 //     itself uses.
 //
 // Deliberate limits (recorded in BOOTSTRAP.md):
-//   * no closures, templates, maps, async, `defer`, or traits;
+//   * no closures, maps/sets, async, or `defer`;
 //   * struct values are reference-shaped objects, so value-copy semantics are
 //     not reproduced (stage 1's own code does not depend on them);
 //   * memory is leaked rather than collected; the compiler is a one-shot
@@ -64,6 +68,11 @@ struct EnumInfo {
     variants: List<string>,
 }
 
+struct TraitInfo {
+    name: string,
+    methods: List<string>,
+}
+
 struct ConstInfo {
     name: string,
     cname: string,
@@ -81,6 +90,7 @@ struct Emitter {
     methods: List<MethodInfo>,
     structs: List<StructInfo>,
     enums: List<EnumInfo>,
+    traits: List<TraitInfo>,
     consts: List<ConstInfo>,
     locals: List<LocalInfo>,
     program: StringBuilder,
@@ -98,6 +108,7 @@ fn new_emitter(): Emitter {
         methods: [],
         structs: [],
         enums: [],
+        traits: [],
         consts: [],
         locals: [],
         program: StringBuilder::new(),
@@ -110,7 +121,7 @@ fn new_emitter(): Emitter {
     )
 }
 
-// 鈹€鈹€ small string/path helpers 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ── small string/path helpers ────────────────────────────────────────────
 
 pub fn dir_of(path: string): string {
     let mut i = path.len - 1
@@ -203,6 +214,18 @@ fn hex_pad(n: number, width: number): string {
     return out.build()
 }
 
+fn pad_hex8(text: string): string {
+    // `\u{1F44B}` carries a variable-width codepoint; C's `\U` needs eight.
+    let mut out = StringBuilder::new()
+    let mut pad = 8 - text.len
+    while pad > 0 {
+        out.append("0")
+        pad = pad - 1
+    }
+    out.append(text)
+    return out.build()
+}
+
 fn c_string(value: string): string {
     let mut out = StringBuilder::new()
     out.append("\"")
@@ -224,7 +247,7 @@ fn c_join(values: List<string>): string {
     return out.build()
 }
 
-// 鈹€鈹€ declaration collection 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ── declaration collection ───────────────────────────────────────────────
 
 impl Emitter {
     fn fail(mut self, message: string) {
@@ -302,6 +325,16 @@ impl Emitter {
         self.enums.push(EnumInfo(name: node.value, variants: variants))
     }
 
+    fn add_trait(mut self, node: Node) {
+        let mut methods: List<string> = []
+        for child in node.children {
+            if child.kind == "TraitMethod" or child.kind == "Fn" {
+                methods.push(child.value)
+            }
+        }
+        self.traits.push(TraitInfo(name: node.value, methods: methods))
+    }
+
     fn add_const(mut self, node: Node) {
         let mut expr = node
         for child in node.children {
@@ -366,6 +399,10 @@ impl Emitter {
             self.add_enum(node)
             return
         }
+        if node.kind == "Trait" {
+            self.add_trait(node)
+            return
+        }
         if node.kind == "Const" {
             self.add_const(node)
             return
@@ -386,7 +423,7 @@ impl Emitter {
         // declaration in the bootstrap subset.
     }
 
-    // 鈹€鈹€ naming and scopes 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    // ── naming and scopes ────────────────────────────────────────────────
 
     fn new_local(mut self, name: string): string {
         self.next_local = self.next_local + 1
@@ -440,6 +477,40 @@ impl Emitter {
         return -1
     }
 
+    fn enum_has_variant(self, enum_name: string, variant: string): bool {
+        let mut i = self.enums.len - 1
+        while i >= 0 {
+            if self.enums[i].name == enum_name {
+                let mut v = 0
+                while v < self.enums[i].variants.len {
+                    if self.enums[i].variants[v] == variant {
+                        return true
+                    }
+                    v = v + 1
+                }
+            }
+            i = i - 1
+        }
+        return false
+    }
+
+    fn trait_has_method(self, trait_name: string, method: string): bool {
+        let mut i = self.traits.len - 1
+        while i >= 0 {
+            if self.traits[i].name == trait_name {
+                let mut m = 0
+                while m < self.traits[i].methods.len {
+                    if self.traits[i].methods[m] == method {
+                        return true
+                    }
+                    m = m + 1
+                }
+            }
+            i = i - 1
+        }
+        return false
+    }
+
     fn new_tmp(mut self): string {
         self.next_tmp = self.next_tmp + 1
         return "t" + str(self.next_tmp)
@@ -465,7 +536,7 @@ impl Emitter {
         }
     }
 
-    // 鈹€鈹€ literals 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    // ── literals ─────────────────────────────────────────────────────────
 
     fn literal_expr(mut self, text: string): string {
         if text == "true" {
@@ -539,7 +610,7 @@ impl Emitter {
     }
 }
 
-// 鈹€鈹€ entry point 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ── entry point ──────────────────────────────────────────────────────────
 
 pub fn compile(root: Node, entry: string, runtime_path: string): BuildResult {
     let mut emitter = new_emitter()
@@ -586,7 +657,7 @@ fn split_path(path: string): List<string> {
     return parts
 }
 
-// 鈹€鈹€ code generation 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ── code generation ──────────────────────────────────────────────────────
 
 impl Emitter {
     fn emit(mut self, runtime_path: string): string {
@@ -1048,12 +1119,18 @@ impl Emitter {
         }
     }
 
-    // 鈹€鈹€ expressions 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    // ── expressions ──────────────────────────────────────────────────────
 
     fn emit_expr(mut self, node: Node): string {
         let kind = node.kind
         if kind == "Literal" {
             return self.literal_expr(node.value)
+        }
+        if kind == "Template" {
+            return self.emit_template(node)
+        }
+        if kind == "TemplateText" {
+            return "xr_str(" + self.c_template_text(node.value) + ")"
         }
         if kind == "Name" {
             return self.require_name(node.value)
@@ -1127,6 +1204,91 @@ impl Emitter {
         return "xr_nil()"
     }
 
+    fn emit_template(mut self, node: Node): string {
+        // Templates are string concatenation: a text chunk is already a
+        // string, an interpolation renders through `xr_str_of`.
+        let mut expr = "xr_str(\"\")"
+        for child in node.children {
+            if child.kind == "TemplateText" {
+                if child.value != "" {
+                    expr = "xr_add("
+                        + expr
+                        + ", xr_str("
+                        + self.c_template_text(child.value)
+                        + "))"
+                }
+                continue
+            }
+            let value = self.emit_expr(child)
+            expr = "xr_add(" + expr + ", xr_str_of(" + value + "))"
+        }
+        return expr
+    }
+
+    fn c_template_text(self, text: string): string {
+        // Escape a template text chunk into a C string literal. `\u{…}` is
+        // not a C escape, so it becomes `\UXXXXXXXX`; other escapes
+        // (`\n`, `\t`, `\uXXXX`, `\xNN`, `\\`) already match C.
+        let chars = text.split("")
+        let mut lit = StringBuilder::new()
+        lit.append("\"")
+        let mut i = 0
+        while i < chars.len {
+            let c = chars[i]
+            if c == "\\" and i + 1 < chars.len {
+                let next = chars[i + 1]
+                if next == "u" and i + 2 < chars.len and chars[i + 2] == "{" {
+                    let mut j = i + 3
+                    let mut hex = StringBuilder::new()
+                    while j < chars.len and chars[j] != "}" {
+                        hex.append(chars[j])
+                        j = j + 1
+                    }
+                    lit.append("\\U")
+                    lit.append(pad_hex8(hex.build()))
+                    i = j + 1
+                    continue
+                }
+                lit.append("\\")
+                lit.append(next)
+                i = i + 2
+                continue
+            }
+            if c == "\"" {
+                lit.append("\\\"")
+                i = i + 1
+                continue
+            }
+            if c == "\n" {
+                lit.append("\\n")
+                i = i + 1
+                continue
+            }
+            if c == "\r" {
+                lit.append("\\r")
+                i = i + 1
+                continue
+            }
+            if c == "\t" {
+                lit.append("\\t")
+                i = i + 1
+                continue
+            }
+            let code = c.code_at(0)
+            if code < 32 {
+                lit.append("\" \"\\x")
+                lit.append(hex_pad(code, 2))
+                lit.append("\" \"")
+                i = i + 1
+                continue
+            }
+            lit.append(c)
+            i = i + 1
+        }
+        lit.append("\"")
+        return lit.build()
+    }
+
     fn emit_name(self, name: string): string {
         let binding = self.lookup_local(name)
         if binding != "" {
@@ -1152,6 +1314,32 @@ impl Emitter {
         let constant = self.lookup_const(value)
         if constant != "" {
             return constant
+        }
+        // `mod::CONST` / `alias::CONST`: declaration collection flattens modules,
+        // so the module prefix is not part of the C name.
+        let parts = split_path(value)
+        if parts.len > 1 {
+            let last = parts[parts.len - 1]
+            let constant = self.lookup_const(last)
+            if constant != "" {
+                return constant
+            }
+            let bound = self.lookup_local(last)
+            if bound != "" {
+                return bound
+            }
+            let callee = self.find_function(last)
+            if callee != "" {
+                return callee
+            }
+        }
+        // A payload-free enum variant is a value: `Direction::East`.
+        if parts.len == 2 and self.enum_has_variant(parts[0], parts[1]) {
+            return "xr_variant("
+                + c_string(parts[0])
+                + ", "
+                + c_string(parts[1])
+                + ", 0, NULL)"
         }
         return ""
     }
@@ -1259,15 +1447,21 @@ impl Emitter {
 
     fn emit_short_circuit(mut self, op: string, node: Node): string {
         let left = self.emit_expr(node.children[0])
+        if op == "and" {
+            // No temp statement: the operand appears once, so the C ternary
+            // itself short-circuits. A statement here would be emitted
+            // unconditionally and would defeat nesting (`a and (b or c)`).
+            let right = self.emit_expr(node.children[1])
+            return "(xr_cond(" + left + ") ? " + right + " : xr_bool(0))"
+        }
+        if op == "or" {
+            let right = self.emit_expr(node.children[1])
+            return "(xr_cond(" + left + ") ? xr_bool(1) : " + right + ")"
+        }
+        // `??` reads the left operand twice, so it needs a temp.
         let tmp = self.new_tmp()
         self.line("XVal " + tmp + " = " + left + ";")
         let right = self.emit_expr(node.children[1])
-        if op == "and" {
-            return "(xr_cond(" + tmp + ") ? " + right + " : xr_bool(0))"
-        }
-        if op == "or" {
-            return "(xr_cond(" + tmp + ") ? xr_bool(1) : " + right + ")"
-        }
         return "((" + tmp + ").tag == XT_NIL ? " + right + " : " + tmp + ")"
     }
 
@@ -1480,14 +1674,23 @@ impl Emitter {
     }
 
     fn emit_builtin(mut self, node: Node, name: string): string {
-        if name == "print" {
-            return "xr_print(" + self.one_arg(node, name) + ")"
-        }
-        if name == "println" {
-            return "xr_print(" + self.one_arg(node, name) + ")"
+        if name == "print" or name == "println" {
+            // The prelude `print` is variadic: values render and are separated
+            // by one space, then a newline.
+            let args = self.eval_args(node.children, 1)
+            return "xr_print_args("
+                + str(args.len)
+                + ", "
+                + self.value_array(args)
+                + ")"
         }
         if name == "eprintln" or name == "eprint" {
-            return "xr_eprintln(" + self.one_arg(node, name) + ")"
+            let args = self.eval_args(node.children, 1)
+            return "xr_eprint_args("
+                + str(args.len)
+                + ", "
+                + self.value_array(args)
+                + ")"
         }
         if name == "str" {
             return "xr_str_of(" + self.one_arg(node, name) + ")"
@@ -1619,12 +1822,36 @@ impl Emitter {
             }
             return "xr_print(" + args[0] + ")"
         }
-        if path == "std::io::eprintln" or path == "std::io::eprint" {
+        if path == "std::io::print" {
+            if args.len != 1 {
+                self.fail("`std::io::print` expects one argument")
+                return "xr_nil()"
+            }
+            return "xr_io_print(" + args[0] + ")"
+        }
+        if path == "std::io::eprintln" {
             if args.len != 1 {
                 self.fail("`std::io::eprintln` expects one argument")
                 return "xr_nil()"
             }
             return "xr_eprintln(" + args[0] + ")"
+        }
+        if path == "std::io::eprint" {
+            if args.len != 1 {
+                self.fail("`std::io::eprint` expects one argument")
+                return "xr_nil()"
+            }
+            return "xr_io_eprint(" + args[0] + ")"
+        }
+        if path == "std::io::flush" {
+            return "xr_io_flush()"
+        }
+        if path == "std::hint::likely" or path == "std::hint::unlikely" {
+            if args.len != 1 {
+                self.fail("`" + path + "` expects one argument")
+                return "xr_nil()"
+            }
+            return args[0]
         }
         if path == "std::os::getenv" {
             if args.len != 1 {
@@ -1662,14 +1889,73 @@ impl Emitter {
         }
         let parts = split_path(path)
         if parts.len == 2 {
+            // Module-qualified declarations are flattened during collection, so
+            // `alias::fn` lowers to the same C function as `fn`.
+            let fn_cname = self.find_function(parts[1])
+            if fn_cname != "" {
+                return fn_cname
+                    + "("
+                    + str(args.len)
+                    + ", "
+                    + self.value_array(args)
+                    + ")"
+            }
+            if self.enum_has_variant(parts[0], parts[1]) {
+                return "xr_variant("
+                    + c_string(parts[0])
+                    + ", "
+                    + c_string(parts[1])
+                    + ", "
+                    + str(args.len)
+                    + ", "
+                    + self.value_array(args)
+                    + ")"
+            }
+            if self.trait_has_method(parts[0], parts[1]) {
+                if args.len < 1 {
+                    self.fail("`" + path + "` expects a receiver")
+                    return "xr_nil()"
+                }
+                let rest: List<string> = []
+                let mut i = 1
+                while i < args.len {
+                    rest.push(args[i])
+                    i = i + 1
+                }
+                // The bootstrap backend is type-erased; dispatch a trait call
+                // through the runtime method registry on the receiver's type.
+                return "xr_method("
+                    + args[0]
+                    + ", "
+                    + c_string(parts[1])
+                    + ", "
+                    + str(rest.len)
+                    + ", "
+                    + self.value_array(rest)
+                    + ")"
+            }
             if parts[0] == "StringBuilder" and parts[1] == "new" {
                 return "xr_static_method(\"StringBuilder\", \"new\", 0, NULL)"
             }
-            return "xr_variant("
-                + c_string(parts[0])
-                + ", "
-                + c_string(parts[1])
-                + ", "
+            if parts[0] == "Result" {
+                return "xr_variant(\"Result\", "
+                    + c_string(parts[1])
+                    + ", "
+                    + str(args.len)
+                    + ", "
+                    + self.value_array(args)
+                    + ")"
+            }
+            // Anything else would silently render as a variant; report it
+            // instead of producing a program that prints its own source.
+            self.fail("cannot lower static call to `" + path + "`")
+            return "xr_nil()"
+        }
+        let last = parts[parts.len - 1]
+        let fn_cname = self.find_function(last)
+        if fn_cname != "" {
+            return fn_cname
+                + "("
                 + str(args.len)
                 + ", "
                 + self.value_array(args)
@@ -1679,7 +1965,7 @@ impl Emitter {
         return "xr_nil()"
     }
 
-    // 鈹€鈹€ patterns 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    // ── patterns ─────────────────────────────────────────────────────────
 
     fn pattern_is_variant(self, value: string): bool {
         let parts = split_path(value)
@@ -1817,7 +2103,7 @@ impl Emitter {
     }
 }
 
-// 鈹€鈹€ pattern text helpers 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ── pattern text helpers ────────────────────────────────────────────────
 
 fn type_pattern_name(value: string): string {
     let words = value.split(" ")

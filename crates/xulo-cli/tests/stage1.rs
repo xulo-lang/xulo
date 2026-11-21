@@ -22,7 +22,7 @@ fn run_stage1(mode: &str, file: &Path) -> Output {
     let root = repo_root();
     Command::new(BIN)
         .arg("run")
-        .arg(root.join("xuloc/main.xulo"))
+        .arg(root.join("xuloc/src/main.xulo"))
         .env("XULO_STAGE1_MODE", mode)
         .env("XULO_STAGE1_FILE", file)
         .current_dir(&root)
@@ -113,15 +113,15 @@ fn stage1_parse_smoke_test() {
 
 /// T5b: every stage 1 source file parses with itself.
 ///
-/// The file set is discovered from `xuloc/` instead of being hard-coded, so a
+/// The file set is discovered from `xuloc/src/` instead of being hard-coded, so a
 /// new stage 1 source file (for example the Gate 3 checker) is covered as soon
 /// as it lands.
 #[test]
 fn stage1_parses_its_own_source() {
     let root = repo_root();
-    let mut sources: Vec<PathBuf> = std::fs::read_dir(root.join("xuloc"))
-        .expect("xuloc/ should exist")
-        .map(|entry| entry.expect("xuloc/ entry should be readable").path())
+    let mut sources: Vec<PathBuf> = std::fs::read_dir(root.join("xuloc/src"))
+        .expect("xuloc/src should exist")
+        .map(|entry| entry.expect("xuloc/src entry should be readable").path())
         .filter(|path| path.extension().is_some_and(|ext| ext == "xulo"))
         .collect();
     sources.sort();
@@ -135,15 +135,15 @@ fn stage1_parses_its_own_source() {
             .expect("a source path has a file name")
             .to_string_lossy();
         let out = run_stage1("parse", path);
-        assert_success(&out, &format!("self-parse of xuloc/{name}"));
+        assert_success(&out, &format!("self-parse of xuloc/src/{name}"));
         let text = stdout_of(&out);
         assert!(
             text.starts_with("Program @"),
-            "xuloc/{name} produced no Program root:\n{text}"
+            "xuloc/src/{name} produced no Program root:\n{text}"
         );
         assert!(
             text.contains("Fn "),
-            "xuloc/{name} tree has no functions:\n{text}"
+            "xuloc/src/{name} tree has no functions:\n{text}"
         );
     }
 }
@@ -195,14 +195,14 @@ fn stage1_tests_run_under_xulo_test() {
     let root = repo_root();
     let out = Command::new(BIN)
         .arg("test")
-        .arg("xuloc/tests.xulo")
+        .arg("xuloc/src/tests.xulo")
         .current_dir(&root)
         .output()
         .expect("xulo test should start");
-    assert_success(&out, "xulo test xuloc/tests.xulo");
+    assert_success(&out, "xulo test xuloc/src/tests.xulo");
     let text = stdout_of(&out);
     assert!(
-        text.contains("10 passed, 0 failed"),
+        text.contains("13 passed, 0 failed"),
         "all stage 1 tests should pass:\n{text}\n{}",
         stderr_of(&out)
     );
@@ -214,11 +214,11 @@ fn stage1_entry_point_checks() {
     let root = repo_root();
     let out = Command::new(BIN)
         .arg("check")
-        .arg(root.join("xuloc/main.xulo"))
+        .arg(root.join("xuloc/src/main.xulo"))
         .current_dir(&root)
         .output()
         .expect("xulo check should start");
-    assert_success(&out, "xulo check xuloc/main.xulo");
+    assert_success(&out, "xulo check xuloc/src/main.xulo");
 }
 
 /// Gate 3: stage 1's checker agrees with stage 0 on accept/reject for the
@@ -333,7 +333,7 @@ fn stage1_example_corpus_tracks_baseline() {
 
     let out = Command::new(BIN)
         .arg("run")
-        .arg("xuloc/main.xulo")
+        .arg("xuloc/src/main.xulo")
         .current_dir(&root)
         .env("XULO_STAGE1_MODE", "scan")
         .env("XULO_STAGE1_DIR", "examples")
@@ -417,7 +417,7 @@ fn stage1_example_corpus_tracks_baseline() {
         let file = examples.join(path);
         let probe = Command::new(BIN)
             .arg("run")
-            .arg("xuloc/main.xulo")
+            .arg("xuloc/src/main.xulo")
             .current_dir(&root)
             .env("XULO_STAGE1_MODE", "parse")
             .env("XULO_STAGE1_FILE", &file)

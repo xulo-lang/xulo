@@ -1,7 +1,7 @@
 // Stage 1's own tests. Run from the repository root:
 //
-//     xulo test xuloc/tests.xulo
-//     xupm test xuloc/tests.xulo
+//     xulo test xuloc/src/tests.xulo
+//     xupm test xuloc/src/tests.xulo
 //
 // They exercise the lexer and parser directly and parse every stage 1 source
 // file, which is the T5b smoke test in executable form.
@@ -96,12 +96,12 @@ fn renders_the_tree() {
 #[test]
 fn parses_its_own_source() {
     let files = [
-        "xuloc/ast.xulo",
-        "xuloc/lexer.xulo",
-        "xuloc/parser.xulo",
-        "xuloc/checker.xulo",
-        "xuloc/main.xulo",
-        "xuloc/tests.xulo",
+        "xuloc/src/ast.xulo",
+        "xuloc/src/lexer.xulo",
+        "xuloc/src/parser.xulo",
+        "xuloc/src/checker.xulo",
+        "xuloc/src/main.xulo",
+        "xuloc/src/tests.xulo",
     ]
     for path in files {
         match std::fs::read(path) {
@@ -183,4 +183,45 @@ fn checker_reports_code_and_position() {
     assert(result.code == "E0101", "error code")
     assert(result.line == 1, "error line")
     assert(result.column == 19, "error column")
+}
+
+#[test]
+fn parses_template_interpolation() {
+    let parsed: ParseResult = parse_source("fn main() { print(`a ${1 + 2} b`) }\n")
+    assert(parsed.error == "", "a template literal must parse")
+    let mut body: Node = parsed.root.children[0]
+    for child in parsed.root.children[0].children {
+        if child.kind == "Block" {
+            body = child
+        }
+    }
+    let call: Node = body.children[0].children[0]
+    let template: Node = call.children[1]
+    assert(template.kind == "Template", "the argument is a template")
+    assert(template.children.len == 3, "text, expression, text")
+    assert(template.children[0].kind == "TemplateText", "leading text")
+    assert(template.children[0].value == "a ", "leading text value")
+    assert(template.children[1].kind == "Binary", "interpolation is an expression")
+    assert(template.children[2].value == " b", "trailing text value")
+}
+
+#[test]
+fn checker_accepts_an_inner_type_for_an_optional() {
+    let parsed: ParseResult = parse_source("fn main() { let x: string? = \"a\" }\n")
+    let result: CheckResult = check(parsed.root)
+    assert(result.ok, "a string fits a string? binding")
+    assert(result.complete, "the checker modeled the whole program")
+}
+
+#[test]
+fn checker_marks_partial_analysis() {
+    let map: ParseResult = parse_source("fn main() { let x = { a: 1 } }\n")
+    let partial: CheckResult = check(map.root)
+    assert(!partial.complete, "an unsupported construct is not a verdict")
+
+    let wrong: ParseResult = parse_source("fn main() { let x: int = \"a\" }\n")
+    let confirmed: CheckResult = check(wrong.root)
+    assert(!confirmed.ok, "the mismatch must fail")
+    assert(confirmed.complete, "the mismatch is a confirmed error")
+    assert(confirmed.code == "E0201", "type mismatch code")
 }

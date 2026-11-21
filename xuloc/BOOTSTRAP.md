@@ -8,27 +8,51 @@ front end; WP6 closes the self-host loop (Gates 5–6).
 
 ## Layout
 
+```
+xuloc/
+├── xupm.toml          # xupm package manifest (entry `src/main.xulo`)
+├── BOOTSTRAP.md       # this file: design notes and bootstrap workarounds
+├── src/               # the compiler, written in Xulo
+│   ├── main.xulo      #   CLI: tokens / parse / check / build / scan
+│   ├── ast.xulo       #   generic Node shape and tree renderer
+│   ├── lexer.xulo     #   UTF-8 scanner
+│   ├── parser.xulo    #   recursive-descent parser
+│   ├── checker.xulo   #   first semantic pass
+│   ├── backend.xulo   #   portable-C code generator
+│   └── tests.xulo     #   stage 1's own #[test] functions
+├── runtime/
+│   └── runtime.c      # dynamic runtime linked into generated programs
+└── corpus/            # Gate 3 accept/reject fixtures
+    ├── accept/
+    └── reject/
+```
+
+Sources live under `src/` because `mod ast;` resolves next to the file that
+declares it, so `main.xulo` and every module it names stay together. `tests.xulo`
+also lives in `src/` for the same reason. The C runtime is not Xulo source, and
+the corpus is not compiled by the package, so they stay outside `src/`.
+
 | File | Role |
 |------|------|
-| `xuloc/xupm.toml` | `xupm` package manifest: name `xuloc`, entry `main.xulo`, artifact `xuloc/.xupm/build/xuloc` |
-| `xuloc/ast.xulo` | One generic `Node` shape plus the stable tree renderer |
-| `xuloc/lexer.xulo` | UTF-8 scalar scanner: tokens, spans, line/column, comments, literals, operators |
-| `xuloc/parser.xulo` | Recursive-descent parser: headers, declarations, statements, expressions, patterns, types |
-| `xuloc/checker.xulo` | Name and type checking for the Gate 3 corpus: functions, bindings, control flow, lists, optionals, calls |
-| `xuloc/backend.xulo` | Code generator: generic AST to portable C, declaration collection, expressions/statements, method/static/path calls, patterns |
-| `xuloc/runtime.c` | Dynamic bootstrap runtime linked by generated programs: tagged `XVal` values, structs/enums, method registry, `std::fs`/`std::io`/`std::os`/`std::process` |
+| `xuloc/xupm.toml` | `xupm` package manifest: name `xuloc`, entry `src/main.xulo`, artifact `xuloc/.xupm/build/xuloc` |
+| `xuloc/src/ast.xulo` | One generic `Node` shape plus the stable tree renderer |
+| `xuloc/src/lexer.xulo` | UTF-8 scalar scanner: tokens, spans, line/column, comments, literals, operators |
+| `xuloc/src/parser.xulo` | Recursive-descent parser: headers, declarations, statements, expressions, patterns, types |
+| `xuloc/src/checker.xulo` | Name and type checking for the Gate 3 corpus: functions, bindings, control flow, lists, optionals, calls |
+| `xuloc/src/backend.xulo` | Code generator: generic AST to portable C, declaration collection, expressions/statements, method/static/path calls, patterns |
+| `xuloc/runtime/runtime.c` | Dynamic bootstrap runtime linked by generated programs: tagged `XVal` values, structs/enums, method registry, `std::fs`/`std::io`/`std::os`/`std::process` |
 | `xuloc/corpus/accept/` | Files stage 1 and stage 0 must both accept; `.expected` files hold their compiled output |
 | `xuloc/corpus/reject/` | Files both must reject, with a coded semantic diagnostic |
-| `xuloc/main.xulo` | CLI: `tokens`, `parse`, `check`, and `build` modes, diagnostics, exit status |
-| `xuloc/tests.xulo` | Stage 1's own `#[test]` functions, including self-parse and corpus checks |
+| `xuloc/src/main.xulo` | CLI: `tokens`, `parse`, `check`, and `build` modes, diagnostics, exit status |
+| `xuloc/src/tests.xulo` | Stage 1's own `#[test]` functions, including self-parse and corpus checks |
 
 `crates/xulo-cli/tests/stage1.rs` drives the same files through the stage 0
 binary, and `crates/xupm/tests/cli.rs` verifies that `xupm test` runs the
-`#[test]` functions in `xuloc/tests.xulo`.
+`#[test]` functions in `xuloc/src/tests.xulo`.
 
 `ast`, `lexer`, `parser`, `checker`, and `backend` are modules, so check them
-through an entry point (`xuloc/main.xulo` or `xuloc/tests.xulo`). Checking
-`xuloc/parser.xulo` on its own cannot resolve the sibling `ast` module, by
+through an entry point (`xuloc/src/main.xulo` or `xuloc/src/tests.xulo`). Checking
+`xuloc/src/parser.xulo` on its own cannot resolve the sibling `ast` module, by
 design.
 
 ## Running
@@ -39,18 +63,18 @@ compiled binary's argv or two environment variables:
 ```bash
 # Interpreter path (Gate 1/2)
 XULO_STAGE1_MODE=tokens XULO_STAGE1_FILE=examples/functions/fibonacci.xulo \
-  target/debug/xulo run xuloc/main.xulo
+  target/debug/xulo run xuloc/src/main.xulo
 
-XULO_STAGE1_MODE=parse XULO_STAGE1_FILE=xuloc/parser.xulo \
-  target/debug/xulo run xuloc/main.xulo
+XULO_STAGE1_MODE=parse XULO_STAGE1_FILE=xuloc/src/parser.xulo \
+  target/debug/xulo run xuloc/src/main.xulo
 
 XULO_STAGE1_MODE=check XULO_STAGE1_FILE=xuloc/corpus/accept/basics.xulo \
-  target/debug/xulo run xuloc/main.xulo
+  target/debug/xulo run xuloc/src/main.xulo
 
 # Corpus scan: one line per .xulo file, `<path>\t<lexer>\t<parser>`.
 # This is what the T9 ratchet measures (docs/tasks.md WP3b).
 XULO_STAGE1_MODE=scan XULO_STAGE1_DIR=examples \
-  target/debug/xulo run xuloc/main.xulo
+  target/debug/xulo run xuloc/src/main.xulo
 
 # Native path once a binary exists
 xuloc tokens examples/functions/fibonacci.xulo
@@ -67,7 +91,7 @@ default. The pieces are overridable:
 |----------|---------|
 | `XULO_STAGE1_OUT` | Output binary path |
 | `XULO_STAGE1_C` | Generated C path |
-| `XULO_STAGE1_RUNTIME` | Runtime source (default `xuloc/runtime.c`, resolved from the working directory) |
+| `XULO_STAGE1_RUNTIME` | Runtime source (default `xuloc/runtime/runtime.c`, resolved from the working directory) |
 | `XULO_STAGE1_DIR` | Directory scanned by `XULO_STAGE1_MODE=scan` |
 | `XULO_STAGE1_SKIP` | Semicolon-separated paths the scan reports as `skipped` (inputs that exhaust the interpreter's call depth) |
 | `XULO_CC` | C compiler; when unset stage 1 tries `clang`, then `cc`, then the standard LLVM install on Windows |
@@ -87,14 +111,14 @@ All failures exit 1. `check` prints `no errors` on success, matching
 
 ## Code generation and the self-host loop
 
-`xuloc/backend.xulo` collects declarations (functions, methods, structs, enums,
+`xuloc/src/backend.xulo` collects declarations (functions, methods, structs, enums,
 consts, imported modules), assigns C names, and emits one C translation unit.
 Every Xulo value becomes an `XVal` tagged value, so the backend does not need
 type information; structs and enums are field tables, and methods go through a
 runtime registry. The generated `main` calls the program's `main`, if any.
 
 `xuloc/` is an ordinary `xupm` package. `xupm` discovers `xuloc/xupm.toml`,
-uses `main.xulo` as the entry, and names the artifact after the package
+uses `src/main.xulo` as the entry, and names the artifact after the package
 (`xuloc/.xupm/build/xuloc`), so stage 1 builds and tests also work without a
 file argument.
 
@@ -103,13 +127,13 @@ To bootstrap:
 ```bash
 # stage 0 builds the native stage 1 compiler
 XULO_RUNTIME_LIB="$PWD/target/release/libxulo_runtime.a" \
-  target/release/xupm build xuloc/main.xulo --release
+  target/release/xupm build xuloc/src/main.xulo --release
 # from inside the package the entry comes from the manifest:
 #   cd xuloc && xupm build --release
 
 # stage 1 compiles itself into stage 2 (it picks the host C compiler)
 XULO_STAGE1_OUT=xuloc/.xupm/build/stage2 \
-  xuloc/.xupm/build/xuloc build xuloc/main.xulo
+  xuloc/.xupm/build/xuloc build xuloc/src/main.xulo
 ```
 
 `crates/xupm/tests/stage1_build.rs` automates the whole loop: the accept corpus,
@@ -148,9 +172,10 @@ text and a zero-width span.
 The parser covers the rows stage 1 relies on: UTF-8 lexing (L1), `let` and
 assignment (L4), functions and recursion (L5), control flow (L7), enums and
 `match` (L8), structs and `impl` (L9), generics in declarations and types
-(L10), modules and `use` (L12), optionals and `??`/`?.` types (L16), and
-`Result`/`Error` matching (L19). It also recognises `defer`, `async`/`await`,
-attributes, and trait/impl declarations well enough to skip through them.
+(L10), modules and `use` (L12), optionals and `??`/`?.` types (L16), template
+literals (L3/C7), and `Result`/`Error` matching (L19). It also recognises
+`defer`, `async`/`await`, attributes, and trait/impl declarations well enough to
+skip through them.
 
 The parser is deliberately syntactic. `xuloc check` adds the first semantic
 pass: function signatures are collected before bodies, local bindings are
@@ -161,8 +186,11 @@ return type, and operators check their operand types. The fixed corpus in
 requires stage 1 and stage 0 to agree on accept/reject for every file.
 
 The checker is not yet a full bootstrap checker. `match`, enums, structs,
-traits, impls, generics, modules, and closures report E0003
-("not supported yet") rather than being silently accepted.
+traits, impls, generics, modules, closures, and std/module calls report E0003
+or leave `CheckResult.complete = false` ("not supported / not modeled") rather
+than being silently accepted. `build` runs the checker and stops only on a
+confirmed error, so the partial analysis never rejects a program that code
+generation could handle.
 
 ## Workarounds and deliberate limits
 
@@ -241,13 +269,19 @@ so stage 2 does not inherit them silently.
     both forms, but stage 1's own source stays inside the subset its native
     binary can execute.
 
-16. **The backend lowers a smaller subset than stage 0.** `xuloc/backend.xulo`
+16. **The backend lowers a smaller subset than stage 0.** `xuloc/src/backend.xulo`
     handles functions, structs, enums, consts, `impl` methods, modules,
     `if`/`while`/`for`/`match`, calls, fields, indexing, lists, tuples,
-    operators, `??`, `is`, `?.`, and the `std::fs`/`std::io`/`std::os`/
-    `std::process` calls stage 1 uses. Closures, templates, maps, `defer`,
-    async, and traits are rejected with `E0005`. Stage 1's own source avoids
-    all of them.
+    templates, operators, `??`, `is`, `?.`, and the `std::fs`/`std::io`/
+    `std::os`/`std::process` calls stage 1 uses. Module-qualified names
+    (`alias::fn`, `m::CONST`) resolve by their final segment because
+    declaration collection flattens modules. `Trait::method(receiver, …)`
+    lowers to runtime method dispatch on the receiver's struct type. Closures,
+    `Map`/`Set`, `defer`, and async are rejected with `E0005`; a two-part path
+    call that is neither a user function, a known enum variant, a trait method,
+    nor a known static method is also an `E0005` instead of silently becoming a
+    variant constructor. Stage 1's own source avoids all of the rejected
+    forms.
 
 17. **The self-build needs the native stage 1 binary.** Running `build` under
     `xulo run` exceeds the Rust interpreter's call-depth limit (128) while
@@ -257,10 +291,13 @@ so stage 2 does not inherit them silently.
 
 18. **`and`/`or` must not carry side effects under the native path.** Stage 0's
     Cranelift build does not short-circuit them on Windows, so stage 1 writes
-    guards as nested `if`s instead of `a and may_panic()`. The generated C does
-    short-circuit, but the source stays safe under both paths.
+    guards as nested `if`s instead of `a and may_panic()`. The C backend lowers
+    `and`/`or` to a ternary without a temp (so nesting short-circuits), but any
+    operand whose lowering needs a statement — a nested `??`, a call that
+    materialises a temporary — is still emitted eagerly. `main.xulo` therefore
+    keeps the argv guard as nested `if`s.
 
-19. **The bootstrap runtime is deliberately dynamic.** `xuloc/runtime.c`
+19. **The bootstrap runtime is deliberately dynamic.** `xuloc/runtime/runtime.c`
     represents every value as a tagged `XVal`, keeps structs as field tables,
     dispatches methods through a registry, and leaks memory (the compiler is a
     one-shot process). Struct values are reference-shaped, so the R8
@@ -271,31 +308,33 @@ so stage 2 does not inherit them silently.
 
 - `check` is a first semantic pass over the generic AST, not a typed tree. It
   covers the Gate 3 corpus; structs, enums, traits, impls, generics, modules,
-  closures, and `match` still report E0003. `build` therefore does not depend
-  on `check`; it lowers the parsed program directly.
+  closures, and `match` still report E0003. `build` runs `check` first and
+  refuses only a *confirmed* error: `CheckResult.complete` is `false` whenever
+  the checker reached a construct, type, or call it does not model, so a
+  partial analysis never rejects a program that code generation could handle.
 - The C backend and the self-host loop are implemented (Gates 5–6), but the
   backend's subset is the bootstrap subset listed above.
 - Postfix `?`, arrow closures, call-site type arguments, macros beyond
   attributes, and `spawn`/`lock` are outside the parser's accepted subset.
 - The parser recovers only by stopping at the first error. That is enough for
   Gate 1/2 diagnostics; stage 1's checker work will need recovery.
-- The tests read `xuloc/*.xulo` relative to the repository root, like the
+- The tests read `xuloc/src/*.xulo` relative to the repository root, like the
   rest of the repository's smoke tests.
 
 ## Verification
 
 ```bash
-./target/debug/xulo check xuloc/main.xulo
-./target/debug/xulo test xuloc/tests.xulo
-./target/debug/xupm test xuloc/tests.xulo
+./target/debug/xulo check xuloc/src/main.xulo
+./target/debug/xulo test xuloc/src/tests.xulo
+./target/debug/xupm test xuloc/src/tests.xulo
 XULO_STAGE1_MODE=check XULO_STAGE1_FILE=xuloc/corpus/accept/basics.xulo \
-  ./target/debug/xulo run xuloc/main.xulo
+  ./target/debug/xulo run xuloc/src/main.xulo
 cargo test -p xulo-cli --test stage1
 cargo test -p xupm --test cli
 
 # Gate 4/B8a: native stage 1 matches the interpreter.
 XULO_RUNTIME_LIB="$PWD/target/release/libxulo_runtime.a" \
-  target/release/xupm build xuloc/main.xulo --release
+  target/release/xupm build xuloc/src/main.xulo --release
 XULO_AOT_DIFFERENTIAL=1 XULO_RUNTIME_LIB="$PWD/target/release/libxulo_runtime.a" \
   cargo test -p xupm --test aot_differential stage1_binary_matches_the_interpreter
 

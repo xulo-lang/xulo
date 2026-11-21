@@ -12,7 +12,7 @@
 //!
 //! * compiles and runs the accept corpus through stage 1's C backend and
 //!   compares stdout with the checked-in `.expected` files (WP6 corpus);
-//! * uses stage 1 to build `xuloc/main.xulo` into a stage 2 binary (self-host);
+//! * uses stage 1 to build `xuloc/src/main.xulo` into a stage 2 binary (self-host);
 //! * compares stage 1 and stage 2 on the bootstrap suite: `tokens`/`parse` of
 //!   every stage 1 source, `check` of the accept/reject corpus, and the
 //!   corpus programs' stdout (T5c);
@@ -132,12 +132,12 @@ fn stage1_binary() -> PathBuf {
                 lib.display()
             );
             let output = Command::new(XUPM)
-                .args(["build", "xuloc/main.xulo", "--release"])
+                .args(["build", "xuloc/src/main.xulo", "--release"])
                 .env("XULO_RUNTIME_LIB", &lib)
                 .current_dir(&root)
                 .output()
                 .expect("xupm build should start");
-            assert_success(&output, "xupm build xuloc/main.xulo");
+            assert_success(&output, "xupm build xuloc/src/main.xulo");
             let stdout = render(&output.stdout);
             let line = stdout
                 .lines()
@@ -226,7 +226,7 @@ fn stage2_binary() -> Stage2 {
             let binary = build_stage1_program(
                 &stage1,
                 &root,
-                Path::new("xuloc/main.xulo"),
+                Path::new("xuloc/src/main.xulo"),
                 &work,
                 "stage2",
             );
@@ -261,7 +261,7 @@ fn reject_corpus(root: &Path) -> Vec<PathBuf> {
 }
 
 fn stage1_sources(root: &Path) -> Vec<PathBuf> {
-    let dir = root.join("xuloc");
+    let dir = root.join("xuloc/src");
     let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
         .unwrap_or_else(|error| panic!("cannot read {}: {error}", dir.display()))
         .map(|entry| entry.expect("source entry").path())
@@ -346,8 +346,13 @@ fn stage1_builds_itself_into_stage2() {
     let stage2 = stage2_binary();
     // The self-built compiler must at least run its own CLI. A deeper check is
     // the T5c differential below.
-    let parsed = run_stage1(&stage2.binary, &root, "parse", Path::new("xuloc/ast.xulo"));
-    assert_success(&parsed, "stage 2 parse of xuloc/ast.xulo");
+    let parsed = run_stage1(
+        &stage2.binary,
+        &root,
+        "parse",
+        Path::new("xuloc/src/ast.xulo"),
+    );
+    assert_success(&parsed, "stage 2 parse of xuloc/src/ast.xulo");
     assert!(
         render(&parsed.stdout).starts_with("Program @"),
         "stage 2 produced no tree:\n{}",
@@ -469,7 +474,7 @@ fn stage1_build_is_reproducible() {
     let stage3 = build_stage1_program(
         &stage2.binary,
         &root,
-        Path::new("xuloc/main.xulo"),
+        Path::new("xuloc/src/main.xulo"),
         &work_b,
         "stage3",
     );
@@ -499,7 +504,7 @@ fn build_stage1_with(backend: &str) -> PathBuf {
     let output = Command::new(XUPM)
         .args([
             "build",
-            "xuloc/main.xulo",
+            "xuloc/src/main.xulo",
             "--release",
             "--backend",
             backend,

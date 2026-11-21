@@ -27,7 +27,7 @@ implementations:
 |---|---|---|
 | Interpreter (`xulo run`) | Rust (`crates/xulo-runtime`) | the whole language |
 | AOT (`xupm build`) | Rust (the same `xulo_*` ABI) | the whole language |
-| stage 1 C backend (`xuloc build`) | `xuloc/runtime.c` (reimplemented) | the bootstrap subset |
+| stage 1 C backend (`xuloc build`) | `xuloc/runtime/runtime.c` (reimplemented) | the bootstrap subset |
 
 Drift is the property that the same program produces different observable
 behavior on different engines. Because the third row is an independent
@@ -55,7 +55,7 @@ observable**, and that no divergence can be introduced silently.
 
 ## 3. The stage-comparison invariant
 
-Stage 1 is the compiler source `xuloc/*.xulo` compiled by stage 0's AOT backend
+Stage 1 is the compiler source `xuloc/src/*.xulo` compiled by stage 0's AOT backend
 (LLVM or Cranelift). Stage 2 is the *same source* compiled by stage 1's own C
 backend. Comparing them therefore compares **two backends on one large, real
 workload**, not two versions of the compiler.
@@ -101,7 +101,7 @@ cannot rot.
 
 | Input | `tokens` | `parse` | `check` | `build` | build output run |
 |---|---|---|---|---|---|
-| `xuloc/*.xulo` | I2 | I2 | I2 | I1, I2 | I3 |
+| `xuloc/src/*.xulo` | I2 | I2 | I2 | I1, I2 | I3 |
 | `xuloc/corpus/accept/*` | I2 | I2 | I2 | I1, I2 | I3 |
 | `xuloc/corpus/reject/*` | I2 | I2 | I2 | expected rejection | — |
 | `xuloc/corpus/semantics/accept/*` | — | — | — | I1, I2 | I3 |
@@ -198,10 +198,10 @@ Status values:
 
 | ID | Deviation | Evidence | Removal | Status |
 |---|---|---|---|---|
-| D-01 | Integral `+`/`-`/`*` wrap silently in the C backend; Rust traps with `panic: integer overflow` | `xuloc/runtime.c` `xr_wrap_*` vs `crates/xulo-runtime/src/runtime/scalar.rs::xulo_int_add` | C backend traps on overflow, as Rust does | open |
+| D-01 | Integral `+`/`-`/`*` wrap silently in the C backend; Rust traps with `panic: integer overflow` | `xuloc/runtime/runtime.c` `xr_wrap_*` vs `crates/xulo-runtime/src/runtime/scalar.rs::xulo_int_add` | C backend traps on overflow, as Rust does | open |
 | D-02 | Float printing uses `%.15g`/`%.17g`; Rust uses shortest round-trip | `xr_format_float` vs `xulo_std::format::format_number` | C backend uses the same shortest round-trip rule as `xulo_std` | open |
 | D-03 | Runtime failure text differs (`division by zero` vs `panic: division by zero`) | `xr_fail` vs `trap` | `xr_fail` prints the same `panic: ` prefix and text as `trap` | open |
-| D-04 | `u64` has no tag in the C backend and is treated as `int` | `xuloc/runtime.c` `XT_*` enum | Add a `u64` tag to the C backend, or reject `u64` with `E0005` in the bootstrap subset | open |
+| D-04 | `u64` has no tag in the C backend and is treated as `int` | `xuloc/runtime/runtime.c` `XT_*` enum | Add a `u64` tag to the C backend, or reject `u64` with `E0005` in the bootstrap subset | open |
 | D-05 | R8 value semantics are not reproduced: structs are reference-shaped | `xuloc/BOOTSTRAP.md` item 20 | Implement value semantics, or reject the dependent constructs in the bootstrap subset. Scope: bootstrap subset only | accepted |
 
 ## 9. CI tiers

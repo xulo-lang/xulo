@@ -17,7 +17,7 @@
 // are not consumed. Stage 1's own source avoids all three.
 
 use ast::{Node, node, add};
-use lexer::{Token};
+use lexer::{lex, LexResult, Token};
 
 pub struct ParseResult {
     pub root: Node,
@@ -49,6 +49,102 @@ pub fn parse(tokens: List<Token>): ParseResult {
         line: p.err_line,
         column: p.err_column,
     )
+}
+
+/// Parse one expression from `tokens` (template interpolation).
+pub fn parse_expression(tokens: List<Token>): ParseResult {
+    let mut p = Parser(
+        tokens: tokens,
+        pos: 0,
+        error: "",
+        err_line: 1,
+        err_column: 1,
+    )
+    let root = p.expr()
+    if p.error == "" and !p.at_kind("eof") {
+        p.fail("unexpected token `" + p.current().text + "`")
+    }
+    return ParseResult(
+        root: root,
+        error: p.error,
+        line: p.err_line,
+        column: p.err_column,
+    )
+}
+
+// ── template scanning ────────────────────────────────────────────────────
+//
+// The lexer emits a whole backtick template as one `template` token. The
+// parser splits its body into text chunks and `${ … }` expressions, so the
+// backend can lower interpolation without re-lexing the program. A nested
+// expression may contain strings, nested templates, and braces; these helpers
+// only track structure, never meaning.
+
+fn template_skip_string(chars: List<string>, start: number, quote: string): number {
+    let mut i = start + 1
+    while i < chars.len {
+        let c = chars[i]
+        if c == "\\" {
+            i = i + 2
+            continue
+        }
+        if c == quote {
+            return i + 1
+        }
+        i = i + 1
+    }
+    return i
+}
+
+fn template_skip_template(chars: List<string>, start: number): number {
+    let mut i = start + 1
+    while i < chars.len {
+        let c = chars[i]
+        if c == "\\" {
+            i = i + 2
+            continue
+        }
+        if c == "`" {
+            return i + 1
+        }
+        if c == "$" and i + 1 < chars.len and chars[i + 1] == "{" {
+            let close = template_expr_end(chars, i + 1)
+            i = close + 1
+            continue
+        }
+        i = i + 1
+    }
+    return i
+}
+
+fn template_expr_end(chars: List<string>, start: number): number {
+    // `start` points at the `{` that follows `$`; depth starts at one.
+    let mut depth = 1
+    let mut i = start + 1
+    while i < chars.len {
+        let c = chars[i]
+        if c == "`" {
+            i = template_skip_template(chars, i)
+            continue
+        }
+        if c == "\"" or c == "'" {
+            i = template_skip_string(chars, i, c)
+            continue
+        }
+        if c == "{" {
+            depth = depth + 1
+            i = i + 1
+            continue
+        }
+        if c == "}" {
+            depth = depth - 1
+            if depth == 0 {
+                return i
+            }
+        }
+        i = i + 1
+    }
+    return i
 }
 
 impl Parser {
@@ -1288,10 +1384,13 @@ impl Parser {
         if self.at_kind("int")
             or self.at_kind("float")
             or self.at_kind("string")
-            or self.at_kind("template")
         {
             self.advance()
             return self.mk("Literal", start.text, start)
+        }
+        if self.at_kind("template") {
+            self.advance()
+            return self.template_expr(start)
         }
         if self.at("(") {
             return self.paren_expr()
@@ -1340,6 +1439,83 @@ impl Parser {
         }
         self.fail("expected an expression, found " + self.describe())
         return self.placeholder(start)
+    }
+
+    fn template_expr(mut self, token: Token): Node {
+        let mut n = node("Template", "", token.start, token.end, token.line, token.column)
+        let text = token.text
+        if text.len < 2 {
+            return n
+        }
+        let body = text.slice(1, text.len - 1)
+        let chars: List<string> = body.split("")
+        let mut chunk = StringBuilder::new()
+        let mut i = 0
+        while self.error == "" and i < chars.len {
+            let c = chars[i]
+            if c == "\\" and i + 1 < chars.len {
+                let escaped = chars[i + 1]
+                if escaped == "`" or escaped == "$" {
+                    // Template-only escapes: the raw character, not an
+                    // interpolation marker.
+                    chunk.append(escaped)
+                } else {
+                    chunk.append("\\")
+                    chunk.append(escaped)
+                }
+                i = i + 2
+                continue
+            }
+            if c == "$" and i + 1 < chars.len and chars[i + 1] == "{" {
+                let flushed = chunk.build()
+                if flushed != "" {
+                    add(
+                        n,
+                        node(
+                            "TemplateText",
+                            flushed,
+                            token.start,
+                            token.end,
+                            token.line,
+                            token.column,
+                        ),
+                    )
+                    chunk = StringBuilder::new()
+                }
+                let close = template_expr_end(chars, i + 1)
+                let inner = body.slice(i + 2, close)
+                let lexed: LexResult = lex(inner)
+                if lexed.error != "" {
+                    self.fail("template interpolation: " + lexed.error)
+                    return n
+                }
+                let parsed: ParseResult = parse_expression(lexed.tokens)
+                if parsed.error != "" {
+                    self.fail("template interpolation: " + parsed.error)
+                    return n
+                }
+                add(n, parsed.root)
+                i = close + 1
+                continue
+            }
+            chunk.append(c)
+            i = i + 1
+        }
+        let tail = chunk.build()
+        if tail != "" {
+            add(
+                n,
+                node(
+                    "TemplateText",
+                    tail,
+                    token.start,
+                    token.end,
+                    token.line,
+                    token.column,
+                ),
+            )
+        }
+        return n
     }
 
     fn paren_expr(mut self): Node {

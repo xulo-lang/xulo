@@ -284,10 +284,10 @@ fn stage1_binary_matches_the_interpreter() {
     }
 
     let root = workspace_root();
-    let build = run(&["build", "xuloc/main.xulo", "--release"], &root);
+    let build = run(&["build", "xuloc/src/main.xulo", "--release"], &root);
     assert!(
         build.status.success(),
-        "`xupm build xuloc/main.xulo --release` failed:\n{}",
+        "`xupm build xuloc/src/main.xulo --release` failed:\n{}",
         render(&build.stderr)
     );
     let artifact = artifact_path(&build);
@@ -295,13 +295,13 @@ fn stage1_binary_matches_the_interpreter() {
     let workloads = [
         ("tokens", "examples/functions/fibonacci.xulo"),
         ("parse", "examples/functions/fibonacci.xulo"),
-        ("parse", "xuloc/main.xulo"),
+        ("parse", "xuloc/src/main.xulo"),
         ("check", "xuloc/corpus/accept/basics.xulo"),
     ];
     for (mode, file) in workloads {
         let interpreted = Command::new(BIN)
             .arg("run")
-            .arg("xuloc/main.xulo")
+            .arg("xuloc/src/main.xulo")
             .current_dir(&root)
             .env("XULO_STAGE1_MODE", mode)
             .env("XULO_STAGE1_FILE", root.join(file))

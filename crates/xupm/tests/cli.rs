@@ -352,7 +352,7 @@ fn xuloc_is_a_package_project() {
         "xuloc manifest should name the package:\n{manifest}"
     );
     assert!(
-        manifest.contains("entry = \"main.xulo\""),
+        manifest.contains("entry = \"src/main.xulo\""),
         "xuloc manifest should declare its entry module:\n{manifest}"
     );
 
@@ -381,7 +381,7 @@ fn runs_stage1_test_file() {
         .and_then(Path::parent)
         .expect("crates/xupm has a repository parent")
         .to_path_buf();
-    let out = run(&["test", "xuloc/tests.xulo"], &root);
+    let out = run(&["test", "xuloc/src/tests.xulo"], &root);
     assert!(
         out.status.success(),
         "stdout:\n{}\nstderr:\n{}",
@@ -390,7 +390,7 @@ fn runs_stage1_test_file() {
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stdout.contains("10 passed, 0 failed"),
+        stdout.contains("13 passed, 0 failed"),
         "stage 1 tests should run through xupm test:\n{stdout}"
     );
 }
