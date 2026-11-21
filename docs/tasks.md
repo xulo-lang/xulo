@@ -119,8 +119,13 @@ package or out-of-scope section that tracks it.
 - [x] **S5** `std::json`
 - [x] **S6** `std::regex` and `std::fmt`
 - [x] **S7** `std::net` and `std::http` (outside the bootstrap subset)
-- [ ] **S8** `extern "C"` FFI — PARTIAL: Unix only, Windows unsupported; outside
-      the bootstrap subset (out of scope, below)
+- [x] **S8** `extern "C"` FFI on Unix and Windows. The interpreter resolves a
+      symbol through the process-wide table (`dlsym(RTLD_DEFAULT)` on Unix,
+      `GetProcAddress` over the loaded modules on Windows); AOT leaves the import
+      undefined for the platform linker. `examples/ffi/ffi.xulo` carries no
+      platform marker and is compared by the AOT differential on every host.
+      Regression: `crates/xulo-runtime/tests/ffi_tests.rs` and
+      `crates/xulo-compiler/tests/ffi_codegen_tests.rs`.
 - [x] **S10** `std::math` (interpreter and AOT)
 - [x] **S11** `std::time` (interpreter and AOT)
 - [x] **B1** `xulo run` and `xulo check` for a single file
@@ -129,8 +134,8 @@ package or out-of-scope section that tracks it.
 - [x] **B4** AOT module tree (`mod` / `use`)
 - [x] **B5** Runtime static library and linker path
 - [x] **B7** Linux/macOS/Windows build matrix — Linux and Windows run the full
-      AOT differential in CI, and macOS is verified locally; Windows parks
-      `ffi.xulo` (Unix-only FFI, S8) and passes locally and in CI on 2026-11-17
+      AOT differential in CI, and macOS is verified locally; Windows runs
+      `ffi.xulo` like every other example since S8 landed
 - [x] **B8** Reproducible stage 1 build and self-compile smoke test — B8a builds
       the native front end; B8b in WP6 shows two stage 1 builds emit identical
       C and that stage 2 regenerates exactly the translation unit that built it
@@ -280,14 +285,13 @@ Priority P1 · needed by Gate 4 · source: `stage1-readiness.md` §7 WP3, §6.6�
 - [x] **B7** Run `stage1_binary_matches_the_interpreter` on macOS and Windows,
       not only Linux. macOS is verified: the opt-in differential compares the
       example corpus and the stage 1 workload byte for byte on 2026-11-17, and CI
-      runs it there. Windows runs the same differential; `ffi.xulo` declares
-      `// @no-aot windows:` because `extern "C"` FFI stays Unix-only (S8). The
-      Windows link now names the Rust runtime's system libraries
+      runs it there. Windows runs the same differential with no platform
+      exemptions; `ffi.xulo` resolves its imports through the UCRT on Windows
+      (S8). The Windows link names the Rust runtime's system libraries
       (`kernel32`/`ntdll`/`userenv`/`ws2_32`/`dbghelp`/`synchronization` plus
       `/DEFAULTLIB:msvcrt`), and `examples/std/fs.xulo` no longer prints its host
       temp path, so the comparable examples and the stage 1 native build pass
-      byte for byte locally and in CI on 2026-11-17. Windows FFI stays out of
-      scope (S8).
+      byte for byte locally and in CI on 2026-11-17.
 
 **Verify:** `xupm build examples/collections/collections.xulo` and
 `xupm build examples/types/optional_chaining.xulo` match `xulo run` byte for byte.
@@ -334,8 +338,9 @@ Priority P1 · needed by Gate 3 and the bootstrap corpus · source:
       dynamic parameters), dispatches `dyn:{Trait}:{method}` on the receiver's
       runtime type (struct/enum name registered at construction), and runs
       `spawn` eagerly, `lock` as its block value, and services with a synchronous
-      `send`/`reply` model. Only `ffi/ffi.xulo` keeps a platform marker
-      (`@no-aot windows`, S8).
+      `send`/`reply` model. No example keeps an `@no-aot` or `@skip-aot` marker:
+      the two `#[test]` harness files also have a runnable `main`, so they take
+      part in the same comparison.
       Failure-path reporting follows T13 option (c): the two formats stay, and
       the differential compares a normalized failure shape for examples that
       declare `@aot-failure-shape`.
@@ -610,7 +615,6 @@ These are deliberately not tracked here. They remain P2 in
 - Async tasks, `spawn` / `lock` / `shared`, `std::net`, `std::http`, package
   registry.
 - Macro expansion beyond `#[test]` in stage 1's own tests.
-- **S8** Full FFI and Windows FFI.
 
 ## Maintenance
 

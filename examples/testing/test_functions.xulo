@@ -11,7 +11,6 @@
 //
 // 运行：xulo test examples/testing/test_functions.xulo
 //
-// @skip-aot all: 这是测试载体的例子，入口是 `xulo test`，没有可运行的程序
 // @test-expect 6 passed, 0 failed, 1 skipped
 
 fn add(a: number, b: number): number {

@@ -14,8 +14,8 @@
 //! `// @no-aot <platform>: <reason>`. That marker must keep failing: either the
 //! native build fails or the two paths still disagree. Once they agree, this
 //! test fails until the marker is removed, so a recorded gap cannot silently
-//! rot. `@skip-aot` excludes an example that is not meant to be built at all
-//! (the `#[test]` harness examples).
+//! rot. `@skip-aot` excludes an example that is not meant to be built at all;
+//! no example currently needs it.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};

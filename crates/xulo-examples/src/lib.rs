@@ -21,8 +21,8 @@
 //!
 //! ```text
 //! // @no-aot all: `defer` has no AOT lowering yet
-//! // @skip-aot all: the entry point is `xulo test`, not `main`
-//! // @no-run windows: `extern "C"` FFI is Unix-only
+//! // @skip-aot all: no native entry point to compare
+//! // @aot-failure-shape all: both paths must fail with the same message
 //! // @error E0006
 //! // @panic attempt to divide by zero
 //! // @test-expect 5 passed, 0 failed

@@ -1,10 +1,9 @@
 //! FFI end-to-end through the native interpreter (lex → parse → semantic →
-//! run): extern imports register at declaration time (dlsym + generated C
-//! trampoline) and call exactly like a declared `fn` at the call site —
-//! named arguments reorder, an omitted `Ptr?` binds `null` (spec ffi.md
-//! "Calling"). Foreign symbols come from the process itself (libc/libm).
-
-#![cfg(unix)]
+//! run): extern imports register at declaration time (process-wide symbol
+//! lookup + generated C trampoline) and call exactly like a declared `fn` at
+//! the call site — named arguments reorder, an omitted `Ptr?` binds `null`
+//! (spec ffi.md "Calling"). Foreign symbols come from the process itself
+//! (libc/libm on Unix, the UCRT on Windows).
 
 use xulo_core::error::XuloError;
 use xulo_parser::parse_program;
@@ -52,10 +51,12 @@ fn extern_f64_roundtrip() {
 
 #[test]
 fn extern_i64_roundtrip() {
+    // `llabs` is the C `long long` form, 64-bit on every target; `labs` is
+    // `long`, which is 32-bit on Windows and would truncate the argument.
     let out = run_ok(
         r#"
-        extern "C" { fn labs(x: i64): i64 as c_labs }
-        fn main() { print(c_labs(-9000000000)) }
+        extern "C" { fn llabs(x: i64): i64 as c_llabs }
+        fn main() { print(c_llabs(-9000000000)) }
         "#,
     );
     assert_eq!(out, ["9000000000"]);

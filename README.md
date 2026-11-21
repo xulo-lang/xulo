@@ -204,7 +204,7 @@ stage 1 指用 Xulo 自身编写的编译器/工具链，stage 2 是 stage 1 编
   `Result`/`?`、64 位 `int`、`unknown` 与 `is` 收窄、元组、List/Map/Set、
   std 的 fs/io/process/os/path/json/regex/fmt/hint、AOT 与 stage 1 自举。
 - 仍属 P2 / 非门禁：LSP 与格式化器注释、async 任务的完整调度、
-  `std::net`/`std::http` 之外的网络与包注册表、非 Unix FFI、UI 库（语言不定义 UI 层）。
+  `std::net`/`std::http` 之外的网络与包注册表、UI 库（语言不定义 UI 层）。
 
 ## 项目结构
 

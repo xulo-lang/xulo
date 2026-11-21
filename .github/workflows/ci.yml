@@ -55,9 +55,8 @@ jobs:
           XULO_RUNTIME_LIB: ${{ github.workspace }}/target/release/libxulo_runtime.a
         run: cargo test -p xupm --test aot_differential -- --nocapture
 
-      # WP3/B7: the same differential on Windows. The examples themselves declare
-      # their platform gaps (`extern "C"` FFI is `@no-aot windows`, S8); nothing
-      # is parked in a separate list that Unix would have to ignore.
+      # WP3/B7: the same differential on Windows, with no parked list: every
+      # example (including `extern "C"` FFI) builds and matches the interpreter.
       - name: AOT differential examples (Windows)
         if: runner.os == 'Windows'
         shell: pwsh

@@ -3,8 +3,6 @@
 // 具名参数与省略 `Ptr?`（补 null）和普通 fn 完全一致；
 // `p != null` 收窄可选绑定，`pub extern fn` 导出实现供宿主调用
 //
-// @no-aot windows: `extern "C"` FFI 是 Unix-only（S8），Windows 没有原生路径可比
-// @no-run windows: 同上，Windows 上只做 `xulo check`
 extern "C" {
     fn abs(x: i32): i32 as c_abs
     fn sqrt(x: f64): f64

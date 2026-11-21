@@ -1,5 +1,6 @@
 //! FFI 导入桥（spec ffi.md）：extern 块在任何语句执行前注册成 Native 绑定，
-//! 调用时经 `dlsym` 拿到的地址走 build.rs 生成的 C trampoline。
+//! 调用时经 `dlsym`（Unix）/ `GetProcAddress`（Windows）拿到的地址走
+//! build.rs 生成的 C trampoline。
 //!
 //! 边界表示：
 //! - 实参窄整类/`Ptr` 统一以 i64 携带（x86-64 SysV 下 callee 只读低位）；
@@ -20,6 +21,8 @@ use crate::value::{Num, PtrValue, Value};
 
 #[cfg(unix)]
 use std::ffi::CString;
+#[cfg(windows)]
+use std::ffi::{CString, c_void};
 #[cfg(unix)]
 use std::ffi::{c_char, c_void};
 
@@ -97,11 +100,94 @@ fn lookup_symbol(symbol: &str) -> Result<usize, XuloError> {
     Ok(addr)
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    fn GetCurrentProcess() -> *mut c_void;
+    fn GetModuleHandleW(name: *const u16) -> *mut c_void;
+    fn K32EnumProcessModules(
+        process: *mut c_void,
+        modules: *mut *mut c_void,
+        bytes: u32,
+        needed: *mut u32,
+    ) -> i32;
+    fn GetProcAddress(module: *mut c_void, name: *const u8) -> *mut c_void;
+}
+
+/// `RTLD_DEFAULT` 的 Windows 等价物：本进程的所有已加载模块。
+/// AOT 在链接期把导入交给系统链接器解析；解释器在这里逐个模块查导出表，
+/// 因此 exe、UCRT 以及程序链接的每个 DLL 都和原生路径一样可见。
+#[cfg(windows)]
+fn lookup_symbol(symbol: &str) -> Result<usize, XuloError> {
+    let c = CString::new(symbol).map_err(|_| {
+        XuloError::new(
+            ErrorKind::Runtime,
+            format!("FFI symbol `{symbol}` contains a NUL byte"),
+        )
+    })?;
+
+    // SAFETY: all handles come from the Win32 loader; every pointer is only
+    // read within this block, and `c` outlives every `GetProcAddress` call.
+    unsafe {
+        let mut modules: Vec<*mut c_void> = Vec::new();
+        loop {
+            let mut needed = 0u32;
+            let ptr = if modules.is_empty() {
+                std::ptr::null_mut()
+            } else {
+                modules.as_mut_ptr()
+            };
+            let ok = K32EnumProcessModules(
+                GetCurrentProcess(),
+                ptr,
+                (modules.len() * std::mem::size_of::<*mut c_void>()) as u32,
+                &mut needed,
+            );
+            if ok != 0 {
+                break;
+            }
+            let count = needed as usize / std::mem::size_of::<*mut c_void>();
+            if count <= modules.len() || count > 4096 {
+                break;
+            }
+            modules.resize(count, std::ptr::null_mut());
+        }
+
+        for module in &modules {
+            let addr = GetProcAddress(*module, c.as_ptr().cast());
+            if !addr.is_null() {
+                return Ok(addr as usize);
+            }
+        }
+
+        // 枚举被安全策略挡住时的兜底：exe 与 UCRT，正是 cranelift-jit 在
+        // Windows 上使用的查找范围。
+        let ucrtbase: Vec<u16> = "ucrtbase.dll\0".encode_utf16().collect();
+        for module in [
+            GetModuleHandleW(std::ptr::null()),
+            GetModuleHandleW(ucrtbase.as_ptr()),
+        ] {
+            if module.is_null() {
+                continue;
+            }
+            let addr = GetProcAddress(module, c.as_ptr().cast());
+            if !addr.is_null() {
+                return Ok(addr as usize);
+            }
+        }
+    }
+
+    Err(XuloError::new(
+        ErrorKind::Runtime,
+        format!("FFI symbol `{symbol}` not found in the process"),
+    ))
+}
+
+#[cfg(not(any(unix, windows)))]
 fn lookup_symbol(symbol: &str) -> Result<usize, XuloError> {
     Err(XuloError::new(
         ErrorKind::Runtime,
-        format!("FFI symbol lookup is not supported on Windows yet: `{symbol}`"),
+        format!("FFI symbol lookup is not supported on this platform: `{symbol}`"),
     ))
 }
 

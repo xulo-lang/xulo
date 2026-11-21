@@ -1,7 +1,6 @@
-//! FFI 执行链路：JIT 经 dlsym 解析 C 符号、AOT 把符号留成 undefined 交链接器。
+//! FFI 执行链路：JIT 经进程内符号查找（Unix `dlsym` / Windows
+//! `GetProcAddress`）解析 C 符号、AOT 把符号留成 undefined 交链接器。
 //! 覆盖边界类（i32/usize/u32/f64/Ptr/unit）、`as` 别名与 `pub extern fn` 导出。
-
-#![cfg(unix)]
 
 use std::path::Path;
 
@@ -101,7 +100,7 @@ fn extern_alias_registers_local_name_with_c_symbol() {
     assert_eq!(ir.externs[0].abi, "C");
 }
 
-// -- JIT（dlsym） --
+// -- JIT（进程内符号查找） --
 
 #[test]
 fn jit_calls_libc_abs_with_i32_boundary() {

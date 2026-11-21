@@ -71,6 +71,14 @@ values, and is left to a future standard-library `std/ui` module.
 
 ### Fixed
 
+- Windows `extern "C"` FFI now works end to end. The interpreter resolves a
+  symbol through the process's loaded modules (`GetProcAddress`, falling back to
+  the executable and UCRT) instead of returning an "unsupported" error; the JIT
+  already resolved through cranelift-jit's Windows lookup, and AOT leaves the
+  import to the linker so it binds the UCRT. `examples/ffi/ffi.xulo` no longer
+  carries `@no-aot windows` / `@no-run windows`, so the AOT differential covers
+  it on every host. Regression: `crates/xulo-runtime/tests/ffi_tests.rs` and
+  `crates/xulo-compiler/tests/ffi_codegen_tests.rs` (both un-gated from Unix).
 - Both engines now enforce the `f32` format (T12). The interpreter carries
   `Value::Float32`/`Num::Float32` and rounds binding annotations, parameters,
   returns, and every f32 arithmetic result; the AOT backend rounds f32

@@ -71,8 +71,8 @@ front end, not for UI or network applications:
 
 Explicitly **not required** for the bootstrap subset: UI libraries and
 renderers (the language defines no UI layer), LSP, formatter comments, async tasks,
-`spawn`/`lock`/`shared`, macros, `std::net`, `std::http`, package registry,
-and non-Unix FFI. These may remain P2 and must not block Gate 1 or Gate 2.
+`spawn`/`lock`/`shared`, macros, `std::net`, `std::http`, and package registry.
+These may remain P2 and must not block Gate 1 or Gate 2.
 
 ### 2.2 Execution-path assumption
 
@@ -165,11 +165,11 @@ run by the AOT differential CI job, which sets `XULO_AOT_DIFFERENTIAL=1` and
 `XULO_RUNTIME_LIB`; a plain `cargo test --workspace` does not run it. The
 assessment covers Linux, macOS, and Windows: macOS was verified locally on
 2026-11-17 (the example corpus and the stage 1 workload match byte for byte), and
-CI runs the differential on Linux and Windows. Windows uses a platform baseline
-that parks `ffi.xulo` (Unix-only FFI, S8); after the Windows link gained the
-runtime's system libraries and `examples/std/fs.xulo` stopped printing a host temp
-path, the full differential and the stage 1 native build pass byte for byte
-locally and in CI (B7, 2026-11-17).
+CI runs the differential on Linux and Windows. Windows runs the same differential
+with no platform exemptions, including `ffi.xulo` (S8); after the Windows link
+gained the runtime's system libraries and `examples/std/fs.xulo` stopped printing
+a host temp path, the full differential and the stage 1 native build pass byte for
+byte locally and in CI (B7, 2026-11-17).
 
 ### Gate 5 — Self-host
 
@@ -273,7 +273,7 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 | S5 | `std::json` parse/stringify/valid | **OK** | `crates/xulo-runtime/tests/json.rs` | 2 |
 | S6 | `std::regex` and `std::fmt` | **OK** | `crates/xulo-runtime/tests/regex.rs`, `crates/xulo-runtime/tests/fmt.rs` | 2 |
 | S7 | `std::net` and `std::http` | **OK** | `crates/xulo-runtime/tests/net.rs`, `crates/xulo-runtime/tests/http.rs`; outside the bootstrap subset | — |
-| S8 | `extern "C"` FFI | **PARTIAL** | Unix only; Windows returns an unsupported error; outside the bootstrap subset | — |
+| S8 | `extern "C"` FFI | **OK** | Unix and Windows: the interpreter resolves symbols through `dlsym(RTLD_DEFAULT)` / `GetProcAddress` over the loaded modules, and AOT leaves imports to the platform linker; `crates/xulo-runtime/tests/ffi_tests.rs`, `crates/xulo-compiler/tests/ffi_codegen_tests.rs` | — |
 | S9 | Numeric signatures and std diagnostics match the std spec | **OK** | Numeric results name `int`/`float`/`u64`; AOT rounding narrows to the `int` slot with a runtime range failure; regex types annotate without imports and aliases reach their statics; stable diagnostic codes from D3 (`crates/xulo-semantic/tests/semantic_tests.rs`, `crates/xulo-runtime/tests/native.rs`, `crates/xulo-compiler/tests/intrinsics_codegen_tests.rs`) | 2 |
 | S10 | `std::math` | **OK** | Interpreter and AOT agree; `crates/xulo-runtime/tests/std_additions.rs`, `crates/xulo-compiler/tests/std_additions_codegen_tests.rs`, `crates/xulo-std/tests/native_semantics.rs`. Allowed by the subset, not yet used by `xuloc/` | — |
 | S11 | `std::time` | **OK** | Format, parse, parts, and weekday semantics are tested in the shared `xulo-std` implementation; the AOT path is covered by `examples/std/time.xulo` in the differential suite (`crates/xulo-std/tests/time_semantics.rs`, `crates/xulo-std/tests/native_semantics.rs`). Allowed by the subset, not yet used by `xuloc/` | — |
@@ -288,7 +288,7 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 | B4 | AOT module tree (`mod`/`use`) | **OK** | `crates/xulo-compiler/tests/module_system.rs`, `examples/modules` native build | 4 |
 | B5 | Runtime static library and linker path | **OK** | `.github/workflows/ci.yml` and the release workflow | 4 |
 | B6 | `xupm test` for stage 1's own tests | **OK** | `crates/xupm/tests/cli.rs::runs_stage1_test_file` runs `xuloc/tests.xulo` (10 tests); `crates/xulo-cli/tests/stage1.rs` covers the `xulo test` path | 3 |
-| B7 | Linux/macOS/Windows build matrix | **OK** | Linux and Windows run the full AOT differential in CI; macOS verified locally on 2026-11-17 (the example corpus plus the stage 1 workload). Platform gaps live in the example's header (`ffi.xulo` declares `@no-aot windows` because FFI is Unix-only, S8), so the runner is identical on every host. The Windows link names the Rust runtime's system libraries (`kernel32`, `ntdll`, `userenv`, `ws2_32`, `dbghelp`, `synchronization`, `/DEFAULTLIB:msvcrt`), and `examples/std/fs.xulo` derives the last walk segment without printing its host temp path (`crates/xupm/tests/aot_differential.rs`). | 4 |
+| B7 | Linux/macOS/Windows build matrix | **OK** | Linux and Windows run the full AOT differential in CI; macOS verified locally on 2026-11-17 (the example corpus plus the stage 1 workload). No example needs a platform exemption (`ffi.xulo` resolves its imports through the UCRT on Windows, S8), so the runner is identical on every host. The Windows link names the Rust runtime's system libraries (`kernel32`, `ntdll`, `userenv`, `ws2_32`, `dbghelp`, `synchronization`, `/DEFAULTLIB:msvcrt`), and `examples/std/fs.xulo` derives the last walk segment without printing its host temp path (`crates/xupm/tests/aot_differential.rs`). | 4 |
 | B8 | Reproducible stage 1 build and self-compile smoke test | **OK** | B8a: `xuloc/` is an `xupm` package (`xuloc/xupm.toml`), and `xupm build xuloc/main.xulo --release` produces a native front end (`xuloc/.xupm/build/xuloc`) that matches the interpreter (`crates/xupm/tests/aot_differential.rs`, `stage1_binary_matches_the_interpreter`). B8b: `crates/xupm/tests/stage1_build.rs` builds the corpus twice, compares the C byte for byte, then has stage 2 regenerate the compiler translation unit and requires it to equal stage 1's (`stage1_build_is_reproducible`). | 5 |
 
 ### 5.6 Diagnostics, testing, and conformance
@@ -302,7 +302,7 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 | T1 | Unit and integration tests | **OK** | `cargo test --workspace`: 2129 passed, 0 failed (2026-11-17) | 1 |
 | T2 | All examples run in CI | **OK** | `crates/xulo-cli/tests/examples.rs` discovers every program unit, runs `xulo check`, executes it, and compares stdout/stderr with `examples/**/<name>.expected`; CI drives it with the release binary (`XULO_BIN`) | 1 |
 | T3 | Pinned-spec example conformance runner | **OK** | `crates/xulo-cli/tests/spec_conformance.rs`: 111 annotated examples extracted from the pinned spec, 78 pass, 33 triaged in `spec_conformance_baseline.tsv` (§6.10) | 2 |
-| T4 | Interpreter vs. AOT differential suite | **OK** | `crates/xupm/tests/aot_differential.rs` discovers every example program (including multi-file units), builds and executes it, and compares stdout/stderr against `xupm run`. Gaps carry `// @no-aot <platform>:` in the example itself and must keep failing, so a recorded gap cannot rot; `@skip-aot` covers test-only examples, and `@aot-failure-shape` compares a normalized failure shape (T13 option c). CI runs it on Linux and Windows after the release build, and macOS is verified locally. | 4 |
+| T4 | Interpreter vs. AOT differential suite | **OK** | `crates/xupm/tests/aot_differential.rs` discovers every example program (including multi-file units), builds and executes it, and compares stdout/stderr against `xupm run`. Gaps carry `// @no-aot <platform>:` in the example itself and must keep failing, so a recorded gap cannot rot; `@skip-aot` remains available for an example with no native entry point (none currently needs it), and `@aot-failure-shape` compares a normalized failure shape (T13 option c). CI runs it on Linux and Windows after the release build, and macOS is verified locally. | 4 |
 | T5 | Stage 1 self-parse/self-check/self-build tests | **OK** | Self-parse, self-check, and interpreter smoke tests are live (`crates/xulo-cli/tests/stage1.rs`, `xuloc/tests.xulo`); `crates/xupm/tests/stage1_build.rs` covers the corpus builds, the self-built stage 2, and the stage 1/stage 2 differential (T5c). | 2–5 |
 | T6 | Robustness/fuzz tests | **OK** | `crates/xulo-compiler/tests/robustness.rs`, `crates/xulo-parser/tests/parser_tests.rs` | 1 |
 | T7 | Spec and std-spec submodules aligned with the pin | **OK** | `crates/xulo-cli/tests/submodule_pins.rs` compares the `HEAD` gitlink, the index, and the checked-out submodule against `spec@815edad` / `std-spec@a2e4cb7`; CI job `conformance` | 1 |
@@ -633,7 +633,7 @@ wildcard so a later argument can fix the callback's type parameter.
   units, and compares it byte for byte. Gaps are declared in the example itself
   (`// @no-aot <platform>: …`) and must keep failing; failing examples that
   declare `@aot-failure-shape` compare a normalized failure shape (T13 option
-  c), and `ffi.xulo` is `@no-aot windows` (S8). FS bytes,
+  c). FS bytes,
   path `split`/`relative`, HTTP server types, `os::exec_path`, process
   `launch`/`Command`/`Child`, and the `Task` combinators are lowered (B3c, S3a,
   R9c).
@@ -722,8 +722,6 @@ The following are deliberately out of scope until the bootstrap loop works:
   and package registry work.
 - Macros and attribute-macro expansion, except for `#[test]` in stage 1's own
   tests.
-- Full FFI and Windows FFI; a stage 1 compiler should use `std::fs`/`std::io`/
-  `std::process` instead.
 
 These features can remain P2 in the matrix. They become relevant only when
 stage 1 needs to compile a program that uses them, not to bootstrap the
@@ -786,7 +784,7 @@ Last recorded verification (2026-11-18):
 | Examples gate | `cargo test -p xulo-cli --test examples` — 6 passed: discovery, `xulo check`, run + sidecar, `xulo test` reports, coverage table |
 | Grammar coverage | `examples/coverage.tsv` maps all 194 productions; one `error-only:` exemption (`StructPattern`, §6.12) |
 | AOT smoke tests | `hello` on macOS/Windows; `structs`, `trait_shapes`, `generics`, `modules` probed locally |
-| AOT differential suite | Every discovered example program compares byte for byte on Linux/macOS, except the two failing examples that declare `@aot-failure-shape` (normalized failure shape, T13); Windows declares `ffi.xulo` (`@no-aot windows`) and compares the rest plus the stage 1 binary |
+| AOT differential suite | Every discovered example program compares byte for byte on Linux/macOS/Windows, except the two failing examples that declare `@aot-failure-shape` (normalized failure shape, T13); Windows compares the same corpus (including `ffi.xulo`) plus the stage 1 binary |
 | AOT build failure | `xupm build` exits nonzero and reports the diagnostic (`crates/xupm/tests/cli.rs`) |
 | Stage 1 smoke tests | `cargo test -p xulo-cli --test stage1` — self-parses `xuloc/*.xulo`, clean diagnostics, `xulo test` |
 | Stage 1 under `xupm test` | `cargo test -p xupm --test cli runs_stage1_test_file` — 10 stage 1 tests passed |

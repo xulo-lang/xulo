@@ -4,7 +4,6 @@
 // - 末尾是 `<passed> passed, <failed> failed, <skipped> skipped` 摘要
 // - 有失败时退出码为 1，失败原因写进 stderr
 //
-// @skip-aot all: 这是测试载体的例子，入口是 `xulo test`，没有可运行的程序
 // @test-expect 1 passed, 1 failed
 
 fn add(a: int, b: int): int {

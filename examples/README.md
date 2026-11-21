@@ -110,9 +110,10 @@ XULO_BLESS=1 cargo test -p xulo-cli --test examples
 
 - 文档注释（`spec/documentation-comments.md` 的提取模型 / 标签 / 包索引）尚未
   实现；示例里的 `///`、`//!` 只是 trivia，`basics/lexical.xulo` 只演示了词法层。
-- AOT 差分只剩 1 个平台标记：`ffi/ffi.xulo` 的 `@no-aot windows`（S8，
-  Windows FFI 不在 stage 1 范围）；另有 2 个 `@skip-aot`（测试载体）。
-  所有平台的 `@no-aot all:` 已清空。块级遮蔽、`f32` 运算、`Error("…")` 构造、
+- AOT 差分没有任何平台豁免标记：`@no-aot` 与 `@skip-aot` 都已清空。
+  `ffi/ffi.xulo` 在 Windows 上通过 UCRT 解析导入（S8，解释器同样走进程内符号
+  查找）；两个 `#[test]` 载体也有可运行的 `main`，同样参与比较。块级遮蔽、
+  `f32` 运算、`Error("…")` 构造、
   嵌套元组/元组传参与返回、`defer`、失败路径报告、match
   guard/or/区间/类型模式、泛型 trait 派发、`spawn`/`lock`/service
   都已修好，标记已删。
