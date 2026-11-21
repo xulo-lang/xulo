@@ -382,6 +382,12 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
         returns: &[],
     },
     RuntimeFnDesc {
+        name: "xulo_round_f32",
+        addr: xulo_runtime::runtime::xulo_round_f32 as *const u8,
+        params: &[F64],
+        returns: &[F64],
+    },
+    RuntimeFnDesc {
         name: "xulo_register_string",
         addr: xulo_runtime::runtime::xulo_register_string as *const u8,
         params: &[I64],

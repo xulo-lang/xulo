@@ -259,7 +259,7 @@ pub(super) fn value_is_named_type(value: &Value, type_name: &str) -> bool {
         "u8" => matches!(value, Value::Int(n) if u8::try_from(*n).is_ok()),
         "u16" => matches!(value, Value::Int(n) if u16::try_from(*n).is_ok()),
         "u32" => matches!(value, Value::Int(n) if u32::try_from(*n).is_ok()),
-        "float" | "f32" | "f64" => matches!(value, Value::Float(_)),
+        "float" | "f32" | "f64" => matches!(value, Value::Float(_) | Value::Float32(_)),
         "string" => matches!(value, Value::String(_)),
         "bool" => matches!(value, Value::Boolean(_)),
         "null" => matches!(value, Value::Null),

@@ -312,7 +312,7 @@ impl Interpreter {
                     arg.value.span().clone(),
                 ));
             };
-            if !decl.fields.iter().any(|(fname, _)| fname == label) {
+            if !decl.fields.iter().any(|(fname, _, _)| fname == label) {
                 return Err(RunError::err(
                     format!("`{name}` has no field `{label}`"),
                     arg.value.span().clone(),
@@ -326,7 +326,7 @@ impl Interpreter {
             }
         }
         let mut fields = Vec::with_capacity(decl.fields.len());
-        for (fname, default) in &decl.fields {
+        for (fname, default, field_ty) in &decl.fields {
             let value = if let Some(arg) = args.get(fname.as_str()) {
                 self.eval(&arg.value, call_env)?
             } else if let Some(default) = default {
@@ -334,6 +334,7 @@ impl Interpreter {
             } else {
                 Value::Null
             };
+            let value = super::stmt::coerce_binding_type(field_ty, value);
             fields.push((fname.clone(), value));
         }
         let obj = Rc::new(RefCell::new(fields));
@@ -1192,15 +1193,6 @@ impl Interpreter {
                         return Ordering::Equal;
                     }
                     match self.call_value_with_values(&f, &[a.clone(), b.clone()]) {
-                        Ok(Value::Float(n)) => {
-                            if n < 0.0 {
-                                Ordering::Less
-                            } else if n > 0.0 {
-                                Ordering::Greater
-                            } else {
-                                Ordering::Equal
-                            }
-                        }
                         Ok(value) if value.num().is_some() => {
                             let n = value.num().expect("checked").to_f64();
                             if n < 0.0 {
@@ -1628,10 +1620,12 @@ impl Interpreter {
                     interp.bind_callee_args(&env, &func.params, args)?;
                     // The async body's call boundary: a `?` in flight becomes
                     // this function's return value (spec `error-handling.md`).
-                    match interp.run_body(&func.body, &env, func.return_type.is_some()) {
+                    let result = match interp.run_body(&func.body, &env, func.return_type.is_some())
+                    {
                         Err(RunError::Propagate(v)) => Ok(v),
                         other => other,
-                    }
+                    };
+                    result.map(|value| super::stmt::coerce_binding_type(&func.return_type, value))
                 })
             }));
         }
@@ -1641,9 +1635,12 @@ impl Interpreter {
         // The call boundary: a `?` in flight becomes this function's return
         // value (spec `error-handling.md`) — `Result::Err` returned whole,
         // `null` for an optional operand, exactly as a `return` written at
-        // that point would be.
+        // that point would be. A fixed-width return rounds at the boundary.
         match result {
-            Err(RunError::Propagate(v)) => Ok(v),
+            Err(RunError::Propagate(v)) => {
+                Ok(super::stmt::coerce_binding_type(&func.return_type, v))
+            }
+            Ok(value) => Ok(super::stmt::coerce_binding_type(&func.return_type, value)),
             other => other,
         }
     }
@@ -1678,10 +1675,11 @@ impl Interpreter {
                         interp.bind_callee_args(&env, &params, bound)?;
                         // The async body's call boundary: a `?` in flight
                         // becomes this function's return value.
-                        match interp.run_body(&body, &env, return_type.is_some()) {
+                        let result = match interp.run_body(&body, &env, return_type.is_some()) {
                             Err(RunError::Propagate(v)) => Ok(v),
                             other => other,
-                        }
+                        };
+                        result.map(|value| super::stmt::coerce_binding_type(&return_type, value))
                     })
                 }));
             }
@@ -1693,7 +1691,8 @@ impl Interpreter {
         // The call boundary: a `?` in flight becomes this function's return
         // value (spec `error-handling.md`).
         match result {
-            Err(RunError::Propagate(v)) => Ok(v),
+            Err(RunError::Propagate(v)) => Ok(super::stmt::coerce_binding_type(&f.return_type, v)),
+            Ok(value) => Ok(super::stmt::coerce_binding_type(&f.return_type, value)),
             other => other,
         }
     }

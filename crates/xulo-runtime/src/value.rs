@@ -70,6 +70,8 @@ pub enum Value {
     UInt(u64),
     /// A `float`, `f32`, or `f64` value.
     Float(f64),
+    /// An `f32` value, kept in binary32 so arithmetic rounds for its format.
+    Float32(f32),
     /// An immutable string backed by a refcounted buffer: cloning a `Value`
     /// (env reads, argument passing, indexing) is then a cheap refcount bump
     /// instead of a full heap copy, and the buffer can never be mutated in
@@ -187,7 +189,7 @@ impl Value {
         match self {
             Value::Int(_) => "an `int`".into(),
             Value::UInt(_) => "a `u64`".into(),
-            Value::Float(_) => "a `float`".into(),
+            Value::Float(_) | Value::Float32(_) => "a `float`".into(),
             Value::String(_) => "a `string`".into(),
             Value::Boolean(_) => "a `bool`".into(),
             Value::Null => "`null`".into(),
@@ -217,6 +219,7 @@ impl Value {
             Value::Int(n) => n.to_string(),
             Value::UInt(n) => n.to_string(),
             Value::Float(n) => format_number(*n),
+            Value::Float32(n) => format_number(*n as f64),
             Value::String(s) => s.to_string(),
             Value::Boolean(b) => b.to_string(),
             Value::Null => "null".to_string(),
@@ -301,6 +304,10 @@ fn equal_seen(a: &Value, b: &Value, seen: &mut Vec<(usize, usize)>) -> bool {
         (Value::Int(x), Value::Int(y)) => x == y,
         (Value::UInt(x), Value::UInt(y)) => x == y,
         (Value::Float(x), Value::Float(y)) => x == y,
+        (Value::Float32(x), Value::Float32(y)) => x == y,
+        (Value::Float(x), Value::Float32(y)) | (Value::Float32(y), Value::Float(x)) => {
+            *x == *y as f64
+        }
         // `==` compares numbers by value across the three slots (spec
         // `expressions/operators.md`): `1 == 1.0` is true, and an `int` and a
         // `u64` with the same magnitude are equal.
@@ -308,7 +315,13 @@ fn equal_seen(a: &Value, b: &Value, seen: &mut Vec<(usize, usize)>) -> bool {
             *x >= 0 && *x as u64 == *y
         }
         (Value::Int(x), Value::Float(y)) | (Value::Float(y), Value::Int(x)) => *x as f64 == *y,
+        (Value::Int(x), Value::Float32(y)) | (Value::Float32(y), Value::Int(x)) => {
+            *x as f64 == *y as f64
+        }
         (Value::UInt(x), Value::Float(y)) | (Value::Float(y), Value::UInt(x)) => *x as f64 == *y,
+        (Value::UInt(x), Value::Float32(y)) | (Value::Float32(y), Value::UInt(x)) => {
+            *x as f64 == *y as f64
+        }
         (Value::String(x), Value::String(y)) => x == y,
         (Value::Boolean(x), Value::Boolean(y)) => x == y,
         (Value::Null, Value::Null) => true,
@@ -409,6 +422,7 @@ pub fn is_truthy(v: &Value) -> bool {
         Value::Int(n) => *n != 0,
         Value::UInt(n) => *n != 0,
         Value::Float(n) => *n != 0.0 && !n.is_nan(),
+        Value::Float32(n) => *n != 0.0 && !n.is_nan(),
         Value::String(s) => !s.is_empty(),
         Value::AstNode(_) => true,
         Value::Null => false,
@@ -426,6 +440,7 @@ pub enum Num {
     Int(i64),
     UInt(u64),
     Float(f64),
+    Float32(f32),
 }
 
 /// Why an integral operation could not produce a value. The caller names the
@@ -464,6 +479,7 @@ impl Value {
             Value::Int(n) => Some(Num::Int(*n)),
             Value::UInt(n) => Some(Num::UInt(*n)),
             Value::Float(n) => Some(Num::Float(*n)),
+            Value::Float32(n) => Some(Num::Float32(*n)),
             _ => None,
         }
     }
@@ -481,6 +497,7 @@ impl Value {
                 }
             }
             Num::Float(n) => Value::Float(n),
+            Num::Float32(n) => Value::Float32(n),
         }
     }
 }
@@ -495,11 +512,12 @@ impl Num {
             Num::Int(n) => n as f64,
             Num::UInt(n) => n as f64,
             Num::Float(n) => n,
+            Num::Float32(n) => n as f64,
         }
     }
 
     pub fn is_float(self) -> bool {
-        matches!(self, Num::Float(_))
+        matches!(self, Num::Float(_) | Num::Float32(_))
     }
 
     /// The exact integer value, when this is an integral number.
@@ -509,12 +527,19 @@ impl Num {
             Num::UInt(n) => Some(n as i128),
             Num::Float(n) if n.is_finite() && n.fract() == 0.0 => Some(n as i128),
             Num::Float(_) => None,
+            Num::Float32(n) if n.is_finite() && n.fract() == 0.0 => Some(n as i128),
+            Num::Float32(_) => None,
         }
     }
 
     /// Promote to `f64` when either operand is a float, else stay integral.
     fn pair(a: Num, b: Num) -> Option<(Num, Num)> {
-        if a.is_float() || b.is_float() {
+        if matches!(a, Num::Float32(_)) || matches!(b, Num::Float32(_)) {
+            Some((
+                Num::Float32(a.to_f64() as f32),
+                Num::Float32(b.to_f64() as f32),
+            ))
+        } else if a.is_float() || b.is_float() {
             Some((Num::Float(a.to_f64()), Num::Float(b.to_f64())))
         } else {
             Some((a, b))
@@ -536,6 +561,7 @@ impl Num {
     pub fn add(a: Num, b: Num) -> Result<Value, NumError> {
         match Num::pair(a, b).expect("pair always succeeds") {
             (Num::Float(x), Num::Float(y)) => Ok(Value::Float(x + y)),
+            (Num::Float32(x), Num::Float32(y)) => Ok(Value::Float32(x + y)),
             (Num::Int(x), Num::Int(y)) => {
                 x.checked_add(y).map(Value::Int).ok_or(NumError::Overflow)
             }
@@ -554,6 +580,7 @@ impl Num {
     pub fn sub(a: Num, b: Num) -> Result<Value, NumError> {
         match Num::pair(a, b).expect("pair always succeeds") {
             (Num::Float(x), Num::Float(y)) => Ok(Value::Float(x - y)),
+            (Num::Float32(x), Num::Float32(y)) => Ok(Value::Float32(x - y)),
             (Num::Int(x), Num::Int(y)) => {
                 x.checked_sub(y).map(Value::Int).ok_or(NumError::Overflow)
             }
@@ -576,6 +603,7 @@ impl Num {
     pub fn mul(a: Num, b: Num) -> Result<Value, NumError> {
         match Num::pair(a, b).expect("pair always succeeds") {
             (Num::Float(x), Num::Float(y)) => Ok(Value::Float(x * y)),
+            (Num::Float32(x), Num::Float32(y)) => Ok(Value::Float32(x * y)),
             (Num::Int(x), Num::Int(y)) => {
                 x.checked_mul(y).map(Value::Int).ok_or(NumError::Overflow)
             }
@@ -596,6 +624,7 @@ impl Num {
     pub fn div(a: Num, b: Num) -> Result<Value, NumError> {
         match Num::pair(a, b).expect("pair always succeeds") {
             (Num::Float(x), Num::Float(y)) => Ok(Value::Float(x / y)),
+            (Num::Float32(x), Num::Float32(y)) => Ok(Value::Float32(x / y)),
             (Num::Int(x), Num::Int(y)) => x.checked_div(y).map(Value::Int).ok_or(if y == 0 {
                 NumError::DivByZero
             } else {
@@ -619,6 +648,7 @@ impl Num {
     pub fn rem(a: Num, b: Num) -> Result<Value, NumError> {
         match Num::pair(a, b).expect("pair always succeeds") {
             (Num::Float(x), Num::Float(y)) => Ok(Value::Float(x % y)),
+            (Num::Float32(x), Num::Float32(y)) => Ok(Value::Float32(x % y)),
             (Num::Int(x), Num::Int(y)) => x.checked_rem(y).map(Value::Int).ok_or(if y == 0 {
                 NumError::DivByZero
             } else {
@@ -638,6 +668,9 @@ impl Num {
     }
 
     pub fn pow(a: Num, b: Num) -> Result<Value, NumError> {
+        if matches!(a, Num::Float32(_)) || matches!(b, Num::Float32(_)) {
+            return Ok(Value::Float32((a.to_f64() as f32).powf(b.to_f64() as f32)));
+        }
         if a.is_float() || b.is_float() {
             return Ok(Value::Float(a.to_f64().powf(b.to_f64())));
         }
@@ -669,7 +702,12 @@ impl Num {
         let (a, b) = match (a, b) {
             (Num::Int(x), Num::Int(y)) => return Ok(Value::Int(int(x, y))),
             (Num::UInt(x), Num::UInt(y)) => return Ok(Value::UInt(uint(x, y))),
-            (Num::Float(_), _) | (_, Num::Float(_)) => return Err(NumError::NotAnInteger),
+            (Num::Float(_), _)
+            | (_, Num::Float(_))
+            | (Num::Float32(_), _)
+            | (_, Num::Float32(_)) => {
+                return Err(NumError::NotAnInteger);
+            }
             (x, y) => (x, y),
         };
         let value = int(
@@ -695,7 +733,7 @@ impl Num {
         match a {
             Num::Int(x) => Ok(Value::Int(!x)),
             Num::UInt(x) => Ok(Value::UInt(!x)),
-            Num::Float(_) => Err(NumError::NotAnInteger),
+            Num::Float(_) | Num::Float32(_) => Err(NumError::NotAnInteger),
         }
     }
 
@@ -712,13 +750,14 @@ impl Num {
             Num::Int(x) => Ok(Value::Int(x >> amount)),
             Num::UInt(x) if left => Ok(Value::UInt(x.wrapping_shl(amount))),
             Num::UInt(x) => Ok(Value::UInt(x >> amount)),
-            Num::Float(_) => Err(NumError::NotAnInteger),
+            Num::Float(_) | Num::Float32(_) => Err(NumError::NotAnInteger),
         }
     }
 
     pub fn neg(a: Num) -> Result<Value, NumError> {
         match a {
             Num::Float(x) => Ok(Value::Float(-x)),
+            Num::Float32(x) => Ok(Value::Float32(-x)),
             Num::Int(x) => x.checked_neg().map(Value::Int).ok_or(NumError::Overflow),
             Num::UInt(x) => Num::narrow(-(x as i128)),
         }
@@ -729,6 +768,11 @@ impl Num {
     /// holds even though both round to the same `f64`.
     pub fn cmp(a: Num, b: Num) -> Option<std::cmp::Ordering> {
         use std::cmp::Ordering;
+        let normalize = |n| match n {
+            Num::Float32(x) => Num::Float(x as f64),
+            other => other,
+        };
+        let (a, b) = (normalize(a), normalize(b));
         match (a, b) {
             (Num::Int(x), Num::Int(y)) => Some(x.cmp(&y)),
             (Num::UInt(x), Num::UInt(y)) => Some(x.cmp(&y)),
@@ -739,6 +783,7 @@ impl Num {
             (Num::UInt(x), Num::Float(y)) => cmp_i128_f64(x as i128, y),
             (Num::Float(x), Num::Int(y)) => cmp_i128_f64(y as i128, x).map(Ordering::reverse),
             (Num::Float(x), Num::UInt(y)) => cmp_i128_f64(y as i128, x).map(Ordering::reverse),
+            _ => None,
         }
     }
 }

@@ -364,6 +364,15 @@ impl IrGenerator {
                 if Self::is_unsigned_int_type(ann) {
                     self.uint_range_names.insert(param.name.clone());
                 }
+                if Self::is_f32_type(ann) {
+                    let rounded = self.emit_f32_round(Operand::Local(local_id));
+                    self.module.functions[func_idx]
+                        .instructions
+                        .push(Instruction::SetLocal {
+                            dst: local_id,
+                            src: rounded,
+                        });
+                }
             }
             // 动态形参的运行时标签由调用点写入；入口先复制到本地，后续嵌套
             // 调用覆盖栈顶也不会影响本帧。
@@ -446,6 +455,11 @@ impl IrGenerator {
                         if self.determine_element_tag(&expr_stmt.expr) == 2 {
                             self.emit_register_float(operand.clone());
                         }
+                        let operand = if f.return_type.as_ref().is_some_and(Self::is_f32_type) {
+                            self.emit_f32_round(operand)
+                        } else {
+                            operand
+                        };
                         self.emit_all_defers()?;
                         self.module.functions[func_idx]
                             .instructions
@@ -792,6 +806,15 @@ impl IrGenerator {
             self.locals.insert(p.name.clone(), local);
             if let Some(ann) = &p.type_annotation {
                 self.source_types.insert(p.name.clone(), ann.clone());
+                if Self::is_f32_type(ann) {
+                    let rounded = self.emit_f32_round(Operand::Local(local));
+                    self.module.functions[func_id]
+                        .instructions
+                        .push(Instruction::SetLocal {
+                            dst: local,
+                            src: rounded,
+                        });
+                }
             }
             if p.type_annotation
                 .as_ref()
@@ -848,6 +871,11 @@ impl IrGenerator {
                         if self.determine_element_tag(&expr_stmt.expr) == 2 {
                             self.emit_register_float(operand.clone());
                         }
+                        let operand = if return_type.is_some_and(Self::is_f32_type) {
+                            self.emit_f32_round(operand)
+                        } else {
+                            operand
+                        };
                         self.emit_all_defers()?;
                         self.module.functions[func_id]
                             .instructions

@@ -559,11 +559,13 @@ fn main() {
 }
 
 /// `f32`/`f64` annotations get an F64 slot, so the values print as floats
-/// instead of their bit patterns as integers.
+/// instead of their bit patterns as integers; `f32` stays binary32 through
+/// bindings and arithmetic (T12).
 #[test]
 fn test_codegen_fixed_width_float_annotations_print_as_floats() {
     let out = compile_and_run(
         r#"
+struct Holder { value: f32 }
 fn main() {
     let single: f32 = 0.5
     let double: f64 = 2.5
@@ -572,10 +574,32 @@ fn main() {
     print(single + single)
     print(double / 2.0)
     print(single < 1.0)
+    let narrow: f32 = 0.8
+    print(narrow)
+    let one: f32 = 1.0
+    let three: f32 = 3.0
+    print(one / three)
+    let mut f = Holder(value: 0.8)
+    print(f.value)
+    f.value = 0.3
+    print(f.value)
 }
 "#,
     );
-    assert_eq!(out, vec!["2", "5", "1", "1.25", "true"]);
+    assert_eq!(
+        out,
+        vec![
+            "2",
+            "5",
+            "1",
+            "1.25",
+            "true",
+            "0.800000011920929",
+            "0.3333333432674408",
+            "0.800000011920929",
+            "0.30000001192092896",
+        ]
+    );
 }
 
 /// `Error("text")` builds the built-in error object, so `?` propagation and

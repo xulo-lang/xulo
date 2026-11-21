@@ -496,6 +496,20 @@ impl IrGenerator {
             });
     }
 
+    /// Round an `f64` operand to binary32 for an `f32` boundary.
+    pub(super) fn emit_f32_round(&mut self, value: Operand) -> Operand {
+        let func_idx = self.current_func.unwrap();
+        let local = self.module.functions[func_idx].add_local(IrType::F64);
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::RuntimeCall {
+                dst: Some(local),
+                func: RuntimeFn::RoundF32,
+                args: vec![value],
+            });
+        Operand::Local(local)
+    }
+
     pub(super) fn generate_binary_op(&mut self, binop: &BinaryOp) -> Result<Operand, XuloError> {
         let func_idx = self.current_func.unwrap();
         let left = self.generate_expression(&binop.left)?;
@@ -934,7 +948,11 @@ impl IrGenerator {
         };
 
         self.module.functions[func_idx].instructions.push(instr);
-        Ok(Operand::Local(local))
+        let result = Operand::Local(local);
+        if self.binary_result_is_f32(binop) {
+            return Ok(self.emit_f32_round(result));
+        }
+        Ok(result)
     }
 
     pub(super) fn generate_unary(&mut self, unary: &UnaryOp) -> Result<Operand, XuloError> {
@@ -1061,7 +1079,11 @@ impl IrGenerator {
         };
 
         self.module.functions[func_idx].instructions.push(instr);
-        Ok(Operand::Local(local))
+        let result = Operand::Local(local);
+        if matches!(unary.operator, UnaryOperator::Neg) && self.expr_is_f32(&unary.operand) {
+            return Ok(self.emit_f32_round(result));
+        }
+        Ok(result)
     }
 
     /// 按形参表排列实参：全命名调用重排到声明序并为缺省的形参填默认

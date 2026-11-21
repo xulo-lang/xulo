@@ -913,6 +913,10 @@ impl IrGenerator {
                         return Some(Type::String);
                     }
                 }
+                // A fixed-width `f32` operation stays binary32.
+                if self.binary_result_is_f32(binop) {
+                    return Some(Type::Named("f32".to_string(), Vec::new()));
+                }
                 // Arithmetic on a `u64` operand stays in the unsigned domain.
                 if matches!(
                     binop.operator,
@@ -941,6 +945,14 @@ impl IrGenerator {
                 if matches!(unop.operator, UnaryOperator::Move | UnaryOperator::Copy) =>
             {
                 self.infer_source_type_from_expr(&unop.operand)
+            }
+            Expression::Unary(unop) if matches!(unop.operator, UnaryOperator::Neg) => {
+                let inner = self.infer_source_type_from_expr(&unop.operand);
+                if inner.as_ref().is_some_and(Self::is_f32_type) {
+                    Some(Type::Named("f32".to_string(), Vec::new()))
+                } else {
+                    inner
+                }
             }
             Expression::Tuple { items, .. } => {
                 let types = items
@@ -1358,6 +1370,66 @@ impl IrGenerator {
         matches!(ty, Type::Named(name, _) if name == "unknown")
     }
 
+    /// 类型是否为 `f32`（定宽 binary32）。
+    fn is_f32_type(ty: &Type) -> bool {
+        matches!(ty, Type::Named(name, args) if args.is_empty() && name == "f32")
+    }
+
+    /// 表达式是否产生 `f32`。一个字面量本身没有固定宽度；它随同侧的 `f32`
+    /// 操作数按 literal coercion 进入 f32 运算。
+    fn expr_is_f32(&self, expr: &Expression) -> bool {
+        match expr {
+            Expression::Identifier { name, .. } => {
+                self.source_types.get(name).is_some_and(Self::is_f32_type)
+            }
+            Expression::BinaryOp(binop) => self.binary_result_is_f32(binop),
+            Expression::Unary(unop) if matches!(unop.operator, UnaryOperator::Neg) => {
+                self.expr_is_f32(&unop.operand)
+            }
+            Expression::Member(_) | Expression::Index(_) | Expression::Call(_) => self
+                .infer_source_type_from_expr(expr)
+                .is_some_and(|ty| Self::is_f32_type(&ty)),
+            Expression::Ternary(ternary) => {
+                self.expr_is_f32(&ternary.then_value) && self.expr_is_f32(&ternary.else_value)
+            }
+            Expression::Nullish(nullish) => self.expr_is_f32(&nullish.right),
+            _ => false,
+        }
+    }
+
+    /// `f32 op f32` / `f32 op literal` 的结果是 f32（spec
+    /// `types/primitive-types.md`, "Arithmetic result types"）。
+    fn binary_result_is_f32(&self, binop: &BinaryOp) -> bool {
+        if !matches!(
+            binop.operator,
+            BinaryOperator::Add
+                | BinaryOperator::Sub
+                | BinaryOperator::Mul
+                | BinaryOperator::Div
+                | BinaryOperator::Mod
+                | BinaryOperator::Pow
+        ) {
+            return false;
+        }
+        let left = self.expr_is_f32(&binop.left);
+        let right = self.expr_is_f32(&binop.right);
+        let left_literal = matches!(
+            binop.left,
+            Expression::Literal {
+                value: Literal::Float(_) | Literal::Int(_),
+                ..
+            }
+        );
+        let right_literal = matches!(
+            binop.right,
+            Expression::Literal {
+                value: Literal::Float(_) | Literal::Int(_),
+                ..
+            }
+        );
+        (left && (right || right_literal)) || (right && (left || left_literal))
+    }
+
     /// 泛型函数返回 `T` 时，从形参注解与实参反推 `T` 的具体标签。
     /// 只处理静态可判定的位置；`int`/`float` 共用槽仍返回 `None`。
     fn generic_return_tag(&self, key: &str, param: &str, args: &[CallArg]) -> Option<i64> {
@@ -1488,6 +1560,11 @@ impl IrGenerator {
                         Type::List(_) => 3,
                         Type::Object | Type::ObjectType(_) => 4,
                         Type::Tuple(_) => 3,
+                        Type::Named(name, args)
+                            if args.is_empty() && matches!(name.as_str(), "f32" | "f64") =>
+                        {
+                            2
+                        }
                         Type::Named(_, _) => -1, // 泛型参数，运行时自动检测
                         _ => 1,
                     }

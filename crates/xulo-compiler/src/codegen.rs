@@ -152,6 +152,7 @@ pub(crate) fn runtime_fn_name(func: &RuntimeFn) -> &'static str {
         RuntimeFn::EnumGetTag => "xulo_enum_get_tag",
         RuntimeFn::AsF64 => "xulo_as_f64",
         RuntimeFn::RegisterFloat => "xulo_register_float",
+        RuntimeFn::RoundF32 => "xulo_round_f32",
         RuntimeFn::AllocCell => "xulo_alloc_cell",
         RuntimeFn::CellGet => "xulo_cell_get",
         RuntimeFn::CellGetF64 => "xulo_cell_get_f64",

@@ -963,14 +963,14 @@ impl Interpreter {
             StructCtorDecl {
                 env: interp.global.clone(),
                 fields: vec![
-                    ("method".to_string(), None),
-                    ("path".to_string(), None),
-                    ("query".to_string(), None),
-                    ("form".to_string(), None),
-                    ("headers".to_string(), None),
-                    ("body".to_string(), None),
-                    ("version".to_string(), None),
-                    ("remote_addr".to_string(), None),
+                    ("method".to_string(), None, None),
+                    ("path".to_string(), None, None),
+                    ("query".to_string(), None, None),
+                    ("form".to_string(), None, None),
+                    ("headers".to_string(), None, None),
+                    ("body".to_string(), None, None),
+                    ("version".to_string(), None, None),
+                    ("remote_addr".to_string(), None, None),
                 ],
             },
         );
@@ -979,9 +979,9 @@ impl Interpreter {
             StructCtorDecl {
                 env: interp.global.clone(),
                 fields: vec![
-                    ("status".to_string(), None),
-                    ("headers".to_string(), None),
-                    ("body".to_string(), None),
+                    ("status".to_string(), None, None),
+                    ("headers".to_string(), None, None),
+                    ("body".to_string(), None, None),
                 ],
             },
         );
@@ -998,8 +998,8 @@ impl Interpreter {
             StructCtorDecl {
                 env: interp.global.clone(),
                 fields: vec![
-                    ("precision".to_string(), None),
-                    ("alternate".to_string(), None),
+                    ("precision".to_string(), None, None),
+                    ("alternate".to_string(), None, None),
                 ],
             },
         );
@@ -1023,7 +1023,7 @@ impl Interpreter {
             name.to_string(),
             StructCtorDecl {
                 env: self.global.clone(),
-                fields: fields.iter().map(|f| (f.to_string(), None)).collect(),
+                fields: fields.iter().map(|f| (f.to_string(), None, None)).collect(),
             },
         );
     }
@@ -1819,7 +1819,12 @@ fn novel_value_bytes(
         return;
     }
     match value {
-        Value::Int(_) | Value::UInt(_) | Value::Float(_) | Value::Boolean(_) | Value::Null => {}
+        Value::Int(_)
+        | Value::UInt(_)
+        | Value::Float(_)
+        | Value::Float32(_)
+        | Value::Boolean(_)
+        | Value::Null => {}
         Value::String(s) => {
             if seen.insert(Rc::as_ptr(s) as *const () as usize) {
                 *bytes = bytes.saturating_add(16u64.saturating_add(s.len() as u64));

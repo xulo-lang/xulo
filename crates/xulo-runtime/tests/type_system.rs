@@ -140,3 +140,34 @@ fn generic_struct_construction_infers_type_arguments() {
         vec!["1", "x"]
     );
 }
+
+/// T12: `f32` is binary32 — the binding rounds its literal and every
+/// arithmetic result stays in f32, while `f64` keeps the double's digits.
+#[test]
+fn f32_rounds_at_binding_and_arithmetic() {
+    assert_eq!(
+        out("struct Holder { value: f32 }
+             fn main() {
+                 let narrow: f32 = 0.8
+                 print(narrow)
+                 let one: f32 = 1.0
+                 let three: f32 = 3.0
+                 print(one / three)
+                 print(narrow * 4.0)
+                 let wide: f64 = 0.8
+                 print(wide)
+                 let mut holder = Holder(value: 0.8)
+                 print(holder.value)
+                 holder.value = 0.3
+                 print(holder.value)
+             }"),
+        vec![
+            "0.800000011920929",
+            "0.3333333432674408",
+            "3.200000047683716",
+            "0.8",
+            "0.800000011920929",
+            "0.30000001192092896",
+        ]
+    );
+}

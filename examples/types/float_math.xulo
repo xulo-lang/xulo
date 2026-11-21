@@ -1,9 +1,8 @@
 // 浮点算术：`f32` 与 `f64` 标注的常量与混合运算
 //
 // - 定宽浮点标注可参与算术语，打印形态与 `number` 的浮点一致
-// - 两个执行路径目前都按 double 计算，`f32` 的单精度语义尚未落地（见
-//   `examples/README.md` 的已知缺口）
-
+// - `f32` 按 IEEE-754 binary32 舍入（绑定与每次算术），`f64` 保留双精度
+//
 fn main() {
     let single: f32 = 0.5
     let double: f64 = 2.5
@@ -12,4 +11,13 @@ fn main() {
     print(single + single)
     print(double / 2.0)
     print(single < 1.0)
+
+    // 两种格式能区分的值
+    let narrow: f32 = 0.8
+    print(narrow)
+    let one: f32 = 1.0
+    let three: f32 = 3.0
+    print(one / three)
+    let wide: f64 = 0.8
+    print(wide)
 }

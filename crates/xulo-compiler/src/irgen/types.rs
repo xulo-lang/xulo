@@ -135,10 +135,20 @@ impl IrGenerator {
                 let arg = &call.arguments[i];
                 let tag = self.determine_element_tag(&arg.value);
                 let op = self.generate_expression(&arg.value)?;
+                let op = if Self::is_f32_type(&field.type_) {
+                    self.emit_f32_round(op)
+                } else {
+                    op
+                };
                 field_ops.push((field.name.clone(), op, tag));
             } else if let Some(default) = &field.default {
                 let tag = self.determine_element_tag(default);
                 let op = self.generate_expression(default)?;
+                let op = if Self::is_f32_type(&field.type_) {
+                    self.emit_f32_round(op)
+                } else {
+                    op
+                };
                 field_ops.push((field.name.clone(), op, tag));
             } else {
                 // 可选字段缺省 -> null

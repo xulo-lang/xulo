@@ -78,6 +78,7 @@ pub fn value_to_json(value: &Value, depth: usize) -> Result<Json, String> {
         Value::Int(n) => Ok(Json::Number((*n).into())),
         Value::UInt(n) => Ok(Json::Number((*n).into())),
         Value::Float(n) => json_number(*n),
+        Value::Float32(n) => json_number(*n as f64),
         Value::String(s) => Ok(Json::String(s.to_string())),
         Value::List(items) => {
             let items = items.borrow();

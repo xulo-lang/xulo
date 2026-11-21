@@ -4,6 +4,19 @@ use super::*;
 /// integer. The numeric tower narrows a `u64` that fits `i64` to `int` for
 /// ordinary arithmetic; an explicit annotation must not lose that domain.
 pub(super) fn coerce_binding_type(annotation: &Option<Type>, value: Value) -> Value {
+    let f32_annotation = matches!(
+        annotation,
+        Some(Type::Named(name, args)) if args.is_empty() && name == "f32"
+    );
+    if f32_annotation {
+        return match value {
+            Value::Float(n) => Value::Float32(n as f32),
+            Value::Float32(n) => Value::Float32(n),
+            Value::Int(n) => Value::Float32(n as f32),
+            Value::UInt(n) => Value::Float32(n as f32),
+            other => other,
+        };
+    }
     let unsigned = matches!(
         annotation,
         Some(Type::Named(name, args))
@@ -475,6 +488,16 @@ impl Interpreter {
                         }
                     }
                     Value::Object(fields) => {
+                        let field_ty = self.instance_type(&fields).and_then(|name| {
+                            let table = self.struct_fields.borrow();
+                            table.get(&name).and_then(|decl| {
+                                decl.fields
+                                    .iter()
+                                    .find(|(fname, _, _)| fname == property)
+                                    .and_then(|(_, _, ty)| ty.clone())
+                            })
+                        });
+                        let value = super::stmt::coerce_binding_type(&field_ty, value);
                         let mut fields = fields.borrow_mut();
                         if let Some((_, slot)) = fields.iter_mut().find(|(k, _)| k == property) {
                             *slot = value;

@@ -121,10 +121,10 @@ XULO_BLESS=1 cargo test -p xulo-cli --test examples
   已流式写出），差分只要求都失败且归一化后的运行时消息一致。使用该契约的
   例子声明 `@aot-failure-shape all:`，见 `errors/division_by_zero.xulo` 与
   `errors/runtime_failure.xulo`。
-- `f32` 目前只是标注：两个字面量与算术都不做 binary32 舍入，两个执行路径都
-  按 `f64` 计算（`spec/types/primitive-types.md` 要求按各自格式的 IEEE-754
-  语义）。`types/float_math.xulo` 只用两种格式都精确的值，所以输出不受影响；
-  跟踪在 `docs/tasks.md` T12。
+- `f32` 已按 IEEE-754 binary32 舍入：解释器用 `Float32` 值槽，绑定、参数、
+  返回与每次算术都留在单精度；AOT 在绑定/参数/返回/结构字段和 f32 算术后用
+  `xulo_round_f32`。`types/float_math.xulo` 现在包含两种格式能区分的值
+  （`0.8`、`1.0 / 3.0`）。
 - stage 1 自举解析器在 13 个语料文件上有差距，记录在
   `crates/xulo-cli/tests/stage1_examples_baseline.tsv`；新增示例若解析不了，
   要么补解析器，要么进基线（基线只能缩短）。它还有两层嵌套解析上限和

@@ -29,6 +29,14 @@ pub extern "C" fn xulo_register_float(bits: i64) {
     });
 }
 
+/// 把 `f64` 槽的值按 binary32 舍入并登记，供 `f32` 绑定/算术边界使用。
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_round_f32(value: f64) -> f64 {
+    let rounded = value as f32 as f64;
+    xulo_register_float(rounded.to_bits() as i64);
+    rounded
+}
+
 /// 注册字符串指针（用于自动检测，不拥有所有权）
 #[unsafe(no_mangle)]
 pub extern "C" fn xulo_register_string(ptr: *const c_char) {

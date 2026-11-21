@@ -32,8 +32,8 @@ readiness document.
 | WP4 — `defer` semantics | 5 | 5 |
 | WP5 — Stage 1 skeleton | 6 | 6 |
 | WP6 — Self-host loop | 7 | 7 |
-| WP7 — Non-gating follow-ups | 9 | 10 |
-| **Total** | **64** | **65** |
+| WP7 — Non-gating follow-ups | 10 | 10 |
+| **Total** | **65** | **65** |
 
 ## Gates
 
@@ -570,17 +570,19 @@ tag_detection` (P2).
       `crates/xulo-compiler/tests/aot_symbols.rs` pins the namespacing, the
       `main` entry, and the unmangled extern export.
 
-- [ ] **T12** Enforce the `f32` format in both engines.
+- [x] **T12** Enforce the `f32` format in both engines.
       `spec/types/primitive-types.md` requires IEEE-754 semantics "for their
       format", so an `f32` literal must round to binary32 and every `f32`
       arithmetic result must land back in binary32 before it is printed or
-      promoted. Today both the interpreter and the AOT path compute in `f64`:
-      `let o: f32 = 0.8` prints `0.8` instead of `0.800000011920929`, and
-      `1.0f32 / 3.0` keeps all the double's digits. `types/float_math.xulo`
-      stays on values both formats represent exactly, so it does not gate this.
-      Fix the coercion at the binding site and the rounding after each
-      operation, then add a differential example with a value that differs
-      between the two formats.
+      promoted. The interpreter now carries a `Value::Float32`/`Num::Float32`
+      slot: binding annotations and parameters round, every f32 operation
+      computes and returns in f32, and calls round at the return boundary. The
+      AOT path rounds at f32 bindings, parameters, returns, struct fields, and
+      after f32 arithmetic through `xulo_round_f32`. `types/float_math.xulo`
+      now includes `0.8` and `1.0 / 3.0` values that differ between the two
+      formats; both paths print `0.800000011920929` / `0.3333333432674408`.
+      Regression: `crates/xulo-runtime/tests/type_system.rs::f32_rounds_at_binding_and_arithmetic`
+      and `crates/xulo-compiler/tests/codegen_tests.rs::test_codegen_fixed_width_float_annotations_print_as_floats`.
 
 - [x] **T13** Decide the failure-path reporting contract.
       Two examples stayed `@no-aot` because a runtime failure prints different

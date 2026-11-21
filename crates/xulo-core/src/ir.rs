@@ -149,6 +149,8 @@ pub enum RuntimeFn {
     AsF64,
     /// 注册 f64 位模式，供打印端的自动检测（tag=-1）还原小数
     RegisterFloat,
+    /// 把 f64 槽的值按 IEEE-754 binary32 舍入（`f32` 绑定/算术边界）
+    RoundF32,
     /// 闭包捕获单元：分配一个 cell（持有原始位模式的 i64 槽）
     AllocCell,
     /// 读 cell 的原始位模式

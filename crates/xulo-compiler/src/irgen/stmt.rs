@@ -123,6 +123,21 @@ impl IrGenerator {
         } else {
             Operand::Const(IrValue::Null)
         };
+        // A fixed-width `f32` binding rounds its initializer to binary32
+        // (spec `types/primitive-types.md`, literal coercion).
+        let binding_f32 = binding
+            .type_annotation
+            .as_ref()
+            .is_some_and(Self::is_f32_type)
+            || self
+                .source_types
+                .get(&binding.name)
+                .is_some_and(Self::is_f32_type);
+        let init_val = if binding_f32 {
+            self.emit_f32_round(init_val)
+        } else {
+            init_val
+        };
 
         // `Array<T, N>` shares the list representation; an object literal
         // annotated with a struct type is a struct, not a `Map`. Register both
@@ -317,6 +332,16 @@ impl IrGenerator {
             if self.determine_element_tag(value) == 2 {
                 self.emit_register_float(operand.clone());
             }
+            let return_f32 = self
+                .current_func
+                .map(|idx| self.module.functions[idx].name.clone())
+                .and_then(|name| self.func_return_types.get(&name).cloned().flatten())
+                .is_some_and(|ty| Self::is_f32_type(&ty));
+            let operand = if return_f32 {
+                self.emit_f32_round(operand)
+            } else {
+                operand
+            };
             self.emit_all_defers()?;
             self.module.functions[func_idx]
                 .instructions
@@ -861,6 +886,14 @@ impl IrGenerator {
         let tag = Self::assign_value_tag(self, &assign.value);
         // Assignment binds by the same value/reference rule as `let` (R8).
         let value = self.shallow_bind_copy(value, Operand::Const(IrValue::I64(tag)));
+        let value = match &assign.target {
+            AssignTarget::Name(name)
+                if self.source_types.get(name).is_some_and(Self::is_f32_type) =>
+            {
+                self.emit_f32_round(value)
+            }
+            _ => value,
+        };
         let result = value.clone();
 
         match &assign.target {
@@ -897,6 +930,16 @@ impl IrGenerator {
                 }
             }
             AssignTarget::Member(obj, field) => {
+                let field_f32 = self
+                    .struct_name_of_expr(obj)
+                    .and_then(|name| self.structs.get(&name))
+                    .and_then(|fields| fields.iter().find(|f| &f.name == field))
+                    .is_some_and(|f| Self::is_f32_type(&f.type_));
+                let value = if field_f32 {
+                    self.emit_f32_round(value)
+                } else {
+                    value
+                };
                 let obj_operand = self.generate_expression(obj)?;
                 // `p.0 = v` writes a tuple element by position; a tuple is a
                 // list at run time.

@@ -71,6 +71,17 @@ values, and is left to a future standard-library `std/ui` module.
 
 ### Fixed
 
+- Both engines now enforce the `f32` format (T12). The interpreter carries
+  `Value::Float32`/`Num::Float32` and rounds binding annotations, parameters,
+  returns, and every f32 arithmetic result; the AOT backend rounds f32
+  bindings, parameters, returns, struct fields, and f32 operations through
+  `xulo_round_f32`. `let o: f32 = 0.8` now prints
+  `0.800000011920929` on both paths, and `1.0 / 3.0` in f32 prints
+  `0.3333333432674408`. `types/float_math.xulo` covers values that differ
+  between binary32 and binary64. Regression:
+  `crates/xulo-runtime/tests/type_system.rs::f32_rounds_at_binding_and_arithmetic`
+  and
+  `crates/xulo-compiler/tests/codegen_tests.rs::test_codegen_fixed_width_float_annotations_print_as_floats`.
 - AOT: `spawn` / `lock` / service now lower. The compiled concurrency model is
   synchronous: a spawn block runs immediately (so `await` is the identity),
   `lock name { … }` evaluates its block, `spawn.process Type { … }` builds a

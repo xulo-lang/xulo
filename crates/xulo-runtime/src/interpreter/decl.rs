@@ -17,7 +17,7 @@ pub(super) enum RenderMode {
 #[derive(Clone)]
 pub(super) struct StructCtorDecl {
     pub(super) env: Rc<RefCell<Env>>,
-    pub(super) fields: Vec<(String, Option<Expression>)>,
+    pub(super) fields: Vec<(String, Option<Expression>, Option<Type>)>,
 }
 
 impl Interpreter {
@@ -319,7 +319,7 @@ impl Interpreter {
                 fields: s
                     .fields
                     .iter()
-                    .map(|f| (f.name.clone(), f.default.clone()))
+                    .map(|f| (f.name.clone(), f.default.clone(), Some(f.type_.clone())))
                     .collect(),
             },
         );
