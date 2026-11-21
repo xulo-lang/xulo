@@ -353,8 +353,12 @@ fn stage1_runs_the_lowered_examples() {
         "examples/std/os.xulo",
         "examples/std/json.xulo",
         "examples/basics/templates.xulo",
+        "examples/basics/bindings.xulo",
         "examples/types/optional_chaining.xulo",
+        "examples/types/structs.xulo",
         "examples/collections/collections.xulo",
+        "examples/patterns/destructuring.xulo",
+        "examples/patterns/match_patterns.xulo",
     ] {
         let file = Path::new(rel);
         let name = file

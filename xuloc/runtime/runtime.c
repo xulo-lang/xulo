@@ -101,6 +101,7 @@ struct XObj {
     const char *variant; // non-NULL for an enum value
     long long payload_len;
     XVal *payload;
+    int debug; // `#[derive(Debug)]`: render as `Type(field: value, …)`
 };
 
 struct XSb {
@@ -551,8 +552,24 @@ XVal xr_struct(const char *type, long long n, const char **names, XVal *values) 
     o->variant = NULL;
     o->payload_len = 0;
     o->payload = NULL;
+    o->debug = 0;
     v.p = o;
     return v;
+}
+
+// `#[derive(Debug)]`: the value renders as `Type(field: value, …)`.
+XVal xr_struct_debug(const char *type, long long n, const char **names, XVal *values) {
+    XVal v = xr_struct(type, n, names, values);
+    ((XObj *)v.p)->debug = 1;
+    return v;
+}
+
+int xr_is_struct(XVal v, const char *type) {
+    if (v.tag != XT_OBJ) {
+        return 0;
+    }
+    XObj *o = xr_as_obj(v);
+    return o->variant == NULL && strcmp(o->type, type) == 0;
 }
 
 XVal xr_variant(const char *type, const char *variant, long long n, XVal *payload) {
@@ -564,6 +581,7 @@ XVal xr_variant(const char *type, const char *variant, long long n, XVal *payloa
     o->variant = variant;
     o->payload_len = n;
     o->payload = NULL;
+    o->debug = 0;
     if (n > 0) {
         o->payload = (XVal *)xr_alloc(sizeof(XVal) * (size_t)n);
         memcpy(o->payload, payload, sizeof(XVal) * (size_t)n);
@@ -1144,6 +1162,21 @@ static void xr_render_value(XVal v, char **buffer, long long *len, long long *ca
                 }
                 xr_append_str(buffer, len, cap, ")", 1);
             }
+            return;
+        }
+        if (o->debug) {
+            // `#[derive(Debug)]` struct: `Type(field: value, …)`.
+            xr_append_str(buffer, len, cap, "(", 1);
+            for (long long i = 0; i < o->nfields; i += 1) {
+                if (i > 0) {
+                    xr_append_str(buffer, len, cap, ", ", 2);
+                }
+                const char *name = o->fields[i].name;
+                xr_append_str(buffer, len, cap, name, (long long)strlen(name));
+                xr_append_str(buffer, len, cap, ": ", 2);
+                xr_render_value(o->fields[i].value, buffer, len, cap);
+            }
+            xr_append_str(buffer, len, cap, ")", 1);
             return;
         }
         xr_append_str(buffer, len, cap, "{ ", 2);

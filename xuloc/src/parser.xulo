@@ -357,9 +357,19 @@ impl Parser {
         n.value = name
         while self.error == "" and !self.at("]") and !self.at_kind("eof") {
             if self.at("(") {
-                self.skip_balanced("(", ")")
-            } else {
                 self.advance()
+                while self.error == "" and !self.at(")") and !self.at_kind("eof") {
+                    if self.at_kind("ident") or self.at_kind("keyword") {
+                        let at = self.current()
+                        let arg = self.ident_name()
+                        add(n, self.mk("AttributeArg", arg, at))
+                    } else {
+                        let _ = self.advance()
+                    }
+                }
+                let _ = self.expect(")")
+            } else {
+                let _ = self.advance()
             }
         }
         self.expect("]")
@@ -734,12 +744,39 @@ impl Parser {
             add(n, self.mk_pair("Mut", "", start, self.prev()))
         }
         if self.at("(") or self.at("{") {
-            let opening = self.current().text
-            let mut closing = ")"
-            if opening == "{" {
-                closing = "}"
+            let opening = self.current()
+            let object = opening.text == "{"
+            let mut close = ")"
+            if object {
+                close = "}"
             }
-            self.skip_balanced(opening, closing)
+            self.advance()
+            let mut pattern = node(
+                "Destructure",
+                "",
+                opening.start,
+                opening.end,
+                opening.line,
+                opening.column,
+            )
+            if object {
+                pattern.value = "object"
+            } else {
+                pattern.value = "tuple"
+            }
+            while self.error == "" and !self.at(close) and !self.at_kind("eof") {
+                let at = self.current()
+                let name = self.ident_name()
+                add(pattern, self.mk("NamePattern", name, at))
+                if self.at(",") {
+                    self.advance()
+                } else {
+                    break
+                }
+            }
+            self.expect(close)
+            pattern.end = self.prev().end
+            add(n, pattern)
         } else {
             n.value = self.ident_name()
         }

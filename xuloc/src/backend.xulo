@@ -61,6 +61,7 @@ struct MethodInfo {
 struct StructInfo {
     name: string,
     fields: List<string>,
+    debug: bool,
 }
 
 struct EnumInfo {
@@ -307,12 +308,20 @@ impl Emitter {
 
     fn add_struct(mut self, node: Node) {
         let mut fields: List<string> = []
+        let mut debug = false
         for child in node.children {
             if child.kind == "Field" {
                 fields.push(child.value)
             }
+            if child.kind == "Attribute" and child.value == "derive" {
+                for arg in child.children {
+                    if arg.value == "Debug" {
+                        debug = true
+                    }
+                }
+            }
         }
-        self.structs.push(StructInfo(name: node.value, fields: fields))
+        self.structs.push(StructInfo(name: node.value, fields: fields, debug: debug))
     }
 
     fn add_enum(mut self, node: Node) {
@@ -948,8 +957,21 @@ impl Emitter {
     fn emit_let(mut self, node: Node) {
         let mut initializer = node
         let mut found = false
+        let mut type_name = ""
+        let mut destructure = node
         for child in node.children {
-            if child.kind != "Mut" and child.kind != "TypeName" {
+            if child.kind == "Destructure" {
+                destructure = child
+                continue
+            }
+            if child.kind == "TypeName" {
+                type_name = child.value
+                continue
+            }
+            if child.kind == "OptionalType" or child.kind == "TupleType" or child.kind == "FnType" {
+                continue
+            }
+            if child.kind != "Mut" {
                 initializer = child
                 found = true
             }
@@ -958,13 +980,98 @@ impl Emitter {
             self.fail("a binding needs an initializer")
             return
         }
-        let value = self.emit_expr(initializer)
+        let mut value = ""
+        let mut handled = false
+        // `let p: Point = { x: 1, y: 2 }`: build the named struct so members,
+        // methods, and patterns see the declared type.
+        if initializer.kind == "Map" and type_name != "" {
+            let index = self.find_struct(type_name)
+            if index >= 0 {
+                value = self.emit_struct_literal(initializer, index)
+                handled = true
+            }
+        }
+        if !handled {
+            value = self.emit_expr(initializer)
+        }
+        if destructure.kind == "Destructure" {
+            self.emit_destructure(destructure, value)
+            return
+        }
         if node.value == "" or node.value == "_" {
             self.line("(void)(" + value + ");")
             return
         }
         let cname = self.new_local(node.value)
         self.line("XVal " + cname + " = " + value + ";")
+    }
+
+    fn emit_destructure(mut self, pattern: Node, value: string) {
+        let tmp = self.new_tmp()
+        self.line("XVal " + tmp + " = " + value + ";")
+        let mut i = 0
+        for child in pattern.children {
+            if child.kind == "NamePattern" and child.value != "_" {
+                let cname = self.new_local(child.value)
+                if pattern.value == "object" {
+                    self.line(
+                        "XVal " + cname + " = xr_get_field(" + tmp + ", " + c_string(child.value) + ");",
+                    )
+                } else {
+                    self.line(
+                        "XVal " + cname + " = xr_index(" + tmp + ", xr_int(" + str(i) + "));",
+                    )
+                }
+            }
+            i = i + 1
+        }
+    }
+
+    fn emit_struct_literal(mut self, map_node: Node, index: number): string {
+        let info = self.structs[index]
+        let fields = info.fields
+        let mut values: List<string> = []
+        let mut i = 0
+        while i < fields.len {
+            values.push("xr_nil()")
+            i = i + 1
+        }
+        for child in map_node.children {
+            if child.kind != "Entry" {
+                self.fail("a typed object literal does not support spread")
+                return "xr_nil()"
+            }
+            let mut target = -1
+            let mut f = 0
+            while f < fields.len {
+                if fields[f] == child.value {
+                    target = f
+                }
+                f = f + 1
+            }
+            if target < 0 {
+                self.fail("unknown field `" + child.value + "` in `" + info.name + "`")
+                return "xr_nil()"
+            }
+            let value = self.emit_expr(child.children[0])
+            let tmp = self.new_tmp()
+            self.line("XVal " + tmp + " = " + value + ";")
+            values[target] = tmp
+        }
+        let mut ctor = "xr_struct"
+        if info.debug {
+            ctor = "xr_struct_debug"
+        }
+        return ctor
+            + "("
+            + c_string(info.name)
+            + ", "
+            + str(fields.len)
+            + ", "
+            + self.name_array(fields)
+            + ", "
+            + self.value_array(values)
+            + ")"
     }
 
     fn emit_assign(mut self, node: Node) {
@@ -1069,20 +1176,62 @@ impl Emitter {
         let value = self.emit_expr(node.children[0])
         let scrut = self.new_tmp()
         self.line("XVal " + scrut + " = " + value + ";")
+        // A guard is evaluated only after the pattern matched, so it can name
+        // the pattern's bindings. Guards therefore need the fall-through form
+        // (`if test { bind; if guard { … goto end } }`) instead of an
+        // `else if` chain.
+        let mut any_guard = false
+        let mut g = 1
+        while g < node.children.len {
+            for child in node.children[g].children {
+                if child.kind == "Guard" {
+                    any_guard = true
+                }
+            }
+            g = g + 1
+        }
+        if any_guard {
+            let label = self.new_tmp()
+            let mut i = 1
+            while i < node.children.len {
+                let arm = node.children[i]
+                let pattern = arm.children[0]
+                let test = self.pattern_test(pattern, scrut)
+                self.line("if (" + test + ") {")
+                self.indent = self.indent + 1
+                self.enter()
+                self.pattern_bind(pattern, scrut)
+                let mut arm_guard = false
+                for child in arm.children {
+                    if child.kind == "Guard" {
+                        arm_guard = true
+                        let condition = self.emit_expr(child.children[0])
+                        self.line("if (xr_cond(" + condition + ")) {")
+                        self.indent = self.indent + 1
+                        self.emit_arm_body(arm, target)
+                        self.line("goto " + label + ";")
+                        self.indent = self.indent - 1
+                        self.line("}")
+                    }
+                }
+                if !arm_guard {
+                    self.emit_arm_body(arm, target)
+                    self.line("goto " + label + ";")
+                }
+                self.leave()
+                self.indent = self.indent - 1
+                self.line("}")
+                i = i + 1
+            }
+            self.line("xr_fail(\"no matching arm\");")
+            self.line(label + ":;")
+            return
+        }
         let mut first = true
         let mut i = 1
         while i < node.children.len {
             let arm = node.children[i]
             let pattern = arm.children[0]
-            let mut has_guard = false
-            for child in arm.children {
-                if child.kind == "Guard" {
-                    has_guard = true
-                }
-            }
-            if has_guard {
-                self.fail("`match` guards are not lowered by the bootstrap backend")
-            }
             let test = self.pattern_test(pattern, scrut)
             if first {
                 self.line("if (" + test + ") {")
@@ -1093,17 +1242,7 @@ impl Emitter {
             self.indent = self.indent + 1
             self.enter()
             self.pattern_bind(pattern, scrut)
-            let body = arm.children[arm.children.len - 1]
-            if body.kind == "Block" {
-                self.emit_block_value(body, target)
-            } else {
-                let value = self.emit_expr(body)
-                if target == "" {
-                    self.line("(void)(" + value + ");")
-                } else {
-                    self.line(target + " = " + value + ";")
-                }
-            }
+            self.emit_arm_body(arm, target)
             self.leave()
             self.indent = self.indent - 1
             i = i + 1
@@ -1116,6 +1255,20 @@ impl Emitter {
             self.line("xr_fail(\"no matching arm\");")
             self.indent = self.indent - 1
             self.line("}")
+        }
+    }
+
+    fn emit_arm_body(mut self, arm: Node, target: string) {
+        let body = arm.children[arm.children.len - 1]
+        if body.kind == "Block" {
+            self.emit_block_value(body, target)
+            return
+        }
+        let value = self.emit_expr(body)
+        if target == "" {
+            self.line("(void)(" + value + ");")
+        } else {
+            self.line(target + " = " + value + ";")
         }
     }
 
@@ -1810,7 +1963,12 @@ impl Emitter {
             values[target] = tmp
             i = i + 1
         }
-        return "xr_struct("
+        let mut ctor = "xr_struct"
+        if info.debug {
+            ctor = "xr_struct_debug"
+        }
+        return ctor
+            + "("
             + c_string(info.name)
             + ", "
             + str(fields.len)
@@ -2232,6 +2390,9 @@ impl Emitter {
             return self.literal_pattern_test(pattern.value, scrut)
         }
         if kind == "VariantPattern" {
+            if self.find_struct(pattern.value) >= 0 and !self.pattern_is_variant(pattern.value) {
+                return "xr_is_struct(" + scrut + ", " + c_string(pattern.value) + ")"
+            }
             return "xr_is_variant(" + scrut + ", " + c_string(pattern.value) + ")"
         }
         if kind == "TypePattern" {
@@ -2297,6 +2458,27 @@ impl Emitter {
             return
         }
         if kind == "VariantPattern" {
+            let struct_index = self.find_struct(pattern.value)
+            if struct_index >= 0 and !self.pattern_is_variant(pattern.value) {
+                let fields = self.structs[struct_index].fields
+                let mut i = 0
+                while i < pattern.children.len {
+                    let payload = pattern.children[i]
+                    if payload.kind == "PatternPayload" {
+                        let mut p = 0
+                        while p < payload.children.len {
+                            let mut value = "xr_nil()"
+                            if p < fields.len {
+                                value = "xr_get_field(" + scrut + ", " + c_string(fields[p]) + ")"
+                            }
+                            self.pattern_bind(payload.children[p], value)
+                            p = p + 1
+                        }
+                    }
+                    i = i + 1
+                }
+                return
+            }
             let mut i = 0
             while i < pattern.children.len {
                 let payload = pattern.children[i]

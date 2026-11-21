@@ -272,10 +272,12 @@ so stage 2 does not inherit them silently.
 16. **The backend lowers a smaller subset than stage 0.** `xuloc/src/backend.xulo`
     handles functions, structs, enums, consts, `impl` methods, modules,
     `if`/`while`/`for`/`match`, calls, fields, indexing, lists, tuples,
-    object literals (and their spread), templates, operators, `??`, `is`,
-    `?.`, and the `std::fs`/`std::io`/`std::os`/`std::process`/`std::path`/
-    `std::hint`/`std::math`/`std::json` calls stage 1 uses. Module-qualified
-    names (`alias::fn`, `m::CONST`) resolve by their final segment because
+    object literals (and their spread), `let` object/tuple destructuring,
+    struct/enum/literal/or/range/type patterns with guards, templates,
+    operators, `??`, `is`, `?.`, `#[derive(Debug)]` rendering, and the
+    `std::fs`/`std::io`/`std::os`/`std::process`/`std::path`/`std::hint`/
+    `std::math`/`std::json` calls stage 1 uses. Module-qualified names
+    (`alias::fn`, `m::CONST`) resolve by their final segment because
     declaration collection flattens modules. `Trait::method(receiver, …)`
     lowers to runtime method dispatch on the receiver's struct type.
     Closures, `Set`, `Map`/`Set` member methods and iteration, `defer`, and
@@ -320,10 +322,10 @@ so stage 2 does not inherit them silently.
   objects, so member access and `{ ...base, k: v }` work; `Map`/`Set` member
   methods, iteration, `std::time`, `std::fmt`, `std::regex`, and `std::net`
   are not lowered yet, so examples that use them fail with `E0005`.
-- Struct values render as `Type{ field: value }`; `#[derive(Debug)]`'s
-  `Type(field: value)` form and struct patterns (`match Point(x, y)`) are not
-  reproduced. The pattern gap is the language-wide `StructPattern` open defect
-  (`docs/stage1-readiness.md` §6.12).
+- Destructuring (`let (a, b)`, `let { x, y }`), struct/enum/literal/or/range/
+  type patterns with guards, and `#[derive(Debug)]`'s `Type(field: value)`
+  rendering are lowered. A struct without the derive still renders as
+  `Type{ field: value }`, which is stage 1's own fallback form.
 - Postfix `?`, arrow closures, call-site type arguments, macros beyond
   attributes, and `spawn`/`lock` are outside the parser's accepted subset.
 - The parser recovers only by stopping at the first error. That is enough for
