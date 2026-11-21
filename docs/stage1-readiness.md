@@ -627,8 +627,8 @@ wildcard so a later argument can fix the callback's type parameter.
 - AOT runtime support for `Map` and `Set` is in place (C2, C3).
 - Known AOT parity probes now agree, including spread, ternaries,
   `Array.len`, `Array::filled`, nested tuples, `defer`, match
-  guards/or-patterns/ranges/type patterns, and dynamic trait dispatch through a
-  generic parameter (C1, R9b, L15, C4, T8).
+  guards/or-patterns/ranges/type patterns, dynamic trait dispatch through a
+  generic parameter, and `spawn`/`lock`/service (C1, R9b, L15, C4, T8).
 - The differential runner discovers every example program, including multi-file
   units, and compares it byte for byte. Gaps are declared in the example itself
   (`// @no-aot <platform>: …`) and must keep failing; failing examples that

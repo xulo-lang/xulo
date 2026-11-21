@@ -172,6 +172,30 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
         returns: &[I64],
     },
     RuntimeFnDesc {
+        name: "xulo_service_new",
+        addr: xulo_runtime::runtime::xulo_service_new as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_service_send",
+        addr: xulo_runtime::runtime::xulo_service_send as *const u8,
+        params: &[I64, I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_service_stop",
+        addr: xulo_runtime::runtime::xulo_service_stop as *const u8,
+        params: &[I64],
+        returns: &[],
+    },
+    RuntimeFnDesc {
+        name: "xulo_service_reply",
+        addr: xulo_runtime::runtime::xulo_service_reply as *const u8,
+        params: &[I64, I64],
+        returns: &[],
+    },
+    RuntimeFnDesc {
         name: "xulo_stringify",
         addr: xulo_runtime::runtime::xulo_stringify as *const u8,
         params: &[I64, I64],

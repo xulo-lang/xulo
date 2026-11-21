@@ -89,6 +89,11 @@ pub enum RuntimeFn {
     TaskRace,
     /// `Task::timeout(t, ms)`：按实测耗时决定 `Result::Ok` 还是超时 `Err`
     TaskTimeout,
+    /// `spawn.process Type { … }` 的 service：句柄 / 消息 / 停止 / reply
+    ServiceNew,
+    ServiceSend,
+    ServiceStop,
+    ServiceReply,
     /// `std::http` 的服务器与 Request/Response 数据类型
     HttpRequestNew,
     HttpResponseNew,

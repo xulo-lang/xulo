@@ -949,6 +949,15 @@ impl IrGenerator {
                     .collect();
                 Some(Type::Tuple(types))
             }
+            // Service 句柄是内部标记类型，调用点据此把 `.send`/`.stop`
+            // lower 成 service 运行时函数。
+            Expression::Spawn(s) => match &s.body {
+                SpawnBody::Service { type_name, .. } => Some(Type::Named(
+                    "__service".to_string(),
+                    vec![Type::Named(type_name.clone(), Vec::new())],
+                )),
+                SpawnBody::Async(_) => None,
+            },
             Expression::TypedMap(map) => Some(Type::Named(
                 "Map".to_string(),
                 vec![map.key_type.clone(), map.value_type.clone()],
@@ -1582,6 +1591,11 @@ impl IrGenerator {
             // function's return tag, and so on).
             Expression::Await { expr, .. } => self.determine_element_tag(expr),
             Expression::Call(call) => {
+                if call.object.as_ref().is_some_and(|obj| {
+                    call.method.as_deref() == Some("send") && self.is_service_expr(obj)
+                }) {
+                    return -1;
+                }
                 // `Task` combinators: `resolve` follows its argument, `all`
                 // yields a list, `timeout` yields `Result`, and `race` is only
                 // known at runtime.

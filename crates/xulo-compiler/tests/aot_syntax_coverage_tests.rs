@@ -1,7 +1,8 @@
 //! AOT 语法覆盖：补足 codegen 路径（JIT 与 AOT 共用 lowering）尚未覆盖的
 //! 语法面——位运算/取模/幂、continue、const、解构、默认与命名参数、下标与
-//! 字段赋值、match 绑定/具名 payload/泛型枚举/guard/or/区间/类型模式、多模块
-//! 执行，以及 irgen 仍明确拒绝的语法（带绑定名的 or-pattern）的报错。
+//! 字段赋值、match 绑定/具名 payload/泛型枚举/guard/or/区间/类型模式、
+//! `spawn`/`lock`/service、多模块执行，以及 irgen 仍明确拒绝的语法（带绑定名
+//! 的 or-pattern）的报错。
 
 use std::path::Path;
 use xulo_compiler::aot::AotCodeGen;
@@ -260,7 +261,56 @@ fn task_combinators_follow_the_compiled_async_model() {
     );
 }
 
-/// R8: plain `let`/assignment follows the value/reference table (spec
+/// Compiled concurrency is synchronous: `spawn` runs its block immediately,
+/// `lock` is the block value, and a service `send` invokes `on_message` and
+/// returns the `reply` value.
+#[test]
+fn spawn_lock_and_services_follow_the_compiled_model() {
+    let out = compile_and_run(
+        r#"
+        fn work(id: int): int { id * 2 }
+        fn bump(state: shared number) {
+            lock state {
+                print(state)
+            }
+        }
+        struct Tally { total: number }
+        impl Tally {
+            fn on_message(mut self, cmd: number) {
+                self.total = self.total + cmd
+                reply(self.total)
+            }
+        }
+        async fn main() {
+            let job = spawn async { work(1) }
+            print(await job)
+            let thread_job = spawn.thread async { work(2) }
+            print(await thread_job)
+            let process_job = spawn.process async { work(3) }
+            print(await process_job)
+            let on_job = spawn.on("worker") async { work(4) }
+            print(await on_job)
+            print(await Task::all([work(5), work(6)]))
+            print(await Task::resolve("ready"))
+            let counter = shared 0
+            lock counter {
+                print(counter)
+            }
+            bump(counter)
+            let worker = spawn.process Tally { total: 0 }
+            print(await worker.send(10))
+            print(await worker.send(5))
+            worker.stop()
+        }
+        "#,
+    );
+    assert_eq!(
+        out,
+        vec![
+            "2", "4", "6", "8", "[10, 12]", "ready", "0", "0", "10", "15"
+        ]
+    );
+}
 /// `memory-and-runtime.md`): struct, enum, tuple, and `Array` values get their
 /// own container, while `List`, `Map`, `Set`, and `StringBuilder` stay shared.
 #[test]

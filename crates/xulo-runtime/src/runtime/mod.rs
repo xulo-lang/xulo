@@ -69,6 +69,15 @@ pub struct XuloEnum {
     pub tags: Vec<i64>,
 }
 
+/// `spawn.process Type { … }` 的 service 实例：状态对象 + `on_message`
+/// 函数地址 + 停止标志。AOT 的并发模型是同步的，`send` 直接调用 handler。
+#[repr(C)]
+pub struct XuloService {
+    pub state: i64,
+    pub on_message: i64,
+    pub stopped: bool,
+}
+
 /// 闭包捕获单元：持有被装箱变量的原始位模式。
 /// 标签不入 cell——读出时与未装箱路径一样按槽位/伴随标签推断。
 #[repr(C)]
@@ -132,6 +141,9 @@ thread_local! {
     static STRUCT_TYPE_NAMES: RefCell<std::collections::HashMap<usize, String>> =
         RefCell::new(std::collections::HashMap::new());
     static VALUE_ARRAYS: RefCell<std::collections::HashSet<usize>> = RefCell::new(std::collections::HashSet::new());
+    /// service 实例（统一释放）与当前 `on_message` 的 reply 槽
+    static SERVICES: RefCell<Vec<*mut XuloService>> = const { RefCell::new(Vec::new()) };
+    static SERVICE_REPLY: RefCell<Option<(i64, i64)>> = const { RefCell::new(None) };
 }
 
 /// 取走输出缓冲区（测试用）
@@ -316,6 +328,14 @@ pub extern "C" fn xulo_cleanup() {
     STRUCT_OBJECTS.with(|objects| objects.borrow_mut().clear());
     STRUCT_TYPE_NAMES.with(|names| names.borrow_mut().clear());
     VALUE_ARRAYS.with(|arrays| arrays.borrow_mut().clear());
+    SERVICES.with(|services| {
+        for ptr in services.borrow_mut().drain(..) {
+            unsafe {
+                drop(Box::from_raw(ptr));
+            }
+        }
+    });
+    SERVICE_REPLY.with(|reply| *reply.borrow_mut() = None);
 
     ENVS.with(|envs| {
         for ptr in envs.borrow_mut().drain(..) {

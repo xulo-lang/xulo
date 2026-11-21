@@ -321,19 +321,21 @@ Priority P1 · needed by Gate 3 and the bootstrap corpus · source:
         module loader; that no longer reproduces, and the nested-module form is
         now part of the corpus).
       The AOT differential then measured the new corpus and recorded these gaps
-      with `@no-aot` (each one must keep failing, so closing it forces a diff):
-      `spawn`/`lock`/service. Block-scoped shadowing, `f32` arithmetic, the
-      `Error("…")` constructor, nested tuple access plus tuple pass/return,
-      `defer`, match guard/or/range/type patterns, and generic trait dispatch
-      were closed later: the AOT path now restores bindings at every nested
-      block, gives `f32`/`f64` bindings an F64 slot, builds the `{ message }`
-      object `Error("…")` denotes, resolves tuple positional access through
-      nested element types and tags tuple returns as arrays, drains per-block
-      `defer` queues on every block exit, lowers pattern guards, or-patterns,
-      ranges, and type patterns (with call-site tags for dynamic parameters),
-      and dispatches `dyn:{Trait}:{method}` on the receiver's runtime type
-      (struct/enum name registered at construction), so all seven agree with
-      the interpreter and their markers are gone.
+      with `@no-aot` (each one must keep failing, so closing it forces a diff).
+      All all-platform gaps were closed: block-scoped shadowing, `f32`
+      arithmetic, the `Error("…")` constructor, nested tuple access plus tuple
+      pass/return, `defer`, match guard/or/range/type patterns, generic trait
+      dispatch, and `spawn`/`lock`/service. The AOT path now restores bindings
+      at every nested block, gives `f32`/`f64` bindings an F64 slot, builds the
+      `{ message }` object `Error("…")` denotes, resolves tuple positional
+      access through nested element types and tags tuple returns as arrays,
+      drains per-block `defer` queues on every block exit, lowers pattern
+      guards, or-patterns, ranges, and type patterns (with call-site tags for
+      dynamic parameters), dispatches `dyn:{Trait}:{method}` on the receiver's
+      runtime type (struct/enum name registered at construction), and runs
+      `spawn` eagerly, `lock` as its block value, and services with a synchronous
+      `send`/`reply` model. Only `ffi/ffi.xulo` keeps a platform marker
+      (`@no-aot windows`, S8).
       Failure-path reporting follows T13 option (c): the two formats stay, and
       the differential compares a normalized failure shape for examples that
       declare `@aot-failure-shape`.

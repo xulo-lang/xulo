@@ -142,6 +142,8 @@ impl IrGenerator {
             // `await e`：编译路径的 async 调用本身同步完成，等待就是取
             // 已经算好的值（`std::time::sleep` 在运行时真实睡眠）。
             Expression::Await { expr, .. } => self.generate_expression(expr),
+            Expression::Spawn(spawn) => self.generate_spawn(spawn),
+            Expression::Lock(lock) => self.generate_block_value(&lock.body),
             Expression::CallValue(cv) => {
                 let callee = self.generate_expression(&cv.callee)?;
                 let mut args = Vec::new();
@@ -1421,8 +1423,200 @@ impl IrGenerator {
         }
     }
 
+    /// 一个块的值：尾部表达式写入结果槽，否则 null。`spawn` / `lock` 的
+    /// 块体走这里（编译路径的异步是同步执行）。
+    fn generate_block_value(&mut self, block: &Block) -> Result<Operand, XuloError> {
+        let func_idx = self.current_func.unwrap();
+        let result = self.module.functions[func_idx].add_local(IrType::Pointer);
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Const {
+                dst: result,
+                value: IrValue::Null,
+            });
+        let scope = self.enter_block();
+        let flowed = self.generate_if_branch_inner(block, result);
+        self.leave_block(scope)?;
+        flowed?;
+        Ok(Operand::Local(result))
+    }
+
+    /// `spawn ...`：async 块按编译路径的同步模型立即求值；service 形式构造
+    /// 状态对象并绑定 `on_message`。
+    fn generate_spawn(&mut self, spawn: &SpawnExpr) -> Result<Operand, XuloError> {
+        match &spawn.body {
+            SpawnBody::Async(block) => self.generate_block_value(block),
+            SpawnBody::Service { type_name, fields } => {
+                self.generate_service_spawn(type_name, fields)
+            }
+        }
+    }
+
+    fn generate_service_spawn(
+        &mut self,
+        type_name: &str,
+        fields: &[SpawnField],
+    ) -> Result<Operand, XuloError> {
+        let func_idx = self.current_func.unwrap();
+        let resolved = self.resolve_type(type_name);
+        let mut field_ops = Vec::new();
+        for field in fields {
+            let tag = self.determine_element_tag(&field.value);
+            let value = self.generate_expression(&field.value)?;
+            field_ops.push((field.name.clone(), value, tag));
+        }
+        let state = self.module.functions[func_idx].add_local(IrType::Pointer);
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::NewObject {
+                dst: state,
+                fields: field_ops,
+            });
+        let name_idx = self.module.add_string(resolved.clone());
+        let name_local = self.module.functions[func_idx].add_local(IrType::Pointer);
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Const {
+                dst: name_local,
+                value: IrValue::String(name_idx),
+            });
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::RuntimeCall {
+                dst: None,
+                func: RuntimeFn::MarkStructTyped,
+                args: vec![Operand::Local(state), Operand::Local(name_local)],
+            });
+        // The service never shares storage with its spawner: deep-copy the
+        // initial state (spec `concurrency.md`).
+        let copied = self.module.functions[func_idx].add_local(IrType::Pointer);
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::RuntimeCall {
+                dst: Some(copied),
+                func: RuntimeFn::ValueCopy,
+                args: vec![Operand::Local(state), Operand::Const(IrValue::I64(4))],
+            });
+        let key = format!("{resolved}::on_message");
+        let alt_key = format!("{type_name}::on_message");
+        let fid = self
+            .methods
+            .get(&key)
+            .or_else(|| self.methods.get(&alt_key))
+            .copied()
+            .or_else(|| {
+                self.module
+                    .functions
+                    .iter()
+                    .position(|f| f.name == key || f.name == alt_key)
+                    .map(FuncId)
+            })
+            .ok_or_else(|| {
+                XuloError::new(
+                    ErrorKind::Semantic,
+                    format!("service `{type_name}` declares no `on_message` method"),
+                )
+            })?;
+        let addr = self.module.functions[func_idx].add_local(IrType::I64);
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::FuncAddr {
+                dst: addr,
+                func: fid,
+            });
+        let handle = self.module.functions[func_idx].add_local(IrType::Pointer);
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::RuntimeCall {
+                dst: Some(handle),
+                func: RuntimeFn::ServiceNew,
+                args: vec![Operand::Local(copied), Operand::Local(addr)],
+            });
+        Ok(Operand::Local(handle))
+    }
+
+    pub(super) fn is_service_expr(&self, expr: &Expression) -> bool {
+        matches!(
+            self.infer_source_type_from_expr(expr),
+            Some(Type::Named(name, _)) if name == "__service"
+        )
+    }
+
     pub(super) fn generate_call(&mut self, call: &Call) -> Result<Operand, XuloError> {
         let func_idx = self.current_func.unwrap();
+
+        // `reply(value)` inside a service `on_message`: record the value the
+        // next `send` returns (spec `concurrency.md`, service replies).
+        if call.object.is_none() && call.callee == "reply" {
+            let (value, tag) = if let Some(arg) = call.arguments.first() {
+                let value = self.generate_expression(&arg.value)?;
+                let tag = self.tag_operand_for(&arg.value, &value);
+                (value, tag)
+            } else {
+                (
+                    Operand::Const(IrValue::Null),
+                    Operand::Const(IrValue::I64(6)),
+                )
+            };
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::RuntimeCall {
+                    dst: None,
+                    func: RuntimeFn::ServiceReply,
+                    args: vec![value, tag],
+                });
+            let local = self.module.functions[func_idx].add_local(IrType::Pointer);
+            return Ok(Operand::Local(local));
+        }
+
+        // Service handle `.send` / `.stop`: the compiled model is synchronous,
+        // so `send` invokes `on_message` immediately and yields its reply.
+        if let Some(object) = &call.object
+            && self.is_service_expr(object)
+        {
+            let method = call.method.as_deref().unwrap_or(&call.callee);
+            let receiver = self.generate_expression(object)?;
+            match method {
+                "send" => {
+                    let (value, tag) = if let Some(arg) = call.arguments.first() {
+                        let value = self.generate_expression(&arg.value)?;
+                        let tag = self.tag_operand_for(&arg.value, &value);
+                        (value, tag)
+                    } else {
+                        (
+                            Operand::Const(IrValue::Null),
+                            Operand::Const(IrValue::I64(6)),
+                        )
+                    };
+                    let local = self.module.functions[func_idx].add_local(IrType::Pointer);
+                    self.module.functions[func_idx]
+                        .instructions
+                        .push(Instruction::RuntimeCall {
+                            dst: Some(local),
+                            func: RuntimeFn::ServiceSend,
+                            args: vec![receiver, value, tag],
+                        });
+                    return Ok(Operand::Local(local));
+                }
+                "stop" => {
+                    self.module.functions[func_idx]
+                        .instructions
+                        .push(Instruction::RuntimeCall {
+                            dst: None,
+                            func: RuntimeFn::ServiceStop,
+                            args: vec![receiver],
+                        });
+                    let local = self.module.functions[func_idx].add_local(IrType::Pointer);
+                    return Ok(Operand::Local(local));
+                }
+                _ => {
+                    return Err(XuloError::new(
+                        ErrorKind::Semantic,
+                        format!("service has no member `{method}`"),
+                    ));
+                }
+            }
+        }
 
         // 多参数 print：逐参数 stringify 后用空格拼接（与解释器 native_print 一致）
         if call.object.is_none()

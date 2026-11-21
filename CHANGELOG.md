@@ -71,6 +71,14 @@ values, and is left to a future standard-library `std/ui` module.
 
 ### Fixed
 
+- AOT: `spawn` / `lock` / service now lower. The compiled concurrency model is
+  synchronous: a spawn block runs immediately (so `await` is the identity),
+  `lock name { … }` evaluates its block, `spawn.process Type { … }` builds a
+  deep-copied service state and calls the compiled `on_message` on `send`, and
+  `reply(v)` records the value `send` returns. This matches the interpreter's
+  eager async model for the checked forms. `concurrency/spawn_lock.xulo` no
+  longer carries `@no-aot`. Regression:
+  `crates/xulo-compiler/tests/aot_syntax_coverage_tests.rs::spawn_lock_and_services_follow_the_compiled_model`.
 - AOT: dynamic trait dispatch through a generic parameter now works. Struct
   construction registers the source type name alongside the value-category
   marker (and copies preserve it), and `dyn:{Trait}:{method}` picks the

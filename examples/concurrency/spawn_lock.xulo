@@ -5,8 +5,6 @@
 // - `spawn.process Type { 字段: 值 }` 启动一个 service，用 `.send` / `.stop` 交互
 // - `shared` 只出现在绑定与参数位置；`lock` 保护对共享绑定的访问
 // - `await` 取得任务结果；`Task::all` / `Task::race` 组合任务
-//
-// @no-aot all: AOT 后端尚未下降 `spawn` / `lock` / service
 
 fn work(id: int): int {
     id * 2
