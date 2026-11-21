@@ -1,7 +1,7 @@
 //! AOT 语法覆盖：补足 codegen 路径（JIT 与 AOT 共用 lowering）尚未覆盖的
 //! 语法面——位运算/取模/幂、continue、const、解构、默认与命名参数、下标与
-//! 字段赋值、match 绑定/具名 payload/泛型枚举、多模块执行，以及 irgen 明确
-//! 拒绝的语法（match guard / or-pattern / range-pattern）的报错。
+//! 字段赋值、match 绑定/具名 payload/泛型枚举/guard/or/区间/类型模式、多模块
+//! 执行，以及 irgen 仍明确拒绝的语法（带绑定名的 or-pattern）的报错。
 
 use std::path::Path;
 use xulo_compiler::aot::AotCodeGen;
@@ -680,60 +680,91 @@ fn multi_module_program_compiles_and_runs() {
 // ── irgen 明确拒绝的语法：必须报出清晰错误（而不是静默降级）─────────────
 
 #[test]
-fn match_guard_is_rejected() {
-    let err = compile_err(
+fn match_guards_or_ranges_and_type_patterns() {
+    let out = compile_and_run(
         r#"
-        fn main() {
-            let out = match 5 {
-                n if n > 3 => "big"
-                _ => "small"
+        enum Shape {
+            Circle(radius: number)
+            Rect(width: number, height: number)
+        }
+        fn classify(n: int): string {
+            match n {
+                0 => "zero"
+                1 | 2 => "small"
+                3..<10 => "medium"
+                10..=99 => "large"
+                _ => "huge"
             }
-            print(out)
+        }
+        fn graded(score: int): string {
+            match score {
+                s if s >= 90 => "A"
+                s if s >= 80 => "B"
+                _ => "C"
+            }
+        }
+        fn area(shape: Shape): number {
+            match shape {
+                Shape::Circle(r) => 3 * r * r
+                Shape::Rect(w, h) => w * h
+            }
+        }
+        fn describe(value: unknown): string {
+            match value {
+                null => "nothing"
+                bool b => `bool ${b}`
+                int i => `int ${i}`
+                float f => `float ${f}`
+                string s => s
+                _ => "other"
+            }
+        }
+        fn main() {
+            print(classify(0), classify(2), classify(7), classify(42), classify(1000))
+            print(graded(95), graded(85), graded(70))
+            print(area(Shape::Circle(2)))
+            print(area(Shape::Rect(3, 4)))
+            print(describe(null))
+            print(describe(true))
+            print(describe(7))
+            print(describe(1.5))
+            print(describe("xulo"))
         }
         "#,
     );
-    assert!(
-        err.message.contains("match guards"),
-        "unexpected error: {}",
-        err.message
+    assert_eq!(
+        out,
+        vec![
+            "zero small medium large huge",
+            "A B C",
+            "12",
+            "12",
+            "nothing",
+            "bool true",
+            "int 7",
+            "float 1.5",
+            "xulo",
+        ]
     );
 }
 
 #[test]
-fn match_or_pattern_is_rejected() {
+fn or_pattern_with_bindings_is_rejected() {
     let err = compile_err(
         r#"
         fn main() {
-            let out = match 2 {
-                1 | 2 => "low"
-                _ => "high"
+            let value: unknown = 1
+            let out = match value {
+                int x | string x => "nope"
+                _ => "other"
             }
             print(out)
         }
         "#,
     );
     assert!(
-        err.message.contains("range, struct, type, or or-patterns"),
-        "unexpected error: {}",
         err.message
-    );
-}
-
-#[test]
-fn match_range_pattern_is_rejected() {
-    let err = compile_err(
-        r#"
-        fn main() {
-            let out = match 5 {
-                0..<3 => "low"
-                _ => "high"
-            }
-            print(out)
-        }
-        "#,
-    );
-    assert!(
-        err.message.contains("range, struct, type, or or-patterns"),
+            .contains("or-pattern alternatives that bind names"),
         "unexpected error: {}",
         err.message
     );

@@ -1341,6 +1341,14 @@ impl IrGenerator {
         }
     }
 
+    /// 形参类型是否显式写成了 `unknown`。这类形参需要调用点通过
+    /// `xulo_set_call_tag` 传运行时标签，match 的类型模式才能区分
+    /// `bool`/`int`（两者共用 0/1 槽）。未标注参数不在此列：它的标签推断
+    /// 依赖 IR 槽型，贸然标成动态会破坏已有的算术 lowering。
+    fn is_dynamic_param_type(ty: &Type) -> bool {
+        matches!(ty, Type::Named(name, _) if name == "unknown")
+    }
+
     /// 泛型函数返回 `T` 时，从形参注解与实参反推 `T` 的具体标签。
     /// 只处理静态可判定的位置；`int`/`float` 共用槽仍返回 `None`。
     fn generic_return_tag(&self, key: &str, param: &str, args: &[CallArg]) -> Option<i64> {

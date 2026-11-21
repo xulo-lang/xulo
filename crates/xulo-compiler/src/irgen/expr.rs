@@ -1117,6 +1117,60 @@ impl IrGenerator {
         Ok(args)
     }
 
+    /// 直接调用前把动态形参（`unknown`/未标注/union/optional）的实参运行时
+    /// 标签写进调用帧。命名/缺省重排无法稳定对应时写 -1，让被调函数走运行时
+    /// 检测；间接调用会先清空标签。
+    fn emit_call_tags(&mut self, key: &str, call: &Call, args: &[Operand]) {
+        let Some(types) = self.func_param_types.get(key).cloned() else {
+            return;
+        };
+        let dynamic: Vec<usize> = types
+            .iter()
+            .enumerate()
+            .filter(|(_, ty)| Self::is_dynamic_param_type(ty))
+            .map(|(index, _)| index)
+            .collect();
+        if dynamic.is_empty() {
+            return;
+        }
+        let positional = call.object.is_none() && call.arguments.iter().all(|a| a.name.is_none());
+        let func_idx = self.current_func.unwrap();
+        let mut tags = Vec::new();
+        for index in dynamic {
+            let tag = if positional {
+                call.arguments
+                    .get(index)
+                    .and_then(|arg| {
+                        args.get(index)
+                            .map(|value| self.tag_operand_for(&arg.value, value))
+                    })
+                    .or_else(|| {
+                        self.func_params
+                            .get(key)
+                            .and_then(|params| params.get(index))
+                            .and_then(|(_, default)| default.as_ref())
+                            .and_then(|default| {
+                                args.get(index)
+                                    .map(|value| self.tag_operand_for(default, value))
+                            })
+                    })
+                    .unwrap_or(Operand::Const(IrValue::I64(-1)))
+            } else {
+                Operand::Const(IrValue::I64(-1))
+            };
+            tags.push((index, tag));
+        }
+        for (index, tag) in tags {
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::RuntimeCall {
+                    dst: None,
+                    func: RuntimeFn::SetCallTag,
+                    args: vec![Operand::Const(IrValue::I64(index as i64)), tag],
+                });
+        }
+    }
+
     pub(super) fn generate_call(&mut self, call: &Call) -> Result<Operand, XuloError> {
         let func_idx = self.current_func.unwrap();
 
@@ -1657,6 +1711,17 @@ impl IrGenerator {
             }
             let ret_type = self.module.functions[fid.0].return_type.clone();
             let local = self.module.functions[func_idx].add_local(ret_type);
+            let impl_key = self.module.functions[fid.0].name.clone();
+            // 派发名未必在 `func_param_types` 里；先清空再按需写入，避免被调
+            // 函数读到上一次调用的标签。
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::RuntimeCall {
+                    dst: None,
+                    func: RuntimeFn::ClearCallTags,
+                    args: Vec::new(),
+                });
+            self.emit_call_tags(&impl_key, call, &args);
             self.module.functions[func_idx]
                 .instructions
                 .push(Instruction::Call {
@@ -2123,6 +2188,8 @@ impl IrGenerator {
             })?;
             let ret_type = self.module.functions[callee_idx].return_type.clone();
             let local = self.module.functions[func_idx].add_local(ret_type);
+            let key = self.module.functions[callee_idx].name.clone();
+            self.emit_call_tags(&key, call, &args);
             self.module.functions[func_idx]
                 .instructions
                 .push(Instruction::Call {
@@ -2150,6 +2217,13 @@ impl IrGenerator {
             ));
         }
         let func_idx = self.current_func.unwrap();
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::RuntimeCall {
+                dst: None,
+                func: RuntimeFn::ClearCallTags,
+                args: Vec::new(),
+            });
         let local = self.module.functions[func_idx].add_local(IrType::Pointer);
         self.module.functions[func_idx]
             .instructions
@@ -2540,12 +2614,6 @@ impl IrGenerator {
         let mut dangling_next = false;
 
         for arm in &m.arms {
-            if arm.guard.is_some() {
-                return Err(XuloError::new(
-                    ErrorKind::Semantic,
-                    "AOT codegen does not support match guards yet".to_string(),
-                ));
-            }
             let body_label = self.module.functions[func_idx].add_label();
             let next_label = self.module.functions[func_idx].add_label();
             match &arm.pattern {
@@ -2561,7 +2629,7 @@ impl IrGenerator {
                     self.module.functions[func_idx]
                         .instructions
                         .push(Instruction::Label(body_label));
-                    self.generate_match_arm_body(arm, result_local)?;
+                    self.generate_match_arm_body(arm, result_local, next_label)?;
                     self.module.functions[func_idx]
                         .instructions
                         .push(Instruction::Jump(end_label));
@@ -2704,7 +2772,7 @@ impl IrGenerator {
                             );
                         }
                     }
-                    self.generate_match_arm_body(arm, result_local)?;
+                    self.generate_match_arm_body(arm, result_local, next_label)?;
                     self.module.functions[func_idx]
                         .instructions
                         .push(Instruction::Jump(end_label));
@@ -2773,7 +2841,7 @@ impl IrGenerator {
                         self.dyn_tag_of.insert(bind.clone(), Operand::Local(tag));
                         self.source_types.insert(bind.clone(), field.type_.clone());
                     }
-                    self.generate_match_arm_body(arm, result_local)?;
+                    self.generate_match_arm_body(arm, result_local, next_label)?;
                     self.module.functions[func_idx]
                         .instructions
                         .push(Instruction::Jump(end_label));
@@ -2807,7 +2875,7 @@ impl IrGenerator {
                     self.module.functions[func_idx]
                         .instructions
                         .push(Instruction::Label(body_label));
-                    self.generate_match_arm_body(arm, result_local)?;
+                    self.generate_match_arm_body(arm, result_local, next_label)?;
                     self.module.functions[func_idx]
                         .instructions
                         .push(Instruction::Jump(end_label));
@@ -2817,7 +2885,7 @@ impl IrGenerator {
                     dangling_next = true;
                 }
                 MatchPattern::Wildcard => {
-                    self.generate_match_arm_body(arm, result_local)?;
+                    self.generate_match_arm_body(arm, result_local, next_label)?;
                     self.module.functions[func_idx]
                         .instructions
                         .push(Instruction::Jump(end_label));
@@ -2845,7 +2913,7 @@ impl IrGenerator {
                     // 标签取 scrutinee 的伴随标签（字面量/标识符静态推断，或
                     // 标识符绑定时的运行时槽），而非硬编码 enum 标签
                     self.dyn_tag_of.insert(name.clone(), scrut_tag_op.clone());
-                    self.generate_match_arm_body(arm, result_local)?;
+                    self.generate_match_arm_body(arm, result_local, next_label)?;
                     self.module.functions[func_idx]
                         .instructions
                         .push(Instruction::Jump(end_label));
@@ -2854,12 +2922,109 @@ impl IrGenerator {
                         .push(Instruction::Label(next_label));
                     dangling_next = true;
                 }
-                _ => {
-                    return Err(XuloError::new(
-                        ErrorKind::Semantic,
-                        "AOT codegen does not support range, struct, type, or or-patterns in match yet"
-                            .to_string(),
-                    ));
+                MatchPattern::Range {
+                    start,
+                    end,
+                    end_inclusive,
+                    ..
+                } => {
+                    self.emit_range_pattern_branch(
+                        *start,
+                        *end,
+                        *end_inclusive,
+                        scrut_op.clone(),
+                        scrut_tag_op.clone(),
+                        body_label,
+                        next_label,
+                    )?;
+                    self.module.functions[func_idx]
+                        .instructions
+                        .push(Instruction::Label(body_label));
+                    self.generate_match_arm_body(arm, result_local, next_label)?;
+                    self.module.functions[func_idx]
+                        .instructions
+                        .push(Instruction::Jump(end_label));
+                    self.module.functions[func_idx]
+                        .instructions
+                        .push(Instruction::Label(next_label));
+                    dangling_next = true;
+                }
+                MatchPattern::TypePattern {
+                    type_name,
+                    optional,
+                    binder,
+                    ..
+                } => {
+                    self.emit_type_pattern_branch(
+                        type_name,
+                        *optional,
+                        scrut_op.clone(),
+                        scrut_tag_op.clone(),
+                        body_label,
+                        next_label,
+                    )?;
+                    self.module.functions[func_idx]
+                        .instructions
+                        .push(Instruction::Label(body_label));
+                    if let PatternBinder::Binding(name) = binder {
+                        self.bind_pattern_binding(name, scrut_local, scrut_tag_op.clone());
+                        match type_name.as_str() {
+                            "int" | "number" | "float" => {
+                                self.source_types.insert(name.clone(), Type::Number);
+                            }
+                            "string" => {
+                                self.source_types.insert(name.clone(), Type::String);
+                            }
+                            "bool" => {
+                                self.source_types.insert(name.clone(), Type::Boolean);
+                            }
+                            "null" => {
+                                self.source_types.insert(name.clone(), Type::Null);
+                            }
+                            _ => {
+                                self.source_types.remove(name);
+                            }
+                        }
+                    }
+                    self.generate_match_arm_body(arm, result_local, next_label)?;
+                    self.module.functions[func_idx]
+                        .instructions
+                        .push(Instruction::Jump(end_label));
+                    self.module.functions[func_idx]
+                        .instructions
+                        .push(Instruction::Label(next_label));
+                    dangling_next = true;
+                }
+                MatchPattern::Or { patterns, .. } => {
+                    // 每个备选先判条件，命中统一落到本臂体；备选之间用
+                    // 独立标签串起来。带绑定名的 or 模式目前不在 AOT 范围。
+                    for alt in patterns {
+                        let alt_next = self.module.functions[func_idx].add_label();
+                        self.emit_pattern_condition(
+                            alt,
+                            &scrut_op,
+                            &scrut_tag_op,
+                            body_label,
+                            alt_next,
+                        )?;
+                        self.module.functions[func_idx]
+                            .instructions
+                            .push(Instruction::Label(alt_next));
+                    }
+                    self.module.functions[func_idx]
+                        .instructions
+                        .push(Instruction::Jump(next_label));
+                    self.module.functions[func_idx]
+                        .instructions
+                        .push(Instruction::Label(body_label));
+                    self.generate_match_arm_body(arm, result_local, next_label)?;
+                    self.module.functions[func_idx]
+                        .instructions
+                        .push(Instruction::Jump(end_label));
+                    self.module.functions[func_idx]
+                        .instructions
+                        .push(Instruction::Label(next_label));
+                    dangling_next = true;
                 }
             }
         }
@@ -2875,7 +3040,232 @@ impl IrGenerator {
         Ok(Operand::Local(result_local))
     }
 
-    /// 字面量 pattern 的比对操作数：返回 (值操作数, 标签)。字符串先物化进
+    /// 绑定一个 match 名字（普通槽或闭包捕获 cell），并登记伴随标签。
+    fn bind_pattern_binding(&mut self, name: &str, value: LocalId, tag: Operand) {
+        let func_idx = self.current_func.unwrap();
+        if self.boxed_names.contains(name) {
+            let cell = self.module.functions[func_idx].add_local(IrType::Pointer);
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::RuntimeCall {
+                    dst: Some(cell),
+                    func: RuntimeFn::AllocCell,
+                    args: vec![Operand::Local(value)],
+                });
+            self.locals.insert(name.to_string(), cell);
+            self.boxed_logical.insert(name.to_string(), IrType::Pointer);
+        } else {
+            self.locals.insert(name.to_string(), value);
+        }
+        self.dyn_tag_of.insert(name.to_string(), tag);
+    }
+
+    /// `range..<end` / `range..=end` 的条件分支。
+    #[allow(clippy::too_many_arguments)]
+    fn emit_range_pattern_branch(
+        &mut self,
+        start: f64,
+        end: f64,
+        end_inclusive: bool,
+        scrut: Operand,
+        scrut_tag: Operand,
+        body_label: Label,
+        next_label: Label,
+    ) -> Result<(), XuloError> {
+        let func_idx = self.current_func.unwrap();
+        let matched = self.module.functions[func_idx].add_local(IrType::I64);
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::RuntimeCall {
+                dst: Some(matched),
+                func: RuntimeFn::RangeMatch,
+                args: vec![
+                    scrut,
+                    scrut_tag,
+                    Operand::Const(IrValue::I64(start.to_bits() as i64)),
+                    Operand::Const(IrValue::I64(end.to_bits() as i64)),
+                    Operand::Const(IrValue::I64(i64::from(end_inclusive))),
+                ],
+            });
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Branch {
+                condition: Operand::Local(matched),
+                then_label: body_label,
+                else_label: next_label,
+            });
+        Ok(())
+    }
+
+    /// 类型模式 `T name` / `T? name` 的条件分支。
+    fn emit_type_pattern_branch(
+        &mut self,
+        type_name: &str,
+        optional: bool,
+        scrut: Operand,
+        scrut_tag: Operand,
+        body_label: Label,
+        next_label: Label,
+    ) -> Result<(), XuloError> {
+        let func_idx = self.current_func.unwrap();
+        let name_idx = self.module.add_string(type_name.to_string());
+        let name = self.module.functions[func_idx].add_local(IrType::Pointer);
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Const {
+                dst: name,
+                value: IrValue::String(name_idx),
+            });
+        let matched = self.module.functions[func_idx].add_local(IrType::I64);
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::RuntimeCall {
+                dst: Some(matched),
+                func: RuntimeFn::TypeMatch,
+                args: vec![
+                    scrut,
+                    scrut_tag,
+                    Operand::Local(name),
+                    Operand::Const(IrValue::I64(i64::from(optional))),
+                ],
+            });
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Branch {
+                condition: Operand::Local(matched),
+                then_label: body_label,
+                else_label: next_label,
+            });
+        Ok(())
+    }
+
+    /// or-pattern 备选的条件分支。备选必须是纯测试（字面量/变体/区间/类型
+    /// 模式/通配）——带绑定名的备选在语义层尚未声明名字，AOT 先明确拒绝。
+    fn emit_pattern_condition(
+        &mut self,
+        pattern: &MatchPattern,
+        scrut: &Operand,
+        scrut_tag: &Operand,
+        body_label: Label,
+        next_label: Label,
+    ) -> Result<(), XuloError> {
+        let func_idx = self.current_func.unwrap();
+        match pattern {
+            MatchPattern::Literal(lit) => {
+                let (lit_val, lit_tag) = self.literal_pattern_operand(lit)?;
+                let cmp = self.module.functions[func_idx].add_local(IrType::I64);
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::RuntimeCall {
+                        dst: Some(cmp),
+                        func: RuntimeFn::LiteralMatch,
+                        args: vec![
+                            scrut.clone(),
+                            scrut_tag.clone(),
+                            lit_val,
+                            Operand::Const(IrValue::I64(lit_tag)),
+                        ],
+                    });
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::Branch {
+                        condition: Operand::Local(cmp),
+                        then_label: body_label,
+                        else_label: next_label,
+                    });
+            }
+            MatchPattern::Enum(r) => {
+                self.emit_enum_tag_branch(
+                    func_idx,
+                    scrut.clone(),
+                    &r.enum_name,
+                    &r.variant,
+                    body_label,
+                    next_label,
+                )?;
+            }
+            MatchPattern::EnumPayload {
+                enum_name,
+                variant,
+                bindings,
+                ..
+            } if bindings.iter().all(|b| b == "_") => {
+                self.emit_enum_tag_branch(
+                    func_idx,
+                    scrut.clone(),
+                    enum_name,
+                    variant,
+                    body_label,
+                    next_label,
+                )?;
+            }
+            // 结构体模式没有运行时类型测试（语义层已钉住 scrutinee 类型）。
+            MatchPattern::Struct { bindings, .. }
+                if bindings.iter().all(|b| matches!(b, MatchPattern::Wildcard)) =>
+            {
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::Jump(body_label));
+            }
+            MatchPattern::Range {
+                start,
+                end,
+                end_inclusive,
+                ..
+            } => {
+                self.emit_range_pattern_branch(
+                    *start,
+                    *end,
+                    *end_inclusive,
+                    scrut.clone(),
+                    scrut_tag.clone(),
+                    body_label,
+                    next_label,
+                )?;
+            }
+            MatchPattern::TypePattern {
+                type_name,
+                optional,
+                binder: PatternBinder::Wildcard,
+                ..
+            } => {
+                self.emit_type_pattern_branch(
+                    type_name,
+                    *optional,
+                    scrut.clone(),
+                    scrut_tag.clone(),
+                    body_label,
+                    next_label,
+                )?;
+            }
+            MatchPattern::Wildcard => {
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::Jump(body_label));
+            }
+            MatchPattern::Or { patterns, .. } => {
+                for alt in patterns {
+                    let alt_next = self.module.functions[func_idx].add_label();
+                    self.emit_pattern_condition(alt, scrut, scrut_tag, body_label, alt_next)?;
+                    self.module.functions[func_idx]
+                        .instructions
+                        .push(Instruction::Label(alt_next));
+                }
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::Jump(next_label));
+            }
+            _ => {
+                return Err(XuloError::new(
+                    ErrorKind::Semantic,
+                    "AOT codegen does not support or-pattern alternatives that bind names yet"
+                        .to_string(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// 本地槽（Const String 不能直接作 RuntimeCall 实参），小数走 f64 位模式。
     pub(super) fn literal_pattern_operand(
         &mut self,
@@ -2945,16 +3335,33 @@ impl IrGenerator {
         Ok(())
     }
 
-    /// 一个 match 臂的求值：分支体的末表达式写入结果槽；f64 结果在按位
-    /// 模式进 Pointer 槽前注册位模式
+    /// 一个 match 臂的求值：guard 为真才进入臂体；分支体的末表达式写入结果槽。
     pub(super) fn generate_match_arm_body(
         &mut self,
         arm: &MatchArm,
         result_local: LocalId,
+        next_label: Label,
     ) -> Result<(), XuloError> {
         // 臂是独立作用域：模式绑定与臂内的 `let` 不泄漏到后面的语句
         let scope = self.enter_block();
-        let result = self.generate_match_arm_body_inner(arm, result_local);
+        let result = (|| {
+            if let Some(guard) = &arm.guard {
+                let func_idx = self.current_func.unwrap();
+                let guarded = self.module.functions[func_idx].add_label();
+                let condition = self.generate_expression(guard)?;
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::Branch {
+                        condition,
+                        then_label: guarded,
+                        else_label: next_label,
+                    });
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::Label(guarded));
+            }
+            self.generate_match_arm_body_inner(arm, result_local)
+        })();
         self.leave_block(scope)?;
         result
     }

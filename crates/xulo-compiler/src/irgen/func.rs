@@ -365,6 +365,24 @@ impl IrGenerator {
                     self.uint_range_names.insert(param.name.clone());
                 }
             }
+            // 动态形参的运行时标签由调用点写入；入口先复制到本地，后续嵌套
+            // 调用覆盖栈顶也不会影响本帧。
+            if param
+                .type_annotation
+                .as_ref()
+                .is_some_and(Self::is_dynamic_param_type)
+            {
+                let tag = self.module.functions[func_idx].add_local(IrType::I64);
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::RuntimeCall {
+                        dst: Some(tag),
+                        func: RuntimeFn::CallTag,
+                        args: vec![Operand::Const(IrValue::I64(i as i64))],
+                    });
+                self.dyn_tag_of
+                    .insert(param.name.clone(), Operand::Local(tag));
+            }
             // 被捕获的参数装箱：cell 槽复用参数 LocalId（codegen 先解析实参
             // 再写 dst，参数原值可安全地作为 AllocCell 的输入）
             if self.boxed_names.contains(&param.name) {
@@ -774,6 +792,20 @@ impl IrGenerator {
             self.locals.insert(p.name.clone(), local);
             if let Some(ann) = &p.type_annotation {
                 self.source_types.insert(p.name.clone(), ann.clone());
+            }
+            if p.type_annotation
+                .as_ref()
+                .is_some_and(Self::is_dynamic_param_type)
+            {
+                let tag = self.module.functions[func_id].add_local(IrType::I64);
+                self.module.functions[func_id]
+                    .instructions
+                    .push(Instruction::RuntimeCall {
+                        dst: Some(tag),
+                        func: RuntimeFn::CallTag,
+                        args: vec![Operand::Const(IrValue::I64(i as i64))],
+                    });
+                self.dyn_tag_of.insert(p.name.clone(), Operand::Local(tag));
             }
             if self.boxed_names.contains(&p.name) {
                 let logical = self.type_to_ir(p.type_annotation.as_ref());

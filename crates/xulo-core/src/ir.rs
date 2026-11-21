@@ -206,6 +206,16 @@ pub enum RuntimeFn {
     StringBuilderCopy,
     /// match 字面量 pattern 判定（返回 1/0）
     LiteralMatch,
+    /// match 区间 pattern 判定：值是否落在 `[start, end)`/`[start, end]`
+    RangeMatch,
+    /// match 类型 pattern 判定：按运行时标签与（可选）枚举类型名比对
+    TypeMatch,
+    /// 调用点向当前调用帧写入第 i 个实参的运行时标签（`unknown` 形参使用）
+    SetCallTag,
+    /// 被调函数入口读取第 i 个实参的运行时标签（缺省 -1）
+    CallTag,
+    /// 间接调用前清空实参标签，避免读到上一次调用的残留
+    ClearCallTags,
     /// 区间表达式 `0..<3` / `1..=4` 求值为列表
     RangeList,
     /// Checked integral arithmetic (spec `types/primitive-types.md`,

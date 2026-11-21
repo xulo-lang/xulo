@@ -5,8 +5,6 @@
 // - `Shape::Circle(r)` 解构枚举载荷，`Direction::East` 匹配无载荷变体
 // - `0 | 1` 是 or 模式；`string s` 是带 binder 的类型模式
 // - 每个分支可以带 `if` guard，只有模式匹配后才会求值
-//
-// @no-aot all: AOT 后端尚未下降 guard / or / 区间 / 类型模式（irgen/expr.rs）
 
 enum Direction {
     North

@@ -619,6 +619,36 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
         returns: &[I64],
     },
     RuntimeFnDesc {
+        name: "xulo_range_match",
+        addr: xulo_runtime::runtime::xulo_range_match as *const u8,
+        params: &[I64, I64, I64, I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_type_match",
+        addr: xulo_runtime::runtime::xulo_type_match as *const u8,
+        params: &[I64, I64, I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_set_call_tag",
+        addr: xulo_runtime::runtime::xulo_set_call_tag as *const u8,
+        params: &[I64, I64],
+        returns: &[],
+    },
+    RuntimeFnDesc {
+        name: "xulo_call_tag",
+        addr: xulo_runtime::runtime::xulo_call_tag as *const u8,
+        params: &[I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_clear_call_tags",
+        addr: xulo_runtime::runtime::xulo_clear_call_tags as *const u8,
+        params: &[],
+        returns: &[],
+    },
+    RuntimeFnDesc {
         name: "xulo_range_list",
         addr: xulo_runtime::runtime::xulo_range_list as *const u8,
         params: &[F64, F64, I64],

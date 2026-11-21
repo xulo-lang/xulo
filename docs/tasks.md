@@ -322,15 +322,17 @@ Priority P1 · needed by Gate 3 and the bootstrap corpus · source:
         now part of the corpus).
       The AOT differential then measured the new corpus and recorded these gaps
       with `@no-aot` (each one must keep failing, so closing it forces a diff):
-      match guard/or/range/type patterns, `spawn`/`lock`/service, and
-      trait dispatch through a generic parameter. Block-scoped shadowing, `f32`
-      arithmetic, the `Error("…")` constructor, nested tuple access plus
-      tuple pass/return, and `defer` were closed later: the AOT path now
-      restores bindings at every nested block, gives `f32`/`f64` bindings an
-      F64 slot, builds the `{ message }` object `Error("…")` denotes, resolves
-      tuple positional access through nested element types and tags tuple
-      returns as arrays, and drains per-block `defer` queues on every block
-      exit, so all five agree with the interpreter and their markers are gone.
+      `spawn`/`lock`/service and trait dispatch through a generic parameter.
+      Block-scoped shadowing, `f32` arithmetic, the `Error("…")` constructor,
+      nested tuple access plus tuple pass/return, `defer`, and match
+      guard/or/range/type patterns were closed later: the AOT path now restores
+      bindings at every nested block, gives `f32`/`f64` bindings an F64 slot,
+      builds the `{ message }` object `Error("…")` denotes, resolves tuple
+      positional access through nested element types and tags tuple returns as
+      arrays, drains per-block `defer` queues on every block exit, and lowers
+      pattern guards, or-patterns, ranges, and type patterns (with call-site
+      tags for dynamic parameters), so all six agree with the interpreter and
+      their markers are gone.
       Failure-path reporting follows T13 option (c): the two formats stay, and
       the differential compares a normalized failure shape for examples that
       declare `@aot-failure-shape`.

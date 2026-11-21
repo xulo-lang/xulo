@@ -626,11 +626,13 @@ wildcard so a later argument can fix the callback's type parameter.
 
 - AOT runtime support for `Map` and `Set` is in place (C2, C3).
 - Known AOT parity probes now agree, including spread, ternaries,
-  `Array.len`, and `Array::filled` (C1, R9b, L15, C4).
+  `Array.len`, `Array::filled`, nested tuples, `defer`, and match
+  guards/or-patterns/ranges/type patterns (C1, R9b, L15, C4, T8).
 - The differential runner discovers every example program, including multi-file
   units, and compares it byte for byte. Gaps are declared in the example itself
-  (`// @no-aot <platform>: …`) and must keep failing; `ffi.xulo` is
-  `@no-aot windows` (S8). FS bytes,
+  (`// @no-aot <platform>: …`) and must keep failing; failing examples that
+  declare `@aot-failure-shape` compare a normalized failure shape (T13 option
+  c), and `ffi.xulo` is `@no-aot windows` (S8). FS bytes,
   path `split`/`relative`, HTTP server types, `os::exec_path`, process
   `launch`/`Command`/`Child`, and the `Task` combinators are lowered (B3c, S3a,
   R9c).

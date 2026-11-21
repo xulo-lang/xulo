@@ -376,6 +376,143 @@ pub extern "C" fn xulo_literal_match(scrut: i64, scrut_tag: i64, lit: i64, lit_t
     i64::from(matched)
 }
 
+/// match 区间 pattern 判定（对齐解释器 `pattern_matches` 的 `Range` 分支）：
+/// 数值按 `f64` 比较，字符串按文本比较；`start_bits`/`end_bits` 是 f64 位模式。
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_range_match(
+    value: i64,
+    tag: i64,
+    start_bits: i64,
+    end_bits: i64,
+    inclusive: i64,
+) -> i64 {
+    let st = if tag == -1 {
+        xulo_detect_tag(value)
+    } else {
+        tag
+    };
+    let start = f64::from_bits(start_bits as u64);
+    let end = f64::from_bits(end_bits as u64);
+    let inside = if st == 1 || st == 2 || st == 10 {
+        let n = match st {
+            2 => f64::from_bits(value as u64),
+            10 => (value as u64) as f64,
+            _ => value as f64,
+        };
+        if inclusive != 0 {
+            n >= start && n <= end
+        } else {
+            n >= start && n < end
+        }
+    } else if st == 0 && value != 0 {
+        let text = unsafe { CStr::from_ptr(value as *const c_char) };
+        let text = text.to_string_lossy();
+        let lo = text.as_ref() >= start.to_string().as_str();
+        let hi = if inclusive != 0 {
+            text.as_ref() <= end.to_string().as_str()
+        } else {
+            text.as_ref() < end.to_string().as_str()
+        };
+        lo && hi
+    } else {
+        false
+    };
+    i64::from(inside)
+}
+
+/// match 类型 pattern 判定（对齐解释器 `value_is_named_type`）。`tag` 是调用点
+/// 传来的静态/运行时标签，-1 时现场检测；`optional` 让 `T?` 也接受 null。
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_type_match(
+    value: i64,
+    tag: i64,
+    type_name: *const c_char,
+    optional: i64,
+) -> i64 {
+    let st = if tag == -1 {
+        xulo_detect_tag(value)
+    } else {
+        tag
+    };
+    if optional != 0 && st == 6 {
+        return 1;
+    }
+    if type_name.is_null() {
+        return 0;
+    }
+    let name = unsafe { CStr::from_ptr(type_name) }.to_str().unwrap_or("");
+    let matched = match name {
+        "number" => matches!(st, 1 | 2 | 10),
+        "int" | "i64" | "isize" => st == 1,
+        "i8" => st == 1 && i8::try_from(value).is_ok(),
+        "i16" => st == 1 && i16::try_from(value).is_ok(),
+        "i32" => st == 1 && i32::try_from(value).is_ok(),
+        "u64" | "usize" => st == 10 || (st == 1 && value >= 0),
+        "u8" => st == 1 && u8::try_from(value).is_ok(),
+        "u16" => st == 1 && u16::try_from(value).is_ok(),
+        "u32" => st == 1 && u32::try_from(value).is_ok(),
+        "float" | "f32" | "f64" => st == 2,
+        "string" => st == 0,
+        "bool" => st == 5,
+        "null" => st == 6,
+        "List" => st == 3,
+        "Map" => st == 4,
+        "unknown" => true,
+        _ => {
+            if st != 7 || value == 0 {
+                false
+            } else {
+                let e = value as *const XuloEnum;
+                unsafe {
+                    if (*e).type_name.is_null() {
+                        false
+                    } else {
+                        CStr::from_ptr((*e).type_name).to_str().unwrap_or("") == name
+                    }
+                }
+            }
+        }
+    };
+    i64::from(matched)
+}
+
+thread_local! {
+    /// 当前直接调用的实参运行时标签。调用点在实参求值后写入，被调函数在
+    /// 入口读取 `unknown` 形参的标签；递归调用各自在入口先复制，互不干扰。
+    static CALL_TAGS: RefCell<Vec<i64>> = const { RefCell::new(Vec::new()) };
+}
+
+/// 写入当前调用帧第 `index` 个实参的运行时标签。
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_set_call_tag(index: i64, tag: i64) {
+    CALL_TAGS.with(|tags| {
+        let mut tags = tags.borrow_mut();
+        let index = index.max(0) as usize;
+        if tags.len() <= index {
+            tags.resize(index + 1, -1);
+        }
+        tags[index] = tag;
+    });
+}
+
+/// 读取当前调用帧第 `index` 个实参的标签（缺省 -1，交给运行时检测）。
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_call_tag(index: i64) -> i64 {
+    CALL_TAGS.with(|tags| {
+        tags.borrow()
+            .get(index.max(0) as usize)
+            .copied()
+            .unwrap_or(-1)
+    })
+}
+
+/// 清空实参标签；间接调用前使用，避免读到上一次调用的残留。
+#[unsafe(no_mangle)]
+pub extern "C" fn xulo_clear_call_tags() {
+    CALL_TAGS.with(|tags| tags.borrow_mut().clear());
+}
+
 /// Abort the compiled program with the interpreter's runtime-failure status.
 /// A message on stderr plus exit status 1 is the contract Rust callers (and
 /// `xupm run`) already use for `xulo_panic`.

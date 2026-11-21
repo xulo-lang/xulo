@@ -71,6 +71,15 @@ values, and is left to a future standard-library `std/ui` module.
 
 ### Fixed
 
+- AOT: match guards, or-patterns, numeric range patterns, and type patterns now
+  lower instead of being rejected. Guards run after the pattern's bindings; an
+  or-pattern tests each alternative before one shared arm body; ranges compare
+  numbers (and strings) with the same semantics as the interpreter; type
+  patterns test the runtime tag and enum type name. Direct calls now pass the
+  runtime tags of dynamic (`unknown`/unannotated/union/optional) arguments, so
+  `bool`/`int` patterns distinguish values that share the `0`/`1` slot.
+  `patterns/match_patterns.xulo` no longer carries `@no-aot`. Regression:
+  `crates/xulo-compiler/tests/aot_syntax_coverage_tests.rs::match_guards_or_ranges_and_type_patterns`.
 - AOT: `defer` now lowers to a per-block queue instead of being rejected. The
   operand runs in reverse registration order when its block exits, including
   before `return` and `?` propagation, and on loop `break`/`continue`; nested
