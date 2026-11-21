@@ -1193,8 +1193,7 @@ impl Emitter {
             return "xr_nil()"
         }
         if kind == "Map" {
-            self.fail("map literals are not lowered by the bootstrap backend")
-            return "xr_nil()"
+            return self.emit_map(node)
         }
         if kind == "Closure" {
             self.fail("closures are not lowered by the bootstrap backend")
@@ -1547,6 +1546,29 @@ impl Emitter {
             return "xr_int(xr_len(" + recv + "))"
         }
         return "xr_get_field_opt(" + recv + ", " + c_string(node.value) + ")"
+    }
+
+    fn emit_map(mut self, node: Node): string {
+        // Object literals lower to a runtime object: members are field
+        // entries, and `{ ...base, k: v }` merges base's fields first.
+        let tmp = self.new_tmp()
+        self.line("XVal " + tmp + " = xr_map_new();")
+        for child in node.children {
+            if child.kind == "Spread" {
+                let value = self.emit_expr(child.children[0])
+                self.line("xr_map_merge(" + tmp + ", " + value + ");")
+                continue
+            }
+            if child.children.len == 0 {
+                self.fail("a map entry needs a value")
+                return "xr_nil()"
+            }
+            let value = self.emit_expr(child.children[0])
+            self.line(
+                "xr_map_set(" + tmp + ", xr_str(" + c_string(child.value) + "), " + value + ");",
+            )
+        }
+        return tmp
     }
 
     fn emit_list(mut self, node: Node): string {
@@ -1926,6 +1948,26 @@ impl Emitter {
                 return "xr_nil()"
             }
             return args[0]
+        }
+        if path == "std::json::parse" or path == "std::json::valid" {
+            if args.len != 1 {
+                self.fail("`" + path + "` expects one argument")
+                return "xr_nil()"
+            }
+            if path == "std::json::parse" {
+                return "xr_json_parse(" + args[0] + ")"
+            }
+            return "xr_json_valid(" + args[0] + ")"
+        }
+        if path == "std::json::stringify" {
+            if args.len < 1 or args.len > 2 {
+                self.fail("`std::json::stringify` expects one or two arguments")
+                return "xr_nil()"
+            }
+            if args.len == 1 {
+                return "xr_json_stringify(" + args[0] + ", xr_nil())"
+            }
+            return "xr_json_stringify(" + args[0] + ", " + args[1] + ")"
         }
         if path == "std::math::random" {
             return "xr_math_random()"

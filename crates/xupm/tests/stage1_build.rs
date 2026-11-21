@@ -336,11 +336,10 @@ fn stage1_compiles_the_bootstrap_corpus() {
     }
 }
 
-/// The C runtime's `std::path` / `std::hint` / `std::math` / `std::os`
-/// surface: lowered examples must run through stage 1's C backend and match
-/// their checked-in output, just like the corpus.
+/// Examples the C backend lowers end to end: the `std` surface stage 1
+/// implements, plus templates, optional chaining, and object literals.
 #[test]
-fn stage1_runs_the_std_examples_it_lowers() {
+fn stage1_runs_the_lowered_examples() {
     if !enabled() {
         return;
     }
@@ -352,6 +351,10 @@ fn stage1_runs_the_std_examples_it_lowers() {
         "examples/std/hint.xulo",
         "examples/std/math_extra.xulo",
         "examples/std/os.xulo",
+        "examples/std/json.xulo",
+        "examples/basics/templates.xulo",
+        "examples/types/optional_chaining.xulo",
+        "examples/collections/collections.xulo",
     ] {
         let file = Path::new(rel);
         let name = file
