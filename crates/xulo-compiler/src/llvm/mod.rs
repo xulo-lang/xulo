@@ -26,7 +26,7 @@ use xulo_core::error::{ErrorKind, XuloError};
 use xulo_core::ir::{IrAbiParam, IrFunction, IrModule, IrType, Label, LocalId, Operand};
 
 use crate::backend::RUNTIME_FNS;
-use crate::codegen::aot_symbol_name;
+use crate::codegen::aot_function_symbol;
 
 pub mod abi;
 pub mod object;

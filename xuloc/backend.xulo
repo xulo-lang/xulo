@@ -1605,6 +1605,13 @@ impl Emitter {
             }
             return "xr_fs_mkdir(" + args[0] + ")"
         }
+        if path == "std::fs::walk" {
+            if args.len != 1 {
+                self.fail("`std::fs::walk` expects one argument")
+                return "xr_nil()"
+            }
+            return "xr_fs_walk(" + args[0] + ")"
+        }
         if path == "std::io::println" {
             if args.len != 1 {
                 self.fail("`std::io::println` expects one argument")

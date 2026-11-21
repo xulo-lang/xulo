@@ -157,10 +157,14 @@ fn examples_match_expected_output() {
         }
 
         if bless() {
-            std::fs::write(xulo_examples::bless_target(&unit.entry, false), &out.stdout)
+            let stdout =
+                xulo_examples::portable(&unit.entry, &xulo_examples::normalize(&out.stdout));
+            std::fs::write(xulo_examples::bless_target(&unit.entry, false), stdout)
                 .expect("cannot write the stdout sidecar");
             if !out.stderr.is_empty() {
-                std::fs::write(xulo_examples::bless_target(&unit.entry, true), &out.stderr)
+                let stderr =
+                    xulo_examples::portable(&unit.entry, &xulo_examples::normalize(&out.stderr));
+                std::fs::write(xulo_examples::bless_target(&unit.entry, true), stderr)
                     .expect("cannot write the stderr sidecar");
             }
             continue;

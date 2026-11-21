@@ -344,6 +344,50 @@ pub fn normalize(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).replace("\r\n", "\n")
 }
 
+/// Replace the machine-specific absolute path of `entry` with its
+/// repository-relative form (`examples/…`, always `/`-separated), so a stderr
+/// sidecar recorded on one checkout compares equal on every host.
+pub fn portable(entry: &Path, text: &str) -> String {
+    // `examples_dir()` is spelled with `..`, so compare canonical roots: the
+    // diagnostic prints the canonical entry path on every host.
+    let tail = std::fs::canonicalize(entry)
+        .ok()
+        .and_then(|canonical| {
+            std::fs::canonicalize(examples_dir())
+                .ok()
+                .and_then(|root| canonical.strip_prefix(root).ok().map(Path::to_path_buf))
+        })
+        .or_else(|| {
+            entry
+                .strip_prefix(examples_dir())
+                .ok()
+                .map(Path::to_path_buf)
+        });
+    let rel = match tail {
+        Some(tail) => format!("examples/{}", tail.to_string_lossy().replace('\\', "/")),
+        None => entry.to_string_lossy().replace('\\', "/"),
+    };
+
+    let mut forms = vec![entry.to_string_lossy().into_owned()];
+    if let Ok(canonical) = std::fs::canonicalize(entry) {
+        let canonical = canonical.to_string_lossy().into_owned();
+        if let Some(stripped) = canonical.strip_prefix(r"\\?\") {
+            forms.push(stripped.to_string());
+        }
+        forms.push(canonical);
+    }
+    forms.sort_by_key(|form| std::cmp::Reverse(form.len()));
+    forms.dedup();
+
+    let mut out = text.to_string();
+    for form in forms {
+        if !form.is_empty() {
+            out = out.replace(&form, &rel);
+        }
+    }
+    out
+}
+
 /// The sidecar that holds `stdout` (`stderr == false`) or `stderr` for `entry`
 /// on the running host, if it exists.
 pub fn sidecar(entry: &Path, stderr: bool) -> Option<(PathBuf, String)> {
@@ -414,7 +458,8 @@ pub fn expected_text(rel: &str) -> String {
 /// Returns `None` when the output matches (or when the sidecar is absent).
 pub fn mismatch(entry: &Path, stderr: bool, actual: &[u8]) -> Option<String> {
     let (path, expected) = sidecar(entry, stderr)?;
-    let actual = normalize(actual);
+    let expected = portable(entry, &expected);
+    let actual = portable(entry, &normalize(actual));
     if actual == expected {
         return None;
     }

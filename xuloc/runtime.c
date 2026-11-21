@@ -15,6 +15,12 @@
 //     cc -O1 generated.c -o program
 // `xuloc/runtime.c` has no `main` and no platform SDK dependency beyond libc.
 
+// `popen`/`pclose` (and `lstat`) are POSIX, but strict `-std=c11` hides them
+// behind a feature-test macro. Ask for the 2008 POSIX surface explicitly.
+#if !defined(_WIN32) && !defined(_POSIX_C_SOURCE)
+#define _POSIX_C_SOURCE 200809L
+#endif
+
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -28,6 +34,7 @@
 #define XR_POPEN _popen
 #define XR_PCLOSE _pclose
 #else
+#include <dirent.h>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -1371,6 +1378,148 @@ static char *xr_read_stream(FILE *stream, long long *bytes) {
     data[len] = '\0';
     *bytes = len;
     return data;
+}
+
+// ── filesystem walk ──────────────────────────────────────────────────────
+
+typedef struct {
+    char **items;
+    long long len;
+    long long cap;
+} XrNames;
+
+static void xr_names_push(XrNames *names, char *name) {
+    if (names->len == names->cap) {
+        long long cap = names->cap == 0 ? 16 : names->cap * 2;
+        char **next = (char **)xr_alloc((size_t)cap * sizeof(char *));
+        if (names->len > 0) {
+            memcpy(next, names->items, (size_t)names->len * sizeof(char *));
+        }
+        names->items = next;
+        names->cap = cap;
+    }
+    names->items[names->len] = name;
+    names->len += 1;
+}
+
+static int xr_name_cmp(const void *a, const void *b) {
+    return strcmp(*(char *const *)a, *(char *const *)b);
+}
+
+static char *xr_path_join(const char *dir, const char *name) {
+    size_t dir_len = strlen(dir);
+    size_t name_len = strlen(name);
+    int slash = dir_len > 0 && dir[dir_len - 1] != '/' && dir[dir_len - 1] != '\\';
+    char *out = (char *)xr_alloc(dir_len + name_len + (slash ? 2 : 1));
+    memcpy(out, dir, dir_len);
+    if (slash) {
+        out[dir_len] = '/';
+        dir_len += 1;
+    }
+    memcpy(out + dir_len, name, name_len + 1);
+    return out;
+}
+
+// A symlink is listed but never descended into: a link cycle cannot loop and a
+// link out of the tree cannot widen the walk (same contract as `std::fs::walk`).
+static int xr_is_directory(const char *path) {
+#ifdef _WIN32
+    DWORD attrs = GetFileAttributesA(path);
+    if (attrs == INVALID_FILE_ATTRIBUTES) {
+        return 0;
+    }
+    if ((attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
+        return 0;
+    }
+    return (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0;
+#else
+    struct stat st;
+    if (lstat(path, &st) != 0) {
+        return 0;
+    }
+    return S_ISDIR(st.st_mode) && !S_ISLNK(st.st_mode);
+#endif
+}
+
+// Names in one directory, sorted; the caller frees nothing (values leak).
+static int xr_read_names(const char *dir, XrNames *names, char *error, size_t error_size) {
+#ifdef _WIN32
+    char *pattern = xr_path_join(dir, "*");
+    WIN32_FIND_DATAA data;
+    HANDLE handle = FindFirstFileA(pattern, &data);
+    if (handle == INVALID_HANDLE_VALUE) {
+        snprintf(error, error_size, "cannot walk `%s`", dir);
+        return 0;
+    }
+    do {
+        if (strcmp(data.cFileName, ".") == 0 || strcmp(data.cFileName, "..") == 0) {
+            continue;
+        }
+        xr_names_push(names, xr_copy_bytes(data.cFileName, (long long)strlen(data.cFileName)));
+    } while (FindNextFileA(handle, &data) != 0);
+    FindClose(handle);
+#else
+    DIR *stream = opendir(dir);
+    if (stream == NULL) {
+        snprintf(error, error_size, "cannot walk `%s`", dir);
+        return 0;
+    }
+    struct dirent *entry;
+    while ((entry = readdir(stream)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+        xr_names_push(names, xr_copy_bytes(entry->d_name, (long long)strlen(entry->d_name)));
+    }
+    closedir(stream);
+#endif
+    if (names->len > 1) {
+        qsort(names->items, (size_t)names->len, sizeof(char *), xr_name_cmp);
+    }
+    return 1;
+}
+
+static int xr_walk_into(const char *dir, XVal out, char *error, size_t error_size) {
+    XrNames names = {NULL, 0, 0};
+    if (!xr_read_names(dir, &names, error, error_size)) {
+        return 0;
+    }
+    char **dirs = (char **)xr_alloc((size_t)(names.len == 0 ? 1 : names.len) * sizeof(char *));
+    long long dir_count = 0;
+    for (long long i = 0; i < names.len; i += 1) {
+        char *child = xr_path_join(dir, names.items[i]);
+        xr_list_push(out, xr_str(child));
+        if (xr_is_directory(child)) {
+            dirs[dir_count] = child;
+            dir_count += 1;
+        }
+    }
+    for (long long i = 0; i < dir_count; i += 1) {
+        if (!xr_walk_into(dirs[i], out, error, error_size)) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+XVal xr_fs_walk(XVal path) {
+    if (path.tag != XT_STR) {
+        return xr_err("std::fs::walk expects a string path");
+    }
+    XStr *p = xr_as_str(path);
+    if (!xr_is_directory(p->data)) {
+        char message[512];
+        snprintf(message, sizeof(message), "cannot walk `%s`", p->data);
+        return xr_err(message);
+    }
+    XVal out = xr_list_new();
+    xr_list_push(out, xr_str_n(p->data, p->bytes));
+    char error[512];
+    error[0] = '\0';
+    if (!xr_walk_into(p->data, out, error, sizeof(error))) {
+        return xr_err(error[0] == '\0' ? "cannot walk the directory" : error);
+    }
+    return xr_ok(out);
 }
 
 XVal xr_fs_read(XVal path) {
