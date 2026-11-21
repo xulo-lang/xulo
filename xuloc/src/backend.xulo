@@ -569,6 +569,12 @@ impl Emitter {
         if is_float_text(digits) {
             return "xr_float(" + digits + ")"
         }
+        // Xulo spells octal `0o644`; C spells it `0644`.
+        if digits.len > 2 {
+            if digits.slice(0, 2) == "0o" or digits.slice(0, 2) == "0O" {
+                return "xr_int(0" + digits.slice(2, digits.len) + "LL)"
+            }
+        }
         return "xr_int(" + digits + "LL)"
     }
 
@@ -1989,26 +1995,49 @@ impl Emitter {
             }
             return "xr_fs_read(" + args[0] + ")"
         }
-        if path == "std::fs::write" {
+        if path == "std::fs::write" or path == "std::fs::append"
+            or path == "std::fs::write_bytes" or path == "std::fs::append_bytes"
+            or path == "std::fs::create_new" or path == "std::fs::copy"
+            or path == "std::fs::rename" or path == "std::fs::set_mode"
+            or path == "std::fs::set_times"
+        {
             if args.len != 2 {
-                self.fail("`std::fs::write` expects two arguments")
+                self.fail("`" + path + "` expects two arguments")
                 return "xr_nil()"
             }
-            return "xr_fs_write(" + args[0] + ", " + args[1] + ")"
+            return "xr_fs_" + path.slice(9, path.len) + "(" + args[0] + ", " + args[1] + ")"
         }
-        if path == "std::fs::mkdir" {
+        if path == "std::fs::read_bytes" or path == "std::fs::exists"
+            or path == "std::fs::stat" or path == "std::fs::remove"
+            or path == "std::fs::mkdir" or path == "std::fs::read_dir"
+            or path == "std::fs::walk" or path == "std::fs::remove_dir"
+            or path == "std::fs::realpath" or path == "std::fs::touch"
+        {
             if args.len != 1 {
-                self.fail("`std::fs::mkdir` expects one argument")
+                self.fail("`" + path + "` expects one argument")
                 return "xr_nil()"
             }
-            return "xr_fs_mkdir(" + args[0] + ")"
+            return "xr_fs_" + path.slice(9, path.len) + "(" + args[0] + ")"
         }
-        if path == "std::fs::walk" {
-            if args.len != 1 {
-                self.fail("`std::fs::walk` expects one argument")
+        if path == "std::fs::temp_file" or path == "std::fs::temp_dir" {
+            if args.len > 1 {
+                self.fail("`" + path + "` expects at most one argument")
                 return "xr_nil()"
             }
-            return "xr_fs_walk(" + args[0] + ")"
+            if args.len == 0 {
+                return "xr_fs_" + path.slice(9, path.len) + "(xr_nil())"
+            }
+            return "xr_fs_" + path.slice(9, path.len) + "(" + args[0] + ")"
+        }
+        if path == "std::fs::temp_file_in" or path == "std::fs::temp_dir_in" {
+            if args.len < 1 or args.len > 2 {
+                self.fail("`" + path + "` expects one or two arguments")
+                return "xr_nil()"
+            }
+            if args.len == 1 {
+                return "xr_fs_" + path.slice(9, path.len) + "(" + args[0] + ", xr_nil())"
+            }
+            return "xr_fs_" + path.slice(9, path.len) + "(" + args[0] + ", " + args[1] + ")"
         }
         if path == "std::io::println" {
             if args.len != 1 {

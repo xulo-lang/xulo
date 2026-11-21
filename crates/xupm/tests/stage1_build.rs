@@ -352,6 +352,8 @@ fn stage1_runs_the_lowered_examples() {
         "examples/std/math_extra.xulo",
         "examples/std/os.xulo",
         "examples/std/json.xulo",
+        "examples/std/fs.xulo",
+        "examples/std/fs_extra.xulo",
         "examples/basics/templates.xulo",
         "examples/basics/bindings.xulo",
         "examples/types/optional_chaining.xulo",
@@ -360,6 +362,10 @@ fn stage1_runs_the_lowered_examples() {
         "examples/patterns/destructuring.xulo",
         "examples/patterns/match_patterns.xulo",
     ] {
+        // `std::fs`'s directory walkers are POSIX-only in the bootstrap runtime.
+        if !cfg!(unix) && rel.starts_with("examples/std/fs") {
+            continue;
+        }
         let file = Path::new(rel);
         let name = file
             .file_stem()

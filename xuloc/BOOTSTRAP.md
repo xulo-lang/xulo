@@ -293,12 +293,14 @@ so stage 2 does not inherit them silently.
     are still fine. This is a stage 0 limit, not a stage 1 semantic change.
 
 18. **`and`/`or` must not carry side effects under the native path.** Stage 0's
-    Cranelift build does not short-circuit them on Windows, so stage 1 writes
-    guards as nested `if`s instead of `a and may_panic()`. The C backend lowers
-    `and`/`or` to a ternary without a temp (so nesting short-circuits), but any
-    operand whose lowering needs a statement — a nested `??`, a call that
-    materialises a temporary — is still emitted eagerly. `main.xulo` therefore
-    keeps the argv guard as nested `if`s.
+    native builds do not reliably short-circuit them (observed on Windows and
+    macOS), so stage 1 writes guards as nested `if`s when the right side could
+    fail instead of `a and may_panic()`. The C backend lowers
+    `and`/`or` to a ternary without a temp (so nesting short-circuits there),
+    but any operand whose lowering needs a statement — a nested `??`, a call
+    that materialises a temporary — is still emitted eagerly. `main.xulo`
+    therefore keeps the argv guard as nested `if`s, and `literal_expr` nests
+    its length check before slicing an octal prefix.
 
 19. **The bootstrap runtime is deliberately dynamic.** `xuloc/runtime/runtime.c`
     represents every value as a tagged `XVal`, keeps structs as field tables,
@@ -318,10 +320,11 @@ so stage 2 does not inherit them silently.
 - The C backend and the self-host loop are implemented (Gates 5–6), but the
   backend's subset is the bootstrap subset listed above. The runtime covers
   the `std` surface stage 1's own source needs plus `std::path`, `std::hint`,
-  `std::os`, `std::math`, and `std::json`. Object literals lower to runtime
-  objects, so member access and `{ ...base, k: v }` work; `Map`/`Set` member
-  methods, iteration, `std::time`, `std::fmt`, `std::regex`, and `std::net`
-  are not lowered yet, so examples that use them fail with `E0005`.
+  `std::os`, `std::math`, `std::json`, and `std::fs` (its `read_dir` / `walk`
+  / `realpath` are POSIX-only). Object literals lower to runtime objects, so
+  member access and `{ ...base, k: v }` work; `Map`/`Set` member methods,
+  iteration, `std::time`, `std::fmt`, `std::regex`, and `std::net` are not
+  lowered yet, so examples that use them fail with `E0005`.
 - Destructuring (`let (a, b)`, `let { x, y }`), struct/enum/literal/or/range/
   type patterns with guards, and `#[derive(Debug)]`'s `Type(field: value)`
   rendering are lowered. A struct without the derive still renders as
