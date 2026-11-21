@@ -42,9 +42,11 @@ fn closure_entry_uses_nine_i64_signature() {
         }
         "#,
     );
-    // Closure entries are emitted as `(i64 × 9) -> i64`.
+    // Closure entries are emitted as `(i64 × 9) -> i64` and carry the same
+    // `xulo_fn_` prefix as every non-exported user function, so a closure
+    // cannot collide with a C runtime symbol.
     assert!(
-        ll.contains("define i64 @closure"),
+        ll.contains("define i64 @xulo_fn_closure"),
         "expected closure entry:\n{ll}"
     );
     assert!(
