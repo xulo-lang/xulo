@@ -10,3 +10,27 @@ JS 代码生成已废弃并移除：工具链只使用 `xulo-runtime` 的原生�
 ## 验证
 - 全量测试：`cargo test --workspace`
 - CI 严格 lint：`cargo clippy --workspace --all-targets -- -D warnings`
+
+## Git 分支与提交
+
+`master` 只接受通过分支合并的改动：**任何修改或新增功能都先开分支，不直接在
+`master` 上提交**（包括文档与 CI 改动）。
+
+- 从最新的 `origin/master` 创建分支，推送前 rebase 到它。
+- 分支名用 ASCII kebab-case，并带类型前缀：
+
+| 前缀 | 用途 | 示例 |
+|---|---|---|
+| `feat/` | 新功能 | `feat/stage1-std-time` |
+| `fix/` | 缺陷修复 | `fix/stage1-match-guard` |
+| `refactor/` | 不改变行为的重构 | `refactor/xuloc-modules` |
+| `test/` | 只改测试/语料 | `test/stage1-examples` |
+| `docs/` | 只改文档 | `docs/git-branch-convention` |
+| `chore/` | 构建、CI、依赖 | `chore/ci-macos` |
+
+- 一个分支只做一件事；提交信息沿用 `<type>(<scope>): <summary>`
+  （例如 `feat(xuloc): 补齐 std::fs`）。
+- 推送前跑过本文件的“验证”命令；不要 force-push 共享分支。
+- 合并后删除远端分支。AI/agent 开始改动前必须先建分支，并在回复里说明分支名。
+
+面向人类贡献者的简短版本在 `CONTRIBUTING.md`，两者冲突时以本文件为准。

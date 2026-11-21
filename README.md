@@ -234,3 +234,8 @@ stage 1 指用 Xulo 自身编写的编译器/工具链，stage 2 是 stage 1 编
 ## License
 
 MIT，见 [LICENSE](LICENSE)。
+
+## 贡献
+
+见 [`CONTRIBUTING.md`](CONTRIBUTING.md)：所有改动先开分支，`master` 只接受通过
+分支合并的内容。
