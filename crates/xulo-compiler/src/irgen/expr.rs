@@ -1117,7 +1117,257 @@ impl IrGenerator {
         Ok(args)
     }
 
-    /// 直接调用前把动态形参（`unknown`/未标注/union/optional）的实参运行时
+    /// `dyn:Trait:method`：按接收者的运行时类型在已注册的 impl 中选择目标。
+    /// 结构体/枚举用构造点登记的源级类型名，内建类型用运行时标签。
+    fn generate_dynamic_trait_dispatch(
+        &mut self,
+        rest: &str,
+        mut args: Vec<Operand>,
+    ) -> Result<Operand, XuloError> {
+        let Some((trait_name, method)) = rest.split_once(':') else {
+            return Err(XuloError::new(
+                ErrorKind::Semantic,
+                format!("malformed dynamic trait dispatch `dyn:{rest}`"),
+            ));
+        };
+        let prefix = format!("impl_{trait_name}_");
+        let suffix = format!("_{method}");
+        let mut impls: Vec<(String, FuncId)> = self
+            .trait_impls
+            .iter()
+            .filter_map(|(key, &fid)| {
+                let type_name = key
+                    .strip_prefix(&prefix)?
+                    .strip_suffix(&suffix)?
+                    .to_string();
+                Some((type_name, fid))
+            })
+            .collect();
+        impls.sort_by(|a, b| a.0.cmp(&b.0));
+        if impls.is_empty() {
+            return Err(XuloError::new(
+                ErrorKind::Semantic,
+                format!("no `impl {trait_name}` method `{method}` is registered"),
+            ));
+        }
+        // `str(v)` / `${v}` dispatch to `display` with a default Format, like
+        // the static impl branch.
+        if args.len() == 1
+            && matches!(trait_name, "Display" | "Debug")
+            && method == trait_name.to_lowercase()
+        {
+            let format = self.default_format_operand();
+            args.push(format);
+        }
+        let receiver = args.first().cloned().ok_or_else(|| {
+            XuloError::new(
+                ErrorKind::Semantic,
+                format!("`{trait_name}::{method}` needs a receiver"),
+            )
+        })?;
+
+        let func_idx = self.current_func.unwrap();
+        let ret_type = self.module.functions[impls[0].1.0].return_type.clone();
+        let result = self.module.functions[func_idx].add_local(ret_type);
+        let end_label = self.module.functions[func_idx].add_label();
+
+        for (type_name, fid) in impls {
+            let hit_label = self.module.functions[func_idx].add_label();
+            let next_label = self.module.functions[func_idx].add_label();
+            self.emit_dispatch_type_test(&type_name, receiver.clone(), hit_label, next_label)?;
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::Label(hit_label));
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::RuntimeCall {
+                    dst: None,
+                    func: RuntimeFn::ClearCallTags,
+                    args: Vec::new(),
+                });
+            let call_ret = self.module.functions[fid.0].return_type.clone();
+            let local = self.module.functions[func_idx].add_local(call_ret);
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::Call {
+                    dst: Some(local),
+                    func: fid,
+                    args: args.clone(),
+                });
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::SetLocal {
+                    dst: result,
+                    src: Operand::Local(local),
+                });
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::Jump(end_label));
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::Label(next_label));
+        }
+
+        // 静态检查保证有匹配 impl；真到了这里说明值类型与实现不一致。
+        let message = self
+            .module
+            .add_string(format!("no `impl {trait_name}` for this value"));
+        let message_local = self.module.functions[func_idx].add_local(IrType::Pointer);
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Const {
+                dst: message_local,
+                value: IrValue::String(message),
+            });
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::RuntimeCall {
+                dst: None,
+                func: RuntimeFn::Panic,
+                args: vec![
+                    Operand::Local(message_local),
+                    Operand::Const(IrValue::I64(0)),
+                ],
+            });
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Jump(end_label));
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Label(end_label));
+        Ok(Operand::Local(result))
+    }
+
+    /// 为一个 impl 的类型名生成运行时判定：struct/枚举按登记的源级名字，
+    /// 内建类型按标签。
+    fn emit_dispatch_type_test(
+        &mut self,
+        type_name: &str,
+        receiver: Operand,
+        hit_label: Label,
+        next_label: Label,
+    ) -> Result<(), XuloError> {
+        let func_idx = self.current_func.unwrap();
+        let short = |name: &str| name.rsplit("::").next().unwrap_or(name).to_string();
+        let wanted = short(type_name);
+        if let Some(key) = self
+            .structs
+            .keys()
+            .find(|key| short(key) == wanted)
+            .cloned()
+        {
+            let name_idx = self.module.add_string(key);
+            let name = self.module.functions[func_idx].add_local(IrType::Pointer);
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::Const {
+                    dst: name,
+                    value: IrValue::String(name_idx),
+                });
+            let matched = self.module.functions[func_idx].add_local(IrType::I64);
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::RuntimeCall {
+                    dst: Some(matched),
+                    func: RuntimeFn::StructTypeIs,
+                    args: vec![receiver, Operand::Local(name)],
+                });
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::Branch {
+                    condition: Operand::Local(matched),
+                    then_label: hit_label,
+                    else_label: next_label,
+                });
+            return Ok(());
+        }
+        if let Some(key) = self.enums.keys().find(|key| short(key) == wanted).cloned() {
+            let name_idx = self.module.add_string(key);
+            let name = self.module.functions[func_idx].add_local(IrType::Pointer);
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::Const {
+                    dst: name,
+                    value: IrValue::String(name_idx),
+                });
+            let matched = self.module.functions[func_idx].add_local(IrType::I64);
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::RuntimeCall {
+                    dst: Some(matched),
+                    func: RuntimeFn::EnumTypeIs,
+                    args: vec![receiver, Operand::Local(name)],
+                });
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::Branch {
+                    condition: Operand::Local(matched),
+                    then_label: hit_label,
+                    else_label: next_label,
+                });
+            return Ok(());
+        }
+        let tags: Vec<i64> = match wanted.as_str() {
+            "string" => vec![0],
+            "bool" => vec![5],
+            "null" => vec![6],
+            "float" | "f32" | "f64" => vec![2],
+            "u64" | "usize" => vec![10],
+            "int" | "i8" | "i16" | "i32" | "i64" | "isize" | "u8" | "u16" | "u32" => vec![1],
+            "List" => vec![3],
+            "Map" => vec![4],
+            _ => Vec::new(),
+        };
+        if tags.is_empty() {
+            // 未知类型名：永远不匹配，继续尝试下一个 impl。
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::Jump(next_label));
+            return Ok(());
+        }
+        let actual = self.module.functions[func_idx].add_local(IrType::I64);
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::RuntimeCall {
+                dst: Some(actual),
+                func: RuntimeFn::DetectTag,
+                args: vec![receiver],
+            });
+        let mut accumulator: Option<LocalId> = None;
+        for tag in tags {
+            let one = self.module.functions[func_idx].add_local(IrType::Bool);
+            self.module.functions[func_idx]
+                .instructions
+                .push(Instruction::Eq {
+                    dst: one,
+                    left: Operand::Local(actual),
+                    right: Operand::Const(IrValue::I64(tag)),
+                });
+            accumulator = Some(match accumulator {
+                None => one,
+                Some(previous) => {
+                    let combined = self.module.functions[func_idx].add_local(IrType::Bool);
+                    self.module.functions[func_idx]
+                        .instructions
+                        .push(Instruction::Or {
+                            dst: combined,
+                            left: Operand::Local(previous),
+                            right: Operand::Local(one),
+                        });
+                    combined
+                }
+            });
+        }
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Branch {
+                condition: Operand::Local(accumulator.unwrap()),
+                then_label: hit_label,
+                else_label: next_label,
+            });
+        Ok(())
+    }
+
     /// 标签写进调用帧。命名/缺省重排无法稳定对应时写 -1，让被调函数走运行时
     /// 检测；间接调用会先清空标签。
     fn emit_call_tags(&mut self, key: &str, call: &Call, args: &[Operand]) {
@@ -1219,7 +1469,8 @@ impl IrGenerator {
             && call.method.is_none()
             && let Some(fields) = self.structs.get(&self.resolve_type(&call.callee)).cloned()
         {
-            return self.generate_struct_ctor(call, &fields);
+            let type_name = self.resolve_type(&call.callee);
+            return self.generate_struct_ctor(&type_name, call, &fields);
         }
 
         // `Enum::Variant(...)` 构造（语义层已校验；内置 Result 与本模块
@@ -1687,12 +1938,7 @@ impl IrGenerator {
                     .map(FuncId)
             }) else {
                 if let Some(rest) = impl_name.strip_prefix("dyn:") {
-                    return Err(XuloError::new(
-                        ErrorKind::Semantic,
-                        format!(
-                            "AOT codegen does not support dynamic trait dispatch through a generic parameter (`{rest}`): the receiver's type is not static in a generic body"
-                        ),
-                    ));
+                    return self.generate_dynamic_trait_dispatch(rest, args);
                 }
                 return Err(XuloError::new(
                     ErrorKind::Semantic,

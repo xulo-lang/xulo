@@ -149,23 +149,41 @@ fn main() { print(P(x: 1)) }
 /// 泛型参数上的派发是运行时决议（`dyn:` 标注）：AOT 目前不支持，
 /// 必须给出明确错误而不是「undefined function」。
 #[test]
-fn generic_trait_dispatch_rejected_with_clear_error() {
-    let err = compile_to_ir(
+fn generic_trait_dispatch_runs() {
+    let out = compile_and_run(
         r#"
 trait Area { fn area(self): number }
-struct Rect { w: number }
-impl Area for Rect { fn area(self): number { self.w } }
-fn measure<T: Area>(x: T): number { return Area::area(x) }
-fn main() { print(measure(Rect(w: 2))) }
+trait Named { fn label(self): string }
+struct Sq { side: number }
+impl Area for Sq { fn area(self): number { self.side * self.side } }
+impl Named for Sq { fn label(self): string { "square" } }
+fn measure<T: Area>(x: T): number { Area::area(x) }
+fn describe<T>(x: T): string where T: Area + Named {
+    Named::label(x) + " of area " + str(Area::area(x))
+}
+struct Palette<T> { items: List<T> }
+impl<T: Area> Palette<T> {
+    fn total(self): number {
+        let mut sum = 0
+        for item in self.items {
+            sum = sum + Area::area(item)
+        }
+        sum
+    }
+}
+struct Box2<T> { v: T }
+impl<T: Area> Area for Box2<T> {
+    fn area(self): number { Area::area(self.v) }
+}
+fn main() {
+    print(measure(Sq(side: 2)))
+    print(describe(Sq(side: 3)))
+    print(Palette(items: [Sq(side: 1), Sq(side: 2)]).total())
+    print(Area::area(Box2(v: Sq(side: 4))))
+}
 "#,
-        Path::new("test.xulo"),
-    )
-    .expect_err("dynamic dispatch through a generic parameter must be rejected");
-    assert!(
-        err.message.contains("dynamic trait dispatch"),
-        "unexpected error: {}",
-        err.message
     );
+    assert_eq!(out, vec!["4", "square of area 9", "5", "16"]);
 }
 
 /// `print` consults a user type's `Display` first, then its `Debug`, for

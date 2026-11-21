@@ -69,6 +69,12 @@ pub enum RuntimeFn {
     ValueShallowCopy,
     /// 登记一个 `struct` 实例为值语义对象
     MarkStruct,
+    /// 登记 `struct` 实例的值语义和源级类型名（泛型 trait 派发按名字选 impl）
+    MarkStructTyped,
+    /// 运行时判定对象是否是指定 `struct` 类型（按登记的名字，忽略模块前缀）
+    StructTypeIs,
+    /// 运行时判定枚举值是否是指定枚举类型
+    EnumTypeIs,
     /// 登记一个 `Array`/tuple 为值语义数组
     MarkValueArray,
     /// `Array::filled<T, N>(value)`：N 个同值元素的新列表

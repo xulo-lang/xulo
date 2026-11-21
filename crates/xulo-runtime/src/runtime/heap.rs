@@ -916,6 +916,66 @@ pub extern "C" fn xulo_mark_struct(value: i64) {
     }
 }
 
+/// 短类型名：`m::Sq` 与 `Sq` 在派发时视为同一类型（impl 键使用源级名字）。
+fn short_type_name(name: &str) -> &str {
+    name.rsplit("::").next().unwrap_or(name)
+}
+
+/// 登记 `struct` 实例的值语义与源级类型名。构造点知道静态类型，运行时
+/// 泛型 trait 派发据此选 `impl_{Trait}_{Type}_{method}`。
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_mark_struct_typed(value: i64, type_name: *const c_char) {
+    xulo_mark_struct(value);
+    if value == 0 || type_name.is_null() {
+        return;
+    }
+    if let Ok(name) = unsafe { CStr::from_ptr(type_name) }.to_str() {
+        STRUCT_TYPE_NAMES.with(|names| {
+            names.borrow_mut().insert(value as usize, name.to_string());
+        });
+    }
+}
+
+/// `value` 是否是指定源级 struct 类型的实例。
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_struct_type_is(value: i64, type_name: *const c_char) -> i64 {
+    if value == 0 || type_name.is_null() {
+        return 0;
+    }
+    let Ok(want) = unsafe { CStr::from_ptr(type_name) }.to_str() else {
+        return 0;
+    };
+    let matched = STRUCT_TYPE_NAMES.with(|names| {
+        names
+            .borrow()
+            .get(&(value as usize))
+            .is_some_and(|have| short_type_name(have) == short_type_name(want))
+    });
+    i64::from(matched)
+}
+
+/// `value` 是否是指定源级 enum 类型的值。
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn xulo_enum_type_is(value: i64, type_name: *const c_char) -> i64 {
+    if value == 0 || type_name.is_null() {
+        return 0;
+    }
+    let Ok(want) = unsafe { CStr::from_ptr(type_name) }.to_str() else {
+        return 0;
+    };
+    let e = value as *const XuloEnum;
+    let matched = unsafe {
+        !(*e).type_name.is_null()
+            && CStr::from_ptr((*e).type_name)
+                .to_str()
+                .is_ok_and(|have| short_type_name(have) == short_type_name(want))
+    };
+    i64::from(matched)
+}
+
 /// Mark an `Array`/tuple value. `List`/`Set` share the `XuloArray`
 /// representation but keep reference semantics, so only these creation sites
 /// register.
@@ -983,10 +1043,16 @@ fn runtime_value_shallow_copy(
                 return *copy;
             }
             let source = &*(value as *const XuloObject);
+            let registered_type = STRUCT_TYPE_NAMES.with(|names| names.borrow().get(&key).cloned());
             let copy = xulo_alloc_object(source.fields.len());
             STRUCT_OBJECTS.with(|objects| {
                 objects.borrow_mut().insert(copy as usize);
             });
+            if let Some(type_name) = registered_type {
+                STRUCT_TYPE_NAMES.with(|names| {
+                    names.borrow_mut().insert(copy as usize, type_name);
+                });
+            }
             seen.insert(key, copy as i64);
             for (index, (name, field)) in source.fields.iter().enumerate() {
                 let field_tag = source.field_tags.get(index).copied().unwrap_or(1);

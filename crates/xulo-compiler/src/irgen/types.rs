@@ -109,6 +109,7 @@ impl IrGenerator {
     /// 结构体构造：按字段顺序 NewObject；命名参数、位置参数、默认值、缺省 null
     pub(super) fn generate_struct_ctor(
         &mut self,
+        type_name: &str,
         call: &Call,
         fields: &[StructField],
     ) -> Result<Operand, XuloError> {
@@ -159,14 +160,23 @@ impl IrGenerator {
                 dst: local,
                 fields: field_ops,
             });
-        // Mark the instance as value-category so binding/assignment copies it
-        // (spec `memory-and-runtime.md`); `Map` objects stay shared references.
+        // Mark the instance as value-category and remember its source type so a
+        // dynamic trait dispatch can pick `impl_{Trait}_{Type}_{method}`
+        // (spec `memory-and-runtime.md`; `types/traits.md`).
+        let name_idx = self.module.add_string(type_name.to_string());
+        let name_local = self.module.functions[func_idx].add_local(IrType::Pointer);
+        self.module.functions[func_idx]
+            .instructions
+            .push(Instruction::Const {
+                dst: name_local,
+                value: IrValue::String(name_idx),
+            });
         self.module.functions[func_idx]
             .instructions
             .push(Instruction::RuntimeCall {
                 dst: None,
-                func: RuntimeFn::MarkStruct,
-                args: vec![Operand::Local(local)],
+                func: RuntimeFn::MarkStructTyped,
+                args: vec![Operand::Local(local), Operand::Local(name_local)],
             });
         Ok(Operand::Local(local))
     }

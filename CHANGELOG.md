@@ -71,6 +71,15 @@ values, and is left to a future standard-library `std/ui` module.
 
 ### Fixed
 
+- AOT: dynamic trait dispatch through a generic parameter now works. Struct
+  construction registers the source type name alongside the value-category
+  marker (and copies preserve it), and `dyn:{Trait}:{method}` picks the
+  registered `impl_{Trait}_{Type}_{method}` by testing the receiver's runtime
+  struct/enum name (primitive impls use the runtime tag). This covers
+  `Area::area(x)` with `x: T`, generic `impl`s such as `Box2<T>`, and inherent
+  methods that loop over a `List<T>`. `types/generics_impl.xulo` no longer
+  carries `@no-aot`. Regression:
+  `crates/xulo-compiler/tests/trait_dispatch_codegen_tests.rs::generic_trait_dispatch_runs`.
 - AOT: match guards, or-patterns, numeric range patterns, and type patterns now
   lower instead of being rejected. Guards run after the pattern's bindings; an
   or-pattern tests each alternative before one shared arm body; ranges compare

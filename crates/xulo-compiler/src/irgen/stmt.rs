@@ -124,31 +124,43 @@ impl IrGenerator {
             Operand::Const(IrValue::Null)
         };
 
-        // `Array<T, N>` shares the list representation and an object literal
-        // annotated with a struct type is a struct, not a `Map`; register the
-        // value category before the binding copy can preserve it
-        // (spec `memory-and-runtime.md`).
-        let value_marker = match &binding.type_annotation {
-            Some(Type::Named(name, _)) if name == "Array" => Some(RuntimeFn::MarkValueArray),
+        // `Array<T, N>` shares the list representation; an object literal
+        // annotated with a struct type is a struct, not a `Map`. Register both
+        // the value category and the source type name (spec
+        // `memory-and-runtime.md`; dynamic trait dispatch needs the name).
+        let init_val = match &binding.type_annotation {
+            Some(Type::Named(name, _)) if name == "Array" => {
+                self.module.functions[func_idx]
+                    .instructions
+                    .push(Instruction::RuntimeCall {
+                        dst: None,
+                        func: RuntimeFn::MarkValueArray,
+                        args: vec![init_val.clone()],
+                    });
+                init_val
+            }
             Some(Type::Named(name, _)) => {
                 let resolved = self.resolve_type(name);
-                self.structs
-                    .contains_key(&resolved)
-                    .then_some(RuntimeFn::MarkStruct)
+                if self.structs.contains_key(&resolved) {
+                    let name_idx = self.module.add_string(resolved);
+                    let name_local = self.module.functions[func_idx].add_local(IrType::Pointer);
+                    self.module.functions[func_idx]
+                        .instructions
+                        .push(Instruction::Const {
+                            dst: name_local,
+                            value: IrValue::String(name_idx),
+                        });
+                    self.module.functions[func_idx]
+                        .instructions
+                        .push(Instruction::RuntimeCall {
+                            dst: None,
+                            func: RuntimeFn::MarkStructTyped,
+                            args: vec![init_val.clone(), Operand::Local(name_local)],
+                        });
+                }
+                init_val
             }
-            _ => None,
-        };
-        let init_val = if let Some(marker) = value_marker {
-            self.module.functions[func_idx]
-                .instructions
-                .push(Instruction::RuntimeCall {
-                    dst: None,
-                    func: marker,
-                    args: vec![init_val.clone()],
-                });
-            init_val
-        } else {
-            init_val
+            _ => init_val,
         };
         // `let x = e`: a value-category aggregate gets its own container;
         // reference-category values keep sharing (R8).

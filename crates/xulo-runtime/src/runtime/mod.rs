@@ -128,6 +128,9 @@ thread_local! {
     /// `Array`/tuple 的数组指针。绑定/赋值时这些值要各自独立；同表示的
     /// `Map`/`List`/`Set` 是引用语义，不登记，保持共享。
     static STRUCT_OBJECTS: RefCell<std::collections::HashSet<usize>> = RefCell::new(std::collections::HashSet::new());
+    /// struct 实例 -> 源级类型名（泛型 trait 派发按运行时类型选 impl）
+    static STRUCT_TYPE_NAMES: RefCell<std::collections::HashMap<usize, String>> =
+        RefCell::new(std::collections::HashMap::new());
     static VALUE_ARRAYS: RefCell<std::collections::HashSet<usize>> = RefCell::new(std::collections::HashSet::new());
 }
 
@@ -311,6 +314,7 @@ pub extern "C" fn xulo_cleanup() {
     });
     MATCH_GROUPS.with(|groups| groups.borrow_mut().clear());
     STRUCT_OBJECTS.with(|objects| objects.borrow_mut().clear());
+    STRUCT_TYPE_NAMES.with(|names| names.borrow_mut().clear());
     VALUE_ARRAYS.with(|arrays| arrays.borrow_mut().clear());
 
     ENVS.with(|envs| {

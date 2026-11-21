@@ -4,8 +4,6 @@
 // - `impl<T: Bound> Trait for Type<T>` 给泛型类型实现 trait
 // - 函数签名后面可以跟 `where T: A + B`，多 bound 用 `+` 连接
 // - `const N: int` 是 const 泛型参数；用到它的 `Array<T, N>` 需要显式类型实参
-//
-// @no-aot all: AOT 不支持经泛型参数的 trait 派发（`Area::area(x)`，x: T）
 
 trait Area {
     fn area(self): number

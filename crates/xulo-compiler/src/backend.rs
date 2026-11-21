@@ -112,6 +112,24 @@ pub(crate) const RUNTIME_FNS: &[RuntimeFnDesc] = &[
         returns: &[],
     },
     RuntimeFnDesc {
+        name: "xulo_mark_struct_typed",
+        addr: xulo_runtime::runtime::xulo_mark_struct_typed as *const u8,
+        params: &[I64, I64],
+        returns: &[],
+    },
+    RuntimeFnDesc {
+        name: "xulo_struct_type_is",
+        addr: xulo_runtime::runtime::xulo_struct_type_is as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
+        name: "xulo_enum_type_is",
+        addr: xulo_runtime::runtime::xulo_enum_type_is as *const u8,
+        params: &[I64, I64],
+        returns: &[I64],
+    },
+    RuntimeFnDesc {
         name: "xulo_mark_value_array",
         addr: xulo_runtime::runtime::xulo_mark_value_array as *const u8,
         params: &[I64],
