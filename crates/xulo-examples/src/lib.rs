@@ -97,6 +97,9 @@ pub struct Directives {
     pub no_aot: Vec<Gap>,
     /// Excluded from the AOT differential; the native build is not checked.
     pub skip_aot: Vec<Gap>,
+    /// Compared as a normalized failure shape instead of byte for byte: both
+    /// paths must fail with the same runtime message (T13 option c).
+    pub failure_shape: Vec<Gap>,
     /// Not executed on this platform (`xulo check` only).
     pub no_run: Vec<Gap>,
     /// Expected static-error code from `xulo check`.
@@ -122,6 +125,11 @@ impl Directives {
     /// Why this example is outside the AOT differential here, as a skip.
     pub fn skip_aot_here(&self) -> Option<&str> {
         Self::first_here(&self.skip_aot)
+    }
+
+    /// Why this example compares a normalized failure shape here.
+    pub fn failure_shape_here(&self) -> Option<&str> {
+        Self::first_here(&self.failure_shape)
     }
 
     /// Why this example is check-only here.
@@ -273,6 +281,10 @@ fn parse_directives(path: &Path, source: &str) -> Directives {
             directives
                 .skip_aot
                 .push(parse_gap(path, at, "skip-aot", arg));
+        } else if let Some(arg) = argument(rest, "aot-failure-shape") {
+            directives
+                .failure_shape
+                .push(parse_gap(path, at, "aot-failure-shape", arg));
         } else if let Some(arg) = argument(rest, "no-run") {
             directives.no_run.push(parse_gap(path, at, "no-run", arg));
         } else if let Some(arg) = argument(rest, "error") {

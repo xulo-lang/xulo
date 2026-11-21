@@ -64,6 +64,70 @@ fn assert_same(example: &Path, kind: &str, interpreted: &[u8], native: &[u8]) {
     );
 }
 
+/// Strip ANSI SGR sequences so the diagnostic can be recognized in captured
+/// output (the CLI colors its header and source snippet).
+fn strip_ansi(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' && chars.peek() == Some(&'[') {
+            chars.next();
+            for next in chars.by_ref() {
+                if next.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+/// The runtime message both paths carry for a failure, independent of their
+/// rendering: `error[E0006] runtime: …` for the interpreter and `panic: …` for
+/// the native binary.
+fn failure_message(stderr: &str) -> Option<String> {
+    let plain = strip_ansi(stderr);
+    for line in plain.lines() {
+        let line = line.trim();
+        let Some(message) = line
+            .split_once("runtime: ")
+            .map(|(_, rest)| rest)
+            .or_else(|| line.strip_prefix("panic: "))
+        else {
+            continue;
+        };
+        let message = message.trim();
+        // The interpreter prefixes operator failures with the operator
+        // (`` `/`: division by zero``) and panics with `uncaught exception:`.
+        let message = message
+            .strip_prefix("uncaught exception: ")
+            .unwrap_or(message);
+        let message = message
+            .split_once("`: ")
+            .filter(|(head, _)| head.starts_with('`'))
+            .map(|(_, rest)| rest)
+            .unwrap_or(message);
+        return Some(message.trim().to_string());
+    }
+    None
+}
+
+#[test]
+fn failure_shape_normalizes_both_renderings() {
+    let interpreter = "\u{1b}[1merror\u{1b}[0m[\u{1b}[36mE0006\u{1b}[0m] runtime: `/`: division by zero\n --> x.xulo:1:1\n";
+    let native = "panic: division by zero\n";
+    assert_eq!(
+        failure_message(interpreter).as_deref(),
+        Some("division by zero")
+    );
+    assert_eq!(failure_message(native).as_deref(), Some("division by zero"));
+    let caught = "error[E0006] runtime: uncaught exception: cannot continue";
+    assert_eq!(failure_message(caught).as_deref(), Some("cannot continue"));
+    assert_eq!(failure_message("no failure here"), None);
+}
+
 #[test]
 fn aot_matches_interpreter_on_examples() {
     if std::env::var_os("XULO_AOT_DIFFERENTIAL").is_none() {
@@ -109,6 +173,51 @@ fn aot_matches_interpreter_on_examples() {
                 "{name} now matches natively; remove its `@no-aot` marker ({reason})"
             );
             eprintln!("known AOT gap: {name}: {reason}");
+            continue;
+        }
+        if let Some(reason) = unit.directives.failure_shape_here() {
+            // T13 option (c): both paths keep their own failure format, but the
+            // differential compares the normalized failure shape — same failing
+            // exit status and the same runtime message. stdout is not compared:
+            // the interpreter drops buffered output, the native binary streams it.
+            let interpreted = run(&["run", path], &root);
+            assert!(
+                !interpreted.status.success(),
+                "{name}: `xupm run` was expected to fail"
+            );
+            let build = run(&["build", path], &root);
+            assert!(
+                build.status.success(),
+                "`xupm build {}` failed:\n{}",
+                example.display(),
+                render(&build.stderr)
+            );
+            let artifact = artifact_path(&build);
+            let native = Command::new(&artifact)
+                .current_dir(&root)
+                .output()
+                .unwrap_or_else(|e| panic!("cannot run {}: {e}", artifact.display()));
+            assert!(
+                !native.status.success(),
+                "{name}: the AOT binary was expected to fail"
+            );
+
+            let interpreted_msg = failure_message(&render(&interpreted.stderr))
+                .unwrap_or_else(|| panic!("{name}: no runtime message in interpreter stderr"));
+            let native_msg = failure_message(&render(&native.stderr))
+                .unwrap_or_else(|| panic!("{name}: no panic message in native stderr"));
+            assert_eq!(
+                interpreted_msg, native_msg,
+                "{name}: normalized failure messages differ"
+            );
+            if let Some(expected) = &unit.directives.panic {
+                assert!(
+                    interpreted_msg.contains(expected),
+                    "{name}: failure message `{interpreted_msg}` does not contain `{expected}`"
+                );
+            }
+            eprintln!("normalized failure shape: {name}: {reason}");
+            compared += 1;
             continue;
         }
         if let Some(code) = &unit.directives.error {

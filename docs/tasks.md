@@ -252,8 +252,9 @@ Priority P1 · needed by Gate 4 · source: `stage1-readiness.md` §7 WP3, §6.6�
 - [x] **L15** Fix `Array<T, N>.len` in the AOT path.
 - [x] **T4** Add a differential runner that builds every example program both
       ways and compares output. Discovery and the `@no-aot` / `@skip-aot` /
-      `@no-run` directives come from `crates/xulo-examples`, shared with the
-      `examples` gate, and a `@no-aot` marker that starts building fails the run.
+      `@no-run` / `@aot-failure-shape` directives come from
+      `crates/xulo-examples`, shared with the `examples` gate, and a `@no-aot`
+      marker that starts building fails the run.
 - [x] **B3a** Verify that `xupm build` failures return a nonzero exit status;
       fix the pipeline if they do not.
 - [x] **G3** Make the `§6.6–6.7` probes pass.
@@ -321,10 +322,8 @@ Priority P1 · needed by Gate 3 and the bootstrap corpus · source:
         now part of the corpus).
       The AOT differential then measured the new corpus and recorded these gaps
       with `@no-aot` (each one must keep failing, so closing it forces a diff):
-      match guard/or/range/type patterns, `spawn`/`lock`/service,
-      trait dispatch through a generic parameter, and failure-path reporting
-      (the interpreter buffers `print` and writes `error[E0006]`, the native
-      runtime writes `panic: …`; see T13). Block-scoped shadowing, `f32`
+      match guard/or/range/type patterns, `spawn`/`lock`/service, and
+      trait dispatch through a generic parameter. Block-scoped shadowing, `f32`
       arithmetic, the `Error("…")` constructor, nested tuple access plus
       tuple pass/return, and `defer` were closed later: the AOT path now
       restores bindings at every nested block, gives `f32`/`f64` bindings an
@@ -332,6 +331,9 @@ Priority P1 · needed by Gate 3 and the bootstrap corpus · source:
       tuple positional access through nested element types and tags tuple
       returns as arrays, and drains per-block `defer` queues on every block
       exit, so all five agree with the interpreter and their markers are gone.
+      Failure-path reporting follows T13 option (c): the two formats stay, and
+      the differential compares a normalized failure shape for examples that
+      declare `@aot-failure-shape`.
 - [x] **T9** Measure stage 1 against the same corpus.
       `xuloc/main.xulo` gained a `scan` mode; `XULO_STAGE1_MODE=scan
       XULO_STAGE1_DIR=examples xulo run xuloc/main.xulo` prints one line per file
@@ -575,20 +577,20 @@ tag_detection` (P2).
       operation, then add a differential example with a value that differs
       between the two formats.
 
-- [ ] **T13** Decide the failure-path reporting contract.
-      Two examples stay `@no-aot` because a runtime failure prints different
+- [x] **T13** Decide the failure-path reporting contract.
+      Two examples stayed `@no-aot` because a runtime failure prints different
       things on the two paths, and neither is a bug in the lowering:
       the interpreter's CLI renders `error[E0006] runtime: …` with a source
       snippet (` --> path:line:col`) and drops the buffered stdout, while the
       native runtime streams stdout as it runs and prints `panic: <message>`.
-      Byte parity therefore needs one of: (a) the compiler embedding the
-      rendered diagnostic (message, canonical path, source line, caret) in the
-      binary and having the runtime print it before exiting, (b) a
-      runtime-only message contract that the interpreter also adopts for
-      failures (losing the snippet), or (c) keeping the two formats and
-      teaching the differential to compare a normalized failure shape for
-      examples that declare it. Pick one before `errors/runtime_failure.xulo`
-      and `errors/division_by_zero.xulo` can leave the gap list.
+      Adopted **option (c)**: the two formats stay, and the differential
+      compares a normalized failure shape for examples that declare
+      `@aot-failure-shape <platform>: …` — both paths must exit nonzero and
+      carry the same runtime message (`division by zero`, `cannot continue`);
+      stdout and diagnostic decoration are not compared.
+      `errors/runtime_failure.xulo` and `errors/division_by_zero.xulo` now use
+      the directive instead of `@no-aot`. Regression:
+      `crates/xupm/tests/aot_differential.rs::failure_shape_normalizes_both_renderings`.
 
 ## Out of scope for stage 1 bootstrap
 

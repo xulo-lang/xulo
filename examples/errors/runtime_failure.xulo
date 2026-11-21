@@ -4,8 +4,9 @@
 // - 诊断以 `error[E0006] runtime: ...` 写到 stderr，退出码为 1
 // - 解释器把 `print` 的输出收集到程序正常结束才写出，所以失败路径上只有诊断
 //
-// @no-aot all: 失败路径的两条路径不比较——解释器写 `error[E0006]` 并丢弃已收集的
-// stdout，原生运行时写 `panic: …` 并保留 stdout
+// @aot-failure-shape all: 两条路径的失败格式不同（解释器带源码片段并丢弃
+// stdout，原生路径流式写出 stdout），差分只比较失败形态：都非零退出、运行时
+// 消息一致；stdout 不比较（T13 选项 c）
 // @panic cannot continue
 
 fn check(ok: bool) {

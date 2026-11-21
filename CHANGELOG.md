@@ -26,6 +26,14 @@ values, and is left to a future standard-library `std/ui` module.
 
 ### Changed
 
+- The AOT differential now accepts `@aot-failure-shape <platform>:` (T13 option
+  c). Examples that declare it must fail on both paths with the same normalized
+  runtime message; stdout and diagnostic decoration are not compared, so the
+  interpreter keeps its `error[E0006]` + source snippet and the native binary
+  keeps `panic: …`. `errors/division_by_zero.xulo` and
+  `errors/runtime_failure.xulo` use the directive instead of `@no-aot`.
+  Regression:
+  `crates/xupm/tests/aot_differential.rs::failure_shape_normalizes_both_renderings`.
 - The `README` and `learn/book` guide now describe the UI-less 0.2.0 language:
   `mod` / `use` / `pub use` instead of `import ... from`, `Result<T, E>` and `?`
   instead of `try` / `catch` / `throw`, the specification's 61-keyword and

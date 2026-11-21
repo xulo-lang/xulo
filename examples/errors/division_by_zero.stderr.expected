@@ -1,7 +1,7 @@
 error[E0006] runtime: `/`: division by zero
- --> \\?\E:\xulo-projects\xulo\examples\errors\division_by_zero.xulo:14:11
+ --> \\?\E:\xulo-projects\xulo\examples\errors\division_by_zero.xulo:15:11
 
      │[0m 
- 14  │[0m     print(10 / zero)
+ 15  │[0m     print(10 / zero)
      │[0m           ^^^^^^^^^^
 

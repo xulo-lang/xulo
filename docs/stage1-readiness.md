@@ -247,7 +247,7 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 | R6 | `panic`, `assert`, and process exit status | **OK** | `crates/xulo-cli/tests/matrix_probes/R6_panic_assert.xulo`, `crates/xulo-cli/tests/process_exit.rs` | 1 |
 | R7 | `defer` executes at scope exit, reverse order | **OK** | `leave_block` drains the scope queue on normal exit and `?` propagation (before `return`/`break`/`continue` pass out); `crates/xulo-runtime/tests/defer.rs` | 3 |
 | R8 | Value/reference semantics for `copy`/`move` | **OK** | `copy` deep-copies lists, maps, sets, builders, structs, enums, and tuples, mirrors cycles, and keeps identity-carrying values shared (`crates/xulo-runtime/tests/native.rs::copy_detaches_sets_enums_and_nested_containers`, `crates/xulo-compiler/tests/aot_syntax_coverage_tests.rs::copy_detaches_reference_values_and_keeps_float_slots`); `move` transfers and invalidates the binding (L21). Plain `let`, assignment, destructuring, loop, and match binding now apply the value/reference table: `struct`/`enum`/`Array`/tuple/`Range` values get their own container and `List`/`Map`/`Set`/`StringBuilder` stay shared (`crates/xulo-runtime/tests/value_semantics.rs`, `crates/xulo-compiler/tests/aot_syntax_coverage_tests.rs::bindings_copy_value_aggregates_and_share_references`). | — |
-| R9 | Interpreter and AOT produce identical observable behavior | **OK** | `crates/xupm/tests/aot_differential.rs` compares all 30 top-level examples byte for byte, including dynamic JSON index tags, generic bool returns, HTTP server round-trips, process `Command`/`Child` handles, and `Task::resolve`/`all`/`race`/`timeout`; the shared baseline is empty. Compiled async calls run eagerly, so race order and timeout durations follow synchronous completion; that model is part of the AOT backend, not an unrecorded baseline gap. | 4 |
+| R9 | Interpreter and AOT produce identical observable behavior | **OK** | `crates/xupm/tests/aot_differential.rs` compares all 30 top-level examples byte for byte, including dynamic JSON index tags, generic bool returns, HTTP server round-trips, process `Command`/`Child` handles, and `Task::resolve`/`all`/`race`/`timeout`; the shared baseline is empty. Two failing examples declare `@aot-failure-shape` and compare a normalized failure shape (same exit status and runtime message, T13 option c). Compiled async calls run eagerly, so race order and timeout durations follow synchronous completion; that model is part of the AOT backend, not an unrecorded baseline gap. | 4 |
 | R10 | Deterministic output formatting for diagnostics and integers | **OK** | `int`/`u64` print and stringify through exact decimal formatting in both paths; `crates/xulo-runtime/tests/integers.rs` covers `u64::MAX`, `2^63`, and `-2^63` | 2 |
 
 ### 5.3 Collections and text
@@ -302,7 +302,7 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 | T1 | Unit and integration tests | **OK** | `cargo test --workspace`: 2129 passed, 0 failed (2026-11-17) | 1 |
 | T2 | All examples run in CI | **OK** | `crates/xulo-cli/tests/examples.rs` discovers every program unit, runs `xulo check`, executes it, and compares stdout/stderr with `examples/**/<name>.expected`; CI drives it with the release binary (`XULO_BIN`) | 1 |
 | T3 | Pinned-spec example conformance runner | **OK** | `crates/xulo-cli/tests/spec_conformance.rs`: 111 annotated examples extracted from the pinned spec, 78 pass, 33 triaged in `spec_conformance_baseline.tsv` (§6.10) | 2 |
-| T4 | Interpreter vs. AOT differential suite | **OK** | `crates/xupm/tests/aot_differential.rs` discovers every example program (including multi-file units), builds and executes it, and compares stdout/stderr against `xupm run`. Gaps carry `// @no-aot <platform>:` in the example itself and must keep failing, so a recorded gap cannot rot; `@skip-aot` covers test-only examples. CI runs it on Linux and Windows after the release build, and macOS is verified locally. | 4 |
+| T4 | Interpreter vs. AOT differential suite | **OK** | `crates/xupm/tests/aot_differential.rs` discovers every example program (including multi-file units), builds and executes it, and compares stdout/stderr against `xupm run`. Gaps carry `// @no-aot <platform>:` in the example itself and must keep failing, so a recorded gap cannot rot; `@skip-aot` covers test-only examples, and `@aot-failure-shape` compares a normalized failure shape (T13 option c). CI runs it on Linux and Windows after the release build, and macOS is verified locally. | 4 |
 | T5 | Stage 1 self-parse/self-check/self-build tests | **OK** | Self-parse, self-check, and interpreter smoke tests are live (`crates/xulo-cli/tests/stage1.rs`, `xuloc/tests.xulo`); `crates/xupm/tests/stage1_build.rs` covers the corpus builds, the self-built stage 2, and the stage 1/stage 2 differential (T5c). | 2–5 |
 | T6 | Robustness/fuzz tests | **OK** | `crates/xulo-compiler/tests/robustness.rs`, `crates/xulo-parser/tests/parser_tests.rs` | 1 |
 | T7 | Spec and std-spec submodules aligned with the pin | **OK** | `crates/xulo-cli/tests/submodule_pins.rs` compares the `HEAD` gitlink, the index, and the checked-out submodule against `spec@815edad` / `std-spec@a2e4cb7`; CI job `conformance` | 1 |
@@ -639,7 +639,8 @@ wildcard so a later argument can fix the callback's type parameter.
 
 **Exit:** §6.6–6.7 probes pass; stage 1 can be built by `xupm` and matches
 `xulo run` on the bootstrap workload (Gate 4, reached), and every example
-program compares byte for byte.
+program compares byte for byte except the two failing examples that declare
+`@aot-failure-shape` (normalized failure shape, T13 option c).
 
 ### WP4 — `defer` semantics (P1, Gate 3)
 
@@ -782,7 +783,7 @@ Last recorded verification (2026-11-18):
 | Examples gate | `cargo test -p xulo-cli --test examples` — 6 passed: discovery, `xulo check`, run + sidecar, `xulo test` reports, coverage table |
 | Grammar coverage | `examples/coverage.tsv` maps all 194 productions; one `error-only:` exemption (`StructPattern`, §6.12) |
 | AOT smoke tests | `hello` on macOS/Windows; `structs`, `trait_shapes`, `generics`, `modules` probed locally |
-| AOT differential suite | Every discovered example program compares byte for byte on Linux/macOS; Windows declares `ffi.xulo` (`@no-aot windows`) and compares the rest plus the stage 1 binary |
+| AOT differential suite | Every discovered example program compares byte for byte on Linux/macOS, except the two failing examples that declare `@aot-failure-shape` (normalized failure shape, T13); Windows declares `ffi.xulo` (`@no-aot windows`) and compares the rest plus the stage 1 binary |
 | AOT build failure | `xupm build` exits nonzero and reports the diagnostic (`crates/xupm/tests/cli.rs`) |
 | Stage 1 smoke tests | `cargo test -p xulo-cli --test stage1` — self-parses `xuloc/*.xulo`, clean diagnostics, `xulo test` |
 | Stage 1 under `xupm test` | `cargo test -p xupm --test cli runs_stage1_test_file` — 10 stage 1 tests passed |

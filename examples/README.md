@@ -62,6 +62,7 @@ XULO_BLESS=1 cargo test -p xulo-cli --test examples
 |------|------|
 | `@no-aot all:` / `@no-aot windows:` | 不参与 AOT 差分：原生构建必须失败，或者两条路径的输出仍然不一致；一旦一致，差分测试会要求删掉标记 |
 | `@skip-aot all:` | 不参与 AOT 差分，也不检查能否构建（例如测试载体） |
+| `@aot-failure-shape all:` | 参与 AOT 差分，但只比较归一化失败形态：两条路径都失败且运行时消息一致；stdout 与诊断格式允许不同（`docs/tasks.md` T13） |
 | `@no-run windows:` | 该平台只 `xulo check`，不 `xulo run` |
 | `@error E0201` | `xulo check` 必须失败并报该错误码，跳过运行 |
 | `@panic 文本` | `xulo run` 必须非零退出且 stderr 含该文本 |
@@ -109,16 +110,17 @@ XULO_BLESS=1 cargo test -p xulo-cli --test examples
 
 - 文档注释（`spec/documentation-comments.md` 的提取模型 / 标签 / 包索引）尚未
   实现；示例里的 `///`、`//!` 只是 trivia，`basics/lexical.xulo` 只演示了词法层。
-- AOT 后端还有 6 处已知差距（5 个 `@no-aot all:` + 1 个 `@no-aot windows:`），
+- AOT 后端还有 4 处已知差距（3 个 `@no-aot all:` + 1 个 `@no-aot windows:`），
   另有 2 个 `@skip-aot`（测试载体）。差分测试要求标记过的程序**继续失败**，
   修好后必须同步删标记。清单见 `docs/tasks.md` T8：match
   guard/or/区间/类型模式、`spawn`/`lock`/service、泛型 trait 派发、
-  失败路径报告、Windows FFI。块级遮蔽、`f32` 运算、`Error("…")` 构造、
-  嵌套元组/元组传参与返回、`defer` 已经修好，标记已删。
-- 失败路径报告仍不一致，且不是实现疏漏：解释器经 CLI 渲染完整诊断
-  （`error[E0006]` + 源码位置 + 片段）并丢弃缓冲区里的 stdout，原生运行时只有
-  `panic: …` 且 stdout 已经流式写出。要做到逐字节一致，得把诊断（含源码片段）
-  编进二进制，属于设计取舍 —— 见 `docs/tasks.md` T13。
+  Windows FFI。块级遮蔽、`f32` 运算、`Error("…")` 构造、
+  嵌套元组/元组传参与返回、`defer`、失败路径报告已经修好，标记已删。
+- 失败路径按 T13 的选项 (c) 处理：两条路径保留各自的失败格式（解释器是
+  `error[E0006]` + 源码片段并丢弃缓冲区 stdout，原生是 `panic: …` 且 stdout
+  已流式写出），差分只要求都失败且归一化后的运行时消息一致。使用该契约的
+  例子声明 `@aot-failure-shape all:`，见 `errors/division_by_zero.xulo` 与
+  `errors/runtime_failure.xulo`。
 - `f32` 目前只是标注：两个字面量与算术都不做 binary32 舍入，两个执行路径都
   按 `f64` 计算（`spec/types/primitive-types.md` 要求按各自格式的 IEEE-754
   语义）。`types/float_math.xulo` 只用两种格式都精确的值，所以输出不受影响；
