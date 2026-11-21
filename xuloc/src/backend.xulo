@@ -1315,6 +1315,21 @@ impl Emitter {
         if constant != "" {
             return constant
         }
+        if value == "std::math::PI" {
+            return "xr_float(3.141592653589793)"
+        }
+        if value == "std::math::E" {
+            return "xr_float(2.718281828459045)"
+        }
+        if value == "std::math::TAU" {
+            return "xr_float(6.283185307179586)"
+        }
+        if value == "std::math::INFINITY" {
+            return "xr_float(INFINITY)"
+        }
+        if value == "std::math::NAN" {
+            return "xr_float(NAN)"
+        }
         // `mod::CONST` / `alias::CONST`: declaration collection flattens modules,
         // so the module prefix is not part of the C name.
         let parts = split_path(value)
@@ -1846,12 +1861,136 @@ impl Emitter {
         if path == "std::io::flush" {
             return "xr_io_flush()"
         }
+        if path == "std::path::join" or path == "std::path::relative" {
+            if args.len != 2 {
+                self.fail("`" + path + "` expects two arguments")
+                return "xr_nil()"
+            }
+            if path == "std::path::join" {
+                return "xr_path_join(" + args[0] + ", " + args[1] + ")"
+            }
+            return "xr_path_relative(" + args[0] + ", " + args[1] + ")"
+        }
+        if path == "std::path::with_ext" {
+            if args.len != 2 {
+                self.fail("`std::path::with_ext` expects two arguments")
+                return "xr_nil()"
+            }
+            return "xr_path_with_ext(" + args[0] + ", " + args[1] + ")"
+        }
+        if path == "std::path::is_absolute"
+            or path == "std::path::dirname"
+            or path == "std::path::basename"
+            or path == "std::path::ext"
+            or path == "std::path::stem"
+            or path == "std::path::normalize"
+            or path == "std::path::split"
+        {
+            if args.len != 1 {
+                self.fail("`" + path + "` expects one argument")
+                return "xr_nil()"
+            }
+            if path == "std::path::is_absolute" {
+                return "xr_path_is_absolute(" + args[0] + ")"
+            }
+            if path == "std::path::dirname" {
+                return "xr_path_dirname(" + args[0] + ")"
+            }
+            if path == "std::path::basename" {
+                return "xr_path_basename(" + args[0] + ")"
+            }
+            if path == "std::path::ext" {
+                return "xr_path_ext(" + args[0] + ")"
+            }
+            if path == "std::path::stem" {
+                return "xr_path_stem(" + args[0] + ")"
+            }
+            if path == "std::path::normalize" {
+                return "xr_path_normalize(" + args[0] + ")"
+            }
+            return "xr_path_split(" + args[0] + ")"
+        }
+        if path == "std::hint::black_box" {
+            if args.len != 1 {
+                self.fail("`std::hint::black_box` expects one argument")
+                return "xr_nil()"
+            }
+            return args[0]
+        }
+        if path == "std::hint::spin_loop" {
+            return "xr_nil()"
+        }
         if path == "std::hint::likely" or path == "std::hint::unlikely" {
             if args.len != 1 {
                 self.fail("`" + path + "` expects one argument")
                 return "xr_nil()"
             }
             return args[0]
+        }
+        if path == "std::math::random" {
+            return "xr_math_random()"
+        }
+        if path == "std::math::abs"
+            or path == "std::math::sign"
+            or path == "std::math::sqrt"
+            or path == "std::math::cbrt"
+            or path == "std::math::sin"
+            or path == "std::math::cos"
+            or path == "std::math::tan"
+            or path == "std::math::asin"
+            or path == "std::math::acos"
+            or path == "std::math::atan"
+            or path == "std::math::log"
+            or path == "std::math::log2"
+            or path == "std::math::log10"
+            or path == "std::math::log1p"
+            or path == "std::math::exp"
+            or path == "std::math::expm1"
+            or path == "std::math::floor"
+            or path == "std::math::ceil"
+            or path == "std::math::round"
+            or path == "std::math::trunc"
+            or path == "std::math::pop_count"
+            or path == "std::math::count_leading_zeros"
+            or path == "std::math::count_trailing_zeros"
+        {
+            if args.len != 1 {
+                self.fail("`" + path + "` expects one argument")
+                return "xr_nil()"
+            }
+            return "xr_math_" + path.slice(11, path.len) + "(" + args[0] + ")"
+        }
+        if path == "std::math::min"
+            or path == "std::math::max"
+            or path == "std::math::pow"
+            or path == "std::math::hypot"
+            or path == "std::math::atan2"
+            or path == "std::math::rotate_left"
+            or path == "std::math::rotate_right"
+            or path == "std::math::wrapping_add"
+            or path == "std::math::wrapping_sub"
+            or path == "std::math::wrapping_mul"
+            or path == "std::math::random_int"
+            or path == "std::math::to_fixed"
+        {
+            if args.len != 2 {
+                self.fail("`" + path + "` expects two arguments")
+                return "xr_nil()"
+            }
+            return "xr_math_"
+                + path.slice(11, path.len)
+                + "("
+                + args[0]
+                + ", "
+                + args[1]
+                + ")"
+        }
+        if path == "std::math::clamp" {
+            if args.len != 3 {
+                self.fail("`std::math::clamp` expects three arguments")
+                return "xr_nil()"
+            }
+            return "xr_math_clamp(" + args[0] + ", " + args[1] + ", " + args[2] + ")"
         }
         if path == "std::os::getenv" {
             if args.len != 1 {
@@ -1862,6 +2001,54 @@ impl Emitter {
         }
         if path == "std::os::platform" {
             return "xr_os_platform()"
+        }
+        if path == "std::os::cwd" {
+            return "xr_os_cwd()"
+        }
+        if path == "std::os::chdir" {
+            if args.len != 1 {
+                self.fail("`std::os::chdir` expects one argument")
+                return "xr_nil()"
+            }
+            return "xr_os_chdir(" + args[0] + ")"
+        }
+        if path == "std::os::tmp_dir" {
+            return "xr_os_tmp_dir()"
+        }
+        if path == "std::os::home_dir" {
+            return "xr_os_home_dir()"
+        }
+        if path == "std::os::setenv" {
+            if args.len != 2 {
+                self.fail("`std::os::setenv` expects two arguments")
+                return "xr_nil()"
+            }
+            return "xr_os_setenv(" + args[0] + ", " + args[1] + ")"
+        }
+        if path == "std::os::unsetenv" {
+            if args.len != 1 {
+                self.fail("`std::os::unsetenv` expects one argument")
+                return "xr_nil()"
+            }
+            return "xr_os_unsetenv(" + args[0] + ")"
+        }
+        if path == "std::os::exec_path" {
+            return "xr_os_exec_path()"
+        }
+        if path == "std::os::host_name" {
+            return "xr_os_host_name()"
+        }
+        if path == "std::os::user_name" {
+            return "xr_os_user_name()"
+        }
+        if path == "std::os::pid" {
+            return "xr_os_pid()"
+        }
+        if path == "std::os::arch" {
+            return "xr_os_arch()"
+        }
+        if path == "std::os::cpu_count" {
+            return "xr_os_cpu_count()"
         }
         if path == "std::process::args" {
             return "xr_process_args()"

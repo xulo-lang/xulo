@@ -40,7 +40,7 @@ the corpus is not compiled by the package, so they stay outside `src/`.
 | `xuloc/src/parser.xulo` | Recursive-descent parser: headers, declarations, statements, expressions, patterns, types |
 | `xuloc/src/checker.xulo` | Name and type checking for the Gate 3 corpus: functions, bindings, control flow, lists, optionals, calls |
 | `xuloc/src/backend.xulo` | Code generator: generic AST to portable C, declaration collection, expressions/statements, method/static/path calls, patterns |
-| `xuloc/runtime/runtime.c` | Dynamic bootstrap runtime linked by generated programs: tagged `XVal` values, structs/enums, method registry, `std::fs`/`std::io`/`std::os`/`std::process` |
+| `xuloc/runtime/runtime.c` | Dynamic bootstrap runtime linked by generated programs: tagged `XVal` values, structs/enums, method registry, `std::fs`/`std::io`/`std::os`/`std::process`/`std::path`/`std::hint`/`std::math` |
 | `xuloc/corpus/accept/` | Files stage 1 and stage 0 must both accept; `.expected` files hold their compiled output |
 | `xuloc/corpus/reject/` | Files both must reject, with a coded semantic diagnostic |
 | `xuloc/src/main.xulo` | CLI: `tokens`, `parse`, `check`, and `build` modes, diagnostics, exit status |
@@ -273,15 +273,15 @@ so stage 2 does not inherit them silently.
     handles functions, structs, enums, consts, `impl` methods, modules,
     `if`/`while`/`for`/`match`, calls, fields, indexing, lists, tuples,
     templates, operators, `??`, `is`, `?.`, and the `std::fs`/`std::io`/
-    `std::os`/`std::process` calls stage 1 uses. Module-qualified names
-    (`alias::fn`, `m::CONST`) resolve by their final segment because
-    declaration collection flattens modules. `Trait::method(receiver, …)`
-    lowers to runtime method dispatch on the receiver's struct type. Closures,
-    `Map`/`Set`, `defer`, and async are rejected with `E0005`; a two-part path
-    call that is neither a user function, a known enum variant, a trait method,
-    nor a known static method is also an `E0005` instead of silently becoming a
-    variant constructor. Stage 1's own source avoids all of the rejected
-    forms.
+    `std::os`/`std::process`/`std::path`/`std::hint`/`std::math` calls stage 1
+    uses. Module-qualified names (`alias::fn`, `m::CONST`) resolve by their
+    final segment because declaration collection flattens modules.
+    `Trait::method(receiver, …)` lowers to runtime method dispatch on the
+    receiver's struct type. Closures, `Map`/`Set`, `defer`, and async are
+    rejected with `E0005`; a two-part path call that is neither a user
+    function, a known enum variant, a trait method, nor a known static method
+    is also an `E0005` instead of silently becoming a variant constructor.
+    Stage 1's own source avoids all of the rejected forms.
 
 17. **The self-build needs the native stage 1 binary.** Running `build` under
     `xulo run` exceeds the Rust interpreter's call-depth limit (128) while
@@ -313,7 +313,11 @@ so stage 2 does not inherit them silently.
   the checker reached a construct, type, or call it does not model, so a
   partial analysis never rejects a program that code generation could handle.
 - The C backend and the self-host loop are implemented (Gates 5–6), but the
-  backend's subset is the bootstrap subset listed above.
+  backend's subset is the bootstrap subset listed above. The runtime covers
+  the `std` surface stage 1's own source needs plus `std::path`, `std::hint`,
+  `std::os`, and most of `std::math`; `std::json`, `std::time`, `std::fmt`,
+  `std::regex`, `std::net`, `Map`, and `Set` are not lowered yet, so examples
+  that use them fail with `E0005`.
 - Postfix `?`, arrow closures, call-site type arguments, macros beyond
   attributes, and `spawn`/`lock` are outside the parser's accepted subset.
 - The parser recovers only by stopping at the first error. That is enough for

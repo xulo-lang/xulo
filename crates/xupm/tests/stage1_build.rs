@@ -336,6 +336,42 @@ fn stage1_compiles_the_bootstrap_corpus() {
     }
 }
 
+/// The C runtime's `std::path` / `std::hint` / `std::math` / `std::os`
+/// surface: lowered examples must run through stage 1's C backend and match
+/// their checked-in output, just like the corpus.
+#[test]
+fn stage1_runs_the_std_examples_it_lowers() {
+    if !enabled() {
+        return;
+    }
+    let root = repo_root();
+    let stage1 = stage1_binary();
+    let work = unique_dir("std_examples");
+    for rel in [
+        "examples/std/path.xulo",
+        "examples/std/hint.xulo",
+        "examples/std/math_extra.xulo",
+        "examples/std/os.xulo",
+    ] {
+        let file = Path::new(rel);
+        let name = file
+            .file_stem()
+            .expect("the example path has a stem")
+            .to_string_lossy()
+            .into_owned();
+        let program = build_stage1_program(&stage1, &root, file, &work, &name);
+        let run = run_program(&program);
+        assert_success(&run, &format!("running {rel}"));
+        let expected = std::fs::read_to_string(expected_path(&root.join(file)))
+            .unwrap_or_else(|error| panic!("cannot read the golden output for {rel}: {error}"));
+        assert_eq!(
+            render_lines(&run.stdout),
+            render_lines(expected.as_bytes()),
+            "the stage 1 build of {rel} printed unexpected output"
+        );
+    }
+}
+
 /// WP6: stage 1 compiles itself, producing a native stage 2 binary.
 #[test]
 fn stage1_builds_itself_into_stage2() {

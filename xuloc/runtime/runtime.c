@@ -26,6 +26,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <errno.h>
 
 #ifdef _WIN32
@@ -33,16 +34,22 @@
 #include <windows.h>
 #define XR_POPEN _popen
 #define XR_PCLOSE _pclose
+#define XR_GETPID _getpid
 #else
 #include <dirent.h>
 #include <fcntl.h>
 #include <dirent.h>
+#include <pwd.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 #define XR_POPEN popen
 #define XR_PCLOSE pclose
+#define XR_GETPID getpid
 #endif
 
 enum {
@@ -997,11 +1004,17 @@ static XVal xr_format_float(double f) {
     if (f == 0.0) {
         return xr_str("0");
     }
+    // Shortest decimal that round-trips, like Rust's `Display` for f64. The
+    // old `%.15g`/`%.17g` pair printed extra digits for values such as PI
+    // (drift D-02).
     char buffer[64];
-    snprintf(buffer, sizeof(buffer), "%.15g", f);
-    if (strtod(buffer, NULL) != f) {
-        snprintf(buffer, sizeof(buffer), "%.17g", f);
+    for (int precision = 1; precision <= 17; precision += 1) {
+        snprintf(buffer, sizeof(buffer), "%.*g", precision, f);
+        if (strtod(buffer, NULL) == f) {
+            return xr_str(buffer);
+        }
     }
+    snprintf(buffer, sizeof(buffer), "%.17g", f);
     return xr_str(buffer);
 }
 
@@ -1681,6 +1694,575 @@ XVal xr_fs_walk(XVal dir) {
 #endif
 }
 
+// ── std::path (POSIX string semantics; never touches the host) ──────────
+
+typedef struct {
+    const char *data;
+    long long len;
+} XrPathSlice;
+
+static long long xr_path_trim_slashes(const char *data, long long n) {
+    while (n > 0 && data[n - 1] == '/') {
+        n -= 1;
+    }
+    return n;
+}
+
+static long long xr_path_base_start(const char *data, long long n) {
+    long long at = n;
+    while (at > 0 && data[at - 1] != '/') {
+        at -= 1;
+    }
+    return at;
+}
+
+static long long xr_path_ext_start(const char *data, long long start, long long n) {
+    // The dot that begins the extension, or -1 for none. A leading dot is a
+    // hidden-file marker and a trailing dot has no extension text.
+    long long dot = -1;
+    for (long long i = start; i < n; i += 1) {
+        if (data[i] == '.') {
+            dot = i;
+        }
+    }
+    if (dot <= start || dot == n - 1) {
+        return -1;
+    }
+    return dot;
+}
+
+static long long xr_path_components(const char *data, long long n, XrPathSlice *out) {
+    long long count = 0;
+    long long i = 0;
+    while (i < n) {
+        while (i < n && data[i] == '/') {
+            i += 1;
+        }
+        long long start = i;
+        while (i < n && data[i] != '/') {
+            i += 1;
+        }
+        long long len = i - start;
+        if (len == 0) {
+            continue;
+        }
+        if (len == 1 && data[start] == '.') {
+            continue;
+        }
+        out[count].data = data + start;
+        out[count].len = len;
+        count += 1;
+    }
+    return count;
+}
+
+static int xr_path_is_dotdot(XrPathSlice slice) {
+    return slice.len == 2 && slice.data[0] == '.' && slice.data[1] == '.';
+}
+
+XVal xr_path_join(XVal a, XVal b) {
+    if (a.tag != XT_STR || b.tag != XT_STR) {
+        xr_fail("std::path::join expects two strings");
+    }
+    XStr *sa = xr_as_str(a);
+    XStr *sb = xr_as_str(b);
+    if (sb->bytes > 0 && sb->data[0] == '/') {
+        return b;
+    }
+    if (sa->bytes == 0) {
+        return b;
+    }
+    long long size = sa->bytes + sb->bytes + 2;
+    char *buffer = (char *)xr_alloc((size_t)size);
+    memcpy(buffer, sa->data, (size_t)sa->bytes);
+    long long at = sa->bytes;
+    if (sa->data[sa->bytes - 1] != '/') {
+        buffer[at] = '/';
+        at += 1;
+    }
+    memcpy(buffer + at, sb->data, (size_t)sb->bytes);
+    at += sb->bytes;
+    return xr_str_n(buffer, at);
+}
+
+XVal xr_path_is_absolute(XVal path) {
+    if (path.tag != XT_STR) {
+        xr_fail("std::path::is_absolute expects a string");
+    }
+    XStr *s = xr_as_str(path);
+    return xr_bool(s->bytes > 0 && s->data[0] == '/');
+}
+
+XVal xr_path_basename(XVal path) {
+    if (path.tag != XT_STR) {
+        xr_fail("std::path::basename expects a string");
+    }
+    XStr *s = xr_as_str(path);
+    long long n = xr_path_trim_slashes(s->data, s->bytes);
+    long long start = xr_path_base_start(s->data, n);
+    return xr_str_n(s->data + start, n - start);
+}
+
+XVal xr_path_dirname(XVal path) {
+    if (path.tag != XT_STR) {
+        xr_fail("std::path::dirname expects a string");
+    }
+    XStr *s = xr_as_str(path);
+    int absolute = s->bytes > 0 && s->data[0] == '/';
+    long long n = xr_path_trim_slashes(s->data, s->bytes);
+    if (n == 0) {
+        return xr_str(absolute ? "/" : "");
+    }
+    long long start = xr_path_base_start(s->data, n);
+    if (start == 0) {
+        return xr_str("");
+    }
+    long long end = start - 1;
+    while (end > 0 && s->data[end - 1] == '/') {
+        end -= 1;
+    }
+    if (end == 0) {
+        return xr_str("/");
+    }
+    return xr_str_n(s->data, end);
+}
+
+XVal xr_path_ext(XVal path) {
+    if (path.tag != XT_STR) {
+        xr_fail("std::path::ext expects a string");
+    }
+    XStr *s = xr_as_str(path);
+    long long n = xr_path_trim_slashes(s->data, s->bytes);
+    long long start = xr_path_base_start(s->data, n);
+    long long dot = xr_path_ext_start(s->data, start, n);
+    if (dot < 0) {
+        return xr_str("");
+    }
+    return xr_str_n(s->data + dot, n - dot);
+}
+
+XVal xr_path_stem(XVal path) {
+    XVal base = xr_path_basename(path);
+    XVal ext = xr_path_ext(path);
+    XStr *sb = xr_as_str(base);
+    XStr *se = xr_as_str(ext);
+    long long len = sb->bytes - se->bytes;
+    if (len < 0) {
+        len = 0;
+    }
+    return xr_str_n(sb->data, len);
+}
+
+XVal xr_path_with_ext(XVal path, XVal ext) {
+    if (path.tag != XT_STR || ext.tag != XT_STR) {
+        xr_fail("std::path::with_ext expects two strings");
+    }
+    XStr *s = xr_as_str(path);
+    XStr *e = xr_as_str(ext);
+    const char *ext_data = e->data;
+    long long ext_len = e->bytes;
+    if (ext_len > 0 && ext_data[0] == '.') {
+        ext_data += 1;
+        ext_len -= 1;
+    }
+    long long n = xr_path_trim_slashes(s->data, s->bytes);
+    long long start = xr_path_base_start(s->data, n);
+    long long dot = xr_path_ext_start(s->data, start, n);
+    long long stem_end = dot < 0 ? n : dot;
+    XVal dir = xr_path_dirname(path);
+    XStr *sd = xr_as_str(dir);
+    long long size = sd->bytes + (stem_end - start) + ext_len + 4;
+    char *buffer = (char *)xr_alloc((size_t)size);
+    long long at = 0;
+    if (sd->bytes > 0) {
+        memcpy(buffer, sd->data, (size_t)sd->bytes);
+        at = sd->bytes;
+        if (sd->data[sd->bytes - 1] != '/') {
+            buffer[at] = '/';
+            at += 1;
+        }
+    }
+    memcpy(buffer + at, s->data + start, (size_t)(stem_end - start));
+    at += stem_end - start;
+    if (ext_len > 0) {
+        buffer[at] = '.';
+        at += 1;
+        memcpy(buffer + at, ext_data, (size_t)ext_len);
+        at += ext_len;
+    }
+    return xr_str_n(buffer, at);
+}
+
+XVal xr_path_normalize(XVal path) {
+    if (path.tag != XT_STR) {
+        xr_fail("std::path::normalize expects a string");
+    }
+    XStr *s = xr_as_str(path);
+    int absolute = s->bytes > 0 && s->data[0] == '/';
+    long long cap = s->bytes + 1;
+    XrPathSlice *stack = (XrPathSlice *)xr_alloc(sizeof(XrPathSlice) * (size_t)cap);
+    long long count = 0;
+    long long i = 0;
+    while (i < s->bytes) {
+        while (i < s->bytes && s->data[i] == '/') {
+            i += 1;
+        }
+        long long start = i;
+        while (i < s->bytes && s->data[i] != '/') {
+            i += 1;
+        }
+        long long len = i - start;
+        if (len == 0) {
+            continue;
+        }
+        XrPathSlice part;
+        part.data = s->data + start;
+        part.len = len;
+        if (len == 1 && part.data[0] == '.') {
+            continue;
+        }
+        if (xr_path_is_dotdot(part)) {
+            if (count > 0 && !xr_path_is_dotdot(stack[count - 1])) {
+                count -= 1;
+                continue;
+            }
+            if (absolute) {
+                continue;
+            }
+            stack[count] = part;
+            count += 1;
+            continue;
+        }
+        stack[count] = part;
+        count += 1;
+    }
+    if (count == 0) {
+        return xr_str(absolute ? "/" : ".");
+    }
+    long long size = 1;
+    for (long long k = 0; k < count; k += 1) {
+        size += stack[k].len + 1;
+    }
+    char *buffer = (char *)xr_alloc((size_t)size);
+    long long at = 0;
+    if (absolute) {
+        buffer[at] = '/';
+        at += 1;
+    }
+    for (long long k = 0; k < count; k += 1) {
+        if (k > 0) {
+            buffer[at] = '/';
+            at += 1;
+        }
+        memcpy(buffer + at, stack[k].data, (size_t)stack[k].len);
+        at += stack[k].len;
+    }
+    return xr_str_n(buffer, at);
+}
+
+XVal xr_path_split(XVal path) {
+    if (path.tag != XT_STR) {
+        xr_fail("std::path::split expects a string");
+    }
+    const char *names[3] = {"dir", "base", "ext"};
+    XVal values[3];
+    values[0] = xr_path_dirname(path);
+    values[1] = xr_path_basename(path);
+    values[2] = xr_path_ext(path);
+    return xr_struct("PathSplit", 3, names, values);
+}
+
+XVal xr_path_relative(XVal from, XVal to) {
+    if (from.tag != XT_STR || to.tag != XT_STR) {
+        xr_fail("std::path::relative expects two strings");
+    }
+    XVal nf = xr_path_normalize(from);
+    XVal nt = xr_path_normalize(to);
+    XStr *sf = xr_as_str(nf);
+    XStr *st = xr_as_str(nt);
+    int absolute = sf->bytes > 0 && sf->data[0] == '/';
+    int target_absolute = st->bytes > 0 && st->data[0] == '/';
+    if (absolute != target_absolute) {
+        return xr_nil();
+    }
+    XrPathSlice *fc = (XrPathSlice *)xr_alloc(sizeof(XrPathSlice) * (size_t)(sf->bytes + 1));
+    XrPathSlice *tc = (XrPathSlice *)xr_alloc(sizeof(XrPathSlice) * (size_t)(st->bytes + 1));
+    long long fn = xr_path_components(sf->data, sf->bytes, fc);
+    long long tn = xr_path_components(st->data, st->bytes, tc);
+    long long common = 0;
+    while (common < fn && common < tn && fc[common].len == tc[common].len
+           && memcmp(fc[common].data, tc[common].data, (size_t)fc[common].len) == 0) {
+        common += 1;
+    }
+    if (!absolute) {
+        // Climbing above the shared anchor needs a name neither path carries.
+        for (long long k = common; k < fn; k += 1) {
+            if (xr_path_is_dotdot(fc[k])) {
+                return xr_nil();
+            }
+        }
+    }
+    long long size = 2;
+    for (long long k = common; k < fn; k += 1) {
+        size += 3;
+    }
+    for (long long k = common; k < tn; k += 1) {
+        size += tc[k].len + 1;
+    }
+    char *buffer = (char *)xr_alloc((size_t)size);
+    long long at = 0;
+    for (long long k = common; k < fn; k += 1) {
+        memcpy(buffer + at, "../", 3);
+        at += 3;
+    }
+    for (long long k = common; k < tn; k += 1) {
+        if (at > 0 && buffer[at - 1] != '/') {
+            buffer[at] = '/';
+            at += 1;
+        }
+        memcpy(buffer + at, tc[k].data, (size_t)tc[k].len);
+        at += tc[k].len;
+    }
+    if (at == 0) {
+        return xr_str(absolute ? "/" : ".");
+    }
+    return xr_str_n(buffer, at);
+}
+
+// ── std::math ────────────────────────────────────────────────────────────
+
+static double xr_math_f(XVal value) {
+    if (value.tag == XT_FLOAT) {
+        return value.f;
+    }
+    if (value.tag == XT_INT) {
+        return (double)value.i;
+    }
+    xr_fail("`std::math` expects a number");
+    return 0.0;
+}
+
+static long long xr_math_i(XVal value) {
+    if (value.tag == XT_INT) {
+        return value.i;
+    }
+    if (value.tag == XT_FLOAT) {
+        return (long long)value.f;
+    }
+    xr_fail("`std::math` expects a number");
+    return 0;
+}
+
+XVal xr_math_abs(XVal x) {
+    if (x.tag == XT_INT) {
+        return xr_int(x.i < 0 ? -x.i : x.i);
+    }
+    return xr_float(fabs(xr_math_f(x)));
+}
+
+XVal xr_math_min(XVal a, XVal b) {
+    if (a.tag == XT_INT && b.tag == XT_INT) {
+        return b.i < a.i ? b : a;
+    }
+    return xr_math_f(b) < xr_math_f(a) ? b : a;
+}
+
+XVal xr_math_max(XVal a, XVal b) {
+    if (a.tag == XT_INT && b.tag == XT_INT) {
+        return b.i > a.i ? b : a;
+    }
+    return xr_math_f(b) > xr_math_f(a) ? b : a;
+}
+
+XVal xr_math_clamp(XVal x, XVal lo, XVal hi) {
+    if (x.tag == XT_INT && lo.tag == XT_INT && hi.tag == XT_INT) {
+        if (x.i < lo.i) {
+            return lo;
+        }
+        if (x.i > hi.i) {
+            return hi;
+        }
+        return x;
+    }
+    if (xr_math_f(x) < xr_math_f(lo)) {
+        return lo;
+    }
+    if (xr_math_f(x) > xr_math_f(hi)) {
+        return hi;
+    }
+    return x;
+}
+
+XVal xr_math_sign(XVal x) {
+    double value = xr_math_f(x);
+    if (value > 0.0) {
+        return x.tag == XT_INT ? xr_int(1) : xr_float(1.0);
+    }
+    if (value < 0.0) {
+        return x.tag == XT_INT ? xr_int(-1) : xr_float(-1.0);
+    }
+    return x.tag == XT_INT ? xr_int(0) : xr_float(0.0);
+}
+
+#define XR_MATH_FN(name, expr)                                                                     \
+    XVal xr_math_##name(XVal x) { return xr_float(expr(xr_math_f(x))); }
+
+XR_MATH_FN(sqrt, sqrt)
+XR_MATH_FN(cbrt, cbrt)
+XR_MATH_FN(sin, sin)
+XR_MATH_FN(cos, cos)
+XR_MATH_FN(tan, tan)
+XR_MATH_FN(asin, asin)
+XR_MATH_FN(acos, acos)
+XR_MATH_FN(atan, atan)
+XR_MATH_FN(log, log)
+XR_MATH_FN(log2, log2)
+XR_MATH_FN(log10, log10)
+XR_MATH_FN(log1p, log1p)
+XR_MATH_FN(exp, exp)
+XR_MATH_FN(expm1, expm1)
+
+XVal xr_math_atan2(XVal y, XVal x) {
+    return xr_float(atan2(xr_math_f(y), xr_math_f(x)));
+}
+
+XVal xr_math_pow(XVal base, XVal exponent) {
+    return xr_float(pow(xr_math_f(base), xr_math_f(exponent)));
+}
+
+XVal xr_math_hypot(XVal a, XVal b) {
+    return xr_float(hypot(xr_math_f(a), xr_math_f(b)));
+}
+
+XVal xr_math_floor(XVal x) { return xr_int((long long)floor(xr_math_f(x))); }
+XVal xr_math_ceil(XVal x) { return xr_int((long long)ceil(xr_math_f(x))); }
+XVal xr_math_round(XVal x) { return xr_int((long long)round(xr_math_f(x))); }
+XVal xr_math_trunc(XVal x) { return xr_int((long long)trunc(xr_math_f(x))); }
+
+static long long xr_math_pop64(uint64_t bits) {
+    long long count = 0;
+    while (bits != 0) {
+        count += (long long)(bits & 1);
+        bits >>= 1;
+    }
+    return count;
+}
+
+XVal xr_math_pop_count(XVal x) { return xr_int(xr_math_pop64((uint64_t)xr_math_i(x))); }
+
+XVal xr_math_count_leading_zeros(XVal x) {
+    uint64_t bits = (uint64_t)xr_math_i(x);
+    if (bits == 0) {
+        return xr_int(64);
+    }
+    long long count = 0;
+    while ((bits & 0x8000000000000000ULL) == 0) {
+        bits <<= 1;
+        count += 1;
+    }
+    return xr_int(count);
+}
+
+XVal xr_math_count_trailing_zeros(XVal x) {
+    uint64_t bits = (uint64_t)xr_math_i(x);
+    if (bits == 0) {
+        return xr_int(64);
+    }
+    long long count = 0;
+    while ((bits & 1) == 0) {
+        bits >>= 1;
+        count += 1;
+    }
+    return xr_int(count);
+}
+
+XVal xr_math_rotate_left(XVal x, XVal amount) {
+    long long shift = xr_math_i(amount) & 63;
+    if (shift == 0) {
+        return x;
+    }
+    uint64_t bits = (uint64_t)xr_math_i(x);
+    return xr_int((long long)((bits << shift) | (bits >> (64 - shift))));
+}
+
+XVal xr_math_rotate_right(XVal x, XVal amount) {
+    long long shift = xr_math_i(amount) & 63;
+    if (shift == 0) {
+        return x;
+    }
+    uint64_t bits = (uint64_t)xr_math_i(x);
+    return xr_int((long long)((bits >> shift) | (bits << (64 - shift))));
+}
+
+XVal xr_math_wrapping_add(XVal a, XVal b) {
+    return xr_int((long long)((uint64_t)xr_math_i(a) + (uint64_t)xr_math_i(b)));
+}
+
+XVal xr_math_wrapping_sub(XVal a, XVal b) {
+    return xr_int((long long)((uint64_t)xr_math_i(a) - (uint64_t)xr_math_i(b)));
+}
+
+XVal xr_math_wrapping_mul(XVal a, XVal b) {
+    return xr_int((long long)((uint64_t)xr_math_i(a) * (uint64_t)xr_math_i(b)));
+}
+
+XVal xr_math_to_fixed(XVal x, XVal digits) {
+    long long d = xr_math_i(digits);
+    if (d < 0 || d > 15) {
+        // `xr_fail` does not return; the assignment keeps the compiler happy.
+        xr_fail("`std::math::to_fixed` digits must be an integer in 0..=15");
+        return xr_str("");
+    }
+    double value = xr_math_f(x);
+    if (isnan(value) || isinf(value)) {
+        return xr_format_float(value);
+    }
+    double factor = pow(10.0, (double)d);
+    double scaled = value * factor;
+    char buffer[128];
+    if (isinf(scaled)) {
+        snprintf(buffer, sizeof(buffer), "%.*f", (int)d, value);
+    } else {
+        snprintf(buffer, sizeof(buffer), "%.*f", (int)d, round(scaled) / factor);
+    }
+    return xr_str(buffer);
+}
+
+static uint64_t xr_math_rng_state = 0;
+
+static uint64_t xr_math_rand64(void) {
+    if (xr_math_rng_state == 0) {
+        uint64_t seed = (uint64_t)time(NULL);
+        seed ^= (uint64_t)(uintptr_t)&xr_math_rng_state;
+        seed ^= (uint64_t)(unsigned long long)clock() << 17;
+        seed ^= (uint64_t)(unsigned long long)XR_GETPID() << 33;
+        xr_math_rng_state = seed == 0 ? 0x9E3779B97F4A7C15ULL : seed;
+    }
+    // xorshift64*
+    uint64_t x = xr_math_rng_state;
+    x ^= x >> 12;
+    x ^= x << 25;
+    x ^= x >> 27;
+    xr_math_rng_state = x;
+    return x * 0x2545F4914F6CDD1DULL;
+}
+
+XVal xr_math_random(void) {
+    return xr_float((double)(xr_math_rand64() >> 11) * (1.0 / 9007199254740992.0));
+}
+
+XVal xr_math_random_int(XVal lo, XVal hi) {
+    long long low = xr_math_i(lo);
+    long long high = xr_math_i(hi);
+    if (low > high) {
+        xr_fail("`std::math::random_int` needs `lo <= hi`");
+        return xr_int(low);
+    }
+    uint64_t span = (uint64_t)high - (uint64_t)low;
+    uint64_t offset = span == UINT64_MAX ? xr_math_rand64() : xr_math_rand64() % (span + 1);
+    return xr_int((long long)((uint64_t)low + offset));
+}
+
 XVal xr_os_getenv(XVal name) {
     if (name.tag != XT_STR) {
         return xr_ok(xr_nil());
@@ -1699,6 +2281,207 @@ XVal xr_os_platform(void) {
     return xr_str("macos");
 #else
     return xr_str("linux");
+#endif
+}
+
+XVal xr_os_cwd(void) {
+    char buffer[4096];
+#ifdef _WIN32
+    if (_getcwd(buffer, (int)sizeof(buffer)) == NULL) {
+        return xr_err("cannot read the current directory");
+    }
+#else
+    if (getcwd(buffer, sizeof(buffer)) == NULL) {
+        return xr_err("cannot read the current directory");
+    }
+#endif
+    return xr_ok(xr_str(buffer));
+}
+
+XVal xr_os_chdir(XVal path) {
+    if (path.tag != XT_STR) {
+        return xr_err("std::os::chdir expects a string path");
+    }
+#ifdef _WIN32
+    if (_chdir(xr_as_str(path)->data) != 0) {
+        return xr_err("cannot change the current directory");
+    }
+#else
+    if (chdir(xr_as_str(path)->data) != 0) {
+        return xr_err("cannot change the current directory");
+    }
+#endif
+    return xr_ok(xr_nil());
+}
+
+XVal xr_os_tmp_dir(void) {
+#ifdef _WIN32
+    char buffer[MAX_PATH + 1];
+    DWORD size = GetTempPathA(MAX_PATH + 1, buffer);
+    if (size == 0) {
+        return xr_str(".");
+    }
+    long long n = (long long)size;
+    while (n > 1 && buffer[n - 1] == '\\') {
+        n -= 1;
+    }
+    return xr_str_n(buffer, n);
+#else
+    const char *tmp = getenv("TMPDIR");
+    if (tmp == NULL || tmp[0] == '\0') {
+        tmp = "/tmp";
+    }
+    long long n = (long long)strlen(tmp);
+    while (n > 1 && tmp[n - 1] == '/') {
+        n -= 1;
+    }
+    return xr_str_n(tmp, n);
+#endif
+}
+
+XVal xr_os_home_dir(void) {
+    const char *home = getenv("HOME");
+#ifdef _WIN32
+    if (home == NULL || home[0] == '\0') {
+        home = getenv("USERPROFILE");
+    }
+#endif
+    if (home == NULL || home[0] == '\0') {
+        return xr_err("cannot read the home directory");
+    }
+    return xr_ok(xr_str(home));
+}
+
+XVal xr_os_setenv(XVal name, XVal value) {
+    if (name.tag != XT_STR || value.tag != XT_STR) {
+        return xr_err("std::os::setenv expects two strings");
+    }
+#ifdef _WIN32
+    if (_putenv_s(xr_as_str(name)->data, xr_as_str(value)->data) != 0) {
+        return xr_err("cannot set the environment variable");
+    }
+#else
+    if (setenv(xr_as_str(name)->data, xr_as_str(value)->data, 1) != 0) {
+        return xr_err("cannot set the environment variable");
+    }
+#endif
+    return xr_ok(xr_nil());
+}
+
+XVal xr_os_unsetenv(XVal name) {
+    if (name.tag != XT_STR) {
+        return xr_err("std::os::unsetenv expects a string name");
+    }
+#ifdef _WIN32
+    if (_putenv_s(xr_as_str(name)->data, "") != 0) {
+        return xr_err("cannot unset the environment variable");
+    }
+#else
+    if (unsetenv(xr_as_str(name)->data) != 0) {
+        return xr_err("cannot unset the environment variable");
+    }
+#endif
+    return xr_ok(xr_nil());
+}
+
+XVal xr_os_exec_path(void) {
+#ifdef _WIN32
+    char buffer[MAX_PATH + 1];
+    DWORD size = GetModuleFileNameA(NULL, buffer, MAX_PATH + 1);
+    if (size == 0) {
+        return xr_err("cannot read the executable path");
+    }
+    return xr_ok(xr_str_n(buffer, (long long)size));
+#elif defined(__APPLE__)
+    uint32_t size = 0;
+    _NSGetExecutablePath(NULL, &size);
+    char *buffer = (char *)xr_alloc((size_t)size + 1);
+    if (_NSGetExecutablePath(buffer, &size) != 0) {
+        return xr_err("cannot read the executable path");
+    }
+    buffer[size] = '\0';
+    return xr_ok(xr_str(buffer));
+#else
+    char buffer[4096];
+    ssize_t size = readlink("/proc/self/exe", buffer, sizeof(buffer) - 1);
+    if (size <= 0) {
+        return xr_err("cannot read the executable path");
+    }
+    buffer[size] = '\0';
+    return xr_ok(xr_str(buffer));
+#endif
+}
+
+XVal xr_os_host_name(void) {
+#ifdef _WIN32
+    char buffer[256];
+    DWORD size = (DWORD)sizeof(buffer);
+    if (!GetComputerNameA(buffer, &size)) {
+        return xr_err("cannot read the host name");
+    }
+    return xr_ok(xr_str_n(buffer, (long long)size));
+#else
+    char buffer[256];
+    if (gethostname(buffer, sizeof(buffer)) != 0) {
+        return xr_err("cannot read the host name");
+    }
+    buffer[sizeof(buffer) - 1] = '\0';
+    return xr_ok(xr_str(buffer));
+#endif
+}
+
+XVal xr_os_user_name(void) {
+#ifdef _WIN32
+    char buffer[256];
+    DWORD size = (DWORD)sizeof(buffer);
+    if (!GetUserNameA(buffer, &size)) {
+        return xr_err("cannot read the user name");
+    }
+    long long n = (long long)size;
+    if (n > 0 && buffer[n - 1] == '\0') {
+        n -= 1;
+    }
+    return xr_ok(xr_str_n(buffer, n));
+#else
+    struct passwd *entry = getpwuid(getuid());
+    if (entry == NULL || entry->pw_name == NULL) {
+        return xr_err("cannot read the user name");
+    }
+    return xr_ok(xr_str(entry->pw_name));
+#endif
+}
+
+XVal xr_os_pid(void) {
+#ifdef _WIN32
+    return xr_int((long long)GetCurrentProcessId());
+#else
+    return xr_int((long long)getpid());
+#endif
+}
+
+XVal xr_os_arch(void) {
+#if defined(__x86_64__) || defined(_M_X64)
+    return xr_str("x86_64");
+#elif defined(__aarch64__) || defined(_M_ARM64)
+    return xr_str("aarch64");
+#elif defined(__i386__) || defined(_M_IX86)
+    return xr_str("x86");
+#else
+    return xr_str("unknown");
+#endif
+}
+
+XVal xr_os_cpu_count(void) {
+#ifdef _WIN32
+    SYSTEM_INFO info;
+    GetSystemInfo(&info);
+    return xr_int((long long)info.dwNumberOfProcessors);
+#else
+    long count = sysconf(_SC_NPROCESSORS_ONLN);
+    if (count < 1) {
+        count = 1;
+    }
+    return xr_int((long long)count);
 #endif
 }
 
