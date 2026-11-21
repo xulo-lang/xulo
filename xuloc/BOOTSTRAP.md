@@ -329,6 +329,9 @@ so stage 2 does not inherit them silently.
   type patterns with guards, and `#[derive(Debug)]`'s `Type(field: value)`
   rendering are lowered. A struct without the derive still renders as
   `Type{ field: value }`, which is stage 1's own fallback form.
+- `f32` arithmetic runs in binary64 in the bootstrap runtime; stage 0 rounds
+  to binary32 (T12), so an example that depends on that rounding can differ
+  (`types/float_math.xulo`).
 - Postfix `?`, arrow closures, call-site type arguments, macros beyond
   attributes, and `spawn`/`lock` are outside the parser's accepted subset.
 - The parser recovers only by stopping at the first error. That is enough for
