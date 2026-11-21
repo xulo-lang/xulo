@@ -53,9 +53,8 @@ Gates are cumulative. An open earlier gate blocks every later gate.
 - [x] **Gate 4 — Native build**: `xupm build` produces a stage 1 binary whose
       output matches `xulo run` on the bootstrap workload.
       `crates/xupm/tests/aot_differential.rs::stage1_binary_matches_the_interpreter`.
-      Reached on Linux, macOS, and Windows (macOS verified locally on
-      2026-11-17; the Windows differential and stage 1 build pass locally and
-      in CI, closing B7 in WP3).
+      Reached on Linux, macOS, and Windows in CI (the Windows differential and
+      stage 1 build share the same jobs, closing B7 in WP3).
 - [x] **Gate 5 — Self-host**: stage 1 compiles itself into stage 2; stage 1 and
       stage 2 agree on the bootstrap suite and the conformance subset.
       `crates/xupm/tests/stage1_build.rs::stage1_builds_itself_into_stage2` and
@@ -133,9 +132,7 @@ package or out-of-scope section that tracks it.
 - [x] **B3** `xupm build` for the bootstrap subset
 - [x] **B4** AOT module tree (`mod` / `use`)
 - [x] **B5** Runtime static library and linker path
-- [x] **B7** Linux/macOS/Windows build matrix — Linux and Windows run the full
-      AOT differential in CI, and macOS is verified locally; Windows runs
-      `ffi.xulo` like every other example since S8 landed
+- [x] **B7** Linux/macOS/Windows build matrix — CI runs the full AOT differential on all three hosts (`macos-latest` is arm64); Windows runs `ffi.xulo` like every other example since S8 landed
 - [x] **B8** Reproducible stage 1 build and self-compile smoke test — B8a builds
       the native front end; B8b in WP6 shows two stage 1 builds emit identical
       C and that stage 2 regenerates exactly the translation unit that built it
@@ -283,11 +280,12 @@ Priority P1 · needed by Gate 4 · source: `stage1-readiness.md` §7 WP3, §6.6�
       `crates/xulo-compiler/tests/type_system_codegen_tests.rs::array_filled_compiles`
       (AOT runtime lowering `xulo_array_filled`).
 - [x] **B7** Run `stage1_binary_matches_the_interpreter` on macOS and Windows,
-      not only Linux. macOS is verified: the opt-in differential compares the
-      example corpus and the stage 1 workload byte for byte on 2026-11-17, and CI
-      runs it there. Windows runs the same differential with no platform
-      exemptions; `ffi.xulo` resolves its imports through the UCRT on Windows
-      (S8). The Windows link names the Rust runtime's system libraries
+      not only Linux. The opt-in differential compares the example corpus and
+      the stage 1 workload byte for byte; CI runs it on Linux, macOS
+      (`macos-latest`, arm64), and Windows. Windows runs the same differential
+      with no platform exemptions; `ffi.xulo` resolves its imports through the
+      UCRT on Windows (S8). The Windows link names the Rust runtime's system
+      libraries
       (`kernel32`/`ntdll`/`userenv`/`ws2_32`/`dbghelp`/`synchronization` plus
       `/DEFAULTLIB:msvcrt`), and `examples/std/fs.xulo` no longer prints its host
       temp path, so the comparable examples and the stage 1 native build pass

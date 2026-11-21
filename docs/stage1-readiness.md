@@ -163,13 +163,11 @@ stderr match `xulo run` for `tokens`/`parse` on `examples/functions/fibonacci.xu
 `crates/xupm/tests/aot_differential.rs::stage1_binary_matches_the_interpreter`,
 run by the AOT differential CI job, which sets `XULO_AOT_DIFFERENTIAL=1` and
 `XULO_RUNTIME_LIB`; a plain `cargo test --workspace` does not run it. The
-assessment covers Linux, macOS, and Windows: macOS was verified locally on
-2026-11-17 (the example corpus and the stage 1 workload match byte for byte), and
-CI runs the differential on Linux and Windows. Windows runs the same differential
-with no platform exemptions, including `ffi.xulo` (S8); after the Windows link
-gained the runtime's system libraries and `examples/std/fs.xulo` stopped printing
-a host temp path, the full differential and the stage 1 native build pass byte for
-byte locally and in CI (B7, 2026-11-17).
+assessment covers Linux, macOS, and Windows: CI runs the differential on all
+three hosts (`macos-latest`, arm64) with no platform exemptions, including
+`ffi.xulo` (S8). After the Windows link gained the runtime's system libraries
+and `examples/std/fs.xulo` stopped printing a host temp path, the full
+differential and the stage 1 native build pass byte for byte (B7).
 
 ### Gate 5 — Self-host
 
@@ -288,7 +286,7 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 | B4 | AOT module tree (`mod`/`use`) | **OK** | `crates/xulo-compiler/tests/module_system.rs`, `examples/modules` native build | 4 |
 | B5 | Runtime static library and linker path | **OK** | `.github/workflows/ci.yml` and the release workflow | 4 |
 | B6 | `xupm test` for stage 1's own tests | **OK** | `crates/xupm/tests/cli.rs::runs_stage1_test_file` runs `xuloc/tests.xulo` (10 tests); `crates/xulo-cli/tests/stage1.rs` covers the `xulo test` path | 3 |
-| B7 | Linux/macOS/Windows build matrix | **OK** | Linux and Windows run the full AOT differential in CI; macOS verified locally on 2026-11-17 (the example corpus plus the stage 1 workload). No example needs a platform exemption (`ffi.xulo` resolves its imports through the UCRT on Windows, S8), so the runner is identical on every host. The Windows link names the Rust runtime's system libraries (`kernel32`, `ntdll`, `userenv`, `ws2_32`, `dbghelp`, `synchronization`, `/DEFAULTLIB:msvcrt`), and `examples/std/fs.xulo` derives the last walk segment without printing its host temp path (`crates/xupm/tests/aot_differential.rs`). | 4 |
+| B7 | Linux/macOS/Windows build matrix | **OK** | CI runs the full AOT differential on Linux, macOS (`macos-latest`, arm64), and Windows. No example needs a platform exemption (`ffi.xulo` resolves its imports through the UCRT on Windows, S8), so the runner is identical on every host. The Windows link names the Rust runtime's system libraries (`kernel32`, `ntdll`, `userenv`, `ws2_32`, `dbghelp`, `synchronization`, `/DEFAULTLIB:msvcrt`), and `examples/std/fs.xulo` derives the last walk segment without printing its host temp path (`crates/xupm/tests/aot_differential.rs`). | 4 |
 | B8 | Reproducible stage 1 build and self-compile smoke test | **OK** | B8a: `xuloc/` is an `xupm` package (`xuloc/xupm.toml`), and `xupm build xuloc/main.xulo --release` produces a native front end (`xuloc/.xupm/build/xuloc`) that matches the interpreter (`crates/xupm/tests/aot_differential.rs`, `stage1_binary_matches_the_interpreter`). B8b: `crates/xupm/tests/stage1_build.rs` builds the corpus twice, compares the C byte for byte, then has stage 2 regenerate the compiler translation unit and requires it to equal stage 1's (`stage1_build_is_reproducible`). | 5 |
 
 ### 5.6 Diagnostics, testing, and conformance
@@ -302,7 +300,7 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 | T1 | Unit and integration tests | **OK** | `cargo test --workspace`: 2129 passed, 0 failed (2026-11-17) | 1 |
 | T2 | All examples run in CI | **OK** | `crates/xulo-cli/tests/examples.rs` discovers every program unit, runs `xulo check`, executes it, and compares stdout/stderr with `examples/**/<name>.expected`; CI drives it with the release binary (`XULO_BIN`) | 1 |
 | T3 | Pinned-spec example conformance runner | **OK** | `crates/xulo-cli/tests/spec_conformance.rs`: 111 annotated examples extracted from the pinned spec, 78 pass, 33 triaged in `spec_conformance_baseline.tsv` (§6.10) | 2 |
-| T4 | Interpreter vs. AOT differential suite | **OK** | `crates/xupm/tests/aot_differential.rs` discovers every example program (including multi-file units), builds and executes it, and compares stdout/stderr against `xupm run`. Gaps carry `// @no-aot <platform>:` in the example itself and must keep failing, so a recorded gap cannot rot; `@skip-aot` remains available for an example with no native entry point (none currently needs it), and `@aot-failure-shape` compares a normalized failure shape (T13 option c). CI runs it on Linux and Windows after the release build, and macOS is verified locally. | 4 |
+| T4 | Interpreter vs. AOT differential suite | **OK** | `crates/xupm/tests/aot_differential.rs` discovers every example program (including multi-file units), builds and executes it, and compares stdout/stderr against `xupm run`. Gaps carry `// @no-aot <platform>:` in the example itself and must keep failing, so a recorded gap cannot rot; `@skip-aot` remains available for an example with no native entry point (none currently needs it), and `@aot-failure-shape` compares a normalized failure shape (T13 option c). CI runs it on Linux, macOS, and Windows after the release build. | 4 |
 | T5 | Stage 1 self-parse/self-check/self-build tests | **OK** | Self-parse, self-check, and interpreter smoke tests are live (`crates/xulo-cli/tests/stage1.rs`, `xuloc/tests.xulo`); `crates/xupm/tests/stage1_build.rs` covers the corpus builds, the self-built stage 2, and the stage 1/stage 2 differential (T5c). | 2–5 |
 | T6 | Robustness/fuzz tests | **OK** | `crates/xulo-compiler/tests/robustness.rs`, `crates/xulo-parser/tests/parser_tests.rs` | 1 |
 | T7 | Spec and std-spec submodules aligned with the pin | **OK** | `crates/xulo-cli/tests/submodule_pins.rs` compares the `HEAD` gitlink, the index, and the checked-out submodule against `spec@815edad` / `std-spec@a2e4cb7`; CI job `conformance` | 1 |
