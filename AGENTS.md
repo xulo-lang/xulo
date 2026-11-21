@@ -16,7 +16,8 @@ JS 代码生成已废弃并移除：工具链只使用 `xulo-runtime` 的原生�
 `master` 只接受通过分支合并的改动：**任何修改或新增功能都先开分支，不直接在
 `master` 上提交**（包括文档与 CI 改动）。
 
-- 从最新的 `origin/master` 创建分支，推送前 rebase 到它。
+- **创建分支前先同步**：`git switch master`、`git pull --ff-only origin master`，
+  再从最新的 `master` 创建分支；推送前再 rebase 到最新 `origin/master`。
 - 分支名用 ASCII kebab-case，并带类型前缀：
 
 | 前缀 | 用途 | 示例 |

@@ -4,8 +4,15 @@
 
 ## 分支
 
-不要在 `master` 上直接提交。任何修改或新增功能都从最新的 `origin/master` 创建
-分支，分支名用 ASCII kebab-case，并带类型前缀：
+不要在 `master` 上直接提交。先同步、再建分支：
+
+```bash
+git switch master
+git pull --ff-only origin master
+git switch -c feat/your-change
+```
+
+分支名用 ASCII kebab-case，并带类型前缀：
 
 | 前缀 | 用途 | 示例 |
 |---|---|---|
