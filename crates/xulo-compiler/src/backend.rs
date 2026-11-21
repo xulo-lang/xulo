@@ -1728,13 +1728,52 @@ impl CompilerModule {
     pub fn with_optimization(mode: BackendMode, optimize: bool) -> Result<Self, XuloError> {
         let inner = match mode {
             BackendMode::Jit => {
-                let mut builder = JITBuilder::new(cranelift_module::default_libcall_names())
+                // `cranelift-jit` 0.110 hard-codes `is_pic = true`, but its PLT
+                // helper exists only on x86_64, so the default builder panics
+                // on aarch64 ("PLT is currently only supported on x86_64").
+                // JIT code is never relocated, so emit long-range absolute
+                // calls everywhere except x86_64, where PIC keeps the previous
+                // behavior.
+                let isa_builder = cranelift_native::builder().map_err(|e| {
+                    XuloError::new(
+                        ErrorKind::Codegen,
+                        format!("failed to get ISA builder: {}", e),
+                    )
+                })?;
+                let mut flag_builder = settings::builder();
+                flag_builder
+                    .set(
+                        "is_pic",
+                        if cfg!(target_arch = "x86_64") {
+                            "true"
+                        } else {
+                            "false"
+                        },
+                    )
                     .map_err(|e| {
                         XuloError::new(
                             ErrorKind::Codegen,
-                            format!("failed to create JITBuilder: {}", e),
+                            format!("failed to configure JIT PIC: {e}"),
                         )
                     })?;
+                flag_builder
+                    .set("use_colocated_libcalls", "false")
+                    .map_err(|e| {
+                        XuloError::new(
+                            ErrorKind::Codegen,
+                            format!("failed to configure JIT libcalls: {e}"),
+                        )
+                    })?;
+                let isa = isa_builder
+                    .finish(settings::Flags::new(flag_builder))
+                    .map_err(|e| {
+                        XuloError::new(
+                            ErrorKind::Codegen,
+                            format!("failed to create JIT ISA: {}", e),
+                        )
+                    })?;
+                let mut builder =
+                    JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
                 for desc in RUNTIME_FNS {
                     builder.symbol(desc.name, desc.addr);
                 }
