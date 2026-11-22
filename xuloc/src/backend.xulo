@@ -367,9 +367,13 @@ impl Emitter {
             return
         }
         if node.kind == "Mod" {
+            // A module's home is the directory named after it: `mod a;` in
+            // `d/x.xulo` reads `d/a.xulo`, and that file's own `mod b;` reads
+            // `d/a/b.xulo` (spec `modules/import-export.md`).
+            let home = join_path(dir, node.value)
             if node.children.len > 0 {
                 for child in node.children {
-                    self.collect_program(child, dir)
+                    self.collect_program(child, home)
                 }
                 return
             }
@@ -387,7 +391,7 @@ impl Emitter {
                         return
                     }
                     for child in parsed.root.children {
-                        self.collect_program(child, dir)
+                        self.collect_program(child, home)
                     }
                 }
                 Result::Err(error) => {
