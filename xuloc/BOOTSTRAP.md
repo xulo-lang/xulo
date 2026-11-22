@@ -20,8 +20,18 @@ xuloc/
 │   ├── checker.xulo   #   first semantic pass
 │   ├── backend.xulo   #   portable-C code generator
 │   └── tests.xulo     #   stage 1's own #[test] functions
-├── runtime/
-│   └── runtime.c      # dynamic runtime linked into generated programs
+├── runtime/           # unity-built dynamic runtime for generated programs
+│   ├── runtime.c      #   entry point; includes the modules below
+│   ├── runtime_internal.h # shared XVal/container definitions
+│   ├── runtime_value.inc  # allocation, UTF-8, constructors, containers
+│   ├── runtime_ops.inc    # arithmetic, comparison, `is`, nullish
+│   ├── runtime_render.inc # formatting and StringBuilder
+│   ├── runtime_methods.inc # member/static dispatch
+│   ├── runtime_fs.inc     # std::fs / io / os / process
+│   ├── runtime_json.inc   # std::json
+│   ├── runtime_path.inc   # std::path
+│   ├── runtime_math.inc   # std::math
+│   └── runtime_process.inc # std::process::exec
 └── corpus/            # Gate 3 accept/reject fixtures
     ├── accept/
     └── reject/
@@ -40,7 +50,9 @@ the corpus is not compiled by the package, so they stay outside `src/`.
 | `xuloc/src/parser.xulo` | Recursive-descent parser: headers, declarations, statements, expressions, patterns, types |
 | `xuloc/src/checker.xulo` | Name and type checking for the Gate 3 corpus: functions, bindings, control flow, lists, optionals, calls |
 | `xuloc/src/backend.xulo` | Code generator: generic AST to portable C, declaration collection, expressions/statements, method/static/path calls, patterns |
-| `xuloc/runtime/runtime.c` | Dynamic bootstrap runtime linked by generated programs: tagged `XVal` values, structs/enums, method registry, `std::fs`/`std::io`/`std::os`/`std::process`/`std::path`/`std::hint`/`std::math`/`std::json` |
+| `xuloc/runtime/runtime.c` | Unity entry point included by generated programs; assembles the `runtime_*.inc` modules in dependency order |
+| `xuloc/runtime/runtime_internal.h` | Shared `XVal`, container, and module-dependency definitions |
+| `xuloc/runtime/runtime_*.inc` | One module each: tagged values/containers, operators, rendering, method dispatch, `std::fs`/`std::io`/`std::os`/`std::process`, `std::json`, `std::path`, `std::math`, `std::process::exec` |
 | `xuloc/corpus/accept/` | Files stage 1 and stage 0 must both accept; `.expected` files hold their compiled output |
 | `xuloc/corpus/reject/` | Files both must reject, with a coded semantic diagnostic |
 | `xuloc/src/main.xulo` | CLI: `tokens`, `parse`, `check`, and `build` modes, diagnostics, exit status |
@@ -306,8 +318,8 @@ so stage 2 does not inherit them silently.
     therefore keeps the argv guard as nested `if`s, and `literal_expr` nests
     its length check before slicing an octal prefix.
 
-19. **The bootstrap runtime is deliberately dynamic.** `xuloc/runtime/runtime.c`
-    represents every value as a tagged `XVal`, keeps structs as field tables,
+19. **The bootstrap runtime is deliberately dynamic.** `xuloc/runtime/` (entry
+    `runtime.c`) represents every value as a tagged `XVal`, keeps structs as field tables,
     dispatches methods through a registry, and leaks memory (the compiler is a
     one-shot process). Struct values are reference-shaped, so the R8
     value-copy table is not reproduced. This keeps the first backend small; the
