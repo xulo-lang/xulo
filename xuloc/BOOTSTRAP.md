@@ -19,7 +19,8 @@ xuloc/
 │   ├── parser.xulo    #   parser state, `parse` entry, module list
 │   ├── parser/        #   procedural parser modules (see below)
 │   ├── checker.xulo   #   first semantic pass
-│   ├── backend.xulo   #   portable-C code generator
+│   ├── backend.xulo   #   codegen entry, collection, emitter state
+│   ├── backend/       #   procedural emission modules (see below)
 │   └── tests.xulo     #   stage 1's own #[test] functions
 ├── runtime/           # unity-built dynamic runtime for generated programs
 │   ├── runtime.c      #   entry point; includes the modules below
@@ -53,7 +54,8 @@ corpus is not compiled by the package, so they stay outside `src/`.
 | `xuloc/src/parser.xulo` | Parser state (`Parser`), `parse`/`parse_expression` entries, and the submodule tree |
 | `xuloc/src/parser/*.xulo` | Procedural parser modules: `tokens`, `nodes`, `template`, `types`, `decls`, `stmts`, `exprs`, `primary`, `control`, `patterns` |
 | `xuloc/src/checker.xulo` | Name and type checking for the Gate 3 corpus: functions, bindings, control flow, lists, optionals, calls |
-| `xuloc/src/backend.xulo` | Code generator: generic AST to portable C, declaration collection, expressions/statements, method/static/path calls, patterns |
+| `xuloc/src/backend.xulo` | Codegen entry: `compile`, declaration collection, emitter state, naming and literal text |
+| `xuloc/src/backend/*.xulo` | Procedural emission modules: `bk_util`, `bk_state`, `bk_emit`, `bk_stmt`, `bk_expr`, `bk_call`, `bk_pattern` |
 | `xuloc/runtime/runtime.c` | Unity entry point included by generated programs; assembles the `runtime_*.inc` modules in dependency order |
 | `xuloc/runtime/runtime_internal.h` | Shared `XVal`, container, and module-dependency definitions |
 | `xuloc/runtime/runtime_*.inc` | One module each: tagged values/containers, operators, rendering, method dispatch, `std::fs`/`std::io`/`std::os`/`std::process`, `std::json`, `std::path`, `std::math`, `std::process::exec` |

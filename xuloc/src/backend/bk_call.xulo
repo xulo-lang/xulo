@@ -1,0 +1,601 @@
+// Stage 1 backend: call and builtin emission.
+//
+// Procedural form of the old `impl Emitter` methods; `e` is the emitter state.
+
+use ast::Node;
+use super::bk_state;
+use super::{Emitter};
+use super::bk_expr;
+use super::bk_util;
+
+pub fn ca_emit_call(e: mut Emitter, node: Node): string {
+    if node.children.len == 0 {
+        return "xr_nil()"
+    }
+    let callee = node.children[0]
+    if callee.kind == "Member" or callee.kind == "OptionalMember" {
+        return ca_emit_method_call(e, node)
+    }
+    if callee.kind == "Name" or callee.kind == "Path" {
+        return ca_emit_named_call(e, node)
+    }
+    bk_state::co_fail(e, "only named functions and methods are callable in the bootstrap backend")
+    return "xr_nil()"
+}
+
+pub fn ca_emit_method_call(e: mut Emitter, node: Node): string {
+    let callee = node.children[0]
+    let recv_expr = bk_expr::ex_emit_expr(e, callee.children[0])
+    let recv = bk_state::co_new_tmp(e)
+    bk_state::co_line(e, "XVal " + recv + " = " + recv_expr + ";")
+    let args = bk_expr::ex_eval_args(e, node.children, 1)
+    return "xr_method("
+        + recv
+        + ", "
+        + bk_util::c_string(callee.value)
+        + ", "
+        + str(args.len)
+        + ", "
+        + bk_expr::ex_value_array(e, args)
+        + ")"
+}
+
+pub fn ca_emit_named_call(e: mut Emitter, node: Node): string {
+    let callee = node.children[0]
+    let name = callee.value
+    if callee.kind == "Name" {
+        let builtin = ca_emit_builtin(e, node, name)
+        if builtin != "" {
+            return builtin
+        }
+        let struct_index = bk_state::co_find_struct(e, name)
+        if struct_index >= 0 {
+            return ca_emit_struct_call(e, node, struct_index)
+        }
+        let binding = bk_state::co_lookup_local(e, name)
+        if binding != "" {
+            bk_state::co_fail(e, "calling a local value is not lowered by the bootstrap backend")
+            return "xr_nil()"
+        }
+        let fn_cname = bk_state::co_find_function(e, name)
+        if fn_cname != "" {
+            let args = bk_expr::ex_eval_args(e, node.children, 1)
+            return fn_cname
+                + "("
+                + str(args.len)
+                + ", "
+                + bk_expr::ex_value_array(e, args)
+                + ")"
+        }
+        bk_state::co_fail(e, "cannot lower call to `" + name + "`")
+        return "xr_nil()"
+    }
+    return ca_emit_path_call(e, node)
+}
+
+pub fn ca_emit_builtin(e: mut Emitter, node: Node, name: string): string {
+    if name == "print" or name == "println" {
+        // The prelude `print` is variadic: values render and are separated
+        // by one space, then a newline.
+        let args = bk_expr::ex_eval_args(e, node.children, 1)
+        return "xr_print_args("
+            + str(args.len)
+            + ", "
+            + bk_expr::ex_value_array(e, args)
+            + ")"
+    }
+    if name == "eprintln" or name == "eprint" {
+        let args = bk_expr::ex_eval_args(e, node.children, 1)
+        return "xr_eprint_args("
+            + str(args.len)
+            + ", "
+            + bk_expr::ex_value_array(e, args)
+            + ")"
+    }
+    if name == "str" {
+        return "xr_str_of(" + bk_expr::ex_one_arg(e, node, name) + ")"
+    }
+    if name == "len" {
+        return "xr_int(xr_len(" + bk_expr::ex_one_arg(e, node, name) + "))"
+    }
+    if name == "panic" {
+        if node.children.len < 2 {
+            return "xr_panic(xr_str(\"panic\"))"
+        }
+        return "xr_panic(" + bk_expr::ex_arg_expr(e, node.children[1]) + ")"
+    }
+    if name == "assert" {
+        if node.children.len == 2 {
+            return "xr_assert("
+                + bk_expr::ex_arg_expr(e, node.children[1])
+                + ", xr_str(\"assertion failed\"))"
+        }
+        if node.children.len >= 3 {
+            return "xr_assert("
+                + bk_expr::ex_arg_expr(e, node.children[1])
+                + ", "
+                + bk_expr::ex_arg_expr(e, node.children[2])
+                + ")"
+        }
+        bk_state::co_fail(e, "`assert` expects a condition")
+        return "xr_nil()"
+    }
+    return ""
+}
+
+pub fn ca_emit_struct_call(e: mut Emitter, node: Node, struct_index: number): string {
+    let info = e.structs[struct_index]
+    let fields = info.fields
+    let mut names: List<string> = []
+    let mut values: List<string> = []
+    let mut i = 0
+    while i < fields.len {
+        names.push(fields[i])
+        values.push("xr_nil()")
+        i = i + 1
+    }
+    let mut position = 0
+    i = 1
+    while i < node.children.len {
+        let child = node.children[i]
+        let mut target = position
+        let mut value_node = child
+        if child.kind == "Arg" {
+            value_node = child.children[0]
+            target = -1
+            let field_count = fields.len
+            let mut fi = 0
+            while fi < field_count {
+                if fields[fi] == child.value {
+                    target = fi
+                }
+                fi = fi + 1
+            }
+            if target < 0 {
+                bk_state::co_fail(e, 
+                    "unknown field `"
+                        + child.value
+                        + "` in `"
+                        + info.name
+                        + "`",
+                )
+                return "xr_nil()"
+            }
+        } else {
+            position = position + 1
+            if target >= fields.len {
+                bk_state::co_fail(e, "too many fields in `" + info.name + "`")
+                return "xr_nil()"
+            }
+        }
+        let value = bk_expr::ex_emit_expr(e, value_node)
+        let tmp = bk_state::co_new_tmp(e)
+        bk_state::co_line(e, "XVal " + tmp + " = " + value + ";")
+        values[target] = tmp
+        i = i + 1
+    }
+    let mut ctor = "xr_struct"
+    if info.debug {
+        ctor = "xr_struct_debug"
+    }
+    return ctor
+        + "("
+        + bk_util::c_string(info.name)
+        + ", "
+        + str(fields.len)
+        + ", "
+        + bk_expr::ex_name_array(e, names)
+        + ", "
+        + bk_expr::ex_value_array(e, values)
+        + ")"
+}
+
+pub fn ca_emit_path_call(e: mut Emitter, node: Node): string {
+    let path = node.children[0].value
+    let args = bk_expr::ex_eval_args(e, node.children, 1)
+    if path == "std::fs::read" {
+        if args.len != 1 {
+            bk_state::co_fail(e, "`std::fs::read` expects one argument")
+            return "xr_nil()"
+        }
+        return "xr_fs_read(" + args[0] + ")"
+    }
+    if path == "std::fs::write" or path == "std::fs::append"
+        or path == "std::fs::write_bytes" or path == "std::fs::append_bytes"
+        or path == "std::fs::create_new" or path == "std::fs::copy"
+        or path == "std::fs::rename" or path == "std::fs::set_mode"
+        or path == "std::fs::set_times"
+    {
+        if args.len != 2 {
+            bk_state::co_fail(e, "`" + path + "` expects two arguments")
+            return "xr_nil()"
+        }
+        return "xr_fs_" + path.slice(9, path.len) + "(" + args[0] + ", " + args[1] + ")"
+    }
+    if path == "std::fs::read_bytes" or path == "std::fs::exists"
+        or path == "std::fs::stat" or path == "std::fs::remove"
+        or path == "std::fs::mkdir" or path == "std::fs::read_dir"
+        or path == "std::fs::walk" or path == "std::fs::remove_dir"
+        or path == "std::fs::realpath" or path == "std::fs::touch"
+    {
+        if args.len != 1 {
+            bk_state::co_fail(e, "`" + path + "` expects one argument")
+            return "xr_nil()"
+        }
+        return "xr_fs_" + path.slice(9, path.len) + "(" + args[0] + ")"
+    }
+    if path == "std::fs::temp_file" or path == "std::fs::temp_dir" {
+        if args.len > 1 {
+            bk_state::co_fail(e, "`" + path + "` expects at most one argument")
+            return "xr_nil()"
+        }
+        if args.len == 0 {
+            return "xr_fs_" + path.slice(9, path.len) + "(xr_nil())"
+        }
+        return "xr_fs_" + path.slice(9, path.len) + "(" + args[0] + ")"
+    }
+    if path == "std::fs::temp_file_in" or path == "std::fs::temp_dir_in" {
+        if args.len < 1 or args.len > 2 {
+            bk_state::co_fail(e, "`" + path + "` expects one or two arguments")
+            return "xr_nil()"
+        }
+        if args.len == 1 {
+            return "xr_fs_" + path.slice(9, path.len) + "(" + args[0] + ", xr_nil())"
+        }
+        return "xr_fs_" + path.slice(9, path.len) + "(" + args[0] + ", " + args[1] + ")"
+    }
+    if path == "std::io::println" {
+        if args.len != 1 {
+            bk_state::co_fail(e, "`std::io::println` expects one argument")
+            return "xr_nil()"
+        }
+        return "xr_print(" + args[0] + ")"
+    }
+    if path == "std::io::print" {
+        if args.len != 1 {
+            bk_state::co_fail(e, "`std::io::print` expects one argument")
+            return "xr_nil()"
+        }
+        return "xr_io_print(" + args[0] + ")"
+    }
+    if path == "std::io::eprintln" {
+        if args.len != 1 {
+            bk_state::co_fail(e, "`std::io::eprintln` expects one argument")
+            return "xr_nil()"
+        }
+        return "xr_eprintln(" + args[0] + ")"
+    }
+    if path == "std::io::eprint" {
+        if args.len != 1 {
+            bk_state::co_fail(e, "`std::io::eprint` expects one argument")
+            return "xr_nil()"
+        }
+        return "xr_io_eprint(" + args[0] + ")"
+    }
+    if path == "std::io::flush" {
+        return "xr_io_flush()"
+    }
+    if path == "std::path::join" or path == "std::path::relative" {
+        if args.len != 2 {
+            bk_state::co_fail(e, "`" + path + "` expects two arguments")
+            return "xr_nil()"
+        }
+        if path == "std::path::join" {
+            return "xr_path_join(" + args[0] + ", " + args[1] + ")"
+        }
+        return "xr_path_relative(" + args[0] + ", " + args[1] + ")"
+    }
+    if path == "std::path::with_ext" {
+        if args.len != 2 {
+            bk_state::co_fail(e, "`std::path::with_ext` expects two arguments")
+            return "xr_nil()"
+        }
+        return "xr_path_with_ext(" + args[0] + ", " + args[1] + ")"
+    }
+    if path == "std::path::is_absolute"
+        or path == "std::path::dirname"
+        or path == "std::path::basename"
+        or path == "std::path::ext"
+        or path == "std::path::stem"
+        or path == "std::path::normalize"
+        or path == "std::path::split"
+    {
+        if args.len != 1 {
+            bk_state::co_fail(e, "`" + path + "` expects one argument")
+            return "xr_nil()"
+        }
+        if path == "std::path::is_absolute" {
+            return "xr_path_is_absolute(" + args[0] + ")"
+        }
+        if path == "std::path::dirname" {
+            return "xr_path_dirname(" + args[0] + ")"
+        }
+        if path == "std::path::basename" {
+            return "xr_path_basename(" + args[0] + ")"
+        }
+        if path == "std::path::ext" {
+            return "xr_path_ext(" + args[0] + ")"
+        }
+        if path == "std::path::stem" {
+            return "xr_path_stem(" + args[0] + ")"
+        }
+        if path == "std::path::normalize" {
+            return "xr_path_normalize(" + args[0] + ")"
+        }
+        return "xr_path_split(" + args[0] + ")"
+    }
+    if path == "std::hint::black_box" {
+        if args.len != 1 {
+            bk_state::co_fail(e, "`std::hint::black_box` expects one argument")
+            return "xr_nil()"
+        }
+        return args[0]
+    }
+    if path == "std::hint::spin_loop" {
+        return "xr_nil()"
+    }
+    if path == "std::hint::likely" or path == "std::hint::unlikely" {
+        if args.len != 1 {
+            bk_state::co_fail(e, "`" + path + "` expects one argument")
+            return "xr_nil()"
+        }
+        return args[0]
+    }
+    if path == "std::json::parse" or path == "std::json::valid" {
+        if args.len != 1 {
+            bk_state::co_fail(e, "`" + path + "` expects one argument")
+            return "xr_nil()"
+        }
+        if path == "std::json::parse" {
+            return "xr_json_parse(" + args[0] + ")"
+        }
+        return "xr_json_valid(" + args[0] + ")"
+    }
+    if path == "std::json::stringify" {
+        if args.len < 1 or args.len > 2 {
+            bk_state::co_fail(e, "`std::json::stringify` expects one or two arguments")
+            return "xr_nil()"
+        }
+        if args.len == 1 {
+            return "xr_json_stringify(" + args[0] + ", xr_nil())"
+        }
+        return "xr_json_stringify(" + args[0] + ", " + args[1] + ")"
+    }
+    if path == "std::math::random" {
+        return "xr_math_random()"
+    }
+    if path == "std::math::abs"
+        or path == "std::math::sign"
+        or path == "std::math::sqrt"
+        or path == "std::math::cbrt"
+        or path == "std::math::sin"
+        or path == "std::math::cos"
+        or path == "std::math::tan"
+        or path == "std::math::asin"
+        or path == "std::math::acos"
+        or path == "std::math::atan"
+        or path == "std::math::log"
+        or path == "std::math::log2"
+        or path == "std::math::log10"
+        or path == "std::math::log1p"
+        or path == "std::math::exp"
+        or path == "std::math::expm1"
+        or path == "std::math::floor"
+        or path == "std::math::ceil"
+        or path == "std::math::round"
+        or path == "std::math::trunc"
+        or path == "std::math::pop_count"
+        or path == "std::math::count_leading_zeros"
+        or path == "std::math::count_trailing_zeros"
+    {
+        if args.len != 1 {
+            bk_state::co_fail(e, "`" + path + "` expects one argument")
+            return "xr_nil()"
+        }
+        return "xr_math_" + path.slice(11, path.len) + "(" + args[0] + ")"
+    }
+    if path == "std::math::min"
+        or path == "std::math::max"
+        or path == "std::math::pow"
+        or path == "std::math::hypot"
+        or path == "std::math::atan2"
+        or path == "std::math::rotate_left"
+        or path == "std::math::rotate_right"
+        or path == "std::math::wrapping_add"
+        or path == "std::math::wrapping_sub"
+        or path == "std::math::wrapping_mul"
+        or path == "std::math::random_int"
+        or path == "std::math::to_fixed"
+    {
+        if args.len != 2 {
+            bk_state::co_fail(e, "`" + path + "` expects two arguments")
+            return "xr_nil()"
+        }
+        return "xr_math_"
+            + path.slice(11, path.len)
+            + "("
+            + args[0]
+            + ", "
+            + args[1]
+            + ")"
+    }
+    if path == "std::math::clamp" {
+        if args.len != 3 {
+            bk_state::co_fail(e, "`std::math::clamp` expects three arguments")
+            return "xr_nil()"
+        }
+        return "xr_math_clamp(" + args[0] + ", " + args[1] + ", " + args[2] + ")"
+    }
+    if path == "std::os::getenv" {
+        if args.len != 1 {
+            bk_state::co_fail(e, "`std::os::getenv` expects one argument")
+            return "xr_nil()"
+        }
+        return "xr_os_getenv(" + args[0] + ")"
+    }
+    if path == "std::os::platform" {
+        return "xr_os_platform()"
+    }
+    if path == "std::os::cwd" {
+        return "xr_os_cwd()"
+    }
+    if path == "std::os::chdir" {
+        if args.len != 1 {
+            bk_state::co_fail(e, "`std::os::chdir` expects one argument")
+            return "xr_nil()"
+        }
+        return "xr_os_chdir(" + args[0] + ")"
+    }
+    if path == "std::os::tmp_dir" {
+        return "xr_os_tmp_dir()"
+    }
+    if path == "std::os::home_dir" {
+        return "xr_os_home_dir()"
+    }
+    if path == "std::os::setenv" {
+        if args.len != 2 {
+            bk_state::co_fail(e, "`std::os::setenv` expects two arguments")
+            return "xr_nil()"
+        }
+        return "xr_os_setenv(" + args[0] + ", " + args[1] + ")"
+    }
+    if path == "std::os::unsetenv" {
+        if args.len != 1 {
+            bk_state::co_fail(e, "`std::os::unsetenv` expects one argument")
+            return "xr_nil()"
+        }
+        return "xr_os_unsetenv(" + args[0] + ")"
+    }
+    if path == "std::os::exec_path" {
+        return "xr_os_exec_path()"
+    }
+    if path == "std::os::host_name" {
+        return "xr_os_host_name()"
+    }
+    if path == "std::os::user_name" {
+        return "xr_os_user_name()"
+    }
+    if path == "std::os::pid" {
+        return "xr_os_pid()"
+    }
+    if path == "std::os::arch" {
+        return "xr_os_arch()"
+    }
+    if path == "std::os::cpu_count" {
+        return "xr_os_cpu_count()"
+    }
+    if path == "std::process::args" {
+        return "xr_process_args()"
+    }
+    if path == "std::process::exit" {
+        if args.len != 1 {
+            bk_state::co_fail(e, "`std::process::exit` expects one argument")
+            return "xr_nil()"
+        }
+        return "xr_process_exit(" + args[0] + ")"
+    }
+    if path == "std::process::run" {
+        if args.len != 1 {
+            bk_state::co_fail(e, "`std::process::run` expects one argument")
+            return "xr_nil()"
+        }
+        return "xr_process_run(" + args[0] + ")"
+    }
+    if path == "std::process::exec" {
+        if args.len < 2 {
+            bk_state::co_fail(e, "`std::process::exec` expects a program and an argument list")
+            return "xr_nil()"
+        }
+        return "xr_process_exec(" + args[0] + ", " + args[1] + ")"
+    }
+    let parts = bk_util::split_path(path)
+    if parts.len == 2 {
+        if parts[0] == "Set" and parts[1] == "from_list" {
+            if args.len != 1 {
+                bk_state::co_fail(e, "`Set::from_list` expects one argument")
+                return "xr_nil()"
+            }
+            return "xr_set_from_list(" + args[0] + ")"
+        }
+        if parts[0] == "Map" and parts[1] == "from_entries" {
+            if args.len != 1 {
+                bk_state::co_fail(e, "`Map::from_entries` expects one argument")
+                return "xr_nil()"
+            }
+            return "xr_map_from_entries(" + args[0] + ")"
+        }
+        // Module-qualified declarations are flattened during collection, so
+        // `alias::fn` lowers to the same C function as `fn`.
+        let fn_cname = bk_state::co_find_function(e, parts[1])
+        if fn_cname != "" {
+            return fn_cname
+                + "("
+                + str(args.len)
+                + ", "
+                + bk_expr::ex_value_array(e, args)
+                + ")"
+        }
+        if bk_state::co_enum_has_variant(e, parts[0], parts[1]) {
+            return "xr_variant("
+                + bk_util::c_string(parts[0])
+                + ", "
+                + bk_util::c_string(parts[1])
+                + ", "
+                + str(args.len)
+                + ", "
+                + bk_expr::ex_value_array(e, args)
+                + ")"
+        }
+        if bk_state::co_trait_has_method(e, parts[0], parts[1]) {
+            if args.len < 1 {
+                bk_state::co_fail(e, "`" + path + "` expects a receiver")
+                return "xr_nil()"
+            }
+            let rest: List<string> = []
+            let mut i = 1
+            while i < args.len {
+                rest.push(args[i])
+                i = i + 1
+            }
+            // The bootstrap backend is type-erased; dispatch a trait call
+            // through the runtime method registry on the receiver's type.
+            return "xr_method("
+                + args[0]
+                + ", "
+                + bk_util::c_string(parts[1])
+                + ", "
+                + str(rest.len)
+                + ", "
+                + bk_expr::ex_value_array(e, rest)
+                + ")"
+        }
+        if parts[0] == "StringBuilder" and parts[1] == "new" {
+            return "xr_static_method(\"StringBuilder\", \"new\", 0, NULL)"
+        }
+        if parts[0] == "Result" {
+            return "xr_variant(\"Result\", "
+                + bk_util::c_string(parts[1])
+                + ", "
+                + str(args.len)
+                + ", "
+                + bk_expr::ex_value_array(e, args)
+                + ")"
+        }
+        // Anything else would silently render as a variant; report it
+        // instead of producing a program that prints its own source.
+        bk_state::co_fail(e, "cannot lower static call to `" + path + "`")
+        return "xr_nil()"
+    }
+    let last = parts[parts.len - 1]
+    let fn_cname = bk_state::co_find_function(e, last)
+    if fn_cname != "" {
+        return fn_cname
+            + "("
+            + str(args.len)
+            + ", "
+            + bk_expr::ex_value_array(e, args)
+            + ")"
+    }
+    bk_state::co_fail(e, "cannot lower call to `" + path + "`")
+    return "xr_nil()"
+}

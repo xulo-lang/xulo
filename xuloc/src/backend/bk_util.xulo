@@ -1,0 +1,184 @@
+// Stage 1 backend: pure path, string, number, and pattern-text helpers.
+//
+// These free functions hold no emitter state and are safe to call from any
+// backend module.
+
+pub fn dir_of(path: string): string {
+    let mut i = path.len - 1
+    while i >= 0 {
+        let c = path.slice(i, i + 1)
+        if c == "/" or c == "\\" {
+            if i == 0 {
+                return path.slice(0, 1)
+            }
+            return path.slice(0, i)
+        }
+        i = i - 1
+    }
+    return "."
+}
+
+pub fn stem_of(path: string): string {
+    let mut at = path.len - 1
+    while at >= 0 {
+        let c = path.slice(at, at + 1)
+        if c == "/" or c == "\\" {
+            break
+        }
+        at = at - 1
+    }
+    let start = at + 1
+    let mut dot = path.len
+    let mut i = start
+    while i < path.len {
+        if path.slice(i, i + 1) == "." {
+            dot = i
+        }
+        i = i + 1
+    }
+    return path.slice(start, dot)
+}
+
+pub fn base_of(path: string): string {
+    let mut at = path.len - 1
+    while at >= 0 {
+        let c = path.slice(at, at + 1)
+        if c == "/" or c == "\\" {
+            return path.slice(at + 1, path.len)
+        }
+        at = at - 1
+    }
+    return path
+}
+
+pub fn join_path(dir: string, name: string): string {
+    if dir == "" or dir == "." {
+        return name
+    }
+    return dir + "/" + name
+}
+
+pub fn clean_number(text: string): string {
+    let mut out = StringBuilder::new()
+    for c in text.split("") {
+        if c != "_" {
+            out.append(c)
+        }
+    }
+    return out.build()
+}
+
+pub fn is_float_text(text: string): bool {
+    if text.len >= 2 {
+        if text.slice(0, 2) == "0x" or text.slice(0, 2) == "0X" {
+            return false
+        }
+    }
+    for c in text.split("") {
+        if c == "." or c == "e" or c == "E" {
+            return true
+        }
+    }
+    return false
+}
+
+pub fn hex_pad(n: number, width: number): string {
+    let digits = "0123456789ABCDEF"
+    let mut out = StringBuilder::new()
+    let mut i = width - 1
+    while i >= 0 {
+        let value = (n >> (i * 4)) & 15
+        out.append(digits.slice(value, value + 1))
+        i = i - 1
+    }
+    return out.build()
+}
+
+pub fn pad_hex8(text: string): string {
+    // `\u{1F44B}` carries a variable-width codepoint; C's `\U` needs eight.
+    let mut out = StringBuilder::new()
+    let mut pad = 8 - text.len
+    while pad > 0 {
+        out.append("0")
+        pad = pad - 1
+    }
+    out.append(text)
+    return out.build()
+}
+
+pub fn c_string(value: string): string {
+    let mut out = StringBuilder::new()
+    out.append("\"")
+    out.append(value)
+    out.append("\"")
+    return out.build()
+}
+
+pub fn c_join(values: List<string>): string {
+    let mut out = StringBuilder::new()
+    let mut i = 0
+    while i < values.len {
+        if i > 0 {
+            out.append(", ")
+        }
+        out.append(values[i])
+        i = i + 1
+    }
+    return out.build()
+}
+
+pub fn normalize_path(path: string): string {
+    let mut out = StringBuilder::new()
+    for c in path.split("") {
+        if c == "\\" {
+            out.append("/")
+        } else {
+            out.append(c)
+        }
+    }
+    return out.build()
+}
+
+pub fn split_path(path: string): List<string> {
+    let mut parts: List<string> = []
+    let mut part = StringBuilder::new()
+    let chars = path.split("")
+    let mut i = 0
+    while i < chars.len {
+        let c = chars[i]
+        if c == ":" and i + 1 < chars.len and chars[i + 1] == ":" {
+            parts.push(part.build())
+            part = StringBuilder::new()
+            i = i + 2
+        } else {
+            part.append(c)
+            i = i + 1
+        }
+    }
+    parts.push(part.build())
+    return parts
+}
+
+pub fn type_pattern_name(value: string): string {
+    let words = value.split(" ")
+    let mut i = words.len - 1
+    while i >= 0 {
+        if words[i] != "" {
+            return words[i]
+        }
+        i = i - 1
+    }
+    return ""
+}
+
+pub fn type_pattern_type(value: string): string {
+    let words = value.split(" ")
+    let mut i = 0
+    while i < words.len {
+        if words[i] != "" {
+            return words[i]
+        }
+        i = i + 1
+    }
+    return value
+}

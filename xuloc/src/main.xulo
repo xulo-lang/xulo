@@ -23,7 +23,8 @@ mod parser;
 mod backend;
 
 use ast::{render};
-use backend::{compile, BuildResult, base_of, dir_of, join_path, stem_of};
+use backend::{compile, BuildResult};
+use backend::bk_util::{base_of, dir_of, join_path, stem_of};
 use checker::{check, CheckResult};
 use lexer::{lex, LexResult, Token};
 use parser::{parse, ParseResult};

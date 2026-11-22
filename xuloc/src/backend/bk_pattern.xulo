@@ -1,0 +1,175 @@
+// Stage 1 backend: pattern tests and bindings.
+//
+// Procedural form of the old `impl Emitter` methods; `e` is the emitter state.
+
+use ast::Node;
+use super::bk_state;
+use super::{Emitter};
+use super::bk_util;
+
+pub fn pt_pattern_is_variant(e: Emitter, value: string): bool {
+    let parts = bk_util::split_path(value)
+    if parts.len != 2 {
+        return false
+    }
+    let mut i = e.enums.len - 1
+    while i >= 0 {
+        if e.enums[i].name == parts[0] {
+            let mut v = 0
+            while v < e.enums[i].variants.len {
+                if e.enums[i].variants[v] == parts[1] {
+                    return true
+                }
+                v = v + 1
+            }
+        }
+        i = i - 1
+    }
+    return false
+}
+
+pub fn pt_pattern_test(e: mut Emitter, pattern: Node, scrut: string): string {
+    let kind = pattern.kind
+    if kind == "Wildcard" {
+        return "1"
+    }
+    if kind == "NamePattern" {
+        if pt_pattern_is_variant(e, pattern.value) {
+            return "xr_is_variant(" + scrut + ", " + bk_util::c_string(pattern.value) + ")"
+        }
+        return "1"
+    }
+    if kind == "LiteralPattern" {
+        return pt_literal_pattern_test(e, pattern.value, scrut)
+    }
+    if kind == "VariantPattern" {
+        if bk_state::co_find_struct(e, pattern.value) >= 0 and !pt_pattern_is_variant(e, pattern.value) {
+            return "xr_is_struct(" + scrut + ", " + bk_util::c_string(pattern.value) + ")"
+        }
+        return "xr_is_variant(" + scrut + ", " + bk_util::c_string(pattern.value) + ")"
+    }
+    if kind == "TypePattern" {
+        return "xr_is(" + scrut + ", " + bk_util::c_string(bk_util::type_pattern_type(pattern.value)) + ")"
+    }
+    if kind == "OrPattern" {
+        let mut out = StringBuilder::new()
+        out.append("(")
+        let mut i = 0
+        while i < pattern.children.len {
+            if i > 0 {
+                out.append(" || ")
+            }
+            out.append(pt_pattern_test(e, pattern.children[i], scrut))
+            i = i + 1
+        }
+        out.append(")")
+        return out.build()
+    }
+    bk_state::co_fail(e, "unsupported pattern `" + kind + "`")
+    return "1"
+}
+
+pub fn pt_literal_pattern_test(e: mut Emitter, value: string, scrut: string): string {
+    let exclusive = value.split("..<")
+    if exclusive.len == 2 {
+        return "(xr_cond(xr_ge("
+            + scrut
+            + ", "
+            + bk_state::co_literal_expr(e, exclusive[0])
+            + ")) && xr_cond(xr_lt("
+            + scrut
+            + ", "
+            + bk_state::co_literal_expr(e, exclusive[1])
+            + ")))"
+    }
+    let inclusive = value.split("..=")
+    if inclusive.len == 2 {
+        return "(xr_cond(xr_ge("
+            + scrut
+            + ", "
+            + bk_state::co_literal_expr(e, inclusive[0])
+            + ")) && xr_cond(xr_le("
+            + scrut
+            + ", "
+            + bk_state::co_literal_expr(e, inclusive[1])
+            + ")))"
+    }
+    return "xr_eq(" + scrut + ", " + bk_state::co_literal_expr(e, value) + ")"
+}
+
+pub fn pt_pattern_bind(e: mut Emitter, pattern: Node, scrut: string) {
+    let kind = pattern.kind
+    if kind == "Wildcard" or kind == "LiteralPattern" {
+        return
+    }
+    if kind == "NamePattern" {
+        if pattern.value == "_" or pt_pattern_is_variant(e, pattern.value) {
+            return
+        }
+        let cname = bk_state::co_new_local(e, pattern.value)
+        bk_state::co_line(e, "XVal " + cname + " = " + scrut + ";")
+        return
+    }
+    if kind == "VariantPattern" {
+        let struct_index = bk_state::co_find_struct(e, pattern.value)
+        if struct_index >= 0 and !pt_pattern_is_variant(e, pattern.value) {
+            pt_bind_struct_pattern(e, pattern, scrut, struct_index)
+            return
+        }
+        pt_bind_enum_pattern(e, pattern, scrut)
+        return
+    }
+    if kind == "TypePattern" {
+        let name = bk_util::type_pattern_name(pattern.value)
+        if name != "" and name != "_" {
+            let cname = bk_state::co_new_local(e, name)
+            bk_state::co_line(e, "XVal " + cname + " = " + scrut + ";")
+        }
+        return
+    }
+    if kind == "OrPattern" {
+        let mut i = 0
+        while i < pattern.children.len {
+            pt_pattern_bind(e, pattern.children[i], scrut)
+            i = i + 1
+        }
+        return
+    }
+    bk_state::co_fail(e, "unsupported pattern `" + kind + "`")
+}
+
+pub fn pt_bind_struct_pattern(e: mut Emitter, pattern: Node, scrut: string, struct_index: number) {
+    let fields = e.structs[struct_index].fields
+    let mut i = 0
+    while i < pattern.children.len {
+        let payload = pattern.children[i]
+        if payload.kind == "PatternPayload" {
+            let mut p = 0
+            while p < payload.children.len {
+                let mut value = "xr_nil()"
+                if p < fields.len {
+                    value = "xr_get_field(" + scrut + ", " + bk_util::c_string(fields[p]) + ")"
+                }
+                pt_pattern_bind(e, payload.children[p], value)
+                p = p + 1
+            }
+        }
+        i = i + 1
+    }
+}
+
+pub fn pt_bind_enum_pattern(e: mut Emitter, pattern: Node, scrut: string) {
+    let mut i = 0
+    while i < pattern.children.len {
+        let payload = pattern.children[i]
+        if payload.kind == "PatternPayload" {
+            let mut p = 0
+            while p < payload.children.len {
+                let value = "xr_payload(" + scrut + ", " + str(p) + ")"
+                pt_pattern_bind(e, payload.children[p], value)
+                p = p + 1
+            }
+        }
+        i = i + 1
+    }
+}

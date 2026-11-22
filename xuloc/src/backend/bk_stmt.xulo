@@ -1,0 +1,351 @@
+// Stage 1 backend: statement emission.
+//
+// Procedural form of the old `impl Emitter` methods; `e` is the emitter state.
+
+use ast::Node;
+use super::bk_state;
+use super::{Emitter};
+use super::bk_emit;
+use super::bk_expr;
+use super::bk_pattern;
+use super::bk_util;
+
+pub fn st_emit_stmt(e: mut Emitter, node: Node) {
+    let kind = node.kind
+    if kind == "Let" or kind == "Const" {
+        st_emit_let(e, node)
+        return
+    }
+    if kind == "Assign" {
+        st_emit_assign(e, node)
+        return
+    }
+    if kind == "ExprStmt" {
+        let expr = node.children[0]
+        if expr.kind == "If" {
+            st_emit_if(e, expr, "")
+        } else if expr.kind == "Match" {
+            st_emit_match(e, expr, "")
+        } else {
+            let value = bk_expr::ex_emit_expr(e, expr)
+            bk_state::co_line(e, "(void)(" + value + ");")
+        }
+        return
+    }
+    if kind == "Return" {
+        if node.children.len > 0 {
+            let value = bk_expr::ex_emit_expr(e, node.children[0])
+            bk_state::co_line(e, "return " + value + ";")
+        } else {
+            bk_state::co_line(e, "return xr_nil();")
+        }
+        return
+    }
+    if kind == "If" {
+        st_emit_if(e, node, "")
+        return
+    }
+    if kind == "While" {
+        st_emit_while(e, node)
+        return
+    }
+    if kind == "For" {
+        st_emit_for(e, node)
+        return
+    }
+    if kind == "Jump" {
+        bk_state::co_line(e, node.value + ";")
+        return
+    }
+    if kind == "Block" {
+        bk_state::co_enter(e)
+        for child in node.children {
+            st_emit_stmt(e, child)
+        }
+        bk_state::co_leave(e)
+        return
+    }
+    if kind == "Defer" {
+        bk_state::co_fail(e, "`defer` is not lowered by the bootstrap backend")
+        return
+    }
+    if kind == "Fn" {
+        bk_state::co_fail(e, "nested functions are not lowered by the bootstrap backend")
+        return
+    }
+    bk_state::co_fail(e, "unsupported statement `" + kind + "`")
+}
+
+pub fn st_emit_let(e: mut Emitter, node: Node) {
+    let mut initializer = node
+    let mut found = false
+    let mut type_name = ""
+    let mut destructure = node
+    for child in node.children {
+        if child.kind == "Destructure" {
+            destructure = child
+            continue
+        }
+        if child.kind == "TypeName" {
+            type_name = child.value
+            continue
+        }
+        if child.kind == "OptionalType" or child.kind == "TupleType" or child.kind == "FnType" {
+            continue
+        }
+        if child.kind != "Mut" {
+            initializer = child
+            found = true
+        }
+    }
+    if !found {
+        bk_state::co_fail(e, "a binding needs an initializer")
+        return
+    }
+    let mut value = ""
+    let mut handled = false
+    // `let p: Point = { x: 1, y: 2 }`: build the named struct so members,
+    // methods, and patterns see the declared type.
+    if initializer.kind == "Map" and type_name != "" {
+        let index = bk_state::co_find_struct(e, type_name)
+        if index >= 0 {
+            value = bk_expr::ex_emit_struct_literal(e, initializer, index)
+            handled = true
+        }
+    }
+    if !handled {
+        value = bk_expr::ex_emit_expr(e, initializer)
+    }
+    if destructure.kind == "Destructure" {
+        st_emit_destructure(e, destructure, value)
+        return
+    }
+    if node.value == "" or node.value == "_" {
+        bk_state::co_line(e, "(void)(" + value + ");")
+        return
+    }
+    let cname = bk_state::co_new_local(e, node.value)
+    bk_state::co_line(e, "XVal " + cname + " = " + value + ";")
+}
+
+pub fn st_emit_destructure(e: mut Emitter, pattern: Node, value: string) {
+    let tmp = bk_state::co_new_tmp(e)
+    bk_state::co_line(e, "XVal " + tmp + " = " + value + ";")
+    let mut i = 0
+    for child in pattern.children {
+        if child.kind == "NamePattern" and child.value != "_" {
+            let cname = bk_state::co_new_local(e, child.value)
+            if pattern.value == "object" {
+                bk_state::co_line(e, 
+                    "XVal " + cname + " = xr_get_field(" + tmp + ", " + bk_util::c_string(child.value) + ");",
+                )
+            } else {
+                bk_state::co_line(e, 
+                    "XVal " + cname + " = xr_index(" + tmp + ", xr_int(" + str(i) + "));",
+                )
+            }
+        }
+        i = i + 1
+    }
+}
+
+pub fn st_emit_assign(e: mut Emitter, node: Node) {
+    st_emit_assign_to(e, node.children[0], node.children[1])
+}
+
+pub fn st_emit_assign_to(e: mut Emitter, target: Node, value_node: Node) {
+    if target.kind == "Name" {
+        let cname = bk_state::co_lookup_local(e, target.value)
+        if cname == "" {
+            bk_state::co_fail(e, "cannot assign to unknown name `" + target.value + "`")
+            return
+        }
+        let value = bk_expr::ex_emit_expr(e, value_node)
+        bk_state::co_line(e, cname + " = " + value + ";")
+        return
+    }
+    if target.kind == "Member" {
+        let recv = bk_expr::ex_emit_expr(e, target.children[0])
+        let value = bk_expr::ex_emit_expr(e, value_node)
+        bk_state::co_line(e, 
+            "xr_set_field(" + recv + ", " + bk_util::c_string(target.value) + ", " + value + ");",
+        )
+        return
+    }
+    if target.kind == "Index" {
+        let recv = bk_expr::ex_emit_expr(e, target.children[0])
+        let index = bk_expr::ex_emit_expr(e, target.children[1])
+        let value = bk_expr::ex_emit_expr(e, value_node)
+        bk_state::co_line(e, "xr_set_index(" + recv + ", " + index + ", " + value + ");")
+        return
+    }
+    if target.kind == "Group" {
+        if target.children.len > 0 {
+            st_emit_assign_to(e, target.children[0], value_node)
+        }
+        return
+    }
+    bk_state::co_fail(e, "unsupported assignment target `" + target.kind + "`")
+}
+
+pub fn st_emit_while(e: mut Emitter, node: Node) {
+    bk_state::co_line(e, "while (1) {")
+    e.indent = e.indent + 1
+    let condition = bk_expr::ex_emit_expr(e, node.children[0])
+    bk_state::co_line(e, "if (!xr_cond(" + condition + ")) { break; }")
+    bk_emit::em_emit_block_value(e, node.children[1], "")
+    e.indent = e.indent - 1
+    bk_state::co_line(e, "}")
+}
+
+pub fn st_emit_for(e: mut Emitter, node: Node) {
+    let iterable = bk_expr::ex_emit_expr(e, node.children[0])
+    let it = bk_state::co_new_tmp(e)
+    bk_state::co_line(e, "XVal " + it + " = " + iterable + ";")
+    let index = bk_state::co_new_tmp(e)
+    bk_state::co_line(e, "long long " + index + " = 0;")
+    bk_state::co_line(e, "for (; " + index + " < xr_len(" + it + "); " + index + " += 1) {")
+    e.indent = e.indent + 1
+    bk_state::co_enter(e)
+    if node.value != "" and node.value != "_" {
+        let cname = bk_state::co_new_local(e, node.value)
+        bk_state::co_line(e, 
+            "XVal "
+                + cname
+                + " = xr_index("
+                + it
+                + ", xr_int("
+                + index
+                + "));",
+        )
+    }
+    for child in node.children[1].children {
+        st_emit_stmt(e, child)
+    }
+    bk_state::co_leave(e)
+    e.indent = e.indent - 1
+    bk_state::co_line(e, "}")
+}
+
+pub fn st_emit_if(e: mut Emitter, node: Node, target: string) {
+    let condition = bk_expr::ex_emit_expr(e, node.children[0])
+    bk_state::co_line(e, "if (xr_cond(" + condition + ")) {")
+    e.indent = e.indent + 1
+    bk_emit::em_emit_block_value(e, node.children[1], target)
+    e.indent = e.indent - 1
+    if node.children.len > 2 {
+        bk_state::co_line(e, "} else {")
+        e.indent = e.indent + 1
+        let alt = node.children[2]
+        if alt.kind == "If" {
+            st_emit_if(e, alt, target)
+        } else {
+            bk_emit::em_emit_block_value(e, alt, target)
+        }
+        e.indent = e.indent - 1
+    }
+    bk_state::co_line(e, "}")
+}
+
+pub fn st_emit_match(e: mut Emitter, node: Node, target: string) {
+    let value = bk_expr::ex_emit_expr(e, node.children[0])
+    let scrut = bk_state::co_new_tmp(e)
+    bk_state::co_line(e, "XVal " + scrut + " = " + value + ";")
+    // A guard is evaluated only after the pattern matched, so it can name
+    // the pattern's bindings. Guards therefore need the fall-through form
+    // (`if test { bind; if guard { … goto end } }`) instead of an
+    // `else if` chain.
+    let mut any_guard = false
+    let mut g = 1
+    while g < node.children.len {
+        for child in node.children[g].children {
+            if child.kind == "Guard" {
+                any_guard = true
+            }
+        }
+        g = g + 1
+    }
+    if any_guard {
+        let label = bk_state::co_new_tmp(e)
+        let mut i = 1
+        while i < node.children.len {
+            st_emit_guard_arm(e, node.children[i], scrut, target, label)
+            i = i + 1
+        }
+        bk_state::co_line(e, "xr_fail(\"no matching arm\");")
+        bk_state::co_line(e, label + ":;")
+        return
+    }
+    let mut first = true
+    let mut i = 1
+    while i < node.children.len {
+        let arm = node.children[i]
+        let pattern = arm.children[0]
+        let test = bk_pattern::pt_pattern_test(e, pattern, scrut)
+        if first {
+            bk_state::co_line(e, "if (" + test + ") {")
+            first = false
+        } else {
+            bk_state::co_line(e, "} else if (" + test + ") {")
+        }
+        e.indent = e.indent + 1
+        bk_state::co_enter(e)
+        bk_pattern::pt_pattern_bind(e, pattern, scrut)
+        st_emit_arm_body(e, arm, target)
+        bk_state::co_leave(e)
+        e.indent = e.indent - 1
+        i = i + 1
+    }
+    if first {
+        bk_state::co_line(e, "xr_fail(\"no match arms\");")
+    } else {
+        bk_state::co_line(e, "} else {")
+        e.indent = e.indent + 1
+        bk_state::co_line(e, "xr_fail(\"no matching arm\");")
+        e.indent = e.indent - 1
+        bk_state::co_line(e, "}")
+    }
+}
+
+pub fn st_emit_arm_body(e: mut Emitter, arm: Node, target: string) {
+    let body = arm.children[arm.children.len - 1]
+    if body.kind == "Block" {
+        bk_emit::em_emit_block_value(e, body, target)
+        return
+    }
+    let value = bk_expr::ex_emit_expr(e, body)
+    if target == "" {
+        bk_state::co_line(e, "(void)(" + value + ");")
+    } else {
+        bk_state::co_line(e, target + " = " + value + ";")
+    }
+}
+
+pub fn st_emit_guard_arm(e: mut Emitter, arm: Node, scrut: string, target: string, label: string) {
+    let pattern = arm.children[0]
+    let test = bk_pattern::pt_pattern_test(e, pattern, scrut)
+    bk_state::co_line(e, "if (" + test + ") {")
+    e.indent = e.indent + 1
+    bk_state::co_enter(e)
+    bk_pattern::pt_pattern_bind(e, pattern, scrut)
+    let mut arm_guard = false
+    for child in arm.children {
+        if child.kind == "Guard" {
+            arm_guard = true
+            let condition = bk_expr::ex_emit_expr(e, child.children[0])
+            bk_state::co_line(e, "if (xr_cond(" + condition + ")) {")
+            e.indent = e.indent + 1
+            st_emit_arm_body(e, arm, target)
+            bk_state::co_line(e, "goto " + label + ";")
+            e.indent = e.indent - 1
+            bk_state::co_line(e, "}")
+        }
+    }
+    if !arm_guard {
+        st_emit_arm_body(e, arm, target)
+        bk_state::co_line(e, "goto " + label + ";")
+    }
+    bk_state::co_leave(e)
+    e.indent = e.indent - 1
+    bk_state::co_line(e, "}")
+}

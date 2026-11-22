@@ -1,0 +1,594 @@
+// Stage 1 backend: expression emission.
+//
+// Procedural form of the old `impl Emitter` methods; `e` is the emitter state.
+
+use ast::Node;
+use super::bk_state;
+use super::{Emitter};
+use super::bk_call;
+use super::bk_stmt;
+use super::bk_util;
+
+pub fn ex_emit_struct_literal(e: mut Emitter, map_node: Node, index: number): string {
+    let info = e.structs[index]
+    let fields = info.fields
+    let mut values: List<string> = []
+    let mut i = 0
+    while i < fields.len {
+        values.push("xr_nil()")
+        i = i + 1
+    }
+    for child in map_node.children {
+        if child.kind != "Entry" {
+            bk_state::co_fail(e, "a typed object literal does not support spread")
+            return "xr_nil()"
+        }
+        let mut target = -1
+        let mut f = 0
+        while f < fields.len {
+            if fields[f] == child.value {
+                target = f
+            }
+            f = f + 1
+        }
+        if target < 0 {
+            bk_state::co_fail(e, "unknown field `" + child.value + "` in `" + info.name + "`")
+            return "xr_nil()"
+        }
+        let value = ex_emit_expr(e, child.children[0])
+        let tmp = bk_state::co_new_tmp(e)
+        bk_state::co_line(e, "XVal " + tmp + " = " + value + ";")
+        values[target] = tmp
+    }
+    let mut ctor = "xr_struct"
+    if info.debug {
+        ctor = "xr_struct_debug"
+    }
+    return ctor
+        + "("
+        + bk_util::c_string(info.name)
+        + ", "
+        + str(fields.len)
+        + ", "
+        + ex_name_array(e, fields)
+        + ", "
+        + ex_value_array(e, values)
+        + ")"
+}
+
+pub fn ex_emit_expr(e: mut Emitter, node: Node): string {
+    let kind = node.kind
+    if kind == "Literal" {
+        return bk_state::co_literal_expr(e, node.value)
+    }
+    if kind == "Template" {
+        return ex_emit_template(e, node)
+    }
+    if kind == "TemplateText" {
+        return "xr_str(" + ex_c_template_text(e, node.value) + ")"
+    }
+    if kind == "Name" {
+        return ex_require_name(e, node.value)
+    }
+    if kind == "Path" {
+        return ex_require_path(e, node.value)
+    }
+    if kind == "Group" {
+        if node.children.len == 0 {
+            return "xr_nil()"
+        }
+        return ex_emit_expr(e, node.children[0])
+    }
+    if kind == "Unary" {
+        return ex_emit_unary(e, node)
+    }
+    if kind == "Binary" {
+        return ex_emit_binary(e, node)
+    }
+    if kind == "Ternary" {
+        return ex_emit_ternary(e, node)
+    }
+    if kind == "Is" {
+        return ex_emit_is(e, node)
+    }
+    if kind == "Call" {
+        return bk_call::ca_emit_call(e, node)
+    }
+    if kind == "Member" {
+        return ex_emit_member(e, node)
+    }
+    if kind == "OptionalMember" {
+        return ex_emit_optional_member(e, node)
+    }
+    if kind == "Index" {
+        let recv = ex_emit_expr(e, node.children[0])
+        let index = ex_emit_expr(e, node.children[1])
+        return "xr_index(" + recv + ", " + index + ")"
+    }
+    if kind == "List" {
+        return ex_emit_list(e, node)
+    }
+    if kind == "Tuple" {
+        return ex_emit_list(e, node)
+    }
+    if kind == "If" {
+        let tmp = bk_state::co_new_tmp(e)
+        bk_state::co_line(e, "XVal " + tmp + " = xr_nil();")
+        bk_stmt::st_emit_if(e, node, tmp)
+        return tmp
+    }
+    if kind == "Match" {
+        let tmp = bk_state::co_new_tmp(e)
+        bk_state::co_line(e, "XVal " + tmp + " = xr_nil();")
+        bk_stmt::st_emit_match(e, node, tmp)
+        return tmp
+    }
+    if kind == "Spread" {
+        bk_state::co_fail(e, "a spread is only valid inside a list literal")
+        return "xr_nil()"
+    }
+    if kind == "Map" {
+        return ex_emit_map(e, node)
+    }
+    if kind == "Closure" {
+        bk_state::co_fail(e, "closures are not lowered by the bootstrap backend")
+        return "xr_nil()"
+    }
+    bk_state::co_fail(e, "unsupported expression `" + kind + "`")
+    return "xr_nil()"
+}
+
+pub fn ex_emit_template(e: mut Emitter, node: Node): string {
+    // Templates are string concatenation: a text chunk is already a
+    // string, an interpolation renders through `xr_str_of`.
+    let mut expr = "xr_str(\"\")"
+    for child in node.children {
+        if child.kind == "TemplateText" {
+            if child.value != "" {
+                expr = "xr_add("
+                    + expr
+                    + ", xr_str("
+                    + ex_c_template_text(e, child.value)
+                    + "))"
+            }
+            continue
+        }
+        let value = ex_emit_expr(e, child)
+        expr = "xr_add(" + expr + ", xr_str_of(" + value + "))"
+    }
+    return expr
+}
+
+pub fn ex_c_template_text(e: Emitter, text: string): string {
+    // Escape a template text chunk into a C string literal. `\u{…}` is
+    // not a C escape, so it becomes `\UXXXXXXXX`; other escapes
+    // (`\n`, `\t`, `\uXXXX`, `\xNN`, `\\`) already match C.
+    let chars = text.split("")
+    let mut lit = StringBuilder::new()
+    lit.append("\"")
+    let mut i = 0
+    while i < chars.len {
+        let c = chars[i]
+        if c == "\\" and i + 1 < chars.len {
+            let next = chars[i + 1]
+            if next == "u" and i + 2 < chars.len and chars[i + 2] == "{" {
+                let mut j = i + 3
+                let mut hex = StringBuilder::new()
+                while j < chars.len and chars[j] != "}" {
+                    hex.append(chars[j])
+                    j = j + 1
+                }
+                lit.append("\\U")
+                lit.append(bk_util::pad_hex8(hex.build()))
+                i = j + 1
+                continue
+            }
+            lit.append("\\")
+            lit.append(next)
+            i = i + 2
+            continue
+        }
+        if c == "\"" {
+            lit.append("\\\"")
+            i = i + 1
+            continue
+        }
+        if c == "\n" {
+            lit.append("\\n")
+            i = i + 1
+            continue
+        }
+        if c == "\r" {
+            lit.append("\\r")
+            i = i + 1
+            continue
+        }
+        if c == "\t" {
+            lit.append("\\t")
+            i = i + 1
+            continue
+        }
+        let code = c.code_at(0)
+        if code < 32 {
+            lit.append("\" \"\\x")
+            lit.append(bk_util::hex_pad(code, 2))
+            lit.append("\" \"")
+            i = i + 1
+            continue
+        }
+        lit.append(c)
+        i = i + 1
+    }
+    lit.append("\"")
+    return lit.build()
+}
+
+pub fn ex_emit_name(e: Emitter, name: string): string {
+    let binding = bk_state::co_lookup_local(e, name)
+    if binding != "" {
+        return binding
+    }
+    let constant = bk_state::co_lookup_const(e, name)
+    if constant != "" {
+        return constant
+    }
+    return ""
+}
+
+pub fn ex_require_name(e: mut Emitter, name: string): string {
+    let value = ex_emit_name(e, name)
+    if value == "" {
+        bk_state::co_fail(e, "cannot lower value `" + name + "`; functions are not first-class in the bootstrap backend")
+        return "xr_nil()"
+    }
+    return value
+}
+
+pub fn ex_emit_path(e: Emitter, value: string): string {
+    let constant = bk_state::co_lookup_const(e, value)
+    if constant != "" {
+        return constant
+    }
+    if value == "std::math::PI" {
+        return "xr_float(3.141592653589793)"
+    }
+    if value == "std::math::E" {
+        return "xr_float(2.718281828459045)"
+    }
+    if value == "std::math::TAU" {
+        return "xr_float(6.283185307179586)"
+    }
+    if value == "std::math::INFINITY" {
+        return "xr_float(INFINITY)"
+    }
+    if value == "std::math::NAN" {
+        return "xr_float(NAN)"
+    }
+    // `mod::CONST` / `alias::CONST`: declaration collection flattens modules,
+    // so the module prefix is not part of the C name.
+    let parts = bk_util::split_path(value)
+    if parts.len > 1 {
+        let last = parts[parts.len - 1]
+        let constant = bk_state::co_lookup_const(e, last)
+        if constant != "" {
+            return constant
+        }
+        let bound = bk_state::co_lookup_local(e, last)
+        if bound != "" {
+            return bound
+        }
+        let callee = bk_state::co_find_function(e, last)
+        if callee != "" {
+            return callee
+        }
+    }
+    // A payload-free enum variant is a value: `Direction::East`.
+    if parts.len == 2 and bk_state::co_enum_has_variant(e, parts[0], parts[1]) {
+        return "xr_variant("
+            + bk_util::c_string(parts[0])
+            + ", "
+            + bk_util::c_string(parts[1])
+            + ", 0, NULL)"
+    }
+    return ""
+}
+
+pub fn ex_require_path(e: mut Emitter, value: string): string {
+    let path = ex_emit_path(e, value)
+    if path == "" {
+        bk_state::co_fail(e, "path `" + value + "` is not a value in the bootstrap backend")
+        return "xr_nil()"
+    }
+    return path
+}
+
+pub fn ex_emit_unary(e: mut Emitter, node: Node): string {
+    if node.children.len == 0 {
+        return "xr_nil()"
+    }
+    let operand = ex_emit_expr(e, node.children[0])
+    if node.value == "!" {
+        return "xr_not(" + operand + ")"
+    }
+    if node.value == "-" {
+        return "xr_neg(" + operand + ")"
+    }
+    if node.value == "~" {
+        return "xr_bitnot(" + operand + ")"
+    }
+    if node.value == "await" or node.value == "move" or node.value == "copy" {
+        return operand
+    }
+    bk_state::co_fail(e, "unsupported unary operator `" + node.value + "`")
+    return "xr_nil()"
+}
+
+pub fn ex_emit_binary(e: mut Emitter, node: Node): string {
+    if node.children.len < 2 {
+        return "xr_nil()"
+    }
+    let op = node.value
+    if op == "and" or op == "or" or op == "??" {
+        return ex_emit_short_circuit(e, op, node)
+    }
+    let left = ex_emit_expr(e, node.children[0])
+    let right = ex_emit_expr(e, node.children[1])
+    if op == "+" {
+        return "xr_add(" + left + ", " + right + ")"
+    }
+    if op == "-" {
+        return "xr_sub(" + left + ", " + right + ")"
+    }
+    if op == "*" {
+        return "xr_mul(" + left + ", " + right + ")"
+    }
+    if op == "/" {
+        return "xr_div(" + left + ", " + right + ")"
+    }
+    if op == "%" {
+        return "xr_mod(" + left + ", " + right + ")"
+    }
+    if op == "**" {
+        return "xr_pow(" + left + ", " + right + ")"
+    }
+    if op == "&" {
+        return "xr_band(" + left + ", " + right + ")"
+    }
+    if op == "|" {
+        return "xr_bor(" + left + ", " + right + ")"
+    }
+    if op == "^" {
+        return "xr_bxor(" + left + ", " + right + ")"
+    }
+    if op == "<<" {
+        return "xr_shl(" + left + ", " + right + ")"
+    }
+    if op == ">>" {
+        return "xr_shr(" + left + ", " + right + ")"
+    }
+    if op == "==" {
+        return "xr_bool(xr_eq(" + left + ", " + right + "))"
+    }
+    if op == "!=" {
+        return "xr_bool(!xr_eq(" + left + ", " + right + "))"
+    }
+    if op == "<" {
+        return "xr_lt(" + left + ", " + right + ")"
+    }
+    if op == "<=" {
+        return "xr_le(" + left + ", " + right + ")"
+    }
+    if op == ">" {
+        return "xr_gt(" + left + ", " + right + ")"
+    }
+    if op == ">=" {
+        return "xr_ge(" + left + ", " + right + ")"
+    }
+    if op == "..<" {
+        return "xr_range(" + left + ", " + right + ", 0)"
+    }
+    if op == "..=" {
+        return "xr_range(" + left + ", " + right + ", 1)"
+    }
+    bk_state::co_fail(e, "unsupported binary operator `" + op + "`")
+    return "xr_nil()"
+}
+
+pub fn ex_emit_short_circuit(e: mut Emitter, op: string, node: Node): string {
+    let left = ex_emit_expr(e, node.children[0])
+    if op == "and" {
+        // No temp statement: the operand appears once, so the C ternary
+        // itself short-circuits. A statement here would be emitted
+        // unconditionally and would defeat nesting (`a and (b or c)`).
+        let right = ex_emit_expr(e, node.children[1])
+        return "(xr_cond(" + left + ") ? " + right + " : xr_bool(0))"
+    }
+    if op == "or" {
+        let right = ex_emit_expr(e, node.children[1])
+        return "(xr_cond(" + left + ") ? xr_bool(1) : " + right + ")"
+    }
+    // `??` reads the left operand twice, so it needs a temp.
+    let tmp = bk_state::co_new_tmp(e)
+    bk_state::co_line(e, "XVal " + tmp + " = " + left + ";")
+    let right = ex_emit_expr(e, node.children[1])
+    return "((" + tmp + ").tag == XT_NIL ? " + right + " : " + tmp + ")"
+}
+
+pub fn ex_emit_ternary(e: mut Emitter, node: Node): string {
+    if node.children.len < 3 {
+        return "xr_nil()"
+    }
+    let condition = ex_emit_expr(e, node.children[0])
+    let tmp = bk_state::co_new_tmp(e)
+    bk_state::co_line(e, "XVal " + tmp + " = " + condition + ";")
+    let then_value = ex_emit_expr(e, node.children[1])
+    let else_value = ex_emit_expr(e, node.children[2])
+    return "(xr_cond(" + tmp + ") ? " + then_value + " : " + else_value + ")"
+}
+
+pub fn ex_emit_is(e: mut Emitter, node: Node): string {
+    if node.children.len < 2 {
+        return "xr_bool(0)"
+    }
+    let value = ex_emit_expr(e, node.children[0])
+    let ty = ex_type_text(e, node.children[1])
+    if node.value == "is not" {
+        return "xr_bool(!xr_is(" + value + ", " + bk_util::c_string(ty) + "))"
+    }
+    return "xr_bool(xr_is(" + value + ", " + bk_util::c_string(ty) + "))"
+}
+
+pub fn ex_type_text(e: Emitter, node: Node): string {
+    if node.kind == "TypeName" {
+        return node.value
+    }
+    if node.kind == "OptionalType" or node.kind == "ListType" {
+        if node.children.len > 0 {
+            return ex_type_text(e, node.children[0])
+        }
+    }
+    if node.kind == "TupleType" {
+        let mut out = StringBuilder::new()
+        out.append("(")
+        let mut i = 0
+        while i < node.children.len {
+            if i > 0 {
+                out.append(", ")
+            }
+            out.append(ex_type_text(e, node.children[i]))
+            i = i + 1
+        }
+        out.append(")")
+        return out.build()
+    }
+    return node.value
+}
+
+pub fn ex_emit_member(e: mut Emitter, node: Node): string {
+    let recv = ex_emit_expr(e, node.children[0])
+    if node.value == "len" {
+        return "xr_int(xr_len(" + recv + "))"
+    }
+    if node.value == "byte_len" {
+        return "xr_int(xr_byte_len(" + recv + "))"
+    }
+    return "xr_get_field(" + recv + ", " + bk_util::c_string(node.value) + ")"
+}
+
+pub fn ex_emit_optional_member(e: mut Emitter, node: Node): string {
+    let recv = ex_emit_expr(e, node.children[0])
+    if node.value == "len" {
+        return "xr_int(xr_len(" + recv + "))"
+    }
+    return "xr_get_field_opt(" + recv + ", " + bk_util::c_string(node.value) + ")"
+}
+
+pub fn ex_emit_map(e: mut Emitter, node: Node): string {
+    // Object literals lower to a runtime object: members are field
+    // entries, and `{ ...base, k: v }` merges base's fields first.
+    let tmp = bk_state::co_new_tmp(e)
+    bk_state::co_line(e, "XVal " + tmp + " = xr_map_new();")
+    for child in node.children {
+        if child.kind == "Spread" {
+            let value = ex_emit_expr(e, child.children[0])
+            bk_state::co_line(e, "xr_map_merge(" + tmp + ", " + value + ");")
+            continue
+        }
+        if child.children.len == 0 {
+            bk_state::co_fail(e, "a map entry needs a value")
+            return "xr_nil()"
+        }
+        if child.value == "" {
+            // Typed map literal: the key is an expression, so the entry
+            // holds `[key, value]` and any hashable key reaches the
+            // runtime, which stringifies non-string keys.
+            if child.children.len < 2 {
+                bk_state::co_fail(e, "a map entry needs a key and a value")
+                return "xr_nil()"
+            }
+            let key = ex_emit_expr(e, child.children[0])
+            let value = ex_emit_expr(e, child.children[1])
+            bk_state::co_line(e, "xr_map_set(" + tmp + ", " + key + ", " + value + ");")
+            continue
+        }
+        let value = ex_emit_expr(e, child.children[0])
+        bk_state::co_line(e, 
+            "xr_map_set(" + tmp + ", xr_str(" + bk_util::c_string(child.value) + "), " + value + ");",
+        )
+    }
+    return tmp
+}
+
+pub fn ex_emit_list(e: mut Emitter, node: Node): string {
+    let tmp = bk_state::co_new_tmp(e)
+    bk_state::co_line(e, "XVal " + tmp + " = xr_list_new();")
+    let mut i = 0
+    while i < node.children.len {
+        let child = node.children[i]
+        if child.kind == "Spread" {
+            let value = ex_emit_expr(e, child.children[0])
+            bk_state::co_line(e, "xr_list_extend(" + tmp + ", " + value + ");")
+        } else {
+            let value = ex_emit_expr(e, child)
+            bk_state::co_line(e, "xr_list_push(" + tmp + ", " + value + ");")
+        }
+        i = i + 1
+    }
+    return tmp
+}
+
+pub fn ex_arg_expr(e: mut Emitter, node: Node): string {
+    if node.kind == "Arg" {
+        if node.children.len == 0 {
+            return "xr_nil()"
+        }
+        return ex_emit_expr(e, node.children[0])
+    }
+    return ex_emit_expr(e, node)
+}
+
+pub fn ex_one_arg(e: mut Emitter, node: Node, name: string): string {
+    if node.children.len != 2 {
+        bk_state::co_fail(e, "`" + name + "` expects one argument")
+        return "xr_nil()"
+    }
+    return ex_arg_expr(e, node.children[1])
+}
+
+pub fn ex_eval_args(e: mut Emitter, children: List<Node>, start: number): List<string> {
+    let values: List<string> = []
+    let mut i = start
+    while i < children.len {
+        let value = ex_arg_expr(e, children[i])
+        let tmp = bk_state::co_new_tmp(e)
+        bk_state::co_line(e, "XVal " + tmp + " = " + value + ";")
+        values.push(tmp)
+        i = i + 1
+    }
+    return values
+}
+
+pub fn ex_value_array(e: Emitter, values: List<string>): string {
+    if values.len == 0 {
+        return "NULL"
+    }
+    return "(XVal[]){" + bk_util::c_join(values) + "}"
+}
+
+pub fn ex_name_array(e: Emitter, names: List<string>): string {
+    if names.len == 0 {
+        return "NULL"
+    }
+    let mut out = StringBuilder::new()
+    out.append("(const char*[]){")
+    let mut i = 0
+    while i < names.len {
+        if i > 0 {
+            out.append(", ")
+        }
+        out.append(bk_util::c_string(names[i]))
+        i = i + 1
+    }
+    out.append("}")
+    return out.build()
+}

@@ -1,0 +1,203 @@
+// Stage 1 backend: emitter state accessors and literal text helpers.
+//
+// These helpers only read or update counters/lists on the emitter; declaration
+// collection stays in `backend.xulo` so every info struct is constructed in
+// the module that defines it.
+
+use super::Emitter;
+use super::bk_util;
+
+pub fn co_fail(e: mut Emitter, message: string) {
+    if e.error == "" {
+        e.error = message
+    }
+}
+
+pub fn co_new_local(e: mut Emitter, name: string): string {
+    e.next_local = e.next_local + 1
+    let cname = "v" + str(e.next_local)
+    e.local_names.push(name)
+    e.local_cnames.push(cname)
+    e.local_depths.push(e.depth)
+    return cname
+}
+
+pub fn co_lookup_local(e: Emitter, name: string): string {
+    let mut i = e.local_names.len - 1
+    while i >= 0 {
+        if e.local_names[i] == name and e.local_depths[i] <= e.depth {
+            return e.local_cnames[i]
+        }
+        i = i - 1
+    }
+    return ""
+}
+
+pub fn co_lookup_const(e: Emitter, name: string): string {
+    let mut i = e.consts.len - 1
+    while i >= 0 {
+        if e.consts[i].name == name {
+            return e.consts[i].cname
+        }
+        i = i - 1
+    }
+    return ""
+}
+
+pub fn co_find_function(e: Emitter, name: string): string {
+    let mut i = e.funcs.len - 1
+    while i >= 0 {
+        if e.funcs[i].name == name {
+            return e.funcs[i].cname
+        }
+        i = i - 1
+    }
+    return ""
+}
+
+pub fn co_find_struct(e: Emitter, name: string): number {
+    let mut i = e.structs.len - 1
+    while i >= 0 {
+        if e.structs[i].name == name {
+            return i
+        }
+        i = i - 1
+    }
+    return -1
+}
+
+pub fn co_enum_has_variant(e: Emitter, enum_name: string, variant: string): bool {
+    let mut i = e.enums.len - 1
+    while i >= 0 {
+        if e.enums[i].name == enum_name {
+            let mut v = 0
+            while v < e.enums[i].variants.len {
+                if e.enums[i].variants[v] == variant {
+                    return true
+                }
+                v = v + 1
+            }
+        }
+        i = i - 1
+    }
+    return false
+}
+
+pub fn co_trait_has_method(e: Emitter, trait_name: string, method: string): bool {
+    let mut i = e.traits.len - 1
+    while i >= 0 {
+        if e.traits[i].name == trait_name {
+            let mut m = 0
+            while m < e.traits[i].methods.len {
+                if e.traits[i].methods[m] == method {
+                    return true
+                }
+                m = m + 1
+            }
+        }
+        i = i - 1
+    }
+    return false
+}
+
+pub fn co_new_tmp(e: mut Emitter): string {
+    e.next_tmp = e.next_tmp + 1
+    return "t" + str(e.next_tmp)
+}
+
+pub fn co_line(e: mut Emitter, text: string) {
+    let mut i = 0
+    while i < e.indent {
+        e.out.append("  ")
+        i = i + 1
+    }
+    e.out.append(text)
+    e.out.append("\n")
+}
+
+pub fn co_enter(e: mut Emitter) {
+    e.depth = e.depth + 1
+}
+
+pub fn co_leave(e: mut Emitter) {
+    if e.depth > 0 {
+        e.depth = e.depth - 1
+    }
+}
+
+pub fn co_literal_expr(e: mut Emitter, text: string): string {
+    if text == "true" {
+        return "xr_bool(1)"
+    }
+    if text == "false" {
+        return "xr_bool(0)"
+    }
+    if text == "null" {
+        return "xr_nil()"
+    }
+    let first = text.slice(0, 1)
+    if first == "\"" or first == "'" {
+        return "xr_str(" + co_emit_string_literal(e, text) + ")"
+    }
+    if first == "`" {
+        co_fail(e, "template literals are not lowered by the bootstrap backend")
+        return "xr_nil()"
+    }
+    let digits = bk_util::clean_number(text)
+    if bk_util::is_float_text(digits) {
+        return "xr_float(" + digits + ")"
+    }
+    // Xulo spells octal `0o644`; C spells it `0644`.
+    if digits.len > 2 {
+        if digits.slice(0, 2) == "0o" or digits.slice(0, 2) == "0O" {
+            return "xr_int(0" + digits.slice(2, digits.len) + "LL)"
+        }
+    }
+    return "xr_int(" + digits + "LL)"
+}
+
+pub fn co_emit_string_literal(e: mut Emitter, text: string): string {
+    let body = text.slice(1, text.len - 1)
+    let chars = body.split("")
+    let mut lit = StringBuilder::new()
+    lit.append("\"")
+    let mut i = 0
+    while i < chars.len {
+        let c = chars[i]
+        if c == "\\" and i + 1 < chars.len {
+            lit.append("\\")
+            lit.append(chars[i + 1])
+            i = i + 2
+            continue
+        }
+        if c == "\"" {
+            lit.append("\\\"")
+            i = i + 1
+            continue
+        }
+        let code = c.code_at(0)
+        if code >= 32 and code <= 126 {
+            lit.append(c)
+            i = i + 1
+            continue
+        }
+        if code < 32 {
+            lit.append("\" \"\\x")
+            lit.append(bk_util::hex_pad(code, 2))
+            lit.append("\" \"")
+            i = i + 1
+            continue
+        }
+        if code <= 65535 {
+            lit.append("\\u")
+            lit.append(bk_util::hex_pad(code, 4))
+            i = i + 1
+            continue
+        }
+        lit.append("\\U")
+        lit.append(bk_util::hex_pad(code, 8))
+        i = i + 1
+    }
+    lit.append("\"")
+    return lit.build()
+}
