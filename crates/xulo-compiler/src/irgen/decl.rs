@@ -137,9 +137,11 @@ impl IrGenerator {
             .map(|t| self.type_to_ir(Some(t)))
             .unwrap_or(IrType::Void);
 
-        // 保存 AST 返回类型注解（用于泛型函数推断）
+        // 保存 AST 返回类型注解（用于泛型函数推断）；类型名在声明模块中
+        // 规范化，跨模块调用点才能继续解析其字段类型。
+        let return_annotation = f.return_type.as_ref().map(|ty| self.canonical_type(ty));
         self.func_return_types
-            .insert(name.to_string(), f.return_type.clone());
+            .insert(name.to_string(), return_annotation);
         // 形参表：命名参数重排 / 缺省参数在调用点补齐
         self.func_params.insert(
             name.to_string(),
@@ -152,7 +154,12 @@ impl IrGenerator {
             name.to_string(),
             f.params
                 .iter()
-                .map(|p| p.type_annotation.clone().unwrap_or(Type::Any))
+                .map(|p| {
+                    p.type_annotation
+                        .as_ref()
+                        .map(|ty| self.canonical_type(ty))
+                        .unwrap_or(Type::Any)
+                })
                 .collect(),
         );
         self.func_generic_params

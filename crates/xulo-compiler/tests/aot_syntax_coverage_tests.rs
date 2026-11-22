@@ -727,6 +727,100 @@ fn multi_module_program_compiles_and_runs() {
     assert_eq!(out, vec!["45"]);
 }
 
+/// Regression: a struct field typed as `List<OtherStruct>` must keep its
+/// canonical type when read from another module. The reader does not import the
+/// inner struct, so lowering `.len` must resolve the *declaring* module's type,
+/// not fall back to string length.
+#[test]
+fn imported_struct_field_types_resolve_across_modules() {
+    let dir = std::env::temp_dir().join(format!(
+        "xulo_aot_nested_mod_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(dir.join("a")).unwrap();
+    std::fs::write(
+        dir.join("main.xulo"),
+        r#"
+        mod a;
+        use a::{Info, T};
+        use a::probe::{probe, probe_info};
+
+        fn main() {
+            let mut fs: List<string> = []
+            fs.push("a")
+            fs.push("b")
+            fs.push("c")
+            let mut xs: List<Info> = []
+            xs.push(Info(name: "n", fields: fs))
+            let t = T(xs: xs)
+            print(t.xs.len, t.xs[0].fields.len)
+            probe(t)
+            probe_info()
+        }
+        "#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("a.xulo"),
+        r#"
+        pub mod probe;
+
+        pub struct Info {
+            pub name: string,
+            pub fields: List<string>,
+        }
+
+        pub struct T {
+            pub xs: List<Info>,
+        }
+
+        pub fn make_info(): Info {
+            let mut fs: List<string> = []
+            fs.push("a")
+            fs.push("b")
+            fs.push("c")
+            return Info(name: "n", fields: fs)
+        }
+        "#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("a/probe.xulo"),
+        r#"
+        use super::{T, make_info};
+
+        pub fn probe(t: T) {
+            print(t.xs.len, t.xs[0].fields.len)
+        }
+
+        pub fn probe_info() {
+            print(make_info().fields.len)
+        }
+        "#,
+    )
+    .unwrap();
+
+    let mut loaded = xulo_compiler::module::load(&dir.join("main.xulo")).unwrap();
+    xulo_compiler::module::analyze(&mut loaded, false).unwrap();
+    xulo_compiler::module::apply_trait_dispatch(&mut loaded);
+    xulo_compiler::module::apply_std_calls(&mut loaded);
+    let ir = xulo_compiler::compile_modules_to_ir(&loaded).expect("IR generation failed");
+    let _ = std::fs::remove_dir_all(&dir);
+
+    let mut codegen = CodeGen::new();
+    let code_ptr = codegen.compile(&ir).expect("codegen failed");
+    unsafe {
+        let func: fn() = std::mem::transmute(code_ptr);
+        func();
+    }
+    let out = xulo_runtime::runtime::xulo_take_output();
+    assert_eq!(out, vec!["1 3", "1 3", "3"]);
+}
+
 // ── irgen 明确拒绝的语法：必须报出清晰错误（而不是静默降级）─────────────
 
 #[test]

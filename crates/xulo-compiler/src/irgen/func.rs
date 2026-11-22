@@ -592,10 +592,11 @@ impl IrGenerator {
             .as_ref()
             .map(|t| self.type_to_ir(Some(t)))
             .unwrap_or(IrType::Void);
+        let return_annotation = f.return_type.as_ref().map(|ty| self.canonical_type(ty));
         self.func_return_types
-            .insert(ir_name.clone(), f.return_type.clone());
+            .insert(ir_name.clone(), return_annotation.clone());
         self.func_return_types
-            .insert(name.clone(), f.return_type.clone());
+            .insert(name.clone(), return_annotation);
         self.func_params.insert(
             name.clone(),
             f.params

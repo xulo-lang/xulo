@@ -18,8 +18,9 @@ impl IrGenerator {
                 tag: Self::const_static_tag(expr),
                 ty: b
                     .type_annotation
-                    .clone()
-                    .or_else(|| Self::const_static_type(expr)),
+                    .as_ref()
+                    .map(|ty| self.canonical_type(ty))
+                    .or_else(|| Self::const_static_type(expr).map(|ty| self.canonical_type(&ty))),
                 expr: expr.clone(),
                 slot,
             },

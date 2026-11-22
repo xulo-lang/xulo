@@ -4,7 +4,58 @@ impl IrGenerator {
     /// 记录 struct 定义（键为规范化类型名，结构体构造按字段顺序/默认值）
     pub(super) fn collect_struct(&mut self, def: &StructDef) {
         let key = self.resolve_type(&def.name);
-        self.structs.insert(key, def.fields.clone());
+        // Resolve field type names in the defining module, not in each later
+        // reader's module. Otherwise `Info.fields: List<string>` read through
+        // `T.xs[0]` from another module keeps the bare `Info` spelling and the
+        // field lookup misses the canonical `a::Info` entry.
+        let fields = def
+            .fields
+            .iter()
+            .map(|field| {
+                let mut field = field.clone();
+                field.type_ = self.canonical_type(&field.type_);
+                field
+            })
+            .collect();
+        self.structs.insert(key, fields);
+    }
+
+    /// Rewrite a written type into the canonical name used by the lookup
+    /// tables: imported names become `module::Name`, and nested applications
+    /// (`List<T>`, tuples, optionals, function types) are rewritten recursively.
+    pub(super) fn canonical_type(&self, ty: &Type) -> Type {
+        match ty {
+            Type::Named(name, args) => Type::Named(
+                self.resolve_type(name),
+                args.iter().map(|arg| self.canonical_type(arg)).collect(),
+            ),
+            Type::List(inner) => Type::List(Box::new(self.canonical_type(inner))),
+            Type::Optional(inner) => Type::Optional(Box::new(self.canonical_type(inner))),
+            Type::Union(items) => {
+                Type::Union(items.iter().map(|item| self.canonical_type(item)).collect())
+            }
+            Type::Intersection(items) => {
+                Type::Intersection(items.iter().map(|item| self.canonical_type(item)).collect())
+            }
+            Type::ObjectType(fields) => Type::ObjectType(
+                fields
+                    .iter()
+                    .map(|(name, ty)| (name.clone(), self.canonical_type(ty)))
+                    .collect(),
+            ),
+            Type::Tuple(items) => {
+                Type::Tuple(items.iter().map(|item| self.canonical_type(item)).collect())
+            }
+            Type::FnSig { params, ret } => Type::FnSig {
+                params: params
+                    .iter()
+                    .map(|param| self.canonical_type(param))
+                    .collect(),
+                ret: ret.as_ref().map(|ret| Box::new(self.canonical_type(ret))),
+            },
+            Type::Async(inner) => Type::Async(Box::new(self.canonical_type(inner))),
+            other => other.clone(),
+        }
     }
 
     /// 记录 enum 定义（键为规范化类型名，变体序号即构造/match 的 tag）
