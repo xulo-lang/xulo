@@ -1,0 +1,111 @@
+// Stage 1 parser: pattern syntax.
+//
+// Procedural form of the old `impl Parser` methods; `p` is the parser state.
+
+use ast::{Node, node, add};
+use super::nodes;
+use super::tokens;
+use super::Parser;
+
+pub fn pt_pattern(p: mut Parser): Node {
+    let mut value = pt_pattern_alt(p)
+    while p.error == "" and tokens::tk_at(p, "|") {
+        tokens::tk_advance(p)
+        let right = pt_pattern_alt(p)
+        let mut n = node(
+            "OrPattern",
+            "|",
+            value.start,
+            right.end,
+            value.line,
+            value.column,
+        )
+        add(n, value)
+        add(n, right)
+        value = n
+    }
+    return value
+}
+
+pub fn pt_pattern_alt(p: mut Parser): Node {
+    let start = tokens::tk_current(p)
+    if tokens::tk_at(p, "_") {
+        tokens::tk_advance(p)
+        return nodes::nd_mk(p, "Wildcard", "_", start)
+    }
+    if tokens::tk_at_kind(p, "int")
+        or tokens::tk_at_kind(p, "float")
+        or tokens::tk_at_kind(p, "string")
+        or tokens::tk_at(p, "true")
+        or tokens::tk_at(p, "false")
+        or tokens::tk_at(p, "null")
+    {
+        tokens::tk_advance(p)
+        let mut n = nodes::nd_mk(p, "LiteralPattern", start.text, start)
+        if tokens::tk_at(p, "..<") or tokens::tk_at(p, "..=") {
+            let op = tokens::tk_advance(p)
+            n.value = n.value + op.text
+            let end = tokens::tk_advance(p)
+            n.value = n.value + end.text
+            n.end = end.end
+        }
+        return n
+    }
+    if tokens::tk_at(p, "(") {
+        tokens::tk_advance(p)
+        let inner = pt_pattern(p)
+        tokens::tk_expect(p, ")")
+        return inner
+    }
+    if tokens::tk_at_kind(p, "ident") or tokens::tk_at_kind(p, "keyword") {
+        tokens::tk_advance(p)
+        let mut path = start.text
+        while p.error == "" and tokens::tk_at(p, "::") {
+            tokens::tk_advance(p)
+            path = path + "::" + tokens::tk_ident_name(p)
+        }
+        if tokens::tk_at(p, "(") {
+            let mut n = node(
+                "VariantPattern",
+                path,
+                start.start,
+                start.end,
+                start.line,
+                start.column,
+            )
+            add(n, pt_pattern_payload(p))
+            n.end = tokens::tk_prev(p).end
+            return n
+        }
+        if tokens::tk_at_kind(p, "ident")
+            and (start.kind == "keyword" or path == "unknown" or path == "unit")
+        {
+            let binder = tokens::tk_advance(p)
+            return nodes::nd_mk_pair(p, 
+                "TypePattern",
+                path + " " + binder.text,
+                start,
+                binder,
+            )
+        }
+        return nodes::nd_mk(p, "NamePattern", path, start)
+    }
+    tokens::tk_fail(p, "expected a pattern, found " + tokens::tk_describe(p))
+    return nodes::nd_placeholder(p, start)
+}
+
+pub fn pt_pattern_payload(p: mut Parser): Node {
+    let start = tokens::tk_advance(p)
+    let mut n = node("PatternPayload", "", start.start, start.end, start.line, start.column)
+    while p.error == "" and !tokens::tk_at(p, ")") and !tokens::tk_at_kind(p, "eof") {
+        add(n, pt_pattern(p))
+        if tokens::tk_at(p, ",") {
+            tokens::tk_advance(p)
+        } else {
+            break
+        }
+    }
+    tokens::tk_expect(p, ")")
+    n.end = tokens::tk_prev(p).end
+    return n
+}

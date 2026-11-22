@@ -1,0 +1,110 @@
+// Stage 1 parser: control-flow expressions.
+//
+// Procedural form of the old `impl Parser` methods; `p` is the parser state.
+
+use ast::{Node, node, add};
+use super::decls;
+use super::exprs;
+use super::patterns;
+use super::stmts;
+use super::tokens;
+use super::types;
+use super::Parser;
+
+pub fn ct_if_expr(p: mut Parser): Node {
+    let start = tokens::tk_advance(p)
+    let condition = exprs::ex_expr(p)
+    let then_block = stmts::st_block(p)
+    let mut n = node(
+        "If",
+        "",
+        start.start,
+        then_block.end,
+        start.line,
+        start.column,
+    )
+    add(n, condition)
+    add(n, then_block)
+    if tokens::tk_at(p, "else") {
+        tokens::tk_advance(p)
+        if tokens::tk_at(p, "if") {
+            add(n, ct_if_expr(p))
+        } else {
+            add(n, stmts::st_block(p))
+        }
+    }
+    n.end = tokens::tk_prev(p).end
+    return n
+}
+
+pub fn ct_match_expr(p: mut Parser): Node {
+    let start = tokens::tk_advance(p)
+    let scrutinee = exprs::ex_expr(p)
+    let mut n = node("Match", "", start.start, start.end, start.line, start.column)
+    add(n, scrutinee)
+    if !tokens::tk_expect(p, "{") {
+        return n
+    }
+    while p.error == "" and !tokens::tk_at(p, "}") and !tokens::tk_at_kind(p, "eof") {
+        add(n, ct_match_arm(p))
+        if tokens::tk_at(p, ",") {
+            tokens::tk_advance(p)
+        }
+    }
+    tokens::tk_expect(p, "}")
+    n.end = tokens::tk_prev(p).end
+    return n
+}
+
+pub fn ct_match_arm(p: mut Parser): Node {
+    let start = tokens::tk_current(p)
+    let mut n = node("Arm", "", start.start, start.end, start.line, start.column)
+    add(n, patterns::pt_pattern(p))
+    if tokens::tk_at(p, "if") {
+        let guard_start = tokens::tk_advance(p)
+        let mut guard_node = node(
+            "Guard",
+            "",
+            guard_start.start,
+            guard_start.end,
+            guard_start.line,
+            guard_start.column,
+        )
+        add(guard_node, exprs::ex_expr(p))
+        guard_node.end = tokens::tk_prev(p).end
+        add(n, guard_node)
+    }
+    if !tokens::tk_expect(p, "=>") {
+        return n
+    }
+    if tokens::tk_at(p, "{") {
+        add(n, stmts::st_block(p))
+    } else {
+        add(n, exprs::ex_expr(p))
+    }
+    n.end = tokens::tk_prev(p).end
+    return n
+}
+
+pub fn ct_fn_expr(p: mut Parser): Node {
+    let start = tokens::tk_advance(p)
+    let mut n = node("Closure", "", start.start, start.end, start.line, start.column)
+    if !tokens::tk_expect(p, "(") {
+        return n
+    }
+    for param in decls::dc_parameters(p) {
+        add(n, param)
+    }
+    tokens::tk_expect(p, ")")
+    if tokens::tk_at(p, ":") {
+        tokens::tk_advance(p)
+        add(n, types::ty_type_expr(p))
+    }
+    if tokens::tk_at(p, "{") {
+        add(n, stmts::st_block(p))
+    } else {
+        tokens::tk_fail(p, "expected a closure body, found " + tokens::tk_describe(p))
+    }
+    n.end = tokens::tk_prev(p).end
+    return n
+}

@@ -1,0 +1,128 @@
+// Stage 1 parser: statements and blocks.
+//
+// Procedural form of the old `impl Parser` methods; `p` is the parser state.
+
+use ast::{Node, node, add};
+use super::decls;
+use super::exprs;
+use super::nodes;
+use super::tokens;
+use super::Parser;
+
+pub fn st_block(p: mut Parser): Node {
+    let start = tokens::tk_advance(p)
+    let mut n = node("Block", "", start.start, start.end, start.line, start.column)
+    while p.error == "" and !tokens::tk_at(p, "}") and !tokens::tk_at_kind(p, "eof") {
+        add(n, st_statement(p))
+    }
+    if p.error == "" {
+        tokens::tk_expect(p, "}")
+    }
+    n.end = tokens::tk_prev(p).end
+    return n
+}
+
+pub fn st_statement(p: mut Parser): Node {
+    let start = tokens::tk_current(p)
+    if tokens::tk_at(p, "let") {
+        return decls::dc_let_decl(p)
+    }
+    if tokens::tk_at(p, "const") {
+        return decls::dc_const_decl(p)
+    }
+    if tokens::tk_at(p, "return") {
+        tokens::tk_advance(p)
+        let mut n = node("Return", "", start.start, start.end, start.line, start.column)
+        if !tokens::tk_at(p, "}") and !tokens::tk_at(p, ";") and !tokens::tk_at_kind(p, "eof") {
+            add(n, exprs::ex_expr(p))
+        }
+        if tokens::tk_at(p, ";") {
+            tokens::tk_advance(p)
+        }
+        n.end = tokens::tk_prev(p).end
+        return n
+    }
+    if tokens::tk_at(p, "break") or tokens::tk_at(p, "continue") {
+        let word = tokens::tk_advance(p)
+        if tokens::tk_at(p, ";") {
+            tokens::tk_advance(p)
+        }
+        return nodes::nd_mk(p, "Jump", word.text, start)
+    }
+    if tokens::tk_at(p, "defer") {
+        tokens::tk_advance(p)
+        let mut n = node("Defer", "", start.start, start.end, start.line, start.column)
+        if tokens::tk_at(p, "{") {
+            add(n, st_block(p))
+        } else {
+            add(n, exprs::ex_expr(p))
+        }
+        if tokens::tk_at(p, ";") {
+            tokens::tk_advance(p)
+        }
+        n.end = tokens::tk_prev(p).end
+        return n
+    }
+    if tokens::tk_at(p, "for") {
+        return st_for_stmt(p)
+    }
+    if tokens::tk_at(p, "while") {
+        return st_while_stmt(p)
+    }
+    if tokens::tk_at(p, "fn") {
+        return decls::dc_fn_decl(p)
+    }
+    let left = exprs::ex_expr(p)
+    if p.error != "" {
+        return left
+    }
+    if tokens::tk_at(p, "=") {
+        tokens::tk_advance(p)
+        let right = exprs::ex_expr(p)
+        let mut n = node("Assign", "", left.start, right.end, left.line, left.column)
+        add(n, left)
+        add(n, right)
+        if tokens::tk_at(p, ";") {
+            tokens::tk_advance(p)
+        }
+        n.end = tokens::tk_prev(p).end
+        return n
+    }
+    let mut n = node("ExprStmt", "", left.start, left.end, left.line, left.column)
+    add(n, left)
+    if tokens::tk_at(p, ";") {
+        tokens::tk_advance(p)
+    }
+    n.end = tokens::tk_prev(p).end
+    return n
+}
+
+pub fn st_for_stmt(p: mut Parser): Node {
+    let start = tokens::tk_advance(p)
+    let name = tokens::tk_ident_name(p)
+    let mut n = node("For", name, start.start, start.end, start.line, start.column)
+    if !tokens::tk_expect(p, "in") {
+        return n
+    }
+    add(n, exprs::ex_expr(p))
+    if tokens::tk_at(p, "{") {
+        add(n, st_block(p))
+    } else {
+        tokens::tk_fail(p, "expected a loop body, found " + tokens::tk_describe(p))
+    }
+    n.end = tokens::tk_prev(p).end
+    return n
+}
+
+pub fn st_while_stmt(p: mut Parser): Node {
+    let start = tokens::tk_advance(p)
+    let mut n = node("While", "", start.start, start.end, start.line, start.column)
+    add(n, exprs::ex_expr(p))
+    if tokens::tk_at(p, "{") {
+        add(n, st_block(p))
+    } else {
+        tokens::tk_fail(p, "expected a loop body, found " + tokens::tk_describe(p))
+    }
+    n.end = tokens::tk_prev(p).end
+    return n
+}

@@ -1,0 +1,526 @@
+// Stage 1 parser: declarations and headers.
+//
+// Procedural form of the old `impl Parser` methods; `p` is the parser state.
+
+use ast::{Node, node, add};
+use super::exprs;
+use super::nodes;
+use super::stmts;
+use super::tokens;
+use super::types;
+use super::Parser;
+
+pub fn dc_program(p: mut Parser): Node {
+    let start = tokens::tk_current(p)
+    let mut root = node("Program", "", start.start, start.end, start.line, start.column)
+    while p.error == "" and !tokens::tk_at_kind(p, "eof") {
+        let item = dc_declaration(p)
+        if p.error != "" {
+            break
+        }
+        add(root, item)
+    }
+    if p.error == "" {
+        root.end = tokens::tk_prev(p).end
+    }
+    return root
+}
+
+pub fn dc_declaration(p: mut Parser): Node {
+    let start = tokens::tk_current(p)
+    let mut attrs: List<Node> = []
+    while tokens::tk_at(p, "#") and p.error == "" {
+        attrs.push(dc_attribute(p))
+    }
+    if p.error != "" {
+        return nodes::nd_placeholder(p, start)
+    }
+    if tokens::tk_at(p, "pub") {
+        tokens::tk_advance(p)
+    }
+    if tokens::tk_at(p, "async") {
+        tokens::tk_advance(p)
+    }
+    let mut item = nodes::nd_placeholder(p, start)
+    if tokens::tk_at(p, "mod") {
+        item = dc_mod_decl(p)
+    } else if tokens::tk_at(p, "use") {
+        item = dc_use_decl(p)
+    } else if tokens::tk_at(p, "fn") {
+        item = dc_fn_decl(p)
+    } else if tokens::tk_at(p, "struct") {
+        item = dc_struct_decl(p)
+    } else if tokens::tk_at(p, "enum") {
+        item = dc_enum_decl(p)
+    } else if tokens::tk_at(p, "trait") {
+        item = dc_trait_decl(p)
+    } else if tokens::tk_at(p, "impl") {
+        item = dc_impl_decl(p)
+    } else if tokens::tk_at(p, "type") {
+        item = dc_type_alias_decl(p)
+    } else if tokens::tk_at(p, "const") {
+        item = dc_const_decl(p)
+    } else if tokens::tk_at(p, "let") {
+        item = dc_let_decl(p)
+    } else if tokens::tk_at(p, "extern") {
+        item = dc_extern_decl(p)
+    } else {
+        tokens::tk_fail(p, "expected a declaration, found " + tokens::tk_describe(p))
+    }
+    for attr in attrs {
+        add(item, attr)
+    }
+    return item
+}
+
+pub fn dc_attribute(p: mut Parser): Node {
+    let start = tokens::tk_advance(p)
+    let mut n = nodes::nd_mk(p, "Attribute", "", start)
+    if !tokens::tk_expect(p, "[") {
+        return n
+    }
+    let name = tokens::tk_ident_name(p)
+    n.value = name
+    while p.error == "" and !tokens::tk_at(p, "]") and !tokens::tk_at_kind(p, "eof") {
+        if tokens::tk_at(p, "(") {
+            tokens::tk_advance(p)
+            while p.error == "" and !tokens::tk_at(p, ")") and !tokens::tk_at_kind(p, "eof") {
+                if tokens::tk_at_kind(p, "ident") or tokens::tk_at_kind(p, "keyword") {
+                    let at = tokens::tk_current(p)
+                    let arg = tokens::tk_ident_name(p)
+                    add(n, nodes::nd_mk(p, "AttributeArg", arg, at))
+                } else {
+                    let _ = tokens::tk_advance(p)
+                }
+            }
+            let _ = tokens::tk_expect(p, ")")
+        } else {
+            let _ = tokens::tk_advance(p)
+        }
+    }
+    tokens::tk_expect(p, "]")
+    n.end = tokens::tk_prev(p).end
+    return n
+}
+
+pub fn dc_mod_decl(p: mut Parser): Node {
+    let start = tokens::tk_advance(p)
+    let name = tokens::tk_ident_name(p)
+    let mut n = node("Mod", name, start.start, start.end, start.line, start.column)
+    if tokens::tk_eat(p, ";") {
+        n.end = tokens::tk_prev(p).end
+        return n
+    }
+    if !tokens::tk_expect(p, "{") {
+        return n
+    }
+    while p.error == "" and !tokens::tk_at(p, "}") and !tokens::tk_at_kind(p, "eof") {
+        add(n, dc_declaration(p))
+    }
+    tokens::tk_expect(p, "}")
+    n.end = tokens::tk_prev(p).end
+    return n
+}
+
+pub fn dc_use_decl(p: mut Parser): Node {
+    let start = tokens::tk_advance(p)
+    let mut value = ""
+    if tokens::tk_at_kind(p, "ident") or tokens::tk_at_kind(p, "keyword") {
+        value = tokens::tk_current(p).text
+    }
+    let mut n = node("Use", value, start.start, start.end, start.line, start.column)
+    while p.error == "" and !tokens::tk_at(p, ";") and !tokens::tk_at_kind(p, "eof") {
+        if tokens::tk_at(p, "{") {
+            tokens::tk_skip_balanced(p, "{", "}")
+        } else {
+            tokens::tk_advance(p)
+        }
+    }
+    tokens::tk_expect(p, ";")
+    n.end = tokens::tk_prev(p).end
+    return n
+}
+
+pub fn dc_extern_decl(p: mut Parser): Node {
+    let start = tokens::tk_advance(p)
+    let mut n = nodes::nd_mk(p, "Extern", "", start)
+    while p.error == "" and !tokens::tk_at(p, "{") and !tokens::tk_at(p, ";") and !tokens::tk_at_kind(p, "eof") {
+        tokens::tk_advance(p)
+    }
+    if tokens::tk_at(p, "{") {
+        tokens::tk_skip_balanced(p, "{", "}")
+    } else if tokens::tk_at(p, ";") {
+        tokens::tk_advance(p)
+    }
+    n.end = tokens::tk_prev(p).end
+    return n
+}
+
+
+pub fn dc_fn_decl(p: mut Parser): Node {
+    let start = tokens::tk_advance(p)
+    let name = tokens::tk_ident_name(p)
+    let mut n = node("Fn", name, start.start, start.end, start.line, start.column)
+    if tokens::tk_at(p, "<") {
+        add(n, types::ty_generic_params(p))
+    }
+    if !tokens::tk_expect(p, "(") {
+        return n
+    }
+    for param in dc_parameters(p) {
+        add(n, param)
+    }
+    tokens::tk_expect(p, ")")
+    if tokens::tk_at(p, ":") {
+        tokens::tk_advance(p)
+        add(n, types::ty_type_expr(p))
+    }
+    while p.error == "" and !tokens::tk_at(p, "{") and !tokens::tk_at_kind(p, "eof") {
+        tokens::tk_advance(p)
+    }
+    if tokens::tk_at(p, "{") {
+        add(n, stmts::st_block(p))
+    } else {
+        tokens::tk_fail(p, "expected a function body, found " + tokens::tk_describe(p))
+    }
+    n.end = tokens::tk_prev(p).end
+    return n
+}
+
+pub fn dc_parameters(p: mut Parser): List<Node> {
+    let mut out: List<Node> = []
+    while p.error == "" and !tokens::tk_at(p, ")") and !tokens::tk_at_kind(p, "eof") {
+        out.push(dc_parameter(p))
+        if tokens::tk_at(p, ",") {
+            tokens::tk_advance(p)
+        } else {
+            break
+        }
+    }
+    return out
+}
+
+pub fn dc_parameter(p: mut Parser): Node {
+    let start = tokens::tk_current(p)
+    if tokens::tk_at(p, "self") {
+        tokens::tk_advance(p)
+        return nodes::nd_mk(p, "Param", "self", start)
+    }
+    if tokens::tk_at(p, "mut") and tokens::tk_peek_text(p, 1) == "self" {
+        tokens::tk_advance(p)
+        tokens::tk_advance(p)
+        return nodes::nd_mk(p, "Param", "mut self", start)
+    }
+    let name = tokens::tk_ident_name(p)
+    let mut n = node("Param", name, start.start, start.end, start.line, start.column)
+    if !tokens::tk_expect(p, ":") {
+        return n
+    }
+    if tokens::tk_at(p, "mut") or tokens::tk_at(p, "shared") {
+        tokens::tk_advance(p)
+    }
+    add(n, types::ty_type_expr(p))
+    if tokens::tk_at(p, "=") {
+        tokens::tk_advance(p)
+        add(n, exprs::ex_expr(p))
+    }
+    n.end = tokens::tk_prev(p).end
+    return n
+}
+
+pub fn dc_struct_decl(p: mut Parser): Node {
+    let start = tokens::tk_advance(p)
+    let name = tokens::tk_ident_name(p)
+    let mut n = node("Struct", name, start.start, start.end, start.line, start.column)
+    if tokens::tk_at(p, "<") {
+        add(n, types::ty_generic_params(p))
+    }
+    if !tokens::tk_expect(p, "{") {
+        return n
+    }
+    while p.error == "" and !tokens::tk_at(p, "}") and !tokens::tk_at_kind(p, "eof") {
+        add(n, dc_field_decl(p))
+        if tokens::tk_at(p, ",") {
+            tokens::tk_advance(p)
+        }
+    }
+    tokens::tk_expect(p, "}")
+    n.end = tokens::tk_prev(p).end
+    return n
+}
+
+pub fn dc_field_decl(p: mut Parser): Node {
+    let start = tokens::tk_current(p)
+    if tokens::tk_at(p, "pub") {
+        tokens::tk_advance(p)
+    }
+    let name = tokens::tk_ident_name(p)
+    let mut n = node("Field", name, start.start, start.end, start.line, start.column)
+    if !tokens::tk_expect(p, ":") {
+        return n
+    }
+    add(n, types::ty_type_expr(p))
+    n.end = tokens::tk_prev(p).end
+    return n
+}
+
+pub fn dc_enum_decl(p: mut Parser): Node {
+    let start = tokens::tk_advance(p)
+    let name = tokens::tk_ident_name(p)
+    let mut n = node("Enum", name, start.start, start.end, start.line, start.column)
+    if tokens::tk_at(p, "<") {
+        add(n, types::ty_generic_params(p))
+    }
+    if !tokens::tk_expect(p, "{") {
+        return n
+    }
+    while p.error == "" and !tokens::tk_at(p, "}") and !tokens::tk_at_kind(p, "eof") {
+        add(n, dc_variant_decl(p))
+        if tokens::tk_at(p, ",") {
+            tokens::tk_advance(p)
+        }
+    }
+    tokens::tk_expect(p, "}")
+    n.end = tokens::tk_prev(p).end
+    return n
+}
+
+pub fn dc_variant_decl(p: mut Parser): Node {
+    let start = tokens::tk_current(p)
+    let name = tokens::tk_ident_name(p)
+    let mut n = node("Variant", name, start.start, start.end, start.line, start.column)
+    if tokens::tk_at(p, "(") {
+        add(n, dc_payload_types(p))
+    }
+    n.end = tokens::tk_prev(p).end
+    return n
+}
+
+pub fn dc_payload_types(p: mut Parser): Node {
+    let start = tokens::tk_advance(p)
+    let mut n = node("Payload", "", start.start, start.end, start.line, start.column)
+    while p.error == "" and !tokens::tk_at(p, ")") and !tokens::tk_at_kind(p, "eof") {
+        let item_start = tokens::tk_current(p)
+        if (tokens::tk_at_kind(p, "ident") or tokens::tk_at_kind(p, "keyword")) and tokens::tk_peek_text(p, 1) == ":" {
+            let name = tokens::tk_ident_name(p)
+            tokens::tk_advance(p)
+            let mut field = node(
+                "PayloadField",
+                name,
+                item_start.start,
+                item_start.end,
+                item_start.line,
+                item_start.column,
+            )
+            add(field, types::ty_type_expr(p))
+            field.end = tokens::tk_prev(p).end
+            add(n, field)
+        } else {
+            add(n, types::ty_type_expr(p))
+        }
+        if tokens::tk_at(p, ",") {
+            tokens::tk_advance(p)
+        } else {
+            break
+        }
+    }
+    tokens::tk_expect(p, ")")
+    n.end = tokens::tk_prev(p).end
+    return n
+}
+
+pub fn dc_trait_decl(p: mut Parser): Node {
+    let start = tokens::tk_advance(p)
+    let name = tokens::tk_ident_name(p)
+    let mut n = node("Trait", name, start.start, start.end, start.line, start.column)
+    if tokens::tk_at(p, "<") {
+        add(n, types::ty_generic_params(p))
+    }
+    if !tokens::tk_expect(p, "{") {
+        return n
+    }
+    while p.error == "" and !tokens::tk_at(p, "}") and !tokens::tk_at_kind(p, "eof") {
+        if tokens::tk_at(p, ";") {
+            tokens::tk_advance(p)
+        } else {
+            add(n, dc_trait_method(p))
+        }
+    }
+    tokens::tk_expect(p, "}")
+    n.end = tokens::tk_prev(p).end
+    return n
+}
+
+pub fn dc_trait_method(p: mut Parser): Node {
+    let start = tokens::tk_current(p)
+    if tokens::tk_at(p, "async") {
+        tokens::tk_advance(p)
+    }
+    let mut n = nodes::nd_mk(p, "TraitMethod", "", start)
+    if !tokens::tk_expect(p, "fn") {
+        return n
+    }
+    n.value = tokens::tk_ident_name(p)
+    if !tokens::tk_expect(p, "(") {
+        return n
+    }
+    for param in dc_parameters(p) {
+        add(n, param)
+    }
+    tokens::tk_expect(p, ")")
+    if tokens::tk_at(p, ":") {
+        tokens::tk_advance(p)
+        add(n, types::ty_type_expr(p))
+    } else {
+        tokens::tk_fail(p, "a trait method must declare a return type")
+    }
+    if tokens::tk_at(p, ";") {
+        tokens::tk_advance(p)
+    }
+    n.end = tokens::tk_prev(p).end
+    return n
+}
+
+pub fn dc_impl_decl(p: mut Parser): Node {
+    let start = tokens::tk_advance(p)
+    let mut n = nodes::nd_mk(p, "Impl", "", start)
+    if tokens::tk_at(p, "<") {
+        tokens::tk_advance(p)
+        while p.error == "" and !tokens::tk_at(p, ">") and !tokens::tk_at_kind(p, "eof") {
+            tokens::tk_advance(p)
+        }
+        tokens::tk_expect(p, ">")
+    }
+    let first = types::ty_type_expr(p)
+    n.value = first.value
+    add(n, first)
+    if tokens::tk_at(p, "for") {
+        tokens::tk_advance(p)
+        add(n, types::ty_type_expr(p))
+    }
+    if !tokens::tk_expect(p, "{") {
+        return n
+    }
+    while p.error == "" and !tokens::tk_at(p, "}") and !tokens::tk_at_kind(p, "eof") {
+        let mut attrs: List<Node> = []
+        while tokens::tk_at(p, "#") and p.error == "" {
+            attrs.push(dc_attribute(p))
+        }
+        if tokens::tk_at(p, "pub") {
+            tokens::tk_advance(p)
+        }
+        if tokens::tk_at(p, "async") {
+            tokens::tk_advance(p)
+        }
+        if tokens::tk_at(p, "fn") {
+            let method = dc_fn_decl(p)
+            for attr in attrs {
+                add(method, attr)
+            }
+            add(n, method)
+        } else {
+            tokens::tk_fail(p, "expected a method in impl, found " + tokens::tk_describe(p))
+        }
+    }
+    tokens::tk_expect(p, "}")
+    n.end = tokens::tk_prev(p).end
+    return n
+}
+
+pub fn dc_type_alias_decl(p: mut Parser): Node {
+    let start = tokens::tk_advance(p)
+    let name = tokens::tk_ident_name(p)
+    let mut n = node("TypeAlias", name, start.start, start.end, start.line, start.column)
+    if tokens::tk_at(p, "<") {
+        add(n, types::ty_generic_params(p))
+    }
+    if !tokens::tk_expect(p, "=") {
+        return n
+    }
+    add(n, types::ty_type_expr(p))
+    n.end = tokens::tk_prev(p).end
+    return n
+}
+
+pub fn dc_const_decl(p: mut Parser): Node {
+    let start = tokens::tk_advance(p)
+    let name = tokens::tk_ident_name(p)
+    let mut n = node("Const", name, start.start, start.end, start.line, start.column)
+    if tokens::tk_at(p, ":") {
+        tokens::tk_advance(p)
+        add(n, types::ty_type_expr(p))
+    }
+    if !tokens::tk_expect(p, "=") {
+        return n
+    }
+    add(n, exprs::ex_expr(p))
+    if tokens::tk_at(p, ";") {
+        tokens::tk_advance(p)
+    }
+    n.end = tokens::tk_prev(p).end
+    return n
+}
+
+pub fn dc_let_decl(p: mut Parser): Node {
+    let start = tokens::tk_advance(p)
+    let mut n = nodes::nd_mk(p, "Let", "", start)
+    if tokens::tk_at(p, "mut") {
+        tokens::tk_advance(p)
+        add(n, nodes::nd_mk_pair(p, "Mut", "", start, tokens::tk_prev(p)))
+    }
+    if tokens::tk_at(p, "(") or tokens::tk_at(p, "{") {
+        let opening = tokens::tk_current(p)
+        let object = opening.text == "{"
+        let mut close = ")"
+        if object {
+            close = "}"
+        }
+        tokens::tk_advance(p)
+        let mut pattern = node(
+            "Destructure",
+            "",
+            opening.start,
+            opening.end,
+            opening.line,
+            opening.column,
+        )
+        if object {
+            pattern.value = "object"
+        } else {
+            pattern.value = "tuple"
+        }
+        while p.error == "" and !tokens::tk_at(p, close) and !tokens::tk_at_kind(p, "eof") {
+            let at = tokens::tk_current(p)
+            let name = tokens::tk_ident_name(p)
+            add(pattern, nodes::nd_mk(p, "NamePattern", name, at))
+            if tokens::tk_at(p, ",") {
+                tokens::tk_advance(p)
+            } else {
+                break
+            }
+        }
+        tokens::tk_expect(p, close)
+        pattern.end = tokens::tk_prev(p).end
+        add(n, pattern)
+    } else {
+        n.value = tokens::tk_ident_name(p)
+    }
+    if tokens::tk_at(p, ":") {
+        tokens::tk_advance(p)
+        add(n, types::ty_type_expr(p))
+    }
+    if tokens::tk_at(p, "=") or tokens::tk_at(p, ":=") {
+        let op = tokens::tk_advance(p)
+        if op.text == ":=" {
+            add(n, nodes::nd_mk_pair(p, "Mut", "", start, op))
+        }
+        add(n, exprs::ex_expr(p))
+    } else {
+        tokens::tk_fail(p, "expected an initializer, found " + tokens::tk_describe(p))
+    }
+    if tokens::tk_at(p, ";") {
+        tokens::tk_advance(p)
+    }
+    n.end = tokens::tk_prev(p).end
+    return n
+}

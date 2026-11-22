@@ -16,7 +16,8 @@ xuloc/
 │   ├── main.xulo      #   CLI: tokens / parse / check / build / scan
 │   ├── ast.xulo       #   generic Node shape and tree renderer
 │   ├── lexer.xulo     #   UTF-8 scanner
-│   ├── parser.xulo    #   recursive-descent parser
+│   ├── parser.xulo    #   parser state, `parse` entry, module list
+│   ├── parser/        #   procedural parser modules (see below)
 │   ├── checker.xulo   #   first semantic pass
 │   ├── backend.xulo   #   portable-C code generator
 │   └── tests.xulo     #   stage 1's own #[test] functions
@@ -39,15 +40,18 @@ xuloc/
 
 Sources live under `src/` because `mod ast;` resolves next to the file that
 declares it, so `main.xulo` and every module it names stay together. `tests.xulo`
-also lives in `src/` for the same reason. The C runtime is not Xulo source, and
-the corpus is not compiled by the package, so they stay outside `src/`.
+also lives in `src/` for the same reason. A file-backed module's home directory
+is its stem: `parser.xulo` declares `mod tokens;`, which resolves to
+`parser/tokens.xulo`, and so on. The C runtime is not Xulo source, and the
+corpus is not compiled by the package, so they stay outside `src/`.
 
 | File | Role |
 |------|------|
 | `xuloc/xupm.toml` | `xupm` package manifest: name `xuloc`, entry `src/main.xulo`, artifact `xuloc/.xupm/build/xuloc` |
 | `xuloc/src/ast.xulo` | One generic `Node` shape plus the stable tree renderer |
 | `xuloc/src/lexer.xulo` | UTF-8 scalar scanner: tokens, spans, line/column, comments, literals, operators |
-| `xuloc/src/parser.xulo` | Recursive-descent parser: headers, declarations, statements, expressions, patterns, types |
+| `xuloc/src/parser.xulo` | Parser state (`Parser`), `parse`/`parse_expression` entries, and the submodule tree |
+| `xuloc/src/parser/*.xulo` | Procedural parser modules: `tokens`, `nodes`, `template`, `types`, `decls`, `stmts`, `exprs`, `primary`, `control`, `patterns` |
 | `xuloc/src/checker.xulo` | Name and type checking for the Gate 3 corpus: functions, bindings, control flow, lists, optionals, calls |
 | `xuloc/src/backend.xulo` | Code generator: generic AST to portable C, declaration collection, expressions/statements, method/static/path calls, patterns |
 | `xuloc/runtime/runtime.c` | Unity entry point included by generated programs; assembles the `runtime_*.inc` modules in dependency order |

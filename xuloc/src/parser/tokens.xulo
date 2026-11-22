@@ -1,0 +1,110 @@
+// Stage 1 parser: token access and diagnostics.
+//
+// Procedural form of the old `impl Parser` methods; `p` is the parser state.
+
+use lexer::Token;
+use super::Parser;
+
+pub fn tk_current(p: Parser): Token {
+    if p.pos >= p.tokens.len {
+        return p.tokens[p.tokens.len - 1]
+    }
+    return p.tokens[p.pos]
+}
+
+pub fn tk_prev(p: Parser): Token {
+    if p.pos == 0 {
+        return tk_current(p)
+    }
+    return p.tokens[p.pos - 1]
+}
+
+pub fn tk_peek_text(p: Parser, offset: number): string {
+    let at = p.pos + offset
+    if at >= p.tokens.len {
+        return ""
+    }
+    return p.tokens[at].text
+}
+
+pub fn tk_at(p: Parser, text: string): bool {
+    return tk_current(p).text == text
+}
+
+pub fn tk_at_kind(p: Parser, kind: string): bool {
+    return tk_current(p).kind == kind
+}
+
+pub fn tk_advance(p: mut Parser): Token {
+    let token = tk_current(p)
+    if token.kind != "eof" {
+        p.pos = p.pos + 1
+    }
+    return token
+}
+
+pub fn tk_eat(p: mut Parser, text: string): bool {
+    if tk_at(p, text) {
+        tk_advance(p)
+        return true
+    }
+    return false
+}
+
+pub fn tk_fail(p: mut Parser, message: string) {
+    if p.error == "" {
+        let token = tk_current(p)
+        p.error = message
+        p.err_line = token.line
+        p.err_column = token.column
+    }
+}
+
+pub fn tk_describe(p: Parser): string {
+    let token = tk_current(p)
+    if token.kind == "eof" {
+        return "end of file"
+    }
+    return "`" + token.text + "`"
+}
+
+pub fn tk_expect(p: mut Parser, text: string): bool {
+    if tk_at(p, text) {
+        tk_advance(p)
+        return true
+    }
+    tk_fail(p, "expected `" + text + "`, found " + tk_describe(p))
+    return false
+}
+
+pub fn tk_ident_name(p: mut Parser): string {
+    let token = tk_current(p)
+    if token.kind == "ident" or token.kind == "keyword" {
+        tk_advance(p)
+        return token.text
+    }
+    tk_fail(p, "expected an identifier, found " + tk_describe(p))
+    return ""
+}
+
+
+pub fn tk_skip_balanced(p: mut Parser, opening: string, closing: string) {
+    if !tk_at(p, opening) {
+        return
+    }
+    let mut depth = 0
+    while p.error == "" and !tk_at_kind(p, "eof") {
+        if tk_at(p, opening) {
+            depth = depth + 1
+            tk_advance(p)
+        } else if tk_at(p, closing) {
+            depth = depth - 1
+            tk_advance(p)
+            if depth == 0 {
+                return
+            }
+        } else {
+            tk_advance(p)
+        }
+    }
+}

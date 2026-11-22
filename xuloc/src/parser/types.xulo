@@ -1,0 +1,193 @@
+// Stage 1 parser: type syntax.
+//
+// Procedural form of the old `impl Parser` methods; `p` is the parser state.
+
+use ast::{Node, node, add};
+use super::nodes;
+use super::tokens;
+use super::Parser;
+
+pub fn ty_type_expr(p: mut Parser): Node {
+    let mut left = ty_type_intersection(p)
+    while p.error == "" and tokens::tk_at(p, "|") {
+        let op = tokens::tk_advance(p)
+        let right = ty_type_intersection(p)
+        left = ty_binary_type(p, "|", op.text, left, right)
+    }
+    return left
+}
+
+pub fn ty_type_intersection(p: mut Parser): Node {
+    let mut left = ty_type_postfix(p)
+    while p.error == "" and tokens::tk_at(p, "&") {
+        let op = tokens::tk_advance(p)
+        let right = ty_type_postfix(p)
+        left = ty_binary_type(p, "&", op.text, left, right)
+    }
+    return left
+}
+
+pub fn ty_binary_type(p: Parser, kind: string, op: string, left: Node, right: Node): Node {
+    let mut n = node(kind, op, left.start, right.end, left.line, left.column)
+    add(n, left)
+    add(n, right)
+    return n
+}
+
+pub fn ty_type_postfix(p: mut Parser): Node {
+    let mut base = ty_type_primary(p)
+    while p.error == "" and tokens::tk_at(p, "?") {
+        let question = tokens::tk_advance(p)
+        let mut n = node(
+            "OptionalType",
+            "?",
+            base.start,
+            question.end,
+            base.line,
+            base.column,
+        )
+        add(n, base)
+        base = n
+    }
+    return base
+}
+
+pub fn ty_type_primary(p: mut Parser): Node {
+    let start = tokens::tk_current(p)
+    if tokens::tk_at(p, "(") {
+        tokens::tk_advance(p)
+        let first = ty_type_expr(p)
+        if tokens::tk_at(p, ",") {
+            let mut n = nodes::nd_mk_pair(p, "TupleType", "", start, start)
+            add(n, first)
+            while p.error == "" and tokens::tk_at(p, ",") {
+                tokens::tk_advance(p)
+                if tokens::tk_at(p, ")") {
+                    break
+                }
+                add(n, ty_type_expr(p))
+            }
+            tokens::tk_expect(p, ")")
+            n.end = tokens::tk_prev(p).end
+            return n
+        }
+        tokens::tk_expect(p, ")")
+        return first
+    }
+    if tokens::tk_at(p, "fn") or (tokens::tk_at(p, "async") and tokens::tk_peek_text(p, 1) == "fn") {
+        return ty_function_type(p)
+    }
+    if tokens::tk_at_kind(p, "ident") or tokens::tk_at_kind(p, "keyword") {
+        tokens::tk_advance(p)
+        let mut n = nodes::nd_mk(p, "TypeName", start.text, start)
+        if tokens::tk_at(p, "<") {
+            add(n, ty_type_args(p))
+        }
+        while p.error == "" and tokens::tk_at(p, "::") {
+            tokens::tk_advance(p)
+            let segment = tokens::tk_ident_name(p)
+            let mut path = node(
+                "TypeName",
+                n.value + "::" + segment,
+                n.start,
+                tokens::tk_prev(p).end,
+                n.line,
+                n.column,
+            )
+            add(path, n)
+            n = path
+        }
+        n.end = tokens::tk_prev(p).end
+        return n
+    }
+    tokens::tk_fail(p, "expected a type, found " + tokens::tk_describe(p))
+    return nodes::nd_placeholder(p, start)
+}
+
+pub fn ty_function_type(p: mut Parser): Node {
+    let start = tokens::tk_current(p)
+    if tokens::tk_at(p, "async") {
+        tokens::tk_advance(p)
+    }
+    tokens::tk_expect(p, "fn")
+    let mut n = nodes::nd_mk(p, "FnType", "", start)
+    if !tokens::tk_expect(p, "(") {
+        return n
+    }
+    while p.error == "" and !tokens::tk_at(p, ")") and !tokens::tk_at_kind(p, "eof") {
+        let param_start = tokens::tk_current(p)
+        if tokens::tk_at_kind(p, "ident") and tokens::tk_peek_text(p, 1) == ":" {
+            tokens::tk_advance(p)
+            tokens::tk_advance(p)
+        } else if tokens::tk_at(p, "mut") or tokens::tk_at(p, "shared") {
+            tokens::tk_advance(p)
+        }
+        add(n, ty_type_expr(p))
+        if tokens::tk_at(p, ",") {
+            tokens::tk_advance(p)
+        } else {
+            break
+        }
+    }
+    tokens::tk_expect(p, ")")
+    if tokens::tk_at(p, ":") {
+        tokens::tk_advance(p)
+        add(n, ty_type_expr(p))
+    }
+    n.end = tokens::tk_prev(p).end
+    return n
+}
+
+pub fn ty_type_args(p: mut Parser): Node {
+    let start = tokens::tk_advance(p)
+    let mut n = node("TypeArgs", "", start.start, start.end, start.line, start.column)
+    while p.error == "" and !tokens::tk_at(p, ">") and !tokens::tk_at_kind(p, "eof") {
+        add(n, ty_type_expr(p))
+        if tokens::tk_at(p, ",") {
+            tokens::tk_advance(p)
+        } else {
+            break
+        }
+    }
+    tokens::tk_expect(p, ">")
+    n.end = tokens::tk_prev(p).end
+    return n
+}
+
+pub fn ty_generic_params(p: mut Parser): Node {
+    let start = tokens::tk_advance(p)
+    let mut n = node("GenericParams", "", start.start, start.end, start.line, start.column)
+    while p.error == "" and !tokens::tk_at(p, ">") and !tokens::tk_at_kind(p, "eof") {
+        let param_start = tokens::tk_current(p)
+        let mut param = node(
+            "GenericParam",
+            "",
+            param_start.start,
+            param_start.end,
+            param_start.line,
+            param_start.column,
+        )
+        if tokens::tk_at(p, "const") {
+            tokens::tk_advance(p)
+        }
+        param.value = tokens::tk_ident_name(p)
+        if tokens::tk_at(p, ":") {
+            tokens::tk_advance(p)
+            add(param, ty_type_expr(p))
+            while tokens::tk_at(p, "+") {
+                tokens::tk_advance(p)
+                add(param, ty_type_expr(p))
+            }
+        }
+        param.end = tokens::tk_prev(p).end
+        add(n, param)
+        if tokens::tk_at(p, ",") {
+            tokens::tk_advance(p)
+        } else {
+            break
+        }
+    }
+    tokens::tk_expect(p, ">")
+    n.end = tokens::tk_prev(p).end
+    return n
+}

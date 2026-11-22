@@ -1,0 +1,35 @@
+// Stage 1 parser: AST node construction.
+//
+// Procedural form of the old `impl Parser` methods; `p` is the parser state.
+
+use ast::{Node, node, add};
+use lexer::Token;
+use super::tokens;
+use super::Parser;
+
+pub fn nd_mk(p: Parser, kind: string, value: string, start: Token): Node {
+    let end = tokens::tk_prev(p)
+    return node(kind, value, start.start, end.end, start.line, start.column)
+}
+
+pub fn nd_mk_pair(p: Parser, kind: string, value: string, start: Token, end: Token): Node {
+    return node(kind, value, start.start, end.end, start.line, start.column)
+}
+
+pub fn nd_placeholder(p: Parser, start: Token): Node {
+    return node("Error", "", start.start, start.end, start.line, start.column)
+}
+
+pub fn nd_binary(p: Parser, op: string, left: Node, right: Node): Node {
+    let mut n = node(
+        "Binary",
+        op,
+        left.start,
+        right.end,
+        left.line,
+        left.column,
+    )
+    add(n, left)
+    add(n, right)
+    return n
+}

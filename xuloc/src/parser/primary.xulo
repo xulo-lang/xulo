@@ -1,0 +1,302 @@
+// Stage 1 parser: primary/postfix expressions and literals.
+//
+// Procedural form of the old `impl Parser` methods; `p` is the parser state.
+
+use ast::{Node, node, add};
+use super::control;
+use super::exprs;
+use super::nodes;
+use super::template;
+use super::tokens;
+use super::types;
+use super::Parser;
+
+pub fn pr_postfix(p: mut Parser): Node {
+    let mut value = pr_primary(p)
+    while p.error == "" {
+        if tokens::tk_at(p, "(") {
+            value = pr_call_tail(p, value)
+        } else if tokens::tk_at(p, "[") {
+            tokens::tk_advance(p)
+            let index = exprs::ex_expr(p)
+            tokens::tk_expect(p, "]")
+            let mut n = node(
+                "Index",
+                "",
+                value.start,
+                tokens::tk_prev(p).end,
+                value.line,
+                value.column,
+            )
+            add(n, value)
+            add(n, index)
+            value = n
+        } else if tokens::tk_at(p, ".") or tokens::tk_at(p, "?.") {
+            let dot = tokens::tk_advance(p)
+            let property = pr_member_name(p)
+            let mut kind = "Member"
+            if dot.text == "?." {
+                kind = "OptionalMember"
+            }
+            let mut n = node(
+                kind,
+                property,
+                value.start,
+                tokens::tk_prev(p).end,
+                value.line,
+                value.column,
+            )
+            add(n, value)
+            value = n
+        } else {
+            break
+        }
+    }
+    return value
+}
+
+pub fn pr_member_name(p: mut Parser): string {
+    let token = tokens::tk_current(p)
+    if token.kind == "ident"
+        or token.kind == "keyword"
+        or token.kind == "int"
+    {
+        tokens::tk_advance(p)
+        return token.text
+    }
+    tokens::tk_fail(p, "expected a member name, found " + tokens::tk_describe(p))
+    return ""
+}
+
+pub fn pr_call_tail(p: mut Parser, callee: Node): Node {
+    let start = tokens::tk_current(p)
+    tokens::tk_advance(p)
+    let mut n = node(
+        "Call",
+        "",
+        callee.start,
+        start.end,
+        callee.line,
+        callee.column,
+    )
+    add(n, callee)
+    while p.error == "" and !tokens::tk_at(p, ")") and !tokens::tk_at_kind(p, "eof") {
+        if (tokens::tk_at_kind(p, "ident") or tokens::tk_at_kind(p, "keyword")) and tokens::tk_peek_text(p, 1) == ":" {
+            let arg_start = tokens::tk_current(p)
+            let name = tokens::tk_ident_name(p)
+            tokens::tk_advance(p)
+            let mut arg = node(
+                "Arg",
+                name,
+                arg_start.start,
+                arg_start.end,
+                arg_start.line,
+                arg_start.column,
+            )
+            add(arg, exprs::ex_expr(p))
+            arg.end = tokens::tk_prev(p).end
+            add(n, arg)
+        } else {
+            add(n, exprs::ex_expr(p))
+        }
+        if tokens::tk_at(p, ",") {
+            tokens::tk_advance(p)
+        } else {
+            break
+        }
+    }
+    tokens::tk_expect(p, ")")
+    n.end = tokens::tk_prev(p).end
+    return n
+}
+
+pub fn pr_primary(p: mut Parser): Node {
+    let start = tokens::tk_current(p)
+    if tokens::tk_at(p, "true") or tokens::tk_at(p, "false") or tokens::tk_at(p, "null") {
+        tokens::tk_advance(p)
+        return nodes::nd_mk(p, "Literal", start.text, start)
+    }
+    if tokens::tk_at_kind(p, "int")
+        or tokens::tk_at_kind(p, "float")
+        or tokens::tk_at_kind(p, "string")
+    {
+        tokens::tk_advance(p)
+        return nodes::nd_mk(p, "Literal", start.text, start)
+    }
+    if tokens::tk_at_kind(p, "template") {
+        tokens::tk_advance(p)
+        return template::tp_template_expr(p, start)
+    }
+    if tokens::tk_at(p, "(") {
+        return pr_paren_expr(p)
+    }
+    if tokens::tk_at(p, "[") {
+        return pr_list_expr(p)
+    }
+    if tokens::tk_at(p, "{") {
+        return pr_map_expr(p)
+    }
+    if tokens::tk_at(p, "if") {
+        return control::ct_if_expr(p)
+    }
+    if tokens::tk_at(p, "match") {
+        return control::ct_match_expr(p)
+    }
+    if tokens::tk_at(p, "fn") {
+        return control::ct_fn_expr(p)
+    }
+    if tokens::tk_at(p, "panic") {
+        tokens::tk_advance(p)
+        let name = nodes::nd_mk(p, "Name", "panic", start)
+        if tokens::tk_at(p, "(") {
+            return pr_call_tail(p, name)
+        }
+        return name
+    }
+    if tokens::tk_at(p, "Map") and tokens::tk_peek_text(p, 1) == "<" {
+        return pr_typed_map_expr(p)
+    }
+    if tokens::tk_at_kind(p, "ident") or tokens::tk_at_kind(p, "keyword") {
+        tokens::tk_advance(p)
+        let mut n = nodes::nd_mk(p, "Name", start.text, start)
+        while p.error == "" and tokens::tk_at(p, "::") {
+            tokens::tk_advance(p)
+            let segment = tokens::tk_ident_name(p)
+            let mut path = node(
+                "Path",
+                n.value + "::" + segment,
+                n.start,
+                tokens::tk_prev(p).end,
+                n.line,
+                n.column,
+            )
+            add(path, n)
+            n = path
+        }
+        return n
+    }
+    tokens::tk_fail(p, "expected an expression, found " + tokens::tk_describe(p))
+    return nodes::nd_placeholder(p, start)
+}
+
+pub fn pr_paren_expr(p: mut Parser): Node {
+    let start = tokens::tk_advance(p)
+    let first = exprs::ex_expr(p)
+    if tokens::tk_at(p, ",") {
+        let mut n = node("Tuple", "", start.start, start.end, start.line, start.column)
+        add(n, first)
+        while p.error == "" and tokens::tk_at(p, ",") {
+            tokens::tk_advance(p)
+            if tokens::tk_at(p, ")") {
+                break
+            }
+            add(n, exprs::ex_expr(p))
+        }
+        tokens::tk_expect(p, ")")
+        n.end = tokens::tk_prev(p).end
+        return n
+    }
+    tokens::tk_expect(p, ")")
+    let mut n = node("Group", "", start.start, tokens::tk_prev(p).end, start.line, start.column)
+    add(n, first)
+    return n
+}
+
+pub fn pr_list_expr(p: mut Parser): Node {
+    let start = tokens::tk_advance(p)
+    let mut n = node("List", "", start.start, start.end, start.line, start.column)
+    while p.error == "" and !tokens::tk_at(p, "]") and !tokens::tk_at_kind(p, "eof") {
+        if tokens::tk_at(p, "...") {
+            let spread_start = tokens::tk_advance(p)
+            let mut spread = node(
+                "Spread",
+                "",
+                spread_start.start,
+                spread_start.end,
+                spread_start.line,
+                spread_start.column,
+            )
+            add(spread, exprs::ex_expr(p))
+            spread.end = tokens::tk_prev(p).end
+            add(n, spread)
+        } else {
+            add(n, exprs::ex_expr(p))
+        }
+        if tokens::tk_at(p, ",") {
+            tokens::tk_advance(p)
+        } else {
+            break
+        }
+    }
+    tokens::tk_expect(p, "]")
+    n.end = tokens::tk_prev(p).end
+    return n
+}
+
+pub fn pr_map_expr(p: mut Parser): Node {
+    return pr_map_body(p, false)
+}
+
+// `Map<K, V>{ "k": v }` is a typed map literal: the type arguments are
+// skipped and the keys are expressions, unlike a brace object literal's
+// bare identifier keys (spec `expressions/literals.md`).
+pub fn pr_typed_map_expr(p: mut Parser): Node {
+    let start = tokens::tk_advance(p)
+    types::ty_type_args(p)
+    if p.error != "" {
+        return nodes::nd_placeholder(p, start)
+    }
+    if !tokens::tk_at(p, "{") {
+        tokens::tk_fail(p, "expected `{` after a map type")
+        return nodes::nd_placeholder(p, start)
+    }
+    let mut n = pr_map_body(p, true)
+    n.start = start.start
+    n.line = start.line
+    n.column = start.column
+    return n
+}
+
+pub fn pr_map_body(p: mut Parser, typed: bool): Node {
+    let start = tokens::tk_advance(p)
+    let mut n = node("Map", "", start.start, start.end, start.line, start.column)
+    while p.error == "" and !tokens::tk_at(p, "}") and !tokens::tk_at_kind(p, "eof") {
+        if tokens::tk_at(p, "...") {
+            let spread_start = tokens::tk_advance(p)
+            let mut spread = node(
+                "Spread",
+                "",
+                spread_start.start,
+                spread_start.end,
+                spread_start.line,
+                spread_start.column,
+            )
+            add(spread, exprs::ex_expr(p))
+            spread.end = tokens::tk_prev(p).end
+            add(n, spread)
+        } else if typed {
+            let key = exprs::ex_expr(p)
+            tokens::tk_expect(p, ":")
+            let mut entry = node("Entry", "", key.start, key.end, key.line, key.column)
+            add(entry, key)
+            add(entry, exprs::ex_expr(p))
+            entry.end = tokens::tk_prev(p).end
+            add(n, entry)
+        } else {
+            let key = tokens::tk_ident_name(p)
+            tokens::tk_expect(p, ":")
+            let mut entry = nodes::nd_mk(p, "Entry", key, start)
+            add(entry, exprs::ex_expr(p))
+            entry.end = tokens::tk_prev(p).end
+            add(n, entry)
+        }
+        if tokens::tk_at(p, ",") {
+            tokens::tk_advance(p)
+        } else {
+            break
+        }
+    }
+    tokens::tk_expect(p, "}")
+    n.end = tokens::tk_prev(p).end
+    return n
+}

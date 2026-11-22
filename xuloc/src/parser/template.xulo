@@ -1,0 +1,154 @@
+// Stage 1 parser: backtick template scanning.
+//
+// Procedural form of the old `impl Parser` methods; `p` is the parser state.
+
+use ast::{Node, node, add};
+use lexer::{lex, LexResult, Token};
+use super::ParseResult;
+use super::tokens;
+use super::parse_expression;
+use super::Parser;
+
+pub fn tp_template_skip_string(chars: List<string>, start: number, quote: string): number {
+    let mut i = start + 1
+    while i < chars.len {
+        let c = chars[i]
+        if c == "\\" {
+            i = i + 2
+            continue
+        }
+        if c == quote {
+            return i + 1
+        }
+        i = i + 1
+    }
+    return i
+}
+
+pub fn tp_template_skip_template(chars: List<string>, start: number): number {
+    let mut i = start + 1
+    while i < chars.len {
+        let c = chars[i]
+        if c == "\\" {
+            i = i + 2
+            continue
+        }
+        if c == "`" {
+            return i + 1
+        }
+        if c == "$" and i + 1 < chars.len and chars[i + 1] == "{" {
+            let close = tp_template_expr_end(chars, i + 1)
+            i = close + 1
+            continue
+        }
+        i = i + 1
+    }
+    return i
+}
+
+pub fn tp_template_expr_end(chars: List<string>, start: number): number {
+    // `start` points at the `{` that follows `$`; depth starts at one.
+    let mut depth = 1
+    let mut i = start + 1
+    while i < chars.len {
+        let c = chars[i]
+        if c == "`" {
+            i = tp_template_skip_template(chars, i)
+            continue
+        }
+        if c == "\"" or c == "'" {
+            i = tp_template_skip_string(chars, i, c)
+            continue
+        }
+        if c == "{" {
+            depth = depth + 1
+            i = i + 1
+            continue
+        }
+        if c == "}" {
+            depth = depth - 1
+            if depth == 0 {
+                return i
+            }
+        }
+        i = i + 1
+    }
+    return i
+}
+
+pub fn tp_template_expr(p: mut Parser, token: Token): Node {
+    let mut n = node("Template", "", token.start, token.end, token.line, token.column)
+    let text = token.text
+    if text.len < 2 {
+        return n
+    }
+    let body = text.slice(1, text.len - 1)
+    let chars: List<string> = body.split("")
+    let mut chunk = StringBuilder::new()
+    let mut i = 0
+    while p.error == "" and i < chars.len {
+        let c = chars[i]
+        if c == "\\" and i + 1 < chars.len {
+            let escaped = chars[i + 1]
+            if escaped == "`" or escaped == "$" {
+                // Template-only escapes: the raw character, not an
+                // interpolation marker.
+                chunk.append(escaped)
+            } else {
+                chunk.append("\\")
+                chunk.append(escaped)
+            }
+            i = i + 2
+            continue
+        }
+        if c == "$" and i + 1 < chars.len and chars[i + 1] == "{" {
+            let flushed = chunk.build()
+            if flushed != "" {
+                add(
+                    n,
+                    node(
+                        "TemplateText",
+                        flushed,
+                        token.start,
+                        token.end,
+                        token.line,
+                        token.column,
+                    ),
+                )
+                chunk = StringBuilder::new()
+            }
+            let close = tp_template_expr_end(chars, i + 1)
+            let inner = body.slice(i + 2, close)
+            let lexed: LexResult = lex(inner)
+            if lexed.error != "" {
+                tokens::tk_fail(p, "template interpolation: " + lexed.error)
+                return n
+            }
+            let parsed: ParseResult = parse_expression(lexed.tokens)
+            if parsed.error != "" {
+                tokens::tk_fail(p, "template interpolation: " + parsed.error)
+                return n
+            }
+            add(n, parsed.root)
+            i = close + 1
+            continue
+        }
+        chunk.append(c)
+        i = i + 1
+    }
+    let tail = chunk.build()
+    if tail != "" {
+        add(
+            n,
+            node(
+                "TemplateText",
+                tail,
+                token.start,
+                token.end,
+                token.line,
+                token.column,
+            ),
+        )
+    }
+    return n
+}
