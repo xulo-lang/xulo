@@ -1,5 +1,77 @@
 // ── formatting ───────────────────────────────────────────────────────────
 
+// Rust's `Display` for f64 does not switch to exponent notation for ordinary
+// magnitudes; `%g` does (`1000.0` becomes `1e+03`). Expand the shortest
+// round-tripping form back to plain decimal notation.
+static void xr_expand_exponent(const char *text, char *out, size_t cap) {
+    const char *mark = strchr(text, 'e');
+    if (mark == NULL) {
+        snprintf(out, cap, "%s", text);
+        return;
+    }
+    char mantissa[64];
+    size_t mlen = (size_t)(mark - text);
+    if (mlen >= sizeof(mantissa)) {
+        mlen = sizeof(mantissa) - 1;
+    }
+    memcpy(mantissa, text, mlen);
+    mantissa[mlen] = '\0';
+    int exponent = atoi(mark + 1);
+    int negative = 0;
+    char *digits_text = mantissa;
+    if (*digits_text == '-' || *digits_text == '+') {
+        negative = *digits_text == '-';
+        digits_text += 1;
+    }
+    char digits[64];
+    int count = 0;
+    int dot = -1;
+    for (char *p = digits_text; *p != '\0'; p += 1) {
+        if (*p == '.') {
+            dot = count;
+        } else if (count < (int)sizeof(digits) - 1) {
+            digits[count] = *p;
+            count += 1;
+        }
+    }
+    digits[count] = '\0';
+    int point = (dot >= 0 ? dot : count) + exponent;
+    size_t pos = 0;
+    if (negative && pos + 1 < cap) {
+        out[pos++] = '-';
+    }
+    if (point <= 0) {
+        if (pos + 2 < cap) {
+            out[pos++] = '0';
+            out[pos++] = '.';
+        }
+        for (int i = 0; i < -point && pos + 1 < cap; i += 1) {
+            out[pos++] = '0';
+        }
+        for (int i = 0; i < count && pos + 1 < cap; i += 1) {
+            out[pos++] = digits[i];
+        }
+    } else if (point >= count) {
+        for (int i = 0; i < count && pos + 1 < cap; i += 1) {
+            out[pos++] = digits[i];
+        }
+        for (int i = count; i < point && pos + 1 < cap; i += 1) {
+            out[pos++] = '0';
+        }
+    } else {
+        for (int i = 0; i < point && pos + 1 < cap; i += 1) {
+            out[pos++] = digits[i];
+        }
+        if (pos + 1 < cap) {
+            out[pos++] = '.';
+        }
+        for (int i = point; i < count && pos + 1 < cap; i += 1) {
+            out[pos++] = digits[i];
+        }
+    }
+    out[pos] = '\0';
+}
+
 static XVal xr_format_float(double f) {
     if (isnan(f)) {
         return xr_str("NaN");
@@ -17,11 +89,15 @@ static XVal xr_format_float(double f) {
     for (int precision = 1; precision <= 17; precision += 1) {
         snprintf(buffer, sizeof(buffer), "%.*g", precision, f);
         if (strtod(buffer, NULL) == f) {
-            return xr_str(buffer);
+            char plain[512];
+            xr_expand_exponent(buffer, plain, sizeof(plain));
+            return xr_str(plain);
         }
     }
     snprintf(buffer, sizeof(buffer), "%.17g", f);
-    return xr_str(buffer);
+    char plain[512];
+    xr_expand_exponent(buffer, plain, sizeof(plain));
+    return xr_str(plain);
 }
 
 static void xr_append_str(char **buffer, long long *len, long long *cap, const char *data,

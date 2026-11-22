@@ -352,6 +352,14 @@ XVal xr_list_lit(long long n, XVal *items) {
     return list;
 }
 
+XVal xr_array_filled(XVal value, long long count) {
+    XVal list = xr_list_new();
+    for (long long i = 0; i < count; i += 1) {
+        xr_list_push(list, value);
+    }
+    return list;
+}
+
 XVal xr_range(XVal start, XVal end, long long inclusive) {
     long long from = start.i;
     long long to = end.i;
@@ -687,6 +695,13 @@ XVal xr_error(const char *message) {
 XVal xr_err(const char *message) {
     XVal error = xr_error(message);
     return xr_variant("Result", "Err", 1, &error);
+}
+
+// `Error(value)` stringifies its argument before storing the message.
+XVal xr_error_of(XVal message) {
+    XVal text = xr_str_of(message);
+    XStr *str = xr_as_str(text);
+    return xr_error(str->data);
 }
 
 static void xr_qualified(const char *qualified, const char **type, const char **tag) {

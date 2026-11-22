@@ -156,6 +156,38 @@ pub fn co_literal_expr(e: mut Emitter, text: string): string {
     return "xr_int(" + digits + "LL)"
 }
 
+fn co_hex_digit(c: string): number {
+    let code = c.code_at(0)
+    if code >= 48 and code <= 57 {
+        return code - 48
+    }
+    if code >= 97 and code <= 102 {
+        return code - 87
+    }
+    if code >= 65 and code <= 70 {
+        return code - 55
+    }
+    return 0
+}
+
+/// C rejects a universal character name for an ASCII character, so those use a
+/// fixed-width octal escape; non-ASCII stays `\uXXXX` / `\UXXXXXXXX`.
+fn co_code_escape(code: number): string {
+    if code <= 127 {
+        let digits = "01234567"
+        let mut out = StringBuilder::new()
+        out.append("\\")
+        out.append(digits.slice((code / 64) % 8, (code / 64) % 8 + 1))
+        out.append(digits.slice((code / 8) % 8, (code / 8) % 8 + 1))
+        out.append(digits.slice(code % 8, code % 8 + 1))
+        return out.build()
+    }
+    if code <= 65535 {
+        return "\\u" + bk_util::hex_pad(code, 4)
+    }
+    return "\\U" + bk_util::hex_pad(code, 8)
+}
+
 pub fn co_emit_string_literal(e: mut Emitter, text: string): string {
     let body = text.slice(1, text.len - 1)
     let chars = body.split("")
@@ -164,6 +196,20 @@ pub fn co_emit_string_literal(e: mut Emitter, text: string): string {
     let mut i = 0
     while i < chars.len {
         let c = chars[i]
+        // Xulo spells a Unicode escape `\u{...}`; C wants `\uXXXX`/`\UXXXXXXXX`.
+        if c == "\\" and i + 2 < chars.len and chars[i + 1] == "u" and chars[i + 2] == "{" {
+            let mut code = 0
+            let mut j = i + 3
+            while j < chars.len and chars[j] != "}" {
+                code = code * 16 + co_hex_digit(chars[j])
+                j = j + 1
+            }
+            if j < chars.len {
+                lit.append(co_code_escape(code))
+                i = j + 1
+                continue
+            }
+        }
         if c == "\\" and i + 1 < chars.len {
             lit.append("\\")
             lit.append(chars[i + 1])

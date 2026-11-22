@@ -304,14 +304,19 @@ so stage 2 does not inherit them silently.
     `if`/`while`/`for`/`match`, calls, fields, indexing, lists, tuples,
     object literals (and their spread), typed `Map<K, V>{ … }` literals,
     `let` object/tuple destructuring, struct/enum/literal/or/range/type
-    patterns with guards, templates, operators, `??`, `is`, `?.`,
+    patterns with guards, templates, operators, `??`, `is`, `?.`, postfix
+    `?` (propagate `Result::Err` with `return`), `Error("…")`, assignment in
+    expression position (`a = b = 3`), `shared` as a pass-through unary,
     `#[derive(Debug)]` rendering, the `Map`/`Set` members (`size`, `get`,
     `set`, `has`, `remove`, `keys`, `values`, `entries`, `insert`), iteration
     over a map's keys or a set's elements, `Map::from_entries`,
-    `Set::from_list`, and the `std::fs`/`std::io`/`std::os`/`std::process`/
-    `std::path`/`std::hint`/`std::math`/`std::json` calls stage 1 uses.
-    Module-qualified names (`alias::fn`, `m::CONST`) resolve by their final
-    segment because declaration collection flattens modules.
+    `Set::from_list`, `Array::filled<T, N>` with a literal `N`, and the
+    `std::fs`/`std::io`/`std::os`/`std::process`/`std::path`/`std::hint`/
+    `std::math`/`std::json` calls stage 1 uses. Call-site type arguments are
+    dropped because the backend is dynamically typed; the type argument is
+    only consulted for a literal `Array::filled` length. Module-qualified
+    names (`alias::fn`, `m::CONST`) resolve by their final segment because
+    declaration collection flattens modules.
     `Trait::method(receiver, …)` lowers to runtime method dispatch on the
     receiver's struct type. Closures, `defer`, async, and the
     `std::time`/`std::fmt`/`std::regex`/`std::net` modules are rejected with
@@ -370,9 +375,15 @@ so stage 2 does not inherit them silently.
   to binary32 (T12), so an example that depends on that rounding can differ
   (`types/float_math.xulo`).
 - The parser accepts postfix `?`, arrow closures, call-site type arguments,
-  function-macro calls, `spawn`, and `lock`, but the checker and backend do not
-  lower their nodes yet. Attribute macros and macro expansion remain outside
-  the bootstrap subset; macro bodies are skipped as token trees.
+  function-macro calls, `spawn`, and `lock`. The backend lowers `?` and drops
+  call-site type arguments, but arrow closures, macro calls, `spawn`, and
+  `lock` still report `E0005`; attribute macros and macro expansion remain
+  outside the bootstrap subset, and macro bodies are skipped as token trees.
+- The backend builds 46 of the 66 example files end to end. One of the
+  remaining failures is the expected `errors/type_error.xulo` reject; the
+  others need closures, `defer`, async/net/time/regex, FFI, or module symbol
+  qualification. `crates/xupm/tests/stage1_build.rs` pins the new `lexical`,
+  `propagation`, and `arrays` cases against their sidecars.
 - The parser recovers only by stopping at the first error. That is enough for
   Gate 1/2 diagnostics; stage 1's checker work will need recovery.
 - The tests read `xuloc/src/*.xulo` relative to the repository root, like the

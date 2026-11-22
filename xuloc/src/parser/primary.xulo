@@ -34,18 +34,37 @@ pub fn pr_postfix(p: mut Parser): Node {
             value = n
         } else if tokens::tk_at(p, ".") or tokens::tk_at(p, "?.") {
             let dot = tokens::tk_advance(p)
+            let member = tokens::tk_current(p)
             let property = pr_member_name(p)
-            // A tuple position chain (`p.0.0`) lexes as one float token
-            // (`0.0`); split it back into member accesses.
-            let mut first = true
-            for part in property.split(".") {
+            if member.kind == "float" {
+                // A tuple position chain (`p.0.0`) lexes as one float token
+                // (`0.0`); split it back into member accesses.
+                let mut first = true
+                for part in property.split(".") {
+                    let mut kind = "Member"
+                    if dot.text == "?." and first {
+                        kind = "OptionalMember"
+                    }
+                    let mut n = node(
+                        kind,
+                        part,
+                        value.start,
+                        tokens::tk_prev(p).end,
+                        value.line,
+                        value.column,
+                    )
+                    add(n, value)
+                    value = n
+                    first = false
+                }
+            } else {
                 let mut kind = "Member"
-                if dot.text == "?." and first {
+                if dot.text == "?." {
                     kind = "OptionalMember"
                 }
                 let mut n = node(
                     kind,
-                    part,
+                    property,
                     value.start,
                     tokens::tk_prev(p).end,
                     value.line,
@@ -53,7 +72,6 @@ pub fn pr_postfix(p: mut Parser): Node {
                 )
                 add(n, value)
                 value = n
-                first = false
             }
         } else if tokens::tk_at(p, "<")
             and (value.kind == "Name" or value.kind == "Path")

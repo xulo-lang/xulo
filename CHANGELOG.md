@@ -47,6 +47,15 @@ values, and is left to a future standard-library `std/ui` module.
 
 ### Added
 
+- Stage 1's C backend lowers postfix `?` (propagating `Result::Err` with a
+  `return`), `Error("…")`, assignment in expression position (`a = b = 3`),
+  `shared` as a pass-through unary, and `Array::filled<T, N>` with a literal
+  length. Call-site type arguments are dropped because the backend is
+  dynamically typed, and Xulo's `\u{…}` escapes are translated to C's
+  `\uXXXX`/`\UXXXXXXXX` form. The bootstrap runtime now expands `%g` exponent
+  notation to plain decimal, so `1000.0` prints like stage 0. The stage 1
+  build coverage test pins `basics/lexical.xulo`, `errors/propagation.xulo`,
+  and `collections/arrays.xulo` end to end.
 - Stage 1's parser now accepts the whole example corpus, so
   `crates/xulo-cli/tests/stage1_examples_baseline.tsv` is empty (66 files, no
   lexer or parser gaps). It gained postfix `?` with the specification's

@@ -8,11 +8,45 @@ use super::{Emitter};
 use super::bk_expr;
 use super::bk_util;
 
+/// A callee may be wrapped in `TypeApply` (`f<int>(x)`); the bootstrap
+/// backend is dynamically typed, so the type arguments are dropped.
+fn ca_callee(node: Node): Node {
+    if node.children.len == 0 {
+        return node
+    }
+    let mut callee = node.children[0]
+    while callee.kind == "TypeApply" and callee.children.len > 0 {
+        callee = callee.children[0]
+    }
+    return callee
+}
+
+/// The literal value of one call-site type argument (`Array::filled<int, 3>`),
+/// or `""` when it is not a literal the dynamic backend can use.
+fn ca_type_arg_literal(node: Node, index: number): string {
+    if node.children.len == 0 {
+        return ""
+    }
+    let callee = node.children[0]
+    if callee.kind != "TypeApply" or callee.children.len < 2 {
+        return ""
+    }
+    let args = callee.children[1]
+    if args.kind != "TypeArgs" or index >= args.children.len {
+        return ""
+    }
+    let arg = args.children[index]
+    if arg.kind == "LiteralType" {
+        return arg.value
+    }
+    return ""
+}
+
 pub fn ca_emit_call(e: mut Emitter, node: Node): string {
     if node.children.len == 0 {
         return "xr_nil()"
     }
-    let callee = node.children[0]
+    let callee = ca_callee(node)
     if callee.kind == "Member" or callee.kind == "OptionalMember" {
         return ca_emit_method_call(e, node)
     }
@@ -24,7 +58,7 @@ pub fn ca_emit_call(e: mut Emitter, node: Node): string {
 }
 
 pub fn ca_emit_method_call(e: mut Emitter, node: Node): string {
-    let callee = node.children[0]
+    let callee = ca_callee(node)
     let recv_expr = bk_expr::ex_emit_expr(e, callee.children[0])
     let recv = bk_state::co_new_tmp(e)
     bk_state::co_line(e, "XVal " + recv + " = " + recv_expr + ";")
@@ -41,7 +75,7 @@ pub fn ca_emit_method_call(e: mut Emitter, node: Node): string {
 }
 
 pub fn ca_emit_named_call(e: mut Emitter, node: Node): string {
-    let callee = node.children[0]
+    let callee = ca_callee(node)
     let name = callee.value
     if callee.kind == "Name" {
         let builtin = ca_emit_builtin(e, node, name)
@@ -103,6 +137,13 @@ pub fn ca_emit_builtin(e: mut Emitter, node: Node, name: string): string {
             return "xr_panic(xr_str(\"panic\"))"
         }
         return "xr_panic(" + bk_expr::ex_arg_expr(e, node.children[1]) + ")"
+    }
+    if name == "Error" {
+        if node.children.len != 2 {
+            bk_state::co_fail(e, "`Error` expects one message argument")
+            return "xr_nil()"
+        }
+        return "xr_error_of(" + bk_expr::ex_arg_expr(e, node.children[1]) + ")"
     }
     if name == "assert" {
         if node.children.len == 2 {
@@ -191,7 +232,7 @@ pub fn ca_emit_struct_call(e: mut Emitter, node: Node, struct_index: number): st
 }
 
 pub fn ca_emit_path_call(e: mut Emitter, node: Node): string {
-    let path = node.children[0].value
+    let path = ca_callee(node).value
     let args = bk_expr::ex_eval_args(e, node.children, 1)
     if path == "std::fs::read" {
         if args.len != 1 {
@@ -507,6 +548,18 @@ pub fn ca_emit_path_call(e: mut Emitter, node: Node): string {
             return "xr_nil()"
         }
         return "xr_process_exec(" + args[0] + ", " + args[1] + ")"
+    }
+    if path == "Array::filled" {
+        if args.len != 1 {
+            bk_state::co_fail(e, "`Array::filled` expects one argument")
+            return "xr_nil()"
+        }
+        let count = ca_type_arg_literal(node, 1)
+        if count == "" {
+            bk_state::co_fail(e, "`Array::filled` needs a literal length in the bootstrap backend")
+            return "xr_nil()"
+        }
+        return "xr_array_filled(" + args[0] + ", " + count + "LL)"
     }
     let parts = bk_util::split_path(path)
     if parts.len == 2 {

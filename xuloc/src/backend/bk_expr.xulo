@@ -79,6 +79,28 @@ pub fn ex_emit_expr(e: mut Emitter, node: Node): string {
         }
         return ex_emit_expr(e, node.children[0])
     }
+    if kind == "TypeApply" {
+        if node.children.len == 0 {
+            return "xr_nil()"
+        }
+        return ex_emit_expr(e, node.children[0])
+    }
+    if kind == "Try" {
+        if node.children.len == 0 {
+            return "xr_nil()"
+        }
+        let value = ex_emit_expr(e, node.children[0])
+        let tmp = bk_state::co_new_tmp(e)
+        bk_state::co_line(e, "XVal " + tmp + " = " + value + ";")
+        bk_state::co_line(
+            e,
+            "if (xr_is_variant(" + tmp + ", \"Result::Err\")) { return " + tmp + "; }",
+        )
+        return "xr_payload(" + tmp + ", 0)"
+    }
+    if kind == "Assign" {
+        return ex_emit_assign(e, node)
+    }
     if kind == "Unary" {
         return ex_emit_unary(e, node)
     }
@@ -302,6 +324,55 @@ pub fn ex_require_path(e: mut Emitter, value: string): string {
     return path
 }
 
+/// Assignment in expression position (`a = b = 3`) stores the value and yields
+/// it, so the outer assignment sees the same result.
+fn ex_emit_assign(e: mut Emitter, node: Node): string {
+    if node.children.len < 2 {
+        return "xr_nil()"
+    }
+    return ex_emit_assign_parts(e, node.children[0], node.children[1])
+}
+
+fn ex_emit_assign_parts(e: mut Emitter, target: Node, value_node: Node): string {
+    if target.kind == "Group" and target.children.len > 0 {
+        return ex_emit_assign_parts(e, target.children[0], value_node)
+    }
+    if target.kind == "Name" {
+        let cname = bk_state::co_lookup_local(e, target.value)
+        if cname == "" {
+            bk_state::co_fail(e, "cannot assign to unknown name `" + target.value + "`")
+            return "xr_nil()"
+        }
+        let value = ex_emit_expr(e, value_node)
+        let tmp = bk_state::co_new_tmp(e)
+        bk_state::co_line(e, "XVal " + tmp + " = " + value + ";")
+        bk_state::co_line(e, cname + " = " + tmp + ";")
+        return tmp
+    }
+    if target.kind == "Member" {
+        let recv = ex_emit_expr(e, target.children[0])
+        let value = ex_emit_expr(e, value_node)
+        let tmp = bk_state::co_new_tmp(e)
+        bk_state::co_line(e, "XVal " + tmp + " = " + value + ";")
+        bk_state::co_line(
+            e,
+            "xr_set_field(" + recv + ", " + bk_util::c_string(target.value) + ", " + tmp + ");",
+        )
+        return tmp
+    }
+    if target.kind == "Index" {
+        let recv = ex_emit_expr(e, target.children[0])
+        let index = ex_emit_expr(e, target.children[1])
+        let value = ex_emit_expr(e, value_node)
+        let tmp = bk_state::co_new_tmp(e)
+        bk_state::co_line(e, "XVal " + tmp + " = " + value + ";")
+        bk_state::co_line(e, "xr_set_index(" + recv + ", " + index + ", " + tmp + ");")
+        return tmp
+    }
+    bk_state::co_fail(e, "unsupported assignment target `" + target.kind + "`")
+    return "xr_nil()"
+}
+
 pub fn ex_emit_unary(e: mut Emitter, node: Node): string {
     if node.children.len == 0 {
         return "xr_nil()"
@@ -316,7 +387,11 @@ pub fn ex_emit_unary(e: mut Emitter, node: Node): string {
     if node.value == "~" {
         return "xr_bitnot(" + operand + ")"
     }
-    if node.value == "await" or node.value == "move" or node.value == "copy" {
+    if node.value == "await"
+        or node.value == "move"
+        or node.value == "copy"
+        or node.value == "shared"
+    {
         return operand
     }
     bk_state::co_fail(e, "unsupported unary operator `" + node.value + "`")

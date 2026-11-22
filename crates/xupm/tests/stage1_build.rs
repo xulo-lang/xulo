@@ -337,7 +337,8 @@ fn stage1_compiles_the_bootstrap_corpus() {
 }
 
 /// Examples the C backend lowers end to end: the `std` surface stage 1
-/// implements, plus templates, optional chaining, and object literals.
+/// implements, plus templates, optional chaining, object literals, `?`
+/// propagation, chained assignment, Unicode escapes, and `Array::filled`.
 #[test]
 fn stage1_runs_the_lowered_examples() {
     if !enabled() {
@@ -356,9 +357,12 @@ fn stage1_runs_the_lowered_examples() {
         "examples/std/fs_extra.xulo",
         "examples/basics/templates.xulo",
         "examples/basics/bindings.xulo",
+        "examples/basics/lexical.xulo",
+        "examples/errors/propagation.xulo",
         "examples/types/optional_chaining.xulo",
         "examples/types/structs.xulo",
         "examples/collections/collections.xulo",
+        "examples/collections/arrays.xulo",
         "examples/collections/maps.xulo",
         "examples/collections/sets.xulo",
         "examples/patterns/destructuring.xulo",
