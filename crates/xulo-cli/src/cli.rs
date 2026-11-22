@@ -107,21 +107,11 @@ pub fn run_file(file: &Path) -> ExitCode {
 
     for (idx, module) in loaded.modules.iter().enumerate() {
         if idx == loaded.entry {
-            for (owner, local, target, member) in std::mem::take(&mut pending) {
-                let value = if let Some(member) = member {
-                    export_maps[target]
-                        .get(&member)
-                        .cloned()
-                        .unwrap_or(Value::Null)
-                } else {
-                    let fields: Vec<(String, Value)> = export_maps[target]
-                        .iter()
-                        .map(|(k, v)| (k.clone(), v.clone()))
-                        .collect();
-                    Value::Object(Rc::new(std::cell::RefCell::new(fields)))
-                };
-                module_exports[owner].patch_import(&local, value);
-            }
+            patch_forward_imports(
+                std::mem::take(&mut pending),
+                &export_maps,
+                &mut module_exports,
+            );
         }
         let imports = module_imports(module, &export_maps, &loaded);
         let run_main = idx == loaded.entry && module.has_main;
@@ -377,6 +367,8 @@ pub fn test_file(file: &Path) -> ExitCode {
         // then run the entry module and invoke this one test body.
         let interp = Interpreter::new();
         let mut export_maps: Vec<HashMap<String, Value>> = Vec::with_capacity(loaded.modules.len());
+        let mut module_exports: Vec<ModuleExports> = Vec::with_capacity(loaded.modules.len());
+        let mut pending: Vec<(usize, String, usize, Option<String>)> = Vec::new();
         let mut setup_err: Option<TestRun> = None;
         for (idx, module) in loaded.modules.iter().enumerate() {
             if idx == loaded.entry {
@@ -385,11 +377,25 @@ pub fn test_file(file: &Path) -> ExitCode {
             let imports = module_imports(module, &export_maps, &loaded);
             match interp.exec_module(&module.program, &imports, false) {
                 Ok(exports) => {
-                    let mut map = HashMap::new();
-                    for (name, value) in exports.bindings {
-                        map.insert(name, value);
+                    for binding in &module.uses {
+                        if let Some(target) = loaded.index_of(&binding.module_id)
+                            && target >= export_maps.len()
+                        {
+                            pending.push((
+                                idx,
+                                binding.local.clone(),
+                                target,
+                                binding.member.clone(),
+                            ));
+                        }
                     }
+                    let map = exports
+                        .bindings
+                        .iter()
+                        .cloned()
+                        .collect::<HashMap<String, Value>>();
                     export_maps.push(map);
+                    module_exports.push(exports);
                 }
                 Err(err) => {
                     let (message, error) = match err {
@@ -424,6 +430,11 @@ pub fn test_file(file: &Path) -> ExitCode {
         let run = match setup_err {
             Some(run) => run,
             None => {
+                patch_forward_imports(
+                    std::mem::take(&mut pending),
+                    &export_maps,
+                    &mut module_exports,
+                );
                 let imports = module_imports(entry, &export_maps, &loaded);
                 interp.run_test(&entry.program, &imports, test)
             }
@@ -1029,6 +1040,31 @@ fn unbalanced(src: &str) -> bool {
         }
     }
     in_str.is_some() || !stack.is_empty()
+}
+
+/// Patch `use` bindings that pointed at a module not yet executed when the
+/// importer ran (legal import cycles / sibling forward references). Modules are
+/// set up in post-order, so every target exists once the non-entry loop ends.
+fn patch_forward_imports(
+    pending: Vec<(usize, String, usize, Option<String>)>,
+    export_maps: &[HashMap<String, Value>],
+    module_exports: &mut [ModuleExports],
+) {
+    for (owner, local, target, member) in pending {
+        let value = if let Some(member) = member {
+            export_maps[target]
+                .get(&member)
+                .cloned()
+                .unwrap_or(Value::Null)
+        } else {
+            let fields: Vec<(String, Value)> = export_maps[target]
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            Value::Object(Rc::new(std::cell::RefCell::new(fields)))
+        };
+        module_exports[owner].patch_import(&local, value);
+    }
 }
 
 fn print_warnings(warnings: &[XuloError], fallback_source: Option<&str>) {

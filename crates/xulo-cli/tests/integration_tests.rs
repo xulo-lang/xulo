@@ -2050,6 +2050,71 @@ fn second() {
     let _ = std::fs::remove_file(&file);
 }
 
+/// `xulo test` must patch sibling forward imports exactly like `xulo run`:
+/// nested modules may legally import a sibling declared later in the parent.
+#[test]
+fn test_command_patches_nested_sibling_forward_imports() {
+    let (dir, entry) = temp_dir(
+        &[
+            (
+                "main.xulo",
+                r#"
+mod a;
+use a::check;
+
+#[test]
+fn check_sibling() {
+    assert(check() == 3, "expected 3")
+}
+"#,
+            ),
+            (
+                "a.xulo",
+                r#"
+pub mod left;
+pub mod right;
+
+pub fn check(): number {
+    return left::f()
+}
+"#,
+            ),
+            (
+                "a/left.xulo",
+                r#"
+use super::right;
+
+pub fn f(): number {
+    return right::g()
+}
+"#,
+            ),
+            (
+                "a/right.xulo",
+                r#"
+pub fn g(): number {
+    return 3
+}
+"#,
+            ),
+        ],
+        "main.xulo",
+    );
+    let out = Command::new(BIN).arg("test").arg(&entry).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "stdout: {stdout}\nstderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        stdout.contains("test check_sibling ... ok"),
+        "stdout: {stdout}"
+    );
+    assert!(stdout.contains("1 passed, 0 failed"), "stdout: {stdout}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn test_command_async_test_runs() {
     let file = temp_file(
