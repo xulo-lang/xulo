@@ -200,6 +200,32 @@ pub fn dc_parameters(p: mut Parser): List<Node> {
     return out
 }
 
+/// Closure parameters may omit the `: Type` annotation (`fn(m) { … }`);
+/// declarations keep the stricter `dc_parameters` form.
+pub fn dc_closure_parameters(p: mut Parser): List<Node> {
+    let mut out: List<Node> = []
+    while p.error == "" and !tokens::tk_at(p, ")") and !tokens::tk_at_kind(p, "eof") {
+        let start = tokens::tk_current(p)
+        if tokens::tk_at(p, "mut") or tokens::tk_at(p, "shared") {
+            tokens::tk_advance(p)
+        }
+        let name = tokens::tk_ident_name(p)
+        let mut param = node("Param", name, start.start, start.end, start.line, start.column)
+        if tokens::tk_at(p, ":") {
+            tokens::tk_advance(p)
+            add(param, types::ty_type_expr(p))
+        }
+        param.end = tokens::tk_prev(p).end
+        out.push(param)
+        if tokens::tk_at(p, ",") {
+            tokens::tk_advance(p)
+        } else {
+            break
+        }
+    }
+    return out
+}
+
 pub fn dc_parameter(p: mut Parser): Node {
     let start = tokens::tk_current(p)
     if tokens::tk_at(p, "self") {

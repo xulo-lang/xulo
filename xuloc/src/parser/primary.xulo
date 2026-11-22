@@ -6,6 +6,7 @@ use ast::{Node, node, add};
 use super::control;
 use super::exprs;
 use super::nodes;
+use super::stmts;
 use super::template;
 use super::tokens;
 use super::types;
@@ -34,19 +35,84 @@ pub fn pr_postfix(p: mut Parser): Node {
         } else if tokens::tk_at(p, ".") or tokens::tk_at(p, "?.") {
             let dot = tokens::tk_advance(p)
             let property = pr_member_name(p)
-            let mut kind = "Member"
-            if dot.text == "?." {
-                kind = "OptionalMember"
+            // A tuple position chain (`p.0.0`) lexes as one float token
+            // (`0.0`); split it back into member accesses.
+            let mut first = true
+            for part in property.split(".") {
+                let mut kind = "Member"
+                if dot.text == "?." and first {
+                    kind = "OptionalMember"
+                }
+                let mut n = node(
+                    kind,
+                    part,
+                    value.start,
+                    tokens::tk_prev(p).end,
+                    value.line,
+                    value.column,
+                )
+                add(n, value)
+                value = n
+                first = false
             }
+        } else if tokens::tk_at(p, "<")
+            and (value.kind == "Name" or value.kind == "Path")
+            and pr_call_type_args_ahead(p)
+        {
+            let args = types::ty_type_args(p)
             let mut n = node(
-                kind,
-                property,
+                "TypeApply",
+                "",
                 value.start,
-                tokens::tk_prev(p).end,
+                args.end,
                 value.line,
                 value.column,
             )
             add(n, value)
+            add(n, args)
+            value = n
+        } else if tokens::tk_at(p, "?") {
+            // `?` is ternary whenever a complete `Expression ":"` follows the
+            // marker (spec `expressions/operators.md`); otherwise it is
+            // postfix propagation.
+            if pr_has_ternary_after(p) {
+                break
+            }
+            let question = tokens::tk_advance(p)
+            let mut n = node(
+                "Try",
+                "?",
+                value.start,
+                question.end,
+                value.line,
+                value.column,
+            )
+            add(n, value)
+            value = n
+        } else if tokens::tk_at(p, "!")
+            and (value.kind == "Name" or value.kind == "Path")
+        {
+            // `name!(…)` / `module::name! { … }`: a function-macro invocation.
+            // The body is a token tree, so it is skipped balanced instead of
+            // parsed as ordinary expressions.
+            let bang = tokens::tk_advance(p)
+            let mut n = node(
+                "MacroCall",
+                value.value,
+                value.start,
+                bang.end,
+                value.line,
+                value.column,
+            )
+            add(n, value)
+            if tokens::tk_at(p, "(") {
+                tokens::tk_skip_balanced(p, "(", ")")
+            } else if tokens::tk_at(p, "{") {
+                tokens::tk_skip_balanced(p, "{", "}")
+            } else if tokens::tk_at(p, "[") {
+                tokens::tk_skip_balanced(p, "[", "]")
+            }
+            n.end = tokens::tk_prev(p).end
             value = n
         } else {
             break
@@ -55,11 +121,56 @@ pub fn pr_postfix(p: mut Parser): Node {
     return value
 }
 
+/// `?` starts a ternary when an expression parses after it and a `:` follows.
+/// The probe is speculative: the position and any diagnostic are restored.
+fn pr_has_ternary_after(p: mut Parser): bool {
+    let saved_pos = p.pos
+    let saved_error = p.error
+    let saved_line = p.err_line
+    let saved_column = p.err_column
+    tokens::tk_advance(p)
+    let _ = exprs::ex_expr(p)
+    let ternary = p.error == "" and tokens::tk_at(p, ":")
+    p.pos = saved_pos
+    p.error = saved_error
+    p.err_line = saved_line
+    p.err_column = saved_column
+    return ternary
+}
+
+/// A `<` after a primary is call-site type arguments only when the matching
+/// `>` is followed by `(`; otherwise it stays the comparison operator.
+fn pr_call_type_args_ahead(p: Parser): bool {
+    let mut i = p.pos
+    let mut depth = 0
+    while i < p.tokens.len {
+        let text = p.tokens[i].text
+        if text == "<" {
+            depth = depth + 1
+        } else if text == ">" {
+            depth = depth - 1
+            if depth == 0 {
+                return i + 1 < p.tokens.len and p.tokens[i + 1].text == "("
+            }
+        } else if text == ">>" {
+            depth = depth - 2
+            if depth <= 0 {
+                return i + 1 < p.tokens.len and p.tokens[i + 1].text == "("
+            }
+        } else if text == ";" or text == "{" or text == "}" or text == "=>" {
+            return false
+        }
+        i = i + 1
+    }
+    return false
+}
+
 pub fn pr_member_name(p: mut Parser): string {
     let token = tokens::tk_current(p)
     if token.kind == "ident"
         or token.kind == "keyword"
         or token.kind == "int"
+        or token.kind == "float"
     {
         tokens::tk_advance(p)
         return token.text
@@ -110,8 +221,182 @@ pub fn pr_call_tail(p: mut Parser, callee: Node): Node {
     return n
 }
 
+/// An arrow closure is `(params) [: Return] => body` or `name => body`.
+/// Look ahead past the parameter list (and optional return type) so a grouped
+/// expression or a parenthesized tuple keeps its usual reading.
+fn pr_arrow_ahead(p: Parser): bool {
+    if (tokens::tk_at_kind(p, "ident") or tokens::tk_at_kind(p, "keyword"))
+        and tokens::tk_peek_text(p, 1) == "=>"
+    {
+        return true
+    }
+    if !tokens::tk_at(p, "(") {
+        return false
+    }
+    let mut i = p.pos
+    let mut depth = 0
+    while i < p.tokens.len {
+        let text = p.tokens[i].text
+        if text == "(" {
+            depth = depth + 1
+        } else if text == ")" {
+            depth = depth - 1
+            if depth == 0 {
+                i = i + 1
+                break
+            }
+        } else if p.tokens[i].kind == "eof" {
+            return false
+        }
+        i = i + 1
+    }
+    if i >= p.tokens.len {
+        return false
+    }
+    if p.tokens[i].text == "=>" {
+        return true
+    }
+    if p.tokens[i].text != ":" {
+        return false
+    }
+    i = i + 1
+    depth = 0
+    while i < p.tokens.len {
+        let text = p.tokens[i].text
+        if text == "=>" and depth == 0 {
+            return true
+        }
+        if text == "(" or text == "[" or text == "{" or text == "<" {
+            depth = depth + 1
+        } else if text == ")" or text == "]" or text == "}" or text == ">" {
+            if depth == 0 {
+                return false
+            }
+            depth = depth - 1
+        } else if text == ">>" {
+            if depth < 2 {
+                return false
+            }
+            depth = depth - 2
+        } else if (text == ";" or text == "=" or text == ",") and depth == 0 {
+            return false
+        }
+        i = i + 1
+    }
+    return false
+}
+
+fn pr_arrow_closure(p: mut Parser): Node {
+    let start = tokens::tk_current(p)
+    let mut n = node("ArrowClosure", "", start.start, start.end, start.line, start.column)
+    if tokens::tk_at(p, "(") {
+        tokens::tk_advance(p)
+        while p.error == "" and !tokens::tk_at(p, ")") and !tokens::tk_at_kind(p, "eof") {
+            let param_start = tokens::tk_current(p)
+            if tokens::tk_at(p, "mut") or tokens::tk_at(p, "shared") {
+                tokens::tk_advance(p)
+            }
+            let name = tokens::tk_ident_name(p)
+            let mut param = node(
+                "Param",
+                name,
+                param_start.start,
+                param_start.end,
+                param_start.line,
+                param_start.column,
+            )
+            if tokens::tk_at(p, ":") {
+                tokens::tk_advance(p)
+                add(param, types::ty_type_expr(p))
+            }
+            param.end = tokens::tk_prev(p).end
+            add(n, param)
+            if tokens::tk_at(p, ",") {
+                tokens::tk_advance(p)
+            } else {
+                break
+            }
+        }
+        tokens::tk_expect(p, ")")
+    } else {
+        let param_start = tokens::tk_current(p)
+        let name = tokens::tk_ident_name(p)
+        add(n, nodes::nd_mk(p, "Param", name, param_start))
+    }
+    if tokens::tk_at(p, ":") {
+        tokens::tk_advance(p)
+        add(n, types::ty_type_expr(p))
+    }
+    if !tokens::tk_expect(p, "=>") {
+        return n
+    }
+    if tokens::tk_at(p, "{") {
+        add(n, stmts::st_block(p))
+    } else {
+        add(n, exprs::ex_expr(p))
+    }
+    n.end = tokens::tk_prev(p).end
+    return n
+}
+
+/// `lock target { … }` guards a shared binding and evaluates to its body.
+fn pr_lock_expr(p: mut Parser): Node {
+    let start = tokens::tk_advance(p)
+    let mut n = node("Lock", "", start.start, start.end, start.line, start.column)
+    add(n, exprs::ex_expr(p))
+    if tokens::tk_at(p, "{") {
+        add(n, stmts::st_block(p))
+    } else {
+        tokens::tk_fail(p, "expected a lock body, found " + tokens::tk_describe(p))
+    }
+    n.end = tokens::tk_prev(p).end
+    return n
+}
+
+/// `spawn [.target] async { … }` runs a task; `spawn.process Type { … }`
+/// starts a service (spec `grammar.md`, `SpawnExpression`).
+fn pr_spawn_expr(p: mut Parser): Node {
+    let start = tokens::tk_advance(p)
+    let mut target = "default"
+    let mut n = node("Spawn", target, start.start, start.end, start.line, start.column)
+    if tokens::tk_at(p, ".") {
+        tokens::tk_advance(p)
+        target = tokens::tk_ident_name(p)
+        n.value = target
+        if target == "on" {
+            if tokens::tk_expect(p, "(") {
+                add(n, exprs::ex_expr(p))
+                tokens::tk_expect(p, ")")
+            }
+        }
+    }
+    if tokens::tk_at(p, "async") {
+        tokens::tk_advance(p)
+        if tokens::tk_at(p, "{") {
+            add(n, stmts::st_block(p))
+        } else {
+            tokens::tk_fail(p, "expected a spawn body, found " + tokens::tk_describe(p))
+        }
+    } else if target == "process" {
+        add(n, types::ty_type_expr(p))
+        if tokens::tk_at(p, "{") {
+            let body = pr_map_body(p, false)
+            add(n, body)
+        } else {
+            tokens::tk_fail(p, "expected a service body, found " + tokens::tk_describe(p))
+        }
+    } else {
+        tokens::tk_fail(p, "expected `async` after spawn, found " + tokens::tk_describe(p))
+    }
+    n.end = tokens::tk_prev(p).end
+    return n
+}
+
 pub fn pr_primary(p: mut Parser): Node {
     let start = tokens::tk_current(p)
+    if pr_arrow_ahead(p) {
+        return pr_arrow_closure(p)
+    }
     if tokens::tk_at(p, "true") or tokens::tk_at(p, "false") or tokens::tk_at(p, "null") {
         tokens::tk_advance(p)
         return nodes::nd_mk(p, "Literal", start.text, start)
@@ -141,6 +426,12 @@ pub fn pr_primary(p: mut Parser): Node {
     }
     if tokens::tk_at(p, "match") {
         return control::ct_match_expr(p)
+    }
+    if tokens::tk_at(p, "lock") {
+        return pr_lock_expr(p)
+    }
+    if tokens::tk_at(p, "spawn") {
+        return pr_spawn_expr(p)
     }
     if tokens::tk_at(p, "fn") {
         return control::ct_fn_expr(p)

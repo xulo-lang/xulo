@@ -1,6 +1,9 @@
-// Stage 1 parser: expression precedence ladder.
+// Stage 1 parser: expression precedence.
 //
-// Procedural form of the old `impl Parser` methods; `p` is the parser state.
+// Binary operators use precedence climbing instead of one function per
+// precedence level. The flat loop keeps the parser's call depth low enough for
+// the interpreted bootstrap path (the runtime stops at 128 nested calls) while
+// keeping the same tree shapes and associativity as the former ladder.
 
 use ast::{Node, node, add};
 use super::nodes;
@@ -14,7 +17,7 @@ pub fn ex_expr(p: mut Parser): Node {
 }
 
 pub fn ex_ternary(p: mut Parser): Node {
-    let cond = ex_logical_or(p)
+    let cond = ex_binary(p, 1)
     if p.error == "" and tokens::tk_at(p, "?") {
         tokens::tk_advance(p)
         let then_branch = ex_expr(p)
@@ -38,152 +41,85 @@ pub fn ex_ternary(p: mut Parser): Node {
     return cond
 }
 
-pub fn ex_logical_or(p: mut Parser): Node {
-    let mut left = ex_logical_and(p)
-    while p.error == "" and tokens::tk_at(p, "or") {
-        tokens::tk_advance(p)
-        let right = ex_logical_and(p)
-        left = nodes::nd_binary(p, "or", left, right)
+/// Precedence of a binary operator, or `0` when the token is not one.
+fn bi_prec(op: string): number {
+    if op == "or" {
+        return 1
     }
-    return left
+    if op == "and" {
+        return 2
+    }
+    if op == "??" {
+        return 3
+    }
+    if op == "==" or op == "!=" {
+        return 4
+    }
+    if op == "is" {
+        return 5
+    }
+    if op == "<" or op == ">" or op == "<=" or op == ">=" {
+        return 6
+    }
+    if op == "..<" or op == "..=" {
+        return 7
+    }
+    if op == "|" {
+        return 8
+    }
+    if op == "^" {
+        return 9
+    }
+    if op == "&" {
+        return 10
+    }
+    if op == "<<" or op == ">>" {
+        return 11
+    }
+    if op == "+" or op == "-" {
+        return 12
+    }
+    if op == "*" or op == "/" or op == "%" {
+        return 13
+    }
+    if op == "**" {
+        return 14
+    }
+    return 0
 }
 
-pub fn ex_logical_and(p: mut Parser): Node {
-    let mut left = ex_nullish(p)
-    while p.error == "" and tokens::tk_at(p, "and") {
-        tokens::tk_advance(p)
-        let right = ex_nullish(p)
-        left = nodes::nd_binary(p, "and", left, right)
-    }
-    return left
-}
-
-pub fn ex_nullish(p: mut Parser): Node {
-    let mut left = ex_equality(p)
-    while p.error == "" and tokens::tk_at(p, "??") {
-        tokens::tk_advance(p)
-        let right = ex_equality(p)
-        left = nodes::nd_binary(p, "??", left, right)
-    }
-    return left
-}
-
-pub fn ex_equality(p: mut Parser): Node {
-    let mut left = ex_is_expr(p)
-    while p.error == "" and (tokens::tk_at(p, "==") or tokens::tk_at(p, "!=")) {
-        let op = tokens::tk_advance(p)
-        let right = ex_is_expr(p)
-        left = nodes::nd_binary(p, op.text, left, right)
-    }
-    return left
-}
-
-pub fn ex_is_expr(p: mut Parser): Node {
-    let mut left = ex_relational(p)
-    if p.error == "" and tokens::tk_at(p, "is") {
-        tokens::tk_advance(p)
-        let mut value = "is"
-        if tokens::tk_at(p, "not") {
-            tokens::tk_advance(p)
-            value = "is not"
+/// Parse operators whose precedence is at least `min_prec`. Left-associative
+/// operators stay in this loop; only the right operand recurses, and `**`
+/// recurses at its own precedence to stay right-associative.
+fn ex_binary(p: mut Parser, min_prec: number): Node {
+    let mut left = ex_unary(p)
+    while p.error == "" {
+        let op = tokens::tk_current(p).text
+        let prec = bi_prec(op)
+        if prec < min_prec or prec == 0 {
+            break
         }
-        let ty = types::ty_type_expr(p)
-        let mut n = node("Is", value, left.start, ty.end, left.line, left.column)
-        add(n, left)
-        add(n, ty)
-        left = n
-    }
-    return left
-}
-
-pub fn ex_relational(p: mut Parser): Node {
-    let mut left = ex_range_expr(p)
-    while p.error == ""
-        and (tokens::tk_at(p, "<") or tokens::tk_at(p, ">") or tokens::tk_at(p, "<=") or tokens::tk_at(p, ">="))
-    {
-        let op = tokens::tk_advance(p)
-        let right = ex_range_expr(p)
-        left = nodes::nd_binary(p, op.text, left, right)
-    }
-    return left
-}
-
-pub fn ex_range_expr(p: mut Parser): Node {
-    let mut left = ex_bit_or(p)
-    while p.error == "" and (tokens::tk_at(p, "..<") or tokens::tk_at(p, "..=")) {
-        let op = tokens::tk_advance(p)
-        let right = ex_bit_or(p)
-        left = nodes::nd_binary(p, op.text, left, right)
-    }
-    return left
-}
-
-pub fn ex_bit_or(p: mut Parser): Node {
-    let mut left = ex_bit_xor(p)
-    while p.error == "" and tokens::tk_at(p, "|") {
-        tokens::tk_advance(p)
-        let right = ex_bit_xor(p)
-        left = nodes::nd_binary(p, "|", left, right)
-    }
-    return left
-}
-
-pub fn ex_bit_xor(p: mut Parser): Node {
-    let mut left = ex_bit_and(p)
-    while p.error == "" and tokens::tk_at(p, "^") {
-        tokens::tk_advance(p)
-        let right = ex_bit_and(p)
-        left = nodes::nd_binary(p, "^", left, right)
-    }
-    return left
-}
-
-pub fn ex_bit_and(p: mut Parser): Node {
-    let mut left = ex_shift(p)
-    while p.error == "" and tokens::tk_at(p, "&") {
-        tokens::tk_advance(p)
-        let right = ex_shift(p)
-        left = nodes::nd_binary(p, "&", left, right)
-    }
-    return left
-}
-
-pub fn ex_shift(p: mut Parser): Node {
-    let mut left = ex_additive(p)
-    while p.error == "" and (tokens::tk_at(p, "<<") or tokens::tk_at(p, ">>")) {
-        let op = tokens::tk_advance(p)
-        let right = ex_additive(p)
-        left = nodes::nd_binary(p, op.text, left, right)
-    }
-    return left
-}
-
-pub fn ex_additive(p: mut Parser): Node {
-    let mut left = ex_multiplicative(p)
-    while p.error == "" and (tokens::tk_at(p, "+") or tokens::tk_at(p, "-")) {
-        let op = tokens::tk_advance(p)
-        let right = ex_multiplicative(p)
-        left = nodes::nd_binary(p, op.text, left, right)
-    }
-    return left
-}
-
-pub fn ex_multiplicative(p: mut Parser): Node {
-    let mut left = ex_power(p)
-    while p.error == "" and (tokens::tk_at(p, "*") or tokens::tk_at(p, "/") or tokens::tk_at(p, "%")) {
-        let op = tokens::tk_advance(p)
-        let right = ex_power(p)
-        left = nodes::nd_binary(p, op.text, left, right)
-    }
-    return left
-}
-
-pub fn ex_power(p: mut Parser): Node {
-    let left = ex_unary(p)
-    if p.error == "" and tokens::tk_at(p, "**") {
-        tokens::tk_advance(p)
-        let right = ex_power(p)
-        return nodes::nd_binary(p, "**", left, right)
+        if op == "is" {
+            tokens::tk_advance(p)
+            let mut value = "is"
+            if tokens::tk_at(p, "not") {
+                tokens::tk_advance(p)
+                value = "is not"
+            }
+            let ty = types::ty_type_expr(p)
+            let mut n = node("Is", value, left.start, ty.end, left.line, left.column)
+            add(n, left)
+            add(n, ty)
+            left = n
+            continue
+        }
+        let token = tokens::tk_advance(p)
+        let mut next_min = prec + 1
+        if op == "**" {
+            next_min = prec
+        }
+        let right = ex_binary(p, next_min)
+        left = nodes::nd_binary(p, token.text, left, right)
     }
     return left
 }
@@ -196,6 +132,7 @@ pub fn ex_unary(p: mut Parser): Node {
         or tokens::tk_at(p, "await")
         or tokens::tk_at(p, "move")
         or tokens::tk_at(p, "copy")
+        or tokens::tk_at(p, "shared")
     {
         let op = tokens::tk_advance(p)
         let operand = ex_unary(p)

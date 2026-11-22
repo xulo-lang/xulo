@@ -21,6 +21,10 @@ fn parse_source(source: string): ParseResult {
     return parse(lexed.tokens)
 }
 
+fn contains(text: string, needle: string): bool {
+    return text.split(needle).len > 1
+}
+
 #[test]
 fn lexes_keywords_identifiers_and_spans() {
     let result: LexResult = lex("fn main() { let x = 1 + 2 }")
@@ -203,6 +207,48 @@ fn parses_template_interpolation() {
     assert(template.children[0].value == "a ", "leading text value")
     assert(template.children[1].kind == "Binary", "interpolation is an expression")
     assert(template.children[2].value == " b", "trailing text value")
+}
+
+#[test]
+fn parses_postfix_propagation_beside_ternary() {
+    let source = "fn f(): Result<int, Error> { Result::Ok(1) }\nfn main() {\n    let x = f()?\n    let y = x > 0 ? 1 : 2\n}\n"
+    let result: ParseResult = parse_source(source)
+    assert(result.error == "", "postfix `?` and ternary must parse: " + result.error)
+    let text = render(result.root, 0)
+    assert(contains(text, "Try ?"), "the propagation is a Try node")
+    assert(contains(text, "Ternary ?"), "the ternary keeps its own node")
+}
+
+#[test]
+fn parses_arrow_closures_and_call_type_arguments() {
+    let source = "fn main() {\n    let triple = (x: number): number => x * 3\n    let square = x => x * x\n    let block = (a: string) => { a }\n    let filled = Array::filled<int, 3>(7)\n}\n"
+    let result: ParseResult = parse_source(source)
+    assert(result.error == "", "arrow closures and type arguments must parse: " + result.error)
+    let text = render(result.root, 0)
+    assert(contains(text, "ArrowClosure"), "arrow closures have their own node")
+    assert(contains(text, "TypeApply"), "call-site type arguments are recorded")
+}
+
+#[test]
+fn parses_tuple_position_chains_and_chained_assignment() {
+    let source = "fn main() {\n    let p = ((1, 2), \"x\")\n    let nested = p.0.1\n    let mut a = 0\n    let mut b = 0\n    a = b = 3\n    print(nested, a, b)\n}\n"
+    let result: ParseResult = parse_source(source)
+    assert(result.error == "", "tuple chains and chained assignment must parse: " + result.error)
+    let text = render(result.root, 0)
+    assert(contains(text, "Member 1"), "the chained tuple position is a member")
+    assert(contains(text, "Assign"), "the assignment is recorded")
+}
+
+#[test]
+fn parses_literal_types_macros_spawn_and_lock() {
+    let source = "type Version = \"v1\" | \"v2\"\nfn main() {\n    let answer = six!()\n    let job = spawn async { 1 }\n    let counter = shared 0\n    lock counter { print(counter) }\n    let version: Version = \"v1\"\n}\n"
+    let result: ParseResult = parse_source(source)
+    assert(result.error == "", "the remaining corpus forms must parse: " + result.error)
+    let text = render(result.root, 0)
+    assert(contains(text, "LiteralType"), "a literal type is recorded")
+    assert(contains(text, "MacroCall"), "a function-macro call is recorded")
+    assert(contains(text, "Spawn"), "spawn has its own node")
+    assert(contains(text, "Lock"), "lock has its own node")
 }
 
 #[test]

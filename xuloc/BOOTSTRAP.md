@@ -195,6 +195,16 @@ literals (L3/C7), and `Result`/`Error` matching (L19). It also recognises
 `defer`, `async`/`await`, attributes, and trait/impl declarations well enough to
 skip through them.
 
+The parser accepts the whole example corpus (T9): postfix `?` (with the
+ternary/postfix disambiguation from `spec/expressions/operators.md`), arrow
+closures, call-site type arguments, literal types, tuple position chains
+(`p.0.1`), chained assignment (`a = b = 3`), function-macro calls, `lock`,
+`spawn`, and service spawn. Binary operators use precedence climbing instead of
+one function per level, so deeply nested `match` expressions stay under the
+interpreter's 128-call limit; `std/net.xulo` and `std/http.xulo` now scan
+cleanly. `crates/xulo-cli/tests/stage1_examples_baseline.tsv` is empty to keep
+that ratchet.
+
 The parser is deliberately syntactic. `xuloc check` adds the first semantic
 pass: function signatures are collected before bodies, local bindings are
 scoped, calls are checked for arity and argument types, `if`/`while` conditions
@@ -232,17 +242,19 @@ so stage 2 does not inherit them silently.
    `!`; `not` appears only in `is not`. `lexer.xulo` uses `!` and never writes
    `not expr`.
 
-4. **No postfix `?` propagation in the stage 1 parser.** The lexer emits `?`,
-   and types accept `T?`, but expression postfix `?` is not parsed. Stage 1
-   avoids `value?` and matches `Result` explicitly. This also keeps the
-   ternary/postfix ambiguity out of the bootstrap parser.
+4. **Stage 1's source avoids postfix `?`.** The parser now produces a `Try`
+   node and disambiguates it from the ternary, but the checker and C backend
+   do not lower propagation yet. Stage 1's own code still matches `Result`
+   explicitly.
 
-5. **No call-site type arguments.** `f<int>(x)` is not consumed; stage 1 calls
-   only monomorphic functions and constructors. Type arguments in type
-   positions (`List<Token>`) are parsed.
+5. **Stage 1's source avoids call-site type arguments.** The parser records
+   them as a `TypeApply` node; the checker and backend ignore the node, so the
+   compiler's own source calls monomorphic functions and constructors only.
 
-6. **Closures are only `fn(...) { ... }`.** Arrow closures are not parsed.
-   Stage 1 uses named module-level functions, so it never needs a closure.
+6. **Stage 1's source uses `fn(...) { ... }` closures.** Arrow closures
+   (`(x: number): number => …`, `x => …`) parse into an `ArrowClosure` node,
+   but the checker and backend do not lower that node yet, so stage 1 itself
+   uses named functions or `fn` closures.
 
 7. **No template interpolation in stage 1's source.** The lexer recognises
    backtick templates and balances `${ ... }`, but stage 1's own strings use
@@ -357,8 +369,10 @@ so stage 2 does not inherit them silently.
 - `f32` arithmetic runs in binary64 in the bootstrap runtime; stage 0 rounds
   to binary32 (T12), so an example that depends on that rounding can differ
   (`types/float_math.xulo`).
-- Postfix `?`, arrow closures, call-site type arguments, macros beyond
-  attributes, and `spawn`/`lock` are outside the parser's accepted subset.
+- The parser accepts postfix `?`, arrow closures, call-site type arguments,
+  function-macro calls, `spawn`, and `lock`, but the checker and backend do not
+  lower their nodes yet. Attribute macros and macro expansion remain outside
+  the bootstrap subset; macro bodies are skipped as token trees.
 - The parser recovers only by stopping at the first error. That is enough for
   Gate 1/2 diagnostics; stage 1's checker work will need recovery.
 - The tests read `xuloc/src/*.xulo` relative to the repository root, like the

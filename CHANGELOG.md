@@ -47,6 +47,18 @@ values, and is left to a future standard-library `std/ui` module.
 
 ### Added
 
+- Stage 1's parser now accepts the whole example corpus, so
+  `crates/xulo-cli/tests/stage1_examples_baseline.tsv` is empty (66 files, no
+  lexer or parser gaps). It gained postfix `?` with the specification's
+  ternary/postfix disambiguation, arrow closures, call-site type arguments,
+  literal types, tuple position chains (`p.0.1`), right-associative chained
+  assignment, function-macro calls (bodies are skipped as token trees), `lock`,
+  `spawn`, and service spawn. Binary operators were rewritten as a
+  precedence-climbing loop, which keeps deeply nested `match` expressions
+  (`std/net.xulo`, `std/http.xulo`) under the interpreter's 128-call limit.
+  Regressions: `xuloc/src/tests.xulo::parses_postfix_propagation_beside_ternary`
+  and the other parser tests there;
+  `crates/xulo-cli/tests/stage1.rs::stage1_example_corpus_tracks_baseline`.
 - Struct deconstruction in `match` (`Point(x, y)`) now works on all three paths:
   the checker validates the struct type and field count and binds each field
   with its declared type, the interpreter deconstructs the object by

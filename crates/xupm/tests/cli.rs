@@ -390,7 +390,7 @@ fn runs_stage1_test_file() {
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stdout.contains("13 passed, 0 failed"),
+        stdout.contains("17 passed, 0 failed"),
         "stage 1 tests should run through xupm test:\n{stdout}"
     );
 }

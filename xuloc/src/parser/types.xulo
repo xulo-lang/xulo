@@ -77,6 +77,18 @@ pub fn ty_type_primary(p: mut Parser): Node {
     if tokens::tk_at(p, "fn") or (tokens::tk_at(p, "async") and tokens::tk_peek_text(p, 1) == "fn") {
         return ty_function_type(p)
     }
+    // Literal types (`"v1" | "v2"`, `3`) restrict a value domain; const generic
+    // arguments in a call also arrive here as literal type nodes.
+    if tokens::tk_at_kind(p, "string")
+        or tokens::tk_at_kind(p, "int")
+        or tokens::tk_at_kind(p, "float")
+        or tokens::tk_at(p, "true")
+        or tokens::tk_at(p, "false")
+        or tokens::tk_at(p, "null")
+    {
+        tokens::tk_advance(p)
+        return nodes::nd_mk(p, "LiteralType", start.text, start)
+    }
     if tokens::tk_at_kind(p, "ident") or tokens::tk_at_kind(p, "keyword") {
         tokens::tk_advance(p)
         let mut n = nodes::nd_mk(p, "TypeName", start.text, start)

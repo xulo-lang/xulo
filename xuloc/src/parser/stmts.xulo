@@ -69,7 +69,9 @@ pub fn st_statement(p: mut Parser): Node {
     if tokens::tk_at(p, "while") {
         return st_while_stmt(p)
     }
-    if tokens::tk_at(p, "fn") {
+    // `fn name(…)` is a nested declaration; `fn(…)` is a closure expression
+    // and belongs to the expression path below.
+    if tokens::tk_at(p, "fn") and tokens::tk_peek_text(p, 1) != "(" {
         return decls::dc_fn_decl(p)
     }
     let left = exprs::ex_expr(p)
@@ -77,19 +79,29 @@ pub fn st_statement(p: mut Parser): Node {
         return left
     }
     if tokens::tk_at(p, "=") {
-        tokens::tk_advance(p)
-        let right = exprs::ex_expr(p)
-        let mut n = node("Assign", "", left.start, right.end, left.line, left.column)
-        add(n, left)
-        add(n, right)
-        if tokens::tk_at(p, ";") {
-            tokens::tk_advance(p)
-        }
-        n.end = tokens::tk_prev(p).end
-        return n
+        return st_assign_tail(p, left)
     }
     let mut n = node("ExprStmt", "", left.start, left.end, left.line, left.column)
     add(n, left)
+    if tokens::tk_at(p, ";") {
+        tokens::tk_advance(p)
+    }
+    n.end = tokens::tk_prev(p).end
+    return n
+}
+
+/// Assignment is right-associative (`a = b = 3` assigns `3` to `b`, then
+/// `b` to `a`), so the tail recurses instead of treating the second `=` as a
+/// new statement.
+fn st_assign_tail(p: mut Parser, left: Node): Node {
+    tokens::tk_advance(p)
+    let mut right = exprs::ex_expr(p)
+    if p.error == "" and tokens::tk_at(p, "=") {
+        right = st_assign_tail(p, right)
+    }
+    let mut n = node("Assign", "", left.start, right.end, left.line, left.column)
+    add(n, left)
+    add(n, right)
     if tokens::tk_at(p, ";") {
         tokens::tk_advance(p)
     }

@@ -285,7 +285,7 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 | B3 | `xupm build` for the bootstrap subset | **OK** | `crates/xupm/tests/aot_differential.rs` compares every example program and `crates/xupm/tests/cli.rs` covers build-failure exit status. FS bytes, path `split`/`relative`, HTTP server types, `os::exec_path`, process `launch`/`Command`/`Child`, and the `Task` combinators lower and compare. | 4 |
 | B4 | AOT module tree (`mod`/`use`) | **OK** | `crates/xulo-compiler/tests/module_system.rs`, `examples/modules` native build | 4 |
 | B5 | Runtime static library and linker path | **OK** | `.github/workflows/ci.yml` and the release workflow | 4 |
-| B6 | `xupm test` for stage 1's own tests | **OK** | `crates/xupm/tests/cli.rs::runs_stage1_test_file` runs `xuloc/src/tests.xulo` (13 tests); `crates/xulo-cli/tests/stage1.rs` covers the `xulo test` path | 3 |
+| B6 | `xupm test` for stage 1's own tests | **OK** | `crates/xupm/tests/cli.rs::runs_stage1_test_file` runs `xuloc/src/tests.xulo` (17 tests); `crates/xulo-cli/tests/stage1.rs` covers the `xulo test` path | 3 |
 | B7 | Linux/macOS/Windows build matrix | **OK** | CI runs the full AOT differential on Linux, macOS (`macos-latest`, arm64), and Windows. No example needs a platform exemption (`ffi.xulo` resolves its imports through the UCRT on Windows, S8), so the runner is identical on every host. The Windows link names the Rust runtime's system libraries (`kernel32`, `ntdll`, `userenv`, `ws2_32`, `dbghelp`, `synchronization`, `/DEFAULTLIB:msvcrt`), and `examples/std/fs.xulo` derives the last walk segment without printing its host temp path (`crates/xupm/tests/aot_differential.rs`). | 4 |
 | B8 | Reproducible stage 1 build and self-compile smoke test | **OK** | B8a: `xuloc/` is an `xupm` package (`xuloc/xupm.toml`), and `xupm build xuloc/src/main.xulo --release` produces a native front end (`xuloc/.xupm/build/xuloc`) that matches the interpreter (`crates/xupm/tests/aot_differential.rs`, `stage1_binary_matches_the_interpreter`). B8b: `crates/xupm/tests/stage1_build.rs` builds the corpus twice, compares the C byte for byte, then has stage 2 regenerate the compiler translation unit and requires it to equal stage 1's (`stage1_build_is_reproducible`). | 5 |
 
@@ -304,8 +304,8 @@ Priority is relative to Gate 1/2 unless stated otherwise.
 | T5 | Stage 1 self-parse/self-check/self-build tests | **OK** | Self-parse, self-check, and interpreter smoke tests are live (`crates/xulo-cli/tests/stage1.rs`, `xuloc/src/tests.xulo`); `crates/xupm/tests/stage1_build.rs` covers the corpus builds, the self-built stage 2, and the stage 1/stage 2 differential (T5c). | 2–5 |
 | T6 | Robustness/fuzz tests | **OK** | `crates/xulo-compiler/tests/robustness.rs`, `crates/xulo-parser/tests/parser_tests.rs` | 1 |
 | T7 | Spec and std-spec submodules aligned with the pin | **OK** | `crates/xulo-cli/tests/submodule_pins.rs` compares the `HEAD` gitlink, the index, and the checked-out submodule against `spec@815edad` / `std-spec@a2e4cb7`; CI job `conformance` | 1 |
-| T8 | Examples cover the whole grammar | **OK** | `examples/coverage.tsv` maps all 194 nonterminals of `spec/grammar.md`'s production index to an example and a probe string; `crates/xulo-cli/tests/examples.rs::coverage_table_accounts_for_grammar` rejects a missing row, a stale path, an absent probe, or an exemption without a reason. `StructPattern` is the one `error-only:` exemption (see §6.12). | 1 |
-| T9 | Stage 1 is measured against the example corpus | **OK** | `xuloc/src/main.xulo` has a `scan` mode (`XULO_STAGE1_MODE=scan XULO_STAGE1_DIR=examples`) that lexes and parses every corpus file; `crates/xulo-cli/tests/stage1.rs::stage1_example_corpus_tracks_baseline` compares it with `crates/xulo-cli/tests/stage1_examples_baseline.tsv`, and a row that starts passing fails the test. | 1 |
+| T8 | Examples cover the whole grammar | **OK** | `examples/coverage.tsv` maps all 194 nonterminals of `spec/grammar.md`'s production index to an example and a probe string; `crates/xulo-cli/tests/examples.rs::coverage_table_accounts_for_grammar` rejects a missing row, a stale path, an absent probe, or an exemption without a reason. Every production has an example, including `StructPattern` (see §6.12). | 1 |
+| T9 | Stage 1 is measured against the example corpus | **OK** | `xuloc/src/main.xulo` has a `scan` mode (`XULO_STAGE1_MODE=scan XULO_STAGE1_DIR=examples`) that lexes and parses every corpus file; `crates/xulo-cli/tests/stage1.rs::stage1_example_corpus_tracks_baseline` compares it with `crates/xulo-cli/tests/stage1_examples_baseline.tsv`, and a row that starts passing fails the test. The baseline is empty: all 66 examples lex and parse, including `std/net.xulo`/`std/http.xulo`, after binary expressions moved to precedence climbing and the parser gained postfix `?`, arrow closures, call-site type arguments, literal types, tuple chains, chained assignment, macro calls, `lock`, and `spawn`. | 1 |
 
 ## 6. Known blocking defects
 
@@ -539,7 +539,7 @@ passes in both paths. Evidence:
 `crates/xulo-compiler/tests/type_system_codegen_tests.rs::structural_equality_compiles`,
 and the updated `crates/xulo-cli/tests/matrix_probes/L13_tuples.xulo`.
 
-### 6.12 Struct patterns are parsed but not implemented (T8)
+### 6.12 Struct patterns in `match` (T8)
 
 ```xulo
 struct P { x: int, y: int }
@@ -550,18 +550,15 @@ fn main() {
 }
 ```
 
-**Open.** `spec/grammar.md` defines `StructPattern = Identifier "(" [ PatternList ] ")"`,
-and the parser builds `MatchPattern::Struct`. The checker has an explicit
-`MatchPattern::Struct { .. } => {}` arm that declares no bindings, and the
-interpreter's pattern matcher only accepts `Value::Enum` for it, so a struct
-value never matches and the bound names are reported as undefined (`E0101`).
-
-Stage 1's own sources do not need struct patterns (their AST is a generic
-`Node` tree matched by enum payload), so this does not gate the bootstrap. It is
-recorded rather than hidden: `examples/coverage.tsv` marks the production
-`error-only:` and no example exercises it. Fixing it needs field-order
-resolution in the checker, an object case in the interpreter, and an IR lowering
-for the AOT path.
+**Resolved.** `spec/grammar.md` defines
+`StructPattern = Identifier "(" [ PatternList ] ")"`. The checker validates the
+struct type and field count and binds each field with its declared type, the
+interpreter deconstructs the object in declaration order, the AOT backend reads
+the fields through `ObjectGet`, and stage 1's own C backend lowers the pattern.
+`examples/coverage.tsv` now points the production at
+`examples/types/structs.xulo`, which matches positional fields and `_` slots.
+Nested patterns inside a struct slot (`Shape::Dot(Point(x, y))`) remain
+unsupported and are rejected with a clear diagnostic.
 
 ## 7. Work packages and recommended order
 
@@ -671,7 +668,7 @@ through a per-block queue; `defer.xulo` is part of the AOT differential.
 CLI, corpus, and self-tests. Gate 1 is covered by the token/parse smoke tests and the clean
 diagnostic test; Gate 2 self-parses all six stage 1 files, discovered from
 `xuloc/src/*.xulo` by the test. `xulo test` and `xupm test` both run
-`xuloc/src/tests.xulo` (13 tests).
+`xuloc/src/tests.xulo` (17 tests).
 
 ### WP6 — Self-host loop (after WP1–WP5)
 
@@ -774,7 +771,7 @@ git submodule status
 git ls-tree HEAD spec std-spec
 ```
 
-Last recorded verification (2026-11-18):
+Last recorded verification (2026-11-22):
 
 | Check | Result |
 |-------|--------|
@@ -785,10 +782,10 @@ Last recorded verification (2026-11-18):
 | AOT differential suite | Every discovered example program compares byte for byte on Linux/macOS/Windows, except the two failing examples that declare `@aot-failure-shape` (normalized failure shape, T13); Windows compares the same corpus (including `ffi.xulo`) plus the stage 1 binary |
 | AOT build failure | `xupm build` exits nonzero and reports the diagnostic (`crates/xupm/tests/cli.rs`) |
 | Stage 1 smoke tests | `cargo test -p xulo-cli --test stage1` — self-parses `xuloc/src/*.xulo`, clean diagnostics, `xulo test` |
-| Stage 1 under `xupm test` | `cargo test -p xupm --test cli runs_stage1_test_file` — 13 stage 1 tests passed |
+| Stage 1 under `xupm test` | `cargo test -p xupm --test cli runs_stage1_test_file` — 17 stage 1 tests passed |
 | Stage 1 native build | `cargo test -p xupm --test aot_differential stage1_binary_matches_the_interpreter` (with `XULO_AOT_DIFFERENTIAL=1`) — interpreter and native output agree |
 | Stage 1 checker | `cargo test -p xulo-cli --test stage1 stage1_check_agrees_with_stage0_on_the_corpus` — 2 accept + 6 reject files agree with stage 0 |
-| Stage 1 corpus ratchet | `cargo test -p xulo-cli --test stage1 stage1_example_corpus_tracks_baseline` — 62 files scanned, 12 parser gaps + 1 call-depth crash recorded in `tests/stage1_examples_baseline.tsv` |
+| Stage 1 corpus ratchet | `cargo test -p xulo-cli --test stage1 stage1_example_corpus_tracks_baseline` — 66 files scanned, all lex and parse; `tests/stage1_examples_baseline.tsv` is empty |
 | Stage 1 self-host (WP6) | `XULO_STAGE1_BUILD=1 cargo test -p xupm --test stage1_build` — 4 passed (corpus, stage 2 self-build, T5c differential, B8b reproducible build) in about four minutes |
 
 ## 10. Maintenance

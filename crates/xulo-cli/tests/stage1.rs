@@ -202,7 +202,7 @@ fn stage1_tests_run_under_xulo_test() {
     assert_success(&out, "xulo test xuloc/src/tests.xulo");
     let text = stdout_of(&out);
     assert!(
-        text.contains("13 passed, 0 failed"),
+        text.contains("17 passed, 0 failed"),
         "all stage 1 tests should pass:\n{text}\n{}",
         stderr_of(&out)
     );

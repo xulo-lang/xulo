@@ -92,7 +92,7 @@ pub fn ct_fn_expr(p: mut Parser): Node {
     if !tokens::tk_expect(p, "(") {
         return n
     }
-    for param in decls::dc_parameters(p) {
+    for param in decls::dc_closure_parameters(p) {
         add(n, param)
     }
     tokens::tk_expect(p, ")")

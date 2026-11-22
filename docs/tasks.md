@@ -348,8 +348,13 @@ Priority P1 · needed by Gate 3 and the bootstrap corpus · source:
       with the lexer and parser verdict. `crates/xulo-cli/tests/stage1.rs::
       stage1_example_corpus_tracks_baseline` compares that with
       `crates/xulo-cli/tests/stage1_examples_baseline.tsv` and fails when a listed
-      gap starts passing. Current baseline: 62 files, 11 parser gaps and 1
-      call-depth crash (`std/net.xulo` nests four `match` levels), 0 lexer gaps.
+      gap starts passing. Current baseline: 66 files, 0 lexer gaps, 0 parser
+      gaps. Closing the last gaps added postfix `?`, ternary disambiguation,
+      arrow closures, call-site type arguments, literal types, tuple position
+      chains, chained assignment, function-macro calls, `lock`, `spawn`, and
+      service spawn. Binary expressions now use precedence climbing, which
+      brought `std/net.xulo` and `std/http.xulo` under the interpreter's
+      128-call limit; the baseline file is empty.
 
 **Verify:** `cargo test -p xulo-cli --test examples`,
 `cargo test -p xulo-cli --test stage1 stage1_example_corpus_tracks_baseline`.

@@ -8,15 +8,6 @@
 #
 # A listed entry MUST keep failing. When a gap is closed, the test fails with
 # "now passes; remove this baseline row", so the list can only shrink.
-basics/lexical.xulo	parse	chained assignment `a = b = 3` is not parsed
-collections/arrays.xulo	parse	call-site type arguments (`Array::filled<int, 3>`) are not consumed
-concurrency/spawn_lock.xulo	parse	service spawn (`spawn.process Tally { ... }`)
-errors/propagation.xulo	parse	postfix `?` propagation is not recognised
-functions/closures_hof.xulo	parse	arrow closures (`(x: number): number =>`)
-macros/macros.xulo	parse	function macro calls (`answer!()`)
-std/regex.xulo	parse	result/match forms used by the regex example
-std/http.xulo	parse	`match` arms with `=>` block bodies
-types/aliases.xulo	parse	literal types (`"v1" | "v2"`)
-types/tuples.xulo	parse	tuple position access (`.0`)
-types/generics_impl.xulo	parse	const-generic type arguments in a call
-std/net.xulo	crash	deeply nested `match` arms exceed the interpreter call-depth limit (128)
+#
+# The baseline is empty: stage 1 lexes and parses every example. Keep it that
+# way; add a row only for a genuine, recorded regression.
