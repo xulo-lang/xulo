@@ -348,7 +348,7 @@ Priority P1 · needed by Gate 3 and the bootstrap corpus · source:
       with the lexer and parser verdict. `crates/xulo-cli/tests/stage1.rs::
       stage1_example_corpus_tracks_baseline` compares that with
       `crates/xulo-cli/tests/stage1_examples_baseline.tsv` and fails when a listed
-      gap starts passing. Current baseline: 62 files, 12 parser gaps and 1
+      gap starts passing. Current baseline: 62 files, 11 parser gaps and 1
       call-depth crash (`std/net.xulo` nests four `match` levels), 0 lexer gaps.
 
 **Verify:** `cargo test -p xulo-cli --test examples`,

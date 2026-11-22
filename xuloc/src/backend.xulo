@@ -1725,6 +1725,19 @@ impl Emitter {
                 self.fail("a map entry needs a value")
                 return "xr_nil()"
             }
+            if child.value == "" {
+                // Typed map literal: the key is an expression, so the entry
+                // holds `[key, value]` and any hashable key reaches the
+                // runtime, which stringifies non-string keys.
+                if child.children.len < 2 {
+                    self.fail("a map entry needs a key and a value")
+                    return "xr_nil()"
+                }
+                let key = self.emit_expr(child.children[0])
+                let value = self.emit_expr(child.children[1])
+                self.line("xr_map_set(" + tmp + ", " + key + ", " + value + ");")
+                continue
+            }
             let value = self.emit_expr(child.children[0])
             self.line(
                 "xr_map_set(" + tmp + ", xr_str(" + c_string(child.value) + "), " + value + ");",
@@ -2308,6 +2321,20 @@ impl Emitter {
         }
         let parts = split_path(path)
         if parts.len == 2 {
+            if parts[0] == "Set" and parts[1] == "from_list" {
+                if args.len != 1 {
+                    self.fail("`Set::from_list` expects one argument")
+                    return "xr_nil()"
+                }
+                return "xr_set_from_list(" + args[0] + ")"
+            }
+            if parts[0] == "Map" and parts[1] == "from_entries" {
+                if args.len != 1 {
+                    self.fail("`Map::from_entries` expects one argument")
+                    return "xr_nil()"
+                }
+                return "xr_map_from_entries(" + args[0] + ")"
+            }
             // Module-qualified declarations are flattened during collection, so
             // `alias::fn` lowers to the same C function as `fn`.
             let fn_cname = self.find_function(parts[1])

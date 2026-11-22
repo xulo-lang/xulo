@@ -359,6 +359,8 @@ fn stage1_runs_the_lowered_examples() {
         "examples/types/optional_chaining.xulo",
         "examples/types/structs.xulo",
         "examples/collections/collections.xulo",
+        "examples/collections/maps.xulo",
+        "examples/collections/sets.xulo",
         "examples/patterns/destructuring.xulo",
         "examples/patterns/match_patterns.xulo",
     ] {

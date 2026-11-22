@@ -9,7 +9,6 @@
 # A listed entry MUST keep failing. When a gap is closed, the test fails with
 # "now passes; remove this baseline row", so the list can only shrink.
 basics/lexical.xulo	parse	chained assignment `a = b = 3` is not parsed
-collections/maps.xulo	parse	brace / typed-map literals with bare keys
 collections/arrays.xulo	parse	call-site type arguments (`Array::filled<int, 3>`) are not consumed
 concurrency/spawn_lock.xulo	parse	service spawn (`spawn.process Tally { ... }`)
 errors/propagation.xulo	parse	postfix `?` propagation is not recognised

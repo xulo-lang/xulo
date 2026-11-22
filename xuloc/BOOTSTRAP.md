@@ -272,19 +272,23 @@ so stage 2 does not inherit them silently.
 16. **The backend lowers a smaller subset than stage 0.** `xuloc/src/backend.xulo`
     handles functions, structs, enums, consts, `impl` methods, modules,
     `if`/`while`/`for`/`match`, calls, fields, indexing, lists, tuples,
-    object literals (and their spread), `let` object/tuple destructuring,
-    struct/enum/literal/or/range/type patterns with guards, templates,
-    operators, `??`, `is`, `?.`, `#[derive(Debug)]` rendering, and the
-    `std::fs`/`std::io`/`std::os`/`std::process`/`std::path`/`std::hint`/
-    `std::math`/`std::json` calls stage 1 uses. Module-qualified names
-    (`alias::fn`, `m::CONST`) resolve by their final segment because
-    declaration collection flattens modules. `Trait::method(receiver, …)`
-    lowers to runtime method dispatch on the receiver's struct type.
-    Closures, `Set`, `Map`/`Set` member methods and iteration, `defer`, and
-    async are rejected with `E0005`; a two-part path call that is neither a
-    user function, a known enum variant, a trait method, nor a known static
-    method is also an `E0005` instead of silently becoming a variant
-    constructor. Stage 1's own source avoids all of the rejected forms.
+    object literals (and their spread), typed `Map<K, V>{ … }` literals,
+    `let` object/tuple destructuring, struct/enum/literal/or/range/type
+    patterns with guards, templates, operators, `??`, `is`, `?.`,
+    `#[derive(Debug)]` rendering, the `Map`/`Set` members (`size`, `get`,
+    `set`, `has`, `remove`, `keys`, `values`, `entries`, `insert`), iteration
+    over a map's keys or a set's elements, `Map::from_entries`,
+    `Set::from_list`, and the `std::fs`/`std::io`/`std::os`/`std::process`/
+    `std::path`/`std::hint`/`std::math`/`std::json` calls stage 1 uses.
+    Module-qualified names (`alias::fn`, `m::CONST`) resolve by their final
+    segment because declaration collection flattens modules.
+    `Trait::method(receiver, …)` lowers to runtime method dispatch on the
+    receiver's struct type. Closures, `defer`, async, and the
+    `std::time`/`std::fmt`/`std::regex`/`std::net` modules are rejected with
+    `E0005`; a two-part path call that is neither a user function, a known
+    enum variant, a trait method, nor a known static method is also an `E0005`
+    instead of silently becoming a variant constructor. Stage 1's own source
+    avoids all of the rejected forms.
 
 17. **The self-build needs the native stage 1 binary.** Running `build` under
     `xulo run` exceeds the Rust interpreter's call-depth limit (128) while
@@ -322,9 +326,12 @@ so stage 2 does not inherit them silently.
   the `std` surface stage 1's own source needs plus `std::path`, `std::hint`,
   `std::os`, `std::math`, `std::json`, and `std::fs` (its `read_dir` / `walk`
   / `realpath` are POSIX-only). Object literals lower to runtime objects, so
-  member access and `{ ...base, k: v }` work; `Map`/`Set` member methods,
-  iteration, `std::time`, `std::fmt`, `std::regex`, and `std::net` are not
-  lowered yet, so examples that use them fail with `E0005`.
+  member access and `{ ...base, k: v }` work. `Map` and `Set` are first-class
+  in the bootstrap runtime: brace and typed map literals, the member methods,
+  key/element iteration, structural set equality, and the static constructors
+  lower to `XT_OBJ` (map) and `XT_SET` (set) values. `std::time`, `std::fmt`,
+  `std::regex`, and `std::net` are not lowered yet, so examples that use them
+  fail with `E0005`.
 - Destructuring (`let (a, b)`, `let { x, y }`), struct/enum/literal/or/range/
   type patterns with guards, and `#[derive(Debug)]`'s `Type(field: value)`
   rendering are lowered. A struct without the derive still renders as

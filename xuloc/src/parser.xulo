@@ -1455,6 +1455,9 @@ impl Parser {
             }
             return name
         }
+        if self.at("Map") and self.peek_text(1) == "<" {
+            return self.typed_map_expr()
+        }
         if self.at_kind("ident") or self.at_kind("keyword") {
             self.advance()
             let mut n = self.mk("Name", start.text, start)
@@ -1610,6 +1613,30 @@ impl Parser {
     }
 
     fn map_expr(mut self): Node {
+        return self.map_body(false)
+    }
+
+    // `Map<K, V>{ "k": v }` is a typed map literal: the type arguments are
+    // skipped and the keys are expressions, unlike a brace object literal's
+    // bare identifier keys (spec `expressions/literals.md`).
+    fn typed_map_expr(mut self): Node {
+        let start = self.advance()
+        self.type_args()
+        if self.error != "" {
+            return self.placeholder(start)
+        }
+        if !self.at("{") {
+            self.fail("expected `{` after a map type")
+            return self.placeholder(start)
+        }
+        let mut n = self.map_body(true)
+        n.start = start.start
+        n.line = start.line
+        n.column = start.column
+        return n
+    }
+
+    fn map_body(mut self, typed: bool): Node {
         let start = self.advance()
         let mut n = node("Map", "", start.start, start.end, start.line, start.column)
         while self.error == "" and !self.at("}") and !self.at_kind("eof") {
@@ -1626,6 +1653,14 @@ impl Parser {
                 add(spread, self.expr())
                 spread.end = self.prev().end
                 add(n, spread)
+            } else if typed {
+                let key = self.expr()
+                self.expect(":")
+                let mut entry = node("Entry", "", key.start, key.end, key.line, key.column)
+                add(entry, key)
+                add(entry, self.expr())
+                entry.end = self.prev().end
+                add(n, entry)
             } else {
                 let key = self.ident_name()
                 self.expect(":")

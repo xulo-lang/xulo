@@ -69,7 +69,8 @@ enum {
     XT_STR = 4,
     XT_LIST = 5,
     XT_OBJ = 6,
-    XT_SB = 7
+    XT_SB = 7,
+    XT_SET = 8
 };
 
 typedef struct XVal XVal;
@@ -78,6 +79,7 @@ typedef struct XList XList;
 typedef struct XField XField;
 typedef struct XObj XObj;
 typedef struct XSb XSb;
+typedef struct XSet XSet;
 
 struct XVal {
     int tag;
@@ -119,11 +121,24 @@ struct XSb {
     char *data;
 };
 
+struct XSet {
+    long long len;
+    long long cap;
+    XVal *items;
+};
+
 typedef XVal (*XrMethodFn)(long long argc, XVal *argv);
 
 // Defined with the value predicates; declared here because the intrinsic
 // helpers below use it.
 int xr_cond(XVal v);
+// Defined with the renderer; declared here because map keys stringify values.
+XVal xr_str_of(XVal v);
+// Defined with the comparison operators; the set helpers use structural
+// equality to keep elements unique.
+int xr_eq(XVal a, XVal b);
+// Defined with the method helpers; map operations stringify non-string keys.
+static XVal xr_key_string(XVal key);
 
 // ── allocation ───────────────────────────────────────────────────────────
 
@@ -502,6 +517,15 @@ long long xr_len(XVal v) {
     if (v.tag == XT_SB) {
         return ((XSb *)v.p)->len;
     }
+    if (v.tag == XT_SET) {
+        return ((XSet *)v.p)->len;
+    }
+    if (v.tag == XT_OBJ) {
+        XObj *o = xr_as_obj(v);
+        if (o->variant == NULL && strcmp(o->type, "Map") == 0) {
+            return o->nfields;
+        }
+    }
     xr_fail("`.len` is not available on this value");
     return 0;
 }
@@ -528,6 +552,22 @@ XVal xr_index(XVal v, XVal index) {
     }
     if (v.tag == XT_STR) {
         return xr_str_slice(v, i, i + 1);
+    }
+    if (v.tag == XT_SET) {
+        XSet *s = (XSet *)v.p;
+        if (i < 0 || i >= s->len) {
+            xr_fail("set index out of bounds");
+        }
+        return s->items[i];
+    }
+    if (v.tag == XT_OBJ) {
+        XObj *o = xr_as_obj(v);
+        if (o->variant == NULL && strcmp(o->type, "Map") == 0) {
+            if (i < 0 || i >= o->nfields) {
+                xr_fail("map index out of bounds");
+            }
+            return xr_str(o->fields[i].name);
+        }
     }
     xr_fail("this value is not indexable");
     return xr_nil();
@@ -604,11 +644,12 @@ XVal xr_variant(const char *type, const char *variant, long long n, XVal *payloa
 XVal xr_map_new(void) { return xr_struct("Map", 0, NULL, NULL); }
 
 void xr_map_set(XVal map, XVal key, XVal value) {
-    if (map.tag != XT_OBJ || key.tag != XT_STR) {
-        xr_fail("map keys must be strings");
+    if (map.tag != XT_OBJ) {
+        xr_fail("`.set` expects a map receiver");
     }
+    XVal key_string = xr_key_string(key);
     XObj *o = xr_as_obj(map);
-    const char *name = xr_as_str(key)->data;
+    const char *name = xr_as_str(key_string)->data;
     for (long long i = 0; i < o->nfields; i += 1) {
         if (strcmp(o->fields[i].name, name) == 0) {
             o->fields[i].value = value;
@@ -638,6 +679,141 @@ void xr_map_merge(XVal map, XVal other) {
     for (long long i = 0; i < o->nfields; i += 1) {
         xr_map_set(map, xr_str(o->fields[i].name), o->fields[i].value);
     }
+}
+
+static long long xr_map_find(XObj *o, const char *name) {
+    for (long long i = 0; i < o->nfields; i += 1) {
+        if (strcmp(o->fields[i].name, name) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static XVal xr_map_get(XVal map, XVal key) {
+    if (map.tag != XT_OBJ) {
+        xr_fail("`.get` expects a map receiver");
+    }
+    XVal key_string = xr_key_string(key);
+    XObj *o = xr_as_obj(map);
+    long long at = xr_map_find(o, xr_as_str(key_string)->data);
+    return at < 0 ? xr_nil() : o->fields[at].value;
+}
+
+static int xr_map_has(XVal map, XVal key) {
+    if (map.tag != XT_OBJ) {
+        xr_fail("`.has` expects a map receiver");
+    }
+    XVal key_string = xr_key_string(key);
+    return xr_map_find(xr_as_obj(map), xr_as_str(key_string)->data) >= 0;
+}
+
+static XVal xr_map_remove(XVal map, XVal key) {
+    if (map.tag != XT_OBJ) {
+        xr_fail("`.remove` expects a map receiver");
+    }
+    XVal key_string = xr_key_string(key);
+    XObj *o = xr_as_obj(map);
+    long long at = xr_map_find(o, xr_as_str(key_string)->data);
+    if (at < 0) {
+        return xr_nil();
+    }
+    XVal old = o->fields[at].value;
+    for (long long i = at; i + 1 < o->nfields; i += 1) {
+        o->fields[i] = o->fields[i + 1];
+    }
+    o->nfields -= 1;
+    return old;
+}
+
+XVal xr_map_from_entries(XVal entries) {
+    if (entries.tag != XT_LIST) {
+        xr_fail("`Map::from_entries` expects a list of (key, value) pairs");
+    }
+    XVal map = xr_map_new();
+    XList *list = xr_as_list(entries);
+    for (long long i = 0; i < list->len; i += 1) {
+        XVal entry = list->items[i];
+        if (entry.tag != XT_LIST) {
+            xr_fail("`Map::from_entries` expects each entry to be a (key, value) pair");
+        }
+        XList *pair = xr_as_list(entry);
+        if (pair->len != 2) {
+            xr_fail("`Map::from_entries` expects each entry to be a (key, value) pair");
+        }
+        xr_map_set(map, pair->items[0], pair->items[1]);
+    }
+    return map;
+}
+
+// ── sets ─────────────────────────────────────────────────────────────────
+
+XVal xr_set_new(void) {
+    XVal v = xr_mk(XT_SET);
+    XSet *s = (XSet *)xr_alloc(sizeof(XSet));
+    s->len = 0;
+    s->cap = 0;
+    s->items = NULL;
+    v.p = s;
+    return v;
+}
+
+static long long xr_set_find(XSet *s, XVal value) {
+    for (long long i = 0; i < s->len; i += 1) {
+        if (xr_eq(s->items[i], value)) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static void xr_set_push(XSet *s, XVal value) {
+    if (s->len == s->cap) {
+        long long cap = s->cap == 0 ? 8 : s->cap * 2;
+        XVal *items = (XVal *)xr_alloc(sizeof(XVal) * (size_t)cap);
+        if (s->len > 0) {
+            memcpy(items, s->items, sizeof(XVal) * (size_t)s->len);
+        }
+        s->items = items;
+        s->cap = cap;
+    }
+    s->items[s->len] = value;
+    s->len += 1;
+}
+
+XVal xr_set_from_list(XVal list) {
+    if (list.tag != XT_LIST) {
+        xr_fail("`Set::from_list` expects a list");
+    }
+    XVal out = xr_set_new();
+    XSet *set = (XSet *)out.p;
+    XList *values = xr_as_list(list);
+    for (long long i = 0; i < values->len; i += 1) {
+        if (xr_set_find(set, values->items[i]) < 0) {
+            xr_set_push(set, values->items[i]);
+        }
+    }
+    return out;
+}
+
+static int xr_set_insert(XSet *set, XVal value) {
+    if (xr_set_find(set, value) >= 0) {
+        return 0;
+    }
+    xr_set_push(set, value);
+    return 1;
+}
+
+static int xr_set_remove(XSet *set, XVal value) {
+    long long at = xr_set_find(set, value);
+    if (at < 0) {
+        return 0;
+    }
+    for (long long i = at; i + 1 < set->len; i += 1) {
+        set->items[i] = set->items[i + 1];
+    }
+    set->len -= 1;
+    return 1;
 }
 
 XVal xr_ok(XVal value) { return xr_variant("Result", "Ok", 1, &value); }
@@ -709,6 +885,15 @@ XVal xr_get_field(XVal v, const char *name) {
                 return o->fields[i].value;
             }
         }
+        // A brace map literal is the only object that answers `.size`
+        // (spec `types/composite-types.md`); a real field named `size` wins
+        // above.
+        if (o->variant == NULL && strcmp(o->type, "Map") == 0 && strcmp(name, "size") == 0) {
+            return xr_int(o->nfields);
+        }
+    }
+    if (v.tag == XT_SET && strcmp(name, "size") == 0) {
+        return xr_int(((XSet *)v.p)->len);
     }
     xr_fail("unknown member");
     return xr_nil();
@@ -725,7 +910,13 @@ XVal xr_get_field_opt(XVal v, const char *name) {
                 return o->fields[i].value;
             }
         }
+        if (o->variant == NULL && strcmp(o->type, "Map") == 0 && strcmp(name, "size") == 0) {
+            return xr_int(o->nfields);
+        }
         return xr_nil();
+    }
+    if (v.tag == XT_SET && strcmp(name, "size") == 0) {
+        return xr_int(((XSet *)v.p)->len);
     }
     return xr_nil();
 }
@@ -962,6 +1153,24 @@ int xr_eq(XVal a, XVal b) {
         XSb *y = (XSb *)b.p;
         return x == y || (x->bytes == y->bytes && memcmp(x->data, y->data, (size_t)x->bytes) == 0);
     }
+    case XT_SET: {
+        // Sets are unordered: same cardinality, and every element of one is
+        // present in the other.
+        XSet *x = (XSet *)a.p;
+        XSet *y = (XSet *)b.p;
+        if (x == y) {
+            return 1;
+        }
+        if (x->len != y->len) {
+            return 0;
+        }
+        for (long long i = 0; i < x->len; i += 1) {
+            if (xr_set_find(y, x->items[i]) < 0) {
+                return 0;
+            }
+        }
+        return 1;
+    }
     case XT_OBJ: {
         XObj *x = xr_as_obj(a);
         XObj *y = xr_as_obj(b);
@@ -1151,9 +1360,25 @@ static void xr_render_value(XVal v, char **buffer, long long *len, long long *ca
         xr_append_str(buffer, len, cap, s->data == NULL ? "" : s->data, s->bytes);
         return;
     }
+    case XT_SET: {
+        XSet *s = (XSet *)v.p;
+        xr_append_str(buffer, len, cap, "Set([", 5);
+        for (long long i = 0; i < s->len; i += 1) {
+            if (i > 0) {
+                xr_append_str(buffer, len, cap, ", ", 2);
+            }
+            xr_render_value(s->items[i], buffer, len, cap);
+        }
+        xr_append_str(buffer, len, cap, "])", 2);
+        return;
+    }
     case XT_OBJ: {
         XObj *o = xr_as_obj(v);
-        xr_append_str(buffer, len, cap, o->type, (long long)strlen(o->type));
+        // A brace map literal renders like stage 0's object value (`{ k: v }`);
+        // every other field table keeps its type prefix.
+        if (o->variant != NULL || o->debug || strcmp(o->type, "Map") != 0) {
+            xr_append_str(buffer, len, cap, o->type, (long long)strlen(o->type));
+        }
         if (o->variant != NULL) {
             xr_append_str(buffer, len, cap, ".", 1);
             xr_append_str(buffer, len, cap, o->variant, (long long)strlen(o->variant));
@@ -1352,6 +1577,16 @@ static XrMethodFn xr_lookup_method(const char *type, const char *name) {
     return NULL;
 }
 
+static XVal xr_key_string(XVal key) {
+    // Map keys follow the stage 0 rule: a string key stays as written and
+    // every other hashable value is rendered first (spec
+    // `types/composite-types.md`).
+    if (key.tag == XT_STR) {
+        return key;
+    }
+    return xr_str_of(key);
+}
+
 static XVal *xr_args_with_self(XVal self, long long n, XVal *args) {
     XVal *all = (XVal *)xr_alloc(sizeof(XVal) * (size_t)(n + 1));
     all[0] = self;
@@ -1368,6 +1603,66 @@ XVal xr_method(XVal recv, const char *name, long long n, XVal *args) {
         if (fn != NULL) {
             return fn(n + 1, xr_args_with_self(recv, n, args));
         }
+        if (o->variant == NULL && strcmp(o->type, "Map") == 0) {
+            if (strcmp(name, "get") == 0 || strcmp(name, "has") == 0
+                || strcmp(name, "remove") == 0) {
+                if (n != 1) {
+                    xr_fail("map method expects one key argument");
+                }
+                if (strcmp(name, "get") == 0) {
+                    return xr_map_get(recv, args[0]);
+                }
+                if (strcmp(name, "has") == 0) {
+                    return xr_bool(xr_map_has(recv, args[0]));
+                }
+                return xr_map_remove(recv, args[0]);
+            }
+            if (strcmp(name, "set") == 0) {
+                if (n != 2) {
+                    xr_fail("`.set` expects a key and a value");
+                }
+                xr_map_set(recv, args[0], args[1]);
+                return xr_nil();
+            }
+            if (strcmp(name, "keys") == 0 || strcmp(name, "values") == 0
+                || strcmp(name, "entries") == 0) {
+                if (n != 0) {
+                    xr_fail("map projection expects no arguments");
+                }
+                XVal out = xr_list_new();
+                for (long long i = 0; i < o->nfields; i += 1) {
+                    if (strcmp(name, "keys") == 0) {
+                        xr_list_push(out, xr_str(o->fields[i].name));
+                    } else if (strcmp(name, "values") == 0) {
+                        xr_list_push(out, o->fields[i].value);
+                    } else {
+                        XVal pair = xr_list_new();
+                        xr_list_push(pair, xr_str(o->fields[i].name));
+                        xr_list_push(pair, o->fields[i].value);
+                        xr_list_push(out, pair);
+                    }
+                }
+                return out;
+            }
+            xr_fail("unknown map method");
+        }
+    }
+    if (recv.tag == XT_SET) {
+        XSet *set = (XSet *)recv.p;
+        if (strcmp(name, "has") == 0 || strcmp(name, "insert") == 0
+            || strcmp(name, "remove") == 0) {
+            if (n != 1) {
+                xr_fail("set method expects one value argument");
+            }
+            if (strcmp(name, "has") == 0) {
+                return xr_bool(xr_set_find(set, args[0]) >= 0);
+            }
+            if (strcmp(name, "insert") == 0) {
+                return xr_bool(xr_set_insert(set, args[0]));
+            }
+            return xr_bool(xr_set_remove(set, args[0]));
+        }
+        xr_fail("unknown set method");
     }
     if (strcmp(name, "slice") == 0 && recv.tag == XT_STR) {
         long long start = n > 0 ? args[0].i : 0;
@@ -1509,10 +1804,20 @@ XVal xr_method(XVal recv, const char *name, long long n, XVal *args) {
 }
 
 XVal xr_static_method(const char *type, const char *name, long long n, XVal *args) {
-    (void)n;
-    (void)args;
     if (strcmp(type, "StringBuilder") == 0 && strcmp(name, "new") == 0) {
         return xr_sb_new();
+    }
+    if (strcmp(type, "Set") == 0 && strcmp(name, "from_list") == 0) {
+        if (n != 1) {
+            xr_fail("`Set::from_list` expects one argument");
+        }
+        return xr_set_from_list(args[0]);
+    }
+    if (strcmp(type, "Map") == 0 && strcmp(name, "from_entries") == 0) {
+        if (n != 1) {
+            xr_fail("`Map::from_entries` expects one argument");
+        }
+        return xr_map_from_entries(args[0]);
     }
     xr_fail("unknown static method");
     return xr_nil();
