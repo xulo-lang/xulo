@@ -539,6 +539,14 @@ fn parameter_list(pair: Pair<'_, Rule>) -> R<Vec<Param>> {
     Ok(params)
 }
 
+fn param_mode_of(pair: Pair<'_, Rule>) -> ParamMode {
+    match pair.as_str() {
+        "mut" => ParamMode::Mut,
+        "shared" => ParamMode::Shared,
+        _ => unreachable!("param_mode"),
+    }
+}
+
 fn parameter(pair: Pair<'_, Rule>) -> R<Param> {
     let span = span_of(&pair);
     let mut inner = pair.into_inner();
@@ -557,20 +565,21 @@ fn parameter(pair: Pair<'_, Rule>) -> R<Param> {
             span,
         });
     }
-    check_rule(&first, Rule::identifier)?;
-    let name = first.as_str().to_string();
+    let mut mode = None;
+    let name_pair = if first.as_rule() == Rule::param_mode {
+        // The pinned spec's examples write `mut xs: T` as well as `xs: mut T`.
+        mode = Some(param_mode_of(first));
+        inner.next().expect("parameter has a name after its mode")
+    } else {
+        first
+    };
+    check_rule(&name_pair, Rule::identifier)?;
+    let name = name_pair.as_str().to_string();
     let mut type_annotation = None;
     let mut default = None;
-    let mut mode = None;
     for p in inner {
         match p.as_rule() {
-            Rule::param_mode => {
-                mode = Some(match p.as_str() {
-                    "mut" => ParamMode::Mut,
-                    "shared" => ParamMode::Shared,
-                    _ => unreachable!("param_mode"),
-                });
-            }
+            Rule::param_mode => mode = Some(param_mode_of(p)),
             Rule::type_expr => type_annotation = Some(type_expr(p)?),
             Rule::expression => default = Some(expression(p)?),
             _ => unreachable!("parameter child {:?}", p.as_rule()),

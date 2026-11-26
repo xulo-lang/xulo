@@ -231,13 +231,16 @@ fn add_block_cases(rel: &str, first_line: usize, body: &[String], cases: &mut Ve
         });
     }
 
-    for at in rejected {
+    for &at in &rejected {
         let line = &body[at];
         let Some(code) = error_marker(line) else {
             continue;
         };
         let mut source = base.clone();
-        source.insert(at.min(source.len()), uncomment(line));
+        // `at` indexes the full block; `base` has the rejected lines removed,
+        // so count the surviving lines before it to keep the statement in place.
+        let position = (0..at).filter(|i| !rejected.contains(i)).count();
+        source.insert(position.min(source.len()), uncomment(line));
         cases.push(Case {
             id: format!("{rel}:{} {}", first_line + at, Kind::Reject.name()),
             kind: Kind::Reject,
@@ -260,10 +263,24 @@ fn add_block_cases(rel: &str, first_line: usize, body: &[String], cases: &mut Ve
     }
 }
 
-/// Turn `    // let x = 1 // error…` into `    let x = 1 // error…`.
+/// Turn a rejected annotation line into checkable source. An inline statement
+/// (`let x = 1 // error[E…]`) loses the whole comment; a fully commented
+/// statement (`// xs[0] = 9 // error[E…]`) is re-inserted with its trailing
+/// annotation still a comment. Keeping the annotation text as code would make
+/// the next token a syntax error and, worse, echo the `E…` text inside the
+/// diagnostic snippet.
 fn uncomment(line: &str) -> String {
     match line.find("//") {
-        Some(at) => format!("{}{}", &line[..at], &line[at + 2..]),
+        Some(at) => {
+            let head = &line[..at];
+            if head.trim().is_empty() {
+                let rest = &line[at + 2..];
+                let rest = rest.strip_prefix(' ').unwrap_or(rest);
+                format!("{head}{rest}")
+            } else {
+                head.to_string()
+            }
+        }
         None => line.to_string(),
     }
 }
@@ -344,14 +361,44 @@ fn run_case(case: &Case, file: &Path) -> Outcome {
     }
 }
 
+/// Strip SGR/ANSI escape sequences so a colorized diagnostic still starts with
+/// `error[`.
+fn strip_ansi(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' && chars.peek() == Some(&'[') {
+            chars.next();
+            for next in chars.by_ref() {
+                if next.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 /// The `E0123` codes stage 0 reported, comma-separated and de-duplicated.
+/// Only the diagnostic headers count: echoing the staged source line can repeat
+/// the `// error[E…]` text in a snippet, which must not read as a real code.
 fn error_codes(stderr: &[u8]) -> String {
     let text = String::from_utf8_lossy(stderr);
     let mut codes = BTreeSet::new();
-    for (at, _) in text.match_indices("error[E") {
-        let code = &text[at + "error[".len()..];
-        if let Some(end) = code.find(']') {
-            codes.insert(code[..end].to_string());
+    for line in text.lines() {
+        let clean = strip_ansi(line);
+        let clean = clean.trim_start();
+        let Some(rest) = clean.strip_prefix("error[") else {
+            continue;
+        };
+        let Some((code, _)) = rest.split_once(']') else {
+            continue;
+        };
+        if code.len() == 5 && code.starts_with('E') && code[1..].bytes().all(|b| b.is_ascii_digit())
+        {
+            codes.insert(code.to_string());
         }
     }
     if codes.is_empty() {
@@ -530,4 +577,50 @@ fn pinned_spec_examples_conform() {
         "spec conformance failed\n\n{}",
         problems.join("\n\n")
     );
+}
+
+#[test]
+fn rejected_line_keeps_its_position_among_surviving_lines() {
+    let body: Vec<String> = [
+        "extern \"C\" {",
+        "  fn ok(): i32",
+        "  fn bad(n: unit): unit // error[E0901]",
+        "  fn also(n: unit): unit // error[E0901]",
+        "}",
+    ]
+    .iter()
+    .map(|line| line.to_string())
+    .collect();
+    let mut cases = Vec::new();
+    add_block_cases("x.md", 1, &body, &mut cases);
+    let reject = cases
+        .iter()
+        .find(|case| case.source.contains("fn bad"))
+        .expect("the `fn bad` line has a reject case");
+    assert!(
+        reject.source.trim_end().ends_with('}'),
+        "the rejected line must stay inside the extern block:\n{}",
+        reject.source
+    );
+}
+
+#[test]
+fn uncomment_reinserts_the_rejected_statement_cleanly() {
+    assert_eq!(
+        uncomment("let bad: Map<string, int> = Map<string, int>{ \"a\": 1 } // error[E0221]"),
+        "let bad: Map<string, int> = Map<string, int>{ \"a\": 1 } "
+    );
+    assert_eq!(
+        uncomment("    // xs[0] = 9              // error[E0411]: written during a borrow"),
+        "    xs[0] = 9              // error[E0411]: written during a borrow"
+    );
+}
+
+#[test]
+fn error_codes_read_headers_not_echoed_source_lines() {
+    let stderr = b"error[E0201] semantic: bad\n --> x.xulo:1:1\n 1 | let x = 1 error[E0221]\n";
+    assert_eq!(error_codes(stderr), "E0201");
+    let colored =
+        b"\x1b[1merror\x1b[0m[\x1b[36mE0002\x1b[0m] syntax: bad\n 1 | x // error[E0221]\n";
+    assert_eq!(error_codes(colored), "E0002");
 }

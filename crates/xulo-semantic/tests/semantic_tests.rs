@@ -6283,6 +6283,16 @@ fn indirection_breaks_the_recursive_struct_rule() {
 }
 
 #[test]
+fn default_integer_literal_above_u64_max_is_e0209() {
+    let err = analyze_src("fn main() { let big = 99999999999999999999 }")
+        .expect_err("a literal above u64::MAX has no default type");
+    assert_eq!(err.code(), "E0209", "got: {}", err.message);
+
+    analyze_src("fn main() { let big = 18446744073709551615 }")
+        .expect("u64::MAX is the widest default integer");
+}
+
+#[test]
 fn out_of_range_constant_shift_is_e0210() {
     let err = analyze_src(r#"fn main() { let x = 1 << 64 }"#).expect_err("64 is out of range");
     assert_eq!(err.code(), "E0210", "got: {}", err.message);

@@ -1102,6 +1102,11 @@ fn brace_map(pair: Pair<'_, Rule>) -> R<Expression> {
                 let value = expression(next(&mut inner, Rule::expression))?;
                 fields.push(ObjectField::Field { name, value });
             }
+            Rule::string_literal => {
+                let name = decode_string(first.as_str());
+                let value = expression(next(&mut inner, Rule::expression))?;
+                fields.push(ObjectField::Field { name, value });
+            }
             _ => unreachable!("map_field child {:?}", first.as_rule()),
         }
     }

@@ -9280,6 +9280,19 @@ impl Analyzer {
                 }
                 Ok(Type::Object)
             }
+            Literal::Int(value) => {
+                // The default slot is `int`, widened to `u64` when the value
+                // does not fit `i64`; anything above `u64::MAX` has no default
+                // type (spec `expressions/literals.md`, "An integer literal
+                // defaults to type `int` … E0209").
+                if *value > u64::MAX as i128 {
+                    return Err(self.err_code(
+                        "E0209",
+                        format!("integer literal `{value}` does not fit `u64`"),
+                    ));
+                }
+                Ok(Type::Number)
+            }
             other => Ok(literal_type(other)),
         }
     }

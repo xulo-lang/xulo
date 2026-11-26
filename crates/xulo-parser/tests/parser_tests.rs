@@ -2,7 +2,8 @@
 //! lowered-AST shape checks, negative cases, and the nesting-depth limit.
 
 use xulo_core::ast::{
-    Expression, Literal, MatchBody, MatchPattern, PathHead, SpawnTarget, Statement, Type, UseTarget,
+    Expression, Literal, MatchBody, MatchPattern, ParamMode, PathHead, SpawnTarget, Statement,
+    Type, UseTarget,
 };
 use xulo_parser::{MAX_NEST_DEPTH, parse_program};
 
@@ -38,6 +39,19 @@ fn fn_decl_with_params_and_return() {
     assert_eq!(f.return_type, Some(Type::Number));
     assert!(!f.is_async);
     assert!(f.type_params.is_empty());
+}
+
+#[test]
+fn param_mode_may_precede_the_name() {
+    let p = parse_ok("fn f(mut a: int, shared b: List<int>): int { a }");
+    let Statement::Fn(f) = &p.statements[0] else {
+        panic!("expected fn");
+    };
+    assert_eq!(f.params.len(), 2);
+    assert_eq!(f.params[0].name, "a");
+    assert_eq!(f.params[0].mode, Some(ParamMode::Mut));
+    assert_eq!(f.params[1].name, "b");
+    assert_eq!(f.params[1].mode, Some(ParamMode::Shared));
 }
 
 #[test]
@@ -668,6 +682,25 @@ fn typed_map() {
 }
 
 #[test]
+fn brace_map_accepts_a_string_key() {
+    let p = parse_ok("fn f(): Map<string, int> { return { \"a\": 1 } }");
+    let Statement::Fn(f) = &p.statements[0] else {
+        panic!();
+    };
+    let Statement::Return(ret) = &f.body.statements[0] else {
+        panic!("expected return");
+    };
+    let Some(Expression::Literal {
+        value: Literal::Object(fields),
+        ..
+    }) = &ret.value
+    else {
+        panic!("expected an object literal");
+    };
+    assert_eq!(fields.len(), 1);
+}
+
+#[test]
 fn tuple_vs_group() {
     let t = first_let("let t = (1, 2, 3)");
     assert!(matches!(t.value, Some(Expression::Tuple { .. })));
@@ -902,7 +935,12 @@ fn untyped_parameters_rejected() {
 #[test]
 fn parameter_mode_follows_the_colon() {
     parse_ok("fn f(x: mut number, y: shared string) { }");
-    parse_err("fn f(mut x: number) { }");
+    // The pinned spec's prose examples also write the mode before the name.
+    let p = parse_ok("fn f(mut x: number) { }");
+    let Statement::Fn(f) = &p.statements[0] else {
+        panic!("expected fn");
+    };
+    assert_eq!(f.params[0].mode, Some(ParamMode::Mut));
 }
 
 #[test]

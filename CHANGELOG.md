@@ -92,6 +92,18 @@ values, and is left to a future standard-library `std/ui` module.
 
 ### Fixed
 
+- The conformance runner no longer passes rejected examples vacuously. It now
+  strips an inline `// error[E…]` annotation from the staged source, keeps a
+  fully-commented statement's trailing annotation as a comment, inserts a
+  rejected line at the position left after earlier rejected lines are removed,
+  and reads codes only from diagnostic headers instead of echoed snippets. The
+  fix cleared 6 cases, exposed 19 masked divergences (now triaged in
+  `spec_conformance_baseline.tsv`: 46 known, 65 of 111 pass), and the parser now
+  accepts the pinned examples' prefix parameter mode (`fn watch(mut xs: …)`)
+  and a brace map's string key (`{ "a": 1 }`). A default integer literal above
+  `u64::MAX` is now `E0209`. Regression:
+  `crates/xulo-cli/tests/spec_conformance.rs` (three runner tests) and
+  `crates/xulo-semantic/tests/semantic_tests.rs::default_integer_literal_above_u64_max_is_e0209`.
 - Stage 1's C backend now matches the stage 0 runtime on the last four
   drift-governance deviations (D-01–D-04). Integral `+`/`-`/`*`, `/`, `%`,
   `**`, and unary `-` are checked and fail with `panic: integer overflow`

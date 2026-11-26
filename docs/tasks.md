@@ -164,6 +164,10 @@ Priority P0 · needed by Gate 1/2 · source: `stage1-readiness.md` §7 WP0, §6.
       `crates/xulo-cli/tests/spec_conformance.rs` (`Accept` cases).
 - [x] **T3b** Extend the runner to `// error[E…]` blocks with expected codes.
       Each rejected line is re-inserted uncommented and must produce its code.
+      The runner strips the annotation from an inline statement, keeps a
+      fully-commented statement's trailing annotation a comment, inserts at the
+      position left after earlier rejected lines are removed, and reads codes
+      only from diagnostic headers (not from echoed source snippets).
 - [x] **T3d** Ensure every row marked OK in `stage1-readiness.md` is backed by
       a test or a named probe; add the missing ones.
       `crates/xulo-cli/tests/readiness_matrix.rs` requires every OK row to cite
@@ -475,13 +479,14 @@ CPU-heavy: the full runner takes roughly four minutes on Windows.
 Not in any gate's exit criterion. Each item must still be closed or explicitly
 re-scoped before the gate it informs.
 
-- [x] **T3f** Triage the 33 divergences in `spec_conformance_baseline.tsv` by
-      group: 11 context-dependent, 12 module-scope statements, 8 syntax gaps,
-      2 semantic gaps. Each group names an owner component and the gate that
-      clears it in the table in `stage1-readiness.md` §6.10 (module-scope and
-      context-dependent at Gate 6; syntax and semantic at Gate 5); the component
-      paths are checked by `readiness_matrix`. "Deadline" for these groups means
-      the gate named in "Cleared by"; there is no separate calendar date.
+- [x] **T3f** Triage the divergences in `spec_conformance_baseline.tsv` by
+      group. The current baseline holds 46: 25 context-dependent, 13
+      module-scope statements, 0 syntax gaps, 8 semantic gaps. Each group names
+      an owner component and its scope in `stage1-readiness.md` §6.10; the
+      component paths are checked by `readiness_matrix`. All gates are reached,
+      so these rows are post-gate cleanup. Fixing the runner's three
+      false-positive paths cleared 6 cases, added `E0209` for a default integer
+      literal above `u64::MAX`, and exposed 19 previously masked divergences.
 - [x] **T3c** Extend the runner to `// runs:` blocks with expected output.
       The pinned spec has no `runs:` examples, so local cases live under
       `crates/xulo-cli/tests/runs_cases/basics.md`; the runner scans them

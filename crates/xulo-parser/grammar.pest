@@ -248,7 +248,10 @@ extern_param_list = { extern_param ~ ("," ~ extern_param)* ~ ","? }
 extern_param = { identifier ~ ":" ~ type_expr }
 
 parameter_list = { parameter ~ ("," ~ parameter)* ~ ","? }
-parameter = { receiver | identifier ~ ":" ~ param_mode? ~ type_expr ~ ("=" ~ expression)? }
+// `Parameter = Receiver | Identifier ":" [ "mut" | "shared" ] Type [ "=" Expression ]`
+// per spec/grammar.md, but the pinned spec's own examples also write the mode
+// before the name (`fn watch(mut xs: List<int>)`), so accept both spellings.
+parameter = { receiver | param_mode? ~ identifier ~ ":" ~ param_mode? ~ type_expr ~ ("=" ~ expression)? }
 receiver = { kw_self | kw_mut ~ kw_self }
 param_mode = { kw_mut | kw_shared }
 
@@ -527,7 +530,10 @@ list_element = { spread | expression }
 spread = { "..." ~ expression }
 
 brace_map = { "{" ~ (map_field ~ ("," ~ map_field)* ~ ","?)? ~ "}" }
-map_field = { spread | identifier ~ ":" ~ expression }
+// Identifier keys are the documented form; a string literal key is also
+// accepted because `spec/expressions/literals.md`'s own `counts` example
+// writes `return { "a": 1 }`.
+map_field = { spread | (identifier | string_literal) ~ ":" ~ expression }
 
 // `self` is a keyword, but inside a method body it is an ordinary name
 // (spec: expressions/path-and-access.md — "self is an ordinary name").

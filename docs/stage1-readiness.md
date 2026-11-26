@@ -460,26 +460,42 @@ recorded in §6.10 rather than in this section.
 ### 6.10 Spec examples that still diverge (T3)
 
 `spec_conformance_baseline.tsv` lists each diverging example with a reason. The
-list currently holds 33 of 111 annotated examples; 78 pass. Counted from the
-baseline reasons, they fall into four groups (11 + 12 + 8 + 2 = 33):
+list currently holds 46 of 111 annotated examples; 65 pass. Counted from the
+baseline reasons, they fall into four groups (25 + 13 + 0 + 8 = 46):
 
-- **Context-dependent examples (11).** The block calls or names a declaration
+- **Context-dependent examples (25).** The block calls or names a declaration
   that exists only in the surrounding prose (`load_config`, `c_malloc`,
-  `first<T>`, `AppState`, `Status`, `User`, `poll`, `fill`, `greet`, …). These
-  can never pass unchanged; a conformance corpus needs the missing declarations,
-  not a compiler fix. This group includes the two `AppState` examples that
-  cannot reach E0410.
-- **Module-scope statements (12).** The spec writes expression statements and
+  `first<T>`, `AppState`, `Status`, `User`, `poll`, `fill`, `greet`, `n`, `f`,
+  `xs`, `pair`, …). These can never pass unchanged; a conformance corpus needs
+  the missing declarations, not a compiler fix. This group includes the two
+  `AppState` examples that cannot reach E0410 and the `Time::sleep` example
+  whose bare module head stage 0 rejects with E0607.
+- **Module-scope statements (13).** The spec writes expression statements and
   assignments at module scope; stage 0 accepts module-scope `let` but rejects
-  module-scope `x = …`, `xs.sort()`, and `assert(…)` with `E0002`. This is a
+  module-scope `x = …`, `xs.sort()`, `assert(…)`, and a parenthesized
+  expression statement (`({ a: 1 })`) with `E0002`. This is a
   parser/top-level-statement gap, not covered elsewhere in this matrix.
-- **Syntax gaps (8).** Map literal forms: typed `Map<K, V>{ … }` (two examples,
-  one of which cannot reach E0221) and parenthesized `({ a: 1 })`. A `mut`
-  parameter in a function with no return annotation (`fn f(mut x: int) { … }`,
-  "expected `self`"), five examples, two of which cannot reach E0404. Typed
-  map literals lower in the AOT path (C2), but the parser still rejects them.
-- **Semantic gaps (2).** Generic inference from the expected type
-  (`let ys: List<int> = empty()`), and `#[test]` bodies that `await`.
+- **Syntax gaps (0).** Closed on 2026-11-26. The parser now accepts the pinned
+  examples' prefix parameter mode (`fn watch(mut xs: List<int>)`) beside the
+  grammar's `xs: mut List<int>` spelling, and a brace map's string key
+  (`{ "a": 1 }`). Typed `Map<K, V>{ … }` and `({ a: 1 })` already parsed; their
+  remaining cases are the E0221 rule and module-scope statements above.
+- **Semantic gaps (8).** `const` initializer constantness and constant division
+  by zero; the trailing-expression rules (a trailing `;`, and a trailing
+  `unit` expression against a non-`unit` return); empty list/map literals
+  without an expected type (`E0807`/`E0216`); a float literal bound to `int`
+  (masked by an undefined `Status` in the same block); a typed map that
+  repeats the expected annotation (`E0221`); and generic inference from the
+  expected type.
+
+The runner itself had three defects that hid rejected-line failures: an inline
+`// error[E…]` annotation stayed in the staged source as code, a rejected line
+was inserted at its original index even though earlier rejected lines had been
+removed, and the code check scanned the whole stderr, so annotation text echoed
+in a source snippet counted as the reported code. Fixing those three (each with
+a regression in `crates/xulo-cli/tests/spec_conformance.rs`) revealed 19
+divergences that were previously masked, cleared 6, and added the `E0209` check
+for an integer literal above `u64::MAX`.
 
 Ownership is recorded as a **component**, not a person: this project is developed
 by agents, so "who fixes it" is better answered by "which crate must change".
@@ -488,32 +504,19 @@ rather than as extra columns in `spec_conformance_baseline.tsv` (the runner
 parses that file as `<case id>\t<reason>`, and the assignment is per group, not
 per case).
 
-| Group | Cases | Owner (component) | Cleared by |
+| Group | Cases | Owner (component) | Scope |
 |---|---:|---|---|
-| Context-dependent examples | 11 | `crates/xulo-cli/tests/` (self-contained corpus) | Gate 6 |
-| Module-scope statements | 12 | `crates/xulo-parser` (top-level statements) | Gate 6 |
-| Syntax gaps | 8 | `crates/xulo-parser` (map literals, `mut` parameters) | Gate 5 |
-| Semantic gaps | 2 | `crates/xulo-semantic` (inference, `await` in tests) | Gate 5 |
+| Context-dependent examples | 25 | `crates/xulo-cli/tests/` (self-contained corpus) | self-contained corpus, not a compiler fix |
+| Module-scope statements | 13 | `crates/xulo-parser` (top-level statements) | top-level statements |
+| Semantic gaps | 8 | `crates/xulo-semantic` (inference and checking rules) | checking rules |
 
-"Cleared by" names the gate whose scope owns the group; the baseline line
-disappears when the named component fixes it. There is no separate deadline.
-The syntax and semantic groups are assigned to Gate 5 because they affect
-language forms the bootstrap subset allows (typed map literals, `mut`
-parameters, expected-type inference), which stage 1 and stage 2 must handle
-identically. The module-scope group is different: a module's top level holds
-declarations, stage 1's own source never executes statements there, so the gap
-does not block self-hosting and belongs to Gate 6 (conformance). The
-context-dependent group is also Gate 6, because those blocks can never pass
-unchanged and need a self-contained corpus. Gate 6 closes with the remaining
-cases triaged here and in `spec_conformance_baseline.tsv`; the fixes stay owned
-by the named components.
+The syntax-gap group is empty (closed 2026-11-26) and no longer has a row.
 
-`crates/xulo-cli/tests/readiness_matrix.rs` fails when a row names a component
-path that does not exist. That check only proves the owner is real; that the
-group actually shrinks is proven by `spec_conformance` losing baseline lines at
-Gate 5/Gate 6. These groups are also candidate rows for the capability matrix;
-the harness exists so that removing a baseline line is the visible proof that a
-fix landed.
+All gates are already reached, so these rows are **post-gate cleanup**, not open
+gate criteria. The owner still names the component that must change when a
+baseline line is removed, and `crates/xulo-cli/tests/readiness_matrix.rs` still
+fails when a row names a component path that does not exist. Removing a
+baseline line remains the visible proof that a fix landed.
 
 ### 6.11 Structural equality for aggregates (L13, R9)
 
@@ -812,3 +815,4 @@ pinned spec commits, and the drift-governance ledger state (see
 |---|---|---|---|---|
 | 2026-11-18 | `3c32586` | `spec@815edad` / `std-spec@a2e4cb7` | D-01–D-04 open，D-05 accepted | 首次记录；`XULO_STAGE1_REQUIRED` 已接入 CI；drift-governance §5.4 差分门禁已落地（`drift_gate_reconciles_stage0_and_stage1`），D-06 因标签传播修复而关闭 |
 | 2026-11-26 | `45c0724` + `fix/stage1-drift-ledger` | `spec@815edad` / `std-spec@a2e4cb7` | D-05 accepted；D-01–D-04 已关闭 | C 后端改为 checked 整数运算与 `panic: ` 前缀，浮点按 stage 0 的 plain-decimal 最短形式输出，`u64` 以 `E0005` 拒绝；回归见 `stage1_build.rs` 的三个用例 |
+| 2026-11-26 | `1e3fa0c` + `fix/spec-conformance-syntax-gaps` | `spec@815edad` / `std-spec@a2e4cb7` | unchanged | 修复 conformance runner 的三处假阳性（内联注解残留、插入位置错位、错误码扫描到回显源码），补上 prefix `mut` 参数与 brace 字符串键，默认整数越界补 `E0209`；baseline 46/111，65 通过 |
