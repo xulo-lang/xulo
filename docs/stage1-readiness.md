@@ -460,8 +460,8 @@ recorded in §6.10 rather than in this section.
 ### 6.10 Spec examples that still diverge (T3)
 
 `spec_conformance_baseline.tsv` lists each diverging example with a reason. The
-list currently holds 46 of 111 annotated examples; 65 pass. Counted from the
-baseline reasons, they fall into four groups (25 + 13 + 0 + 8 = 46):
+list currently holds 44 of 111 annotated examples; 67 pass. Counted from the
+baseline reasons, they fall into four groups (25 + 13 + 0 + 6 = 44):
 
 - **Context-dependent examples (25).** The block calls or names a declaration
   that exists only in the surrounding prose (`load_config`, `c_malloc`,
@@ -484,13 +484,13 @@ baseline reasons, they fall into four groups (25 + 13 + 0 + 8 = 46):
   grammar's `xs: mut List<int>` spelling, and a brace map's string key
   (`{ "a": 1 }`). Typed `Map<K, V>{ … }` and `({ a: 1 })` already parsed; their
   remaining cases are the E0221 rule and module-scope statements above.
-- **Semantic gaps (8).** `const` initializer constantness and constant division
-  by zero; the trailing-expression rules (a trailing `;`, and a trailing
-  `unit` expression against a non-`unit` return); empty list/map literals
-  without an expected type (`E0807`/`E0216`); a float literal bound to `int`
-  (masked by an undefined `Status` in the same block); a typed map that
+- **Semantic gaps (6).** The trailing-expression rules (a trailing `;`, and a
+  trailing `unit` expression against a non-`unit` return); empty list/map
+  literals without an expected type (`E0807`/`E0216`); a float literal bound to
+  `int` (masked by an undefined `Status` in the same block); a typed map that
   repeats the expected annotation (`E0221`); and generic inference from the
-  expected type.
+  expected type. The `const` initializer rules (constant expression, division
+  by zero, shift range) now report `E0210` and their two examples pass.
 
 The runner itself had three defects that hid rejected-line failures: an inline
 `// error[E…]` annotation stayed in the staged source as code, a rejected line
@@ -499,7 +499,8 @@ removed, and the code check scanned the whole stderr, so annotation text echoed
 in a source snippet counted as the reported code. Fixing those three (each with
 a regression in `crates/xulo-cli/tests/spec_conformance.rs`) revealed 19
 divergences that were previously masked, cleared 6, and added the `E0209` check
-for an integer literal above `u64::MAX`.
+for an integer literal above `u64::MAX`. The `const` initializer check later
+removed two more lines, so the baseline is 44.
 
 Ownership is recorded as a **component**, not a person: this project is developed
 by agents, so "who fixes it" is better answered by "which crate must change".
@@ -512,7 +513,7 @@ per case).
 |---|---:|---|---|
 | Context-dependent examples | 25 | `crates/xulo-cli/tests/` (self-contained corpus) | self-contained corpus, not a compiler fix |
 | Fragments (module-scope statements) | 13 | `crates/xulo-cli/tests/` (self-contained corpus) | wrap the snippet in a function; not a parser gap |
-| Semantic gaps | 8 | `crates/xulo-semantic` (inference and checking rules) | checking rules |
+| Semantic gaps | 6 | `crates/xulo-semantic` (inference and checking rules) | checking rules |
 
 The syntax-gap group is empty (closed 2026-11-26) and no longer has a row.
 
@@ -821,3 +822,4 @@ pinned spec commits, and the drift-governance ledger state (see
 | 2026-11-26 | `45c0724` + `fix/stage1-drift-ledger` | `spec@815edad` / `std-spec@a2e4cb7` | D-05 accepted；D-01–D-04 已关闭 | C 后端改为 checked 整数运算与 `panic: ` 前缀，浮点按 stage 0 的 plain-decimal 最短形式输出，`u64` 以 `E0005` 拒绝；回归见 `stage1_build.rs` 的三个用例 |
 | 2026-11-26 | `1e3fa0c` + `fix/spec-conformance-syntax-gaps` | `spec@815edad` / `std-spec@a2e4cb7` | unchanged | 修复 conformance runner 的三处假阳性（内联注解残留、插入位置错位、错误码扫描到回显源码），补上 prefix `mut` 参数与 brace 字符串键，默认整数越界补 `E0209`；baseline 46/111，65 通过 |
 | 2026-11-26 | `59d4a4e` + `docs/module-scope-fragments-triage` | `spec@815edad` / `std-spec@a2e4cb7` | unchanged | 13 个 module-scope 示例重分类为“假设在函数体内的片段”（`Program` 只含声明，不是 parser gap）；baseline 仍 46/111 |
+| 2026-11-26 | `62d70e1` + `fix/stage1-const-initializers` | `spec@815edad` / `std-spec@a2e4cb7` | unchanged | `const` 初始化器按常量表达式检查，常量除零/溢出/移位越界报 `E0210`；baseline 44/111，67 通过 |

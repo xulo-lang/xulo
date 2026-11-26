@@ -105,6 +105,15 @@ values, and is left to a future standard-library `std/ui` module.
 
 ### Fixed
 
+- A `const` initializer is now checked as a constant expression. A call is
+  `E0210` ("const initializer is not a constant expression"), and constant
+  arithmetic reports `E0210` for division/remainder by zero, integer overflow,
+  a negative exponent, or a shift amount outside `0..64`; references to another
+  `const` and arithmetic/comparison over constants stay legal. Float constant
+  arithmetic keeps IEEE-754 semantics. Regression:
+  `crates/xulo-semantic/tests/semantic_tests.rs::const_initializer_must_be_a_constant_expression`.
+  This clears the two `const` divergences from the spec baseline (44 known,
+  67 of 111 pass).
 - The conformance runner no longer passes rejected examples vacuously. It now
   strips an inline `// error[E…]` annotation from the staged source, keeps a
   fully-commented statement's trailing annotation as a comment, inserts a

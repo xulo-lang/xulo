@@ -480,15 +480,16 @@ Not in any gate's exit criterion. Each item must still be closed or explicitly
 re-scoped before the gate it informs.
 
 - [x] **T3f** Triage the divergences in `spec_conformance_baseline.tsv` by
-      group. The current baseline holds 46: 25 context-dependent, 13 fragments
+      group. The current baseline holds 44: 25 context-dependent, 13 fragments
       that assume a function body (not module-scope statements: `Program` in
-      `spec/grammar.md` holds declarations only), 0 syntax gaps, 8 semantic
+      `spec/grammar.md` holds declarations only), 0 syntax gaps, 6 semantic
       gaps. Each group names an owner component and its scope in
       `stage1-readiness.md` §6.10; the component paths are checked by
       `readiness_matrix`. All gates are reached, so these rows are post-gate
       cleanup. Fixing the runner's three false-positive paths cleared 6 cases,
-      added `E0209` for a default integer literal above `u64::MAX`, and exposed
-      19 previously masked divergences.
+      added `E0209` for a default integer literal above `u64::MAX`, exposed 19
+      previously masked divergences, and the `const` initializer `E0210` rules
+      cleared 2 more.
 - [x] **T3c** Extend the runner to `// runs:` blocks with expected output.
       The pinned spec has no `runs:` examples, so local cases live under
       `crates/xulo-cli/tests/runs_cases/basics.md`; the runner scans them

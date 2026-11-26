@@ -4053,6 +4053,28 @@ macro_rules! record_first {
     };
 }
 
+/// A `const` initializer's value when it can be folded without resolving other
+/// `const` bindings, or `Unknown` when it depends on one.
+enum ConstValue {
+    Known(ConstNumber),
+    Unknown,
+}
+
+#[derive(Clone, Copy)]
+enum ConstNumber {
+    Int(i128),
+    Float(f64),
+}
+
+impl ConstNumber {
+    fn as_f64(self) -> f64 {
+        match self {
+            ConstNumber::Int(n) => n as f64,
+            ConstNumber::Float(n) => n,
+        }
+    }
+}
+
 impl Analyzer {
     fn warn(&mut self, message: String) {
         self.warnings
@@ -5098,6 +5120,11 @@ impl Analyzer {
                     return Ok(());
                 }
 
+                if binding.is_const
+                    && let Some(value) = &binding.value
+                {
+                    self.require_constant(value)?;
+                }
                 let mut ok = true;
                 if let Some(annotation) = &binding.type_annotation
                     && !self.assignable(&value_type, annotation)
@@ -9295,6 +9322,210 @@ impl Analyzer {
             }
             other => Ok(literal_type(other)),
         }
+    }
+
+    /// `const` initializers must be constant expressions
+    /// (`statements/let-and-assignment.md`): a literal, another `const`, or a
+    /// computation over constants. A call is never constant. Constant
+    /// arithmetic errors (division/remainder by zero, overflow, a shift amount
+    /// outside `0..64`) are `E0210` (`checking-rules.md`).
+    fn constant_value(&self, expr: &Expression) -> SResult<ConstValue> {
+        match expr {
+            Expression::Literal { value, .. } => match value {
+                Literal::Int(n) => Ok(ConstValue::Known(ConstNumber::Int(*n))),
+                Literal::Float(n) => Ok(ConstValue::Known(ConstNumber::Float(*n))),
+                Literal::List(items) => {
+                    for item in items {
+                        self.require_constant(item)?;
+                    }
+                    Ok(ConstValue::Unknown)
+                }
+                Literal::Object(fields) => {
+                    for field in fields {
+                        match field {
+                            ObjectField::Field { value, .. } => self.require_constant(value)?,
+                            ObjectField::Spread { value } => self.require_constant(value)?,
+                        }
+                    }
+                    Ok(ConstValue::Unknown)
+                }
+                Literal::String(_) | Literal::Boolean(_) | Literal::Null => Ok(ConstValue::Unknown),
+            },
+            Expression::Identifier { name, .. } => {
+                if self.const_generics.contains(name) {
+                    return Ok(ConstValue::Unknown);
+                }
+                match self.table.lookup(name) {
+                    Some(symbol) if symbol.is_const && !symbol.is_param => Ok(ConstValue::Unknown),
+                    _ => Err(self.constant_error(expr, "is not a constant expression")),
+                }
+            }
+            Expression::Unary(unary) => {
+                let operand = self.constant_value(&unary.operand)?;
+                match (unary.operator, operand) {
+                    (
+                        xulo_core::ast::UnaryOperator::Neg,
+                        ConstValue::Known(ConstNumber::Int(n)),
+                    ) => match n.checked_neg() {
+                        Some(value) => Ok(ConstValue::Known(ConstNumber::Int(value))),
+                        None => {
+                            Err(self.constant_error(expr, "overflows in a constant expression"))
+                        }
+                    },
+                    (
+                        xulo_core::ast::UnaryOperator::Neg,
+                        ConstValue::Known(ConstNumber::Float(n)),
+                    ) => Ok(ConstValue::Known(ConstNumber::Float(-n))),
+                    (_, ConstValue::Known(_)) => Ok(ConstValue::Unknown),
+                    _ => Ok(ConstValue::Unknown),
+                }
+            }
+            Expression::BinaryOp(binary) => {
+                let left = self.constant_value(&binary.left)?;
+                let right = self.constant_value(&binary.right)?;
+                self.constant_binary(expr, binary.operator, left, right)
+            }
+            Expression::Ternary(ternary) => {
+                self.require_constant(&ternary.condition)?;
+                self.require_constant(&ternary.then_value)?;
+                self.require_constant(&ternary.else_value)?;
+                Ok(ConstValue::Unknown)
+            }
+            Expression::Nullish(nullish) => {
+                self.require_constant(&nullish.left)?;
+                self.require_constant(&nullish.right)?;
+                Ok(ConstValue::Unknown)
+            }
+            Expression::Range(range) => {
+                self.require_constant(&range.start)?;
+                self.require_constant(&range.end)?;
+                Ok(ConstValue::Unknown)
+            }
+            Expression::Is(is) => {
+                self.require_constant(&is.expr)?;
+                Ok(ConstValue::Unknown)
+            }
+            Expression::Spread { expr: inner, .. } => self.constant_value(inner),
+            Expression::Tuple { items, .. } => {
+                for item in items {
+                    self.require_constant(item)?;
+                }
+                Ok(ConstValue::Unknown)
+            }
+            Expression::TypedMap(map) => {
+                for entry in &map.entries {
+                    self.require_constant(&entry.key)?;
+                    self.require_constant(&entry.value)?;
+                }
+                Ok(ConstValue::Unknown)
+            }
+            _ => Err(self.constant_error(expr, "is not a constant expression")),
+        }
+    }
+
+    /// Reject a non-constant initializer.
+    fn require_constant(&self, expr: &Expression) -> SResult<()> {
+        self.constant_value(expr)?;
+        Ok(())
+    }
+
+    fn constant_binary(
+        &self,
+        expr: &Expression,
+        operator: BinaryOperator,
+        left: ConstValue,
+        right: ConstValue,
+    ) -> SResult<ConstValue> {
+        let (ConstValue::Known(a), ConstValue::Known(b)) = (left, right) else {
+            return Ok(ConstValue::Unknown);
+        };
+        match (a, b) {
+            (ConstNumber::Int(x), ConstNumber::Int(y)) => {
+                let value = match operator {
+                    BinaryOperator::Add => x.checked_add(y).ok_or_else(|| {
+                        self.constant_error(expr, "overflows in a constant expression")
+                    })?,
+                    BinaryOperator::Sub => x.checked_sub(y).ok_or_else(|| {
+                        self.constant_error(expr, "overflows in a constant expression")
+                    })?,
+                    BinaryOperator::Mul => x.checked_mul(y).ok_or_else(|| {
+                        self.constant_error(expr, "overflows in a constant expression")
+                    })?,
+                    BinaryOperator::Div => {
+                        if y == 0 {
+                            return Err(self
+                                .constant_error(expr, "divides by zero in a constant expression"));
+                        }
+                        x.checked_div(y).ok_or_else(|| {
+                            self.constant_error(expr, "overflows in a constant expression")
+                        })?
+                    }
+                    BinaryOperator::Mod => {
+                        if y == 0 {
+                            return Err(self.constant_error(
+                                expr,
+                                "takes a remainder by zero in a constant expression",
+                            ));
+                        }
+                        x.checked_rem(y).ok_or_else(|| {
+                            self.constant_error(expr, "overflows in a constant expression")
+                        })?
+                    }
+                    BinaryOperator::Pow => {
+                        let exponent = u32::try_from(y).map_err(|_| {
+                            self.constant_error(
+                                expr,
+                                "has a negative exponent in a constant expression",
+                            )
+                        })?;
+                        x.checked_pow(exponent).ok_or_else(|| {
+                            self.constant_error(expr, "overflows in a constant expression")
+                        })?
+                    }
+                    BinaryOperator::Shl => {
+                        if !(0..64).contains(&y) {
+                            return Err(self.constant_error(
+                                expr,
+                                "shifts by an out-of-range amount in a constant expression",
+                            ));
+                        }
+                        ((x as i64).wrapping_shl(y as u32)) as i128
+                    }
+                    BinaryOperator::Shr => {
+                        if !(0..64).contains(&y) {
+                            return Err(self.constant_error(
+                                expr,
+                                "shifts by an out-of-range amount in a constant expression",
+                            ));
+                        }
+                        ((x as i64) >> (y as u32)) as i128
+                    }
+                    BinaryOperator::BitAnd => ((x as i64) & (y as i64)) as i128,
+                    BinaryOperator::BitOr => ((x as i64) | (y as i64)) as i128,
+                    BinaryOperator::Xor => ((x as i64) ^ (y as i64)) as i128,
+                    _ => return Ok(ConstValue::Unknown),
+                };
+                Ok(ConstValue::Known(ConstNumber::Int(value)))
+            }
+            (a, b) => {
+                let (x, y) = (a.as_f64(), b.as_f64());
+                let value = match operator {
+                    BinaryOperator::Add => x + y,
+                    BinaryOperator::Sub => x - y,
+                    BinaryOperator::Mul => x * y,
+                    BinaryOperator::Div => x / y,
+                    BinaryOperator::Mod => x % y,
+                    BinaryOperator::Pow => x.powf(y),
+                    _ => return Ok(ConstValue::Unknown),
+                };
+                Ok(ConstValue::Known(ConstNumber::Float(value)))
+            }
+        }
+    }
+
+    fn constant_error(&self, expr: &Expression, detail: &str) -> XuloError {
+        self.err_code("E0210", format!("const initializer {detail}"))
+            .at(expr.span().clone())
     }
 
     /// Run `f` with `no_await_depth` incremented, so `await` inside `if`/

@@ -25,8 +25,6 @@ spec/statements/expression-statements.md:75 ok	fragment assumes a function body;
 spec/statements/expression-statements.md:87 ok	fragment assumes a function body; spec/grammar.md's Program has no module-scope statements
 spec/statements/let-and-assignment.md:45 ok	fragment assumes a function body; spec/grammar.md's Program has no module-scope statements
 spec/statements/let-and-assignment.md:63 ok	fragment assumes a function body; spec/grammar.md's Program has no module-scope statements
-spec/statements/let-and-assignment.md:91 error	`const` initializer constantness is not enforced; a call is accepted
-spec/statements/let-and-assignment.md:92 error	constant division by zero is accepted instead of a compile-time error
 spec/statements/return-and-block.md:128 error	a trailing `unit` expression is accepted against a declared non-`unit` return type
 spec/statements/return-and-block.md:40 error	a trailing `;` is only W0001; the spec makes it an error
 spec/testing.md:353 ok	the example uses the legacy bare `Time::sleep` head, which stage 0 rejects with E0607

@@ -18,22 +18,22 @@ fn compile_and_run(source: &str) -> Vec<String> {
 
 #[test]
 fn aggregate_const_initializer_runs_once_before_main() {
+    // A `const` initializer is a constant expression (a call is E0210), so the
+    // observable is that the aggregate exists before `main` and every
+    // reference shares one value rather than re-evaluating the literal.
     let out = compile_and_run(
-        r#"pub const values: List<number> = build()
-
-fn build(): List<number> {
-    print("init")
-    return [1, 2]
-}
+        r#"const values: List<number> = [1, 2]
 
 fn main() {
     print("before")
     print(values)
+    let alias = values
+    alias.push(3)
     print(values)
 }
 "#,
     );
-    assert_eq!(out, vec!["init", "before", "[1, 2]", "[1, 2]"]);
+    assert_eq!(out, vec!["before", "[1, 2]", "[1, 2, 3]"]);
 }
 
 #[test]

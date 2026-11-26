@@ -6283,6 +6283,27 @@ fn indirection_breaks_the_recursive_struct_rule() {
 }
 
 #[test]
+fn const_initializer_must_be_a_constant_expression() {
+    let err =
+        analyze_src("fn compute(): int { 42 }\nconst BAD = compute()\nfn main() { let x = BAD }")
+            .expect_err("a call is not a constant expression");
+    assert_eq!(err.code(), "E0210", "got: {}", err.message);
+
+    let err = analyze_src("const ZERO = 1 / 0\nfn main() { let x = ZERO }")
+        .expect_err("constant division by zero");
+    assert_eq!(err.code(), "E0210", "got: {}", err.message);
+
+    let err = analyze_src("const SHIFTED = 1 << 64\nfn main() { let x = SHIFTED }")
+        .expect_err("constant shift amount out of range");
+    assert_eq!(err.code(), "E0210", "got: {}", err.message);
+
+    analyze_src("const A = 2\nconst B = A * 3\nconst C = B > 5\nfn main() { let x = B }")
+        .expect("arithmetic and comparison over constants stay legal");
+    analyze_src("const F = 1.0 / 0.0\nfn main() { let x = F }")
+        .expect("float constant division follows IEEE-754");
+}
+
+#[test]
 fn default_integer_literal_above_u64_max_is_e0209() {
     let err = analyze_src("fn main() { let big = 99999999999999999999 }")
         .expect_err("a literal above u64::MAX has no default type");
