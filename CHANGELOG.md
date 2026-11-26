@@ -26,6 +26,12 @@ values, and is left to a future standard-library `std/ui` module.
 
 ### Changed
 
+- The conformance triage now classifies the 13 examples that write statements at
+  module scope as **fragments that assume a function body**, not as a
+  module-scope-statement parser gap: `spec/grammar.md` defines `Program` as
+  `{ HeaderItem } { Declaration } [ Entry ]`, so module scope holds
+  declarations only. The fix is a self-contained corpus that wraps the snippet,
+  tracked on the `crates/xulo-cli/tests/` side.
 - The AOT differential now accepts `@aot-failure-shape <platform>:` (T13 option
   c). Examples that declare it must fail on both paths with the same normalized
   runtime message; stdout and diagnostic decoration are not compared, so the

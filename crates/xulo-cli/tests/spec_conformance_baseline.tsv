@@ -1,30 +1,30 @@
 # Spec conformance divergences, triaged in docs/stage1-readiness.md §6.
 # Format: <case id>\t<reason>. Regenerate with XULO_SPEC_CONFORMANCE_BLESS=1;
 # review every line you add or remove, and update the readiness matrix.
-spec/builtins/intrinsic-functions.md:174 ok	module-scope `assert(...)` is a syntax error (E0002); the example assumes a function body
+spec/builtins/intrinsic-functions.md:174 ok	fragment assumes a function body; spec/grammar.md's Program has no module-scope statements
 spec/concurrency.md:138 ok	depends on `load_config`/`gather`/`transmit` declared only in the surrounding prose
 spec/concurrency.md:280 ok	`AppState` (shared type) is declared only in the surrounding prose, so E0410 cannot be exercised
 spec/concurrency.md:282 error	`AppState` (shared type) is declared only in the surrounding prose, so E0410 cannot be exercised
 spec/error-handling.md:262 ok	`poll` is declared only in the surrounding prose
 spec/error-handling.md:31 ok	`User`/`LoadError` are declared only in the surrounding prose
-spec/expressions/calls.md:58 ok	module-scope expression statement is a syntax error (E0002)
+spec/expressions/calls.md:58 ok	fragment assumes a function body; spec/grammar.md's Program has no module-scope statements
 spec/expressions/literals.md:146 error	an empty list literal without an expected type is accepted; the spec's E0807 rule is not enforced
 spec/expressions/literals.md:196 error	E0221 (a typed map literal that repeats the expected annotation) is not implemented
 spec/expressions/literals.md:209 error	an empty map literal without an expected type is accepted; the spec's E0216 rule is not enforced
-spec/expressions/literals.md:217 ok	module-scope expression statement is a syntax error (E0002)
+spec/expressions/literals.md:217 ok	fragment assumes a function body; spec/grammar.md's Program has no module-scope statements
 spec/ffi.md:212 error	`c_malloc`/`c_free` are extern imports declared only in the surrounding prose
 spec/ffi.md:221 ok	`c_malloc`/`c_free` are extern imports declared only in the surrounding prose
-spec/functions.md:43 ok	module-scope expression statement is a syntax error (E0002)
+spec/functions.md:43 ok	fragment assumes a function body; spec/grammar.md's Program has no module-scope statements
 spec/memory-and-runtime.md:525 ok	`fill` is declared only in the surrounding prose
-spec/statements/README.md:66 ok	module-scope expression statements are a syntax error (E0002)
-spec/statements/expression-statements.md:24 ok	module-scope expression statement is a syntax error (E0002)
-spec/statements/expression-statements.md:38 ok	module-scope expression statement is a syntax error (E0002)
-spec/statements/expression-statements.md:52 ok	module-scope expression statement is a syntax error (E0002)
-spec/statements/expression-statements.md:64 ok	module-scope expression statement is a syntax error (E0002)
-spec/statements/expression-statements.md:75 ok	module-scope expression statement is a syntax error (E0002)
-spec/statements/expression-statements.md:87 ok	module-scope expression statement is a syntax error (E0002)
-spec/statements/let-and-assignment.md:45 ok	module-scope assignment (`p.x = 1`) is a syntax error (E0002)
-spec/statements/let-and-assignment.md:63 ok	module-scope assignment is a syntax error (E0002)
+spec/statements/README.md:66 ok	fragment assumes a function body; spec/grammar.md's Program has no module-scope statements
+spec/statements/expression-statements.md:24 ok	fragment assumes a function body; spec/grammar.md's Program has no module-scope statements
+spec/statements/expression-statements.md:38 ok	fragment assumes a function body; spec/grammar.md's Program has no module-scope statements
+spec/statements/expression-statements.md:52 ok	fragment assumes a function body; spec/grammar.md's Program has no module-scope statements
+spec/statements/expression-statements.md:64 ok	fragment assumes a function body; spec/grammar.md's Program has no module-scope statements
+spec/statements/expression-statements.md:75 ok	fragment assumes a function body; spec/grammar.md's Program has no module-scope statements
+spec/statements/expression-statements.md:87 ok	fragment assumes a function body; spec/grammar.md's Program has no module-scope statements
+spec/statements/let-and-assignment.md:45 ok	fragment assumes a function body; spec/grammar.md's Program has no module-scope statements
+spec/statements/let-and-assignment.md:63 ok	fragment assumes a function body; spec/grammar.md's Program has no module-scope statements
 spec/statements/let-and-assignment.md:91 error	`const` initializer constantness is not enforced; a call is accepted
 spec/statements/let-and-assignment.md:92 error	constant division by zero is accepted instead of a compile-time error
 spec/statements/return-and-block.md:128 error	a trailing `unit` expression is accepted against a declared non-`unit` return type

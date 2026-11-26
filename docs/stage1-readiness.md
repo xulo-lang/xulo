@@ -470,11 +470,15 @@ baseline reasons, they fall into four groups (25 + 13 + 0 + 8 = 46):
   the missing declarations, not a compiler fix. This group includes the two
   `AppState` examples that cannot reach E0410 and the `Time::sleep` example
   whose bare module head stage 0 rejects with E0607.
-- **Module-scope statements (13).** The spec writes expression statements and
-  assignments at module scope; stage 0 accepts module-scope `let` but rejects
-  module-scope `x = …`, `xs.sort()`, `assert(…)`, and a parenthesized
-  expression statement (`({ a: 1 })`) with `E0002`. This is a
-  parser/top-level-statement gap, not covered elsewhere in this matrix.
+- **Fragments that assume a function body (13).** The spec writes expression
+  statements, assignments, and `assert(…)` at module scope inside illustrative
+  snippets, but `spec/grammar.md` defines
+  `Program = { HeaderItem } { Declaration } [ Entry ]`: module scope holds
+  declarations only, so these are fragments of a function body, not a missing
+  language feature. The fix is a self-contained conformance corpus that wraps
+  the snippet in a function, not a parser change. A parenthesized map literal
+  (`({ a: 1 })`) in statement position belongs to this group for the same
+  reason.
 - **Syntax gaps (0).** Closed on 2026-11-26. The parser now accepts the pinned
   examples' prefix parameter mode (`fn watch(mut xs: List<int>)`) beside the
   grammar's `xs: mut List<int>` spelling, and a brace map's string key
@@ -507,7 +511,7 @@ per case).
 | Group | Cases | Owner (component) | Scope |
 |---|---:|---|---|
 | Context-dependent examples | 25 | `crates/xulo-cli/tests/` (self-contained corpus) | self-contained corpus, not a compiler fix |
-| Module-scope statements | 13 | `crates/xulo-parser` (top-level statements) | top-level statements |
+| Fragments (module-scope statements) | 13 | `crates/xulo-cli/tests/` (self-contained corpus) | wrap the snippet in a function; not a parser gap |
 | Semantic gaps | 8 | `crates/xulo-semantic` (inference and checking rules) | checking rules |
 
 The syntax-gap group is empty (closed 2026-11-26) and no longer has a row.
@@ -816,3 +820,4 @@ pinned spec commits, and the drift-governance ledger state (see
 | 2026-11-18 | `3c32586` | `spec@815edad` / `std-spec@a2e4cb7` | D-01–D-04 open，D-05 accepted | 首次记录；`XULO_STAGE1_REQUIRED` 已接入 CI；drift-governance §5.4 差分门禁已落地（`drift_gate_reconciles_stage0_and_stage1`），D-06 因标签传播修复而关闭 |
 | 2026-11-26 | `45c0724` + `fix/stage1-drift-ledger` | `spec@815edad` / `std-spec@a2e4cb7` | D-05 accepted；D-01–D-04 已关闭 | C 后端改为 checked 整数运算与 `panic: ` 前缀，浮点按 stage 0 的 plain-decimal 最短形式输出，`u64` 以 `E0005` 拒绝；回归见 `stage1_build.rs` 的三个用例 |
 | 2026-11-26 | `1e3fa0c` + `fix/spec-conformance-syntax-gaps` | `spec@815edad` / `std-spec@a2e4cb7` | unchanged | 修复 conformance runner 的三处假阳性（内联注解残留、插入位置错位、错误码扫描到回显源码），补上 prefix `mut` 参数与 brace 字符串键，默认整数越界补 `E0209`；baseline 46/111，65 通过 |
+| 2026-11-26 | `59d4a4e` + `docs/module-scope-fragments-triage` | `spec@815edad` / `std-spec@a2e4cb7` | unchanged | 13 个 module-scope 示例重分类为“假设在函数体内的片段”（`Program` 只含声明，不是 parser gap）；baseline 仍 46/111 |
