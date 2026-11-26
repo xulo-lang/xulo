@@ -4,16 +4,49 @@ static int xr_is_num(XVal v) { return v.tag == XT_INT || v.tag == XT_FLOAT; }
 
 static double xr_as_double(XVal v) { return v.tag == XT_INT ? (double)v.i : v.f; }
 
-static long long xr_wrap_add(long long a, long long b) {
-    return (long long)((unsigned long long)a + (unsigned long long)b);
+// Integral arithmetic is checked, matching the stage 0 runtime's `xulo_int_*`
+// helpers: a result that leaves the 64-bit range is a runtime failure, not a
+// silent wrap (spec `types/primitive-types.md`, "Overflow"; drift D-01).
+static long long xr_checked_add(long long a, long long b) {
+    if ((b > 0 && a > LLONG_MAX - b) || (b < 0 && a < LLONG_MIN - b)) {
+        xr_fail("integer overflow");
+    }
+    return a + b;
 }
 
-static long long xr_wrap_sub(long long a, long long b) {
-    return (long long)((unsigned long long)a - (unsigned long long)b);
+static long long xr_checked_sub(long long a, long long b) {
+    if ((b > 0 && a < LLONG_MIN + b) || (b < 0 && a > LLONG_MAX + b)) {
+        xr_fail("integer overflow");
+    }
+    return a - b;
 }
 
-static long long xr_wrap_mul(long long a, long long b) {
-    return (long long)((unsigned long long)a * (unsigned long long)b);
+static long long xr_checked_mul(long long a, long long b) {
+    if (a == 0 || b == 0) {
+        return 0;
+    }
+    if (a == -1 && b == LLONG_MIN) {
+        xr_fail("integer overflow");
+    }
+    if (b == -1 && a == LLONG_MIN) {
+        xr_fail("integer overflow");
+    }
+    if (a > 0) {
+        if (b > 0) {
+            if (a > LLONG_MAX / b) {
+                xr_fail("integer overflow");
+            }
+        } else if (b < LLONG_MIN / a) {
+            xr_fail("integer overflow");
+        }
+    } else if (b > 0) {
+        if (a < LLONG_MIN / b) {
+            xr_fail("integer overflow");
+        }
+    } else if (a < LLONG_MAX / b) {
+        xr_fail("integer overflow");
+    }
+    return a * b;
 }
 
 XVal xr_add(XVal a, XVal b) {
@@ -27,7 +60,7 @@ XVal xr_add(XVal a, XVal b) {
         return out;
     }
     if (a.tag == XT_INT && b.tag == XT_INT) {
-        return xr_int(xr_wrap_add(a.i, b.i));
+        return xr_int(xr_checked_add(a.i, b.i));
     }
     if (xr_is_num(a) && xr_is_num(b)) {
         return xr_float(xr_as_double(a) + xr_as_double(b));
@@ -38,7 +71,7 @@ XVal xr_add(XVal a, XVal b) {
 
 XVal xr_sub(XVal a, XVal b) {
     if (a.tag == XT_INT && b.tag == XT_INT) {
-        return xr_int(xr_wrap_sub(a.i, b.i));
+        return xr_int(xr_checked_sub(a.i, b.i));
     }
     if (xr_is_num(a) && xr_is_num(b)) {
         return xr_float(xr_as_double(a) - xr_as_double(b));
@@ -49,7 +82,7 @@ XVal xr_sub(XVal a, XVal b) {
 
 XVal xr_mul(XVal a, XVal b) {
     if (a.tag == XT_INT && b.tag == XT_INT) {
-        return xr_int(xr_wrap_mul(a.i, b.i));
+        return xr_int(xr_checked_mul(a.i, b.i));
     }
     if (xr_is_num(a) && xr_is_num(b)) {
         return xr_float(xr_as_double(a) * xr_as_double(b));
@@ -62,6 +95,9 @@ XVal xr_div(XVal a, XVal b) {
     if (a.tag == XT_INT && b.tag == XT_INT) {
         if (b.i == 0) {
             xr_fail("division by zero");
+        }
+        if (a.i == LLONG_MIN && b.i == -1) {
+            xr_fail("integer overflow");
         }
         return xr_int(a.i / b.i);
     }
@@ -76,6 +112,9 @@ XVal xr_mod(XVal a, XVal b) {
     if (a.tag == XT_INT && b.tag == XT_INT) {
         if (b.i == 0) {
             xr_fail("division by zero");
+        }
+        if (a.i == LLONG_MIN && b.i == -1) {
+            xr_fail("integer overflow");
         }
         return xr_int(a.i % b.i);
     }
@@ -93,9 +132,9 @@ XVal xr_pow(XVal a, XVal b) {
         long long n = b.i;
         while (n > 0) {
             if ((n & 1) == 1) {
-                result = xr_wrap_mul(result, base);
+                result = xr_checked_mul(result, base);
             }
-            base = xr_wrap_mul(base, base);
+            base = xr_checked_mul(base, base);
             n >>= 1;
         }
         return xr_int(result);
@@ -105,7 +144,10 @@ XVal xr_pow(XVal a, XVal b) {
 
 XVal xr_neg(XVal a) {
     if (a.tag == XT_INT) {
-        return xr_int(xr_wrap_sub(0, a.i));
+        if (a.i == LLONG_MIN) {
+            xr_fail("integer overflow");
+        }
+        return xr_int(-a.i);
     }
     if (a.tag == XT_FLOAT) {
         return xr_float(-a.f);

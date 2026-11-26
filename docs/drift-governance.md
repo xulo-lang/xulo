@@ -198,11 +198,16 @@ Status values:
 
 | ID | Deviation | Evidence | Removal | Status |
 |---|---|---|---|---|
-| D-01 | Integral `+`/`-`/`*` wrap silently in the C backend; Rust traps with `panic: integer overflow` | `xuloc/runtime/runtime.c` `xr_wrap_*` vs `crates/xulo-runtime/src/runtime/scalar.rs::xulo_int_add` | C backend traps on overflow, as Rust does | open |
-| D-02 | Float printing picks the shortest round-tripping `%g`, but C's exponent form (`1e+300`) still differs from Rust's plain-decimal `Display` | `xr_format_float` vs `xulo_std::format::format_number` | C backend renders the same plain-decimal text as `xulo_std` for every finite value | open |
-| D-03 | Runtime failure text differs (`division by zero` vs `panic: division by zero`) | `xr_fail` vs `trap` | `xr_fail` prints the same `panic: ` prefix and text as `trap` | open |
-| D-04 | `u64` has no tag in the C backend and is treated as `int` | `xuloc/runtime/runtime.c` `XT_*` enum | Add a `u64` tag to the C backend, or reject `u64` with `E0005` in the bootstrap subset | open |
 | D-05 | R8 value semantics are not reproduced: structs are reference-shaped | `xuloc/BOOTSTRAP.md` item 20 | Implement value semantics, or reject the dependent constructs in the bootstrap subset. Scope: bootstrap subset only | accepted |
+
+D-01–D-04 were closed on 2026-11-26 (branch `fix/stage1-drift-ledger`): the C
+backend's `xr_checked_add/sub/mul` trap on overflow like `xulo_int_*`, float
+text uses stage 0's plain-decimal shortest form, `xr_fail` prints the
+`panic: ` prefix, and `u64` is rejected with `E0005` rather than mis-tagged as
+`int`. Regressions live in
+`crates/xupm/tests/stage1_build.rs::stage1_c_backend_traps_like_the_stage0_runtime`,
+`::stage1_c_backend_matches_stage0_float_formatting`, and
+`::stage1_rejects_u64_in_the_bootstrap_subset`.
 
 ## 9. CI tiers
 

@@ -391,6 +391,157 @@ fn stage1_runs_the_lowered_examples() {
     }
 }
 
+/// D-02 (closed): the C runtime renders floats exactly like stage 0, including
+/// magnitudes that `%g` would spell in exponent form and the signed-zero case.
+#[test]
+fn stage1_c_backend_matches_stage0_float_formatting() {
+    if !enabled() {
+        return;
+    }
+    let root = repo_root();
+    let stage1 = stage1_binary();
+    let work = unique_dir("float_format");
+    let source = work.join("floats.xulo");
+    std::fs::write(
+        &source,
+        r#"fn main() {
+    print(0.1 + 0.2)
+    print(1.0 / 3.0)
+    print(3.141592653589793)
+    print(std::math::pow(10.0, 300.0))
+    print(std::math::pow(10.0, -300.0))
+    print(std::math::pow(10.0, 21.0))
+    print(-0.0)
+    print(9223372036854775807)
+    print(-9223372036854775808)
+    print(-9223372036854775807 - 1)
+}
+"#,
+    )
+    .expect("the float probe should be writable");
+
+    let interpreted = Command::new(XUPM)
+        .args(["run", source.to_str().expect("a UTF-8 path")])
+        .current_dir(&root)
+        .output()
+        .expect("xupm run should start");
+    assert_success(&interpreted, "the interpreter float probe");
+
+    let program = build_stage1_program(&stage1, &root, &source, &work, "floats");
+    let native = run_program(&program);
+    assert_success(&native, "the stage 1 float probe");
+    assert_eq!(
+        render_lines(&native.stdout),
+        render_lines(&interpreted.stdout),
+        "the C backend's float text must match the interpreter"
+    );
+}
+
+/// D-01/D-03 (closed): checked integral arithmetic and the runtime-failure
+/// prefix. Stage 0's native runtime traps with `panic: <message>`; the C
+/// backend now does the same instead of wrapping or printing the bare message.
+#[test]
+fn stage1_c_backend_traps_like_the_stage0_runtime() {
+    if !enabled() {
+        return;
+    }
+    let root = repo_root();
+    let stage1 = stage1_binary();
+    let work = unique_dir("runtime_traps");
+    let cases = [
+        (
+            "overflow",
+            "fn main() {\n    let a: int = 9223372036854775807\n    let b: int = 1\n    print(a + b)\n}\n",
+            "integer overflow",
+        ),
+        (
+            "division",
+            "fn main() {\n    let a: int = 1\n    let b: int = 0\n    print(a / b)\n}\n",
+            "division by zero",
+        ),
+        ("panic", "fn main() {\n    panic(\"boom\")\n}\n", "boom"),
+    ];
+    for (name, source, message) in cases {
+        let file = work.join(format!("{name}.xulo"));
+        std::fs::write(&file, source).expect("the trap probe should be writable");
+        let program = build_stage1_program(&stage1, &root, &file, &work, name);
+        let run = run_program(&program);
+        assert_eq!(
+            run.status.code(),
+            Some(1),
+            "{name} must exit 1, stdout:\n{}",
+            render(&run.stdout)
+        );
+        assert_eq!(
+            render_lines(&run.stderr),
+            format!("panic: {message}\n"),
+            "{name} must report the stage 0 runtime message"
+        );
+    }
+}
+
+/// D-04 (closed): the bootstrap runtime has one signed 64-bit slot, so `u64`
+/// (annotations and literals above `i64::MAX`) is rejected with `E0005`
+/// instead of being silently treated as `int`.
+#[test]
+fn stage1_rejects_u64_in_the_bootstrap_subset() {
+    if !enabled() {
+        return;
+    }
+    let root = repo_root();
+    let stage1 = stage1_binary();
+    let work = unique_dir("u64");
+    let cases = [
+        (
+            "annotation",
+            "fn main() {\n    let x: u64 = 1\n    print(x)\n}\n",
+            "u64",
+        ),
+        (
+            "literal",
+            "fn main() {\n    print(18446744073709551615)\n}\n",
+            "i64::MAX",
+        ),
+        (
+            "hex-literal",
+            "fn main() {\n    print(0x8000000000000000)\n}\n",
+            "i64::MAX",
+        ),
+    ];
+    for (name, source, needle) in cases {
+        let file = work.join(format!("{name}.xulo"));
+        std::fs::write(&file, source).expect("the u64 probe should be writable");
+        let output = Command::new(&stage1)
+            .args(["build", file.to_str().expect("a UTF-8 path")])
+            .current_dir(&root)
+            .env(
+                "XULO_STAGE1_OUT",
+                work.join(format!("{name}{}", exe_suffix())),
+            )
+            .env("XULO_STAGE1_C", work.join(format!("{name}.c")))
+            .env_remove("XULO_STAGE1_MODE")
+            .env_remove("XULO_STAGE1_FILE")
+            .output()
+            .expect("stage 1 should start");
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "{name} must be rejected, stdout:\n{}\nstderr:\n{}",
+            render(&output.stdout),
+            render(&output.stderr)
+        );
+        let stderr = render_lines(&output.stderr);
+        assert!(
+            stderr.contains("error[E0005]"),
+            "{name} must be a codegen rejection, got:\n{stderr}"
+        );
+        assert!(
+            stderr.contains(needle),
+            "{name} must name `{needle}`, got:\n{stderr}"
+        );
+    }
+}
+
 /// WP6: stage 1 compiles itself, producing a native stage 2 binary.
 #[test]
 fn stage1_builds_itself_into_stage2() {

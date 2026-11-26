@@ -234,6 +234,23 @@ pub fn cl_add_const(e: mut Emitter, node: Node) {
     )
 }
 
+// The bootstrap runtime is dynamically typed and has a single signed 64-bit
+// integer slot. `u64` values above `i64::MAX` cannot be represented, so the
+// subset rejects the type outright instead of mis-tagging it as `int`
+// (drift-governance.md D-04). Stage 1's own source does not use `u64`.
+fn cl_reject_u64(e: mut Emitter, node: Node) {
+    if e.error != "" {
+        return
+    }
+    if node.kind == "TypeName" and node.value == "u64" {
+        bk_state::co_fail(e, "`u64` is outside the bootstrap subset")
+        return
+    }
+    for child in node.children {
+        cl_reject_u64(e, child)
+    }
+}
+
 pub fn cl_collect_program(e: mut Emitter, node: Node, dir: string) {
     if e.error != "" {
         return
@@ -266,6 +283,10 @@ pub fn cl_collect_program(e: mut Emitter, node: Node, dir: string) {
                 let parsed: ParseResult = parse(lexed.tokens)
                 if parsed.error != "" {
                     bk_state::co_fail(e, path + ": " + parsed.error)
+                    return
+                }
+                cl_reject_u64(e, parsed.root)
+                if e.error != "" {
                     return
                 }
                 for child in parsed.root.children {
@@ -318,6 +339,10 @@ pub fn cl_collect_program(e: mut Emitter, node: Node, dir: string) {
 
 pub fn compile(root: Node, entry: string, runtime_path: string): BuildResult {
     let mut emitter = new_emitter()
+    cl_reject_u64(emitter, root)
+    if emitter.error != "" {
+        return BuildResult(ok: false, message: emitter.error, source: "")
+    }
     cl_collect_program(emitter, root, bk_util::dir_of(entry))
     if emitter.error != "" {
         return BuildResult(ok: false, message: emitter.error, source: "")

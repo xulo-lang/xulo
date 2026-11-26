@@ -20,6 +20,7 @@
 #define _DARWIN_C_SOURCE
 #endif
 
+#include <limits.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -32,6 +33,7 @@
 #include <direct.h>
 #include <fcntl.h>
 #include <io.h>
+#include <process.h>
 #include <sys/stat.h>
 #include <sys/utime.h>
 #include <windows.h>

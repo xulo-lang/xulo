@@ -92,6 +92,20 @@ values, and is left to a future standard-library `std/ui` module.
 
 ### Fixed
 
+- Stage 1's C backend now matches the stage 0 runtime on the last four
+  drift-governance deviations (D-01–D-04). Integral `+`/`-`/`*`, `/`, `%`,
+  `**`, and unary `-` are checked and fail with `panic: integer overflow`
+  instead of wrapping or hitting C UB; runtime failures print stage 0's
+  `panic: <message>` prefix; floats keep the plain-decimal shortest form
+  (`1e300`, `1e-300`, `1e21`); `u64` annotations and integer literals above
+  `i64::MAX` are rejected with `E0005` instead of being mis-tagged as `int`.
+  Windows C builds also link `advapi32` explicitly (the runtime's
+  `GetUserNameA` call previously depended on the host linker's defaults), and
+  the Windows runtime includes `<process.h>` for `_getpid`.
+  Regression:
+  `crates/xupm/tests/stage1_build.rs::stage1_c_backend_traps_like_the_stage0_runtime`,
+  `::stage1_c_backend_matches_stage0_float_formatting`, and
+  `::stage1_rejects_u64_in_the_bootstrap_subset`.
 - Windows `extern "C"` FFI now works end to end. The interpreter resolves a
   symbol through the process's loaded modules (`GetProcAddress`, falling back to
   the executable and UCRT) instead of returning an "unsupported" error; the JIT

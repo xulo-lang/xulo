@@ -377,6 +377,15 @@ pub fn ex_emit_unary(e: mut Emitter, node: Node): string {
     if node.children.len == 0 {
         return "xr_nil()"
     }
+    // `-9223372036854775808` is `i64::MIN`, whose magnitude is one above
+    // `i64::MAX`. Fold it here so the literal check does not reject the only
+    // negated value the bootstrap slot can represent.
+    if node.value == "-" and node.children[0].kind == "Literal" {
+        let digits = bk_util::clean_number(node.children[0].value)
+        if !bk_util::integer_fits_i64(digits) and bk_util::integer_is_i64_min_magnitude(digits) {
+            return "xr_int(LLONG_MIN)"
+        }
+    }
     let operand = ex_emit_expr(e, node.children[0])
     if node.value == "!" {
         return "xr_not(" + operand + ")"

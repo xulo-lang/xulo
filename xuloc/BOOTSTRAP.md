@@ -320,10 +320,12 @@ so stage 2 does not inherit them silently.
     `Trait::method(receiver, …)` lowers to runtime method dispatch on the
     receiver's struct type. Closures, `defer`, async, and the
     `std::time`/`std::fmt`/`std::regex`/`std::net` modules are rejected with
-    `E0005`; a two-part path call that is neither a user function, a known
-    enum variant, a trait method, nor a known static method is also an `E0005`
-    instead of silently becoming a variant constructor. Stage 1's own source
-    avoids all of the rejected forms.
+    `E0005`; `u64` annotations and integer literals above `i64::MAX` are also
+    `E0005`, because the bootstrap runtime has one signed 64-bit slot and does
+    not tag `u64` (drift-governance D-04); a two-part path call that is neither
+    a user function, a known enum variant, a trait method, nor a known static
+    method is also an `E0005` instead of silently becoming a variant
+    constructor. Stage 1's own source avoids all of the rejected forms.
 
 17. **The self-build needs the native stage 1 binary.** Running `build` under
     `xulo run` exceeds the Rust interpreter's call-depth limit (128) while
@@ -350,6 +352,12 @@ so stage 2 does not inherit them silently.
 
 ## Known gaps (tracked, not hidden)
 
+- Integral arithmetic traps on overflow and division by zero with stage 0's
+  `panic: <message>` text, floats render in stage 0's plain-decimal shortest
+  form, and `u64` is an `E0005` rejection; these close drift-governance
+  D-01–D-04 (`crates/xupm/tests/stage1_build.rs::stage1_c_backend_traps_like_the_stage0_runtime`,
+  `::stage1_c_backend_matches_stage0_float_formatting`, and
+  `::stage1_rejects_u64_in_the_bootstrap_subset`).
 - `check` is a first semantic pass over the generic AST, not a typed tree. It
   covers the Gate 3 corpus; structs, enums, traits, impls, generics, modules,
   closures, and `match` still report E0003. `build` runs `check` first and

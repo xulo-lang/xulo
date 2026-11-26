@@ -162,7 +162,9 @@ static XObj *xr_as_obj(XVal v) { return (XObj *)v.p; }
 
 static void xr_fail(const char *message) {
     fflush(stdout);
-    fprintf(stderr, "%s\n", message);
+    // The stage 0 native runtime prints `panic: <message>` (`xulo-runtime`'s
+    // `trap`), and `drift-governance.md` D-03 requires the same prefix here.
+    fprintf(stderr, "panic: %s\n", message);
     exit(1);
 }
 

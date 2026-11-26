@@ -147,6 +147,10 @@ pub fn co_literal_expr(e: mut Emitter, text: string): string {
     if bk_util::is_float_text(digits) {
         return "xr_float(" + digits + ")"
     }
+    if !bk_util::integer_fits_i64(digits) {
+        co_fail(e, "integer literal `" + digits + "` is above i64::MAX; `u64` is outside the bootstrap subset")
+        return "xr_nil()"
+    }
     // Xulo spells octal `0o644`; C spells it `0644`.
     if digits.len > 2 {
         if digits.slice(0, 2) == "0o" or digits.slice(0, 2) == "0O" {
