@@ -467,6 +467,71 @@ pub fn ca_emit_path_call(e: mut Emitter, node: Node): string {
         }
         return "xr_math_clamp(" + args[0] + ", " + args[1] + ", " + args[2] + ")"
     }
+    if path == "std::time::now" {
+        return "xr_time_now()"
+    }
+    if path == "std::time::now_nanos" {
+        return "xr_time_now_nanos()"
+    }
+    if path == "std::time::monotonic" {
+        return "xr_time_monotonic()"
+    }
+    if path == "std::time::monotonic_nanos" {
+        return "xr_time_monotonic_nanos()"
+    }
+    if path == "std::time::sleep" {
+        if args.len != 1 {
+            bk_state::co_fail(e, "`std::time::sleep` expects one argument")
+            return "xr_nil()"
+        }
+        return "xr_time_sleep(" + args[0] + ")"
+    }
+    if path == "std::time::format" {
+        if args.len != 1 {
+            bk_state::co_fail(e, "`std::time::format` expects one argument")
+            return "xr_nil()"
+        }
+        return "xr_time_format(" + args[0] + ")"
+    }
+    if path == "std::time::parse" {
+        if args.len != 1 {
+            bk_state::co_fail(e, "`std::time::parse` expects one argument")
+            return "xr_nil()"
+        }
+        return "xr_time_parse(" + args[0] + ")"
+    }
+    if path == "std::time::parts" {
+        if args.len != 1 {
+            bk_state::co_fail(e, "`std::time::parts` expects one argument")
+            return "xr_nil()"
+        }
+        return "xr_time_parts(" + args[0] + ")"
+    }
+    if path == "std::time::weekday" {
+        if args.len != 1 {
+            bk_state::co_fail(e, "`std::time::weekday` expects one argument")
+            return "xr_nil()"
+        }
+        return "xr_time_weekday(" + args[0] + ")"
+    }
+    if path == "std::time::from_parts" {
+        if args.len < 3 or args.len > 7 {
+            bk_state::co_fail(e, "`std::time::from_parts` expects three to seven arguments")
+            return "xr_nil()"
+        }
+        let mut call = "xr_time_from_parts(" + args[0] + ", " + args[1] + ", " + args[2]
+        let mut index = 3
+        while index < 7 {
+            call = call + ", "
+            if index < args.len {
+                call = call + args[index]
+            } else {
+                call = call + "xr_nil()"
+            }
+            index = index + 1
+        }
+        return call + ")"
+    }
     if path == "std::os::getenv" {
         if args.len != 1 {
             bk_state::co_fail(e, "`std::os::getenv` expects one argument")

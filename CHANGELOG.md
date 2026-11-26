@@ -47,6 +47,13 @@ values, and is left to a future standard-library `std/ui` module.
 
 ### Added
 
+- Stage 1's C backend now lowers `std::time`: the wall and monotonic clocks,
+  `sleep`, and the UTC calendar (`format`, `parse`, `parts`, `from_parts`,
+  `weekday`) over a `runtime_time.inc` module that uses pure integer date
+  arithmetic, so it does not depend on the host time zone or locale.
+  `examples/std/time.xulo`, `math_time.xulo`, and `std.xulo` now compile and
+  match the interpreter byte for byte. Stage 1 build coverage reaches 49 of 66
+  example files.
 - Stage 1's C backend lowers postfix `?` (propagating `Result::Err` with a
   `return`), `Error("…")`, assignment in expression position (`a = b = 3`),
   `shared` as a pass-through unary, and `Array::filled<T, N>` with a literal

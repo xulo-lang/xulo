@@ -33,6 +33,7 @@ xuloc/
 │   ├── runtime_json.inc   # std::json
 │   ├── runtime_path.inc   # std::path
 │   ├── runtime_math.inc   # std::math
+│   ├── runtime_time.inc   # std::time
 │   └── runtime_process.inc # std::process::exec
 └── corpus/            # Gate 3 accept/reject fixtures
     ├── accept/
@@ -58,7 +59,7 @@ corpus is not compiled by the package, so they stay outside `src/`.
 | `xuloc/src/backend/*.xulo` | Procedural emission modules: `bk_util`, `bk_state`, `bk_emit`, `bk_stmt`, `bk_expr`, `bk_call`, `bk_pattern` |
 | `xuloc/runtime/runtime.c` | Unity entry point included by generated programs; assembles the `runtime_*.inc` modules in dependency order |
 | `xuloc/runtime/runtime_internal.h` | Shared `XVal`, container, and module-dependency definitions |
-| `xuloc/runtime/runtime_*.inc` | One module each: tagged values/containers, operators, rendering, method dispatch, `std::fs`/`std::io`/`std::os`/`std::process`, `std::json`, `std::path`, `std::math`, `std::process::exec` |
+| `xuloc/runtime/runtime_*.inc` | One module each: tagged values/containers, operators, rendering, method dispatch, `std::fs`/`std::io`/`std::os`/`std::process`, `std::json`, `std::path`, `std::math`, `std::time`, `std::process::exec` |
 | `xuloc/corpus/accept/` | Files stage 1 and stage 0 must both accept; `.expected` files hold their compiled output |
 | `xuloc/corpus/reject/` | Files both must reject, with a coded semantic diagnostic |
 | `xuloc/src/main.xulo` | CLI: `tokens`, `parse`, `check`, and `build` modes, diagnostics, exit status |
@@ -310,16 +311,18 @@ so stage 2 does not inherit them silently.
     `#[derive(Debug)]` rendering, the `Map`/`Set` members (`size`, `get`,
     `set`, `has`, `remove`, `keys`, `values`, `entries`, `insert`), iteration
     over a map's keys or a set's elements, `Map::from_entries`,
-    `Set::from_list`, `Array::filled<T, N>` with a literal `N`, and the
+    `Set::from_list`, `Array::filled<T, N>` with a literal `N`, the
     `std::fs`/`std::io`/`std::os`/`std::process`/`std::path`/`std::hint`/
-    `std::math`/`std::json` calls stage 1 uses. Call-site type arguments are
+    `std::math`/`std::json` calls stage 1 uses, and the `std::time` clocks,
+    `sleep`, and UTC calendar (`format`, `parse`, `parts`, `from_parts`,
+    `weekday`). Call-site type arguments are
     dropped because the backend is dynamically typed; the type argument is
     only consulted for a literal `Array::filled` length. Module-qualified
     names (`alias::fn`, `m::CONST`) resolve by their final segment because
     declaration collection flattens modules.
     `Trait::method(receiver, …)` lowers to runtime method dispatch on the
     receiver's struct type. Closures, `defer`, async, and the
-    `std::time`/`std::fmt`/`std::regex`/`std::net` modules are rejected with
+    `std::fmt`/`std::regex`/`std::net` modules are rejected with
     `E0005`; `u64` annotations and integer literals above `i64::MAX` are also
     `E0005`, because the bootstrap runtime has one signed 64-bit slot and does
     not tag `u64` (drift-governance D-04); a two-part path call that is neither
@@ -372,9 +375,10 @@ so stage 2 does not inherit them silently.
   member access and `{ ...base, k: v }` work. `Map` and `Set` are first-class
   in the bootstrap runtime: brace and typed map literals, the member methods,
   key/element iteration, structural set equality, and the static constructors
-  lower to `XT_OBJ` (map) and `XT_SET` (set) values. `std::time`, `std::fmt`,
-  `std::regex`, and `std::net` are not lowered yet, so examples that use them
-  fail with `E0005`.
+  lower to `XT_OBJ` (map) and `XT_SET` (set) values. `std::time` is lowered
+  (clocks, `sleep`, and the UTC calendar over pure integer date arithmetic);
+  `std::fmt`, `std::regex`, and `std::net` are not lowered yet, so examples
+  that use them fail with `E0005`.
 - Destructuring (`let (a, b)`, `let { x, y }`), struct/enum/literal/or/range/
   type patterns with guards, and `#[derive(Debug)]`'s `Type(field: value)`
   rendering are lowered. A struct without the derive still renders as
@@ -387,11 +391,13 @@ so stage 2 does not inherit them silently.
   call-site type arguments, but arrow closures, macro calls, `spawn`, and
   `lock` still report `E0005`; attribute macros and macro expansion remain
   outside the bootstrap subset, and macro bodies are skipped as token trees.
-- The backend builds 46 of the 66 example files end to end. One of the
+- The backend builds 49 of the 66 example files end to end. One of the
   remaining failures is the expected `errors/type_error.xulo` reject; the
-  others need closures, `defer`, async/net/time/regex, FFI, or module symbol
-  qualification. `crates/xupm/tests/stage1_build.rs` pins the new `lexical`,
-  `propagation`, and `arrays` cases against their sidecars.
+  others need closures, `defer`, `lock`, macros, `u64`, the
+  `std::fmt`/`std::regex`/`std::net` modules, `std::io`'s tty/read extras,
+  `std::http`, `std::process`'s `Command`/`launch`, FFI, or the inline-module
+  C compile path. `crates/xupm/tests/stage1_build.rs` pins the `lexical`,
+  `propagation`, `arrays`, and `std/time` cases against their sidecars.
 - The parser recovers only by stopping at the first error. That is enough for
   Gate 1/2 diagnostics; stage 1's checker work will need recovery.
 - The tests read `xuloc/src/*.xulo` relative to the repository root, like the
