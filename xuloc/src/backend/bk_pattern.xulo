@@ -106,8 +106,7 @@ pub fn pt_pattern_bind(e: mut Emitter, pattern: Node, scrut: string) {
         if pattern.value == "_" or pt_pattern_is_variant(e, pattern.value) {
             return
         }
-        let cname = bk_state::co_new_local(e, pattern.value)
-        bk_state::co_line(e, "XVal " + cname + " = " + scrut + ";")
+        bk_state::co_bind_value(e, pattern.value, scrut)
         return
     }
     if kind == "VariantPattern" {
@@ -122,8 +121,7 @@ pub fn pt_pattern_bind(e: mut Emitter, pattern: Node, scrut: string) {
     if kind == "TypePattern" {
         let name = bk_util::type_pattern_name(pattern.value)
         if name != "" and name != "_" {
-            let cname = bk_state::co_new_local(e, name)
-            bk_state::co_line(e, "XVal " + cname + " = " + scrut + ";")
+            bk_state::co_bind_value(e, name, scrut)
         }
         return
     }

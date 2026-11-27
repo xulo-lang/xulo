@@ -223,7 +223,7 @@ pub fn ex_emit_closure(e: mut Emitter, node: Node): string {
     if e.box_locals {
         let mut i = e.local_names.len - 1
         while i >= 0 {
-            if e.local_depths[i] <= e.depth {
+            if e.local_active[i] and e.local_depths[i] <= e.depth {
                 let name = e.local_names[i]
                 if !ex_has_name(cap_names, name) {
                     cap_names.push(name)
@@ -251,6 +251,8 @@ pub fn ex_emit_closure(e: mut Emitter, node: Node): string {
     let saved_names = e.local_names
     let saved_cnames = e.local_cnames
     let saved_depths = e.local_depths
+    let saved_active = e.local_active
+    let saved_marks = e.local_marks
     let saved_defer_depths = e.defer_depths
     let saved_defer_lists = e.defer_lists
     let saved_loop_depths = e.loop_depths
@@ -268,6 +270,8 @@ pub fn ex_emit_closure(e: mut Emitter, node: Node): string {
     e.local_names = []
     e.local_cnames = []
     e.local_depths = []
+    e.local_active = []
+    e.local_marks = []
     e.defer_depths = []
     e.defer_lists = []
     e.loop_depths = []
@@ -326,6 +330,8 @@ pub fn ex_emit_closure(e: mut Emitter, node: Node): string {
     e.local_names = saved_names
     e.local_cnames = saved_cnames
     e.local_depths = saved_depths
+    e.local_active = saved_active
+    e.local_marks = saved_marks
     e.defer_depths = saved_defer_depths
     e.defer_lists = saved_defer_lists
     e.loop_depths = saved_loop_depths

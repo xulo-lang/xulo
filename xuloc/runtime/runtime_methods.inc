@@ -81,6 +81,12 @@ static XVal *xr_args_with_self(XVal self, long long n, XVal *args) {
 XVal xr_method(XVal recv, const char *name, long long n, XVal *args) {
     if (recv.tag == XT_OBJ) {
         XObj *o = xr_as_obj(recv);
+        if (strcmp(o->type, "RegExp") == 0) {
+            return xr_regex_method(recv, name, n, args);
+        }
+        if (strcmp(o->type, "RegexMatch") == 0) {
+            return xr_regex_match_method(recv, name, n, args);
+        }
         XrMethodFn fn = xr_lookup_method(o->type, name);
         if (fn != NULL) {
             return fn(n + 1, xr_args_with_self(recv, n, args));
@@ -176,7 +182,16 @@ XVal xr_method(XVal recv, const char *name, long long n, XVal *args) {
         }
         return out;
     }
+    if (strcmp(name, "replace") == 0 && recv.tag == XT_STR) {
+        if (n != 2) {
+            xr_fail("`.replace` expects a pattern and a replacer");
+        }
+        return xr_regex_replace(args[0], recv, args[1]);
+    }
     if (strcmp(name, "split") == 0 && recv.tag == XT_STR) {
+        if (n == 1 && args[0].tag == XT_OBJ && strcmp(xr_as_obj(args[0])->type, "RegExp") == 0) {
+            return xr_regex_split(args[0], recv);
+        }
         XStr *s = xr_as_str(recv);
         XVal out = xr_list_new();
         if (args[0].tag != XT_STR) {

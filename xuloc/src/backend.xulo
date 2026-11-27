@@ -22,8 +22,8 @@
 //     declaration collection flattens modules into one namespace;
 //   * a `Trait::method(receiver, …)` call dispatches through the runtime
 //     method registry on the receiver's struct type;
-//   * the `std::fs`, `std::io`, `std::os`, `std::fmt`, and `std::process`
-//     calls stage 1 itself uses.
+//   * the `std::fs`, `std::io`, `std::os`, `std::fmt`, `std::regex`, and
+//     `std::process` calls stage 1 itself uses.
 //
 // Deliberate limits (recorded in BOOTSTRAP.md):
 //   * no asynchronous execution: `spawn` runs its block immediately and
@@ -103,6 +103,8 @@ pub struct Emitter {
     pub local_names: List<string>,
     pub local_cnames: List<string>,
     pub local_depths: List<number>,
+    pub local_active: List<bool>,
+    pub local_marks: List<number>,
     pub capture_names: List<string>,
     pub closure_funcs: List<string>,
     pub closure_ids: List<number>,
@@ -134,6 +136,8 @@ fn new_emitter(): Emitter {
         local_names: [],
         local_cnames: [],
         local_depths: [],
+        local_active: [],
+        local_marks: [],
         capture_names: [],
         closure_funcs: [],
         closure_ids: [],

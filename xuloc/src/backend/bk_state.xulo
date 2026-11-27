@@ -19,13 +19,26 @@ pub fn co_new_local(e: mut Emitter, name: string): string {
     e.local_names.push(name)
     e.local_cnames.push(cname)
     e.local_depths.push(e.depth)
+    e.local_active.push(true)
+    return cname
+}
+
+/// Bind `name` to `value` as a local, boxing the value when this function
+/// contains closures so captures share one cell.
+pub fn co_bind_value(e: mut Emitter, name: string, value: string): string {
+    let cname = co_new_local(e, name)
+    if e.box_locals {
+        co_line(e, "XVal *" + cname + " = xr_cell(" + value + ");")
+    } else {
+        co_line(e, "XVal " + cname + " = " + value + ";")
+    }
     return cname
 }
 
 pub fn co_lookup_local(e: Emitter, name: string): string {
     let mut i = e.local_names.len - 1
     while i >= 0 {
-        if e.local_names[i] == name and e.local_depths[i] <= e.depth {
+        if e.local_active[i] and e.local_names[i] == name and e.local_depths[i] <= e.depth {
             return e.local_cnames[i]
         }
         i = i - 1
@@ -145,6 +158,7 @@ pub fn co_enter(e: mut Emitter) {
     e.depth = e.depth + 1
     e.defer_depths.push(e.depth)
     e.defer_lists.push([])
+    e.local_marks.push(e.local_names.len)
 }
 
 pub fn co_leave(e: mut Emitter) {
@@ -156,6 +170,21 @@ pub fn co_leave(e: mut Emitter) {
     // and the compile-time size is negligible.
     if e.defer_depths.len > 0 {
         e.defer_depths[e.defer_depths.len - 1] = -1
+    }
+    if e.local_marks.len > 0 {
+        let mut found = e.local_marks.len - 1
+        while found >= 0 and e.local_marks[found] < 0 {
+            found = found - 1
+        }
+        if found >= 0 {
+            let mark = e.local_marks[found]
+            e.local_marks[found] = -1
+            let mut i = mark
+            while i < e.local_active.len {
+                e.local_active[i] = false
+                i = i + 1
+            }
+        }
     }
 }
 

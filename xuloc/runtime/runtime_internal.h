@@ -137,5 +137,11 @@ XVal xr_str_of(XVal v);
 int xr_eq(XVal a, XVal b);
 // Defined with the method helpers; map operations stringify non-string keys.
 static XVal xr_key_string(XVal key);
+// Defined in `runtime_regex.inc`; the method dispatcher delegates to them.
+XVal xr_regex_compile(XVal pattern, XVal flags);
+XVal xr_regex_method(XVal recv, const char *name, long long n, XVal *args);
+XVal xr_regex_match_method(XVal recv, const char *name, long long n, XVal *args);
+XVal xr_regex_replace(XVal regex_value, XVal input, XVal replacer);
+XVal xr_regex_split(XVal regex_value, XVal input);
 
 #endif

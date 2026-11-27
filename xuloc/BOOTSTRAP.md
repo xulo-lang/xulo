@@ -29,6 +29,7 @@ xuloc/
 │   ├── runtime_ops.inc    # arithmetic, comparison, `is`, nullish
 │   ├── runtime_render.inc # formatting and StringBuilder
 │   ├── runtime_methods.inc # member/static dispatch
+│   ├── runtime_regex.inc   # std::regex
 │   ├── runtime_fs.inc     # std::fs / os / process
 │   ├── runtime_io.inc     # std::io readers and terminal probes
 │   ├── runtime_json.inc   # std::json
@@ -61,7 +62,7 @@ corpus is not compiled by the package, so they stay outside `src/`.
 | `xuloc/src/backend/*.xulo` | Procedural emission modules: `bk_util`, `bk_state`, `bk_emit`, `bk_stmt`, `bk_expr`, `bk_call`, `bk_pattern` |
 | `xuloc/runtime/runtime.c` | Unity entry point included by generated programs; assembles the `runtime_*.inc` modules in dependency order |
 | `xuloc/runtime/runtime_internal.h` | Shared `XVal`, container, and module-dependency definitions |
-| `xuloc/runtime/runtime_*.inc` | One module each: tagged values/containers, operators, rendering, method dispatch, `std::fs`/`std::os`/`std::process`, `std::io`'s readers and terminal probes (its writes live with the renderer), `std::json`, `std::path`, `std::math`, `std::fmt`, `std::time`, `std::process::exec` |
+| `xuloc/runtime/runtime_*.inc` | One module each: tagged values/containers, operators, rendering, method dispatch, `std::regex`, `std::fs`/`std::os`/`std::process`, `std::io`'s readers and terminal probes (its writes live with the renderer), `std::json`, `std::path`, `std::math`, `std::fmt`, `std::time`, `std::process::exec` |
 | `xuloc/corpus/accept/` | Files stage 1 and stage 0 must both accept; `.expected` files hold their compiled output |
 | `xuloc/corpus/reject/` | Files both must reject, with a coded semantic diagnostic |
 | `xuloc/src/main.xulo` | CLI: `tokens`, `parse`, `check`, and `build` modes, diagnostics, exit status |
@@ -329,9 +330,11 @@ so stage 2 does not inherit them silently.
     `std::json` calls stage 1 uses, all of `std::io` (the four writes, `flush`,
     the two tty probes, and `read_line`/`read`/`read_n`), the `std::time`
     clocks, `sleep`, and UTC calendar (`format`, `parse`, `parts`,
-    `from_parts`, `weekday`), and all of `std::fmt::format` (every verb,
+    `from_parts`, `weekday`), all of `std::fmt::format` (every verb,
     flag, width, precision, the `Display`/`Debug` consultation, and the
-    import forms). Call-site type arguments are
+    import forms), and `std::regex` (`RegExp::compile` with `i`/`g`/`m`/`s`/
+    `u`, `test`/`find`/`find_all`, named and numbered groups, `string.replace`
+    templates and closures, and `string.split`). Call-site type arguments are
     dropped because the backend is dynamically typed; a const argument is the
     exception, since the lowered body uses its value. Module-qualified
     names (`alias::fn`, `m::CONST`) resolve by their final segment because
@@ -339,7 +342,7 @@ so stage 2 does not inherit them silently.
     `Trait::method(receiver, …)` lowers to runtime method dispatch on the
     receiver's struct type; `async` functions lower as ordinary functions and
     `await` is the identity. The
-    `std::regex`/`std::net` modules are rejected with
+    `std::net` module is rejected with
     `E0005`; `u64` annotations and integer literals above `i64::MAX` are also
     `E0005`, because the bootstrap runtime has one signed 64-bit slot and does
     not tag `u64` (drift-governance D-04); a two-part path call that is neither
@@ -387,16 +390,16 @@ so stage 2 does not inherit them silently.
 - The C backend and the self-host loop are implemented (Gates 5–6), but the
   backend's subset is the bootstrap subset listed above. The runtime covers
   the `std` surface stage 1's own source needs plus `std::path`, `std::hint`,
-  `std::os`, `std::math`, `std::fmt`, `std::json`, and `std::fs` (its
-  `read_dir` / `walk` / `realpath` are POSIX-only). Object literals lower to
-  runtime objects, so
+  `std::os`, `std::math`, `std::fmt`, `std::regex`, `std::json`, and `std::fs`
+  (its `read_dir` / `walk` / `realpath` are POSIX-only). Object literals lower
+  to runtime objects, so
   member access and `{ ...base, k: v }` work. `Map` and `Set` are first-class
   in the bootstrap runtime: brace and typed map literals, the member methods,
   key/element iteration, structural set equality, and the static constructors
   lower to `XT_OBJ` (map) and `XT_SET` (set) values. `std::time` is lowered
   (clocks, `sleep`, and the UTC calendar over pure integer date arithmetic),
-  and so is `std::fmt::format`; `std::regex` and `std::net` are not lowered
-  yet, so examples that use them fail with `E0005`.
+  and so are `std::fmt::format` and `std::regex`; `std::net` is not lowered
+  yet, so examples that use it fail with `E0005`.
 - Destructuring (`let (a, b)`, `let { x, y }`), struct/enum/literal/or/range/
   type patterns with guards, and `#[derive(Debug)]`'s `Type(field: value)`
   rendering are lowered. A struct without the derive still renders as
@@ -410,13 +413,13 @@ so stage 2 does not inherit them silently.
   synchronous model, and drops call-site type arguments, but macro calls still
   report `E0005`; attribute macros and macro expansion remain outside the
   bootstrap subset, and macro bodies are skipped as token trees.
-- The backend builds 55 of the 66 example files end to end. One of the
+- The backend builds 56 of the 66 example files end to end. One of the
   remaining failures is the expected `errors/type_error.xulo` reject; the
-  others need macros, `u64`, the `std::regex`/`std::net` modules,
+  others need macros, `u64`, the `std::net` module,
   `std::http`, `std::process`'s `Command`/`launch`, FFI, or the inline-module
   C compile path. `crates/xupm/tests/stage1_build.rs` pins the `lexical`,
   `propagation`, `arrays`, `std/time`, `std/io`, `std/io_extra`, `std/fmt`,
-  `functions/closures_hof`, `functions/defer`, `types/aliases`,
+  `std/regex`, `functions/closures_hof`, `functions/defer`, `types/aliases`,
   `types/generics_impl`, and `concurrency/spawn_lock` cases against their
   sidecars (stdout and stderr).
 - The parser recovers only by stopping at the first error. That is enough for

@@ -341,8 +341,8 @@ fn stage1_compiles_the_bootstrap_corpus() {
 /// propagation, chained assignment, Unicode escapes, `Array::filled`,
 /// closures (including mutable captures and returned closures), `defer`
 /// (including loops and `?`), `std::fmt` (including the `Display`/`Debug`
-/// consultation), const generic parameters, and the synchronous
-/// `spawn`/`lock`/service model.
+/// consultation), const generic parameters, the synchronous
+/// `spawn`/`lock`/service model, and `std::regex`.
 #[test]
 fn stage1_runs_the_lowered_examples() {
     if !enabled() {
@@ -365,6 +365,7 @@ fn stage1_runs_the_lowered_examples() {
         "examples/std/io.xulo",
         "examples/std/io_extra.xulo",
         "examples/std/fmt.xulo",
+        "examples/std/regex.xulo",
         "examples/concurrency/spawn_lock.xulo",
         "examples/basics/templates.xulo",
         "examples/basics/bindings.xulo",
@@ -568,6 +569,118 @@ fn main() {
         render_lines(&native.stdout),
         render_lines(&interpreted.stdout),
         "the C backend's const-generic output must match the interpreter"
+    );
+}
+
+/// `std::regex`: compilation errors, `test`/`find`/`find_all`, empty-match
+/// iteration, flags (`i`/`s`/`m`), greedy/lazy and counted repetition, named
+/// groups, templates, word boundaries, and Unicode scalar indices.
+#[test]
+fn stage1_c_backend_lowers_regex() {
+    if !enabled() {
+        return;
+    }
+    let root = repo_root();
+    let stage1 = stage1_binary();
+    let work = unique_dir("regex");
+    let source = work.join("regex.xulo");
+    std::fs::write(
+        &source,
+        r#"use std::regex::RegExp;
+
+fn show_find(re: RegExp, text: string) {
+    let m = re.find(text)
+    if m != null {
+        print(m.value, m.index, m.end)
+    } else {
+        print("miss")
+    }
+}
+
+fn main() {
+    match RegExp::compile("a|ab") {
+        Result::Ok(re) => show_find(re, "ab")
+        Result::Err(e) => print(e.message)
+    }
+    match RegExp::compile("a*") {
+        Result::Ok(re) => {
+            let all = re.find_all("bab")
+            for m in all {
+                print(`[${m.value}]`)
+            }
+        }
+        Result::Err(e) => print(e.message)
+    }
+    match RegExp::compile("a.c", "s") {
+        Result::Ok(re) => print(re.test("a\nc"))
+        Result::Err(e) => print(e.message)
+    }
+    match RegExp::compile("a.c") {
+        Result::Ok(re) => print(re.test("a\nc"))
+        Result::Err(e) => print(e.message)
+    }
+    match RegExp::compile("^b", "m") {
+        Result::Ok(re) => print(re.test("a\nb"))
+        Result::Err(e) => print(e.message)
+    }
+    match RegExp::compile("^b") {
+        Result::Ok(re) => print(re.test("a\nb"))
+        Result::Err(e) => print(e.message)
+    }
+    match RegExp::compile("a+?") {
+        Result::Ok(re) => show_find(re, "aaa")
+        Result::Err(e) => print(e.message)
+    }
+    match RegExp::compile("a{2,3}") {
+        Result::Ok(re) => show_find(re, "aaaa")
+        Result::Err(e) => print(e.message)
+    }
+    match RegExp::compile("(?P<word>\\w+)") {
+        Result::Ok(re) => {
+            let m = re.find("hi there")
+            if m != null {
+                print(m.group("word"), m.group(1))
+            } else {
+                print("miss")
+            }
+            print("x hi y".replace(re, "[$word]"))
+        }
+        Result::Err(e) => print(e.message)
+    }
+    match RegExp::compile("\\bcat\\b") {
+        Result::Ok(re) => print(re.test("a cat!"), re.test("concat"))
+        Result::Err(e) => print(e.message)
+    }
+    match RegExp::compile("(€+)") {
+        Result::Ok(re) => {
+            let m = re.find("a€€b")
+            if m != null {
+                print(m.value, m.index, m.end)
+            } else {
+                print("miss")
+            }
+        }
+        Result::Err(e) => print(e.message)
+    }
+}
+"#,
+    )
+    .expect("the regex probe should be writable");
+
+    let interpreted = Command::new(XUPM)
+        .args(["run", source.to_str().expect("a UTF-8 path")])
+        .current_dir(&root)
+        .output()
+        .expect("xupm run should start");
+    assert_success(&interpreted, "the interpreter regex probe");
+
+    let program = build_stage1_program(&stage1, &root, &source, &work, "regex");
+    let native = run_program(&program);
+    assert_success(&native, "the stage 1 regex probe");
+    assert_eq!(
+        render_lines(&native.stdout),
+        render_lines(&interpreted.stdout),
+        "the C backend's regex output must match the interpreter"
     );
 }
 

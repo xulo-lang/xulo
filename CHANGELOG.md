@@ -53,6 +53,21 @@ values, and is left to a future standard-library `std/ui` module.
 
 ### Added
 
+- Stage 1's C backend now lowers `std::regex` over a new `runtime_regex.inc`:
+  a backtracking engine for literals, `.`, classes and escapes, groups
+  (numbered, named, non-capturing), alternation, greedy/lazy and counted
+  repetition, anchors, and the `i`/`g`/`m`/`s`/`u` flags; `RegExp::compile`
+  returns `Result<RegExp, RegexError>` with the engine's parse-error text.
+  `test`/`find`/`find_all`, `RegexMatch.group`, `string.replace` (templates
+  and closures), and `string.split` are lowered. `examples/std/regex.xulo`
+  now compiles and matches the interpreter byte for byte; a regression test
+  adds alternation order, empty matches, dotall, multiline, lazy/counted
+  repetition, named groups, word boundaries, and Unicode indices. Stage 1
+  build coverage reaches 56 of 66 example files.
+- Closures now box pattern bindings and capture only bindings in live scopes.
+  This fixes a latent bug exposed by match-heavy programs: pattern bindings
+  were declared as plain values while reads used cells, and locals from
+  closed sibling scopes leaked into later closure capture lists.
 - Stage 1's C backend now lowers `lock`, `spawn`, services, and the `Task`
   combinators in the compiled model: `lock target { … }` evaluates its block,
   a spawn block runs immediately (so `await` stays the identity), and
