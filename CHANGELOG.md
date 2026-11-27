@@ -53,6 +53,15 @@ values, and is left to a future standard-library `std/ui` module.
 
 ### Added
 
+- Stage 1's C backend now lowers `std::net` over a new `runtime_net.inc`:
+  opaque handles with listener/stream kinds, TCP listen/connect/accept,
+  read/write with optional millisecond timeouts, shutdown/shutdown_write,
+  close, and local/peer addresses over IPv4/IPv6 and DNS names. Windows
+  builds link `ws2_32`, and the runtime carries Winsock and POSIX socket
+  paths. `examples/std/net.xulo` and `examples/std/net_shutdown.xulo` now
+  compile and match the interpreter byte for byte; a regression test covers
+  handle validation, the read-size domain, wrong-kind handles, and a second
+  close. Stage 1 build coverage reaches 58 of 66 example files.
 - Stage 1's C backend now lowers `std::regex` over a new `runtime_regex.inc`:
   a backtracking engine for literals, `.`, classes and escapes, groups
   (numbered, named, non-capturing), alternation, greedy/lazy and counted

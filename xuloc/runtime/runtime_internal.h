@@ -30,6 +30,11 @@
 #include <errno.h>
 
 #ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include <direct.h>
 #include <fcntl.h>
 #include <io.h>
@@ -41,9 +46,14 @@
 #define XR_PCLOSE _pclose
 #define XR_GETPID _getpid
 #else
+#include <arpa/inet.h>
 #include <dirent.h>
 #include <fcntl.h>
+#include <netdb.h>
+#include <netinet/in.h>
 #include <pwd.h>
+#include <sys/select.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/types.h>

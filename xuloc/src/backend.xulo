@@ -22,8 +22,8 @@
 //     declaration collection flattens modules into one namespace;
 //   * a `Trait::method(receiver, …)` call dispatches through the runtime
 //     method registry on the receiver's struct type;
-//   * the `std::fs`, `std::io`, `std::os`, `std::fmt`, `std::regex`, and
-//     `std::process` calls stage 1 itself uses.
+//   * the `std::fs`, `std::io`, `std::os`, `std::fmt`, `std::regex`,
+//     `std::net`, and `std::process` calls stage 1 itself uses.
 //
 // Deliberate limits (recorded in BOOTSTRAP.md):
 //   * no asynchronous execution: `spawn` runs its block immediately and

@@ -144,6 +144,68 @@ fn ca_emit_fmt_call(e: mut Emitter, node: Node): string {
     return ca_emit_fmt_args(e, args)
 }
 
+fn ca_is_net_member(name: string): bool {
+    return name == "tcp_listen" or name == "tcp_connect" or name == "tcp_accept"
+        or name == "sock_read" or name == "sock_write" or name == "sock_shutdown"
+        or name == "sock_shutdown_write" or name == "sock_close"
+        or name == "sock_local_addr" or name == "sock_peer_addr"
+}
+
+fn ca_emit_net_args(e: mut Emitter, name: string, args: List<string>): string {
+    if name == "tcp_listen" {
+        if args.len != 1 {
+            bk_state::co_fail(e, "`std::net::tcp_listen` expects one argument")
+            return "xr_nil()"
+        }
+        return "xr_net_tcp_listen(" + args[0] + ")"
+    }
+    if name == "tcp_connect" or name == "tcp_accept" {
+        if args.len < 1 or args.len > 2 {
+            bk_state::co_fail(e, "`std::net::" + name + "` expects one or two arguments")
+            return "xr_nil()"
+        }
+        let mut timeout = "xr_nil()"
+        if args.len == 2 {
+            timeout = args[1]
+        }
+        if name == "tcp_connect" {
+            return "xr_net_tcp_connect(" + args[0] + ", " + timeout + ")"
+        }
+        return "xr_net_tcp_accept(" + args[0] + ", " + timeout + ")"
+    }
+    if name == "sock_read" or name == "sock_write" {
+        if args.len < 2 or args.len > 3 {
+            bk_state::co_fail(e, "`std::net::" + name + "` expects two or three arguments")
+            return "xr_nil()"
+        }
+        let mut timeout = "xr_nil()"
+        if args.len == 3 {
+            timeout = args[2]
+        }
+        if name == "sock_read" {
+            return "xr_net_read(" + args[0] + ", " + args[1] + ", " + timeout + ")"
+        }
+        return "xr_net_write(" + args[0] + ", " + args[1] + ", " + timeout + ")"
+    }
+    if args.len != 1 {
+        bk_state::co_fail(e, "`std::net::" + name + "` expects one argument")
+        return "xr_nil()"
+    }
+    if name == "sock_shutdown" {
+        return "xr_net_shutdown(" + args[0] + ")"
+    }
+    if name == "sock_shutdown_write" {
+        return "xr_net_shutdown_write(" + args[0] + ")"
+    }
+    if name == "sock_close" {
+        return "xr_net_close(" + args[0] + ")"
+    }
+    if name == "sock_local_addr" {
+        return "xr_net_local_addr(" + args[0] + ")"
+    }
+    return "xr_net_peer_addr(" + args[0] + ")"
+}
+
 pub fn ca_emit_method_call(e: mut Emitter, node: Node): string {
     let callee = ca_callee(node)
     let recv_expr = bk_expr::ex_emit_expr(e, callee.children[0])
@@ -196,6 +258,10 @@ pub fn ca_emit_named_call(e: mut Emitter, node: Node): string {
         }
         // `use std::fmt::*` binds the one member; the backend does not model
         // imports, so a bare `format` falls back to the std member.
+        if ca_is_net_member(name) {
+            let args = bk_expr::ex_eval_args(e, node.children, 1)
+            return ca_emit_net_args(e, name, args)
+        }
         if name == "format" {
             return ca_emit_fmt_call(e, node)
         }
@@ -339,6 +405,17 @@ pub fn ca_emit_path_call(e: mut Emitter, node: Node): string {
     let args = bk_expr::ex_eval_args(e, node.children, 1)
     if path == "std::fmt::format" {
         return ca_emit_fmt_args(e, args)
+    }
+    let net_parts = bk_util::split_path(path)
+    if net_parts.len > 0 {
+        let net_last = net_parts[net_parts.len - 1]
+        if ca_is_net_member(net_last) {
+            let std_net = path == "std::net::" + net_last
+            let aliased = net_parts.len == 2 and bk_state::co_find_function(e, net_last) == ""
+            if std_net or aliased {
+                return ca_emit_net_args(e, net_last, args)
+            }
+        }
     }
     let fmt_parts = bk_util::split_path(path)
     // `use std::fmt as f;` makes `f::format` an alias; a user function named

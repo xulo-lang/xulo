@@ -342,7 +342,7 @@ fn stage1_compiles_the_bootstrap_corpus() {
 /// closures (including mutable captures and returned closures), `defer`
 /// (including loops and `?`), `std::fmt` (including the `Display`/`Debug`
 /// consultation), const generic parameters, the synchronous
-/// `spawn`/`lock`/service model, and `std::regex`.
+/// `spawn`/`lock`/service model, `std::regex`, and `std::net`.
 #[test]
 fn stage1_runs_the_lowered_examples() {
     if !enabled() {
@@ -366,6 +366,8 @@ fn stage1_runs_the_lowered_examples() {
         "examples/std/io_extra.xulo",
         "examples/std/fmt.xulo",
         "examples/std/regex.xulo",
+        "examples/std/net.xulo",
+        "examples/std/net_shutdown.xulo",
         "examples/concurrency/spawn_lock.xulo",
         "examples/basics/templates.xulo",
         "examples/basics/bindings.xulo",
@@ -681,6 +683,68 @@ fn main() {
         render_lines(&native.stdout),
         render_lines(&interpreted.stdout),
         "the C backend's regex output must match the interpreter"
+    );
+}
+
+/// `std::net`: handle validation and argument domains. A foreign handle, a
+/// listener used as a stream, a read size outside `1..=16777216`, and a second
+/// close are all clean `Err` values rather than panics.
+#[test]
+fn stage1_c_backend_lowers_net_errors() {
+    if !enabled() {
+        return;
+    }
+    let root = repo_root();
+    let stage1 = stage1_binary();
+    let work = unique_dir("net");
+    let source = work.join("net_errors.xulo");
+    std::fs::write(
+        &source,
+        r#"fn main() {
+    match std::net::sock_read(999999, 8) {
+        Result::Ok(_) => print("ok")
+        Result::Err(e) => print(e.message != "")
+    }
+    match std::net::sock_read(999999, 0) {
+        Result::Ok(_) => print("ok")
+        Result::Err(e) => print(e.message != "")
+    }
+    match std::net::tcp_listen("127.0.0.1:0") {
+        Result::Ok(server) => {
+            match std::net::sock_write(server, "x") {
+                Result::Ok(_) => print("ok")
+                Result::Err(e) => print(e.message != "")
+            }
+            match std::net::sock_close(server) {
+                Result::Ok(_) => print("closed")
+                Result::Err(e) => print(e.message)
+            }
+            match std::net::sock_close(server) {
+                Result::Ok(_) => print("again")
+                Result::Err(e) => print(e.message != "")
+            }
+        }
+        Result::Err(e) => print(e.message)
+    }
+}
+"#,
+    )
+    .expect("the net error probe should be writable");
+
+    let interpreted = Command::new(XUPM)
+        .args(["run", source.to_str().expect("a UTF-8 path")])
+        .current_dir(&root)
+        .output()
+        .expect("xupm run should start");
+    assert_success(&interpreted, "the interpreter net error probe");
+
+    let program = build_stage1_program(&stage1, &root, &source, &work, "net_errors");
+    let native = run_program(&program);
+    assert_success(&native, "the stage 1 net error probe");
+    assert_eq!(
+        render_lines(&native.stdout),
+        render_lines(&interpreted.stdout),
+        "the C backend's net error behavior must match the interpreter"
     );
 }
 

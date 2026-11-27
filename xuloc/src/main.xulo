@@ -63,6 +63,8 @@ fn cc_args(runtime_path: string, c_path: string, binary: string): List<string> {
         // `xr_os_user_name` calls `GetUserNameA`; clang does not add advapi32
         // to its default libraries when it drives lld-link.
         args.push("-ladvapi32")
+        // `std::net` uses Winsock.
+        args.push("-lws2_32")
     }
     return args
 }
