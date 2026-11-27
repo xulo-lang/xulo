@@ -206,6 +206,137 @@ fn ca_emit_net_args(e: mut Emitter, name: string, args: List<string>): string {
     return "xr_net_peer_addr(" + args[0] + ")"
 }
 
+fn ca_extern_arg(ty: string, expr: string): string {
+    if ty == "Ptr" {
+        return "((void *)(uintptr_t)(" + expr + ").i)"
+    }
+    if ty == "bool" {
+        return "xr_cond(" + expr + ")"
+    }
+    if ty == "f32" {
+        return "(float)((" + expr + ").tag == XT_INT ? (double)(" + expr + ").i : (" + expr
+            + ").f)"
+    }
+    if ty == "f64" or ty == "float" {
+        return "(double)((" + expr + ").tag == XT_INT ? (double)(" + expr + ").i : (" + expr
+            + ").f)"
+    }
+    if ty == "i8" {
+        return "((signed char)(" + expr + ").i)"
+    }
+    if ty == "i16" {
+        return "((short)(" + expr + ").i)"
+    }
+    if ty == "i32" {
+        return "((int)(" + expr + ").i)"
+    }
+    if ty == "i64" {
+        return "((long long)(" + expr + ").i)"
+    }
+    if ty == "u8" {
+        return "((unsigned char)(" + expr + ").i)"
+    }
+    if ty == "u16" {
+        return "((unsigned short)(" + expr + ").i)"
+    }
+    if ty == "u32" {
+        return "((unsigned int)(" + expr + ").i)"
+    }
+    if ty == "u64" {
+        return "((unsigned long long)(" + expr + ").i)"
+    }
+    if ty == "usize" {
+        return "((size_t)(" + expr + ").i)"
+    }
+    if ty == "isize" {
+        return "((ptrdiff_t)(" + expr + ").i)"
+    }
+    return "((" + expr + ").i)"
+}
+
+/// Lower a call to an `extern "C"` import. Named arguments are matched by
+/// the import's parameter names; conversions follow the declared ABI types.
+fn ca_emit_extern_call(e: mut Emitter, node: Node, index: number): string {
+    let info = e.externs[index]
+    let mut slots: List<string> = []
+    let mut s = 0
+    while s < info.params.len {
+        slots.push("xr_nil()")
+        s = s + 1
+    }
+    let mut position = 0
+    let mut i = 1
+    while i < node.children.len {
+        let child = node.children[i]
+        let mut target = position
+        let mut expr_node = child
+        if child.kind == "Arg" {
+            if child.children.len > 0 {
+                expr_node = child.children[0]
+            }
+            target = -1
+            let mut p = 0
+            while p < info.params.len {
+                if info.params[p] == child.value {
+                    target = p
+                }
+                p = p + 1
+            }
+            if target < 0 {
+                bk_state::co_fail(e, 
+                    "unknown parameter `" + child.value + "` in `" + info.symbol + "`",
+                )
+                target = position
+            }
+        }
+        let value = bk_expr::ex_emit_expr(e, expr_node)
+        let tmp = bk_state::co_new_tmp(e)
+        bk_state::co_line(e, "XVal " + tmp + " = " + value + ";")
+        if target >= 0 and target < slots.len {
+            slots[target] = tmp
+        }
+        position = position + 1
+        i = i + 1
+    }
+    let mut call = info.symbol + "("
+    let mut a = 0
+    while a < info.params.len {
+        if a > 0 {
+            call = call + ", "
+        }
+        let ty = if a < info.types.len { info.types[a] } else { "" }
+        call = call + ca_extern_arg(ty, slots[a])
+        a = a + 1
+    }
+    call = call + ")"
+    if info.ret == "unit" or info.ret == "" {
+        bk_state::co_line(e, "(void)(" + call + ");")
+        return "xr_nil()"
+    }
+    if info.ret == "bool" {
+        return "xr_bool((" + call + ") != 0)"
+    }
+    if info.ret == "f32" or info.ret == "f64" or info.ret == "float" {
+        return "xr_float((double)(" + call + "))"
+    }
+    if info.ret == "Ptr" {
+        let pointer = bk_state::co_new_tmp(e)
+        bk_state::co_line(e, "void *" + pointer + " = (void *)(" + call + ");")
+        let result = bk_state::co_new_tmp(e)
+        bk_state::co_line(e, 
+            "XVal "
+                + result
+                + " = "
+                + pointer
+                + " == NULL ? xr_nil() : xr_int((long long)(uintptr_t)"
+                + pointer
+                + ");",
+        )
+        return result
+    }
+    return "xr_int((long long)(" + call + "))"
+}
+
 pub fn ca_emit_method_call(e: mut Emitter, node: Node): string {
     let callee = ca_callee(node)
     let recv_expr = bk_expr::ex_emit_expr(e, callee.children[0])
@@ -244,6 +375,10 @@ pub fn ca_emit_named_call(e: mut Emitter, node: Node): string {
             if capture >= 0 {
                 return ca_emit_value_call(e, node, callee)
             }
+        }
+        let extern_index = bk_state::co_find_extern(e, name)
+        if extern_index >= 0 {
+            return ca_emit_extern_call(e, node, extern_index)
         }
         let fn_cname = bk_state::co_find_function(e, name)
         if fn_cname != "" {

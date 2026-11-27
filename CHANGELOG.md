@@ -53,6 +53,13 @@ values, and is left to a future standard-library `std/ui` module.
 
 ### Added
 
+- Stage 1's C backend now lowers `extern "C"` imports and exported
+  `pub extern "C" fn` bodies. The parser records import signatures, and calls
+  convert arguments by the declared ABI type (integers, `usize`/`isize`,
+  `f32`/`f64`, `bool`, `unit`, and opaque `Ptr`/`Ptr?` values), match named
+  arguments by parameter name, and convert the return value back to a tagged
+  value. `examples/ffi/ffi.xulo` now compiles and matches the interpreter;
+  stage 1 build coverage reaches 59 of 66 example files.
 - Stage 1's C backend now lowers `std::net` over a new `runtime_net.inc`:
   opaque handles with listener/stream kinds, TCP listen/connect/accept,
   read/write with optional millisecond timeouts, shutdown/shutdown_write,

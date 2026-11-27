@@ -335,10 +335,13 @@ so stage 2 does not inherit them silently.
     flag, width, precision, the `Display`/`Debug` consultation, and the
     import forms), `std::regex` (`RegExp::compile` with `i`/`g`/`m`/`s`/
     `u`, `test`/`find`/`find_all`, named and numbered groups, `string.replace`
-    templates and closures, and `string.split`), and all of `std::net` (TCP
+    templates and closures, and `string.split`), all of `std::net` (TCP
     listen/connect/accept, read/write with optional timeouts, shutdown,
-    close, and local/peer addresses over opaque handles). Call-site type
-    arguments are
+    close, and local/peer addresses over opaque handles), and `extern "C"`
+    imports (`i8`–`i64`, `u8`–`u32`, `usize`/`isize`, `f32`/`f64`, `bool`,
+    `unit`, and `Ptr`/`Ptr?`, with named-argument matching and reordering).
+    `pub extern "C" fn` exports are lowered as ordinary functions. Call-site
+    type arguments are
     dropped because the backend is dynamically typed; a const argument is the
     exception, since the lowered body uses its value. Module-qualified
     names (`alias::fn`, `m::CONST`) resolve by their final segment because
@@ -418,15 +421,16 @@ so stage 2 does not inherit them silently.
   synchronous model, and drops call-site type arguments, but macro calls still
   report `E0005`; attribute macros and macro expansion remain outside the
   bootstrap subset, and macro bodies are skipped as token trees.
-- The backend builds 58 of the 66 example files end to end. One of the
+- The backend builds 59 of the 66 example files end to end. One of the
   remaining failures is the expected `errors/type_error.xulo` reject; the
   others need macros, `u64`, `std::http` (which also needs `std::process`'s
-  `Command`/`Child`), FFI, or the inline-module C compile path.
+  `Command`/`Child`), or the inline-module C compile path.
   `crates/xupm/tests/stage1_build.rs` pins the `lexical`,
   `propagation`, `arrays`, `std/time`, `std/io`, `std/io_extra`, `std/fmt`,
   `std/regex`, `std/net`, `std/net_shutdown`, `functions/closures_hof`,
-  `functions/defer`, `types/aliases`, `types/generics_impl`, and
-  `concurrency/spawn_lock` cases against their sidecars (stdout and stderr).
+  `functions/defer`, `types/aliases`, `types/generics_impl`,
+  `concurrency/spawn_lock`, and `ffi/ffi` cases against their sidecars
+  (stdout and stderr).
 - The parser recovers only by stopping at the first error. That is enough for
   Gate 1/2 diagnostics; stage 1's checker work will need recovery.
 - The tests read `xuloc/src/*.xulo` relative to the repository root, like the

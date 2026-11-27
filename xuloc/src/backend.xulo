@@ -23,7 +23,8 @@
 //   * a `Trait::method(receiver, …)` call dispatches through the runtime
 //     method registry on the receiver's struct type;
 //   * the `std::fs`, `std::io`, `std::os`, `std::fmt`, `std::regex`,
-//     `std::net`, and `std::process` calls stage 1 itself uses.
+//     `std::net`, and `std::process` calls stage 1 itself uses, plus
+//     `extern "C"` imports and exported `pub extern "C" fn` bodies.
 //
 // Deliberate limits (recorded in BOOTSTRAP.md):
 //   * no asynchronous execution: `spawn` runs its block immediately and
@@ -93,6 +94,14 @@ pub struct ConstInfo {
     pub expr: Node,
 }
 
+pub struct ExternInfo {
+    pub local_name: string,
+    pub symbol: string,
+    pub params: List<string>,
+    pub types: List<string>,
+    pub ret: string,
+}
+
 pub struct Emitter {
     pub funcs: List<FnInfo>,
     pub methods: List<MethodInfo>,
@@ -100,6 +109,7 @@ pub struct Emitter {
     pub enums: List<EnumInfo>,
     pub traits: List<TraitInfo>,
     pub consts: List<ConstInfo>,
+    pub externs: List<ExternInfo>,
     pub local_names: List<string>,
     pub local_cnames: List<string>,
     pub local_depths: List<number>,
@@ -133,6 +143,7 @@ fn new_emitter(): Emitter {
         enums: [],
         traits: [],
         consts: [],
+        externs: [],
         local_names: [],
         local_cnames: [],
         local_depths: [],
@@ -278,6 +289,43 @@ pub fn cl_add_const(e: mut Emitter, node: Node) {
     )
 }
 
+pub fn cl_add_extern(e: mut Emitter, node: Node) {
+    for child in node.children {
+        if child.kind != "ExternFn" {
+            continue
+        }
+        let mut params: List<string> = []
+        let mut types: List<string> = []
+        let mut ret = ""
+        let mut alias = ""
+        for item in child.children {
+            if item.kind == "Param" {
+                params.push(item.value)
+                let mut type_text = ""
+                if item.children.len > 0 {
+                    type_text = bk_expr::ex_type_text(e, item.children[0])
+                }
+                types.push(type_text)
+            } else if item.kind == "ExternAlias" {
+                alias = item.value
+            } else {
+                ret = bk_expr::ex_type_text(e, item)
+            }
+        }
+        let local_name = if alias == "" { child.value } else { alias }
+        e.externs.push(
+            ExternInfo(
+                local_name: local_name,
+                symbol: child.value,
+                params: params,
+                types: types,
+                ret: ret,
+            ),
+        )
+    }
+}
+
+
 // The bootstrap runtime is dynamically typed and has a single signed 64-bit
 // integer slot. `u64` values above `i64::MAX` cannot be represented, so the
 // subset rejects the type outright instead of mis-tagging it as `int`
@@ -361,6 +409,10 @@ pub fn cl_collect_program(e: mut Emitter, node: Node, dir: string) {
     }
     if node.kind == "Const" {
         cl_add_const(e, node)
+        return
+    }
+    if node.kind == "Extern" {
+        cl_add_extern(e, node)
         return
     }
     if node.kind == "Impl" {

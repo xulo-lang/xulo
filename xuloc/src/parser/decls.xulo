@@ -144,12 +144,54 @@ pub fn dc_use_decl(p: mut Parser): Node {
 pub fn dc_extern_decl(p: mut Parser): Node {
     let start = tokens::tk_advance(p)
     let mut n = nodes::nd_mk(p, "Extern", "", start)
-    while p.error == "" and !tokens::tk_at(p, "{") and !tokens::tk_at(p, ";") and !tokens::tk_at_kind(p, "eof") {
+    if tokens::tk_at_kind(p, "string") {
         tokens::tk_advance(p)
     }
-    if tokens::tk_at(p, "{") {
-        tokens::tk_skip_balanced(p, "{", "}")
-    } else if tokens::tk_at(p, ";") {
+    // `pub extern "C" fn … { … }` exports an implementation; inside the
+    // program it is an ordinary function.
+    if tokens::tk_at(p, "fn") {
+        return dc_fn_decl(p)
+    }
+    if !tokens::tk_expect(p, "{") {
+        return n
+    }
+    while p.error == "" and !tokens::tk_at(p, "}") and !tokens::tk_at_kind(p, "eof") {
+        if tokens::tk_at(p, "fn") {
+            add(n, dc_extern_fn(p))
+        } else if tokens::tk_at(p, ";") {
+            tokens::tk_advance(p)
+        } else {
+            tokens::tk_advance(p)
+        }
+    }
+    tokens::tk_expect(p, "}")
+    n.end = tokens::tk_prev(p).end
+    return n
+}
+
+/// One import in an `extern "C" { … }` block:
+/// `fn name(params) [: Ret] [as local];`.
+fn dc_extern_fn(p: mut Parser): Node {
+    let start = tokens::tk_advance(p)
+    let name = tokens::tk_ident_name(p)
+    let mut n = node("ExternFn", name, start.start, start.end, start.line, start.column)
+    if !tokens::tk_expect(p, "(") {
+        return n
+    }
+    for param in dc_parameters(p) {
+        add(n, param)
+    }
+    tokens::tk_expect(p, ")")
+    if tokens::tk_at(p, ":") {
+        tokens::tk_advance(p)
+        add(n, types::ty_type_expr(p))
+    }
+    if tokens::tk_at(p, "as") {
+        tokens::tk_advance(p)
+        let alias = tokens::tk_ident_name(p)
+        add(n, nodes::nd_mk(p, "ExternAlias", alias, tokens::tk_prev(p)))
+    }
+    if tokens::tk_at(p, ";") {
         tokens::tk_advance(p)
     }
     n.end = tokens::tk_prev(p).end

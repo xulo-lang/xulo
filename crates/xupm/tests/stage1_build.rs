@@ -342,7 +342,7 @@ fn stage1_compiles_the_bootstrap_corpus() {
 /// closures (including mutable captures and returned closures), `defer`
 /// (including loops and `?`), `std::fmt` (including the `Display`/`Debug`
 /// consultation), const generic parameters, the synchronous
-/// `spawn`/`lock`/service model, `std::regex`, and `std::net`.
+/// `spawn`/`lock`/service model, `std::regex`, `std::net`, and `extern "C"`.
 #[test]
 fn stage1_runs_the_lowered_examples() {
     if !enabled() {
@@ -369,6 +369,7 @@ fn stage1_runs_the_lowered_examples() {
         "examples/std/net.xulo",
         "examples/std/net_shutdown.xulo",
         "examples/concurrency/spawn_lock.xulo",
+        "examples/ffi/ffi.xulo",
         "examples/basics/templates.xulo",
         "examples/basics/bindings.xulo",
         "examples/basics/lexical.xulo",
