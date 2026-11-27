@@ -42,6 +42,63 @@ fn ca_type_arg_literal(node: Node, index: number): string {
     return ""
 }
 
+/// The runtime value of one call-site type argument: a literal integer, or a
+/// const-generic parameter name resolved against the current locals.
+fn ca_type_arg_value(e: mut Emitter, node: Node, index: number): string {
+    if node.children.len == 0 {
+        return ""
+    }
+    let callee = node.children[0]
+    if callee.kind != "TypeApply" or callee.children.len < 2 {
+        return ""
+    }
+    let args = callee.children[1]
+    if args.kind != "TypeArgs" or index >= args.children.len {
+        return ""
+    }
+    let arg = args.children[index]
+    if arg.kind == "LiteralType" {
+        return "xr_int(" + arg.value + "LL)"
+    }
+    if arg.kind == "TypeName" or arg.kind == "Name" {
+        return bk_expr::ex_emit_name(e, arg.value)
+    }
+    return ""
+}
+
+/// The const-generic arguments a call must append after its value arguments.
+fn ca_const_args(e: mut Emitter, node: Node, name: string): List<string> {
+    let extra: List<string> = []
+    let index = bk_state::co_find_function_index(e, name)
+    if index < 0 {
+        return extra
+    }
+    let flags = e.funcs[index].generic_const
+    let mut i = 0
+    while i < flags.len {
+        if flags[i] {
+            let value = ca_type_arg_value(e, node, i)
+            if value == "" {
+                bk_state::co_fail(e, "`" + name + "` needs a const argument at type position " + str(i))
+                extra.push("xr_nil()")
+            } else {
+                extra.push(value)
+            }
+        }
+        i = i + 1
+    }
+    return extra
+}
+
+fn ca_append_const_args(e: mut Emitter, node: Node, name: string, args: List<string>) {
+    let extra = ca_const_args(e, node, name)
+    let mut i = 0
+    while i < extra.len {
+        args.push(extra[i])
+        i = i + 1
+    }
+}
+
 pub fn ca_emit_call(e: mut Emitter, node: Node): string {
     if node.children.len == 0 {
         return "xr_nil()"
@@ -129,6 +186,7 @@ pub fn ca_emit_named_call(e: mut Emitter, node: Node): string {
         let fn_cname = bk_state::co_find_function(e, name)
         if fn_cname != "" {
             let args = bk_expr::ex_eval_args(e, node.children, 1)
+            ca_append_const_args(e, node, name, args)
             return fn_cname
                 + "("
                 + str(args.len)
@@ -697,8 +755,12 @@ pub fn ca_emit_path_call(e: mut Emitter, node: Node): string {
         }
         let count = ca_type_arg_literal(node, 1)
         if count == "" {
-            bk_state::co_fail(e, "`Array::filled` needs a literal length in the bootstrap backend")
-            return "xr_nil()"
+            let value = ca_type_arg_value(e, node, 1)
+            if value == "" {
+                bk_state::co_fail(e, "`Array::filled` needs a length or a const parameter")
+                return "xr_nil()"
+            }
+            return "xr_array_filled(" + args[0] + ", xr_int_value(" + value + "))"
         }
         return "xr_array_filled(" + args[0] + ", " + count + "LL)"
     }
@@ -722,6 +784,7 @@ pub fn ca_emit_path_call(e: mut Emitter, node: Node): string {
         // `alias::fn` lowers to the same C function as `fn`.
         let fn_cname = bk_state::co_find_function(e, parts[1])
         if fn_cname != "" {
+            ca_append_const_args(e, node, parts[1], args)
             return fn_cname
                 + "("
                 + str(args.len)
@@ -783,6 +846,7 @@ pub fn ca_emit_path_call(e: mut Emitter, node: Node): string {
     let last = parts[parts.len - 1]
     let fn_cname = bk_state::co_find_function(e, last)
     if fn_cname != "" {
+        ca_append_const_args(e, node, last, args)
         return fn_cname
             + "("
             + str(args.len)

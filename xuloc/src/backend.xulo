@@ -57,6 +57,8 @@ pub struct FnInfo {
     pub cname: string,
     pub params: List<string>,
     pub body: Node,
+    pub const_params: List<string>,
+    pub generic_const: List<bool>,
 }
 
 pub struct MethodInfo {
@@ -161,6 +163,8 @@ fn new_emitter(): Emitter {
 pub fn cl_add_function(e: mut Emitter, node: Node) {
     let mut params: List<string> = []
     let mut body = node
+    let mut const_params: List<string> = []
+    let mut generic_const: List<bool> = []
     for child in node.children {
         if child.kind == "Param" {
             if child.value == "self" or child.value == "mut self" {
@@ -170,6 +174,15 @@ pub fn cl_add_function(e: mut Emitter, node: Node) {
             }
         } else if child.kind == "Block" {
             body = child
+        } else if child.kind == "GenericParams" {
+            for param in child.children {
+                if param.kind == "ConstGenericParam" {
+                    const_params.push(param.value)
+                    generic_const.push(true)
+                } else {
+                    generic_const.push(false)
+                }
+            }
         }
     }
     e.funcs.push(
@@ -178,6 +191,8 @@ pub fn cl_add_function(e: mut Emitter, node: Node) {
             cname: "f_" + node.value,
             params: params,
             body: body,
+            const_params: const_params,
+            generic_const: generic_const,
         ),
     )
 }

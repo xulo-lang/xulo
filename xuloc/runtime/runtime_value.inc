@@ -168,6 +168,19 @@ static void xr_fail(const char *message) {
     exit(1);
 }
 
+// An integer slot for a runtime value; float values convert to their integer
+// part. Used where a lowered generic constant has to become a C count.
+static long long xr_int_value(XVal v) {
+    if (v.tag == XT_INT) {
+        return v.i;
+    }
+    if (v.tag == XT_FLOAT) {
+        return (long long)v.f;
+    }
+    xr_fail("expected an integer value");
+    return 0;
+}
+
 XVal xr_panic(XVal message) {
     XStr *s = xr_as_str(message);
     if (message.tag == XT_STR) {

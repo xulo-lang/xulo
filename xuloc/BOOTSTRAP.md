@@ -318,7 +318,9 @@ so stage 2 does not inherit them silently.
     closures), `#[derive(Debug)]` rendering, the `Map`/`Set` members (`size`,
     `get`, `set`, `has`, `remove`, `keys`, `values`, `entries`, `insert`),
     iteration over a map's keys or a set's elements, `Map::from_entries`,
-    `Set::from_list`, `Array::filled<T, N>` with a literal `N`, the
+    `Set::from_list`, `Array::filled<T, N>` with a literal or const-generic
+    length, const generic parameters (an explicit call-site argument is
+    appended to the call and bound as a function-local value), the
     `std::fs`/`std::os`/`std::process`/`std::path`/`std::hint`/`std::math`/
     `std::json` calls stage 1 uses, all of `std::io` (the four writes, `flush`,
     the two tty probes, and `read_line`/`read`/`read_n`), the `std::time`
@@ -326,8 +328,8 @@ so stage 2 does not inherit them silently.
     `from_parts`, `weekday`), and all of `std::fmt::format` (every verb,
     flag, width, precision, the `Display`/`Debug` consultation, and the
     import forms). Call-site type arguments are
-    dropped because the backend is dynamically typed; the type argument is
-    only consulted for a literal `Array::filled` length. Module-qualified
+    dropped because the backend is dynamically typed; a const argument is the
+    exception, since the lowered body uses its value. Module-qualified
     names (`alias::fn`, `m::CONST`) resolve by their final segment because
     declaration collection flattens modules.
     `Trait::method(receiver, …)` lowers to runtime method dispatch on the
@@ -403,14 +405,14 @@ so stage 2 does not inherit them silently.
   arguments, but macro calls, `spawn`, and `lock` still report `E0005`;
   attribute macros and macro expansion remain outside the bootstrap subset,
   and macro bodies are skipped as token trees.
-- The backend builds 53 of the 66 example files end to end. One of the
+- The backend builds 54 of the 66 example files end to end. One of the
   remaining failures is the expected `errors/type_error.xulo` reject; the
   others need `lock`, macros, `u64`, the `std::regex`/`std::net` modules,
   `std::http`, `std::process`'s `Command`/`launch`, FFI, or the inline-module
   C compile path. `crates/xupm/tests/stage1_build.rs` pins the `lexical`,
   `propagation`, `arrays`, `std/time`, `std/io`, `std/io_extra`, `std/fmt`,
-  `functions/closures_hof`, `functions/defer`, and `types/aliases` cases
-  against their sidecars (stdout and stderr).
+  `functions/closures_hof`, `functions/defer`, `types/aliases`, and
+  `types/generics_impl` cases against their sidecars (stdout and stderr).
 - The parser recovers only by stopping at the first error. That is enough for
   Gate 1/2 diagnostics; stage 1's checker work will need recovery.
 - The tests read `xuloc/src/*.xulo` relative to the repository root, like the

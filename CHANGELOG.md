@@ -53,6 +53,14 @@ values, and is left to a future standard-library `std/ui` module.
 
 ### Added
 
+- Stage 1's C backend now lowers const generic parameters: the parser marks
+  `const N: int` as `ConstGenericParam`, call sites append explicit const
+  arguments (a literal or an enclosing const parameter) after the value
+  arguments, and the function body binds each one as a local. `Array::filled`
+  accepts such a parameter as its length. `examples/types/generics_impl.xulo`
+  now compiles and matches the interpreter; a regression test covers
+  const-only, mixed type/const, and const-length array construction. Stage 1
+  build coverage reaches 54 of 66 example files.
 - Stage 1's C backend now lowers `std::fmt::format` over a new
   `runtime_fmt.inc`, including every verb (`v`/`s`/`q`/`t`/`c`, the integer
   and floating-point verbs), the flag/width/precision vocabulary, the

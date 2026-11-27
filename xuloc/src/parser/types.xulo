@@ -181,6 +181,7 @@ pub fn ty_generic_params(p: mut Parser): Node {
         )
         if tokens::tk_at(p, "const") {
             tokens::tk_advance(p)
+            param.kind = "ConstGenericParam"
         }
         param.value = tokens::tk_ident_name(p)
         if tokens::tk_at(p, ":") {

@@ -51,13 +51,14 @@ pub fn em_emit(e: mut Emitter, runtime_path: string): string {
     i = 0
     while i < e.funcs.len {
         let f = e.funcs[i]
-        em_emit_function(e, f.cname, f.params, f.body)
+        em_emit_function(e, f.cname, f.params, f.const_params, f.body)
         i = i + 1
     }
     i = 0
     while i < e.methods.len {
         let m = e.methods[i]
-        em_emit_function(e, m.cname, m.params, m.body)
+        let const_params: List<string> = []
+        em_emit_function(e, m.cname, m.params, const_params, m.body)
         i = i + 1
     }
     em_emit_main(e)
@@ -154,7 +155,8 @@ pub fn em_emit_globals(e: mut Emitter) {
     e.program.append("\n")
 }
 
-pub fn em_emit_function(e: mut Emitter, cname: string, params: List<string>, body: Node) {
+pub fn em_emit_function(e: mut Emitter, cname: string, params: List<string>,
+                         const_params: List<string>, body: Node) {
     e.out = StringBuilder::new()
     e.local_names = []
     e.local_cnames = []
@@ -199,6 +201,33 @@ pub fn em_emit_function(e: mut Emitter, cname: string, params: List<string>, bod
             )
         }
         i = i + 1
+    }
+    let mut c = 0
+    while c < const_params.len {
+        let index = params.len + c
+        let const_local = bk_state::co_new_local(e, const_params[c])
+        if e.box_locals {
+            bk_state::co_line(e, 
+                "  XVal *"
+                    + const_local
+                    + " = xr_cell(argc > "
+                    + str(index)
+                    + " ? argv["
+                    + str(index)
+                    + "] : xr_nil());",
+            )
+        } else {
+            bk_state::co_line(e, 
+                "  XVal "
+                    + const_local
+                    + " = argc > "
+                    + str(index)
+                    + " ? argv["
+                    + str(index)
+                    + "] : xr_nil();",
+            )
+        }
+        c = c + 1
     }
     em_emit_block_return(e, body)
     e.indent = 0

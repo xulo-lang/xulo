@@ -340,8 +340,8 @@ fn stage1_compiles_the_bootstrap_corpus() {
 /// implements, plus templates, optional chaining, object literals, `?`
 /// propagation, chained assignment, Unicode escapes, `Array::filled`,
 /// closures (including mutable captures and returned closures), `defer`
-/// (including loops and `?`), and `std::fmt` (including the `Display`/`Debug`
-/// consultation).
+/// (including loops and `?`), `std::fmt` (including the `Display`/`Debug`
+/// consultation), and const generic parameters.
 #[test]
 fn stage1_runs_the_lowered_examples() {
     if !enabled() {
@@ -373,6 +373,7 @@ fn stage1_runs_the_lowered_examples() {
         "examples/types/optional_chaining.xulo",
         "examples/types/structs.xulo",
         "examples/types/aliases.xulo",
+        "examples/types/generics_impl.xulo",
         "examples/collections/collections.xulo",
         "examples/collections/arrays.xulo",
         "examples/collections/maps.xulo",
@@ -512,6 +513,59 @@ fn main() {
         render_lines(&native.stdout),
         render_lines(&interpreted.stdout),
         "the C backend's closure output must match the interpreter"
+    );
+}
+
+/// Const generic parameters: a const argument is appended to the call, bound
+/// as a function-local value, and can flow into `Array::filled`. Mixed type and
+/// const parameters keep their declaration positions.
+#[test]
+fn stage1_c_backend_lowers_const_generics() {
+    if !enabled() {
+        return;
+    }
+    let root = repo_root();
+    let stage1 = stage1_binary();
+    let work = unique_dir("const_generics");
+    let source = work.join("const_generics.xulo");
+    std::fs::write(
+        &source,
+        r#"fn pick<const N: int>(x: int): int {
+    x + N
+}
+
+fn both<T, const N: int>(x: T): int {
+    N
+}
+
+fn make<const N: int>(v: int): Array<int, N> {
+    Array::filled<int, N>(v)
+}
+
+fn main() {
+    print(pick<2>(10))
+    print(both<string, 4>("x"))
+    let a = make<3>(7)
+    print(a.len, a[0])
+}
+"#,
+    )
+    .expect("the const-generic probe should be writable");
+
+    let interpreted = Command::new(XUPM)
+        .args(["run", source.to_str().expect("a UTF-8 path")])
+        .current_dir(&root)
+        .output()
+        .expect("xupm run should start");
+    assert_success(&interpreted, "the interpreter const-generic probe");
+
+    let program = build_stage1_program(&stage1, &root, &source, &work, "const_generics");
+    let native = run_program(&program);
+    assert_success(&native, "the stage 1 const-generic probe");
+    assert_eq!(
+        render_lines(&native.stdout),
+        render_lines(&interpreted.stdout),
+        "the C backend's const-generic output must match the interpreter"
     );
 }
 
