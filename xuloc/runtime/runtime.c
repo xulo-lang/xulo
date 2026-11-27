@@ -32,5 +32,6 @@
 #include "runtime_json.inc"    // std::json
 #include "runtime_path.inc"    // std::path
 #include "runtime_math.inc"    // std::math
+#include "runtime_fmt.inc"     // std::fmt
 #include "runtime_time.inc"    // std::time
 #include "runtime_process.inc" // std::process::exec

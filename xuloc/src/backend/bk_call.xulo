@@ -70,6 +70,23 @@ pub fn ca_emit_value_call(e: mut Emitter, node: Node, callee: Node): string {
         + ")"
 }
 
+fn ca_emit_fmt_args(e: mut Emitter, args: List<string>): string {
+    if args.len < 1 or args.len > 2 {
+        bk_state::co_fail(e, "`std::fmt::format` expects one or two arguments")
+        return "xr_nil()"
+    }
+    let mut list = "xr_list_new()"
+    if args.len == 2 {
+        list = args[1]
+    }
+    return "xr_fmt_format(" + args[0] + ", " + list + ")"
+}
+
+fn ca_emit_fmt_call(e: mut Emitter, node: Node): string {
+    let args = bk_expr::ex_eval_args(e, node.children, 1)
+    return ca_emit_fmt_args(e, args)
+}
+
 pub fn ca_emit_method_call(e: mut Emitter, node: Node): string {
     let callee = ca_callee(node)
     let recv_expr = bk_expr::ex_emit_expr(e, callee.children[0])
@@ -118,6 +135,11 @@ pub fn ca_emit_named_call(e: mut Emitter, node: Node): string {
                 + ", "
                 + bk_expr::ex_value_array(e, args)
                 + ")"
+        }
+        // `use std::fmt::*` binds the one member; the backend does not model
+        // imports, so a bare `format` falls back to the std member.
+        if name == "format" {
+            return ca_emit_fmt_call(e, node)
         }
         bk_state::co_fail(e, "cannot lower call to `" + name + "`")
         return "xr_nil()"
@@ -252,6 +274,17 @@ pub fn ca_emit_struct_call(e: mut Emitter, node: Node, struct_index: number): st
 pub fn ca_emit_path_call(e: mut Emitter, node: Node): string {
     let path = ca_callee(node).value
     let args = bk_expr::ex_eval_args(e, node.children, 1)
+    if path == "std::fmt::format" {
+        return ca_emit_fmt_args(e, args)
+    }
+    let fmt_parts = bk_util::split_path(path)
+    // `use std::fmt as f;` makes `f::format` an alias; a user function named
+    // `format` keeps precedence, matching the flattened module namespace.
+    if fmt_parts.len == 2 and fmt_parts[1] == "format"
+        and bk_state::co_find_function(e, "format") == ""
+    {
+        return ca_emit_fmt_args(e, args)
+    }
     if path == "std::fs::read" {
         if args.len != 1 {
             bk_state::co_fail(e, "`std::fs::read` expects one argument")

@@ -339,8 +339,9 @@ fn stage1_compiles_the_bootstrap_corpus() {
 /// Examples the C backend lowers end to end: the `std` surface stage 1
 /// implements, plus templates, optional chaining, object literals, `?`
 /// propagation, chained assignment, Unicode escapes, `Array::filled`,
-/// closures (including mutable captures and returned closures), and `defer`
-/// (including loops and `?`).
+/// closures (including mutable captures and returned closures), `defer`
+/// (including loops and `?`), and `std::fmt` (including the `Display`/`Debug`
+/// consultation).
 #[test]
 fn stage1_runs_the_lowered_examples() {
     if !enabled() {
@@ -362,6 +363,7 @@ fn stage1_runs_the_lowered_examples() {
         "examples/std/fs_extra.xulo",
         "examples/std/io.xulo",
         "examples/std/io_extra.xulo",
+        "examples/std/fmt.xulo",
         "examples/basics/templates.xulo",
         "examples/basics/bindings.xulo",
         "examples/basics/lexical.xulo",
@@ -598,6 +600,65 @@ fn main() {
         render_lines(&native.stdout),
         render_lines(&interpreted.stdout),
         "the C backend's defer output must match the interpreter"
+    );
+}
+
+/// `std::fmt::format`: every verb, flags, width, precision, quoting, scalar
+/// output, and the `Display`/`Debug` consultation for user structs. The
+/// compiled output must match the interpreter byte for byte.
+#[test]
+fn stage1_c_backend_lowers_fmt() {
+    if !enabled() {
+        return;
+    }
+    let root = repo_root();
+    let stage1 = stage1_binary();
+    let work = unique_dir("fmt");
+    let source = work.join("fmt.xulo");
+    std::fs::write(
+        &source,
+        r#"fn main() {
+    print(std::fmt::format("%6.2f", [3.14159]))
+    print(std::fmt::format("%e", [1234.5]))
+    print(std::fmt::format("%E", [0.000123]))
+    print(std::fmt::format("%f", [-0.0]))
+    print(std::fmt::format("%e", [-0.0]))
+    print(std::fmt::format("%g", [100000.0]))
+    print(std::fmt::format("%g", [1234567.0]))
+    print(std::fmt::format("%g", [std::math::pow(10.0, 20.0)]))
+    print(std::fmt::format("%g", [0.1]))
+    print(std::fmt::format("%.0f", [2.5]))
+    print(std::fmt::format("%.1f", [2.25]))
+    print(std::fmt::format("%x", [-255]))
+    print(std::fmt::format("%x", [-9223372036854775808]))
+    print(std::fmt::format("%#b", [5]))
+    print(std::fmt::format("%q", ["a\n"]))
+    print(std::fmt::format("%q", ["q\"b\\c\td"]))
+    print(std::fmt::format("%c", [8364]))
+    print(std::fmt::format("%3s|", ["€"]))
+    print(std::fmt::format("%.3s", [[1, 2, 3]]))
+    print(std::fmt::format("100%%"))
+    print(std::fmt::format("%v", [[1, [2, 3]]]))
+    print(std::fmt::format("%d %d", [1, 2]))
+}
+"#,
+    )
+    .expect("the fmt probe should be writable");
+
+    let interpreted = Command::new(XUPM)
+        .args(["run", source.to_str().expect("a UTF-8 path")])
+        .current_dir(&root)
+        .output()
+        .expect("xupm run should start");
+    assert_success(&interpreted, "the interpreter fmt probe");
+
+    let program = build_stage1_program(&stage1, &root, &source, &work, "fmt");
+    let native = run_program(&program);
+    assert_success(&native, "the stage 1 fmt probe");
+    assert_eq!(
+        render_lines(&native.stdout),
+        render_lines(&interpreted.stdout),
+        "the C backend's fmt output must match the interpreter"
     );
 }
 

@@ -53,6 +53,16 @@ values, and is left to a future standard-library `std/ui` module.
 
 ### Added
 
+- Stage 1's C backend now lowers `std::fmt::format` over a new
+  `runtime_fmt.inc`, including every verb (`v`/`s`/`q`/`t`/`c`, the integer
+  and floating-point verbs), the flag/width/precision vocabulary, the
+  `Display`/`Debug` consultation for user structs (with a `Format` carrying
+  `precision` and `alternate`), `#[derive(Debug)]` fallback, and the
+  qualified, imported, and aliased call forms. `examples/std/fmt.xulo` now
+  compiles and matches the interpreter byte for byte; a regression test adds
+  rounding, negative zero, alternate forms, quoting, multibyte width, and the
+  extreme integer cases. Stage 1 build coverage reaches 53 of 66 example
+  files.
 - Stage 1's C backend now lowers `defer`: each block keeps a registration
   list, and its operands run in reverse registration order when the block
   leaves through fallthrough, `return`, `break`, `continue`, or `?`, after the
