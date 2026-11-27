@@ -233,11 +233,11 @@ strings check their interpolated expressions, an untyped object literal gets
 an anonymous shape so its member reads are checked, tuples carry a `(T1,T2)`
 type through literals, annotations, positional reads/writes, and destructuring,
 `type` aliases expand on demand, inherent `impl Type` methods bind `self` and
-are callable with arity/type checks, optional struct fields may be omitted, and
-a generic enum payload binds as `unknown` so the arm body still checks. Traits,
-generic impls, generics, closures, and std calls still report E0003 or leave
-`complete = false` ("not supported / not modeled") rather than being silently
-accepted. `build` runs the checker and stops only on a
+are callable with arity/type checks, default parameters relax the minimum
+arity, optional struct fields may be omitted, and a generic enum payload binds
+as `unknown` so the arm body still checks. Traits, generic impls, generics,
+closures, and std calls still report E0003 or leave `complete = false` ("not
+supported / not modeled") rather than being silently accepted. `build` runs the checker and stops only on a
 confirmed error, so the partial analysis never rejects a program that code
 generation could handle.
 

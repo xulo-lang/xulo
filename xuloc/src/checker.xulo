@@ -17,8 +17,9 @@
 // gets an anonymous shape so its member reads and object destructuring are
 // checked. Tuple types, literals, positional reads, writes, and destructuring
 // are modeled as `(T1,T2)` strings, `type` aliases expand on demand, and an
-// inherent `impl Type` exposes methods with `self`. Traits, generic impls,
-// closures, and the remaining pattern forms arrive in later WP6 slices.
+// inherent `impl Type` exposes methods with `self`, and default parameters
+// relax a call's minimum arity. Traits, generic impls, closures, and the
+// remaining pattern forms arrive in later WP6 slices.
 //
 // Types are canonical strings (`number`, `string`, `bool`, `unit`, `unknown`,
 // `null`, `List<T>`, `T?`) so comparisons never depend on structural equality.
@@ -51,6 +52,7 @@ pub struct FuncSig {
     name: string,
     module_id: string,
     is_pub: bool,
+    min_params: number,
     params: List<string>,
     ret: string,
     /// The declaration, kept so parameter and return types are resolved after
@@ -63,6 +65,7 @@ pub struct MethodSig {
     name: string,
     module_id: string,
     param_names: List<string>,
+    min_params: number,
     params: List<string>,
     ret: string,
     decl: Node,
@@ -1335,6 +1338,7 @@ impl Checker {
                         name: child.value,
                         module_id: module_id,
                         param_names: [],
+                        min_params: 0,
                         params: [],
                         ret: "unit",
                         decl: child,
@@ -1368,6 +1372,8 @@ impl Checker {
             let mut names: List<string> = []
             let mut params: List<string> = []
             let mut ret = "unit"
+            let mut min_params = 0
+            let mut seen_default = false
             for child in item.children {
                 if child.kind == "Param" {
                     if child.value == "self" or child.value == "mut self" {
@@ -1375,18 +1381,31 @@ impl Checker {
                     }
                     names.push(child.value)
                     let mut ty = "unknown"
+                    let mut has_default = false
                     for part in child.children {
                         if self.is_type_node(part) {
                             ty = self.type_of(part)
+                        } else if part.kind != "Pub" and part.kind != "Async"
+                            and part.kind != "Mut" and part.kind != "Shared"
+                        {
+                            has_default = true
                         }
+                    }
+                    if has_default and !seen_default {
+                        min_params = params.len
+                        seen_default = true
                     }
                     params.push(ty)
                 } else if self.is_type_node(child) {
                     ret = self.type_of(child)
                 }
             }
+            if !seen_default {
+                min_params = params.len
+            }
             if self.error == "" {
                 self.methods[i].param_names = names
+                self.methods[i].min_params = min_params
                 self.methods[i].params = params
                 self.methods[i].ret = ret
             }
@@ -1488,6 +1507,7 @@ impl Checker {
                 name: item.value,
                 module_id: module_id,
                 is_pub: has_child_kind(item, "Pub"),
+                min_params: 0,
                 params: [],
                 ret: "unit",
                 decl: item,
@@ -1506,6 +1526,8 @@ impl Checker {
             let item = sig.decl
             let mut params: List<string> = []
             let mut ret = "unit"
+            let mut min_params = 0
+            let mut seen_default = false
             for child in item.children {
                 if child.kind == "Param" {
                     if child.value == "self" or child.value == "mut self" {
@@ -1513,17 +1535,30 @@ impl Checker {
                         break
                     }
                     let mut ty = "unknown"
+                    let mut has_default = false
                     for part in child.children {
                         if self.is_type_node(part) {
                             ty = self.type_of(part)
+                        } else if part.kind != "Pub" and part.kind != "Async"
+                            and part.kind != "Mut" and part.kind != "Shared"
+                        {
+                            has_default = true
                         }
+                    }
+                    if has_default and !seen_default {
+                        min_params = params.len
+                        seen_default = true
                     }
                     params.push(ty)
                 } else if self.is_type_node(child) {
                     ret = self.type_of(child)
                 }
             }
+            if !seen_default {
+                min_params = params.len
+            }
             if self.error == "" {
+                self.functions[i].min_params = min_params
                 self.functions[i].params = params
                 self.functions[i].ret = ret
             }
@@ -2443,6 +2478,9 @@ impl Checker {
             }
             return "number"
         }
+        if node.value == "shared" or node.value == "copy" or node.value == "move" {
+            return ty
+        }
         self.fail(node, "E0003", "stage 1 checker does not support `" + node.value + "` yet")
         return "unknown"
     }
@@ -2634,16 +2672,17 @@ impl Checker {
             return "unknown"
         }
         let sig = self.functions[index]
-        if arg_types.len != sig.params.len {
+        if arg_types.len < sig.min_params or arg_types.len > sig.params.len {
             self.fail(
                 node,
                 "E0207",
-                "`" + name + "` expects " + str(sig.params.len) + " arguments, found " + str(arg_types.len),
+                "`" + name + "` expects " + str(sig.min_params) + ".." + str(sig.params.len)
+                    + " arguments, found " + str(arg_types.len),
             )
             return sig.ret
         }
         let mut p = 0
-        while p < sig.params.len {
+        while p < arg_types.len {
             if !self.assignable(sig.params[p], arg_types[p]) {
                 self.fail(
                 node,
@@ -2688,17 +2727,17 @@ impl Checker {
             return "unknown"
         }
         let sig = self.methods[index]
-        if arg_types.len != sig.params.len {
+        if arg_types.len < sig.min_params or arg_types.len > sig.params.len {
             self.fail(
                 node,
                 "E0207",
-                "`" + sig.name + "` expects " + str(sig.params.len)
-                    + " arguments, found " + str(arg_types.len),
+                "`" + sig.name + "` expects " + str(sig.min_params) + ".."
+                    + str(sig.params.len) + " arguments, found " + str(arg_types.len),
             )
             return sig.ret
         }
         let mut p = 0
-        while p < sig.params.len {
+        while p < arg_types.len {
             if !self.assignable(sig.params[p], arg_types[p]) {
                 self.fail(
                     node,

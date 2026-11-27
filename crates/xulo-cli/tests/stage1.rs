@@ -383,6 +383,19 @@ fn stage1_check_accepts_struct_methods() {
     );
 }
 
+/// Default parameters relax the call's minimum arity.
+#[test]
+fn stage1_check_accepts_default_params() {
+    let root = repo_root();
+    let out = run_stage1("check", &root.join("examples/functions/params.xulo"));
+    assert_success(&out, "stage 1 check of examples/functions/params.xulo");
+    assert!(
+        stdout_of(&out).contains("no errors"),
+        "default parameters should check cleanly:\n{}",
+        stdout_of(&out)
+    );
+}
+
 /// T9: the stage 1 lexer/parser is measured against the example corpus, and
 /// the gaps are a shrinking baseline.
 ///
