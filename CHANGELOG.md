@@ -58,8 +58,16 @@ values, and is left to a future standard-library `std/ui` module.
   `weekday`) over a `runtime_time.inc` module that uses pure integer date
   arithmetic, so it does not depend on the host time zone or locale.
   `examples/std/time.xulo`, `math_time.xulo`, and `std.xulo` now compile and
-  match the interpreter byte for byte. Stage 1 build coverage reaches 49 of 66
-  example files.
+  match the interpreter byte for byte. Stage 1 build coverage reached 49 of 66
+  example files before the `std::io` readers landed.
+- Stage 1's C backend now lowers the rest of `std::io`: the two tty probes and
+  the three stdin readers (`read_line`, `read`, `read_n`) over a new
+  `runtime_io.inc`. The readers decode strict UTF-8, report the first invalid
+  byte's offset, distinguish `Ok(null)` at end of input from `Ok("")`, and
+  `read_n` keeps an incomplete trailing scalar for the next call.
+  `examples/std/io_extra.xulo` now compiles and matches the interpreter on
+  stdout and stderr, so stage 1 build coverage reaches 50 of 66 example files.
+  `examples/std/io.xulo` is now pinned alongside it.
 - Stage 1's C backend lowers postfix `?` (propagating `Result::Err` with a
   `return`), `Error("…")`, assignment in expression position (`a = b = 3`),
   `shared` as a pass-through unary, and `Array::filled<T, N>` with a literal

@@ -27,7 +27,8 @@
 #include "runtime_ops.inc"     // arithmetic, comparison, `is`, nullish
 #include "runtime_render.inc"  // formatting and `StringBuilder`
 #include "runtime_methods.inc" // intrinsic/member dispatch
-#include "runtime_fs.inc"      // std::fs / std::io / std::os / std::process
+#include "runtime_fs.inc"      // std::fs / std::os / std::process
+#include "runtime_io.inc"      // std::io readers and terminal probes
 #include "runtime_json.inc"    // std::json
 #include "runtime_path.inc"    // std::path
 #include "runtime_math.inc"    // std::math

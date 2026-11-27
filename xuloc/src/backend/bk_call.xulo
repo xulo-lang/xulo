@@ -316,6 +316,31 @@ pub fn ca_emit_path_call(e: mut Emitter, node: Node): string {
     if path == "std::io::flush" {
         return "xr_io_flush()"
     }
+    if path == "std::io::read_line" or path == "std::io::read"
+        or path == "std::io::stdin_is_tty" or path == "std::io::stdout_is_tty"
+    {
+        if args.len != 0 {
+            bk_state::co_fail(e, "`" + path + "` expects no arguments")
+            return "xr_nil()"
+        }
+        if path == "std::io::read_line" {
+            return "xr_io_read_line()"
+        }
+        if path == "std::io::read" {
+            return "xr_io_read()"
+        }
+        if path == "std::io::stdin_is_tty" {
+            return "xr_io_stdin_is_tty()"
+        }
+        return "xr_io_stdout_is_tty()"
+    }
+    if path == "std::io::read_n" {
+        if args.len != 1 {
+            bk_state::co_fail(e, "`std::io::read_n` expects one argument")
+            return "xr_nil()"
+        }
+        return "xr_io_read_n(" + args[0] + ")"
+    }
     if path == "std::path::join" or path == "std::path::relative" {
         if args.len != 2 {
             bk_state::co_fail(e, "`" + path + "` expects two arguments")

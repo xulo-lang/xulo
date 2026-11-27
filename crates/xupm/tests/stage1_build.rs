@@ -358,6 +358,8 @@ fn stage1_runs_the_lowered_examples() {
         "examples/std/json.xulo",
         "examples/std/fs.xulo",
         "examples/std/fs_extra.xulo",
+        "examples/std/io.xulo",
+        "examples/std/io_extra.xulo",
         "examples/basics/templates.xulo",
         "examples/basics/bindings.xulo",
         "examples/basics/lexical.xulo",
@@ -391,6 +393,9 @@ fn stage1_runs_the_lowered_examples() {
             render_lines(expected.as_bytes()),
             "the stage 1 build of {rel} printed unexpected output"
         );
+        if let Some(problem) = xulo_examples::mismatch(&root.join(file), true, &run.stderr) {
+            panic!("the stage 1 build of {rel} printed unexpected stderr:\n{problem}");
+        }
     }
 }
 

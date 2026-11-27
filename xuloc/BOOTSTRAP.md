@@ -29,7 +29,8 @@ xuloc/
 │   ├── runtime_ops.inc    # arithmetic, comparison, `is`, nullish
 │   ├── runtime_render.inc # formatting and StringBuilder
 │   ├── runtime_methods.inc # member/static dispatch
-│   ├── runtime_fs.inc     # std::fs / io / os / process
+│   ├── runtime_fs.inc     # std::fs / os / process
+│   ├── runtime_io.inc     # std::io readers and terminal probes
 │   ├── runtime_json.inc   # std::json
 │   ├── runtime_path.inc   # std::path
 │   ├── runtime_math.inc   # std::math
@@ -59,7 +60,7 @@ corpus is not compiled by the package, so they stay outside `src/`.
 | `xuloc/src/backend/*.xulo` | Procedural emission modules: `bk_util`, `bk_state`, `bk_emit`, `bk_stmt`, `bk_expr`, `bk_call`, `bk_pattern` |
 | `xuloc/runtime/runtime.c` | Unity entry point included by generated programs; assembles the `runtime_*.inc` modules in dependency order |
 | `xuloc/runtime/runtime_internal.h` | Shared `XVal`, container, and module-dependency definitions |
-| `xuloc/runtime/runtime_*.inc` | One module each: tagged values/containers, operators, rendering, method dispatch, `std::fs`/`std::io`/`std::os`/`std::process`, `std::json`, `std::path`, `std::math`, `std::time`, `std::process::exec` |
+| `xuloc/runtime/runtime_*.inc` | One module each: tagged values/containers, operators, rendering, method dispatch, `std::fs`/`std::os`/`std::process`, `std::io`'s readers and terminal probes (its writes live with the renderer), `std::json`, `std::path`, `std::math`, `std::time`, `std::process::exec` |
 | `xuloc/corpus/accept/` | Files stage 1 and stage 0 must both accept; `.expected` files hold their compiled output |
 | `xuloc/corpus/reject/` | Files both must reject, with a coded semantic diagnostic |
 | `xuloc/src/main.xulo` | CLI: `tokens`, `parse`, `check`, and `build` modes, diagnostics, exit status |
@@ -312,10 +313,11 @@ so stage 2 does not inherit them silently.
     `set`, `has`, `remove`, `keys`, `values`, `entries`, `insert`), iteration
     over a map's keys or a set's elements, `Map::from_entries`,
     `Set::from_list`, `Array::filled<T, N>` with a literal `N`, the
-    `std::fs`/`std::io`/`std::os`/`std::process`/`std::path`/`std::hint`/
-    `std::math`/`std::json` calls stage 1 uses, and the `std::time` clocks,
-    `sleep`, and UTC calendar (`format`, `parse`, `parts`, `from_parts`,
-    `weekday`). Call-site type arguments are
+    `std::fs`/`std::os`/`std::process`/`std::path`/`std::hint`/`std::math`/
+    `std::json` calls stage 1 uses, all of `std::io` (the four writes, `flush`,
+    the two tty probes, and `read_line`/`read`/`read_n`), and the `std::time`
+    clocks, `sleep`, and UTC calendar (`format`, `parse`, `parts`,
+    `from_parts`, `weekday`). Call-site type arguments are
     dropped because the backend is dynamically typed; the type argument is
     only consulted for a literal `Array::filled` length. Module-qualified
     names (`alias::fn`, `m::CONST`) resolve by their final segment because
@@ -391,13 +393,14 @@ so stage 2 does not inherit them silently.
   call-site type arguments, but arrow closures, macro calls, `spawn`, and
   `lock` still report `E0005`; attribute macros and macro expansion remain
   outside the bootstrap subset, and macro bodies are skipped as token trees.
-- The backend builds 49 of the 66 example files end to end. One of the
+- The backend builds 50 of the 66 example files end to end. One of the
   remaining failures is the expected `errors/type_error.xulo` reject; the
   others need closures, `defer`, `lock`, macros, `u64`, the
-  `std::fmt`/`std::regex`/`std::net` modules, `std::io`'s tty/read extras,
-  `std::http`, `std::process`'s `Command`/`launch`, FFI, or the inline-module
-  C compile path. `crates/xupm/tests/stage1_build.rs` pins the `lexical`,
-  `propagation`, `arrays`, and `std/time` cases against their sidecars.
+  `std::fmt`/`std::regex`/`std::net` modules, `std::http`,
+  `std::process`'s `Command`/`launch`, FFI, or the inline-module C compile
+  path. `crates/xupm/tests/stage1_build.rs` pins the `lexical`,
+  `propagation`, `arrays`, `std/time`, `std/io`, and `std/io_extra` cases
+  against their sidecars (stdout and stderr).
 - The parser recovers only by stopping at the first error. That is enough for
   Gate 1/2 diagnostics; stage 1's checker work will need recovery.
 - The tests read `xuloc/src/*.xulo` relative to the repository root, like the
