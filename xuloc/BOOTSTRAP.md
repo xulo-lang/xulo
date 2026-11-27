@@ -366,7 +366,10 @@ so stage 2 does not inherit them silently.
     closure. Call-site
     type arguments are
     dropped because the backend is dynamically typed; a const argument is the
-    exception, since the lowered body uses its value. Module namespaces are
+    exception, since the lowered body uses its value. Direct user-function
+    calls apply named arguments and default values; a default expression is
+    evaluated at the call site, so references to earlier parameters are
+    outside the subset. Module namespaces are
     preserved: every file-backed and inline module gets its own scope, C
     symbols are mangled by module path, and `alias::fn` / `m::CONST` /
     `super::…` / `self::…` paths resolve through the module tree, `use`

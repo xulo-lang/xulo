@@ -63,6 +63,9 @@ pub struct FnInfo {
     /// Module id that declares this function (`""` for the package root).
     pub module_id: string,
     pub params: List<string>,
+    /// Parallel to `params`: the default expression, or the `Param` node
+    /// itself when the parameter has no default.
+    pub defaults: List<Node>,
     pub body: Node,
     pub const_params: List<string>,
     pub generic_const: List<bool>,
@@ -232,6 +235,7 @@ fn new_emitter(): Emitter {
 
 pub fn cl_add_function(e: mut Emitter, node: Node, module_id: string) {
     let mut params: List<string> = []
+    let mut defaults: List<Node> = []
     let mut body = node
     let mut const_params: List<string> = []
     let mut generic_const: List<bool> = []
@@ -242,6 +246,18 @@ pub fn cl_add_function(e: mut Emitter, node: Node, module_id: string) {
             } else {
                 params.push(child.value)
             }
+            let mut default_expr = child
+            let mut seen_type = false
+            for part in child.children {
+                if part.kind == "TypeName" {
+                    seen_type = true
+                } else if seen_type and part.kind != "Pub" and part.kind != "Async"
+                    and part.kind != "Mut" and part.kind != "Shared"
+                {
+                    default_expr = part
+                }
+            }
+            defaults.push(default_expr)
         } else if child.kind == "Block" {
             body = child
         } else if child.kind == "GenericParams" {
@@ -262,6 +278,7 @@ pub fn cl_add_function(e: mut Emitter, node: Node, module_id: string) {
             cname: cname,
             module_id: module_id,
             params: params,
+            defaults: defaults,
             body: body,
             const_params: const_params,
             generic_const: generic_const,

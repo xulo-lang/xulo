@@ -55,7 +55,10 @@ values, and is left to a future standard-library `std/ui` module.
 
 - Stage 1's checker now honors default parameters: a call may omit trailing
   defaulted arguments, so `examples/functions/params.xulo` reports
-  `no errors` (the C backend still does not fill defaults at run time).
+  `no errors`.
+- Stage 1's C backend now applies defaults and named arguments for direct user
+  function calls, so `examples/functions/params.xulo` builds and runs
+  (`2 / 20 / hi! / hey? / shared`) and is pinned in `stage1_build`.
 - Stage 1's checker now models inherent `impl Type` methods: `self` is bound
   to the owner type, method bodies are checked, and method calls validate
   arity and arguments (including chains). Optional struct fields may be

@@ -100,6 +100,86 @@ fn ca_append_const_args(e: mut Emitter, node: Node, fn_cname: string, args: List
     }
 }
 
+fn ca_param_index(e: Emitter, index: number, name: string): number {
+    let mut i = 0
+    while i < e.funcs[index].params.len {
+        if e.funcs[index].params[i] == name {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+/// Evaluate a user function call's arguments in parameter order, applying
+/// named arguments and default values. Provided arguments are evaluated in
+/// source order; a default expression is emitted for a missing position.
+fn ca_eval_call_args(e: mut Emitter, node: Node, index: number): List<string> {
+    let count = e.funcs[index].params.len
+    let mut values: List<string> = []
+    let mut filled: List<bool> = []
+    let mut i = 0
+    while i < count {
+        values.push("")
+        filled.push(false)
+        i = i + 1
+    }
+    let mut positional = 0
+    let mut a = 1
+    while a < node.children.len {
+        let arg = node.children[a]
+        let mut label = ""
+        let mut expr = arg
+        if arg.kind == "Arg" {
+            label = arg.value
+            if arg.children.len > 0 {
+                expr = arg.children[0]
+            }
+        }
+        let mut target = -1
+        if label == "" {
+            target = positional
+            positional = positional + 1
+        } else {
+            target = ca_param_index(e, index, label)
+        }
+        if target < 0 or target >= count {
+            bk_state::co_fail(e, "unknown argument `" + label + "`")
+            a = a + 1
+            continue
+        }
+        let value = bk_expr::ex_arg_expr(e, expr)
+        let tmp = bk_state::co_new_tmp(e)
+        bk_state::co_line(e, "XVal " + tmp + " = " + value + ";")
+        values[target] = tmp
+        filled[target] = true
+        a = a + 1
+    }
+    let ordered: List<string> = []
+    let mut p = 0
+    while p < count {
+        if filled[p] {
+            ordered.push(values[p])
+        } else {
+            let default_expr = e.funcs[index].defaults[p]
+            if default_expr.kind == "Param" {
+                bk_state::co_fail(
+                    e,
+                    "missing argument `" + e.funcs[index].params[p] + "`",
+                )
+                ordered.push("xr_nil()")
+            } else {
+                let value = bk_expr::ex_emit_expr(e, default_expr)
+                let tmp = bk_state::co_new_tmp(e)
+                bk_state::co_line(e, "XVal " + tmp + " = " + value + ";")
+                ordered.push(tmp)
+            }
+        }
+        p = p + 1
+    }
+    return ordered
+}
+
 pub fn ca_emit_call(e: mut Emitter, node: Node): string {
     if node.children.len == 0 {
         return "xr_nil()"
@@ -486,7 +566,12 @@ pub fn ca_emit_named_call(e: mut Emitter, node: Node): string {
             fn_cname = bk_state::co_find_function(e, name)
         }
         if fn_cname != "" {
-            let args = bk_expr::ex_eval_args(e, node.children, 1)
+            let index = bk_state::co_find_function_index_by_cname(e, fn_cname)
+            let args = if index >= 0 {
+                ca_eval_call_args(e, node, index)
+            } else {
+                bk_expr::ex_eval_args(e, node.children, 1)
+            }
             ca_append_const_args(e, node, fn_cname, args)
             return fn_cname
                 + "("

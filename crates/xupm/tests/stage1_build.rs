@@ -380,6 +380,7 @@ fn stage1_runs_the_lowered_examples() {
         "examples/basics/lexical.xulo",
         "examples/functions/closures_hof.xulo",
         "examples/functions/defer.xulo",
+        "examples/functions/params.xulo",
         "examples/errors/propagation.xulo",
         "examples/types/optional_chaining.xulo",
         "examples/types/structs.xulo",
