@@ -105,6 +105,21 @@ pub fn ca_emit_call(e: mut Emitter, node: Node): string {
     }
     let callee = ca_callee(node)
     if callee.kind == "Member" or callee.kind == "OptionalMember" {
+        if callee.children.len > 0 {
+            let mut recv_type = ""
+            let recv = callee.children[0]
+            if recv.kind == "Name" {
+                recv_type = recv.value
+            } else if recv.kind == "Path" {
+                let parts = bk_util::split_path(recv.value)
+                if parts.len > 0 {
+                    recv_type = parts[parts.len - 1]
+                }
+            }
+            if recv_type == "Response" or recv_type == "Command" {
+                return ca_emit_static_member_call(e, node, recv_type, callee.value)
+            }
+        }
         return ca_emit_method_call(e, node)
     }
     if callee.kind == "Name" or callee.kind == "Path" {
@@ -337,6 +352,50 @@ fn ca_emit_extern_call(e: mut Emitter, node: Node, index: number): string {
     return "xr_int((long long)(" + call + "))"
 }
 
+/// Static methods written with dot syntax (`Response.text(…)`) are
+/// distinguishable from instance methods because the receiver is the type
+/// name. Command's join spelling (`Command::shell`) goes through the path
+/// lowering instead.
+fn ca_emit_static_member_call(e: mut Emitter, node: Node, recv_type: string,
+                               method: string): string {
+    let args = bk_expr::ex_eval_args(e, node.children, 1)
+    if recv_type == "Response" {
+        if method == "text" {
+            if args.len < 1 or args.len > 2 {
+                bk_state::co_fail(e, "`Response.text` expects one or two arguments")
+                return "xr_nil()"
+            }
+            let status = if args.len == 2 { args[1] } else { "xr_nil()" }
+            return "xr_http_response_text(" + args[0] + ", " + status + ")"
+        }
+        if method == "json" {
+            if args.len != 1 {
+                bk_state::co_fail(e, "`Response.json` expects one argument")
+                return "xr_nil()"
+            }
+            return "xr_http_response_json(" + args[0] + ")"
+        }
+    }
+    if recv_type == "Command" {
+        if method == "shell" {
+            if args.len != 1 {
+                bk_state::co_fail(e, "`Command.shell` expects one argument")
+                return "xr_nil()"
+            }
+            return "xr_process_command_shell(" + args[0] + ")"
+        }
+        if method == "direct" {
+            if args.len != 2 {
+                bk_state::co_fail(e, "`Command.direct` expects a program and an argument list")
+                return "xr_nil()"
+            }
+            return "xr_process_command_direct(" + args[0] + ", " + args[1] + ")"
+        }
+    }
+    bk_state::co_fail(e, "cannot lower static method `" + recv_type + "." + method + "`")
+    return "xr_nil()"
+}
+
 pub fn ca_emit_method_call(e: mut Emitter, node: Node): string {
     let callee = ca_callee(node)
     let recv_expr = bk_expr::ex_emit_expr(e, callee.children[0])
@@ -354,6 +413,27 @@ pub fn ca_emit_method_call(e: mut Emitter, node: Node): string {
         + ")"
 }
 
+/// `Request(method: …, path: …, …)` / `Response(status: …, …)` construct a
+/// field table with the named arguments, in source order.
+fn ca_emit_named_object(e: mut Emitter, node: Node, type_name: string): string {
+    let mut names: List<string> = []
+    let mut values: List<string> = []
+    let mut i = 1
+    while i < node.children.len {
+        let child = node.children[i]
+        if child.kind == "Arg" and child.children.len > 0 {
+            let value = bk_expr::ex_emit_expr(e, child.children[0])
+            let tmp = bk_state::co_new_tmp(e)
+            bk_state::co_line(e, "XVal " + tmp + " = " + value + ";")
+            names.push(child.value)
+            values.push(tmp)
+        }
+        i = i + 1
+    }
+    return "xr_struct(" + bk_util::c_string(type_name) + ", " + str(names.len) + ", "
+        + bk_expr::ex_name_array(e, names) + ", " + bk_expr::ex_value_array(e, values) + ")"
+}
+
 pub fn ca_emit_named_call(e: mut Emitter, node: Node): string {
     let callee = ca_callee(node)
     let name = callee.value
@@ -365,6 +445,9 @@ pub fn ca_emit_named_call(e: mut Emitter, node: Node): string {
         let struct_index = bk_state::co_find_struct(e, name)
         if struct_index >= 0 {
             return ca_emit_struct_call(e, node, struct_index)
+        }
+        if name == "Request" or name == "Response" {
+            return ca_emit_named_object(e, node, name)
         }
         let binding = bk_state::co_lookup_local(e, name)
         if binding != "" {
@@ -393,6 +476,20 @@ pub fn ca_emit_named_call(e: mut Emitter, node: Node): string {
         }
         // `use std::fmt::*` binds the one member; the backend does not model
         // imports, so a bare `format` falls back to the std member.
+        if name == "exec_path" {
+            if node.children.len != 1 {
+                bk_state::co_fail(e, "`exec_path` expects no arguments")
+                return "xr_nil()"
+            }
+            return "xr_os_exec_path()"
+        }
+        if name == "args" {
+            if node.children.len != 1 {
+                bk_state::co_fail(e, "`args` expects no arguments")
+                return "xr_nil()"
+            }
+            return "xr_process_args()"
+        }
         if ca_is_net_member(name) {
             let args = bk_expr::ex_eval_args(e, node.children, 1)
             return ca_emit_net_args(e, name, args)
@@ -991,6 +1088,47 @@ pub fn ca_emit_path_call(e: mut Emitter, node: Node): string {
             return "xr_nil()"
         }
         return "xr_process_command_direct(" + args[0] + ", " + args[1] + ")"
+    }
+    if path == "std::http::listen" {
+        if args.len != 1 {
+            bk_state::co_fail(e, "`std::http::listen` expects one argument")
+            return "xr_nil()"
+        }
+        return "xr_http_listen(" + args[0] + ")"
+    }
+    if path == "std::http::fetch" {
+        if args.len < 1 or args.len > 2 {
+            bk_state::co_fail(e, "`std::http::fetch` expects one or two arguments")
+            return "xr_nil()"
+        }
+        let timeout = if args.len == 2 { args[1] } else { "xr_nil()" }
+        return "xr_http_fetch(" + args[0] + ", " + timeout + ")"
+    }
+    if path == "std::http::request" {
+        if args.len < 2 or args.len > 5 {
+            bk_state::co_fail(e, "`std::http::request` expects two to five arguments")
+            return "xr_nil()"
+        }
+        let headers = if args.len >= 3 { args[2] } else { "xr_nil()" }
+        let body = if args.len >= 4 { args[3] } else { "xr_nil()" }
+        let timeout = if args.len >= 5 { args[4] } else { "xr_nil()" }
+        return "xr_http_request(" + args[0] + ", " + args[1] + ", " + headers + ", " + body
+            + ", " + timeout + ")"
+    }
+    if path == "Response::text" or path == "std::http::Response::text" {
+        if args.len < 1 or args.len > 2 {
+            bk_state::co_fail(e, "`Response::text` expects one or two arguments")
+            return "xr_nil()"
+        }
+        let status = if args.len == 2 { args[1] } else { "xr_nil()" }
+        return "xr_http_response_text(" + args[0] + ", " + status + ")"
+    }
+    if path == "Response::json" or path == "std::http::Response::json" {
+        if args.len != 1 {
+            bk_state::co_fail(e, "`Response::json` expects one argument")
+            return "xr_nil()"
+        }
+        return "xr_http_response_json(" + args[0] + ")"
     }
     if path == "Array::filled" {
         if args.len != 1 {

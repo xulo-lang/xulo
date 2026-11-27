@@ -343,7 +343,7 @@ fn stage1_compiles_the_bootstrap_corpus() {
 /// (including loops and `?`), `std::fmt` (including the `Display`/`Debug`
 /// consultation), const generic parameters, the synchronous
 /// `spawn`/`lock`/service model, `std::regex`, `std::net`, `std::process`,
-/// and `extern "C"`.
+/// `std::http`, named function values, and `extern "C"`.
 #[test]
 fn stage1_runs_the_lowered_examples() {
     if !enabled() {
@@ -370,6 +370,7 @@ fn stage1_runs_the_lowered_examples() {
         "examples/std/net.xulo",
         "examples/std/net_shutdown.xulo",
         "examples/std/process.xulo",
+        "examples/std/http.xulo",
         "examples/concurrency/spawn_lock.xulo",
         "examples/ffi/ffi.xulo",
         "examples/basics/templates.xulo",

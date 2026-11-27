@@ -339,10 +339,15 @@ so stage 2 does not inherit them silently.
     `u`, `test`/`find`/`find_all`, named and numbered groups, `string.replace`
     templates and closures, and `string.split`), all of `std::net` (TCP
     listen/connect/accept, read/write with optional timeouts, shutdown,
-    close, and local/peer addresses over opaque handles), and `extern "C"`
+    close, and local/peer addresses over opaque handles), `std::http`
+    (`listen`/`serve`, `fetch`/`request`, and the `Server`/`Request`/
+    `Response` field tables with header/query/form lookup and the
+    `text`/`json` shorthands), and `extern "C"`
     imports (`i8`–`i64`, `u8`–`u32`, `usize`/`isize`, `f32`/`f64`, `bool`,
     `unit`, and `Ptr`/`Ptr?`, with named-argument matching and reordering).
-    `pub extern "C" fn` exports are lowered as ordinary functions. Call-site
+    `pub extern "C" fn` exports are lowered as ordinary functions, and a
+    named function used as a value (`logging(route)`) gets a forwarding
+    closure. Call-site
     type arguments are
     dropped because the backend is dynamically typed; a const argument is the
     exception, since the lowered body uses its value. Module-qualified
@@ -399,7 +404,7 @@ so stage 2 does not inherit them silently.
   backend's subset is the bootstrap subset listed above. The runtime covers
   the `std` surface stage 1's own source needs plus `std::path`, `std::hint`,
   `std::os`, `std::math`, `std::fmt`, `std::regex`, `std::net`, `std::process`,
-  `std::json`, and `std::fs`
+  `std::http`, `std::json`, and `std::fs`
   (its `read_dir` / `walk` / `realpath` are POSIX-only). Object literals lower
   to runtime objects, so
   member access and `{ ...base, k: v }` work. `Map` and `Set` are first-class
@@ -407,9 +412,8 @@ so stage 2 does not inherit them silently.
   key/element iteration, structural set equality, and the static constructors
   lower to `XT_OBJ` (map) and `XT_SET` (set) values. `std::time` is lowered
   (clocks, `sleep`, and the UTC calendar over pure integer date arithmetic),
-  and so are `std::fmt::format`, `std::regex`, `std::net`, and `std::process`;
-  `std::http` is the remaining HTTP layer above them, so that example still
-  fails with `E0005`.
+  and so are `std::fmt::format`, `std::regex`, `std::net`, `std::process`, and
+  `std::http`.
 - Destructuring (`let (a, b)`, `let { x, y }`), struct/enum/literal/or/range/
   type patterns with guards, and `#[derive(Debug)]`'s `Type(field: value)`
   rendering are lowered. A struct without the derive still renders as
@@ -423,13 +427,12 @@ so stage 2 does not inherit them silently.
   synchronous model, and drops call-site type arguments, but macro calls still
   report `E0005`; attribute macros and macro expansion remain outside the
   bootstrap subset, and macro bodies are skipped as token trees.
-- The backend builds 60 of the 66 example files end to end. One of the
+- The backend builds 61 of the 66 example files end to end. One of the
   remaining failures is the expected `errors/type_error.xulo` reject; the
-  others need macros, `u64`, `std::http` (the HTTP layer above the now-lowered
-  `std::net` and `std::process`), or the inline-module C compile path.
+  others need macros, `u64`, or the inline-module C compile path.
   `crates/xupm/tests/stage1_build.rs` pins the `lexical`,
   `propagation`, `arrays`, `std/time`, `std/io`, `std/io_extra`, `std/fmt`,
-  `std/regex`, `std/net`, `std/net_shutdown`, `std/process`,
+  `std/regex`, `std/net`, `std/net_shutdown`, `std/process`, `std/http`,
   `functions/closures_hof`, `functions/defer`, `types/aliases`,
   `types/generics_impl`, `concurrency/spawn_lock`, and `ffi/ffi` cases against
   their sidecars (stdout and stderr).

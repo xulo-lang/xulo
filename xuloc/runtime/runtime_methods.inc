@@ -93,6 +93,15 @@ XVal xr_method(XVal recv, const char *name, long long n, XVal *args) {
         if (strcmp(o->type, "Child") == 0) {
             return xr_process_child_method(recv, name, n, args);
         }
+        if (strcmp(o->type, "Request") == 0) {
+            return xr_http_request_method(recv, name, n, args);
+        }
+        if (strcmp(o->type, "Response") == 0) {
+            return xr_http_response_method(recv, name, n, args);
+        }
+        if (strcmp(o->type, "Server") == 0) {
+            return xr_http_server_method(recv, name, n, args);
+        }
         XrMethodFn fn = xr_lookup_method(o->type, name);
         if (fn != NULL) {
             return fn(n + 1, xr_args_with_self(recv, n, args));

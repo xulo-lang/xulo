@@ -489,7 +489,7 @@ pub fn ex_c_template_text(e: Emitter, text: string): string {
     return lit.build()
 }
 
-pub fn ex_emit_name(e: Emitter, name: string): string {
+pub fn ex_emit_name(e: mut Emitter, name: string): string {
     let binding = bk_state::co_lookup_local(e, name)
     if binding != "" {
         if e.box_locals {
@@ -507,7 +507,35 @@ pub fn ex_emit_name(e: Emitter, name: string): string {
     if constant != "" {
         return constant
     }
+    if bk_state::co_find_function_index(e, name) >= 0 {
+        return ex_function_value(e, name)
+    }
     return ""
+}
+
+/// A named function used as a value gets a generated closure that forwards
+/// its arguments, so `map(xs, double)` and `logging(route)` work.
+fn ex_function_value(e: mut Emitter, name: string): string {
+    let mut i = 0
+    while i < e.function_value_names.len {
+        if e.function_value_names[i] == name {
+            return "xr_closure_new(" + str(e.function_value_ids[i]) + ", 0, NULL)"
+        }
+        i = i + 1
+    }
+    let index = bk_state::co_find_function_index(e, name)
+    let fn_cname = e.funcs[index].cname
+    let id = e.next_closure
+    e.next_closure = e.next_closure + 1
+    let cname = "c_" + str(id)
+    let text = "static XVal " + cname + "(XVal self, long long argc, XVal *argv) {\n"
+        + "  (void)self;\n  (void)argc;\n  (void)argv;\n  return " + fn_cname
+        + "(argc, argv);\n}\n"
+    e.closure_funcs.push(text)
+    e.closure_ids.push(id)
+    e.function_value_names.push(name)
+    e.function_value_ids.push(id)
+    return "xr_closure_new(" + str(id) + ", 0, NULL)"
 }
 
 pub fn ex_require_name(e: mut Emitter, name: string): string {

@@ -32,6 +32,7 @@
 #include "runtime_io.inc"      // std::io readers and terminal probes
 #include "runtime_net.inc"     // std::net TCP sockets
 #include "runtime_json.inc"    // std::json
+#include "runtime_http.inc"    // std::http
 #include "runtime_path.inc"    // std::path
 #include "runtime_math.inc"    // std::math
 #include "runtime_fmt.inc"     // std::fmt

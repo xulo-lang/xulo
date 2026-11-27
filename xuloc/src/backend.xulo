@@ -23,8 +23,8 @@
 //   * a `Trait::method(receiver, …)` call dispatches through the runtime
 //     method registry on the receiver's struct type;
 //   * the `std::fs`, `std::io`, `std::os`, `std::fmt`, `std::regex`,
-//     `std::net`, and `std::process` calls stage 1 itself uses, plus
-//     `extern "C"` imports and exported `pub extern "C" fn` bodies.
+//     `std::net`, `std::process`, and `std::http` calls stage 1 itself uses,
+//     plus `extern "C"` imports and exported `pub extern "C" fn` bodies.
 //
 // Deliberate limits (recorded in BOOTSTRAP.md):
 //   * no asynchronous execution: `spawn` runs its block immediately and
@@ -118,6 +118,8 @@ pub struct Emitter {
     pub capture_names: List<string>,
     pub closure_funcs: List<string>,
     pub closure_ids: List<number>,
+    pub function_value_names: List<string>,
+    pub function_value_ids: List<number>,
     pub defer_depths: List<number>,
     pub defer_lists: List<List<Node> >,
     pub loop_depths: List<number>,
@@ -152,6 +154,8 @@ fn new_emitter(): Emitter {
         capture_names: [],
         closure_funcs: [],
         closure_ids: [],
+        function_value_names: [],
+        function_value_ids: [],
         defer_depths: [],
         defer_lists: [],
         loop_depths: [],

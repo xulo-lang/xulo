@@ -47,6 +47,9 @@
 #define XR_POPEN _popen
 #define XR_PCLOSE _pclose
 #define XR_GETPID _getpid
+#ifndef strncasecmp
+#define strncasecmp _strnicmp
+#endif
 #else
 #include <arpa/inet.h>
 #include <dirent.h>
@@ -56,6 +59,7 @@
 #include <poll.h>
 #include <pwd.h>
 #include <signal.h>
+#include <strings.h>
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -162,5 +166,9 @@ XVal xr_process_command_shell(XVal command);
 XVal xr_process_command_direct(XVal program, XVal args);
 XVal xr_process_command_method(XVal recv, const char *name, long long n, XVal *args);
 XVal xr_process_child_method(XVal recv, const char *name, long long n, XVal *args);
+// Defined in `runtime_http.inc`; the method dispatcher delegates to them.
+XVal xr_http_request_method(XVal recv, const char *name, long long n, XVal *args);
+XVal xr_http_response_method(XVal recv, const char *name, long long n, XVal *args);
+XVal xr_http_server_method(XVal recv, const char *name, long long n, XVal *args);
 
 #endif

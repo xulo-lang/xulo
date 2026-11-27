@@ -53,6 +53,16 @@ values, and is left to a future standard-library `std/ui` module.
 
 ### Added
 
+- Stage 1's C backend now lowers `std::http` over a new `runtime_http.inc`:
+  `listen`/`serve` with a function-value handler, `fetch`/`request` clients,
+  and the `Server`/`Request`/`Response` field tables with case-insensitive
+  header lookup, exact query/form lookup, percent decoding, and the
+  `Response.text`/`Response.json` shorthands. The backend also lowers named
+  functions used as values (`logging(route)`) as forwarding closures and
+  static dot calls (`Response.text`). `examples/std/http.xulo` now compiles
+  and matches the interpreter byte for byte, including its self-launched
+  server, three client exchanges, and the captured server log. Stage 1 build
+  coverage reaches 61 of 66 example files.
 - Stage 1's C backend now lowers the full `std::process` surface: `run`,
   `exec`, and `launch` with optional input and timeout; the `Command`
   `shell`/`direct` constructors and pure `input`/`cwd`/`env`/`timeout`
