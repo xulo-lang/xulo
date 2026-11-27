@@ -270,9 +270,17 @@ pub fn st_emit_assign_to(e: mut Emitter, target: Node, value_node: Node) {
     if target.kind == "Member" {
         let recv = bk_expr::ex_emit_expr(e, target.children[0])
         let value = bk_expr::ex_emit_expr(e, value_node)
-        bk_state::co_line(e, 
-            "xr_set_field(" + recv + ", " + bk_util::c_string(target.value) + ", " + value + ");",
-        )
+        let position = bk_expr::ex_member_index(target.value)
+        if position >= 0 {
+            bk_state::co_line(
+                e,
+                "xr_set_index(" + recv + ", xr_int(" + str(position) + "), " + value + ");",
+            )
+        } else {
+            bk_state::co_line(e,
+                "xr_set_field(" + recv + ", " + bk_util::c_string(target.value) + ", " + value + ");",
+            )
+        }
         return
     }
     if target.kind == "Index" {

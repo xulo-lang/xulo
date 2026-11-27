@@ -384,6 +384,7 @@ fn stage1_runs_the_lowered_examples() {
         "examples/errors/propagation.xulo",
         "examples/types/optional_chaining.xulo",
         "examples/types/structs.xulo",
+        "examples/types/tuples.xulo",
         "examples/types/aliases.xulo",
         "examples/types/generics_impl.xulo",
         "examples/collections/collections.xulo",

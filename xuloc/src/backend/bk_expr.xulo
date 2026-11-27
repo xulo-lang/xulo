@@ -680,10 +680,18 @@ fn ex_emit_assign_parts(e: mut Emitter, target: Node, value_node: Node): string 
         let value = ex_emit_expr(e, value_node)
         let tmp = bk_state::co_new_tmp(e)
         bk_state::co_line(e, "XVal " + tmp + " = " + value + ";")
-        bk_state::co_line(
-            e,
-            "xr_set_field(" + recv + ", " + bk_util::c_string(target.value) + ", " + tmp + ");",
-        )
+        let position = ex_member_index(target.value)
+        if position >= 0 {
+            bk_state::co_line(
+                e,
+                "xr_set_index(" + recv + ", xr_int(" + str(position) + "), " + tmp + ");",
+            )
+        } else {
+            bk_state::co_line(
+                e,
+                "xr_set_field(" + recv + ", " + bk_util::c_string(target.value) + ", " + tmp + ");",
+            )
+        }
         return tmp
     }
     if target.kind == "Index" {
@@ -877,6 +885,25 @@ pub fn ex_type_text(e: Emitter, node: Node): string {
     return node.value
 }
 
+/// A numeric member (`p.0`) is a tuple position; `-1` means a named member.
+pub fn ex_member_index(text: string): number {
+    if text == "" {
+        return -1
+    }
+    let mut value = 0
+    let chars = text.split("")
+    let mut i = 0
+    while i < chars.len {
+        let code = chars[i].code_at(0)
+        if code < 48 or code > 57 {
+            return -1
+        }
+        value = value * 10 + (code - 48)
+        i = i + 1
+    }
+    return value
+}
+
 pub fn ex_emit_member(e: mut Emitter, node: Node): string {
     let recv = ex_emit_expr(e, node.children[0])
     if node.value == "len" {
@@ -885,6 +912,10 @@ pub fn ex_emit_member(e: mut Emitter, node: Node): string {
     if node.value == "byte_len" {
         return "xr_int(xr_byte_len(" + recv + "))"
     }
+    let position = ex_member_index(node.value)
+    if position >= 0 {
+        return "xr_index(" + recv + ", xr_int(" + str(position) + "))"
+    }
     return "xr_get_field(" + recv + ", " + bk_util::c_string(node.value) + ")"
 }
 
@@ -892,6 +923,10 @@ pub fn ex_emit_optional_member(e: mut Emitter, node: Node): string {
     let recv = ex_emit_expr(e, node.children[0])
     if node.value == "len" {
         return "xr_int(xr_len(" + recv + "))"
+    }
+    let position = ex_member_index(node.value)
+    if position >= 0 {
+        return "xr_index_opt(" + recv + ", xr_int(" + str(position) + "))"
     }
     return "xr_get_field_opt(" + recv + ", " + bk_util::c_string(node.value) + ")"
 }

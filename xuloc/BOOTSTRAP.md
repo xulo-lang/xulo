@@ -325,7 +325,8 @@ so stage 2 does not inherit them silently.
     `if`/`while`/`for`/`match`, `defer` (each block's operands run in reverse
     registration order at fallthrough, `return`, `break`, `continue`, and
     `?`, after the block value is determined), calls, fields, indexing,
-    lists, tuples, object literals (and their spread), typed `Map<K, V>{ … }`
+    lists, tuples (including positional `p.0` reads, writes, and optional
+    reads), object literals (and their spread), typed `Map<K, V>{ … }`
     literals,
     `let` object/tuple destructuring, struct/enum/literal/or/range/type
     patterns with guards, templates, operators, `??`, `is`, `?.`, postfix

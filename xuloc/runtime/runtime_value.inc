@@ -515,6 +515,32 @@ XVal xr_index(XVal v, XVal index) {
     return xr_nil();
 }
 
+// `tuple?.0`: null base or an out-of-range position yields null instead of
+// failing, matching optional member access.
+XVal xr_index_opt(XVal v, XVal index) {
+    if (v.tag == XT_NIL) {
+        return xr_nil();
+    }
+    long long i = index.i;
+    if (v.tag == XT_LIST) {
+        XList *l = xr_as_list(v);
+        if (i < 0 || i >= l->len) {
+            return xr_nil();
+        }
+        return l->items[i];
+    }
+    if (v.tag == XT_OBJ) {
+        XObj *o = xr_as_obj(v);
+        if (o->variant == NULL && strcmp(o->type, "Map") == 0) {
+            if (i < 0 || i >= o->nfields) {
+                return xr_nil();
+            }
+            return xr_str(o->fields[i].name);
+        }
+    }
+    return xr_nil();
+}
+
 void xr_set_index(XVal v, XVal index, XVal value) {
     long long i = index.i;
     if (v.tag == XT_LIST) {
