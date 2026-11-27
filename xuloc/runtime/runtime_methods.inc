@@ -87,6 +87,12 @@ XVal xr_method(XVal recv, const char *name, long long n, XVal *args) {
         if (strcmp(o->type, "RegexMatch") == 0) {
             return xr_regex_match_method(recv, name, n, args);
         }
+        if (strcmp(o->type, "Command") == 0) {
+            return xr_process_command_method(recv, name, n, args);
+        }
+        if (strcmp(o->type, "Child") == 0) {
+            return xr_process_child_method(recv, name, n, args);
+        }
         XrMethodFn fn = xr_lookup_method(o->type, name);
         if (fn != NULL) {
             return fn(n + 1, xr_args_with_self(recv, n, args));

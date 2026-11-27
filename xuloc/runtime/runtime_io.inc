@@ -26,6 +26,20 @@ static void xr_io_binary_stdin(void) {
 #endif
 }
 
+// Stage 0's stdout/stderr are byte streams; Windows text mode would turn every
+// `\n` into `\r\n`. Match the Rust runtime so captured child output and the
+// program's own lines are byte-identical.
+static void xr_io_binary_output(void) {
+#ifdef _WIN32
+    static int done = 0;
+    if (!done) {
+        _setmode(_fileno(stdout), _O_BINARY);
+        _setmode(_fileno(stderr), _O_BINARY);
+        done = 1;
+    }
+#endif
+}
+
 // The number of leading valid bytes. `incomplete` is set when the first
 // problem is a scalar cut off by the end of the buffer (Rust's
 // `Utf8Error::error_len() == None`) rather than an invalid byte.

@@ -53,6 +53,18 @@ values, and is left to a future standard-library `std/ui` module.
 
 ### Added
 
+- Stage 1's C backend now lowers the full `std::process` surface: `run`,
+  `exec`, and `launch` with optional input and timeout; the `Command`
+  `shell`/`direct` constructors and pure `input`/`cwd`/`env`/`timeout`
+  setters; and `Child::wait`/`kill`/`pid`. Both streams are captured
+  separately and decoded lossily, a budget kills an overrun child, and a
+  spent handle refuses a second `wait`/`kill`. POSIX uses fork/exec with a
+  non-blocking drain; Windows uses `CreateProcess` and `WaitForSingleObject`.
+  Windows stdout/stderr now run in binary mode so captured CRLF text and the
+  program's own lines match stage 0 byte for byte.
+  `examples/std/process.xulo` builds (and runs on Unix); a cross-platform
+  regression covers shell `run`, `Command::shell().run()`, `launch`/`wait`,
+  and a spent handle. Stage 1 build coverage reaches 60 of 66 example files.
 - Stage 1's C backend now lowers `extern "C"` imports and exported
   `pub extern "C" fn` bodies. The parser records import signatures, and calls
   convert arguments by the declared ABI type (integers, `usize`/`isize`,

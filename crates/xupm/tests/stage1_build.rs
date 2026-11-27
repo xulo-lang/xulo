@@ -342,7 +342,8 @@ fn stage1_compiles_the_bootstrap_corpus() {
 /// closures (including mutable captures and returned closures), `defer`
 /// (including loops and `?`), `std::fmt` (including the `Display`/`Debug`
 /// consultation), const generic parameters, the synchronous
-/// `spawn`/`lock`/service model, `std::regex`, `std::net`, and `extern "C"`.
+/// `spawn`/`lock`/service model, `std::regex`, `std::net`, `std::process`,
+/// and `extern "C"`.
 #[test]
 fn stage1_runs_the_lowered_examples() {
     if !enabled() {
@@ -368,6 +369,7 @@ fn stage1_runs_the_lowered_examples() {
         "examples/std/regex.xulo",
         "examples/std/net.xulo",
         "examples/std/net_shutdown.xulo",
+        "examples/std/process.xulo",
         "examples/concurrency/spawn_lock.xulo",
         "examples/ffi/ffi.xulo",
         "examples/basics/templates.xulo",
@@ -398,6 +400,10 @@ fn stage1_runs_the_lowered_examples() {
             .to_string_lossy()
             .into_owned();
         let program = build_stage1_program(&stage1, &root, file, &work, &name);
+        // `process.xulo` drives `sh`/`cat`/`sleep`; it is build-only on Windows.
+        if !cfg!(unix) && rel == "examples/std/process.xulo" {
+            continue;
+        }
         let run = run_program(&program);
         assert_success(&run, &format!("running {rel}"));
         let expected = std::fs::read_to_string(expected_path(&root.join(file)))
@@ -746,6 +752,67 @@ fn stage1_c_backend_lowers_net_errors() {
         render_lines(&native.stdout),
         render_lines(&interpreted.stdout),
         "the C backend's net error behavior must match the interpreter"
+    );
+}
+
+/// `std::process`: shell `run`, `Command::shell().run()`, and
+/// `Command::shell().launch()` + `wait` + a spent second wait. Uses only
+/// `echo`, which both `sh -c` and `cmd /C` provide.
+#[test]
+fn stage1_c_backend_lowers_process() {
+    if !enabled() {
+        return;
+    }
+    let root = repo_root();
+    let stage1 = stage1_binary();
+    let work = unique_dir("process");
+    let source = work.join("process.xulo");
+    std::fs::write(
+        &source,
+        r#"fn main() {
+    match std::process::run("echo process-ok") {
+        Result::Ok(r) => {
+            print(r.code)
+            print(r.stdout)
+        }
+        Result::Err(e) => print(e.message)
+    }
+    match std::process::Command::shell("echo command-ok").run() {
+        Result::Ok(r) => print(r.stdout)
+        Result::Err(e) => print(e.message)
+    }
+    match std::process::Command::shell("echo child-ok").launch() {
+        Result::Ok(child) => {
+            match child.wait() {
+                Result::Ok(r) => print(r.stdout)
+                Result::Err(e) => print(e.message)
+            }
+            match child.wait() {
+                Result::Ok(_) => print("again")
+                Result::Err(e) => print(e.message != "")
+            }
+        }
+        Result::Err(e) => print(e.message)
+    }
+}
+"#,
+    )
+    .expect("the process probe should be writable");
+
+    let interpreted = Command::new(XUPM)
+        .args(["run", source.to_str().expect("a UTF-8 path")])
+        .current_dir(&root)
+        .output()
+        .expect("xupm run should start");
+    assert_success(&interpreted, "the interpreter process probe");
+
+    let program = build_stage1_program(&stage1, &root, &source, &work, "process");
+    let native = run_program(&program);
+    assert_success(&native, "the stage 1 process probe");
+    assert_eq!(
+        render_lines(&native.stdout),
+        render_lines(&interpreted.stdout),
+        "the C backend's process output must match the interpreter"
     );
 }
 

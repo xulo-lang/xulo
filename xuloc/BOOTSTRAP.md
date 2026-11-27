@@ -327,8 +327,10 @@ so stage 2 does not inherit them silently.
     model), `spawn.process Type { … }` services (`send` dispatches to
     `on_message`, `stop` is a no-op), and the `Task::all`/`resolve`/`race`/
     `timeout` combinators over already-settled values, the
-    `std::fs`/`std::os`/`std::process`/`std::path`/`std::hint`/`std::math`/
-    `std::json` calls stage 1 uses, all of `std::io` (the four writes, `flush`,
+    `std::fs`/`std::os`/`std::path`/`std::hint`/`std::math`/`std::json` calls
+    stage 1 uses, all of `std::process` (`args`/`exit`, `run`/`exec`/`launch`
+    with optional input and timeout, the `Command` builders and setters, and
+    `Child::wait`/`kill`/`pid`), all of `std::io` (the four writes, `flush`,
     the two tty probes, and `read_line`/`read`/`read_n`), the `std::time`
     clocks, `sleep`, and UTC calendar (`format`, `parse`, `parts`,
     `from_parts`, `weekday`), all of `std::fmt::format` (every verb,
@@ -396,8 +398,8 @@ so stage 2 does not inherit them silently.
 - The C backend and the self-host loop are implemented (Gates 5–6), but the
   backend's subset is the bootstrap subset listed above. The runtime covers
   the `std` surface stage 1's own source needs plus `std::path`, `std::hint`,
-  `std::os`, `std::math`, `std::fmt`, `std::regex`, `std::net`, `std::json`,
-  and `std::fs`
+  `std::os`, `std::math`, `std::fmt`, `std::regex`, `std::net`, `std::process`,
+  `std::json`, and `std::fs`
   (its `read_dir` / `walk` / `realpath` are POSIX-only). Object literals lower
   to runtime objects, so
   member access and `{ ...base, k: v }` work. `Map` and `Set` are first-class
@@ -405,9 +407,9 @@ so stage 2 does not inherit them silently.
   key/element iteration, structural set equality, and the static constructors
   lower to `XT_OBJ` (map) and `XT_SET` (set) values. `std::time` is lowered
   (clocks, `sleep`, and the UTC calendar over pure integer date arithmetic),
-  and so are `std::fmt::format`, `std::regex`, and `std::net`; `std::http` is
-  not lowered yet because it also needs `std::process`'s `Command`/`Child`
-  and the HTTP client/server layers, so that example still fails with `E0005`.
+  and so are `std::fmt::format`, `std::regex`, `std::net`, and `std::process`;
+  `std::http` is the remaining HTTP layer above them, so that example still
+  fails with `E0005`.
 - Destructuring (`let (a, b)`, `let { x, y }`), struct/enum/literal/or/range/
   type patterns with guards, and `#[derive(Debug)]`'s `Type(field: value)`
   rendering are lowered. A struct without the derive still renders as
@@ -421,16 +423,16 @@ so stage 2 does not inherit them silently.
   synchronous model, and drops call-site type arguments, but macro calls still
   report `E0005`; attribute macros and macro expansion remain outside the
   bootstrap subset, and macro bodies are skipped as token trees.
-- The backend builds 59 of the 66 example files end to end. One of the
+- The backend builds 60 of the 66 example files end to end. One of the
   remaining failures is the expected `errors/type_error.xulo` reject; the
-  others need macros, `u64`, `std::http` (which also needs `std::process`'s
-  `Command`/`Child`), or the inline-module C compile path.
+  others need macros, `u64`, `std::http` (the HTTP layer above the now-lowered
+  `std::net` and `std::process`), or the inline-module C compile path.
   `crates/xupm/tests/stage1_build.rs` pins the `lexical`,
   `propagation`, `arrays`, `std/time`, `std/io`, `std/io_extra`, `std/fmt`,
-  `std/regex`, `std/net`, `std/net_shutdown`, `functions/closures_hof`,
-  `functions/defer`, `types/aliases`, `types/generics_impl`,
-  `concurrency/spawn_lock`, and `ffi/ffi` cases against their sidecars
-  (stdout and stderr).
+  `std/regex`, `std/net`, `std/net_shutdown`, `std/process`,
+  `functions/closures_hof`, `functions/defer`, `types/aliases`,
+  `types/generics_impl`, `concurrency/spawn_lock`, and `ffi/ffi` cases against
+  their sidecars (stdout and stderr).
 - The parser recovers only by stopping at the first error. That is enough for
   Gate 1/2 diagnostics; stage 1's checker work will need recovery.
 - The tests read `xuloc/src/*.xulo` relative to the repository root, like the

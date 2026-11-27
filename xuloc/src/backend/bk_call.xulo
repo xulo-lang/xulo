@@ -952,18 +952,45 @@ pub fn ca_emit_path_call(e: mut Emitter, node: Node): string {
         return "xr_process_exit(" + args[0] + ")"
     }
     if path == "std::process::run" {
-        if args.len != 1 {
-            bk_state::co_fail(e, "`std::process::run` expects one argument")
+        if args.len < 1 or args.len > 3 {
+            bk_state::co_fail(e, "`std::process::run` expects one to three arguments")
             return "xr_nil()"
         }
-        return "xr_process_run(" + args[0] + ")"
+        let input = if args.len >= 2 { args[1] } else { "xr_nil()" }
+        let timeout = if args.len >= 3 { args[2] } else { "xr_nil()" }
+        return "xr_process_run(" + args[0] + ", " + input + ", " + timeout + ")"
     }
     if path == "std::process::exec" {
-        if args.len < 2 {
-            bk_state::co_fail(e, "`std::process::exec` expects a program and an argument list")
+        if args.len < 2 or args.len > 4 {
+            bk_state::co_fail(e, "`std::process::exec` expects two to four arguments")
             return "xr_nil()"
         }
-        return "xr_process_exec(" + args[0] + ", " + args[1] + ")"
+        let input = if args.len >= 3 { args[2] } else { "xr_nil()" }
+        let timeout = if args.len >= 4 { args[3] } else { "xr_nil()" }
+        return "xr_process_exec(" + args[0] + ", " + args[1] + ", " + input + ", " + timeout + ")"
+    }
+    if path == "std::process::launch" {
+        if args.len < 1 or args.len > 3 {
+            bk_state::co_fail(e, "`std::process::launch` expects one to three arguments")
+            return "xr_nil()"
+        }
+        let input = if args.len >= 2 { args[1] } else { "xr_nil()" }
+        let timeout = if args.len >= 3 { args[2] } else { "xr_nil()" }
+        return "xr_process_launch(" + args[0] + ", " + input + ", " + timeout + ")"
+    }
+    if path == "Command::shell" or path == "std::process::Command::shell" {
+        if args.len != 1 {
+            bk_state::co_fail(e, "`Command::shell` expects one argument")
+            return "xr_nil()"
+        }
+        return "xr_process_command_shell(" + args[0] + ")"
+    }
+    if path == "Command::direct" or path == "std::process::Command::direct" {
+        if args.len != 2 {
+            bk_state::co_fail(e, "`Command::direct` expects a program and an argument list")
+            return "xr_nil()"
+        }
+        return "xr_process_command_direct(" + args[0] + ", " + args[1] + ")"
     }
     if path == "Array::filled" {
         if args.len != 1 {

@@ -472,30 +472,3 @@ XVal xr_process_exit(XVal code) {
     return xr_nil();
 }
 
-XVal xr_process_run(XVal command) {    if (command.tag != XT_STR) {
-        return xr_err("std::process::run expects a command string");
-    }
-    XStr *cmd = xr_as_str(command);
-    char *full = (char *)xr_alloc((size_t)cmd->bytes + 6);
-    if (cmd->bytes > 0) {
-        memcpy(full, cmd->data, (size_t)cmd->bytes);
-    }
-    memcpy(full + cmd->bytes, " 2>&1", 5);
-    FILE *pipe = XR_POPEN(full, "r");
-    if (pipe == NULL) {
-        return xr_err("cannot start the command");
-    }
-    long long bytes = 0;
-    char *data = xr_read_stream(pipe, &bytes);
-    int status = XR_PCLOSE(pipe);
-    const char *names[3];
-    XVal values[3];
-    names[0] = "stdout";
-    names[1] = "stderr";
-    names[2] = "code";
-    values[0] = xr_str_n(data, bytes);
-    values[1] = xr_str("");
-    values[2] = xr_int(status);
-    return xr_ok(xr_struct("RunResult", 3, names, values));
-}
-

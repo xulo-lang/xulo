@@ -53,7 +53,9 @@
 #include <fcntl.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <poll.h>
 #include <pwd.h>
+#include <signal.h>
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -155,5 +157,10 @@ XVal xr_regex_method(XVal recv, const char *name, long long n, XVal *args);
 XVal xr_regex_match_method(XVal recv, const char *name, long long n, XVal *args);
 XVal xr_regex_replace(XVal regex_value, XVal input, XVal replacer);
 XVal xr_regex_split(XVal regex_value, XVal input);
+// Defined in `runtime_process.inc`; the method dispatcher delegates to them.
+XVal xr_process_command_shell(XVal command);
+XVal xr_process_command_direct(XVal program, XVal args);
+XVal xr_process_command_method(XVal recv, const char *name, long long n, XVal *args);
+XVal xr_process_child_method(XVal recv, const char *name, long long n, XVal *args);
 
 #endif

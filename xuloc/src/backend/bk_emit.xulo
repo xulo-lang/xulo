@@ -260,6 +260,7 @@ pub fn em_emit_main(e: mut Emitter) {
     e.defer_emitting = 0
     e.self_name = ""
     bk_state::co_line(e, "int main(int argc, char **argv) {")
+    bk_state::co_line(e, "  xr_io_binary_output();")
     bk_state::co_line(e, "  xr_set_argv(argc, argv);")
     bk_state::co_line(e, "  xr_register_user_methods();")
     bk_state::co_line(e, "  xr_init_globals();")
