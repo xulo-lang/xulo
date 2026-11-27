@@ -6,6 +6,7 @@ use ast::Node;
 use super::bk_state;
 use super::{Emitter};
 use super::bk_call;
+use super::bk_emit;
 use super::bk_stmt;
 use super::bk_util;
 
@@ -152,12 +153,175 @@ pub fn ex_emit_expr(e: mut Emitter, node: Node): string {
     if kind == "Map" {
         return ex_emit_map(e, node)
     }
-    if kind == "Closure" {
-        bk_state::co_fail(e, "closures are not lowered by the bootstrap backend")
-        return "xr_nil()"
+    if kind == "Closure" or kind == "ArrowClosure" {
+        return ex_emit_closure(e, node)
     }
     bk_state::co_fail(e, "unsupported expression `" + kind + "`")
     return "xr_nil()"
+}
+
+/// Whether a function body contains a closure literal. A function that does is
+/// the one whose locals must be boxed so closures can capture them by reference.
+pub fn ex_contains_closure(node: Node): bool {
+    if node.kind == "Closure" or node.kind == "ArrowClosure" {
+        return true
+    }
+    for child in node.children {
+        if ex_contains_closure(child) {
+            return true
+        }
+    }
+    return false
+}
+
+fn ex_has_name(names: List<string>, name: string): bool {
+    let mut i = 0
+    while i < names.len {
+        if names[i] == name {
+            return true
+        }
+        i = i + 1
+    }
+    return false
+}
+
+/// Lower a closure or arrow literal to a generated C function plus a runtime
+/// value that carries its captured cells. The function body is emitted into a
+/// saved emitter state, so nested closures work without disturbing the
+/// enclosing function.
+pub fn ex_emit_closure(e: mut Emitter, node: Node): string {
+    let id = e.next_closure
+    e.next_closure = e.next_closure + 1
+    let cname = "c_" + str(id)
+
+    let mut params: List<string> = []
+    let mut body = node
+    if node.children.len > 0 {
+        body = node.children[node.children.len - 1]
+    }
+    for child in node.children {
+        if child.kind == "Param" {
+            params.push(child.value)
+        }
+    }
+
+    // Capture every visible binding, innermost first so shadowed names win.
+    // A function that contains a closure boxes all of its locals, so a normal
+    // binding is already a cell pointer.
+    let mut cap_names: List<string> = []
+    let mut cap_cells: List<string> = []
+    if e.box_locals {
+        let mut i = e.local_names.len - 1
+        while i >= 0 {
+            if e.local_depths[i] <= e.depth {
+                let name = e.local_names[i]
+                if !ex_has_name(cap_names, name) {
+                    cap_names.push(name)
+                    cap_cells.push(e.local_cnames[i])
+                }
+            }
+            i = i - 1
+        }
+    }
+    if e.in_closure {
+        let mut i = 0
+        while i < e.capture_names.len {
+            let name = e.capture_names[i]
+            if !ex_has_name(cap_names, name) {
+                cap_names.push(name)
+                cap_cells.push(
+                    "xr_capture_cell(" + e.self_name + ", " + str(i) + ")",
+                )
+            }
+            i = i + 1
+        }
+    }
+
+    let saved_out = e.out
+    let saved_names = e.local_names
+    let saved_cnames = e.local_cnames
+    let saved_depths = e.local_depths
+    let saved_depth = e.depth
+    let saved_local = e.next_local
+    let saved_tmp = e.next_tmp
+    let saved_indent = e.indent
+    let saved_box = e.box_locals
+    let saved_in_closure = e.in_closure
+    let saved_captures = e.capture_names
+    let saved_self = e.self_name
+
+    e.out = StringBuilder::new()
+    e.local_names = []
+    e.local_cnames = []
+    e.local_depths = []
+    e.depth = 0
+    e.next_local = 0
+    e.next_tmp = 0
+    e.indent = 1
+    e.box_locals = ex_contains_closure(body)
+    e.in_closure = true
+    e.capture_names = cap_names
+    e.self_name = "self"
+
+    bk_state::co_line(e, "static XVal " + cname + "(XVal self, long long argc, XVal *argv) {")
+    bk_state::co_line(e, "  (void)self;")
+    bk_state::co_line(e, "  (void)argc;")
+    bk_state::co_line(e, "  (void)argv;")
+    let mut i = 0
+    while i < params.len {
+        let c = bk_state::co_new_local(e, params[i])
+        if e.box_locals {
+            bk_state::co_line(e, 
+                "  XVal *"
+                    + c
+                    + " = xr_cell(argc > "
+                    + str(i)
+                    + " ? argv["
+                    + str(i)
+                    + "] : xr_nil());",
+            )
+        } else {
+            bk_state::co_line(e, 
+                "  XVal "
+                    + c
+                    + " = argc > "
+                    + str(i)
+                    + " ? argv["
+                    + str(i)
+                    + "] : xr_nil();",
+            )
+        }
+        i = i + 1
+    }
+    if body.kind == "Block" {
+        bk_emit::em_emit_block_return(e, body)
+    } else {
+        let value = ex_emit_expr(e, body)
+        bk_state::co_line(e, "return " + value + ";")
+    }
+    e.indent = 0
+    bk_state::co_line(e, "}")
+    e.closure_funcs.push(e.out.build())
+    e.closure_ids.push(id)
+
+    e.out = saved_out
+    e.local_names = saved_names
+    e.local_cnames = saved_cnames
+    e.local_depths = saved_depths
+    e.depth = saved_depth
+    e.next_local = saved_local
+    e.next_tmp = saved_tmp
+    e.indent = saved_indent
+    e.box_locals = saved_box
+    e.in_closure = saved_in_closure
+    e.capture_names = saved_captures
+    e.self_name = saved_self
+
+    let mut cells = "NULL"
+    if cap_cells.len > 0 {
+        cells = "(XVal*[]){" + bk_util::c_join(cap_cells) + "}"
+    }
+    return "xr_closure_new(" + str(id) + ", " + str(cap_cells.len) + ", " + cells + ")"
 }
 
 pub fn ex_emit_template(e: mut Emitter, node: Node): string {
@@ -248,7 +412,16 @@ pub fn ex_c_template_text(e: Emitter, text: string): string {
 pub fn ex_emit_name(e: Emitter, name: string): string {
     let binding = bk_state::co_lookup_local(e, name)
     if binding != "" {
+        if e.box_locals {
+            return "xr_cell_get(" + binding + ")"
+        }
         return binding
+    }
+    if e.in_closure {
+        let capture = bk_state::co_lookup_capture(e, name)
+        if capture >= 0 {
+            return "xr_capture_get(" + e.self_name + ", " + str(capture) + ")"
+        }
     }
     let constant = bk_state::co_lookup_const(e, name)
     if constant != "" {
@@ -340,13 +513,35 @@ fn ex_emit_assign_parts(e: mut Emitter, target: Node, value_node: Node): string 
     if target.kind == "Name" {
         let cname = bk_state::co_lookup_local(e, target.value)
         if cname == "" {
+            if e.in_closure {
+                let capture = bk_state::co_lookup_capture(e, target.value)
+                if capture >= 0 {
+                    let value = ex_emit_expr(e, value_node)
+                    let tmp = bk_state::co_new_tmp(e)
+                    bk_state::co_line(e, "XVal " + tmp + " = " + value + ";")
+                    bk_state::co_line(e, 
+                        "xr_capture_set("
+                            + e.self_name
+                            + ", "
+                            + str(capture)
+                            + ", "
+                            + tmp
+                            + ");",
+                    )
+                    return tmp
+                }
+            }
             bk_state::co_fail(e, "cannot assign to unknown name `" + target.value + "`")
             return "xr_nil()"
         }
         let value = ex_emit_expr(e, value_node)
         let tmp = bk_state::co_new_tmp(e)
         bk_state::co_line(e, "XVal " + tmp + " = " + value + ";")
-        bk_state::co_line(e, cname + " = " + tmp + ";")
+        if e.box_locals {
+            bk_state::co_line(e, "xr_cell_set(" + cname + ", " + tmp + ");")
+        } else {
+            bk_state::co_line(e, cname + " = " + tmp + ";")
+        }
         return tmp
     }
     if target.kind == "Member" {
@@ -525,6 +720,9 @@ pub fn ex_emit_is(e: mut Emitter, node: Node): string {
 pub fn ex_type_text(e: Emitter, node: Node): string {
     if node.kind == "TypeName" {
         return node.value
+    }
+    if node.kind == "FnType" or node.kind == "FunctionType" {
+        return "fn"
     }
     if node.kind == "OptionalType" or node.kind == "ListType" {
         if node.children.len > 0 {

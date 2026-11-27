@@ -66,7 +66,8 @@ enum {
     XT_LIST = 5,
     XT_OBJ = 6,
     XT_SB = 7,
-    XT_SET = 8
+    XT_SET = 8,
+    XT_FN = 9
 };
 
 typedef struct XVal XVal;
@@ -76,6 +77,7 @@ typedef struct XField XField;
 typedef struct XObj XObj;
 typedef struct XSb XSb;
 typedef struct XSet XSet;
+typedef struct XClosure XClosure;
 
 struct XVal {
     int tag;

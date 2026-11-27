@@ -198,6 +198,67 @@ int xr_cond(XVal v) {
     return 1;
 }
 
+// ── closures ─────────────────────────────────────────────────────────────
+//
+// A captured binding lives in a heap cell, so a closure can outlive the
+// function that created it and a mutable capture is shared with the enclosing
+// scope. The generated translation unit defines `xr_closure_dispatch`, which
+// maps a closure id to its body; keeping an id instead of a function pointer
+// lets the bodies be emitted after the calls that create them.
+
+struct XClosure {
+    long long id;
+    long long ncaptures;
+    XVal **captures;
+};
+
+static XVal xr_closure_dispatch(long long id, XVal self, long long argc, XVal *argv);
+
+static XVal *xr_cell(XVal value) {
+    XVal *cell = (XVal *)xr_alloc(sizeof(XVal));
+    *cell = value;
+    return cell;
+}
+
+static XVal xr_cell_get(XVal *cell) { return *cell; }
+
+static void xr_cell_set(XVal *cell, XVal value) { *cell = value; }
+
+static XVal *xr_capture_cell(XVal self, long long index) {
+    XClosure *closure = (XClosure *)self.p;
+    return closure->captures[index];
+}
+
+static XVal xr_capture_get(XVal self, long long index) {
+    return *xr_capture_cell(self, index);
+}
+
+static void xr_capture_set(XVal self, long long index, XVal value) {
+    *xr_capture_cell(self, index) = value;
+}
+
+static XVal xr_closure_new(long long id, long long ncaptures, XVal **cells) {
+    XVal v = xr_mk(XT_FN);
+    XClosure *closure = (XClosure *)xr_alloc(sizeof(XClosure));
+    closure->id = id;
+    closure->ncaptures = ncaptures;
+    closure->captures =
+        (XVal **)xr_alloc(sizeof(XVal *) * (size_t)(ncaptures > 0 ? ncaptures : 1));
+    for (long long i = 0; i < ncaptures; i += 1) {
+        closure->captures[i] = cells[i];
+    }
+    v.p = closure;
+    return v;
+}
+
+XVal xr_call_value(XVal fn, long long argc, XVal *argv) {
+    if (fn.tag != XT_FN) {
+        xr_fail("value is not callable");
+    }
+    XClosure *closure = (XClosure *)fn.p;
+    return xr_closure_dispatch(closure->id, fn, argc, argv);
+}
+
 // ── strings ──────────────────────────────────────────────────────────────
 
 XVal xr_str_concat(XVal a, XVal b) {

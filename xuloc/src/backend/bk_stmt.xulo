@@ -125,7 +125,11 @@ pub fn st_emit_let(e: mut Emitter, node: Node) {
         return
     }
     let cname = bk_state::co_new_local(e, node.value)
-    bk_state::co_line(e, "XVal " + cname + " = " + value + ";")
+    if e.box_locals {
+        bk_state::co_line(e, "XVal *" + cname + " = xr_cell(" + value + ");")
+    } else {
+        bk_state::co_line(e, "XVal " + cname + " = " + value + ";")
+    }
 }
 
 pub fn st_emit_destructure(e: mut Emitter, pattern: Node, value: string) {
@@ -135,14 +139,15 @@ pub fn st_emit_destructure(e: mut Emitter, pattern: Node, value: string) {
     for child in pattern.children {
         if child.kind == "NamePattern" and child.value != "_" {
             let cname = bk_state::co_new_local(e, child.value)
-            if pattern.value == "object" {
-                bk_state::co_line(e, 
-                    "XVal " + cname + " = xr_get_field(" + tmp + ", " + bk_util::c_string(child.value) + ");",
-                )
+            let source = if pattern.value == "object" {
+                "xr_get_field(" + tmp + ", " + bk_util::c_string(child.value) + ")"
             } else {
-                bk_state::co_line(e, 
-                    "XVal " + cname + " = xr_index(" + tmp + ", xr_int(" + str(i) + "));",
-                )
+                "xr_index(" + tmp + ", xr_int(" + str(i) + "))"
+            }
+            if e.box_locals {
+                bk_state::co_line(e, "XVal *" + cname + " = xr_cell(" + source + ");")
+            } else {
+                bk_state::co_line(e, "XVal " + cname + " = " + source + ";")
             }
         }
         i = i + 1
@@ -157,11 +162,31 @@ pub fn st_emit_assign_to(e: mut Emitter, target: Node, value_node: Node) {
     if target.kind == "Name" {
         let cname = bk_state::co_lookup_local(e, target.value)
         if cname == "" {
+            if e.in_closure {
+                let capture = bk_state::co_lookup_capture(e, target.value)
+                if capture >= 0 {
+                    let value = bk_expr::ex_emit_expr(e, value_node)
+                    bk_state::co_line(e, 
+                        "xr_capture_set("
+                            + e.self_name
+                            + ", "
+                            + str(capture)
+                            + ", "
+                            + value
+                            + ");",
+                    )
+                    return
+                }
+            }
             bk_state::co_fail(e, "cannot assign to unknown name `" + target.value + "`")
             return
         }
         let value = bk_expr::ex_emit_expr(e, value_node)
-        bk_state::co_line(e, cname + " = " + value + ";")
+        if e.box_locals {
+            bk_state::co_line(e, "xr_cell_set(" + cname + ", " + value + ");")
+        } else {
+            bk_state::co_line(e, cname + " = " + value + ";")
+        }
         return
     }
     if target.kind == "Member" {
@@ -209,15 +234,12 @@ pub fn st_emit_for(e: mut Emitter, node: Node) {
     bk_state::co_enter(e)
     if node.value != "" and node.value != "_" {
         let cname = bk_state::co_new_local(e, node.value)
-        bk_state::co_line(e, 
-            "XVal "
-                + cname
-                + " = xr_index("
-                + it
-                + ", xr_int("
-                + index
-                + "));",
-        )
+        let source = "xr_index(" + it + ", xr_int(" + index + "))"
+        if e.box_locals {
+            bk_state::co_line(e, "XVal *" + cname + " = xr_cell(" + source + ");")
+        } else {
+            bk_state::co_line(e, "XVal " + cname + " = " + source + ";")
+        }
     }
     for child in node.children[1].children {
         st_emit_stmt(e, child)

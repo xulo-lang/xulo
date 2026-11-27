@@ -53,6 +53,15 @@ values, and is left to a future standard-library `std/ui` module.
 
 ### Added
 
+- Stage 1's C backend now lowers closures: function literals and arrow
+  closures, first-class function values called through any expression,
+  captured bindings (boxed into shared heap cells, so mutable captures and
+  returned closures keep working), and nested closures. The bootstrap runtime
+  gains an `XT_FN` value and a generated `xr_closure_dispatch` that maps a
+  closure id to its body; a function value renders as `<function>` like stage
+  0. `examples/functions/closures_hof.xulo` and `examples/types/aliases.xulo`
+  now compile and match the interpreter, so stage 1 build coverage reaches 51
+  of 66 example files, and both are pinned in the lowered-example test.
 - Stage 1's C backend now lowers `std::time`: the wall and monotonic clocks,
   `sleep`, and the UTC calendar (`format`, `parse`, `parts`, `from_parts`,
   `weekday`) over a `runtime_time.inc` module that uses pure integer date
@@ -66,8 +75,8 @@ values, and is left to a future standard-library `std/ui` module.
   byte's offset, distinguish `Ok(null)` at end of input from `Ok("")`, and
   `read_n` keeps an incomplete trailing scalar for the next call.
   `examples/std/io_extra.xulo` now compiles and matches the interpreter on
-  stdout and stderr, so stage 1 build coverage reaches 50 of 66 example files.
-  `examples/std/io.xulo` is now pinned alongside it.
+  stdout and stderr, so stage 1 build coverage reached 50 of 66 example files
+  before closures landed. `examples/std/io.xulo` is now pinned alongside it.
 - Stage 1's C backend lowers postfix `?` (propagating `Result::Err` with a
   `return`), `Error("…")`, assignment in expression position (`a = b = 3`),
   `shared` as a pass-through unary, and `Array::filled<T, N>` with a literal

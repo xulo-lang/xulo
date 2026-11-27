@@ -33,6 +33,19 @@ pub fn co_lookup_local(e: Emitter, name: string): string {
     return ""
 }
 
+/// Index of a captured enclosing binding, or `-1` when `name` is not captured
+/// by the closure body being emitted.
+pub fn co_lookup_capture(e: Emitter, name: string): number {
+    let mut i = 0
+    while i < e.capture_names.len {
+        if e.capture_names[i] == name {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}
+
 pub fn co_lookup_const(e: Emitter, name: string): string {
     let mut i = e.consts.len - 1
     while i >= 0 {

@@ -231,6 +231,9 @@ static void xr_render_value(XVal v, char **buffer, long long *len, long long *ca
         xr_append_str(buffer, len, cap, " }", 2);
         return;
     }
+    case XT_FN:
+        xr_append_str(buffer, len, cap, "<function>", 10);
+        return;
     default:
         xr_append_str(buffer, len, cap, "?", 1);
     }

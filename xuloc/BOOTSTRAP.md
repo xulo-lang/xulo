@@ -25,7 +25,7 @@ xuloc/
 ├── runtime/           # unity-built dynamic runtime for generated programs
 │   ├── runtime.c      #   entry point; includes the modules below
 │   ├── runtime_internal.h # shared XVal/container definitions
-│   ├── runtime_value.inc  # allocation, UTF-8, constructors, containers
+│   ├── runtime_value.inc  # allocation, UTF-8, constructors, containers, closures
 │   ├── runtime_ops.inc    # arithmetic, comparison, `is`, nullish
 │   ├── runtime_render.inc # formatting and StringBuilder
 │   ├── runtime_methods.inc # member/static dispatch
@@ -254,9 +254,9 @@ so stage 2 does not inherit them silently.
    compiler's own source calls monomorphic functions and constructors only.
 
 6. **Stage 1's source uses `fn(...) { ... }` closures.** Arrow closures
-   (`(x: number): number => …`, `x => …`) parse into an `ArrowClosure` node,
-   but the checker and backend do not lower that node yet, so stage 1 itself
-   uses named functions or `fn` closures.
+   (`(x: number): number => …`, `x => …`) parse into an `ArrowClosure` node and
+   the backend lowers both forms, but stage 1's own source keeps the `fn`
+   spelling for readability.
 
 7. **No template interpolation in stage 1's source.** The lexer recognises
    backtick templates and balances `${ ... }`, but stage 1's own strings use
@@ -309,9 +309,11 @@ so stage 2 does not inherit them silently.
     patterns with guards, templates, operators, `??`, `is`, `?.`, postfix
     `?` (propagate `Result::Err` with `return`), `Error("…")`, assignment in
     expression position (`a = b = 3`), `shared` as a pass-through unary,
-    `#[derive(Debug)]` rendering, the `Map`/`Set` members (`size`, `get`,
-    `set`, `has`, `remove`, `keys`, `values`, `entries`, `insert`), iteration
-    over a map's keys or a set's elements, `Map::from_entries`,
+    closures (function literals and arrow closures, including first-class
+    values, calls through any expression, mutable captures, and returned
+    closures), `#[derive(Debug)]` rendering, the `Map`/`Set` members (`size`,
+    `get`, `set`, `has`, `remove`, `keys`, `values`, `entries`, `insert`),
+    iteration over a map's keys or a set's elements, `Map::from_entries`,
     `Set::from_list`, `Array::filled<T, N>` with a literal `N`, the
     `std::fs`/`std::os`/`std::process`/`std::path`/`std::hint`/`std::math`/
     `std::json` calls stage 1 uses, all of `std::io` (the four writes, `flush`,
@@ -323,7 +325,7 @@ so stage 2 does not inherit them silently.
     names (`alias::fn`, `m::CONST`) resolve by their final segment because
     declaration collection flattens modules.
     `Trait::method(receiver, …)` lowers to runtime method dispatch on the
-    receiver's struct type. Closures, `defer`, async, and the
+    receiver's struct type. `defer`, async, and the
     `std::fmt`/`std::regex`/`std::net` modules are rejected with
     `E0005`; `u64` annotations and integer literals above `i64::MAX` are also
     `E0005`, because the bootstrap runtime has one signed 64-bit slot and does
@@ -389,18 +391,20 @@ so stage 2 does not inherit them silently.
   to binary32 (T12), so an example that depends on that rounding can differ
   (`types/float_math.xulo`).
 - The parser accepts postfix `?`, arrow closures, call-site type arguments,
-  function-macro calls, `spawn`, and `lock`. The backend lowers `?` and drops
-  call-site type arguments, but arrow closures, macro calls, `spawn`, and
-  `lock` still report `E0005`; attribute macros and macro expansion remain
-  outside the bootstrap subset, and macro bodies are skipped as token trees.
-- The backend builds 50 of the 66 example files end to end. One of the
+  function-macro calls, `spawn`, and `lock`. The backend lowers `?`, closures
+  (including arrow closures and captured bindings), and drops call-site type
+  arguments, but macro calls, `spawn`, and `lock` still report `E0005`;
+  attribute macros and macro expansion remain outside the bootstrap subset,
+  and macro bodies are skipped as token trees.
+- The backend builds 51 of the 66 example files end to end. One of the
   remaining failures is the expected `errors/type_error.xulo` reject; the
-  others need closures, `defer`, `lock`, macros, `u64`, the
+  others need `defer`, `lock`, macros, `u64`, the
   `std::fmt`/`std::regex`/`std::net` modules, `std::http`,
   `std::process`'s `Command`/`launch`, FFI, or the inline-module C compile
   path. `crates/xupm/tests/stage1_build.rs` pins the `lexical`,
-  `propagation`, `arrays`, `std/time`, `std/io`, and `std/io_extra` cases
-  against their sidecars (stdout and stderr).
+  `propagation`, `arrays`, `std/time`, `std/io`, `std/io_extra`,
+  `functions/closures_hof`, and `types/aliases` cases against their sidecars
+  (stdout and stderr).
 - The parser recovers only by stopping at the first error. That is enough for
   Gate 1/2 diagnostics; stage 1's checker work will need recovery.
 - The tests read `xuloc/src/*.xulo` relative to the repository root, like the

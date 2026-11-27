@@ -338,7 +338,8 @@ fn stage1_compiles_the_bootstrap_corpus() {
 
 /// Examples the C backend lowers end to end: the `std` surface stage 1
 /// implements, plus templates, optional chaining, object literals, `?`
-/// propagation, chained assignment, Unicode escapes, and `Array::filled`.
+/// propagation, chained assignment, Unicode escapes, `Array::filled`, and
+/// closures (including mutable captures and returned closures).
 #[test]
 fn stage1_runs_the_lowered_examples() {
     if !enabled() {
@@ -363,9 +364,11 @@ fn stage1_runs_the_lowered_examples() {
         "examples/basics/templates.xulo",
         "examples/basics/bindings.xulo",
         "examples/basics/lexical.xulo",
+        "examples/functions/closures_hof.xulo",
         "examples/errors/propagation.xulo",
         "examples/types/optional_chaining.xulo",
         "examples/types/structs.xulo",
+        "examples/types/aliases.xulo",
         "examples/collections/collections.xulo",
         "examples/collections/arrays.xulo",
         "examples/collections/maps.xulo",
@@ -442,6 +445,69 @@ fn stage1_c_backend_matches_stage0_float_formatting() {
         render_lines(&native.stdout),
         render_lines(&interpreted.stdout),
         "the C backend's float text must match the interpreter"
+    );
+}
+
+/// Closures: nested captures, a mutable capture shared by two closures, and a
+/// parameter that shadows a captured name. Captured locals are boxed cells, so
+/// a closure returned from its maker keeps the same cell.
+#[test]
+fn stage1_c_backend_lowers_closures() {
+    if !enabled() {
+        return;
+    }
+    let root = repo_root();
+    let stage1 = stage1_binary();
+    let work = unique_dir("closures");
+    let source = work.join("closures.xulo");
+    std::fs::write(
+        &source,
+        r#"fn add3(a: number): fn(number): fn(number): number {
+    fn(b: number): fn(number): number {
+        fn(c: number): number { a + b + c }
+    }
+}
+
+fn make_pair() {
+    let mut n = 0
+    let inc = fn(): number {
+        n = n + 1
+        n
+    }
+    let read = fn(): number { n }
+    return [inc, read]
+}
+
+fn main() {
+    let g = add3(1)(2)
+    print(g(3))
+    let pair = make_pair()
+    print(pair[0]())
+    print(pair[1]())
+    print(pair[0]())
+    let y = 10
+    let f = fn(y: number): number { y + 1 }
+    print(f(4))
+    print(y)
+}
+"#,
+    )
+    .expect("the closure probe should be writable");
+
+    let interpreted = Command::new(XUPM)
+        .args(["run", source.to_str().expect("a UTF-8 path")])
+        .current_dir(&root)
+        .output()
+        .expect("xupm run should start");
+    assert_success(&interpreted, "the interpreter closure probe");
+
+    let program = build_stage1_program(&stage1, &root, &source, &work, "closures");
+    let native = run_program(&program);
+    assert_success(&native, "the stage 1 closure probe");
+    assert_eq!(
+        render_lines(&native.stdout),
+        render_lines(&interpreted.stdout),
+        "the C backend's closure output must match the interpreter"
     );
 }
 

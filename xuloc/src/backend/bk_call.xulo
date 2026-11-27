@@ -53,8 +53,21 @@ pub fn ca_emit_call(e: mut Emitter, node: Node): string {
     if callee.kind == "Name" or callee.kind == "Path" {
         return ca_emit_named_call(e, node)
     }
-    bk_state::co_fail(e, "only named functions and methods are callable in the bootstrap backend")
-    return "xr_nil()"
+    return ca_emit_value_call(e, node, callee)
+}
+
+/// Call a first-class function value: a parameter, a captured binding, a list
+/// element, a field, or any other expression that evaluates to a closure.
+pub fn ca_emit_value_call(e: mut Emitter, node: Node, callee: Node): string {
+    let value = bk_expr::ex_emit_expr(e, callee)
+    let args = bk_expr::ex_eval_args(e, node.children, 1)
+    return "xr_call_value("
+        + value
+        + ", "
+        + str(args.len)
+        + ", "
+        + bk_expr::ex_value_array(e, args)
+        + ")"
 }
 
 pub fn ca_emit_method_call(e: mut Emitter, node: Node): string {
@@ -88,8 +101,13 @@ pub fn ca_emit_named_call(e: mut Emitter, node: Node): string {
         }
         let binding = bk_state::co_lookup_local(e, name)
         if binding != "" {
-            bk_state::co_fail(e, "calling a local value is not lowered by the bootstrap backend")
-            return "xr_nil()"
+            return ca_emit_value_call(e, node, callee)
+        }
+        if e.in_closure {
+            let capture = bk_state::co_lookup_capture(e, name)
+            if capture >= 0 {
+                return ca_emit_value_call(e, node, callee)
+            }
         }
         let fn_cname = bk_state::co_find_function(e, name)
         if fn_cname != "" {

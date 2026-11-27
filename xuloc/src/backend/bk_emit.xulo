@@ -16,6 +16,9 @@ pub fn em_emit(e: mut Emitter, runtime_path: string): string {
     e.program = StringBuilder::new()
     e.out = StringBuilder::new()
     e.indent = 0
+    e.closure_funcs = []
+    e.closure_ids = []
+    e.next_closure = 0
     bk_state::co_line(e, "#define _CRT_SECURE_NO_WARNINGS")
     bk_state::co_line(e, "#if defined(_MSC_VER)")
     bk_state::co_line(e, "#pragma comment(linker, \"/STACK:67108864\")")
@@ -58,7 +61,40 @@ pub fn em_emit(e: mut Emitter, runtime_path: string): string {
         i = i + 1
     }
     em_emit_main(e)
+    em_emit_closures(e)
     return e.program.build()
+}
+
+pub fn em_emit_closures(e: mut Emitter) {
+    let mut i = 0
+    while i < e.closure_funcs.len {
+        e.program.append(e.closure_funcs[i])
+        e.program.append("\n")
+        i = i + 1
+    }
+    e.out = StringBuilder::new()
+    e.indent = 0
+    bk_state::co_line(e, "static XVal xr_closure_dispatch(long long id, XVal self, long long argc, XVal *argv) {")
+    e.indent = 1
+    bk_state::co_line(e, "(void)self;")
+    bk_state::co_line(e, "(void)argc;")
+    bk_state::co_line(e, "(void)argv;")
+    bk_state::co_line(e, "switch (id) {")
+    e.indent = 2
+    i = 0
+    while i < e.closure_ids.len {
+        let id = e.closure_ids[i]
+        bk_state::co_line(e, "case " + str(id) + ": return c_" + str(id) + "(self, argc, argv);")
+        i = i + 1
+    }
+    e.indent = 1
+    bk_state::co_line(e, "}")
+    bk_state::co_line(e, "xr_fail(\"unknown closure\");")
+    bk_state::co_line(e, "return xr_nil();")
+    e.indent = 0
+    bk_state::co_line(e, "}")
+    e.program.append(e.out.build())
+    e.program.append("\n")
 }
 
 pub fn em_emit_method_registrations(e: mut Emitter) {
@@ -91,10 +127,14 @@ pub fn em_emit_globals(e: mut Emitter) {
     e.local_names = []
     e.local_cnames = []
     e.local_depths = []
+    e.capture_names = []
     e.depth = 0
     e.next_local = 0
     e.next_tmp = 0
     e.indent = 0
+    e.box_locals = false
+    e.in_closure = false
+    e.self_name = ""
     bk_state::co_line(e, "static void xr_init_globals(void) {")
     e.indent = 1
     let mut i = 0
@@ -115,25 +155,41 @@ pub fn em_emit_function(e: mut Emitter, cname: string, params: List<string>, bod
     e.local_names = []
     e.local_cnames = []
     e.local_depths = []
+    e.capture_names = []
     e.depth = 0
     e.next_local = 0
     e.next_tmp = 0
     e.indent = 1
+    e.box_locals = bk_expr::ex_contains_closure(body)
+    e.in_closure = false
+    e.self_name = ""
     bk_state::co_line(e, "XVal " + cname + "(long long argc, XVal *argv) {")
     bk_state::co_line(e, "  (void)argc;")
     bk_state::co_line(e, "  (void)argv;")
     let mut i = 0
     while i < params.len {
         let c = bk_state::co_new_local(e, params[i])
-        bk_state::co_line(e, 
-            "  XVal "
-                + c
-                + " = argc > "
-                + str(i)
-                + " ? argv["
-                + str(i)
-                + "] : xr_nil();",
-        )
+        if e.box_locals {
+            bk_state::co_line(e, 
+                "  XVal *"
+                    + c
+                    + " = xr_cell(argc > "
+                    + str(i)
+                    + " ? argv["
+                    + str(i)
+                    + "] : xr_nil());",
+            )
+        } else {
+            bk_state::co_line(e, 
+                "  XVal "
+                    + c
+                    + " = argc > "
+                    + str(i)
+                    + " ? argv["
+                    + str(i)
+                    + "] : xr_nil();",
+            )
+        }
         i = i + 1
     }
     em_emit_block_return(e, body)
@@ -148,10 +204,14 @@ pub fn em_emit_main(e: mut Emitter) {
     e.local_names = []
     e.local_cnames = []
     e.local_depths = []
+    e.capture_names = []
     e.depth = 0
     e.next_local = 0
     e.next_tmp = 0
     e.indent = 0
+    e.box_locals = false
+    e.in_closure = false
+    e.self_name = ""
     bk_state::co_line(e, "int main(int argc, char **argv) {")
     bk_state::co_line(e, "  xr_set_argv(argc, argv);")
     bk_state::co_line(e, "  xr_register_user_methods();")

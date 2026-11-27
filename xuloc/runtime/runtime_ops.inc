@@ -295,6 +295,8 @@ int xr_eq(XVal a, XVal b) {
         }
         return 1;
     }
+    case XT_FN:
+        return a.p == b.p;
     default:
         return 0;
     }
@@ -355,6 +357,9 @@ int xr_is(XVal v, const char *type) {
     }
     if (strcmp(name, "List") == 0) {
         return v.tag == XT_LIST;
+    }
+    if (strcmp(name, "fn") == 0 || strcmp(name, "function") == 0) {
+        return v.tag == XT_FN;
     }
     if (v.tag == XT_OBJ) {
         return strcmp(xr_as_obj(v)->type, name) == 0;
