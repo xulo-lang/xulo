@@ -1,0 +1,29 @@
+// Gate 3: inherent methods, `self` field access, and method chaining.
+mod shapes {
+    pub struct Box {
+        pub width: int,
+        pub height: int
+    }
+
+    impl Box {
+        pub fn area(self): int {
+            self.width * self.height
+        }
+
+        pub fn scale(self, factor: int): Box {
+            Box(width: self.width * factor, height: self.height * factor)
+        }
+    }
+
+    pub fn make(width: int, height: int): Box {
+        Box(width: width, height: height)
+    }
+
+    pub fn doubled_area(width: int, height: int): int {
+        make(width, height).scale(2).area()
+    }
+}
+
+fn main() {
+    print(shapes::doubled_area(3, 4))
+}

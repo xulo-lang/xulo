@@ -53,6 +53,12 @@ values, and is left to a future standard-library `std/ui` module.
 
 ### Added
 
+- Stage 1's checker now models inherent `impl Type` methods: `self` is bound
+  to the owner type, method bodies are checked, and method calls validate
+  arity and arguments (including chains). Optional struct fields may be
+  omitted, typed object literals are checked against their struct, and struct
+  patterns bind their fields. `examples/types/structs.xulo` now reports
+  `no errors`; `xuloc/corpus/accept/methods.xulo` is pinned end to end.
 - Stage 1's checker now expands simple `type` aliases (including module
   aliases imported through `use type`/`use`), with on-demand expansion and a
   cycle guard. `xuloc/corpus/accept/aliases.xulo` is checked by both compilers

@@ -16,9 +16,9 @@
 // strings check their interpolated expressions, and an untyped object literal
 // gets an anonymous shape so its member reads and object destructuring are
 // checked. Tuple types, literals, positional reads, writes, and destructuring
-// are modeled as `(T1,T2)` strings, and `type` aliases expand on demand.
-// Traits, impls, generics, closures, and the remaining pattern forms arrive in
-// later WP6 slices.
+// are modeled as `(T1,T2)` strings, `type` aliases expand on demand, and an
+// inherent `impl Type` exposes methods with `self`. Traits, generic impls,
+// closures, and the remaining pattern forms arrive in later WP6 slices.
 //
 // Types are canonical strings (`number`, `string`, `bool`, `unit`, `unknown`,
 // `null`, `List<T>`, `T?`) so comparisons never depend on structural equality.
@@ -55,6 +55,16 @@ pub struct FuncSig {
     ret: string,
     /// The declaration, kept so parameter and return types are resolved after
     /// every module and struct name is known.
+    decl: Node,
+}
+
+pub struct MethodSig {
+    owner: string,
+    name: string,
+    module_id: string,
+    param_names: List<string>,
+    params: List<string>,
+    ret: string,
     decl: Node,
 }
 
@@ -141,6 +151,7 @@ pub struct ModuleSig {
 
 pub struct Checker {
     functions: List<FuncSig>,
+    methods: List<MethodSig>,
     structs: List<StructSig>,
     enums: List<EnumSig>,
     aliases: List<AliasSig>,
@@ -164,6 +175,7 @@ pub struct Checker {
 pub fn check(root: Node): CheckResult {
     let mut checker = Checker(
         functions: [],
+        methods: [],
         structs: [],
         enums: [],
         aliases: [],
@@ -191,6 +203,7 @@ pub fn check(root: Node): CheckResult {
     checker.resolve_structs()
     checker.resolve_enums()
     checker.resolve_function_signatures()
+    checker.resolve_method_signatures()
     if checker.error == "" {
         checker.check_program(root)
     }
@@ -383,6 +396,28 @@ impl Checker {
             i = i - 1
             let sig = self.functions[i]
             if sig.module_id == module_id and sig.name == name {
+                return i
+            }
+        }
+        return -1
+    }
+
+    fn find_method(self, owner: string, name: string): number {
+        let mut i = self.methods.len
+        while i > 0 {
+            i = i - 1
+            if self.methods[i].owner == owner and self.methods[i].name == name {
+                return i
+            }
+        }
+        return -1
+    }
+
+    fn find_method_in(self, module_id: string, name: string): number {
+        let mut i = self.methods.len
+        while i > 0 {
+            i = i - 1
+            if self.methods[i].module_id == module_id and self.methods[i].name == name {
                 return i
             }
         }
@@ -1162,6 +1197,8 @@ impl Checker {
                 self.add_enum(item, module_id)
             } else if item.kind == "TypeAlias" {
                 self.add_alias(item, module_id)
+            } else if item.kind == "Impl" {
+                self.add_impl(item, module_id)
             }
         }
     }
@@ -1276,6 +1313,88 @@ impl Checker {
         )
     }
 
+    fn add_impl(mut self, item: Node, module_id: string) {
+        let mut type_names: List<string> = []
+        for child in item.children {
+            if child.kind == "TypeName" {
+                type_names.push(child.value)
+            }
+        }
+        // `impl Trait for Type` has two type names; trait dispatch stays
+        // outside this pass.
+        if type_names.len != 1 {
+            self.complete = false
+            return
+        }
+        let owner = type_names[0]
+        for child in item.children {
+            if child.kind == "Fn" {
+                self.methods.push(
+                    MethodSig(
+                        owner: owner,
+                        name: child.value,
+                        module_id: module_id,
+                        param_names: [],
+                        params: [],
+                        ret: "unit",
+                        decl: child,
+                    ),
+                )
+            }
+        }
+    }
+
+    /// Resolve owner types and signatures once structs, enums, aliases, and
+    /// imports are known.
+    fn resolve_method_signatures(mut self) {
+        let saved_module = self.current_module
+        let mut i = 0
+        while i < self.methods.len and self.error == "" {
+            self.current_module = self.methods[i].module_id
+            let raw_owner = self.methods[i].owner
+            let struct_index = self.resolve_struct(self.methods[i].module_id, raw_owner, 0)
+            if struct_index >= 0 {
+                self.methods[i].owner = self.struct_canonical(struct_index)
+            } else {
+                let enum_index = self.resolve_enum(self.methods[i].module_id, raw_owner, 0)
+                if enum_index >= 0 and !self.enums[enum_index].is_generic {
+                    self.methods[i].owner = self.enum_canonical(enum_index)
+                } else {
+                    self.methods[i].owner = "unknown"
+                    self.complete = false
+                }
+            }
+            let item = self.methods[i].decl
+            let mut names: List<string> = []
+            let mut params: List<string> = []
+            let mut ret = "unit"
+            for child in item.children {
+                if child.kind == "Param" {
+                    if child.value == "self" or child.value == "mut self" {
+                        continue
+                    }
+                    names.push(child.value)
+                    let mut ty = "unknown"
+                    for part in child.children {
+                        if self.is_type_node(part) {
+                            ty = self.type_of(part)
+                        }
+                    }
+                    params.push(ty)
+                } else if self.is_type_node(child) {
+                    ret = self.type_of(child)
+                }
+            }
+            if self.error == "" {
+                self.methods[i].param_names = names
+                self.methods[i].params = params
+                self.methods[i].ret = ret
+            }
+            i = i + 1
+        }
+        self.current_module = saved_module
+    }
+
     /// Fill variant payload types after every type name exists. A generic
     /// enum's payloads may mention type parameters, so they stay unresolved
     /// (the enum itself is then treated as an opaque type).
@@ -1354,6 +1473,8 @@ impl Checker {
                 self.add_enum(child, module_id)
             } else if child.kind == "TypeAlias" {
                 self.add_alias(child, module_id)
+            } else if child.kind == "Impl" {
+                self.add_impl(child, module_id)
             }
         }
     }
@@ -1683,8 +1804,13 @@ impl Checker {
                 or item.kind == "TypeAlias"
             {
                 // Fields, payloads, and alias targets are resolved before
-                // checking; methods and `impl` blocks are still outside this
-                // pass.
+                // checking.
+            } else if item.kind == "Impl" {
+                for child in item.children {
+                    if child.kind == "Fn" {
+                        self.check_method(child)
+                    }
+                }
             } else {
                 self.fail(
                     item,
@@ -1724,6 +1850,37 @@ impl Checker {
         }
         if !found {
             self.fail(item, "E0003", "a function needs a body")
+        } else {
+            self.check_block(body)
+        }
+        self.leave_scope()
+    }
+
+    fn check_method(mut self, item: Node) {
+        let index = self.find_method_in(self.current_module, item.value)
+        if index < 0 {
+            self.complete = false
+            return
+        }
+        let sig = self.methods[index]
+        self.current_return = sig.ret
+        self.enter_scope()
+        self.bind("self", sig.owner)
+        let mut p = 0
+        while p < sig.param_names.len and p < sig.params.len {
+            self.bind(sig.param_names[p], sig.params[p])
+            p = p + 1
+        }
+        let mut body = item
+        let mut found = false
+        for child in item.children {
+            if child.kind == "Block" {
+                body = child
+                found = true
+            }
+        }
+        if !found {
+            self.fail(item, "E0003", "a method needs a body")
         } else {
             self.check_block(body)
         }
@@ -1814,6 +1971,16 @@ impl Checker {
             return
         }
         let actual = self.check_expr(initializer)
+        if ty != "" and initializer.kind == "Map" {
+            let struct_index = self.find_struct_by_type(ty)
+            if struct_index >= 0 {
+                self.check_struct_object(initializer, struct_index)
+                if self.error == "" {
+                    self.bind(item.value, ty)
+                }
+                return
+            }
+        }
         if ty == "" {
             ty = actual
         } else if !self.assignable(ty, actual) {
@@ -1824,6 +1991,70 @@ impl Checker {
             )
         }
         self.bind(item.value, ty)
+    }
+
+    fn check_struct_object(mut self, node: Node, index: number) {
+        let sig = self.structs[index]
+        let mut used: List<bool> = []
+        let mut f = 0
+        while f < sig.fields.len {
+            used.push(false)
+            f = f + 1
+        }
+        for child in node.children {
+            if child.kind != "Entry" {
+                self.complete = false
+                continue
+            }
+            if child.children.len == 0 {
+                self.complete = false
+                continue
+            }
+            let mut target = self.struct_field_index(index, child.value)
+            if target < 0 {
+                self.fail(
+                    node,
+                    "E0206",
+                    "`" + sig.name + "` has no field `" + child.value + "`",
+                )
+                return
+            }
+            if used[target] {
+                self.fail(
+                    node,
+                    "E0208",
+                    "field `" + sig.fields[target].name + "` is initialized twice",
+                )
+                return
+            }
+            used[target] = true
+            let ty = self.check_expr(child.children[0])
+            if self.error != "" {
+                return
+            }
+            if !self.assignable(sig.fields[target].ty, ty) {
+                self.fail(
+                    node,
+                    "E0202",
+                    "field `" + sig.fields[target].name + "` expects `"
+                        + sig.fields[target].ty + "`, found `" + ty + "`",
+                )
+                return
+            }
+        }
+        f = 0
+        while f < used.len {
+            if !used[f] and !self.is_optional(sig.fields[f].ty) {
+                self.fail(
+                    node,
+                    "E0205",
+                    "missing field `" + sig.fields[f].name + "` in initializer of `"
+                        + sig.name + "`",
+                )
+                return
+            }
+            f = f + 1
+        }
     }
 
     fn bind_destructure(mut self, pattern: Node, actual: string) {
@@ -2319,8 +2550,10 @@ impl Checker {
             return "unit"
         }
         let callee = node.children[0]
+        if callee.kind == "Member" or callee.kind == "OptionalMember" {
+            return self.check_method_call(node, callee)
+        }
         if callee.kind != "Name" and callee.kind != "Path" {
-            // Method calls are outside the checker's subset.
             self.complete = false
             self.fail(callee, "E0204", "this expression is not callable")
             return "unknown"
@@ -2424,6 +2657,62 @@ impl Checker {
         return sig.ret
     }
 
+    fn check_method_call(mut self, node: Node, callee: Node): string {
+        let mut arg_types: List<string> = []
+        let mut i = 1
+        while i < node.children.len {
+            let mut arg = node.children[i]
+            if arg.kind == "Arg" {
+                if arg.children.len > 0 {
+                    arg = arg.children[0]
+                }
+            }
+            arg_types.push(self.check_expr(arg))
+            i = i + 1
+        }
+        if callee.children.len == 0 {
+            return "unknown"
+        }
+        let recv = self.check_expr(callee.children[0])
+        if self.error != "" {
+            return "unknown"
+        }
+        if recv == "unknown" {
+            self.complete = false
+            return "unknown"
+        }
+        let index = self.find_method(recv, callee.value)
+        if index < 0 {
+            // Built-in collection/string members are outside this pass.
+            self.complete = false
+            return "unknown"
+        }
+        let sig = self.methods[index]
+        if arg_types.len != sig.params.len {
+            self.fail(
+                node,
+                "E0207",
+                "`" + sig.name + "` expects " + str(sig.params.len)
+                    + " arguments, found " + str(arg_types.len),
+            )
+            return sig.ret
+        }
+        let mut p = 0
+        while p < sig.params.len {
+            if !self.assignable(sig.params[p], arg_types[p]) {
+                self.fail(
+                    node,
+                    "E0202",
+                    "argument " + str(p + 1) + " to `" + sig.name + "` expects `"
+                        + sig.params[p] + "`, found `" + arg_types[p] + "`",
+                )
+                return sig.ret
+            }
+            p = p + 1
+        }
+        return sig.ret
+    }
+
     fn check_struct_constructor(mut self, node: Node, index: number,
                                 labels: List<string>, types: List<string>): string {
         let sig = self.structs[index]
@@ -2486,7 +2775,7 @@ impl Checker {
         }
         f = 0
         while f < used.len {
-            if !used[f] {
+            if !used[f] and !self.is_optional(sig.fields[f].ty) {
                 self.fail(
                     node,
                     "E0205",
@@ -2832,6 +3121,39 @@ impl Checker {
             return
         }
         if pattern.kind == "VariantPattern" {
+            if pattern.value.split("::").len == 1 {
+                let struct_index = self.resolve_struct(self.current_module, pattern.value, 0)
+                if struct_index >= 0 {
+                    if subject != "unknown" and subject != self.struct_canonical(struct_index) {
+                        self.fail(
+                            pattern,
+                            "E0201",
+                            "pattern `" + pattern.value + "` does not match `" + subject + "`",
+                        )
+                        return
+                    }
+                    let fields = self.structs[struct_index].fields
+                    for child in pattern.children {
+                        if child.kind == "PatternPayload" {
+                            if child.children.len != fields.len {
+                                self.complete = false
+                                return
+                            }
+                            let mut p = 0
+                            while p < child.children.len {
+                                let binding = child.children[p]
+                                if binding.kind == "NamePattern" and binding.value != "_" {
+                                    self.bind(binding.value, fields[p].ty)
+                                } else if binding.kind != "NamePattern" {
+                                    self.complete = false
+                                }
+                                p = p + 1
+                            }
+                        }
+                    }
+                    return
+                }
+            }
             let enum_index = self.resolve_variant_path(pattern.value)
             if enum_index < 0 {
                 self.complete = false

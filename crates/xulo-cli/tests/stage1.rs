@@ -261,6 +261,7 @@ fn stage1_check_agrees_with_stage0_on_the_corpus() {
         ("xuloc/corpus/accept/modules.xulo", true),
         ("xuloc/corpus/accept/enums.xulo", true),
         ("xuloc/corpus/accept/aliases.xulo", true),
+        ("xuloc/corpus/accept/methods.xulo", true),
         ("xuloc/corpus/reject/undefined_name.xulo", false),
         ("xuloc/corpus/reject/type_mismatch.xulo", false),
         ("xuloc/corpus/reject/arity.xulo", false),
@@ -366,6 +367,20 @@ fn stage1_check_accepts_tuples() {
             stdout_of(&out)
         );
     }
+}
+
+/// Inherent methods, omitted optional fields, typed object literals, and
+/// struct patterns are all modeled.
+#[test]
+fn stage1_check_accepts_struct_methods() {
+    let root = repo_root();
+    let out = run_stage1("check", &root.join("examples/types/structs.xulo"));
+    assert_success(&out, "stage 1 check of examples/types/structs.xulo");
+    assert!(
+        stdout_of(&out).contains("no errors"),
+        "struct methods should check cleanly:\n{}",
+        stdout_of(&out)
+    );
 }
 
 /// T9: the stage 1 lexer/parser is measured against the example corpus, and
