@@ -128,6 +128,8 @@ fn checker_accepts_the_bootstrap_corpus() {
     let files = [
         "xuloc/corpus/accept/fibonacci.xulo",
         "xuloc/corpus/accept/basics.xulo",
+        "xuloc/corpus/accept/modules.xulo",
+        "xuloc/corpus/accept/enums.xulo",
     ]
     for path in files {
         match std::fs::read(path) {
@@ -158,6 +160,8 @@ fn checker_rejects_the_bad_corpus() {
         "xuloc/corpus/reject/condition.xulo",
         "xuloc/corpus/reject/not_iterable.xulo",
         "xuloc/corpus/reject/return_mismatch.xulo",
+        "xuloc/corpus/reject/module_return_mismatch.xulo",
+        "xuloc/corpus/reject/struct_field_mismatch.xulo",
     ]
     for path in files {
         match std::fs::read(path) {

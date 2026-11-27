@@ -259,6 +259,7 @@ fn stage1_check_agrees_with_stage0_on_the_corpus() {
         ("xuloc/corpus/accept/fibonacci.xulo", true),
         ("xuloc/corpus/accept/basics.xulo", true),
         ("xuloc/corpus/accept/modules.xulo", true),
+        ("xuloc/corpus/accept/enums.xulo", true),
         ("xuloc/corpus/reject/undefined_name.xulo", false),
         ("xuloc/corpus/reject/type_mismatch.xulo", false),
         ("xuloc/corpus/reject/arity.xulo", false),

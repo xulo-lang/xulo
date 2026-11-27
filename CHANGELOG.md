@@ -53,6 +53,12 @@ values, and is left to a future standard-library `std/ui` module.
 
 ### Added
 
+- Stage 1's checker now models non-generic enums and `match`: payload-free
+  variant values, payload variant constructors, payload bindings, literal,
+  type, binder, wildcard, and guard patterns, and arm result unification.
+  `xuloc/corpus/accept/enums.xulo` is checked by both compilers and built/run
+  by stage 1; generic enums stay `unknown`/incomplete rather than becoming
+  false errors.
 - Stage 1's checker now models simple structs: field types, constructors with
   named or positional fields, and member reads. Struct names resolve through
   the module tree, signatures and field types are resolved after `use`

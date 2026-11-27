@@ -11,8 +11,10 @@
 // `use` paths (aliases, groups, globs), and `pub use` re-exports are modeled;
 // a file-backed module is opaque because the checker has no loader. Simple
 // structs are modeled too: field types, constructors, and member reads.
-// Enums, traits, impls, generics, closures, and `match` arrive in later WP6
-// slices.
+// Non-generic enums are modeled with payload constructors and `match` arms
+// (variant, literal, type, binder, wildcard, and guard patterns). Traits,
+// impls, generics, closures, and the remaining pattern forms arrive in later
+// WP6 slices.
 //
 // Types are canonical strings (`number`, `string`, `bool`, `unit`, `unknown`,
 // `null`, `List<T>`, `T?`) so comparisons never depend on structural equality.
@@ -72,6 +74,21 @@ pub struct StructSig {
     fields: List<FieldSig>,
 }
 
+pub struct VariantSig {
+    name: string,
+    field_nodes: List<Node>,
+    fields: List<FieldSig>,
+}
+
+pub struct EnumSig {
+    name: string,
+    module_id: string,
+    is_pub: bool,
+    is_generic: bool,
+    variant_nodes: List<Node>,
+    variants: List<VariantSig>,
+}
+
 pub struct ImportSig {
     alias: string,
     target: string,
@@ -103,6 +120,7 @@ pub struct ModuleSig {
 pub struct Checker {
     functions: List<FuncSig>,
     structs: List<StructSig>,
+    enums: List<EnumSig>,
     modules: List<ModuleSig>,
     current_module: string,
     bindings: List<Binding>,
@@ -121,6 +139,7 @@ pub fn check(root: Node): CheckResult {
     let mut checker = Checker(
         functions: [],
         structs: [],
+        enums: [],
         modules: [],
         current_module: "",
         bindings: [],
@@ -140,6 +159,7 @@ pub fn check(root: Node): CheckResult {
     checker.collect_functions(root, "")
     checker.resolve_uses()
     checker.resolve_structs()
+    checker.resolve_enums()
     checker.resolve_function_signatures()
     if checker.error == "" {
         checker.check_program(root)
@@ -461,6 +481,135 @@ impl Checker {
         return -1
     }
 
+    fn find_enum_in(self, module_id: string, name: string): number {
+        let mut i = self.enums.len
+        while i > 0 {
+            i = i - 1
+            if self.enums[i].module_id == module_id and self.enums[i].name == name {
+                return i
+            }
+        }
+        return -1
+    }
+
+    fn enum_canonical(self, index: number): string {
+        if index < 0 or index >= self.enums.len {
+            return "unknown"
+        }
+        let sig = self.enums[index]
+        if sig.module_id == "" {
+            return sig.name
+        }
+        return sig.module_id + "::" + sig.name
+    }
+
+    fn find_enum_by_type(self, ty: string): number {
+        let mut i = 0
+        while i < self.enums.len {
+            if self.enum_canonical(i) == ty {
+                return i
+            }
+            i = i + 1
+        }
+        return -1
+    }
+
+    fn resolve_enum(self, module_id: string, name: string, depth: number): number {
+        if depth > 32 {
+            return -1
+        }
+        let own = self.find_enum_in(module_id, name)
+        if own >= 0 {
+            return own
+        }
+        let scope = self.module_index(module_id)
+        if scope < 0 {
+            return -1
+        }
+        let mut i = self.modules[scope].imports.len - 1
+        while i >= 0 {
+            let import = self.modules[scope].imports[i]
+            if import.alias == name and import.member != "" {
+                let found = self.export_enum(import.target, import.member, depth + 1)
+                if found != -1 {
+                    return found
+                }
+            }
+            i = i - 1
+        }
+        i = self.modules[scope].globs.len - 1
+        while i >= 0 {
+            let found = self.export_enum(self.modules[scope].globs[i].target, name, depth + 1)
+            if found != -1 {
+                return found
+            }
+            i = i - 1
+        }
+        return -1
+    }
+
+    fn export_enum(self, module_id: string, name: string, depth: number): number {
+        if depth > 32 {
+            return -1
+        }
+        let index = self.module_index(module_id)
+        if index < 0 or self.modules[index].opaque {
+            return -1
+        }
+        let own = self.find_enum_in(module_id, name)
+        if own >= 0 {
+            if self.enums[own].is_pub {
+                return own
+            }
+            return -1
+        }
+        let mut i = self.modules[index].imports.len - 1
+        while i >= 0 {
+            let import = self.modules[index].imports[i]
+            if import.alias == name and import.is_pub and import.member != "" {
+                let found = self.export_enum(import.target, import.member, depth + 1)
+                if found != -1 {
+                    return found
+                }
+            }
+            i = i - 1
+        }
+        i = self.modules[index].globs.len - 1
+        while i >= 0 {
+            if self.modules[index].globs[i].is_pub {
+                let found = self.export_enum(self.modules[index].globs[i].target, name, depth + 1)
+                if found != -1 {
+                    return found
+                }
+            }
+            i = i - 1
+        }
+        return -1
+    }
+
+    fn variant_index(self, enum_index: number, name: string): number {
+        if enum_index < 0 or enum_index >= self.enums.len {
+            return -1
+        }
+        let mut i = 0
+        while i < self.enums[enum_index].variants.len {
+            if self.enums[enum_index].variants[i].name == name {
+                return i
+            }
+            i = i + 1
+        }
+        return -1
+    }
+
+    /// `Enum::Variant` in the current module: returns the enum index, or -1.
+    fn resolve_variant_path(self, path: string): number {
+        let parts = split_path(path)
+        if parts.len != 2 {
+            return -1
+        }
+        return self.resolve_enum(self.current_module, parts[0], 0)
+    }
+
     /// Resolve a name used as a value in `module_id`: a module constant, or a
     /// constant reached through `use`. Returns `""` when it is not a value.
     fn value_type(self, module_id: string, name: string, depth: number): string {
@@ -729,6 +878,16 @@ impl Checker {
         if struct_index >= 0 {
             return self.struct_canonical(struct_index)
         }
+        let enum_index = self.resolve_enum(self.current_module, name, 0)
+        if enum_index >= 0 {
+            if self.enums[enum_index].is_generic {
+                // A generic enum's payloads mention type parameters this pass
+                // does not instantiate.
+                self.complete = false
+                return "unknown"
+            }
+            return self.enum_canonical(enum_index)
+        }
         if self.is_foreign_type(self.current_module, name) {
             // `use type opaque::Meters`: the name is a type by declaration,
             // but its definition is outside this checker's input.
@@ -842,6 +1001,8 @@ impl Checker {
                 self.add_module_use(module_id, item)
             } else if item.kind == "Struct" {
                 self.add_struct(item, module_id)
+            } else if item.kind == "Enum" {
+                self.add_enum(item, module_id)
             }
         }
     }
@@ -852,6 +1013,8 @@ impl Checker {
         for item in items.children {
             if item.kind == "Struct" {
                 self.add_struct(item, module_id)
+            } else if item.kind == "Enum" {
+                self.add_enum(item, module_id)
             } else if item.kind == "Mod" and has_child_kind(item, "ModBody") {
                 let child = if module_id == "" {
                     item.value
@@ -908,6 +1071,82 @@ impl Checker {
         self.current_module = saved_module
     }
 
+    fn add_enum(mut self, item: Node, module_id: string) {
+        if self.find_enum_in(module_id, item.value) >= 0 {
+            return
+        }
+        let mut variant_nodes: List<Node> = []
+        for child in item.children {
+            if child.kind == "Variant" {
+                variant_nodes.push(child)
+            }
+        }
+        self.enums.push(
+            EnumSig(
+                name: item.value,
+                module_id: module_id,
+                is_pub: has_child_kind(item, "Pub"),
+                is_generic: has_child_kind(item, "GenericParams"),
+                variant_nodes: variant_nodes,
+                variants: [],
+            ),
+        )
+    }
+
+    /// Fill variant payload types after every type name exists. A generic
+    /// enum's payloads may mention type parameters, so they stay unresolved
+    /// (the enum itself is then treated as an opaque type).
+    fn resolve_enums(mut self) {
+        let saved_module = self.current_module
+        let mut i = 0
+        while i < self.enums.len and self.error == "" {
+            self.current_module = self.enums[i].module_id
+            if !self.enums[i].is_generic {
+                let mut v = 0
+                while v < self.enums[i].variant_nodes.len and self.error == "" {
+                    let variant = self.enums[i].variant_nodes[v]
+                    let mut variant_fields: List<FieldSig> = []
+                    let mut field_nodes: List<Node> = []
+                    let mut payload_nodes: List<Node> = []
+                    for child in variant.children {
+                        if child.kind == "Payload" {
+                            for part in child.children {
+                                if part.kind == "PayloadField" {
+                                    let mut ty = "unknown"
+                                    for type_child in part.children {
+                                        if self.is_type_node(type_child) {
+                                            ty = self.type_of(type_child)
+                                        }
+                                    }
+                                    variant_fields.push(FieldSig(name: part.value, ty: ty))
+                                } else if self.is_type_node(part) {
+                                    payload_nodes.push(part)
+                                }
+                            }
+                        }
+                    }
+                    let mut p = 0
+                    while p < payload_nodes.len {
+                        let ty = self.type_of(payload_nodes[p])
+                        variant_fields.push(FieldSig(name: "", ty: ty))
+                        p = p + 1
+                    }
+                    field_nodes.push(variant)
+                    self.enums[i].variants.push(
+                        VariantSig(
+                            name: variant.value,
+                            field_nodes: field_nodes,
+                            fields: variant_fields,
+                        ),
+                    )
+                    v = v + 1
+                }
+            }
+            i = i + 1
+        }
+        self.current_module = saved_module
+    }
+
     fn collect_mod(mut self, item: Node, parent: string) {
         let module_id = if parent == "" { item.value } else { parent + "::" + item.value }
         let inline = has_child_kind(item, "ModBody")
@@ -928,6 +1167,8 @@ impl Checker {
                 self.add_module_use(module_id, child)
             } else if child.kind == "Struct" {
                 self.add_struct(child, module_id)
+            } else if child.kind == "Enum" {
+                self.add_enum(child, module_id)
             }
         }
     }
@@ -1253,9 +1494,10 @@ impl Checker {
                 // Attributes are attached to their declaration, imports were
                 // resolved before checking, and the markers are not
                 // declarations.
-            } else if item.kind == "Struct" {
-                // Struct fields were collected and resolved before checking;
-                // methods and `impl` blocks are still outside this pass.
+            } else if item.kind == "Struct" or item.kind == "Enum" {
+                // Fields and payloads were collected and resolved before
+                // checking; methods and `impl` blocks are still outside this
+                // pass.
             } else {
                 self.fail(
                     item,
@@ -1568,6 +1810,20 @@ impl Checker {
             return ty
         }
         if node.kind == "Path" {
+            let enum_index = self.resolve_variant_path(node.value)
+            if enum_index >= 0 {
+                if self.enums[enum_index].is_generic {
+                    self.complete = false
+                    return "unknown"
+                }
+                let parts = split_path(node.value)
+                let variant = self.variant_index(enum_index, parts[parts.len - 1])
+                if variant >= 0 and self.enums[enum_index].variants[variant].fields.len == 0 {
+                    return self.enum_canonical(enum_index)
+                }
+                self.complete = false
+                return "unknown"
+            }
             let ty = self.path_value_type(node.value)
             if ty == "" or ty == "unknown" {
                 // A std path, a function value, or a module the checker does
@@ -1606,6 +1862,9 @@ impl Checker {
         }
         if node.kind == "List" {
             return self.check_list(node)
+        }
+        if node.kind == "Match" {
+            return self.check_match(node)
         }
         self.fail(
             node,
@@ -1820,6 +2079,12 @@ impl Checker {
         if struct_index >= 0 {
             return self.check_struct_constructor(node, struct_index, arg_names, arg_types)
         }
+        if callee.kind == "Path" {
+            let enum_index = self.resolve_variant_path(name)
+            if enum_index >= 0 {
+                return self.check_variant_constructor(node, enum_index, name, arg_names, arg_types)
+            }
+        }
         let index = self.resolve_function(self.current_module, name, 0)
         if index == -2 {
             // A file-backed module or an external/std path: its interface is
@@ -1938,6 +2203,86 @@ impl Checker {
             f = f + 1
         }
         return self.struct_canonical(index)
+    }
+
+    fn check_variant_constructor(mut self, node: Node, enum_index: number,
+                                 path: string, labels: List<string>, types: List<string>): string {
+        if self.enums[enum_index].is_generic {
+            self.complete = false
+            return "unknown"
+        }
+        let parts = split_path(path)
+        let variant = parts[parts.len - 1]
+        let v = self.variant_index(enum_index, variant)
+        if v < 0 {
+            self.fail(
+                node,
+                "E0102",
+                "`" + self.enums[enum_index].name + "` has no variant `" + variant + "`",
+            )
+            return self.enum_canonical(enum_index)
+        }
+        let fields = self.enums[enum_index].variants[v].fields
+        if types.len != fields.len {
+            self.fail(
+                node,
+                "E0207",
+                "variant `" + variant + "` expects " + str(fields.len)
+                    + " payload values, found " + str(types.len),
+            )
+            return self.enum_canonical(enum_index)
+        }
+        let mut i = 0
+        while i < types.len {
+            if labels[i] != "" {
+                let target = self.variant_field_index(enum_index, v, labels[i])
+                if target < 0 {
+                    self.fail(
+                        node,
+                        "E0102",
+                        "variant `" + variant + "` has no payload field `" + labels[i] + "`",
+                    )
+                    return self.enum_canonical(enum_index)
+                }
+                if !self.assignable(fields[target].ty, types[i]) {
+                    self.fail(
+                        node,
+                        "E0202",
+                        "payload field `" + labels[i] + "` expects `"
+                            + fields[target].ty + "`, found `" + types[i] + "`",
+                    )
+                    return self.enum_canonical(enum_index)
+                }
+            } else if !self.assignable(fields[i].ty, types[i]) {
+                self.fail(
+                    node,
+                    "E0202",
+                    "payload " + str(i + 1) + " of `" + variant + "` expects `"
+                        + fields[i].ty + "`, found `" + types[i] + "`",
+                )
+                return self.enum_canonical(enum_index)
+            }
+            i = i + 1
+        }
+        return self.enum_canonical(enum_index)
+    }
+
+    fn variant_field_index(self, enum_index: number, variant: number, name: string): number {
+        if enum_index < 0 or enum_index >= self.enums.len {
+            return -1
+        }
+        if variant < 0 or variant >= self.enums[enum_index].variants.len {
+            return -1
+        }
+        let fields = self.enums[enum_index].variants[variant].fields
+        let mut i = 0
+        while i < fields.len {
+            if fields[i].name == name {
+                return i
+            }
+            i = i + 1
+        }
+        return -1
     }
 
     fn struct_field_index(self, index: number, name: string): number {
@@ -2069,6 +2414,171 @@ impl Checker {
         let then_ty = self.check_expr(node.children[1])
         let else_ty = self.check_expr(node.children[2])
         return self.unify(node, then_ty, else_ty)
+    }
+
+    fn check_match(mut self, node: Node): string {
+        if node.children.len == 0 {
+            return "unit"
+        }
+        let subject = self.check_expr(node.children[0])
+        if self.error != "" {
+            return "unknown"
+        }
+        let mut result = "unit"
+        let mut first = true
+        let mut i = 1
+        while i < node.children.len {
+            let arm = node.children[i]
+            if arm.kind != "Arm" or arm.children.len == 0 {
+                self.complete = false
+                i = i + 1
+                continue
+            }
+            self.enter_scope()
+            self.check_pattern(arm.children[0], subject)
+            // The guard, when present, sits between the pattern and the body.
+            let mut g = 1
+            while g + 1 < arm.children.len {
+                let child = arm.children[g]
+                if child.kind == "Guard" and child.children.len > 0 {
+                    let guard_ty = self.check_expr(child.children[0])
+                    if self.error == "" and guard_ty != "bool" and guard_ty != "unknown" {
+                        self.fail(
+                            child,
+                            "E0201",
+                            "a match guard must be `bool`, found `" + guard_ty + "`",
+                        )
+                    }
+                    if guard_ty == "unknown" {
+                        self.complete = false
+                    }
+                }
+                g = g + 1
+            }
+            let body = arm.children[arm.children.len - 1]
+            let arm_ty = if body.kind == "Block" {
+                self.check_block(body)
+            } else {
+                self.check_expr(body)
+            }
+            self.leave_scope()
+            if self.error != "" {
+                return "unknown"
+            }
+            if first {
+                result = arm_ty
+                first = false
+            } else {
+                result = self.unify(node, result, arm_ty)
+            }
+            i = i + 1
+        }
+        if result == "unknown" {
+            self.complete = false
+        }
+        return result
+    }
+
+    fn check_pattern(mut self, pattern: Node, subject: string) {
+        if pattern.kind == "NamePattern" {
+            let value = pattern.value
+            if value == "_" {
+                return
+            }
+            if value.split("::").len > 1 {
+                let enum_index = self.resolve_variant_path(value)
+                if enum_index < 0 {
+                    self.complete = false
+                    return
+                }
+                if self.enums[enum_index].is_generic {
+                    self.complete = false
+                    return
+                }
+                if subject != "unknown" and subject != self.enum_canonical(enum_index) {
+                    self.fail(
+                        pattern,
+                        "E0201",
+                        "pattern `" + value + "` does not match `" + subject + "`",
+                    )
+                }
+                return
+            }
+            self.bind(value, subject)
+            return
+        }
+        if pattern.kind == "VariantPattern" {
+            let enum_index = self.resolve_variant_path(pattern.value)
+            if enum_index < 0 {
+                self.complete = false
+                return
+            }
+            if self.enums[enum_index].is_generic {
+                self.complete = false
+                return
+            }
+            if subject != "unknown" and subject != self.enum_canonical(enum_index) {
+                self.fail(
+                    pattern,
+                    "E0201",
+                    "pattern `" + pattern.value + "` does not match `" + subject + "`",
+                )
+                return
+            }
+            let parts = split_path(pattern.value)
+            let variant = self.variant_index(enum_index, parts[parts.len - 1])
+            if variant < 0 {
+                self.complete = false
+                return
+            }
+            let fields = self.enums[enum_index].variants[variant].fields
+            for child in pattern.children {
+                if child.kind != "PatternPayload" {
+                    continue
+                }
+                if child.children.len != fields.len {
+                    self.complete = false
+                    return
+                }
+                let mut p = 0
+                while p < child.children.len {
+                    let binding = child.children[p]
+                    if binding.kind == "NamePattern" and binding.value != "_" {
+                        self.bind(binding.value, fields[p].ty)
+                    } else if binding.kind != "NamePattern" {
+                        self.complete = false
+                    }
+                    p = p + 1
+                }
+            }
+            return
+        }
+        if pattern.kind == "TypePattern" {
+            // `bool b`, `int i`, `string s`: bind the trailing name.
+            let words = pattern.value.split(" ")
+            let mut type_text = ""
+            let mut binder = ""
+            for word in words {
+                if word != "" {
+                    if type_text == "" {
+                        type_text = word
+                    }
+                    binder = word
+                }
+            }
+            if type_text == "int" or type_text == "number" or type_text == "float" {
+                type_text = "number"
+            }
+            if binder != "" and binder != "_" {
+                self.bind(binder, type_text)
+            }
+            return
+        }
+        // Literal, range, or-patterns and struct patterns carry no binding the
+        // checker needs here; shapes it cannot read stay "not modeled".
+        if pattern.kind != "LiteralPattern" {
+            self.complete = false
+        }
     }
 
     fn check_list(mut self, node: Node): string {

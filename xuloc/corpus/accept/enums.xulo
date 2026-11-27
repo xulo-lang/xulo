@@ -1,0 +1,43 @@
+// Gate 3: non-generic enums, payload-free variants, payload variants, and
+// `match` with payload bindings, guards, literals, and a wildcard.
+enum Direction {
+    North
+    South
+    East
+    West
+}
+
+enum Shape {
+    Circle(radius: number)
+    Rect(width: number, height: number)
+}
+
+fn area(shape: Shape): number {
+    match shape {
+        Shape::Circle(r) => 3.14 * r * r
+        Shape::Rect(w, h) => w * h
+    }
+}
+
+fn sign(n: number): string {
+    match n {
+        value if value > 0 => "positive"
+        0 => "zero"
+        _ => "negative"
+    }
+}
+
+fn main() {
+    let dir = Direction::East
+    print(dir)
+    let name = match dir {
+        Direction::North => "north"
+        Direction::South => "south"
+        Direction::East => "east"
+        Direction::West => "west"
+    }
+    print(name)
+    print(area(Shape::Circle(2)))
+    print(area(Shape::Rect(3, 4)))
+    print(sign(3), sign(0), sign(-1))
+}
