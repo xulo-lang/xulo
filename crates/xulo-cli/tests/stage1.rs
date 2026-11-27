@@ -262,6 +262,7 @@ fn stage1_check_agrees_with_stage0_on_the_corpus() {
         ("xuloc/corpus/accept/enums.xulo", true),
         ("xuloc/corpus/accept/aliases.xulo", true),
         ("xuloc/corpus/accept/methods.xulo", true),
+        ("xuloc/corpus/accept/results.xulo", true),
         ("xuloc/corpus/reject/undefined_name.xulo", false),
         ("xuloc/corpus/reject/type_mismatch.xulo", false),
         ("xuloc/corpus/reject/arity.xulo", false),
@@ -394,6 +395,24 @@ fn stage1_check_accepts_default_params() {
         "default parameters should check cleanly:\n{}",
         stdout_of(&out)
     );
+}
+
+/// Ranges, optional chaining, and null narrowing are modeled.
+#[test]
+fn stage1_check_accepts_ranges_and_optional_chaining() {
+    let root = repo_root();
+    for relative in [
+        "examples/basics/for.xulo",
+        "examples/types/optional_chaining.xulo",
+    ] {
+        let out = run_stage1("check", &root.join(relative));
+        assert_success(&out, &format!("stage 1 check of {relative}"));
+        assert!(
+            stdout_of(&out).contains("no errors"),
+            "{relative} should check cleanly:\n{}",
+            stdout_of(&out)
+        );
+    }
 }
 
 /// T9: the stage 1 lexer/parser is measured against the example corpus, and

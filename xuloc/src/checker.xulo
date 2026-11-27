@@ -17,9 +17,11 @@
 // gets an anonymous shape so its member reads and object destructuring are
 // checked. Tuple types, literals, positional reads, writes, and destructuring
 // are modeled as `(T1,T2)` strings, `type` aliases expand on demand, and an
-// inherent `impl Type` exposes methods with `self`, and default parameters
-// relax a call's minimum arity. Traits, generic impls, closures, and the
-// remaining pattern forms arrive in later WP6 slices.
+// inherent `impl Type` exposes methods with `self`, default parameters relax a
+// call's minimum arity, `Result`/`Error` are prelude types, and ranges,
+// optional chaining, `try`/`await`, and null narrowing are modeled. Traits,
+// generic impls, closures, and the remaining pattern forms arrive in later WP6
+// slices.
 //
 // Types are canonical strings (`number`, `string`, `bool`, `unit`, `unknown`,
 // `null`, `List<T>`, `T?`) so comparisons never depend on structural equality.
@@ -201,6 +203,7 @@ pub fn check(root: Node): CheckResult {
     checker.enter_scope()
     checker.add_module("", "#", false)
     checker.collect_structs(root, "")
+    checker.add_builtin_types()
     checker.collect_functions(root, "")
     checker.resolve_uses()
     checker.resolve_structs()
@@ -507,6 +510,9 @@ impl Checker {
             }
             i = i - 1
         }
+        if module_id != "" {
+            return self.find_struct_in("", name)
+        }
         return -1
     }
 
@@ -612,6 +618,9 @@ impl Checker {
                 return found
             }
             i = i - 1
+        }
+        if module_id != "" {
+            return self.find_enum_in("", name)
         }
         return -1
     }
@@ -1115,6 +1124,10 @@ impl Checker {
         return ty.slice(0, ty.len - 1)
     }
 
+    fn is_range(self, ty: string): bool {
+        return ty == "Range"
+    }
+
     fn is_list(self, ty: string): bool {
         if ty.len < 6 {
             return false
@@ -1137,7 +1150,8 @@ impl Checker {
             return true
         }
         if actual == "unknown" {
-            return false
+            // An unmodeled expression is not evidence of a type error.
+            return true
         }
         if self.is_number(expected) and self.is_number(actual) {
             return true
@@ -1224,6 +1238,45 @@ impl Checker {
                 }
                 self.collect_structs(item, child)
             }
+        }
+    }
+
+    /// Prelude `Result`/`Error`: a user declaration of the same name wins,
+    /// because the builtins are added after the user's type names.
+    fn add_builtin_types(mut self) {
+        if self.find_struct_in("", "Error") < 0 {
+            self.structs.push(
+                StructSig(
+                    name: "Error",
+                    module_id: "",
+                    is_pub: true,
+                    field_nodes: [],
+                    fields: [FieldSig(name: "message", ty: "string")],
+                ),
+            )
+        }
+        if self.find_enum_in("", "Result") < 0 {
+            self.enums.push(
+                EnumSig(
+                    name: "Result",
+                    module_id: "",
+                    is_pub: true,
+                    is_generic: false,
+                    variant_nodes: [],
+                    variants: [
+                        VariantSig(
+                            name: "Ok",
+                            field_nodes: [],
+                            fields: [FieldSig(name: "", ty: "unknown")],
+                        ),
+                        VariantSig(
+                            name: "Err",
+                            field_nodes: [],
+                            fields: [FieldSig(name: "", ty: "unknown")],
+                        ),
+                    ],
+                ),
+            )
         }
     }
 
@@ -2300,7 +2353,17 @@ impl Checker {
         if self.error != "" {
             return
         }
-        if !self.is_list(iterable) {
+        if iterable == "unknown" {
+            self.complete = false
+            self.enter_scope()
+            self.bind(stmt.value, "unknown")
+            if stmt.children.len > 1 {
+                self.check_block(stmt.children[1])
+            }
+            self.leave_scope()
+            return
+        }
+        if !self.is_list(iterable) and !self.is_range(iterable) {
             self.fail(
                 stmt.children[0],
                 "E0213",
@@ -2309,7 +2372,11 @@ impl Checker {
             return
         }
         self.enter_scope()
-        self.bind(stmt.value, self.list_element(iterable))
+        if self.is_range(iterable) {
+            self.bind(stmt.value, "number")
+        } else {
+            self.bind(stmt.value, self.list_element(iterable))
+        }
         if stmt.children.len > 1 {
             self.check_block(stmt.children[1])
         }
@@ -2383,6 +2450,9 @@ impl Checker {
         if node.kind == "Member" {
             return self.check_member(node)
         }
+        if node.kind == "OptionalMember" {
+            return self.check_optional_member(node)
+        }
         if node.kind == "Index" {
             return self.check_index(node)
         }
@@ -2394,6 +2464,29 @@ impl Checker {
         }
         if node.kind == "List" {
             return self.check_list(node)
+        }
+        if node.kind == "Block" {
+            return self.check_block(node)
+        }
+        if node.kind == "Assign" {
+            if node.children.len < 2 {
+                return "unknown"
+            }
+            let lhs = self.place_type(node.children[0])
+            let rhs = self.check_expr(node.children[1])
+            if self.error == "" and (lhs == "unknown" or rhs == "unknown") {
+                self.complete = false
+            } else if self.error == "" and !self.assignable(lhs, rhs) {
+                self.fail(node, "E0201", "expected `" + lhs + "`, found `" + rhs + "`")
+            }
+            return rhs
+        }
+        if node.kind == "Try" or node.kind == "Await" {
+            if node.children.len > 0 {
+                self.check_expr(node.children[0])
+            }
+            self.complete = false
+            return "unknown"
         }
         if node.kind == "Tuple" {
             let mut text = "("
@@ -2499,6 +2592,13 @@ impl Checker {
             return "unknown"
         }
         let op = node.value
+        if op == "..<" or op == "..=" {
+            if self.is_number(left) and self.is_number(right) {
+                return "Range"
+            }
+            self.fail(node, "E0201", "a range needs `number` operands")
+            return "unknown"
+        }
         if op == "+" {
             if self.is_number(left) and self.is_number(right) {
                 return "number"
@@ -2930,6 +3030,32 @@ impl Checker {
         if self.error != "" {
             return "unknown"
         }
+        return self.member_type(node, recv)
+    }
+
+    fn check_optional_member(mut self, node: Node): string {
+        if node.children.len == 0 {
+            return "unknown"
+        }
+        let recv = self.check_expr(node.children[0])
+        if self.error != "" {
+            return "unknown"
+        }
+        if recv == "null" {
+            return "null"
+        }
+        if recv == "unknown" {
+            self.complete = false
+            return "unknown"
+        }
+        let ty = self.member_type(node, self.optional_inner(recv))
+        if ty == "unknown" or ty == "null" or self.is_optional(ty) {
+            return ty
+        }
+        return ty + "?"
+    }
+
+    fn member_type(mut self, node: Node, recv: string): string {
         if recv == "unknown" {
             self.complete = false
             return "unknown"
@@ -3038,12 +3164,60 @@ impl Checker {
             )
             return "unknown"
         }
-        let then_ty = self.check_block(node.children[1])
+        let mut narrow_name = ""
+        let mut narrow_ty = ""
+        let mut narrow_else = false
+        let condition = node.children[0]
+        if condition.kind == "Binary" and condition.children.len == 2
+            and (condition.value == "!=" or condition.value == "==")
+        {
+            let left = condition.children[0]
+            let right = condition.children[1]
+            let mut tested = left
+            let mut null_on_right = true
+            if left.kind == "Literal" and left.value == "null" {
+                tested = right
+                null_on_right = false
+            } else if !(right.kind == "Literal" and right.value == "null") {
+                tested = condition
+            }
+            let is_null_test = null_on_right
+                and right.kind == "Literal" and right.value == "null"
+            let is_null_test2 = !null_on_right
+                and left.kind == "Literal" and left.value == "null"
+            if tested.kind == "Name" and (is_null_test or is_null_test2) {
+                let ty = self.lookup(tested.value)
+                if self.is_optional(ty) {
+                    narrow_name = tested.value
+                    narrow_ty = self.optional_inner(ty)
+                    narrow_else = condition.value == "=="
+                }
+            }
+        }
+        let then_ty = if narrow_name != "" and !narrow_else {
+            self.enter_scope()
+            self.bind(narrow_name, narrow_ty)
+            let ty = self.check_block(node.children[1])
+            self.leave_scope()
+            ty
+        } else {
+            self.check_block(node.children[1])
+        }
         if node.children.len < 3 {
             return "unit"
         }
         let else_node = node.children[2]
-        let else_ty = if else_node.kind == "If" {
+        let else_ty = if narrow_name != "" and narrow_else {
+            self.enter_scope()
+            self.bind(narrow_name, narrow_ty)
+            let ty = if else_node.kind == "If" {
+                self.check_expr(else_node)
+            } else {
+                self.check_block(else_node)
+            }
+            self.leave_scope()
+            ty
+        } else if else_node.kind == "If" {
             self.check_expr(else_node)
         } else {
             self.check_block(else_node)

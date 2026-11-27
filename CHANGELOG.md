@@ -56,6 +56,12 @@ values, and is left to a future standard-library `std/ui` module.
 - Stage 1's checker now honors default parameters: a call may omit trailing
   defaulted arguments, so `examples/functions/params.xulo` reports
   `no errors`.
+- Stage 1's checker now treats `Result`/`Error` as prelude types and models
+  `try`, `await`, block and assignment expressions, ranges (`a..<b`, `a..=b`),
+  optional chaining (`?.`), and `!= null` / `== null` narrowing. `unknown`
+  operands are accepted instead of flagged. This moves `for`, optional
+  chaining, propagation, and several `std` examples to `no errors`;
+  `xuloc/corpus/accept/results.xulo` pins builtin `Result`/`Error` end to end.
 - Stage 1's C backend now lowers tuple positional members (`p.0` reads and
   writes, plus `p?.0` through `xr_index_opt`). `examples/types/tuples.xulo`
   builds and runs with stage 1 and is pinned in `stage1_build`.
