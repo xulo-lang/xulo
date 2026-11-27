@@ -265,8 +265,8 @@ fn checker_accepts_an_inner_type_for_an_optional() {
 
 #[test]
 fn checker_marks_partial_analysis() {
-    let map: ParseResult = parse_source("fn main() { let x = { a: 1 } }\n")
-    let partial: CheckResult = check(map.root)
+    let closure: ParseResult = parse_source("fn main() { let f = fn(a: int): int { a } }\n")
+    let partial: CheckResult = check(closure.root)
     assert(!partial.complete, "an unsupported construct is not a verdict")
 
     let wrong: ParseResult = parse_source("fn main() { let x: int = \"a\" }\n")

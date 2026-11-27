@@ -13,8 +13,10 @@
 // structs are modeled too: field types, constructors, and member reads.
 // Non-generic enums are modeled with payload constructors and `match` arms
 // (variant, literal, type, binder, wildcard, and guard patterns). Template
-// strings check their interpolated expressions. Traits, impls, generics,
-// closures, and the remaining pattern forms arrive in later WP6 slices.
+// strings check their interpolated expressions, and an untyped object literal
+// gets an anonymous shape so its member reads and object destructuring are
+// checked. Traits, impls, generics, closures, and the remaining pattern forms
+// arrive in later WP6 slices.
 //
 // Types are canonical strings (`number`, `string`, `bool`, `unit`, `unknown`,
 // `null`, `List<T>`, `T?`) so comparisons never depend on structural equality.
@@ -89,6 +91,13 @@ pub struct EnumSig {
     variants: List<VariantSig>,
 }
 
+/// The shape of an untyped object literal (`{ name: "a", age: 1 }`). Type
+/// strings name it as `@objN`, so member reads can recover the fields.
+pub struct AnonSig {
+    id: number,
+    fields: List<FieldSig>,
+}
+
 pub struct ImportSig {
     alias: string,
     target: string,
@@ -121,6 +130,8 @@ pub struct Checker {
     functions: List<FuncSig>,
     structs: List<StructSig>,
     enums: List<EnumSig>,
+    anon_objects: List<AnonSig>,
+    next_anon: number,
     modules: List<ModuleSig>,
     current_module: string,
     bindings: List<Binding>,
@@ -140,6 +151,8 @@ pub fn check(root: Node): CheckResult {
         functions: [],
         structs: [],
         enums: [],
+        anon_objects: [],
+        next_anon: 0,
         modules: [],
         current_module: "",
         bindings: [],
@@ -1590,6 +1603,25 @@ impl Checker {
     }
 
     fn check_let(mut self, item: Node) {
+        if item.value == "" and item.children.len >= 2
+            and item.children[0].kind == "Destructure"
+        {
+            let pattern = item.children[0]
+            let initializer = item.children[item.children.len - 1]
+            let actual = self.check_expr(initializer)
+            if self.error != "" {
+                // Still bind the names so later reads do not add cascading
+                // "not found" errors to a partial analysis.
+                for binding in pattern.children {
+                    if binding.kind == "NamePattern" and binding.value != "_" {
+                        self.bind(binding.value, "unknown")
+                    }
+                }
+                return
+            }
+            self.bind_destructure(pattern, actual)
+            return
+        }
         let mut ty = ""
         let mut initializer = item
         let mut found = false
@@ -1618,6 +1650,45 @@ impl Checker {
             )
         }
         self.bind(item.value, ty)
+    }
+
+    fn bind_destructure(mut self, pattern: Node, actual: string) {
+        if pattern.value == "object" {
+            let anon = self.find_anon(actual)
+            let struct_index = self.find_struct_by_type(actual)
+            for binding in pattern.children {
+                if binding.kind != "NamePattern" or binding.value == "_" {
+                    continue
+                }
+                let name = binding.value
+                let mut ty = "unknown"
+                if anon >= 0 {
+                    let mut f = self.anon_objects[anon].fields.len
+                    while f > 0 {
+                        f = f - 1
+                        if self.anon_objects[anon].fields[f].name == name {
+                            ty = self.anon_objects[anon].fields[f].ty
+                        }
+                    }
+                } else if struct_index >= 0 {
+                    let f = self.struct_field_index(struct_index, name)
+                    if f >= 0 {
+                        ty = self.structs[struct_index].fields[f].ty
+                    }
+                } else {
+                    self.complete = false
+                }
+                self.bind(name, ty)
+            }
+            return
+        }
+        // Tuple positions are not modeled as types yet.
+        self.complete = false
+        for binding in pattern.children {
+            if binding.kind == "NamePattern" and binding.value != "_" {
+                self.bind(binding.value, "unknown")
+            }
+        }
     }
 
     // ── statements ───────────────────────────────────────────────────────
@@ -1862,6 +1933,9 @@ impl Checker {
         }
         if node.kind == "List" {
             return self.check_list(node)
+        }
+        if node.kind == "Map" {
+            return self.check_map_literal(node)
         }
         if node.kind == "Match" {
             return self.check_match(node)
@@ -2327,6 +2401,22 @@ impl Checker {
                 return "number"
             }
         }
+        let anon = self.find_anon(recv)
+        if anon >= 0 {
+            let mut i = self.anon_objects[anon].fields.len
+            while i > 0 {
+                i = i - 1
+                if self.anon_objects[anon].fields[i].name == node.value {
+                    return self.anon_objects[anon].fields[i].ty
+                }
+            }
+            self.fail(
+                node,
+                "E0206",
+                "object literal has no field `" + node.value + "`",
+            )
+            return "unknown"
+        }
         let struct_index = self.find_struct_by_type(recv)
         if struct_index >= 0 {
             let field = self.struct_field_index(struct_index, node.value)
@@ -2601,6 +2691,44 @@ impl Checker {
         if pattern.kind != "LiteralPattern" {
             self.complete = false
         }
+    }
+
+    fn check_map_literal(mut self, node: Node): string {
+        let mut fields: List<FieldSig> = []
+        for child in node.children {
+            if child.kind == "Entry" {
+                if child.children.len > 0 {
+                    let ty = self.check_expr(child.children[0])
+                    fields.push(FieldSig(name: child.value, ty: ty))
+                } else {
+                    fields.push(FieldSig(name: child.value, ty: "unknown"))
+                }
+            } else {
+                // Spread and other object forms need an expected type.
+                self.complete = false
+            }
+        }
+        if self.error != "" {
+            return "unknown"
+        }
+        let id = self.next_anon
+        self.next_anon = self.next_anon + 1
+        self.anon_objects.push(AnonSig(id: id, fields: fields))
+        return "@obj" + str(id)
+    }
+
+    fn find_anon(self, ty: string): number {
+        if ty.len < 4 or ty.slice(0, 4) != "@obj" {
+            return -1
+        }
+        let mut i = 0
+        while i < self.anon_objects.len {
+            if "@obj" + str(self.anon_objects[i].id) == ty {
+                return i
+            }
+            i = i + 1
+        }
+        return -1
     }
 
     fn check_list(mut self, node: Node): string {

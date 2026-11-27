@@ -332,6 +332,20 @@ fn stage1_check_accepts_templated_generic_enums() {
     );
 }
 
+/// Untyped object literals get an anonymous shape, so template member reads
+/// (`${user.name}`) are checked rather than rejected.
+#[test]
+fn stage1_check_accepts_object_literals() {
+    let root = repo_root();
+    let out = run_stage1("check", &root.join("examples/basics/templates.xulo"));
+    assert_success(&out, "stage 1 check of examples/basics/templates.xulo");
+    assert!(
+        stdout_of(&out).contains("no errors"),
+        "stage 1 check should report success:\n{}",
+        stdout_of(&out)
+    );
+}
+
 /// T9: the stage 1 lexer/parser is measured against the example corpus, and
 /// the gaps are a shrinking baseline.
 ///

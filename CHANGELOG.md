@@ -53,6 +53,12 @@ values, and is left to a future standard-library `std/ui` module.
 
 ### Added
 
+- Stage 1's checker now models untyped object literals with an anonymous
+  shape, so `${user.name}` and `user.age` are checked instead of rejected;
+  object destructuring binds fields from that shape, while tuple destructuring
+  binds `unknown`. `examples/basics/templates.xulo` now reports `no errors`,
+  a spread or other form that needs an expected type stays `complete = false`,
+  and `examples/basics/bindings.xulo` still builds through stage 1.
 - Stage 1's checker now checks template expressions (every `${…}` is
   type-checked, the template is a `string`) and binds generic-enum payload
   names to `unknown` so the arm body still checks. This lets
