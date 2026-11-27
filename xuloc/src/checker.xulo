@@ -12,9 +12,9 @@
 // a file-backed module is opaque because the checker has no loader. Simple
 // structs are modeled too: field types, constructors, and member reads.
 // Non-generic enums are modeled with payload constructors and `match` arms
-// (variant, literal, type, binder, wildcard, and guard patterns). Traits,
-// impls, generics, closures, and the remaining pattern forms arrive in later
-// WP6 slices.
+// (variant, literal, type, binder, wildcard, and guard patterns). Template
+// strings check their interpolated expressions. Traits, impls, generics,
+// closures, and the remaining pattern forms arrive in later WP6 slices.
 //
 // Types are canonical strings (`number`, `string`, `bool`, `unit`, `unknown`,
 // `null`, `List<T>`, `T?`) so comparisons never depend on structural equality.
@@ -1866,6 +1866,17 @@ impl Checker {
         if node.kind == "Match" {
             return self.check_match(node)
         }
+        if node.kind == "Template" {
+            for child in node.children {
+                if child.kind != "TemplateText" {
+                    self.check_expr(child)
+                    if self.error != "" {
+                        return "unknown"
+                    }
+                }
+            }
+            return "string"
+        }
         self.fail(
             node,
             "E0003",
@@ -2514,6 +2525,17 @@ impl Checker {
                 return
             }
             if self.enums[enum_index].is_generic {
+                // Payload types mention type parameters; bind the names so
+                // the arm body still checks, but keep the pass incomplete.
+                for child in pattern.children {
+                    if child.kind == "PatternPayload" {
+                        for binding in child.children {
+                            if binding.kind == "NamePattern" and binding.value != "_" {
+                                self.bind(binding.value, "unknown")
+                            }
+                        }
+                    }
+                }
                 self.complete = false
                 return
             }

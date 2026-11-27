@@ -318,6 +318,20 @@ fn stage1_check_agrees_with_stage0_on_the_corpus() {
     }
 }
 
+/// Template expressions and generic-enum payload bindings are name-resolved
+/// even when the full type is outside the checker's subset.
+#[test]
+fn stage1_check_accepts_templated_generic_enums() {
+    let root = repo_root();
+    let out = run_stage1("check", &root.join("examples/types/enums_match.xulo"));
+    assert_success(&out, "stage 1 check of examples/types/enums_match.xulo");
+    assert!(
+        stdout_of(&out).contains("no errors"),
+        "stage 1 check should report success:\n{}",
+        stdout_of(&out)
+    );
+}
+
 /// T9: the stage 1 lexer/parser is measured against the example corpus, and
 /// the gaps are a shrinking baseline.
 ///

@@ -39,5 +39,6 @@ fn main() {
     print(name)
     print(area(Shape::Circle(2)))
     print(area(Shape::Rect(3, 4)))
+    print(`area ${area(Shape::Rect(2, 3))}`)
     print(sign(3), sign(0), sign(-1))
 }

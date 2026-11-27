@@ -53,6 +53,12 @@ values, and is left to a future standard-library `std/ui` module.
 
 ### Added
 
+- Stage 1's checker now checks template expressions (every `${…}` is
+  type-checked, the template is a `string`) and binds generic-enum payload
+  names to `unknown` so the arm body still checks. This lets
+  `examples/types/enums_match.xulo` report `no errors` while staying
+  `complete = false`, and `xuloc/corpus/accept/enums.xulo` now builds and runs
+  a template interpolation end to end.
 - Stage 1's checker now models non-generic enums and `match`: payload-free
   variant values, payload variant constructors, payload bindings, literal,
   type, binder, wildcard, and guard patterns, and arm result unification.
