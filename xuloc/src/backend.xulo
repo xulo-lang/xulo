@@ -13,9 +13,9 @@
 //   * declarations: functions, structs, enums, traits, consts, impl methods,
 //     modules (`mod name;` is loaded relative to the entry file);
 //   * statements/expressions: let/const, assignment, return, if/else, while,
-//     for, match, calls, methods, fields, indexing, lists, tuples, templates,
-//     closures and first-class function values, the arithmetic/comparison/
-//     logical operator set, `??`, `is`, `?.`, and the variadic
+//     for, match, defer, calls, methods, fields, indexing, lists, tuples,
+//     templates, closures and first-class function values, the arithmetic/
+//     comparison/logical operator set, `??`, `is`, `?.`, and the variadic
 //     print/str/assert/panic intrinsics;
 //   * module-qualified declarations resolve by their final segment, because
 //     declaration collection flattens modules into one namespace;
@@ -25,7 +25,7 @@
 //     itself uses.
 //
 // Deliberate limits (recorded in BOOTSTRAP.md):
-//   * no async or `defer`;
+//   * no async;
 //   * struct values are reference-shaped objects, so value-copy semantics are
 //     not reproduced (stage 1's own code does not depend on them);
 //   * memory is leaked rather than collected; the compiler is a one-shot
@@ -102,6 +102,9 @@ pub struct Emitter {
     pub capture_names: List<string>,
     pub closure_funcs: List<string>,
     pub closure_ids: List<number>,
+    pub defer_depths: List<number>,
+    pub defer_lists: List<List<Node> >,
+    pub loop_depths: List<number>,
     pub program: StringBuilder,
     pub out: StringBuilder,
     pub depth: number,
@@ -111,6 +114,7 @@ pub struct Emitter {
     pub indent: number,
     pub box_locals: bool,
     pub in_closure: bool,
+    pub defer_emitting: number,
     pub self_name: string,
     pub error: string,
 }
@@ -129,6 +133,9 @@ fn new_emitter(): Emitter {
         capture_names: [],
         closure_funcs: [],
         closure_ids: [],
+        defer_depths: [],
+        defer_lists: [],
+        loop_depths: [],
         program: StringBuilder::new(),
         out: StringBuilder::new(),
         depth: 0,
@@ -138,6 +145,7 @@ fn new_emitter(): Emitter {
         indent: 1,
         box_locals: false,
         in_closure: false,
+        defer_emitting: 0,
         self_name: "",
         error: "",
     )

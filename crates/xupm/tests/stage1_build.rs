@@ -338,8 +338,9 @@ fn stage1_compiles_the_bootstrap_corpus() {
 
 /// Examples the C backend lowers end to end: the `std` surface stage 1
 /// implements, plus templates, optional chaining, object literals, `?`
-/// propagation, chained assignment, Unicode escapes, `Array::filled`, and
-/// closures (including mutable captures and returned closures).
+/// propagation, chained assignment, Unicode escapes, `Array::filled`,
+/// closures (including mutable captures and returned closures), and `defer`
+/// (including loops and `?`).
 #[test]
 fn stage1_runs_the_lowered_examples() {
     if !enabled() {
@@ -365,6 +366,7 @@ fn stage1_runs_the_lowered_examples() {
         "examples/basics/bindings.xulo",
         "examples/basics/lexical.xulo",
         "examples/functions/closures_hof.xulo",
+        "examples/functions/defer.xulo",
         "examples/errors/propagation.xulo",
         "examples/types/optional_chaining.xulo",
         "examples/types/structs.xulo",
@@ -508,6 +510,94 @@ fn main() {
         render_lines(&native.stdout),
         render_lines(&interpreted.stdout),
         "the C backend's closure output must match the interpreter"
+    );
+}
+
+/// `defer` runs at block exit in reverse registration order: on fallthrough,
+/// `return`, `break`, `continue`, and `?`, after the block value is determined,
+/// and for nested blocks innermost first.
+#[test]
+fn stage1_c_backend_lowers_defer() {
+    if !enabled() {
+        return;
+    }
+    let root = repo_root();
+    let stage1 = stage1_binary();
+    let work = unique_dir("defer");
+    let source = work.join("defer.xulo");
+    std::fs::write(
+        &source,
+        r#"fn check(flag: bool): Result<int, Error> {
+    defer print("check cleanup")
+    if flag {
+        return Result::Err(Error("boom"))
+    }
+    Result::Ok(7)
+}
+
+fn attempt(flag: bool): Result<unit, Error> {
+    defer print("attempt cleanup")
+    let value = check(flag)?
+    print(value + 1)
+    Result::Ok(null)
+}
+
+fn cycles() {
+    for i in 0..<4 {
+        defer print(`done ${i}`)
+        if i == 1 {
+            continue
+        }
+        if i == 3 {
+            break
+        }
+        print(`body ${i}`)
+    }
+}
+
+fn nested() {
+    defer {
+        print("outer one")
+        print("outer two")
+    }
+    if true {
+        defer print("inner")
+        print("inner body")
+    }
+    print("after inner")
+}
+
+fn main() {
+    attempt(false)
+    attempt(true)
+    cycles()
+    nested()
+    let x = if true {
+        defer print("block cleanup")
+        5
+    } else {
+        0
+    }
+    print(x)
+}
+"#,
+    )
+    .expect("the defer probe should be writable");
+
+    let interpreted = Command::new(XUPM)
+        .args(["run", source.to_str().expect("a UTF-8 path")])
+        .current_dir(&root)
+        .output()
+        .expect("xupm run should start");
+    assert_success(&interpreted, "the interpreter defer probe");
+
+    let program = build_stage1_program(&stage1, &root, &source, &work, "defer");
+    let native = run_program(&program);
+    assert_success(&native, "the stage 1 defer probe");
+    assert_eq!(
+        render_lines(&native.stdout),
+        render_lines(&interpreted.stdout),
+        "the C backend's defer output must match the interpreter"
     );
 }
 

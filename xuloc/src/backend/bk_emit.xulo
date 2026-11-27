@@ -128,12 +128,16 @@ pub fn em_emit_globals(e: mut Emitter) {
     e.local_cnames = []
     e.local_depths = []
     e.capture_names = []
+    e.defer_depths = []
+    e.defer_lists = []
+    e.loop_depths = []
     e.depth = 0
     e.next_local = 0
     e.next_tmp = 0
     e.indent = 0
     e.box_locals = false
     e.in_closure = false
+    e.defer_emitting = 0
     e.self_name = ""
     bk_state::co_line(e, "static void xr_init_globals(void) {")
     e.indent = 1
@@ -156,12 +160,16 @@ pub fn em_emit_function(e: mut Emitter, cname: string, params: List<string>, bod
     e.local_cnames = []
     e.local_depths = []
     e.capture_names = []
+    e.defer_depths = []
+    e.defer_lists = []
+    e.loop_depths = []
     e.depth = 0
     e.next_local = 0
     e.next_tmp = 0
     e.indent = 1
     e.box_locals = bk_expr::ex_contains_closure(body)
     e.in_closure = false
+    e.defer_emitting = 0
     e.self_name = ""
     bk_state::co_line(e, "XVal " + cname + "(long long argc, XVal *argv) {")
     bk_state::co_line(e, "  (void)argc;")
@@ -205,12 +213,16 @@ pub fn em_emit_main(e: mut Emitter) {
     e.local_cnames = []
     e.local_depths = []
     e.capture_names = []
+    e.defer_depths = []
+    e.defer_lists = []
+    e.loop_depths = []
     e.depth = 0
     e.next_local = 0
     e.next_tmp = 0
     e.indent = 0
     e.box_locals = false
     e.in_closure = false
+    e.defer_emitting = 0
     e.self_name = ""
     bk_state::co_line(e, "int main(int argc, char **argv) {")
     bk_state::co_line(e, "  xr_set_argv(argc, argv);")
@@ -237,6 +249,7 @@ pub fn em_emit_block_return(e: mut Emitter, block: Node) {
     bk_state::co_enter(e)
     let kids = block.children
     if kids.len == 0 {
+        bk_stmt::st_emit_defers_to(e, 1)
         bk_state::co_line(e, "return xr_nil();")
         bk_state::co_leave(e)
         return
@@ -249,9 +262,14 @@ pub fn em_emit_block_return(e: mut Emitter, block: Node) {
     let last = kids[kids.len - 1]
     if last.kind == "ExprStmt" {
         let value = bk_expr::ex_emit_expr(e, last.children[0])
-        bk_state::co_line(e, "return " + value + ";")
+        // The block's value is determined before its defers run.
+        let tmp = bk_state::co_new_tmp(e)
+        bk_state::co_line(e, "XVal " + tmp + " = " + value + ";")
+        bk_stmt::st_emit_defers_to(e, 1)
+        bk_state::co_line(e, "return " + tmp + ";")
     } else {
         bk_stmt::st_emit_stmt(e, last)
+        bk_stmt::st_emit_defers_to(e, 1)
         bk_state::co_line(e, "return xr_nil();")
     }
     bk_state::co_leave(e)
@@ -259,11 +277,13 @@ pub fn em_emit_block_return(e: mut Emitter, block: Node) {
 
 pub fn em_emit_block_value(e: mut Emitter, block: Node, target: string) {
     bk_state::co_enter(e)
+    let block_depth = e.depth
     let kids = block.children
     if kids.len == 0 {
         if target != "" {
             bk_state::co_line(e, target + " = xr_nil();")
         }
+        bk_stmt::st_emit_defers_to(e, block_depth)
         bk_state::co_leave(e)
         return
     }
@@ -294,5 +314,6 @@ pub fn em_emit_block_value(e: mut Emitter, block: Node, target: string) {
             bk_state::co_line(e, target + " = xr_nil();")
         }
     }
+    bk_stmt::st_emit_defers_to(e, block_depth)
     bk_state::co_leave(e)
 }

@@ -53,6 +53,15 @@ values, and is left to a future standard-library `std/ui` module.
 
 ### Added
 
+- Stage 1's C backend now lowers `defer`: each block keeps a registration
+  list, and its operands run in reverse registration order when the block
+  leaves through fallthrough, `return`, `break`, `continue`, or `?`, after the
+  block's value is determined. Nested blocks run innermost first, and a
+  `panic` still stops before any defer runs. `examples/functions/defer.xulo`
+  now compiles and matches the interpreter byte for byte; a regression test
+  also covers loop `continue`/`break`, `?` propagation, nested blocks, and
+  block-expression values. Stage 1 build coverage reaches 52 of 66 example
+  files.
 - Stage 1's C backend now lowers closures: function literals and arrow
   closures, first-class function values called through any expression,
   captured bindings (boxed into shared heap cells, so mutable captures and

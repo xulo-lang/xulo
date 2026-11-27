@@ -93,10 +93,14 @@ pub fn ex_emit_expr(e: mut Emitter, node: Node): string {
         let value = ex_emit_expr(e, node.children[0])
         let tmp = bk_state::co_new_tmp(e)
         bk_state::co_line(e, "XVal " + tmp + " = " + value + ";")
-        bk_state::co_line(
-            e,
-            "if (xr_is_variant(" + tmp + ", \"Result::Err\")) { return " + tmp + "; }",
-        )
+        bk_state::co_line(e, "if (xr_is_variant(" + tmp + ", \"Result::Err\")) {")
+        e.indent = e.indent + 1
+        if e.defer_emitting == 0 {
+            bk_stmt::st_emit_defers_to(e, 1)
+        }
+        bk_state::co_line(e, "return " + tmp + ";")
+        e.indent = e.indent - 1
+        bk_state::co_line(e, "}")
         return "xr_payload(" + tmp + ", 0)"
     }
     if kind == "Assign" {
@@ -241,6 +245,10 @@ pub fn ex_emit_closure(e: mut Emitter, node: Node): string {
     let saved_names = e.local_names
     let saved_cnames = e.local_cnames
     let saved_depths = e.local_depths
+    let saved_defer_depths = e.defer_depths
+    let saved_defer_lists = e.defer_lists
+    let saved_loop_depths = e.loop_depths
+    let saved_defer_emitting = e.defer_emitting
     let saved_depth = e.depth
     let saved_local = e.next_local
     let saved_tmp = e.next_tmp
@@ -254,6 +262,10 @@ pub fn ex_emit_closure(e: mut Emitter, node: Node): string {
     e.local_names = []
     e.local_cnames = []
     e.local_depths = []
+    e.defer_depths = []
+    e.defer_lists = []
+    e.loop_depths = []
+    e.defer_emitting = 0
     e.depth = 0
     e.next_local = 0
     e.next_tmp = 0
@@ -308,6 +320,10 @@ pub fn ex_emit_closure(e: mut Emitter, node: Node): string {
     e.local_names = saved_names
     e.local_cnames = saved_cnames
     e.local_depths = saved_depths
+    e.defer_depths = saved_defer_depths
+    e.defer_lists = saved_defer_lists
+    e.loop_depths = saved_loop_depths
+    e.defer_emitting = saved_defer_emitting
     e.depth = saved_depth
     e.next_local = saved_local
     e.next_tmp = saved_tmp

@@ -35,8 +35,17 @@ pub fn st_emit_stmt(e: mut Emitter, node: Node) {
     if kind == "Return" {
         if node.children.len > 0 {
             let value = bk_expr::ex_emit_expr(e, node.children[0])
-            bk_state::co_line(e, "return " + value + ";")
+            // The operand is evaluated before the live blocks' defers run.
+            let tmp = bk_state::co_new_tmp(e)
+            bk_state::co_line(e, "XVal " + tmp + " = " + value + ";")
+            if e.defer_emitting == 0 {
+                st_emit_defers_to(e, 1)
+            }
+            bk_state::co_line(e, "return " + tmp + ";")
         } else {
+            if e.defer_emitting == 0 {
+                st_emit_defers_to(e, 1)
+            }
             bk_state::co_line(e, "return xr_nil();")
         }
         return
@@ -54,19 +63,27 @@ pub fn st_emit_stmt(e: mut Emitter, node: Node) {
         return
     }
     if kind == "Jump" {
+        if e.defer_emitting == 0 and (node.value == "break" or node.value == "continue") {
+            st_emit_defers_to(e, st_loop_floor(e))
+        }
         bk_state::co_line(e, node.value + ";")
         return
     }
     if kind == "Block" {
         bk_state::co_enter(e)
+        let block_depth = e.depth
         for child in node.children {
             st_emit_stmt(e, child)
         }
+        st_emit_defers_to(e, block_depth)
         bk_state::co_leave(e)
         return
     }
     if kind == "Defer" {
-        bk_state::co_fail(e, "`defer` is not lowered by the bootstrap backend")
+        if node.children.len > 0 and e.defer_lists.len > 0 {
+            let top = e.defer_lists[e.defer_lists.len - 1]
+            top.push(node.children[0])
+        }
         return
     }
     if kind == "Fn" {
@@ -74,6 +91,67 @@ pub fn st_emit_stmt(e: mut Emitter, node: Node) {
         return
     }
     bk_state::co_fail(e, "unsupported statement `" + kind + "`")
+}
+
+/// Index of the live deferred list registered by the block at `depth`, or
+/// `-1`. Closed scopes are marked `-1`, so a newer synthetic block at the same
+/// depth (emitted while draining an outer block) wins.
+fn st_defer_find(e: Emitter, depth: number): number {
+    let mut i = e.defer_depths.len - 1
+    while i >= 0 {
+        if e.defer_depths[i] == depth {
+            return i
+        }
+        i = i - 1
+    }
+    return -1
+}
+
+/// Depth of the innermost live loop body; a function body fallback keeps an
+/// invalid `break`/`continue` from panicking the emitter.
+fn st_loop_floor(e: Emitter): number {
+    let mut i = e.loop_depths.len - 1
+    while i >= 0 {
+        if e.loop_depths[i] >= 0 {
+            return e.loop_depths[i]
+        }
+        i = i - 1
+    }
+    return 1
+}
+
+/// Emit the operands deferred by the blocks from the current depth down to
+/// `floor` (inclusive), innermost block first and each block in reverse
+/// registration order. The lists stay registered so other exit paths still see
+/// them; the generated C for this path runs once.
+pub fn st_emit_defers_to(e: mut Emitter, floor: number) {
+    let mut d = e.depth
+    while d >= floor {
+        let index = st_defer_find(e, d)
+        if index >= 0 {
+            let list = e.defer_lists[index]
+            let mut i = list.len - 1
+            while i >= 0 {
+                st_emit_defer_operand(e, list[i], d)
+                i = i - 1
+            }
+        }
+        d = d - 1
+    }
+}
+
+fn st_emit_defer_operand(e: mut Emitter, node: Node, depth: number) {
+    let saved = e.depth
+    e.depth = depth
+    e.defer_emitting = e.defer_emitting + 1
+    if node.kind == "Block" {
+        bk_emit::em_emit_block_value(e, node, "")
+    } else {
+        let value = bk_expr::ex_emit_expr(e, node)
+        bk_state::co_line(e, "(void)(" + value + ");")
+    }
+    e.defer_emitting = e.defer_emitting - 1
+    e.depth = saved
 }
 
 pub fn st_emit_let(e: mut Emitter, node: Node) {
@@ -218,7 +296,12 @@ pub fn st_emit_while(e: mut Emitter, node: Node) {
     e.indent = e.indent + 1
     let condition = bk_expr::ex_emit_expr(e, node.children[0])
     bk_state::co_line(e, "if (!xr_cond(" + condition + ")) { break; }")
+    let body_depth = e.depth + 1
+    e.loop_depths.push(body_depth)
     bk_emit::em_emit_block_value(e, node.children[1], "")
+    if e.loop_depths.len > 0 {
+        e.loop_depths[e.loop_depths.len - 1] = -1
+    }
     e.indent = e.indent - 1
     bk_state::co_line(e, "}")
 }
@@ -232,6 +315,8 @@ pub fn st_emit_for(e: mut Emitter, node: Node) {
     bk_state::co_line(e, "for (; " + index + " < xr_len(" + it + "); " + index + " += 1) {")
     e.indent = e.indent + 1
     bk_state::co_enter(e)
+    let body_depth = e.depth
+    e.loop_depths.push(body_depth)
     if node.value != "" and node.value != "_" {
         let cname = bk_state::co_new_local(e, node.value)
         let source = "xr_index(" + it + ", xr_int(" + index + "))"
@@ -243,6 +328,10 @@ pub fn st_emit_for(e: mut Emitter, node: Node) {
     }
     for child in node.children[1].children {
         st_emit_stmt(e, child)
+    }
+    st_emit_defers_to(e, body_depth)
+    if e.loop_depths.len > 0 {
+        e.loop_depths[e.loop_depths.len - 1] = -1
     }
     bk_state::co_leave(e)
     e.indent = e.indent - 1

@@ -130,11 +130,19 @@ pub fn co_line(e: mut Emitter, text: string) {
 
 pub fn co_enter(e: mut Emitter) {
     e.depth = e.depth + 1
+    e.defer_depths.push(e.depth)
+    e.defer_lists.push([])
 }
 
 pub fn co_leave(e: mut Emitter) {
     if e.depth > 0 {
         e.depth = e.depth - 1
+    }
+    // Keep the stacks aligned with emission order: the closed scope's depth is
+    // invalidated, so a later lookup by depth skips it. `xuloc` has no `pop`,
+    // and the compile-time size is negligible.
+    if e.defer_depths.len > 0 {
+        e.defer_depths[e.defer_depths.len - 1] = -1
     }
 }
 
