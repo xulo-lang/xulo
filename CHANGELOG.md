@@ -53,6 +53,11 @@ values, and is left to a future standard-library `std/ui` module.
 
 ### Added
 
+- Stage 1's checker now expands simple `type` aliases (including module
+  aliases imported through `use type`/`use`), with on-demand expansion and a
+  cycle guard. `xuloc/corpus/accept/aliases.xulo` is checked by both compilers
+  and built/run by stage 1; `xuloc/corpus/reject/alias_mismatch.xulo` pins the
+  `E0201` mismatch.
 - Stage 1's checker now models tuples: `(T1,T2)` types, tuple literals,
   positional reads (`p.0`), tuple member assignment, and tuple destructuring.
   `examples/basics/bindings.xulo`, `examples/patterns/destructuring.xulo`, and

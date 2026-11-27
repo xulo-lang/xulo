@@ -130,6 +130,7 @@ fn checker_accepts_the_bootstrap_corpus() {
         "xuloc/corpus/accept/basics.xulo",
         "xuloc/corpus/accept/modules.xulo",
         "xuloc/corpus/accept/enums.xulo",
+        "xuloc/corpus/accept/aliases.xulo",
     ]
     for path in files {
         match std::fs::read(path) {
@@ -162,6 +163,7 @@ fn checker_rejects_the_bad_corpus() {
         "xuloc/corpus/reject/return_mismatch.xulo",
         "xuloc/corpus/reject/module_return_mismatch.xulo",
         "xuloc/corpus/reject/struct_field_mismatch.xulo",
+        "xuloc/corpus/reject/alias_mismatch.xulo",
     ]
     for path in files {
         match std::fs::read(path) {

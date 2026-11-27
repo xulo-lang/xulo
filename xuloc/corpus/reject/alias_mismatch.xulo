@@ -1,0 +1,7 @@
+// A local alias expands to `int`, so the string initializer is a mismatch.
+type Id = int
+
+fn main() {
+    let id: Id = "bad"
+    print(id)
+}

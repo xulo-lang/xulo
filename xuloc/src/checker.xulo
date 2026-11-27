@@ -16,8 +16,9 @@
 // strings check their interpolated expressions, and an untyped object literal
 // gets an anonymous shape so its member reads and object destructuring are
 // checked. Tuple types, literals, positional reads, writes, and destructuring
-// are modeled as `(T1,T2)` strings. Traits, impls, generics, closures, and the
-// remaining pattern forms arrive in later WP6 slices.
+// are modeled as `(T1,T2)` strings, and `type` aliases expand on demand.
+// Traits, impls, generics, closures, and the remaining pattern forms arrive in
+// later WP6 slices.
 //
 // Types are canonical strings (`number`, `string`, `bool`, `unit`, `unknown`,
 // `null`, `List<T>`, `T?`) so comparisons never depend on structural equality.
@@ -99,6 +100,17 @@ pub struct AnonSig {
     fields: List<FieldSig>,
 }
 
+/// A `type Name = Target` alias. The target is expanded on demand, so aliases
+/// may name aliases declared later.
+pub struct AliasSig {
+    name: string,
+    module_id: string,
+    is_pub: bool,
+    is_generic: bool,
+    type_node: Node,
+    target: string,
+}
+
 pub struct ImportSig {
     alias: string,
     target: string,
@@ -131,6 +143,8 @@ pub struct Checker {
     functions: List<FuncSig>,
     structs: List<StructSig>,
     enums: List<EnumSig>,
+    aliases: List<AliasSig>,
+    alias_depth: number,
     anon_objects: List<AnonSig>,
     next_anon: number,
     modules: List<ModuleSig>,
@@ -152,6 +166,8 @@ pub fn check(root: Node): CheckResult {
         functions: [],
         structs: [],
         enums: [],
+        aliases: [],
+        alias_depth: 0,
         anon_objects: [],
         next_anon: 0,
         modules: [],
@@ -601,6 +617,117 @@ impl Checker {
         return -1
     }
 
+    fn find_alias_in(self, module_id: string, name: string): number {
+        let mut i = self.aliases.len
+        while i > 0 {
+            i = i - 1
+            if self.aliases[i].module_id == module_id and self.aliases[i].name == name {
+                return i
+            }
+        }
+        return -1
+    }
+
+    fn resolve_alias(self, module_id: string, name: string, depth: number): number {
+        if depth > 32 {
+            return -1
+        }
+        let own = self.find_alias_in(module_id, name)
+        if own >= 0 {
+            return own
+        }
+        let scope = self.module_index(module_id)
+        if scope < 0 {
+            return -1
+        }
+        let mut i = self.modules[scope].imports.len - 1
+        while i >= 0 {
+            let import = self.modules[scope].imports[i]
+            if import.alias == name and import.member != "" {
+                let found = self.export_alias(import.target, import.member, depth + 1)
+                if found != -1 {
+                    return found
+                }
+            }
+            i = i - 1
+        }
+        i = self.modules[scope].globs.len - 1
+        while i >= 0 {
+            let found = self.export_alias(self.modules[scope].globs[i].target, name, depth + 1)
+            if found != -1 {
+                return found
+            }
+            i = i - 1
+        }
+        return -1
+    }
+
+    fn export_alias(self, module_id: string, name: string, depth: number): number {
+        if depth > 32 {
+            return -1
+        }
+        let index = self.module_index(module_id)
+        if index < 0 or self.modules[index].opaque {
+            return -1
+        }
+        let own = self.find_alias_in(module_id, name)
+        if own >= 0 {
+            if self.aliases[own].is_pub {
+                return own
+            }
+            return -1
+        }
+        let mut i = self.modules[index].imports.len - 1
+        while i >= 0 {
+            let import = self.modules[index].imports[i]
+            if import.alias == name and import.is_pub and import.member != "" {
+                let found = self.export_alias(import.target, import.member, depth + 1)
+                if found != -1 {
+                    return found
+                }
+            }
+            i = i - 1
+        }
+        i = self.modules[index].globs.len - 1
+        while i >= 0 {
+            if self.modules[index].globs[i].is_pub {
+                let found = self.export_alias(self.modules[index].globs[i].target, name, depth + 1)
+                if found != -1 {
+                    return found
+                }
+            }
+            i = i - 1
+        }
+        return -1
+    }
+
+    /// Expand an alias to its target type, caching the result. `alias_depth`
+    /// breaks `type A = B` / `type B = A` cycles.
+    fn expand_alias(mut self, index: number, depth: number): string {
+        if index < 0 or index >= self.aliases.len {
+            return "unknown"
+        }
+        if self.aliases[index].target != "" {
+            return self.aliases[index].target
+        }
+        if self.aliases[index].is_generic or depth > 32 or self.alias_depth > 32 {
+            self.complete = false
+            return "unknown"
+        }
+        self.alias_depth = self.alias_depth + 1
+        let saved_module = self.current_module
+        self.current_module = self.aliases[index].module_id
+        let type_node = self.aliases[index].type_node
+        let target = self.type_of(type_node)
+        self.current_module = saved_module
+        self.alias_depth = self.alias_depth - 1
+        if self.error != "" {
+            return "unknown"
+        }
+        self.aliases[index].target = target
+        return target
+    }
+
     fn variant_index(self, enum_index: number, name: string): number {
         if enum_index < 0 or enum_index >= self.enums.len {
             return -1
@@ -914,6 +1041,10 @@ impl Checker {
             }
             return self.enum_canonical(enum_index)
         }
+        let alias_index = self.resolve_alias(self.current_module, name, 0)
+        if alias_index >= 0 {
+            return self.expand_alias(alias_index, 0)
+        }
         if self.is_foreign_type(self.current_module, name) {
             // `use type opaque::Meters`: the name is a type by declaration,
             // but its definition is outside this checker's input.
@@ -1029,6 +1160,8 @@ impl Checker {
                 self.add_struct(item, module_id)
             } else if item.kind == "Enum" {
                 self.add_enum(item, module_id)
+            } else if item.kind == "TypeAlias" {
+                self.add_alias(item, module_id)
             }
         }
     }
@@ -1041,6 +1174,8 @@ impl Checker {
                 self.add_struct(item, module_id)
             } else if item.kind == "Enum" {
                 self.add_enum(item, module_id)
+            } else if item.kind == "TypeAlias" {
+                self.add_alias(item, module_id)
             } else if item.kind == "Mod" and has_child_kind(item, "ModBody") {
                 let child = if module_id == "" {
                     item.value
@@ -1115,6 +1250,28 @@ impl Checker {
                 is_generic: has_child_kind(item, "GenericParams"),
                 variant_nodes: variant_nodes,
                 variants: [],
+            ),
+        )
+    }
+
+    fn add_alias(mut self, item: Node, module_id: string) {
+        if self.find_alias_in(module_id, item.value) >= 0 {
+            return
+        }
+        let mut type_node = item
+        for child in item.children {
+            if self.is_type_node(child) {
+                type_node = child
+            }
+        }
+        self.aliases.push(
+            AliasSig(
+                name: item.value,
+                module_id: module_id,
+                is_pub: has_child_kind(item, "Pub"),
+                is_generic: has_child_kind(item, "GenericParams"),
+                type_node: type_node,
+                target: "",
             ),
         )
     }
@@ -1195,6 +1352,8 @@ impl Checker {
                 self.add_struct(child, module_id)
             } else if child.kind == "Enum" {
                 self.add_enum(child, module_id)
+            } else if child.kind == "TypeAlias" {
+                self.add_alias(child, module_id)
             }
         }
     }
@@ -1520,8 +1679,10 @@ impl Checker {
                 // Attributes are attached to their declaration, imports were
                 // resolved before checking, and the markers are not
                 // declarations.
-            } else if item.kind == "Struct" or item.kind == "Enum" {
-                // Fields and payloads were collected and resolved before
+            } else if item.kind == "Struct" or item.kind == "Enum"
+                or item.kind == "TypeAlias"
+            {
+                // Fields, payloads, and alias targets are resolved before
                 // checking; methods and `impl` blocks are still outside this
                 // pass.
             } else {

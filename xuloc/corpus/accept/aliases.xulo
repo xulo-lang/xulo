@@ -1,0 +1,22 @@
+// Gate 3: module and local type aliases expand to their target types.
+mod units {
+    pub type Meters = int
+}
+
+use type units::Meters;
+
+type Id = int
+
+fn id_of(value: Id): int {
+    value
+}
+
+fn scale(meters: Meters): Meters {
+    meters * 2
+}
+
+fn main() {
+    let id: Id = 4
+    print(id_of(id))
+    print(scale(3))
+}

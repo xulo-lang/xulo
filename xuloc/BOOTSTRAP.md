@@ -232,10 +232,10 @@ Non-generic enums are modeled with payload constructors and `match` arms
 strings check their interpolated expressions, an untyped object literal gets
 an anonymous shape so its member reads are checked, tuples carry a `(T1,T2)`
 type through literals, annotations, positional reads/writes, and destructuring,
-and a generic enum payload binds as `unknown` so the arm body still checks.
-Traits, impls, generics, closures, and std calls still report E0003 or leave
-`complete = false` ("not supported / not modeled") rather than being silently
-accepted. `build` runs the checker and stops only on a
+`type` aliases expand on demand, and a generic enum payload binds as `unknown`
+so the arm body still checks. Traits, impls, generics, closures, and std calls
+still report E0003 or leave `complete = false` ("not supported / not modeled")
+rather than being silently accepted. `build` runs the checker and stops only on a
 confirmed error, so the partial analysis never rejects a program that code
 generation could handle.
 
@@ -413,9 +413,10 @@ so stage 2 does not inherit them silently.
 - `check` is a first semantic pass over the generic AST, not a typed tree. It
   covers the Gate 3 corpus, including inline modules, module `use` paths,
   simple struct construction/member reads, non-generic enum construction and
-  `match`, template interpolation, untyped object literals, and tuple
-  expressions/types; file-backed modules are opaque, and traits, impls,
-  generics, closures, and the remaining pattern forms still report E0003.
+  `match`, template interpolation, untyped object literals, tuple
+  expressions/types, and simple `type` aliases; file-backed modules are
+  opaque, and traits, impls, generics, closures, and the remaining pattern
+  forms still report E0003.
   `build` runs `check` first and
   refuses only a *confirmed* error: `CheckResult.complete` is `false` whenever
   the checker reached a construct, type, or call it does not model, so a

@@ -260,6 +260,7 @@ fn stage1_check_agrees_with_stage0_on_the_corpus() {
         ("xuloc/corpus/accept/basics.xulo", true),
         ("xuloc/corpus/accept/modules.xulo", true),
         ("xuloc/corpus/accept/enums.xulo", true),
+        ("xuloc/corpus/accept/aliases.xulo", true),
         ("xuloc/corpus/reject/undefined_name.xulo", false),
         ("xuloc/corpus/reject/type_mismatch.xulo", false),
         ("xuloc/corpus/reject/arity.xulo", false),
@@ -268,6 +269,7 @@ fn stage1_check_agrees_with_stage0_on_the_corpus() {
         ("xuloc/corpus/reject/return_mismatch.xulo", false),
         ("xuloc/corpus/reject/module_return_mismatch.xulo", false),
         ("xuloc/corpus/reject/struct_field_mismatch.xulo", false),
+        ("xuloc/corpus/reject/alias_mismatch.xulo", false),
     ];
     for (relative, accept) in cases {
         let file = root.join(relative);
