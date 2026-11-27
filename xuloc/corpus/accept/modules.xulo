@@ -1,0 +1,46 @@
+// Gate 3: inline module namespaces, nested modules, `use` aliases/groups/globs,
+// and a `pub use` re-export.
+mod inner {
+    mod detail {
+        use super::twice;
+
+        pub fn quadruple(n: int): int {
+            twice(twice(n))
+        }
+    }
+
+    pub const K: int = 2
+
+    pub fn hi(): string {
+        "hi"
+    }
+
+    pub fn twice(n: int): int {
+        n * 2
+    }
+
+    pub fn quadruple(n: int): int {
+        detail::quadruple(n)
+    }
+}
+
+mod tools {
+    pub fn tool(): string {
+        "tool"
+    }
+}
+
+use self::inner as i;
+use inner::{hi, K};
+use tools::*;
+
+pub use { hi };
+
+fn main() {
+    print(i::hi())
+    print(K)
+    print(hi())
+    print(inner::twice(i::K))
+    print(inner::quadruple(3))
+    print(tool())
+}

@@ -560,18 +560,15 @@ fn cl_module_parent(e: Emitter, module_id: string): string {
 }
 
 /// Resolve a path head from `from`: `self`, `super`, a root module, or a
-/// child of the current module. External package heads (for example `std`)
-/// resolve to `""` so the backend leaves them to its std lowering.
+/// child of the current module. `"#"` means the head leaves the package (for
+/// example `std` or an unknown file-backed module). The root module's id is
+/// the empty string, so it must stay distinguishable from failure.
 fn cl_resolve_head(e: Emitter, from: string, head: string): string {
     if head == "self" {
         return from
     }
     if head == "super" {
-        let parent = cl_module_parent(e, from)
-        if parent == "#" {
-            return ""
-        }
-        return parent
+        return cl_module_parent(e, from)
     }
     let child = cl_child_id(from, head)
     if cl_module_index(e, child) >= 0 {
@@ -584,7 +581,7 @@ fn cl_resolve_head(e: Emitter, from: string, head: string): string {
     if cl_module_index(e, head) >= 0 {
         return head
     }
-    return ""
+    return "#"
 }
 
 fn cl_module_import_target(e: Emitter, module_id: string, name: string): string {
@@ -604,11 +601,11 @@ fn cl_module_import_target(e: Emitter, module_id: string, name: string): string 
 }
 
 /// Walk `segments` from the module `head` names. Returns the target module id,
-/// or `""` when any step is not a module of this package.
+/// or `"#"` when any step is not a module of this package.
 fn cl_resolve_module_path(e: Emitter, from: string, head: string, segments: List<string>): string {
     let mut current = cl_resolve_head(e, from, head)
-    if current == "" {
-        return ""
+    if current == "#" {
+        return "#"
     }
     let mut i = 0
     while i < segments.len {
@@ -620,7 +617,7 @@ fn cl_resolve_module_path(e: Emitter, from: string, head: string, segments: List
         if segment == "super" {
             let parent = cl_module_parent(e, current)
             if parent == "#" {
-                return ""
+                return "#"
             }
             current = parent
             i = i + 1
@@ -632,7 +629,7 @@ fn cl_resolve_module_path(e: Emitter, from: string, head: string, segments: List
         } else {
             let aliased = cl_module_import_target(e, current, segment)
             if aliased == "" {
-                return ""
+                return "#"
             }
             current = aliased
         }
@@ -714,7 +711,7 @@ fn cl_resolve_use(e: mut Emitter, module_id: string, node: Node) {
             return
         }
         let prefix = cl_resolve_module_path(e, module_id, head, segments)
-        if prefix == "" {
+        if prefix == "#" {
             return
         }
         for entry in group.children {
@@ -736,24 +733,30 @@ fn cl_resolve_use(e: mut Emitter, module_id: string, node: Node) {
                 } else {
                     let aliased = cl_module_import_target(e, target, rel[i])
                     if aliased == "" {
-                        target = ""
+                        target = "#"
                         break
                     }
                     target = aliased
                 }
                 i = i + 1
             }
-            if target == "" {
+            if target == "#" {
                 continue
             }
             let bound = if entry_alias == "" { entry.value } else { entry_alias }
-            cl_add_import(e, module_id, bound, target, entry.value, is_pub)
+            let child = cl_child_id(target, entry.value)
+            if cl_module_index(e, child) >= 0 {
+                // `use form::{fields}` binds the child namespace itself.
+                cl_add_import(e, module_id, bound, child, "", is_pub)
+            } else {
+                cl_add_import(e, module_id, bound, target, entry.value, is_pub)
+            }
         }
         return
     }
     if glob {
         let target = cl_resolve_module_path(e, module_id, head, segments)
-        if target != "" {
+        if target != "#" {
             cl_add_glob(e, module_id, target, is_pub)
         }
         return
@@ -763,7 +766,7 @@ fn cl_resolve_use(e: mut Emitter, module_id: string, node: Node) {
     }
     if segments.len == 0 {
         let target = cl_resolve_head(e, module_id, head)
-        if target != "" {
+        if target != "#" {
             let bound = if alias == "" { head } else { alias }
             cl_add_import(e, module_id, bound, target, "", is_pub)
         }
@@ -777,10 +780,17 @@ fn cl_resolve_use(e: mut Emitter, module_id: string, node: Node) {
         i = i + 1
     }
     let target = cl_resolve_module_path(e, module_id, head, prefix)
-    if target == "" {
+    if target == "#" {
         return
     }
     let bound = if alias == "" { member } else { alias }
+    let child = cl_child_id(target, member)
+    if cl_module_index(e, child) >= 0 {
+        // `use self::inner as i` aliases the child namespace, not a member
+        // of the prefix.
+        cl_add_import(e, module_id, bound, child, "", is_pub)
+        return
+    }
     cl_add_import(e, module_id, bound, target, member, is_pub)
 }
 

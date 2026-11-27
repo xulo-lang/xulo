@@ -258,12 +258,14 @@ fn stage1_check_agrees_with_stage0_on_the_corpus() {
     let cases = [
         ("xuloc/corpus/accept/fibonacci.xulo", true),
         ("xuloc/corpus/accept/basics.xulo", true),
+        ("xuloc/corpus/accept/modules.xulo", true),
         ("xuloc/corpus/reject/undefined_name.xulo", false),
         ("xuloc/corpus/reject/type_mismatch.xulo", false),
         ("xuloc/corpus/reject/arity.xulo", false),
         ("xuloc/corpus/reject/condition.xulo", false),
         ("xuloc/corpus/reject/not_iterable.xulo", false),
         ("xuloc/corpus/reject/return_mismatch.xulo", false),
+        ("xuloc/corpus/reject/module_return_mismatch.xulo", false),
     ];
     for (relative, accept) in cases {
         let file = root.join(relative);

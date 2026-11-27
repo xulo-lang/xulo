@@ -53,6 +53,14 @@ values, and is left to a future standard-library `std/ui` module.
 
 ### Added
 
+- Stage 1's checker now models inline modules: it collects a module namespace,
+  resolves `use` aliases/groups/globs, `pub use` re-exports, and `super`/`self`
+  paths, and checks module bodies. `xuloc check examples/modules/inline/main.xulo`
+  reports `no errors`, a module-body type error is reported with its stage 0
+  code (`E0203`), and a file-backed module stays opaque (`complete = false`)
+  instead of becoming a false "not found". Regression corpus:
+  `xuloc/corpus/accept/modules.xulo` and
+  `xuloc/corpus/reject/module_return_mismatch.xulo`.
 - Stage 1's C backend now keeps module namespaces instead of flattening them.
   Every file-backed or inline `mod` gets a scope, its functions and constants
   get module-mangled C symbols (`f_5inner6detail_quadruple`), and path/name

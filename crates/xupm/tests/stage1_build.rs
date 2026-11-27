@@ -426,6 +426,47 @@ fn stage1_runs_the_lowered_examples() {
     }
 }
 
+/// A root child importing a declaration from the package root through
+/// `super::`. The root module id is the empty string, so this pins that module
+/// resolution does not confuse it with the "not found" sentinel.
+#[test]
+fn stage1_resolves_super_imports_from_a_root_child() {
+    if !enabled() {
+        return;
+    }
+    let root = repo_root();
+    let stage1 = stage1_binary();
+    let work = unique_dir("root_super");
+    let file = work.join("root_super.xulo");
+    std::fs::write(
+        &file,
+        r#"mod child {
+    use super::helper;
+
+    pub fn call(): int {
+        helper()
+    }
+}
+
+pub fn helper(): int {
+    7
+}
+
+fn main() {
+    print(child::call())
+}
+"#,
+    )
+    .expect("the root-super probe should be writable");
+
+    let checked = run_stage1(&stage1, &root, "check", &file);
+    assert_success(&checked, "stage 1 check of a root-child super import");
+    let program = build_stage1_program(&stage1, &root, &file, &work, "root_super");
+    let run = run_program(&program);
+    assert_success(&run, "running the root-child super probe");
+    assert_eq!(render_lines(&run.stdout), "7\n");
+}
+
 /// D-02 (closed): the C runtime renders floats exactly like stage 0, including
 /// magnitudes that `%g` would spell in exponent form and the signed-zero case.
 #[test]

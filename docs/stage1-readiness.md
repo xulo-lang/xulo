@@ -144,8 +144,9 @@ file/line/column and exit nonzero on failure.
 
 **Current assessment:** **Reached (2026-11-16).** `xuloc/src/checker.xulo` checks
 the fixed corpus under `xuloc/corpus/` (functions, bindings, control flow,
-lists, strings, calls, return types). Stage 1 and stage 0 agree on accept/reject
-for both accepted files and all six rejected files, and D4 aligns their
+lists, strings, calls, return types, and inline modules with `use` aliases,
+groups, globs, and `super` paths). Stage 1 and stage 0 agree on accept/reject
+for all three accepted files and all seven rejected files, and D4 aligns their
 diagnostic codes as well; rejected diagnostics carry `file:line:column`, an `E…`
 code, and exit 1. Evidence:
 `crates/xulo-cli/tests/stage1.rs::stage1_check_agrees_with_stage0_on_the_corpus`
@@ -792,9 +793,9 @@ Last recorded verification (2026-11-22):
 | Stage 1 smoke tests | `cargo test -p xulo-cli --test stage1` — self-parses `xuloc/src/*.xulo`, clean diagnostics, `xulo test` |
 | Stage 1 under `xupm test` | `cargo test -p xupm --test cli runs_stage1_test_file` — 17 stage 1 tests passed |
 | Stage 1 native build | `cargo test -p xupm --test aot_differential stage1_binary_matches_the_interpreter` (with `XULO_AOT_DIFFERENTIAL=1`) — interpreter and native output agree |
-| Stage 1 checker | `cargo test -p xulo-cli --test stage1 stage1_check_agrees_with_stage0_on_the_corpus` — 2 accept + 6 reject files agree with stage 0 |
+| Stage 1 checker | `cargo test -p xulo-cli --test stage1 stage1_check_agrees_with_stage0_on_the_corpus` — 3 accept + 7 reject files (including inline modules) agree with stage 0 |
 | Stage 1 corpus ratchet | `cargo test -p xulo-cli --test stage1 stage1_example_corpus_tracks_baseline` — 66 files scanned, all lex and parse; `tests/stage1_examples_baseline.tsv` is empty |
-| Stage 1 self-host (WP6) | `XULO_STAGE1_BUILD=1 cargo test -p xupm --test stage1_build` — 4 passed (corpus, stage 2 self-build, T5c differential, B8b reproducible build) in about four minutes |
+| Stage 1 self-host (WP6) | `XULO_STAGE1_BUILD=1 cargo test -p xupm --test stage1_build` — 20 passed (corpus, stage 2 self-build, T5c differential, B8b reproducible build, root-child `super` imports) in about a minute |
 
 ## 10. Maintenance
 

@@ -218,9 +218,14 @@ return type, and operators check their operand types. The fixed corpus in
 `xuloc/corpus/` is the Gate 3 evidence; `crates/xulo-cli/tests/stage1.rs`
 requires stage 1 and stage 0 to agree on accept/reject for every file.
 
-The checker is not yet a full bootstrap checker. `match`, enums, structs,
-traits, impls, generics, modules, closures, and std/module calls report E0003
-or leave `CheckResult.complete = false` ("not supported / not modeled") rather
+The checker is not yet a full bootstrap checker. Inline modules are modeled:
+their functions and constants are collected in a module namespace, `use`
+aliases/groups/globs and `pub use` re-exports resolve, `super` reaches a root
+child's parent (including the package root), and module bodies are checked.
+A file-backed module is opaque (the checker has no loader), so calls into it
+leave `CheckResult.complete = false` instead of producing a false "not found".
+`match`, enums, structs, traits, impls, generics, closures, and std calls still
+report E0003 or leave `complete = false` ("not supported / not modeled") rather
 than being silently accepted. `build` runs the checker and stops only on a
 confirmed error, so the partial analysis never rejects a program that code
 generation could handle.
@@ -397,7 +402,8 @@ so stage 2 does not inherit them silently.
   `::stage1_c_backend_matches_stage0_float_formatting`, and
   `::stage1_rejects_u64_in_the_bootstrap_subset`).
 - `check` is a first semantic pass over the generic AST, not a typed tree. It
-  covers the Gate 3 corpus; structs, enums, traits, impls, generics, modules,
+  covers the Gate 3 corpus, including inline modules and module `use` paths;
+  file-backed modules are opaque, and structs, enums, traits, impls, generics,
   closures, and `match` still report E0003. `build` runs `check` first and
   refuses only a *confirmed* error: `CheckResult.complete` is `false` whenever
   the checker reached a construct, type, or call it does not model, so a

@@ -1,0 +1,10 @@
+// The checker descends into an inline module and checks its function bodies.
+mod inner {
+    pub fn f(n: int): int {
+        return "bad"
+    }
+}
+
+fn main() {
+    print(inner::f(1))
+}
