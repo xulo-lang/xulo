@@ -30,6 +30,21 @@ mod tools {
     }
 }
 
+mod shapes {
+    pub struct Box {
+        pub width: int,
+        pub height: int
+    }
+
+    pub fn make(width: int, height: int): Box {
+        Box(width: width, height: height)
+    }
+
+    pub fn area(box: Box): int {
+        box.width * box.height
+    }
+}
+
 use self::inner as i;
 use inner::{hi, K};
 use tools::*;
@@ -43,4 +58,6 @@ fn main() {
     print(inner::twice(i::K))
     print(inner::quadruple(3))
     print(tool())
+    let box = shapes::make(3, 4)
+    print(shapes::area(box))
 }

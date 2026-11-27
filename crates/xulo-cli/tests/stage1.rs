@@ -266,6 +266,7 @@ fn stage1_check_agrees_with_stage0_on_the_corpus() {
         ("xuloc/corpus/reject/not_iterable.xulo", false),
         ("xuloc/corpus/reject/return_mismatch.xulo", false),
         ("xuloc/corpus/reject/module_return_mismatch.xulo", false),
+        ("xuloc/corpus/reject/struct_field_mismatch.xulo", false),
     ];
     for (relative, accept) in cases {
         let file = root.join(relative);

@@ -1,0 +1,13 @@
+// A struct imported from an inline module keeps its field types.
+mod shapes {
+    pub struct Box {
+        pub width: int
+    }
+}
+
+use shapes::Box;
+
+fn main() {
+    let box = Box(width: "wide")
+    print(box.width)
+}

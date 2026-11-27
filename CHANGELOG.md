@@ -53,6 +53,15 @@ values, and is left to a future standard-library `std/ui` module.
 
 ### Added
 
+- Stage 1's checker now models simple structs: field types, constructors with
+  named or positional fields, and member reads. Struct names resolve through
+  the module tree, signatures and field types are resolved after `use`
+  statements, and `use type` from an opaque/file-backed module becomes a
+  foreign type whose operations stay unchecked (`complete = false`) rather
+  than becoming false errors. `xuloc check examples/modules/visibility/main.xulo`
+  and `examples/modules/imports/main.xulo` now report `no errors`. Regressions:
+  `xuloc/corpus/accept/modules.xulo` (a module struct) and
+  `xuloc/corpus/reject/struct_field_mismatch.xulo`.
 - Stage 1's checker now models inline modules: it collects a module namespace,
   resolves `use` aliases/groups/globs, `pub use` re-exports, and `super`/`self`
   paths, and checks module bodies. `xuloc check examples/modules/inline/main.xulo`

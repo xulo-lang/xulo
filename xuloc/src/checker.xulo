@@ -9,8 +9,9 @@
 // It deliberately reports "not supported yet" (E0003) for declarations it does
 // not understand instead of silently accepting them. Inline modules, their
 // `use` paths (aliases, groups, globs), and `pub use` re-exports are modeled;
-// a file-backed module is opaque because the checker has no loader. Structs,
-// enums, traits, impls, generics, closures, and `match` arrive in later WP6
+// a file-backed module is opaque because the checker has no loader. Simple
+// structs are modeled too: field types, constructors, and member reads.
+// Enums, traits, impls, generics, closures, and `match` arrive in later WP6
 // slices.
 //
 // Types are canonical strings (`number`, `string`, `bool`, `unit`, `unknown`,
@@ -46,12 +47,29 @@ pub struct FuncSig {
     is_pub: bool,
     params: List<string>,
     ret: string,
+    /// The declaration, kept so parameter and return types are resolved after
+    /// every module and struct name is known.
+    decl: Node,
 }
 
 pub struct ConstSig {
     name: string,
     ty: string,
     is_pub: bool,
+}
+
+pub struct FieldSig {
+    name: string,
+    ty: string,
+}
+
+pub struct StructSig {
+    name: string,
+    module_id: string,
+    is_pub: bool,
+    /// Field type annotations, resolved after every struct name is known.
+    field_nodes: List<Node>,
+    fields: List<FieldSig>,
 }
 
 pub struct ImportSig {
@@ -77,10 +95,14 @@ pub struct ModuleSig {
     imports: List<ImportSig>,
     globs: List<GlobSig>,
     uses: List<Node>,
+    /// Type names imported from an opaque module or `std`: the checker cannot
+    /// inspect their shape, so uses are "unknown", not errors.
+    foreign_types: List<string>,
 }
 
 pub struct Checker {
     functions: List<FuncSig>,
+    structs: List<StructSig>,
     modules: List<ModuleSig>,
     current_module: string,
     bindings: List<Binding>,
@@ -98,6 +120,7 @@ pub struct Checker {
 pub fn check(root: Node): CheckResult {
     let mut checker = Checker(
         functions: [],
+        structs: [],
         modules: [],
         current_module: "",
         bindings: [],
@@ -113,8 +136,11 @@ pub fn check(root: Node): CheckResult {
     )
     checker.enter_scope()
     checker.add_module("", "#", false)
+    checker.collect_structs(root, "")
     checker.collect_functions(root, "")
     checker.resolve_uses()
+    checker.resolve_structs()
+    checker.resolve_function_signatures()
     if checker.error == "" {
         checker.check_program(root)
     }
@@ -210,6 +236,7 @@ impl Checker {
                 imports: [],
                 globs: [],
                 uses: [],
+                foreign_types: [],
             ),
         )
     }
@@ -323,6 +350,113 @@ impl Checker {
                 return i
             }
             i = i + 1
+        }
+        return -1
+    }
+
+    fn find_struct_in(self, module_id: string, name: string): number {
+        let mut i = self.structs.len
+        while i > 0 {
+            i = i - 1
+            if self.structs[i].module_id == module_id and self.structs[i].name == name {
+                return i
+            }
+        }
+        return -1
+    }
+
+    fn struct_canonical(self, index: number): string {
+        if index < 0 or index >= self.structs.len {
+            return "unknown"
+        }
+        let sig = self.structs[index]
+        if sig.module_id == "" {
+            return sig.name
+        }
+        return sig.module_id + "::" + sig.name
+    }
+
+    fn find_struct_by_type(self, ty: string): number {
+        let mut i = 0
+        while i < self.structs.len {
+            if self.struct_canonical(i) == ty {
+                return i
+            }
+            i = i + 1
+        }
+        return -1
+    }
+
+    /// Local view: this module's struct, then `use` imports and globs.
+    fn resolve_struct(self, module_id: string, name: string, depth: number): number {
+        if depth > 32 {
+            return -1
+        }
+        let own = self.find_struct_in(module_id, name)
+        if own >= 0 {
+            return own
+        }
+        let scope = self.module_index(module_id)
+        if scope < 0 {
+            return -1
+        }
+        let mut i = self.modules[scope].imports.len - 1
+        while i >= 0 {
+            let import = self.modules[scope].imports[i]
+            if import.alias == name and import.member != "" {
+                let found = self.export_struct(import.target, import.member, depth + 1)
+                if found != -1 {
+                    return found
+                }
+            }
+            i = i - 1
+        }
+        i = self.modules[scope].globs.len - 1
+        while i >= 0 {
+            let found = self.export_struct(self.modules[scope].globs[i].target, name, depth + 1)
+            if found != -1 {
+                return found
+            }
+            i = i - 1
+        }
+        return -1
+    }
+
+    fn export_struct(self, module_id: string, name: string, depth: number): number {
+        if depth > 32 {
+            return -1
+        }
+        let index = self.module_index(module_id)
+        if index < 0 or self.modules[index].opaque {
+            return -1
+        }
+        let own = self.find_struct_in(module_id, name)
+        if own >= 0 {
+            if self.structs[own].is_pub {
+                return own
+            }
+            return -1
+        }
+        let mut i = self.modules[index].imports.len - 1
+        while i >= 0 {
+            let import = self.modules[index].imports[i]
+            if import.alias == name and import.is_pub and import.member != "" {
+                let found = self.export_struct(import.target, import.member, depth + 1)
+                if found != -1 {
+                    return found
+                }
+            }
+            i = i - 1
+        }
+        i = self.modules[index].globs.len - 1
+        while i >= 0 {
+            if self.modules[index].globs[i].is_pub {
+                let found = self.export_struct(self.modules[index].globs[i].target, name, depth + 1)
+                if found != -1 {
+                    return found
+                }
+            }
+            i = i - 1
         }
         return -1
     }
@@ -591,7 +725,17 @@ impl Checker {
             self.fail(node, "E0101", "`" + name + "` needs a type argument")
             return "unknown"
         }
-        // Struct, enum, alias, generic parameter, and imported types are not
+        let struct_index = self.resolve_struct(self.current_module, name, 0)
+        if struct_index >= 0 {
+            return self.struct_canonical(struct_index)
+        }
+        if self.is_foreign_type(self.current_module, name) {
+            // `use type opaque::Meters`: the name is a type by declaration,
+            // but its definition is outside this checker's input.
+            self.complete = false
+            return "unknown"
+        }
+        // Enum, alias, generic parameter, and opaque imported types are not
         // modeled here; the name is unknown to the checker, not necessarily
         // wrong, so `build` must not reject on this alone.
         self.complete = false
@@ -696,8 +840,72 @@ impl Checker {
                 self.collect_mod(item, module_id)
             } else if item.kind == "Use" {
                 self.add_module_use(module_id, item)
+            } else if item.kind == "Struct" {
+                self.add_struct(item, module_id)
             }
         }
+    }
+
+    /// Register struct names before function signatures are read, so a
+    /// parameter or return type may name a struct declared later.
+    fn collect_structs(mut self, items: Node, module_id: string) {
+        for item in items.children {
+            if item.kind == "Struct" {
+                self.add_struct(item, module_id)
+            } else if item.kind == "Mod" and has_child_kind(item, "ModBody") {
+                let child = if module_id == "" {
+                    item.value
+                } else {
+                    module_id + "::" + item.value
+                }
+                self.collect_structs(item, child)
+            }
+        }
+    }
+
+    fn add_struct(mut self, item: Node, module_id: string) {
+        if self.find_struct_in(module_id, item.value) >= 0 {
+            return
+        }
+        let mut field_nodes: List<Node> = []
+        for child in item.children {
+            if child.kind == "Field" {
+                field_nodes.push(child)
+            }
+        }
+        self.structs.push(
+            StructSig(
+                name: item.value,
+                module_id: module_id,
+                is_pub: has_child_kind(item, "Pub"),
+                field_nodes: field_nodes,
+                fields: [],
+            ),
+        )
+    }
+
+    /// Fill struct field types after every struct name exists, so a field may
+    /// name a struct declared later in the same module.
+    fn resolve_structs(mut self) {
+        let saved_module = self.current_module
+        let mut i = 0
+        while i < self.structs.len and self.error == "" {
+            self.current_module = self.structs[i].module_id
+            let mut f = 0
+            while f < self.structs[i].field_nodes.len and self.error == "" {
+                let field = self.structs[i].field_nodes[f]
+                let mut ty = "unknown"
+                for child in field.children {
+                    if self.is_type_node(child) {
+                        ty = self.type_of(child)
+                    }
+                }
+                self.structs[i].fields.push(FieldSig(name: field.value, ty: ty))
+                f = f + 1
+            }
+            i = i + 1
+        }
+        self.current_module = saved_module
     }
 
     fn collect_mod(mut self, item: Node, parent: string) {
@@ -718,6 +926,8 @@ impl Checker {
                 self.collect_mod(child, module_id)
             } else if child.kind == "Use" {
                 self.add_module_use(module_id, child)
+            } else if child.kind == "Struct" {
+                self.add_struct(child, module_id)
             }
         }
     }
@@ -726,42 +936,60 @@ impl Checker {
         if self.error != "" {
             return
         }
-        let mut params: List<string> = []
-        let mut ret = "unit"
-        for child in item.children {
-            if child.kind == "Param" {
-                if child.value == "self" or child.value == "mut self" {
-                    self.fail(child, "E0003", "stage 1 checker does not support methods yet")
-                    return
-                }
-                let mut ty = "unknown"
-                for part in child.children {
-                    if self.is_type_node(part) {
-                        ty = self.type_of(part)
+        self.functions.push(
+            FuncSig(
+                name: item.value,
+                module_id: module_id,
+                is_pub: has_child_kind(item, "Pub"),
+                params: [],
+                ret: "unit",
+                decl: item,
+            ),
+        )
+    }
+
+    /// Resolve parameter and return types after `use` and struct names are
+    /// known, so a signature may name an imported or forward-declared type.
+    fn resolve_function_signatures(mut self) {
+        let saved_module = self.current_module
+        let mut i = 0
+        while i < self.functions.len and self.error == "" {
+            let sig = self.functions[i]
+            self.current_module = sig.module_id
+            let item = sig.decl
+            let mut params: List<string> = []
+            let mut ret = "unit"
+            for child in item.children {
+                if child.kind == "Param" {
+                    if child.value == "self" or child.value == "mut self" {
+                        self.fail(child, "E0003", "stage 1 checker does not support methods yet")
+                        break
                     }
+                    let mut ty = "unknown"
+                    for part in child.children {
+                        if self.is_type_node(part) {
+                            ty = self.type_of(part)
+                        }
+                    }
+                    params.push(ty)
+                } else if self.is_type_node(child) {
+                    ret = self.type_of(child)
                 }
-                params.push(ty)
-            } else if self.is_type_node(child) {
-                ret = self.type_of(child)
             }
+            if self.error == "" {
+                self.functions[i].params = params
+                self.functions[i].ret = ret
+            }
+            i = i + 1
         }
-        if self.error == "" {
-            self.functions.push(
-                FuncSig(
-                    name: item.value,
-                    module_id: module_id,
-                    is_pub: has_child_kind(item, "Pub"),
-                    params: params,
-                    ret: ret,
-                ),
-            )
-        }
+        self.current_module = saved_module
     }
 
     fn add_const_sig(mut self, item: Node, module_id: string) {
         if self.error != "" {
             return
         }
+        self.current_module = module_id
         let mut ty = ""
         for child in item.children {
             if self.is_type_node(child) {
@@ -798,9 +1026,7 @@ impl Checker {
     }
 
     fn resolve_use(mut self, module_id: string, node: Node) {
-        if has_child_kind(node, "UseType") {
-            return
-        }
+        let type_only = has_child_kind(node, "UseType")
         let is_pub = has_child_kind(node, "Pub")
         let head = node.value
         let mut segments: List<string> = []
@@ -861,6 +1087,9 @@ impl Checker {
                     continue
                 }
                 let bound = if entry_alias == "" { entry.value } else { entry_alias }
+                if type_only {
+                    self.note_foreign_type(module_id, bound, target)
+                }
                 let child = self.child_module(target, entry.value)
                 if child != "#" {
                     self.add_import(module_id, bound, child, "", is_pub)
@@ -900,12 +1129,45 @@ impl Checker {
             return
         }
         let bound = if alias == "" { member } else { alias }
+        if type_only {
+            self.note_foreign_type(module_id, bound, target)
+        }
         let child = self.child_module(target, member)
         if child != "#" {
             self.add_import(module_id, bound, child, "", is_pub)
             return
         }
         self.add_import(module_id, bound, target, member, is_pub)
+    }
+
+    fn note_foreign_type(mut self, module_id: string, name: string, target: string) {
+        let index = self.module_index(module_id)
+        if index < 0 {
+            return
+        }
+        if target == "#" {
+            self.modules[index].foreign_types.push(name)
+            return
+        }
+        let target_index = self.module_index(target)
+        if target_index >= 0 and self.modules[target_index].opaque {
+            self.modules[index].foreign_types.push(name)
+        }
+    }
+
+    fn is_foreign_type(self, module_id: string, name: string): bool {
+        let index = self.module_index(module_id)
+        if index < 0 {
+            return false
+        }
+        let mut i = 0
+        while i < self.modules[index].foreign_types.len {
+            if self.modules[index].foreign_types[i] == name {
+                return true
+            }
+            i = i + 1
+        }
+        return false
     }
 
     fn add_import(mut self, module_id: string, bound: string,
@@ -991,6 +1253,9 @@ impl Checker {
                 // Attributes are attached to their declaration, imports were
                 // resolved before checking, and the markers are not
                 // declarations.
+            } else if item.kind == "Struct" {
+                // Struct fields were collected and resolved before checking;
+                // methods and `impl` blocks are still outside this pass.
             } else {
                 self.fail(
                     item,
@@ -1187,6 +1452,10 @@ impl Checker {
         }
         let lhs = self.place_type(stmt.children[0])
         let rhs = self.check_expr(stmt.children[1])
+        if self.error == "" and (lhs == "unknown" or rhs == "unknown") {
+            self.complete = false
+            return
+        }
         if self.error == "" and !self.assignable(lhs, rhs) {
             self.fail(
                 stmt,
@@ -1371,6 +1640,10 @@ impl Checker {
         if self.error != "" {
             return "unknown"
         }
+        if ty == "unknown" {
+            self.complete = false
+            return "unknown"
+        }
         if node.value == "!" {
             if ty != "bool" {
                 self.fail(node, "E0201", "expected `bool`, found `" + ty + "`")
@@ -1396,6 +1669,10 @@ impl Checker {
         let left = self.check_expr(node.children[0])
         let right = self.check_expr(node.children[1])
         if self.error != "" {
+            return "unknown"
+        }
+        if left == "unknown" or right == "unknown" {
+            self.complete = false
             return "unknown"
         }
         let op = node.value
@@ -1496,13 +1773,17 @@ impl Checker {
         }
         let name = callee.value
         let mut arg_types: List<string> = []
+        let mut arg_names: List<string> = []
         let mut i = 1
         while i < node.children.len {
             let mut arg = node.children[i]
             if arg.kind == "Arg" {
+                arg_names.push(arg.value)
                 if arg.children.len > 0 {
                     arg = arg.children[0]
                 }
+            } else {
+                arg_names.push("")
             }
             arg_types.push(self.check_expr(arg))
             i = i + 1
@@ -1534,6 +1815,10 @@ impl Checker {
         }
         if name == "panic" {
             return "unit"
+        }
+        let struct_index = self.resolve_struct(self.current_module, name, 0)
+        if struct_index >= 0 {
+            return self.check_struct_constructor(node, struct_index, arg_names, arg_types)
         }
         let index = self.resolve_function(self.current_module, name, 0)
         if index == -2 {
@@ -1579,6 +1864,96 @@ impl Checker {
         return sig.ret
     }
 
+    fn check_struct_constructor(mut self, node: Node, index: number,
+                                labels: List<string>, types: List<string>): string {
+        let sig = self.structs[index]
+        let mut used: List<bool> = []
+        let mut f = 0
+        while f < sig.fields.len {
+            used.push(false)
+            f = f + 1
+        }
+        let mut seen_named = false
+        let mut a = 0
+        while a < types.len {
+            let label = labels[a]
+            let mut target = -1
+            if label == "" {
+                if seen_named {
+                    self.fail(node, "E0208", "a positional argument follows a named argument")
+                    return self.struct_canonical(index)
+                }
+                target = a
+                if target >= sig.fields.len {
+                    self.fail(
+                        node,
+                        "E0205",
+                        "too many fields in initializer of `" + sig.name + "`",
+                    )
+                    return self.struct_canonical(index)
+                }
+            } else {
+                seen_named = true
+                target = self.struct_field_index(index, label)
+                if target < 0 {
+                    self.fail(
+                        node,
+                        "E0206",
+                        "`" + sig.name + "` has no field `" + label + "`",
+                    )
+                    return self.struct_canonical(index)
+                }
+            }
+            if used[target] {
+                self.fail(
+                    node,
+                    "E0208",
+                    "field `" + sig.fields[target].name + "` is initialized twice",
+                )
+                return self.struct_canonical(index)
+            }
+            used[target] = true
+            if !self.assignable(sig.fields[target].ty, types[a]) {
+                self.fail(
+                    node,
+                    "E0202",
+                    "field `" + sig.fields[target].name + "` expects `"
+                        + sig.fields[target].ty + "`, found `" + types[a] + "`",
+                )
+                return self.struct_canonical(index)
+            }
+            a = a + 1
+        }
+        f = 0
+        while f < used.len {
+            if !used[f] {
+                self.fail(
+                    node,
+                    "E0205",
+                    "missing field `" + sig.fields[f].name + "` in initializer of `"
+                        + sig.name + "`",
+                )
+                return self.struct_canonical(index)
+            }
+            f = f + 1
+        }
+        return self.struct_canonical(index)
+    }
+
+    fn struct_field_index(self, index: number, name: string): number {
+        if index < 0 or index >= self.structs.len {
+            return -1
+        }
+        let mut i = 0
+        while i < self.structs[index].fields.len {
+            if self.structs[index].fields[i].name == name {
+                return i
+            }
+            i = i + 1
+        }
+        return -1
+    }
+
     fn check_member(mut self, node: Node): string {
         if node.children.len == 0 {
             return "unknown"
@@ -1587,10 +1962,28 @@ impl Checker {
         if self.error != "" {
             return "unknown"
         }
+        if recv == "unknown" {
+            self.complete = false
+            return "unknown"
+        }
         if node.value == "len" or node.value == "byte_len" {
             if recv == "string" or self.is_list(recv) {
                 return "number"
             }
+        }
+        let struct_index = self.find_struct_by_type(recv)
+        if struct_index >= 0 {
+            let field = self.struct_field_index(struct_index, node.value)
+            if field >= 0 {
+                return self.structs[struct_index].fields[field].ty
+            }
+            self.fail(
+                node,
+                "E0206",
+                "`" + self.structs[struct_index].name + "` has no field `"
+                    + node.value + "`",
+            )
+            return "unknown"
         }
         self.fail(
             node,
@@ -1607,6 +2000,10 @@ impl Checker {
         let recv = self.check_expr(node.children[0])
         let index = self.check_expr(node.children[1])
         if self.error != "" {
+            return "unknown"
+        }
+        if recv == "unknown" or index == "unknown" {
+            self.complete = false
             return "unknown"
         }
         if !self.is_number(index) {
@@ -1630,6 +2027,10 @@ impl Checker {
         }
         let cond = self.check_expr(node.children[0])
         if self.error != "" {
+            return "unknown"
+        }
+        if cond == "unknown" {
+            self.complete = false
             return "unknown"
         }
         if cond != "bool" {
