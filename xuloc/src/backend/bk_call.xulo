@@ -227,6 +227,11 @@ pub fn ca_emit_builtin(e: mut Emitter, node: Node, name: string): string {
     if name == "str" {
         return "xr_str_of(" + bk_expr::ex_one_arg(e, node, name) + ")"
     }
+    // In the synchronous compiled model a service handler's `reply` is the
+    // value its `on_message` returns.
+    if name == "reply" {
+        return bk_expr::ex_one_arg(e, node, name)
+    }
     if name == "len" {
         return "xr_int(xr_len(" + bk_expr::ex_one_arg(e, node, name) + "))"
     }
@@ -766,6 +771,33 @@ pub fn ca_emit_path_call(e: mut Emitter, node: Node): string {
     }
     let parts = bk_util::split_path(path)
     if parts.len == 2 {
+        if parts[0] == "Task" {
+            // The compiled model is eager: every spawned expression has already
+            // run, so the combinators just expose the settled values.
+            if parts[1] == "all" or parts[1] == "resolve" {
+                if args.len != 1 {
+                    bk_state::co_fail(e, "`" + path + "` expects one argument")
+                    return "xr_nil()"
+                }
+                return args[0]
+            }
+            if parts[1] == "race" {
+                if args.len != 1 {
+                    bk_state::co_fail(e, "`Task::race` expects one argument")
+                    return "xr_nil()"
+                }
+                return "xr_index(" + args[0] + ", xr_int(0))"
+            }
+            if parts[1] == "timeout" {
+                if args.len != 2 {
+                    bk_state::co_fail(e, "`Task::timeout` expects two arguments")
+                    return "xr_nil()"
+                }
+                return args[0]
+            }
+            bk_state::co_fail(e, "`" + path + "` is not a known Task combinator")
+            return "xr_nil()"
+        }
         if parts[0] == "Set" and parts[1] == "from_list" {
             if args.len != 1 {
                 bk_state::co_fail(e, "`Set::from_list` expects one argument")

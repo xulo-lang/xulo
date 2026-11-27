@@ -157,6 +157,12 @@ pub fn ex_emit_expr(e: mut Emitter, node: Node): string {
     if kind == "Map" {
         return ex_emit_map(e, node)
     }
+    if kind == "Lock" {
+        return ex_emit_lock(e, node)
+    }
+    if kind == "Spawn" {
+        return ex_emit_spawn(e, node)
+    }
     if kind == "Closure" or kind == "ArrowClosure" {
         return ex_emit_closure(e, node)
     }
@@ -338,6 +344,58 @@ pub fn ex_emit_closure(e: mut Emitter, node: Node): string {
         cells = "(XVal*[]){" + bk_util::c_join(cap_cells) + "}"
     }
     return "xr_closure_new(" + str(id) + ", " + str(cap_cells.len) + ", " + cells + ")"
+}
+
+/// `lock target { … }` evaluates its block. The compiled concurrency model is
+/// synchronous, so the shared target is only read for effect.
+pub fn ex_emit_lock(e: mut Emitter, node: Node): string {
+    if node.children.len > 0 {
+        let target = ex_emit_expr(e, node.children[0])
+        bk_state::co_line(e, "(void)(" + target + ");")
+    }
+    let tmp = bk_state::co_new_tmp(e)
+    bk_state::co_line(e, "XVal " + tmp + " = xr_nil();")
+    if node.children.len > 1 {
+        bk_emit::em_emit_block_value(e, node.children[1], tmp)
+    }
+    return tmp
+}
+
+/// `spawn` runs its block immediately in the compiled model. A
+/// `spawn.process Type { … }` service becomes an instance of `Type`; `send`
+/// dispatches to its `on_message` through the runtime.
+pub fn ex_emit_spawn(e: mut Emitter, node: Node): string {
+    if node.value == "process" and node.children.len >= 2
+        and node.children[0].kind == "TypeName" and node.children[1].kind == "Map"
+    {
+        let index = bk_state::co_find_struct(e, node.children[0].value)
+        if index < 0 {
+            bk_state::co_fail(e, "unknown service type `" + node.children[0].value + "`")
+            return "xr_nil()"
+        }
+        return ex_emit_struct_literal(e, node.children[1], index)
+    }
+    let mut block = node
+    let mut found = false
+    for child in node.children {
+        if child.kind == "Block" {
+            block = child
+            found = true
+        }
+    }
+    // `spawn.on(expr)` names a scheduling target; evaluate it for effect.
+    for child in node.children {
+        if child.kind != "Block" and child.kind != "TypeName" {
+            let value = ex_emit_expr(e, child)
+            bk_state::co_line(e, "(void)(" + value + ");")
+        }
+    }
+    let tmp = bk_state::co_new_tmp(e)
+    bk_state::co_line(e, "XVal " + tmp + " = xr_nil();")
+    if found {
+        bk_emit::em_emit_block_value(e, block, tmp)
+    }
+    return tmp
 }
 
 pub fn ex_emit_template(e: mut Emitter, node: Node): string {

@@ -341,7 +341,8 @@ fn stage1_compiles_the_bootstrap_corpus() {
 /// propagation, chained assignment, Unicode escapes, `Array::filled`,
 /// closures (including mutable captures and returned closures), `defer`
 /// (including loops and `?`), `std::fmt` (including the `Display`/`Debug`
-/// consultation), and const generic parameters.
+/// consultation), const generic parameters, and the synchronous
+/// `spawn`/`lock`/service model.
 #[test]
 fn stage1_runs_the_lowered_examples() {
     if !enabled() {
@@ -364,6 +365,7 @@ fn stage1_runs_the_lowered_examples() {
         "examples/std/io.xulo",
         "examples/std/io_extra.xulo",
         "examples/std/fmt.xulo",
+        "examples/concurrency/spawn_lock.xulo",
         "examples/basics/templates.xulo",
         "examples/basics/bindings.xulo",
         "examples/basics/lexical.xulo",

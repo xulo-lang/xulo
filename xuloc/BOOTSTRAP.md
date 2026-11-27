@@ -320,7 +320,11 @@ so stage 2 does not inherit them silently.
     iteration over a map's keys or a set's elements, `Map::from_entries`,
     `Set::from_list`, `Array::filled<T, N>` with a literal or const-generic
     length, const generic parameters (an explicit call-site argument is
-    appended to the call and bound as a function-local value), the
+    appended to the call and bound as a function-local value), `lock`
+    (evaluates its block), `spawn` (runs its block immediately in the compiled
+    model), `spawn.process Type { … }` services (`send` dispatches to
+    `on_message`, `stop` is a no-op), and the `Task::all`/`resolve`/`race`/
+    `timeout` combinators over already-settled values, the
     `std::fs`/`std::os`/`std::process`/`std::path`/`std::hint`/`std::math`/
     `std::json` calls stage 1 uses, all of `std::io` (the four writes, `flush`,
     the two tty probes, and `read_line`/`read`/`read_n`), the `std::time`
@@ -333,7 +337,8 @@ so stage 2 does not inherit them silently.
     names (`alias::fn`, `m::CONST`) resolve by their final segment because
     declaration collection flattens modules.
     `Trait::method(receiver, …)` lowers to runtime method dispatch on the
-    receiver's struct type. `async` and the
+    receiver's struct type; `async` functions lower as ordinary functions and
+    `await` is the identity. The
     `std::regex`/`std::net` modules are rejected with
     `E0005`; `u64` annotations and integer literals above `i64::MAX` are also
     `E0005`, because the bootstrap runtime has one signed 64-bit slot and does
@@ -401,18 +406,19 @@ so stage 2 does not inherit them silently.
   (`types/float_math.xulo`).
 - The parser accepts postfix `?`, arrow closures, call-site type arguments,
   function-macro calls, `spawn`, and `lock`. The backend lowers `?`, closures
-  (including arrow closures and captured bindings), and drops call-site type
-  arguments, but macro calls, `spawn`, and `lock` still report `E0005`;
-  attribute macros and macro expansion remain outside the bootstrap subset,
-  and macro bodies are skipped as token trees.
-- The backend builds 54 of the 66 example files end to end. One of the
+  (including arrow closures and captured bindings), `spawn`/`lock` in the
+  synchronous model, and drops call-site type arguments, but macro calls still
+  report `E0005`; attribute macros and macro expansion remain outside the
+  bootstrap subset, and macro bodies are skipped as token trees.
+- The backend builds 55 of the 66 example files end to end. One of the
   remaining failures is the expected `errors/type_error.xulo` reject; the
-  others need `lock`, macros, `u64`, the `std::regex`/`std::net` modules,
+  others need macros, `u64`, the `std::regex`/`std::net` modules,
   `std::http`, `std::process`'s `Command`/`launch`, FFI, or the inline-module
   C compile path. `crates/xupm/tests/stage1_build.rs` pins the `lexical`,
   `propagation`, `arrays`, `std/time`, `std/io`, `std/io_extra`, `std/fmt`,
-  `functions/closures_hof`, `functions/defer`, `types/aliases`, and
-  `types/generics_impl` cases against their sidecars (stdout and stderr).
+  `functions/closures_hof`, `functions/defer`, `types/aliases`,
+  `types/generics_impl`, and `concurrency/spawn_lock` cases against their
+  sidecars (stdout and stderr).
 - The parser recovers only by stopping at the first error. That is enough for
   Gate 1/2 diagnostics; stage 1's checker work will need recovery.
 - The tests read `xuloc/src/*.xulo` relative to the repository root, like the

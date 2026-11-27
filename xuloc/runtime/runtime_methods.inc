@@ -85,6 +85,17 @@ XVal xr_method(XVal recv, const char *name, long long n, XVal *args) {
         if (fn != NULL) {
             return fn(n + 1, xr_args_with_self(recv, n, args));
         }
+        // Synchronous service model: `send` on a type with `on_message`
+        // invokes the handler and returns its `reply`; `stop` is a no-op.
+        if (o->variant == NULL && xr_lookup_method(o->type, "on_message") != NULL) {
+            if (strcmp(name, "send") == 0) {
+                XrMethodFn handler = xr_lookup_method(o->type, "on_message");
+                return handler(n + 1, xr_args_with_self(recv, n, args));
+            }
+            if (strcmp(name, "stop") == 0) {
+                return xr_nil();
+            }
+        }
         if (o->variant == NULL && strcmp(o->type, "Map") == 0) {
             if (strcmp(name, "get") == 0 || strcmp(name, "has") == 0
                 || strcmp(name, "remove") == 0) {

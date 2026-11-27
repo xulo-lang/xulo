@@ -53,6 +53,15 @@ values, and is left to a future standard-library `std/ui` module.
 
 ### Added
 
+- Stage 1's C backend now lowers `lock`, `spawn`, services, and the `Task`
+  combinators in the compiled model: `lock target { … }` evaluates its block,
+  a spawn block runs immediately (so `await` stays the identity), and
+  `spawn.process Type { … }` builds a `Type` instance whose `send` dispatches
+  to `on_message` and whose `stop` is a no-op. `Task::all`/`resolve`/`race`/
+  `timeout` read already-settled values, and `reply` is the handler's value.
+  `examples/concurrency/spawn_lock.xulo` now compiles and matches the
+  interpreter byte for byte, including repeated service messages. Stage 1
+  build coverage reaches 55 of 66 example files.
 - Stage 1's C backend now lowers const generic parameters: the parser marks
   `const N: int` as `ConstGenericParam`, call sites append explicit const
   arguments (a literal or an enclosing const parameter) after the value
