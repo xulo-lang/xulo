@@ -51,14 +51,14 @@ pub fn em_emit(e: mut Emitter, runtime_path: string): string {
     i = 0
     while i < e.funcs.len {
         let f = e.funcs[i]
-        em_emit_function(e, f.cname, f.params, f.const_params, f.body)
+        em_emit_function(e, f.cname, f.params, f.const_params, f.body, f.module_id)
         i = i + 1
     }
     i = 0
     while i < e.methods.len {
         let m = e.methods[i]
         let const_params: List<string> = []
-        em_emit_function(e, m.cname, m.params, const_params, m.body)
+        em_emit_function(e, m.cname, m.params, const_params, m.body, m.module_id)
         i = i + 1
     }
     em_emit_main(e)
@@ -147,6 +147,7 @@ pub fn em_emit_globals(e: mut Emitter) {
     let mut i = 0
     while i < e.consts.len {
         let c = e.consts[i]
+        e.current_module = c.module_id
         let value = bk_expr::ex_emit_expr(e, c.expr)
         bk_state::co_line(e, c.cname + " = " + value + ";")
         i = i + 1
@@ -158,7 +159,8 @@ pub fn em_emit_globals(e: mut Emitter) {
 }
 
 pub fn em_emit_function(e: mut Emitter, cname: string, params: List<string>,
-                         const_params: List<string>, body: Node) {
+                         const_params: List<string>, body: Node, module_id: string) {
+    e.current_module = module_id
     e.out = StringBuilder::new()
     e.local_names = []
     e.local_cnames = []
@@ -241,6 +243,7 @@ pub fn em_emit_function(e: mut Emitter, cname: string, params: List<string>,
 }
 
 pub fn em_emit_main(e: mut Emitter) {
+    e.current_module = ""
     e.out = StringBuilder::new()
     e.local_names = []
     e.local_cnames = []
@@ -267,7 +270,7 @@ pub fn em_emit_main(e: mut Emitter) {
     let mut has_main = false
     let mut i = 0
     while i < e.funcs.len {
-        if e.funcs[i].name == "main" {
+        if e.funcs[i].name == "main" and e.funcs[i].module_id == "" {
             has_main = true
         }
         i = i + 1

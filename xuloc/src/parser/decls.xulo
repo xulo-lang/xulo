@@ -35,11 +35,15 @@ pub fn dc_declaration(p: mut Parser): Node {
     if p.error != "" {
         return nodes::nd_placeholder(p, start)
     }
+    let mut is_pub = false
     if tokens::tk_at(p, "pub") {
         tokens::tk_advance(p)
+        is_pub = true
     }
+    let mut is_async = false
     if tokens::tk_at(p, "async") {
         tokens::tk_advance(p)
+        is_async = true
     }
     let mut item = nodes::nd_placeholder(p, start)
     if tokens::tk_at(p, "mod") {
@@ -69,6 +73,14 @@ pub fn dc_declaration(p: mut Parser): Node {
     }
     for attr in attrs {
         add(item, attr)
+    }
+    // Visibility and `async` are markers, not declarations: collectors read
+    // them when they need `pub` (module exports) or call shape.
+    if is_pub {
+        add(item, node("Pub", "", start.start, start.end, start.line, start.column))
+    }
+    if is_async {
+        add(item, node("Async", "", start.start, start.end, start.line, start.column))
     }
     return item
 }
@@ -114,6 +126,9 @@ pub fn dc_mod_decl(p: mut Parser): Node {
     if !tokens::tk_expect(p, "{") {
         return n
     }
+    // Distinguishes `mod m { … }` (inline body) from `pub mod m;`, whose only
+    // child is the `Pub` marker.
+    add(n, node("ModBody", "", start.start, start.end, start.line, start.column))
     while p.error == "" and !tokens::tk_at(p, "}") and !tokens::tk_at_kind(p, "eof") {
         add(n, dc_declaration(p))
     }
@@ -122,23 +137,122 @@ pub fn dc_mod_decl(p: mut Parser): Node {
     return n
 }
 
+// A `use` keeps its structure so the backend can resolve names through the
+// module tree. Shape:
+//   Use value=<head> [UseType]
+//     UseSegment …              middle path segments
+//     UseAlias                  local rename
+//     UseGroup { UseEntry … }   brace group (head "" = `pub use { a, b }`)
+//     UseGlob                   `::*`
+// A `UseEntry` mirrors the tail of a path: UseSegment …, value=last segment,
+// optional UseAlias.
 pub fn dc_use_decl(p: mut Parser): Node {
     let start = tokens::tk_advance(p)
-    let mut value = ""
-    if tokens::tk_at_kind(p, "ident") or tokens::tk_at_kind(p, "keyword") {
-        value = tokens::tk_current(p).text
+    let mut n = node("Use", "", start.start, start.end, start.line, start.column)
+    if tokens::tk_at(p, "type") {
+        tokens::tk_advance(p)
+        add(n, node("UseType", "", start.start, start.end, start.line, start.column))
     }
-    let mut n = node("Use", value, start.start, start.end, start.line, start.column)
-    while p.error == "" and !tokens::tk_at(p, ";") and !tokens::tk_at_kind(p, "eof") {
-        if tokens::tk_at(p, "{") {
-            tokens::tk_skip_balanced(p, "{", "}")
-        } else {
+    if tokens::tk_at(p, "{") {
+        add(n, dc_use_group(p))
+    } else if tokens::tk_at_kind(p, "ident") or tokens::tk_at_kind(p, "keyword") {
+        n.value = tokens::tk_ident_name(p)
+        while p.error == "" and tokens::tk_at(p, "::") {
             tokens::tk_advance(p)
+            if tokens::tk_at(p, "*") {
+                let at = tokens::tk_current(p)
+                tokens::tk_advance(p)
+                add(n, node("UseGlob", "", at.start, at.end, at.line, at.column))
+                break
+            }
+            if tokens::tk_at(p, "{") {
+                add(n, dc_use_group(p))
+                break
+            }
+            if !(tokens::tk_at_kind(p, "ident") or tokens::tk_at_kind(p, "keyword")) {
+                break
+            }
+            let at = tokens::tk_current(p)
+            let segment = tokens::tk_ident_name(p)
+            add(n, node("UseSegment", segment, at.start, at.end, at.line, at.column))
+            if tokens::tk_at(p, "as") {
+                tokens::tk_advance(p)
+                let alias_at = tokens::tk_current(p)
+                let alias = tokens::tk_ident_name(p)
+                add(n, node("UseAlias", alias, alias_at.start, alias_at.end, alias_at.line, alias_at.column))
+                break
+            }
         }
+        if tokens::tk_at(p, "as") {
+            tokens::tk_advance(p)
+            let alias_at = tokens::tk_current(p)
+            let alias = tokens::tk_ident_name(p)
+            add(n, node("UseAlias", alias, alias_at.start, alias_at.end, alias_at.line, alias_at.column))
+        }
+    }
+    // A spelling this parser does not model (for example a manifest-style
+    // package key) must not turn into a syntax error: keep the `use`
+    // statement opaque and consume to its terminator.
+    while p.error == "" and !tokens::tk_at(p, ";") and !tokens::tk_at_kind(p, "eof") {
+        tokens::tk_advance(p)
     }
     tokens::tk_expect(p, ";")
     n.end = tokens::tk_prev(p).end
     return n
+}
+
+fn dc_use_group(p: mut Parser): Node {
+    let start = tokens::tk_current(p)
+    let mut group = node("UseGroup", "", start.start, start.end, start.line, start.column)
+    if !tokens::tk_expect(p, "{") {
+        return group
+    }
+    while p.error == "" and !tokens::tk_at(p, "}") and !tokens::tk_at_kind(p, "eof") {
+        if tokens::tk_at(p, ",") {
+            tokens::tk_advance(p)
+            continue
+        }
+        add(group, dc_use_entry(p))
+        if tokens::tk_at(p, ",") {
+            tokens::tk_advance(p)
+        } else {
+            break
+        }
+    }
+    tokens::tk_expect(p, "}")
+    group.end = tokens::tk_prev(p).end
+    return group
+}
+
+fn dc_use_entry(p: mut Parser): Node {
+    let start = tokens::tk_current(p)
+    let mut entry = node("UseEntry", "", start.start, start.end, start.line, start.column)
+    let mut segments: List<string> = []
+    while p.error == "" and (tokens::tk_at_kind(p, "ident") or tokens::tk_at_kind(p, "keyword")) {
+        let at = tokens::tk_current(p)
+        segments.push(tokens::tk_ident_name(p))
+        entry.end = tokens::tk_prev(p).end
+        if tokens::tk_at(p, "::") {
+            tokens::tk_advance(p)
+        } else {
+            break
+        }
+    }
+    if segments.len > 0 {
+        entry.value = segments[segments.len - 1]
+        let mut i = 0
+        while i + 1 < segments.len {
+            add(entry, node("UseSegment", segments[i], start.start, start.end, start.line, start.column))
+            i = i + 1
+        }
+    }
+    if tokens::tk_at(p, "as") {
+        tokens::tk_advance(p)
+        let alias_at = tokens::tk_current(p)
+        let alias = tokens::tk_ident_name(p)
+        add(entry, node("UseAlias", alias, alias_at.start, alias_at.end, alias_at.line, alias_at.column))
+    }
+    return entry
 }
 
 pub fn dc_extern_decl(p: mut Parser): Node {

@@ -7,6 +7,7 @@ use super::bk_state;
 use super::{Emitter};
 use super::bk_call;
 use super::bk_emit;
+use super::bk_ns;
 use super::bk_stmt;
 use super::bk_util;
 
@@ -503,28 +504,38 @@ pub fn ex_emit_name(e: mut Emitter, name: string): string {
             return "xr_capture_get(" + e.self_name + ", " + str(capture) + ")"
         }
     }
+    let kind = bk_ns::ns_lookup_kind(e, e.current_module, name, 0)
+    let cname = bk_ns::ns_lookup_cname(e, e.current_module, name, 0)
+    if kind == "const" {
+        return cname
+    }
+    if kind == "fn" and cname != "" {
+        let index = bk_state::co_find_function_index_by_cname(e, cname)
+        if index >= 0 {
+            return ex_function_value(e, index)
+        }
+    }
     let constant = bk_state::co_lookup_const(e, name)
     if constant != "" {
         return constant
     }
     if bk_state::co_find_function_index(e, name) >= 0 {
-        return ex_function_value(e, name)
+        return ex_function_value(e, bk_state::co_find_function_index(e, name))
     }
     return ""
 }
 
 /// A named function used as a value gets a generated closure that forwards
 /// its arguments, so `map(xs, double)` and `logging(route)` work.
-fn ex_function_value(e: mut Emitter, name: string): string {
+fn ex_function_value(e: mut Emitter, index: number): string {
+    let fn_cname = e.funcs[index].cname
     let mut i = 0
     while i < e.function_value_names.len {
-        if e.function_value_names[i] == name {
+        if e.function_value_names[i] == fn_cname {
             return "xr_closure_new(" + str(e.function_value_ids[i]) + ", 0, NULL)"
         }
         i = i + 1
     }
-    let index = bk_state::co_find_function_index(e, name)
-    let fn_cname = e.funcs[index].cname
     let id = e.next_closure
     e.next_closure = e.next_closure + 1
     let cname = "c_" + str(id)
@@ -533,7 +544,7 @@ fn ex_function_value(e: mut Emitter, name: string): string {
         + "(argc, argv);\n}\n"
     e.closure_funcs.push(text)
     e.closure_ids.push(id)
-    e.function_value_names.push(name)
+    e.function_value_names.push(fn_cname)
     e.function_value_ids.push(id)
     return "xr_closure_new(" + str(id) + ", 0, NULL)"
 }
@@ -547,7 +558,7 @@ pub fn ex_require_name(e: mut Emitter, name: string): string {
     return value
 }
 
-pub fn ex_emit_path(e: Emitter, value: string): string {
+pub fn ex_emit_path(e: mut Emitter, value: string): string {
     let constant = bk_state::co_lookup_const(e, value)
     if constant != "" {
         return constant
@@ -567,8 +578,20 @@ pub fn ex_emit_path(e: Emitter, value: string): string {
     if value == "std::math::NAN" {
         return "xr_float(NAN)"
     }
-    // `mod::CONST` / `alias::CONST`: declaration collection flattens modules,
-    // so the module prefix is not part of the C name.
+    // Resolve through this package's module tree first: `mod::CONST`,
+    // `alias::CONST`, and a module-qualified function used as a value.
+    let kind = bk_ns::ns_path_kind(e, e.current_module, value, 0)
+    let cname = bk_ns::ns_path_cname(e, e.current_module, value, 0)
+    if kind == "const" and cname != "" {
+        return cname
+    }
+    if kind == "fn" and cname != "" {
+        let index = bk_state::co_find_function_index_by_cname(e, cname)
+        if index >= 0 {
+            return ex_function_value(e, index)
+        }
+    }
+    // External aliases (`use std::fmt as f`) fall back to the flattened name.
     let parts = bk_util::split_path(value)
     if parts.len > 1 {
         let last = parts[parts.len - 1]

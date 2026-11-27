@@ -53,6 +53,13 @@ values, and is left to a future standard-library `std/ui` module.
 
 ### Added
 
+- Stage 1's C backend now keeps module namespaces instead of flattening them.
+  Every file-backed or inline `mod` gets a scope, its functions and constants
+  get module-mangled C symbols (`f_5inner6detail_quadruple`), and path/name
+  resolution walks the module tree through `self`, `super`, `use` aliases,
+  groups, globs, and `pub use` re-exports. Nested inline modules no longer
+  collide in the generated C (`examples/modules/inline/main.xulo` is pinned in
+  `crates/xupm/tests/stage1_build.rs`), and stage 1 still self-hosts.
 - Stage 1's C backend now lowers `std::http` over a new `runtime_http.inc`:
   `listen`/`serve` with a function-value handler, `fetch`/`request` clients,
   and the `Server`/`Request`/`Response` field tables with case-insensitive

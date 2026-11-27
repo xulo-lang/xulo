@@ -18,9 +18,10 @@
 //     (synchronous), services, the arithmetic/comparison/logical operator
 //     set, `??`, `is`, `?.`, and the variadic print/str/assert/panic
 //     intrinsics;
-//   * module-qualified declarations resolve by their final segment, because
-//     declaration collection flattens modules into one namespace;
-//   * a `Trait::method(receiver, …)` call dispatches through the runtime
+//   * module-qualified names resolve through the package's module tree: a
+//     `mod` scope, `use` aliases/groups/globs, and `pub` re-exports are
+//     kept, and C symbols carry a module-path prefix (`bk_ns.xulo`);
+//   * a `Trait::method(receiver, ...` call dispatches through the runtime
 //     method registry on the receiver's struct type;
 //   * the `std::fs`, `std::io`, `std::os`, `std::fmt`, `std::regex`,
 //     `std::net`, `std::process`, and `std::http` calls stage 1 itself uses,
@@ -48,6 +49,7 @@ pub mod bk_stmt;
 pub mod bk_expr;
 pub mod bk_call;
 pub mod bk_pattern;
+pub mod bk_ns;
 
 pub struct BuildResult {
     pub ok: bool,
@@ -58,6 +60,8 @@ pub struct BuildResult {
 pub struct FnInfo {
     pub name: string,
     pub cname: string,
+    /// Module id that declares this function (`""` for the package root).
+    pub module_id: string,
     pub params: List<string>,
     pub body: Node,
     pub const_params: List<string>,
@@ -68,6 +72,7 @@ pub struct MethodInfo {
     pub owner: string,
     pub name: string,
     pub cname: string,
+    pub module_id: string,
     pub params: List<string>,
     pub body: Node,
 }
@@ -91,7 +96,45 @@ pub struct TraitInfo {
 pub struct ConstInfo {
     pub name: string,
     pub cname: string,
+    pub module_id: string,
     pub expr: Node,
+}
+
+/// One module-level name in a module's own scope. `kind` is `fn`, `const`,
+/// `struct`, `enum`, `trait`, or `extern`; `cname` is its C symbol (functions
+/// and constants) or runtime type name (types).
+pub struct DeclEntry {
+    pub name: string,
+    pub kind: string,
+    pub cname: string,
+    pub is_pub: bool,
+}
+
+/// One `use` binding: a module alias (`member == ""`) or a name imported from
+/// another module.
+pub struct ImportEntry {
+    pub alias: string,
+    pub target: string,
+    pub member: string,
+    pub is_pub: bool,
+}
+
+/// One `use path::*`: names are resolved through the target module's exports.
+pub struct GlobEntry {
+    pub target: string,
+    pub is_pub: bool,
+}
+
+/// A module's namespace: its declarations and its view of other modules
+/// through `use`.
+pub struct ModuleScope {
+    pub id: string,
+    pub parent: string,
+    pub decls: List<DeclEntry>,
+    pub imports: List<ImportEntry>,
+    pub globs: List<GlobEntry>,
+    /// Raw `use` nodes; resolved in one pass after the whole tree is known.
+    pub uses: List<Node>,
 }
 
 pub struct ExternInfo {
@@ -110,6 +153,10 @@ pub struct Emitter {
     pub traits: List<TraitInfo>,
     pub consts: List<ConstInfo>,
     pub externs: List<ExternInfo>,
+    /// Every module in the package, keyed by id in `ModuleScope.id`.
+    pub modules: List<ModuleScope>,
+    /// Module whose body is being collected or emitted.
+    pub current_module: string,
     pub local_names: List<string>,
     pub local_cnames: List<string>,
     pub local_depths: List<number>,
@@ -146,6 +193,8 @@ fn new_emitter(): Emitter {
         traits: [],
         consts: [],
         externs: [],
+        modules: [],
+        current_module: "",
         local_names: [],
         local_cnames: [],
         local_depths: [],
@@ -181,7 +230,7 @@ fn new_emitter(): Emitter {
 // ── collection and emitter state (procedural) ──────────────────────────
 
 
-pub fn cl_add_function(e: mut Emitter, node: Node) {
+pub fn cl_add_function(e: mut Emitter, node: Node, module_id: string) {
     let mut params: List<string> = []
     let mut body = node
     let mut const_params: List<string> = []
@@ -206,19 +255,54 @@ pub fn cl_add_function(e: mut Emitter, node: Node) {
             }
         }
     }
+    let cname = bk_util::decl_cname("f", module_id, node.value)
     e.funcs.push(
         FnInfo(
             name: node.value,
-            cname: "f_" + node.value,
+            cname: cname,
+            module_id: module_id,
             params: params,
             body: body,
             const_params: const_params,
             generic_const: generic_const,
         ),
     )
+    cl_add_decl(e, module_id, node.value, "fn", cname, bk_util::has_child_kind(node, "Pub"))
 }
 
-pub fn cl_add_method(e: mut Emitter, owner: string, node: Node) {
+/// Record a module-level name so path and `use` resolution can find it.
+pub fn cl_add_decl(e: mut Emitter, module_id: string, name: string,
+                   kind: string, cname: string, is_pub: bool) {
+    let index = cl_module_index(e, module_id)
+    if index < 0 {
+        return
+    }
+    e.modules[index].decls.push(
+        DeclEntry(name: name, kind: kind, cname: cname, is_pub: is_pub),
+    )
+}
+
+fn cl_module_index(e: Emitter, module_id: string): number {
+    let mut i = e.modules.len - 1
+    while i >= 0 {
+        if e.modules[i].id == module_id {
+            return i
+        }
+        i = i - 1
+    }
+    return -1
+}
+
+fn cl_add_module(e: mut Emitter, module_id: string, parent: string) {
+    if cl_module_index(e, module_id) >= 0 {
+        return
+    }
+    e.modules.push(
+        ModuleScope(id: module_id, parent: parent, decls: [], imports: [], globs: [], uses: []),
+    )
+}
+
+pub fn cl_add_method(e: mut Emitter, owner: string, node: Node, module_id: string) {
     let mut params: List<string> = []
     let mut body = node
     for child in node.children {
@@ -236,14 +320,15 @@ pub fn cl_add_method(e: mut Emitter, owner: string, node: Node) {
         MethodInfo(
             owner: owner,
             name: node.value,
-            cname: "m_" + owner + "_" + node.value,
+            cname: bk_util::decl_cname("m", module_id, owner + "_" + node.value),
+            module_id: module_id,
             params: params,
             body: body,
         ),
     )
 }
 
-pub fn cl_add_struct(e: mut Emitter, node: Node) {
+pub fn cl_add_struct(e: mut Emitter, node: Node, module_id: string) {
     let mut fields: List<string> = []
     let mut debug = false
     for child in node.children {
@@ -259,9 +344,10 @@ pub fn cl_add_struct(e: mut Emitter, node: Node) {
         }
     }
     e.structs.push(StructInfo(name: node.value, fields: fields, debug: debug))
+    cl_add_decl(e, module_id, node.value, "struct", node.value, bk_util::has_child_kind(node, "Pub"))
 }
 
-pub fn cl_add_enum(e: mut Emitter, node: Node) {
+pub fn cl_add_enum(e: mut Emitter, node: Node, module_id: string) {
     let mut variants: List<string> = []
     for child in node.children {
         if child.kind == "Variant" {
@@ -269,9 +355,10 @@ pub fn cl_add_enum(e: mut Emitter, node: Node) {
         }
     }
     e.enums.push(EnumInfo(name: node.value, variants: variants))
+    cl_add_decl(e, module_id, node.value, "enum", node.value, bk_util::has_child_kind(node, "Pub"))
 }
 
-pub fn cl_add_trait(e: mut Emitter, node: Node) {
+pub fn cl_add_trait(e: mut Emitter, node: Node, module_id: string) {
     let mut methods: List<string> = []
     for child in node.children {
         if child.kind == "TraitMethod" or child.kind == "Fn" {
@@ -279,21 +366,24 @@ pub fn cl_add_trait(e: mut Emitter, node: Node) {
         }
     }
     e.traits.push(TraitInfo(name: node.value, methods: methods))
+    cl_add_decl(e, module_id, node.value, "trait", node.value, bk_util::has_child_kind(node, "Pub"))
 }
 
-pub fn cl_add_const(e: mut Emitter, node: Node) {
+pub fn cl_add_const(e: mut Emitter, node: Node, module_id: string) {
     let mut expr = node
     for child in node.children {
-        if child.kind != "TypeName" {
+        if child.kind != "TypeName" and child.kind != "Pub" and child.kind != "Async" {
             expr = child
         }
     }
+    let cname = bk_util::decl_cname("g", module_id, node.value)
     e.consts.push(
-        ConstInfo(name: node.value, cname: "g_" + node.value, expr: expr),
+        ConstInfo(name: node.value, cname: cname, module_id: module_id, expr: expr),
     )
+    cl_add_decl(e, module_id, node.value, "const", cname, bk_util::has_child_kind(node, "Pub"))
 }
 
-pub fn cl_add_extern(e: mut Emitter, node: Node) {
+pub fn cl_add_extern(e: mut Emitter, node: Node, module_id: string) {
     for child in node.children {
         if child.kind != "ExternFn" {
             continue
@@ -326,6 +416,7 @@ pub fn cl_add_extern(e: mut Emitter, node: Node) {
                 ret: ret,
             ),
         )
+        cl_add_decl(e, module_id, local_name, "extern", local_name, false)
     }
 }
 
@@ -347,24 +438,27 @@ fn cl_reject_u64(e: mut Emitter, node: Node) {
     }
 }
 
-pub fn cl_collect_program(e: mut Emitter, node: Node, dir: string) {
+pub fn cl_collect_program(e: mut Emitter, node: Node, dir: string, module_id: string) {
     if e.error != "" {
         return
     }
     if node.kind == "Program" {
         for child in node.children {
-            cl_collect_program(e, child, dir)
+            cl_collect_program(e, child, dir, module_id)
         }
         return
     }
     if node.kind == "Mod" {
         // A module's home is the directory named after it: `mod a;` in
         // `d/x.xulo` reads `d/a.xulo`, and that file's own `mod b;` reads
-        // `d/a/b.xulo` (spec `modules/import-export.md`).
+        // `d/a/b.xulo` (spec `modules/import-export.md`). An inline module
+        // keeps its body in this file but gets its own namespace.
+        let child_id = cl_child_id(module_id, node.value)
+        cl_add_module(e, child_id, module_id)
         let home = bk_util::join_path(dir, node.value)
-        if node.children.len > 0 {
+        if bk_util::has_child_kind(node, "ModBody") {
             for child in node.children {
-                cl_collect_program(e, child, home)
+                cl_collect_program(e, child, home, child_id)
             }
             return
         }
@@ -386,7 +480,7 @@ pub fn cl_collect_program(e: mut Emitter, node: Node, dir: string) {
                     return
                 }
                 for child in parsed.root.children {
-                    cl_collect_program(e, child, home)
+                    cl_collect_program(e, child, home, child_id)
                 }
             }
             Result::Err(error) => {
@@ -395,28 +489,36 @@ pub fn cl_collect_program(e: mut Emitter, node: Node, dir: string) {
         }
         return
     }
+    if node.kind == "Use" {
+        cl_add_module_use(e, module_id, node)
+        return
+    }
     if node.kind == "Fn" {
-        cl_add_function(e, node)
+        cl_add_function(e, node, module_id)
         return
     }
     if node.kind == "Struct" {
-        cl_add_struct(e, node)
+        cl_add_struct(e, node, module_id)
         return
     }
     if node.kind == "Enum" {
-        cl_add_enum(e, node)
+        cl_add_enum(e, node, module_id)
         return
     }
     if node.kind == "Trait" {
-        cl_add_trait(e, node)
+        cl_add_trait(e, node, module_id)
+        return
+    }
+    if node.kind == "TypeAlias" {
+        cl_add_decl(e, module_id, node.value, "type", node.value, bk_util::has_child_kind(node, "Pub"))
         return
     }
     if node.kind == "Const" {
-        cl_add_const(e, node)
+        cl_add_const(e, node, module_id)
         return
     }
     if node.kind == "Extern" {
-        cl_add_extern(e, node)
+        cl_add_extern(e, node, module_id)
         return
     }
     if node.kind == "Impl" {
@@ -426,24 +528,288 @@ pub fn cl_collect_program(e: mut Emitter, node: Node, dir: string) {
                 owner = child.value
             }
             if child.kind == "Fn" {
-                cl_add_method(e, owner, child)
+                cl_add_method(e, owner, child, module_id)
             }
         }
         return
     }
-    // `use`, `type`, `trait`, `extern`, and attributes carry no runtime
-    // declaration in the bootstrap subset.
+    // Attributes and the `Pub`/`ModBody` markers carry no declaration.
+}
+
+fn cl_child_id(module_id: string, name: string): string {
+    if module_id == "" {
+        return name
+    }
+    return module_id + "::" + name
+}
+
+fn cl_add_module_use(e: mut Emitter, module_id: string, node: Node) {
+    let index = cl_module_index(e, module_id)
+    if index < 0 {
+        return
+    }
+    e.modules[index].uses.push(node)
+}
+
+fn cl_module_parent(e: Emitter, module_id: string): string {
+    let index = cl_module_index(e, module_id)
+    if index < 0 {
+        return "#"
+    }
+    return e.modules[index].parent
+}
+
+/// Resolve a path head from `from`: `self`, `super`, a root module, or a
+/// child of the current module. External package heads (for example `std`)
+/// resolve to `""` so the backend leaves them to its std lowering.
+fn cl_resolve_head(e: Emitter, from: string, head: string): string {
+    if head == "self" {
+        return from
+    }
+    if head == "super" {
+        let parent = cl_module_parent(e, from)
+        if parent == "#" {
+            return ""
+        }
+        return parent
+    }
+    let child = cl_child_id(from, head)
+    if cl_module_index(e, child) >= 0 {
+        return child
+    }
+    let aliased = cl_module_import_target(e, from, head)
+    if aliased != "" {
+        return aliased
+    }
+    if cl_module_index(e, head) >= 0 {
+        return head
+    }
+    return ""
+}
+
+fn cl_module_import_target(e: Emitter, module_id: string, name: string): string {
+    let index = cl_module_index(e, module_id)
+    if index < 0 {
+        return ""
+    }
+    let mut i = e.modules[index].imports.len - 1
+    while i >= 0 {
+        let import = e.modules[index].imports[i]
+        if import.alias == name and import.member == "" {
+            return import.target
+        }
+        i = i - 1
+    }
+    return ""
+}
+
+/// Walk `segments` from the module `head` names. Returns the target module id,
+/// or `""` when any step is not a module of this package.
+fn cl_resolve_module_path(e: Emitter, from: string, head: string, segments: List<string>): string {
+    let mut current = cl_resolve_head(e, from, head)
+    if current == "" {
+        return ""
+    }
+    let mut i = 0
+    while i < segments.len {
+        let segment = segments[i]
+        if segment == "self" {
+            i = i + 1
+            continue
+        }
+        if segment == "super" {
+            let parent = cl_module_parent(e, current)
+            if parent == "#" {
+                return ""
+            }
+            current = parent
+            i = i + 1
+            continue
+        }
+        let child = cl_child_id(current, segment)
+        if cl_module_index(e, child) >= 0 {
+            current = child
+        } else {
+            let aliased = cl_module_import_target(e, current, segment)
+            if aliased == "" {
+                return ""
+            }
+            current = aliased
+        }
+        i = i + 1
+    }
+    return current
+}
+
+fn cl_add_import(e: mut Emitter, module_id: string, bound: string,
+                 target: string, member: string, is_pub: bool) {
+    let index = cl_module_index(e, module_id)
+    if index < 0 {
+        return
+    }
+    e.modules[index].imports.push(
+        ImportEntry(alias: bound, target: target, member: member, is_pub: is_pub),
+    )
+}
+
+fn cl_add_glob(e: mut Emitter, module_id: string, target: string, is_pub: bool) {
+    let index = cl_module_index(e, module_id)
+    if index < 0 {
+        return
+    }
+    e.modules[index].globs.push(GlobEntry(target: target, is_pub: is_pub))
+}
+
+/// `pub use { name }` re-exports an existing local binding.
+fn cl_mark_export(e: mut Emitter, module_id: string, name: string) {
+    let index = cl_module_index(e, module_id)
+    if index < 0 {
+        return
+    }
+    let mut d = 0
+    while d < e.modules[index].decls.len {
+        if e.modules[index].decls[d].name == name {
+            e.modules[index].decls[d].is_pub = true
+        }
+        d = d + 1
+    }
+    let mut i = 0
+    while i < e.modules[index].imports.len {
+        if e.modules[index].imports[i].alias == name {
+            e.modules[index].imports[i].is_pub = true
+        }
+        i = i + 1
+    }
+}
+
+fn cl_resolve_use(e: mut Emitter, module_id: string, node: Node) {
+    if bk_util::has_child_kind(node, "UseType") {
+        return
+    }
+    let is_pub = bk_util::has_child_kind(node, "Pub")
+    let head = node.value
+    let mut segments: List<string> = []
+    let mut alias = ""
+    let mut group = node
+    let mut has_group = false
+    let mut glob = false
+    for child in node.children {
+        if child.kind == "UseSegment" {
+            segments.push(child.value)
+        } else if child.kind == "UseAlias" {
+            alias = child.value
+        } else if child.kind == "UseGroup" {
+            group = child
+            has_group = true
+        } else if child.kind == "UseGlob" {
+            glob = true
+        }
+    }
+    if has_group {
+        if head == "" {
+            // `pub use { a, b }`: promote the local bindings.
+            for entry in group.children {
+                cl_mark_export(e, module_id, entry.value)
+            }
+            return
+        }
+        let prefix = cl_resolve_module_path(e, module_id, head, segments)
+        if prefix == "" {
+            return
+        }
+        for entry in group.children {
+            let mut rel: List<string> = []
+            let mut entry_alias = ""
+            for child in entry.children {
+                if child.kind == "UseSegment" {
+                    rel.push(child.value)
+                } else if child.kind == "UseAlias" {
+                    entry_alias = child.value
+                }
+            }
+            let mut target = prefix
+            let mut i = 0
+            while i + 1 < rel.len {
+                let child = cl_child_id(target, rel[i])
+                if cl_module_index(e, child) >= 0 {
+                    target = child
+                } else {
+                    let aliased = cl_module_import_target(e, target, rel[i])
+                    if aliased == "" {
+                        target = ""
+                        break
+                    }
+                    target = aliased
+                }
+                i = i + 1
+            }
+            if target == "" {
+                continue
+            }
+            let bound = if entry_alias == "" { entry.value } else { entry_alias }
+            cl_add_import(e, module_id, bound, target, entry.value, is_pub)
+        }
+        return
+    }
+    if glob {
+        let target = cl_resolve_module_path(e, module_id, head, segments)
+        if target != "" {
+            cl_add_glob(e, module_id, target, is_pub)
+        }
+        return
+    }
+    if head == "" {
+        return
+    }
+    if segments.len == 0 {
+        let target = cl_resolve_head(e, module_id, head)
+        if target != "" {
+            let bound = if alias == "" { head } else { alias }
+            cl_add_import(e, module_id, bound, target, "", is_pub)
+        }
+        return
+    }
+    let member = segments[segments.len - 1]
+    let mut prefix: List<string> = []
+    let mut i = 0
+    while i + 1 < segments.len {
+        prefix.push(segments[i])
+        i = i + 1
+    }
+    let target = cl_resolve_module_path(e, module_id, head, prefix)
+    if target == "" {
+        return
+    }
+    let bound = if alias == "" { member } else { alias }
+    cl_add_import(e, module_id, bound, target, member, is_pub)
+}
+
+/// Resolve every module's `use` statements once the module tree is known.
+fn cl_resolve_uses(e: mut Emitter) {
+    let mut m = 0
+    while m < e.modules.len {
+        let module_id = e.modules[m].id
+        let mut u = 0
+        while u < e.modules[m].uses.len {
+            let node = e.modules[m].uses[u]
+            cl_resolve_use(e, module_id, node)
+            u = u + 1
+        }
+        m = m + 1
+    }
 }
 
 // ── entry point ──────────────────────────────────────────────────────────
 
 pub fn compile(root: Node, entry: string, runtime_path: string): BuildResult {
     let mut emitter = new_emitter()
+    cl_add_module(emitter, "", "#")
     cl_reject_u64(emitter, root)
     if emitter.error != "" {
         return BuildResult(ok: false, message: emitter.error, source: "")
     }
-    cl_collect_program(emitter, root, bk_util::dir_of(entry))
+    cl_collect_program(emitter, root, bk_util::dir_of(entry), "")
+    cl_resolve_uses(emitter)
     if emitter.error != "" {
         return BuildResult(ok: false, message: emitter.error, source: "")
     }

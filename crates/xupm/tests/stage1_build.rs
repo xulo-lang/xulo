@@ -343,7 +343,9 @@ fn stage1_compiles_the_bootstrap_corpus() {
 /// (including loops and `?`), `std::fmt` (including the `Display`/`Debug`
 /// consultation), const generic parameters, the synchronous
 /// `spawn`/`lock`/service model, `std::regex`, `std::net`, `std::process`,
-/// `std::http`, named function values, and `extern "C"`.
+/// `std::http`, named function values, `extern "C"`, and module namespaces
+/// (file-backed and inline modules, nested modules, `use` aliases/groups/globs,
+/// and `pub` re-exports).
 #[test]
 fn stage1_runs_the_lowered_examples() {
     if !enabled() {
@@ -389,6 +391,10 @@ fn stage1_runs_the_lowered_examples() {
         "examples/collections/sets.xulo",
         "examples/patterns/destructuring.xulo",
         "examples/patterns/match_patterns.xulo",
+        "examples/modules/main.xulo",
+        "examples/modules/imports/main.xulo",
+        "examples/modules/visibility/main.xulo",
+        "examples/modules/inline/main.xulo",
     ] {
         // `std::fs`'s directory walkers are POSIX-only in the bootstrap runtime.
         if !cfg!(unix) && rel.starts_with("examples/std/fs") {

@@ -1,0 +1,351 @@
+// Stage 1 backend: module namespace resolution.
+//
+// Declaration collection records every module's own names, its `use`
+// bindings, and its globs. This module answers the two questions the emitter
+// asks: what C symbol does a bare name in the current module mean, and what
+// does a `::` path mean? A path walks the module tree (`self`, `super`, a
+// child module, a module alias from `use`, or a root module); the final
+// segment is a declaration of the reached module.
+
+use super::{Emitter};
+use super::bk_util;
+
+fn ns_scope_index(e: Emitter, module_id: string): number {
+    let mut i = e.modules.len - 1
+    while i >= 0 {
+        if e.modules[i].id == module_id {
+            return i
+        }
+        i = i - 1
+    }
+    return -1
+}
+
+/// Child module id, or `""` when `name` is not a child of `parent`.
+pub fn ns_child(e: Emitter, parent: string, name: string): string {
+    let id = if parent == "" { name } else { parent + "::" + name }
+    if ns_scope_index(e, id) >= 0 {
+        return id
+    }
+    return ""
+}
+
+/// Parent module id; `"#"` when `module_id` is already the package root.
+fn ns_parent(e: Emitter, module_id: string): string {
+    let index = ns_scope_index(e, module_id)
+    if index < 0 {
+        return "#"
+    }
+    return e.modules[index].parent
+}
+
+fn ns_decl_index(e: Emitter, module_id: string, name: string): number {
+    let index = ns_scope_index(e, module_id)
+    if index < 0 {
+        return -1
+    }
+    let mut i = e.modules[index].decls.len - 1
+    while i >= 0 {
+        if e.modules[index].decls[i].name == name {
+            return i
+        }
+        i = i - 1
+    }
+    return -1
+}
+
+fn ns_import_index(e: Emitter, module_id: string, name: string): number {
+    let index = ns_scope_index(e, module_id)
+    if index < 0 {
+        return -1
+    }
+    let mut i = e.modules[index].imports.len - 1
+    while i >= 0 {
+        if e.modules[index].imports[i].alias == name {
+            return i
+        }
+        i = i - 1
+    }
+    return -1
+}
+
+/// A module alias bound by `use path as name` (member is empty).
+pub fn ns_import_module(e: Emitter, module_id: string, name: string): string {
+    let index = ns_import_index(e, module_id, name)
+    if index < 0 {
+        return ""
+    }
+    let scope = ns_scope_index(e, module_id)
+    if scope < 0 {
+        return ""
+    }
+    if e.modules[scope].imports[index].member != "" {
+        return ""
+    }
+    return e.modules[scope].imports[index].target
+}
+
+fn ns_own_kind(e: Emitter, module_id: string, name: string): string {
+    let scope = ns_scope_index(e, module_id)
+    let index = ns_decl_index(e, module_id, name)
+    if scope < 0 or index < 0 {
+        return ""
+    }
+    return e.modules[scope].decls[index].kind
+}
+
+fn ns_own_cname(e: Emitter, module_id: string, name: string): string {
+    let scope = ns_scope_index(e, module_id)
+    let index = ns_decl_index(e, module_id, name)
+    if scope < 0 or index < 0 {
+        return ""
+    }
+    return e.modules[scope].decls[index].cname
+}
+
+fn ns_own_export_kind(e: Emitter, module_id: string, name: string): string {
+    let scope = ns_scope_index(e, module_id)
+    let index = ns_decl_index(e, module_id, name)
+    if scope < 0 or index < 0 {
+        return ""
+    }
+    if !e.modules[scope].decls[index].is_pub {
+        return ""
+    }
+    return e.modules[scope].decls[index].kind
+}
+
+fn ns_own_export_cname(e: Emitter, module_id: string, name: string): string {
+    let scope = ns_scope_index(e, module_id)
+    let index = ns_decl_index(e, module_id, name)
+    if scope < 0 or index < 0 {
+        return ""
+    }
+    if !e.modules[scope].decls[index].is_pub {
+        return ""
+    }
+    return e.modules[scope].decls[index].cname
+}
+
+/// The kind of `name` as seen from inside `module_id`: own declarations,
+/// explicit imports, then glob imports. `""` when the name is not bound.
+pub fn ns_lookup_kind(e: Emitter, module_id: string, name: string, depth: number): string {
+    if depth > 32 {
+        return ""
+    }
+    let own = ns_own_kind(e, module_id, name)
+    if own != "" {
+        return own
+    }
+    let scope = ns_scope_index(e, module_id)
+    if scope < 0 {
+        return ""
+    }
+    let import = ns_import_index(e, module_id, name)
+    if import >= 0 {
+        let entry = e.modules[scope].imports[import]
+        if entry.member != "" {
+            let kind = ns_export_kind(e, entry.target, entry.member, depth + 1)
+            if kind != "" {
+                return kind
+            }
+        }
+    }
+    let mut i = e.modules[scope].globs.len - 1
+    while i >= 0 {
+        let target = e.modules[scope].globs[i].target
+        let kind = ns_export_kind(e, target, name, depth + 1)
+        if kind != "" {
+            return kind
+        }
+        i = i - 1
+    }
+    return ""
+}
+
+/// The C symbol (or runtime type name) of a name as seen from `module_id`.
+pub fn ns_lookup_cname(e: Emitter, module_id: string, name: string, depth: number): string {
+    if depth > 32 {
+        return ""
+    }
+    let own = ns_own_cname(e, module_id, name)
+    if own != "" {
+        return own
+    }
+    let scope = ns_scope_index(e, module_id)
+    if scope < 0 {
+        return ""
+    }
+    let import = ns_import_index(e, module_id, name)
+    if import >= 0 {
+        let entry = e.modules[scope].imports[import]
+        if entry.member != "" {
+            let cname = ns_export_cname(e, entry.target, entry.member, depth + 1)
+            if cname != "" {
+                return cname
+            }
+        }
+    }
+    let mut i = e.modules[scope].globs.len - 1
+    while i >= 0 {
+        let target = e.modules[scope].globs[i].target
+        let cname = ns_export_cname(e, target, name, depth + 1)
+        if cname != "" {
+            return cname
+        }
+        i = i - 1
+    }
+    return ""
+}
+
+/// A name as another module may reach it: only `pub` declarations, `pub`
+/// imports, and `pub` globs.
+pub fn ns_export_kind(e: Emitter, module_id: string, name: string, depth: number): string {
+    if depth > 32 {
+        return ""
+    }
+    let own = ns_own_export_kind(e, module_id, name)
+    if own != "" {
+        return own
+    }
+    let scope = ns_scope_index(e, module_id)
+    if scope < 0 {
+        return ""
+    }
+    let mut i = e.modules[scope].imports.len - 1
+    while i >= 0 {
+        let entry = e.modules[scope].imports[i]
+        if entry.alias == name and entry.is_pub and entry.member != "" {
+            let kind = ns_export_kind(e, entry.target, entry.member, depth + 1)
+            if kind != "" {
+                return kind
+            }
+        }
+        i = i - 1
+    }
+    i = e.modules[scope].globs.len - 1
+    while i >= 0 {
+        if e.modules[scope].globs[i].is_pub {
+            let target = e.modules[scope].globs[i].target
+            let kind = ns_export_kind(e, target, name, depth + 1)
+            if kind != "" {
+                return kind
+            }
+        }
+        i = i - 1
+    }
+    return ""
+}
+
+pub fn ns_export_cname(e: Emitter, module_id: string, name: string, depth: number): string {
+    if depth > 32 {
+        return ""
+    }
+    let own = ns_own_export_cname(e, module_id, name)
+    if own != "" {
+        return own
+    }
+    let scope = ns_scope_index(e, module_id)
+    if scope < 0 {
+        return ""
+    }
+    let mut i = e.modules[scope].imports.len - 1
+    while i >= 0 {
+        let entry = e.modules[scope].imports[i]
+        if entry.alias == name and entry.is_pub and entry.member != "" {
+            let cname = ns_export_cname(e, entry.target, entry.member, depth + 1)
+            if cname != "" {
+                return cname
+            }
+        }
+        i = i - 1
+    }
+    i = e.modules[scope].globs.len - 1
+    while i >= 0 {
+        if e.modules[scope].globs[i].is_pub {
+            let target = e.modules[scope].globs[i].target
+            let cname = ns_export_cname(e, target, name, depth + 1)
+            if cname != "" {
+                return cname
+            }
+        }
+        i = i - 1
+    }
+    return ""
+}
+
+/// Resolve a `::` path to its declaration's kind (`""` when it is not a local
+/// declaration, for example a `std` path or an enum variant).
+pub fn ns_path_kind(e: Emitter, from: string, path: string, depth: number): string {
+    let current = ns_path_module(e, from, path)
+    if current == "" {
+        return ""
+    }
+    let parts = bk_util::split_path(path)
+    let member = parts[parts.len - 1]
+    return ns_lookup_kind(e, current, member, depth)
+}
+
+/// Resolve a `::` path to its declaration's C symbol / runtime type name.
+pub fn ns_path_cname(e: Emitter, from: string, path: string, depth: number): string {
+    let current = ns_path_module(e, from, path)
+    if current == "" {
+        return ""
+    }
+    let parts = bk_util::split_path(path)
+    let member = parts[parts.len - 1]
+    return ns_lookup_cname(e, current, member, depth)
+}
+
+/// Walk every module segment of `path` and return the module that owns its
+/// final declaration, or `""` when the head is not a module of this package.
+fn ns_path_module(e: Emitter, from: string, path: string): string {
+    let parts = bk_util::split_path(path)
+    if parts.len < 2 {
+        return ""
+    }
+    let mut current = ""
+    let mut i = 1
+    if parts[0] == "self" {
+        current = from
+    } else if parts[0] == "super" {
+        current = ns_parent(e, from)
+        if current == "#" {
+            return ""
+        }
+        while i < parts.len and parts[i] == "super" {
+            let parent = ns_parent(e, current)
+            if parent == "#" {
+                return ""
+            }
+            current = parent
+            i = i + 1
+        }
+    } else {
+        current = ns_child(e, from, parts[0])
+        if current == "" {
+            current = ns_import_module(e, from, parts[0])
+        }
+        if current == "" {
+            current = ns_child(e, "", parts[0])
+        }
+        if current == "" {
+            return ""
+        }
+    }
+    while i + 1 < parts.len {
+        let segment = parts[i]
+        let child = ns_child(e, current, segment)
+        if child != "" {
+            current = child
+        } else {
+            let aliased = ns_import_module(e, current, segment)
+            if aliased == "" {
+                return ""
+            }
+            current = aliased
+        }
+        i = i + 1
+    }
+    return current
+}

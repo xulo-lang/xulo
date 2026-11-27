@@ -111,6 +111,35 @@ fn stage1_parse_smoke_test() {
     );
 }
 
+/// The parser keeps enough `use`/`mod` structure for the C backend's module
+/// namespaces: inline bodies, path segments, groups, globs, and aliases.
+#[test]
+fn stage1_parse_keeps_module_and_use_structure() {
+    let root = repo_root();
+    let out = run_stage1("parse", &root.join("examples/modules/inline/main.xulo"));
+    assert_success(&out, "stage1 parse of an inline-module example");
+    let text = stdout_of(&out);
+    for needle in [
+        "Mod inner @",
+        "ModBody @",
+        "Use self @",
+        "UseSegment inner @",
+        "UseAlias i @",
+        "Use inner @",
+        "UseGroup @",
+        "UseEntry hi @",
+        "Use tools @",
+        "UseGlob @",
+        "Use super @",
+        "UseSegment twice @",
+    ] {
+        assert!(
+            text.contains(needle),
+            "the tree should keep `{needle}`:\n{text}"
+        );
+    }
+}
+
 /// T5b: every stage 1 source file parses with itself.
 ///
 /// The file set is discovered from `xuloc/src/` instead of being hard-coded, so a

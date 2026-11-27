@@ -4,6 +4,7 @@
 
 use ast::Node;
 use super::bk_state;
+use super::bk_ns;
 use super::{Emitter};
 use super::bk_expr;
 use super::bk_util;
@@ -67,9 +68,9 @@ fn ca_type_arg_value(e: mut Emitter, node: Node, index: number): string {
 }
 
 /// The const-generic arguments a call must append after its value arguments.
-fn ca_const_args(e: mut Emitter, node: Node, name: string): List<string> {
+fn ca_const_args(e: mut Emitter, node: Node, fn_cname: string): List<string> {
     let extra: List<string> = []
-    let index = bk_state::co_find_function_index(e, name)
+    let index = bk_state::co_find_function_index_by_cname(e, fn_cname)
     if index < 0 {
         return extra
     }
@@ -79,7 +80,7 @@ fn ca_const_args(e: mut Emitter, node: Node, name: string): List<string> {
         if flags[i] {
             let value = ca_type_arg_value(e, node, i)
             if value == "" {
-                bk_state::co_fail(e, "`" + name + "` needs a const argument at type position " + str(i))
+                bk_state::co_fail(e, "`" + e.funcs[index].name + "` needs a const argument at type position " + str(i))
                 extra.push("xr_nil()")
             } else {
                 extra.push(value)
@@ -90,8 +91,8 @@ fn ca_const_args(e: mut Emitter, node: Node, name: string): List<string> {
     return extra
 }
 
-fn ca_append_const_args(e: mut Emitter, node: Node, name: string, args: List<string>) {
-    let extra = ca_const_args(e, node, name)
+fn ca_append_const_args(e: mut Emitter, node: Node, fn_cname: string, args: List<string>) {
+    let extra = ca_const_args(e, node, fn_cname)
     let mut i = 0
     while i < extra.len {
         args.push(extra[i])
@@ -442,6 +443,14 @@ pub fn ca_emit_named_call(e: mut Emitter, node: Node): string {
         if builtin != "" {
             return builtin
         }
+        let local_kind = bk_ns::ns_lookup_kind(e, e.current_module, name, 0)
+        let local_cname = bk_ns::ns_lookup_cname(e, e.current_module, name, 0)
+        if local_kind == "struct" {
+            let struct_index = bk_state::co_find_struct(e, local_cname)
+            if struct_index >= 0 {
+                return ca_emit_struct_call(e, node, struct_index)
+            }
+        }
         let struct_index = bk_state::co_find_struct(e, name)
         if struct_index >= 0 {
             return ca_emit_struct_call(e, node, struct_index)
@@ -459,14 +468,26 @@ pub fn ca_emit_named_call(e: mut Emitter, node: Node): string {
                 return ca_emit_value_call(e, node, callee)
             }
         }
+        if local_kind == "extern" {
+            let extern_index = bk_state::co_find_extern(e, local_cname)
+            if extern_index >= 0 {
+                return ca_emit_extern_call(e, node, extern_index)
+            }
+        }
         let extern_index = bk_state::co_find_extern(e, name)
         if extern_index >= 0 {
             return ca_emit_extern_call(e, node, extern_index)
         }
-        let fn_cname = bk_state::co_find_function(e, name)
+        let mut fn_cname = ""
+        if local_kind == "fn" {
+            fn_cname = local_cname
+        }
+        if fn_cname == "" {
+            fn_cname = bk_state::co_find_function(e, name)
+        }
         if fn_cname != "" {
             let args = bk_expr::ex_eval_args(e, node.children, 1)
-            ca_append_const_args(e, node, name, args)
+            ca_append_const_args(e, node, fn_cname, args)
             return fn_cname
                 + "("
                 + str(args.len)
@@ -651,11 +672,36 @@ pub fn ca_emit_path_call(e: mut Emitter, node: Node): string {
     }
     let fmt_parts = bk_util::split_path(path)
     // `use std::fmt as f;` makes `f::format` an alias; a user function named
-    // `format` keeps precedence, matching the flattened module namespace.
+    // `format` anywhere in the package keeps precedence, matching the old
+    // flattened fallback for std aliases.
     if fmt_parts.len == 2 and fmt_parts[1] == "format"
         and bk_state::co_find_function(e, "format") == ""
     {
         return ca_emit_fmt_args(e, args)
+    }
+    // A path that names a declaration in this package's module tree.
+    let local_kind = bk_ns::ns_path_kind(e, e.current_module, path, 0)
+    let local_cname = bk_ns::ns_path_cname(e, e.current_module, path, 0)
+    if local_kind == "fn" and local_cname != "" {
+        ca_append_const_args(e, node, local_cname, args)
+        return local_cname
+            + "("
+            + str(args.len)
+            + ", "
+            + bk_expr::ex_value_array(e, args)
+            + ")"
+    }
+    if local_kind == "struct" and local_cname != "" {
+        let struct_index = bk_state::co_find_struct(e, local_cname)
+        if struct_index >= 0 {
+            return ca_emit_struct_call(e, node, struct_index)
+        }
+    }
+    if local_kind == "extern" and local_cname != "" {
+        let extern_index = bk_state::co_find_extern(e, local_cname)
+        if extern_index >= 0 {
+            return ca_emit_extern_call(e, node, extern_index)
+        }
     }
     if path == "std::fs::read" {
         if args.len != 1 {
@@ -1200,11 +1246,11 @@ pub fn ca_emit_path_call(e: mut Emitter, node: Node): string {
             }
             return "xr_map_from_entries(" + args[0] + ")"
         }
-        // Module-qualified declarations are flattened during collection, so
-        // `alias::fn` lowers to the same C function as `fn`.
+        // Fallback for a path whose head is an external package alias: the
+        // module resolver did not answer, so try the unique final segment.
         let fn_cname = bk_state::co_find_function(e, parts[1])
         if fn_cname != "" {
-            ca_append_const_args(e, node, parts[1], args)
+            ca_append_const_args(e, node, fn_cname, args)
             return fn_cname
                 + "("
                 + str(args.len)
@@ -1266,7 +1312,7 @@ pub fn ca_emit_path_call(e: mut Emitter, node: Node): string {
     let last = parts[parts.len - 1]
     let fn_cname = bk_state::co_find_function(e, last)
     if fn_cname != "" {
-        ca_append_const_args(e, node, last, args)
+        ca_append_const_args(e, node, fn_cname, args)
         return fn_cname
             + "("
             + str(args.len)

@@ -60,7 +60,7 @@ corpus is not compiled by the package, so they stay outside `src/`.
 | `xuloc/src/parser/*.xulo` | Procedural parser modules: `tokens`, `nodes`, `template`, `types`, `decls`, `stmts`, `exprs`, `primary`, `control`, `patterns` |
 | `xuloc/src/checker.xulo` | Name and type checking for the Gate 3 corpus: functions, bindings, control flow, lists, optionals, calls |
 | `xuloc/src/backend.xulo` | Codegen entry: `compile`, declaration collection, emitter state, naming and literal text |
-| `xuloc/src/backend/*.xulo` | Procedural emission modules: `bk_util`, `bk_state`, `bk_emit`, `bk_stmt`, `bk_expr`, `bk_call`, `bk_pattern` |
+| `xuloc/src/backend/*.xulo` | Procedural emission modules: `bk_util`, `bk_state`, `bk_ns` (module namespaces), `bk_emit`, `bk_stmt`, `bk_expr`, `bk_call`, `bk_pattern` |
 | `xuloc/runtime/runtime.c` | Unity entry point included by generated programs; assembles the `runtime_*.inc` modules in dependency order |
 | `xuloc/runtime/runtime_internal.h` | Shared `XVal`, container, and module-dependency definitions |
 | `xuloc/runtime/runtime_*.inc` | One module each: tagged values/containers, operators, rendering, method dispatch, `std::regex`, `std::fs`/`std::os`/`std::process`, `std::io`'s readers and terminal probes (its writes live with the renderer), `std::net`'s TCP sockets, `std::json`, `std::path`, `std::math`, `std::fmt`, `std::time`, `std::process::exec` |
@@ -350,9 +350,11 @@ so stage 2 does not inherit them silently.
     closure. Call-site
     type arguments are
     dropped because the backend is dynamically typed; a const argument is the
-    exception, since the lowered body uses its value. Module-qualified
-    names (`alias::fn`, `m::CONST`) resolve by their final segment because
-    declaration collection flattens modules.
+    exception, since the lowered body uses its value. Module namespaces are
+    preserved: every file-backed and inline module gets its own scope, C
+    symbols are mangled by module path, and `alias::fn` / `m::CONST` /
+    `super::…` / `self::…` paths resolve through the module tree, `use`
+    aliases, groups, globs, and `pub` re-exports (see `bk_ns.xulo`).
     `Trait::method(receiver, …)` lowers to runtime method dispatch on the
     receiver's struct type; `async` functions lower as ordinary functions and
     `await` is the identity. `u64` annotations and integer literals above
@@ -427,15 +429,16 @@ so stage 2 does not inherit them silently.
   synchronous model, and drops call-site type arguments, but macro calls still
   report `E0005`; attribute macros and macro expansion remain outside the
   bootstrap subset, and macro bodies are skipped as token trees.
-- The backend builds 61 of the 66 example files end to end. One of the
-  remaining failures is the expected `errors/type_error.xulo` reject; the
-  others need macros, `u64`, or the inline-module C compile path.
+- The backend builds every example file that stays inside the bootstrap
+  subset, including the file-backed, inline, nested, glob, and re-export
+  module cases. `errors/type_error.xulo` is the expected reject; the remaining
+  failures need macros or `u64`.
   `crates/xupm/tests/stage1_build.rs` pins the `lexical`,
   `propagation`, `arrays`, `std/time`, `std/io`, `std/io_extra`, `std/fmt`,
   `std/regex`, `std/net`, `std/net_shutdown`, `std/process`, `std/http`,
   `functions/closures_hof`, `functions/defer`, `types/aliases`,
-  `types/generics_impl`, `concurrency/spawn_lock`, and `ffi/ffi` cases against
-  their sidecars (stdout and stderr).
+  `types/generics_impl`, `concurrency/spawn_lock`, `ffi/ffi`, and every
+  `modules/` case against their sidecars (stdout and stderr).
 - The parser recovers only by stopping at the first error. That is enough for
   Gate 1/2 diagnostics; stage 1's checker work will need recovery.
 - The tests read `xuloc/src/*.xulo` relative to the repository root, like the
