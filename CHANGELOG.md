@@ -53,6 +53,10 @@ values, and is left to a future standard-library `std/ui` module.
 
 ### Added
 
+- Stage 1's checker now models tuples: `(T1,T2)` types, tuple literals,
+  positional reads (`p.0`), tuple member assignment, and tuple destructuring.
+  `examples/basics/bindings.xulo`, `examples/patterns/destructuring.xulo`, and
+  `examples/types/tuples.xulo` now report `no errors`.
 - Stage 1's checker now models untyped object literals with an anonymous
   shape, so `${user.name}` and `user.age` are checked instead of rejected;
   object destructuring binds fields from that shape, while tuple destructuring

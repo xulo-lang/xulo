@@ -346,6 +346,26 @@ fn stage1_check_accepts_object_literals() {
     );
 }
 
+/// Tuple literals, tuple type annotations, positional reads, and tuple
+/// destructuring are modeled by the checker.
+#[test]
+fn stage1_check_accepts_tuples() {
+    let root = repo_root();
+    for relative in [
+        "examples/basics/bindings.xulo",
+        "examples/patterns/destructuring.xulo",
+        "examples/types/tuples.xulo",
+    ] {
+        let out = run_stage1("check", &root.join(relative));
+        assert_success(&out, &format!("stage 1 check of {relative}"));
+        assert!(
+            stdout_of(&out).contains("no errors"),
+            "{relative} should check cleanly:\n{}",
+            stdout_of(&out)
+        );
+    }
+}
+
 /// T9: the stage 1 lexer/parser is measured against the example corpus, and
 /// the gaps are a shrinking baseline.
 ///
