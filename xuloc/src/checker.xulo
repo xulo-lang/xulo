@@ -24,10 +24,11 @@
 // closures (block and arrow bodies, captured locals) are checked, union types
 // `A|B` and `is` narrowing are modeled, a heterogeneous literal is
 // `List<unknown>`, an external `use path::*` keeps bare names opaque,
-// `await` yields its operand's task type, and `spawn`/`lock`/`shared` are
-// modeled; ranges, optional chaining, `try`, and null narrowing are checked.
-// Traits, generic impls, and the remaining pattern forms arrive in later WP6
-// slices.
+// `await` yields its operand's task type, `spawn`/`lock`/`shared` are
+// modeled, `extern "C"` declarations bind their `as` alias with `Ptr` as an
+// opaque address, and ranges, optional chaining, `try`, and null narrowing are
+// checked. Traits, generic impls, and the remaining pattern forms arrive in
+// later WP6 slices.
 //
 // Types are canonical strings (`number`, `string`, `bool`, `unit`, `unknown`,
 // `null`, `List<T>`, `T?`) so comparisons never depend on structural equality.
@@ -1140,6 +1141,11 @@ impl Checker {
         if name == "unknown" {
             return "unknown"
         }
+        if name == "Ptr" {
+            // An opaque FFI address. Equality and optional narrowing are the
+            // only operations the checker models.
+            return "Ptr"
+        }
         if name == "Map" or name == "Set" {
             let args = self.type_arguments(node)
             if name == "Map" {
@@ -1594,6 +1600,12 @@ impl Checker {
                 self.add_alias(item, module_id)
             } else if item.kind == "Impl" {
                 self.add_impl(item, module_id)
+            } else if item.kind == "Extern" {
+                for child in item.children {
+                    if child.kind == "ExternFn" {
+                        self.add_extern_function(child, module_id)
+                    }
+                }
             }
         }
     }
@@ -1925,6 +1937,12 @@ impl Checker {
                 self.add_alias(child, module_id)
             } else if child.kind == "Impl" {
                 self.add_impl(child, module_id)
+            } else if child.kind == "Extern" {
+                for entry in child.children {
+                    if entry.kind == "ExternFn" {
+                        self.add_extern_function(entry, module_id)
+                    }
+                }
             }
         }
     }
@@ -1946,6 +1964,31 @@ impl Checker {
         )
     }
 
+    /// `extern "C" { fn abs(x: i32): i32 as c_abs }`: the C symbol stays in
+    /// the declaration; the local binding is the `as` alias when present.
+    fn add_extern_function(mut self, item: Node, module_id: string) {
+        if self.error != "" {
+            return
+        }
+        let mut name = item.value
+        for child in item.children {
+            if child.kind == "ExternAlias" {
+                name = child.value
+            }
+        }
+        self.functions.push(
+            FuncSig(
+                name: name,
+                module_id: module_id,
+                is_pub: true,
+                min_params: 0,
+                params: [],
+                ret: "unit",
+                decl: item,
+            ),
+        )
+    }
+
     /// Resolve parameter and return types after `use` and struct names are
     /// known, so a signature may name an imported or forward-declared type.
     fn resolve_function_signatures(mut self) {
@@ -1957,6 +2000,10 @@ impl Checker {
             let item = sig.decl
             let mut params: List<string> = []
             let mut ret = "unknown"
+            if item.kind == "ExternFn" {
+                // A C function without a return annotation is `void`.
+                ret = "unit"
+            }
             let mut min_params = 0
             let mut seen_default = false
             for child in item.children {
@@ -1975,6 +2022,11 @@ impl Checker {
                         {
                             has_default = true
                         }
+                    }
+                    if item.kind == "ExternFn" and self.is_optional(ty) {
+                        // `free(p: Ptr?)`: an omitted optional FFI argument
+                        // binds `null`.
+                        has_default = true
                     }
                     if has_default and !seen_default {
                         min_params = params.len
@@ -2282,10 +2334,10 @@ impl Checker {
                 // resolved before checking, and the markers are not
                 // declarations.
             } else if item.kind == "Struct" or item.kind == "Enum"
-                or item.kind == "TypeAlias"
+                or item.kind == "TypeAlias" or item.kind == "Extern"
             {
-                // Fields, payloads, and alias targets are resolved before
-                // checking.
+                // Fields, payloads, alias targets, and FFI signatures are
+                // resolved before checking.
             } else if item.kind == "Impl" {
                 for child in item.children {
                     if child.kind == "Fn" {

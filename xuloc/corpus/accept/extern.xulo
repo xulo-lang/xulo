@@ -1,0 +1,18 @@
+// Gate 3: `extern "C"` declarations, aliases, and optional `Ptr` arguments.
+extern "C" {
+    fn abs(x: i32): i32 as c_abs
+    fn isalnum(c: i32): bool as c_is_alnum
+    fn malloc(size: usize): Ptr?
+    fn free(p: Ptr?)
+}
+
+fn main() {
+    print(c_abs(-42))
+    print(c_is_alnum(65), c_is_alnum(33))
+    let p = malloc(16)
+    if p != null {
+        print("allocated")
+        free(p)
+    }
+    free()
+}

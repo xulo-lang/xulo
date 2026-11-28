@@ -241,7 +241,8 @@ function types `fn(…)->…` and closures bind their parameters and returned
 type, union types `A | B` accept either member and `is` / `is not` narrow the
 tested binding in `if` branches, heterogeneous literals infer `unknown`, an
 external `use path::*` keeps bare names opaque, `await` yields its operand's
-task type and `spawn`/`lock`/`shared` are modeled, and
+task type, `spawn`/`lock`/`shared` are modeled, `extern "C"` declarations
+bind their `as` alias and an optional `Ptr?` argument may be omitted, and
 ranges, optional chaining, null narrowing, `try`, block
 expressions, and assignment expressions are checked. Traits, generic impls,
 generics, and std calls still report E0003 or leave
@@ -433,7 +434,7 @@ so stage 2 does not inherit them silently.
   `Result`/`Error`, `Map<K, V>`/`Set<T>`/`Array<T, N>` (with their member and
   static constructors), list/object spread, function types and closures,
   union types and `is` narrowing, external glob imports, `await` and
-  `spawn`/`lock`/`shared`,
+  `spawn`/`lock`/`shared`, `extern "C"` declarations and `Ptr`,
   ranges, optional chaining, and
   null narrowing; file-backed
   modules are opaque, and traits, generic impls, generics,

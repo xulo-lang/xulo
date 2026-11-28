@@ -267,6 +267,7 @@ fn stage1_check_agrees_with_stage0_on_the_corpus() {
         ("xuloc/corpus/accept/closures.xulo", true),
         ("xuloc/corpus/accept/unions.xulo", true),
         ("xuloc/corpus/accept/concurrency.xulo", true),
+        ("xuloc/corpus/accept/extern.xulo", true),
         ("xuloc/corpus/reject/undefined_name.xulo", false),
         ("xuloc/corpus/reject/type_mismatch.xulo", false),
         ("xuloc/corpus/reject/arity.xulo", false),
@@ -279,6 +280,7 @@ fn stage1_check_agrees_with_stage0_on_the_corpus() {
         ("xuloc/corpus/reject/list_element_mismatch.xulo", false),
         ("xuloc/corpus/reject/fn_value_arity.xulo", false),
         ("xuloc/corpus/reject/union_mismatch.xulo", false),
+        ("xuloc/corpus/reject/extern_argument.xulo", false),
     ];
     for (relative, accept) in cases {
         let file = root.join(relative);
@@ -498,6 +500,21 @@ fn stage1_check_accepts_concurrency() {
             stdout_of(&out)
         );
     }
+}
+
+/// `extern "C"` declarations, `as` aliases, `Ptr`, and omitted optional
+/// arguments are modeled.
+#[test]
+fn stage1_check_accepts_extern() {
+    let root = repo_root();
+    let relative = "examples/ffi/ffi.xulo";
+    let out = run_stage1("check", &root.join(relative));
+    assert_success(&out, &format!("stage 1 check of {relative}"));
+    assert!(
+        stdout_of(&out).contains("no errors"),
+        "{relative} should check cleanly:\n{}",
+        stdout_of(&out)
+    );
 }
 
 /// T9: the stage 1 lexer/parser is measured against the example corpus, and

@@ -56,6 +56,12 @@ values, and is left to a future standard-library `std/ui` module.
 - Stage 1's checker now honors default parameters: a call may omit trailing
   defaulted arguments, so `examples/functions/params.xulo` reports
   `no errors`.
+- Stage 1's checker now models `extern "C"` declarations: the `as` alias is
+  the local binding, a declaration without a return type is `unit`, `Ptr` is
+  an opaque address type, and an optional `Ptr?` parameter may be omitted.
+  `examples/ffi/ffi.xulo` reports `no errors`; the example check baseline
+  drops from 7 to 6. `xuloc/corpus/accept/extern.xulo` and
+  `reject/extern_argument.xulo` pin the behavior.
 - Stage 1's checker now models `async`/`await`, `spawn` (default, thread,
   process, and `on(target)`), `lock`, `shared`, and the service `reply`
   intrinsic. `examples/concurrency/async_tasks`, `spawn_lock`, and
