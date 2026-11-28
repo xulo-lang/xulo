@@ -1039,7 +1039,10 @@ pub fn index_text(ck: Checker, text: string): number {
 }
 
 pub fn find_anon(ck: Checker, ty: string): number {
-    if ty.len < 4 or ty.slice(0, 4) != "@obj" {
+    if ty.len < 4 {
+        return -1
+    }
+    if ty.slice(0, 4) != "@obj" {
         return -1
     }
     let mut i = 0

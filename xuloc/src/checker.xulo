@@ -48,7 +48,8 @@
 // generic enum instantiations (`Option<int>`) carry their payload types
 // through constructors and `match`, a generic struct instantiation
 // (`Palette<int>`) substitutes field types and keeps its methods reachable,
-// a `trait` declaration is
+// an `impl<T> Type<T>` method refines its `T` from the receiver type at the
+// call site, a `trait` declaration is
 // accepted with dispatch left opaque, macro definition bodies are skipped and
 // a macro invocation is `unknown` (a declared macro also makes unresolved
 // names opaque), names imported from an external module are opaque, a named
@@ -118,6 +119,9 @@ pub struct MethodSig {
     pub min_params: number,
     pub params: List<string>,
     pub ret: string,
+    pub type_params: List<string>,
+    pub param_templates: List<string>,
+    pub ret_template: string,
     pub decl: Node,
 }
 

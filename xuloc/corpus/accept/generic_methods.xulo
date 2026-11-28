@@ -1,0 +1,21 @@
+// Gate 3: `impl<T>` method signatures instantiate from the receiver type.
+struct Box<T> {
+    value: T
+}
+
+impl<T> Box<T> {
+    fn get(self): T {
+        self.value
+    }
+
+    fn replace(self, next: T): T {
+        next
+    }
+}
+
+fn main() {
+    let b: Box<int> = Box(value: 3)
+    let n: number = b.get()
+    let m: number = b.replace(5)
+    print(n, m)
+}

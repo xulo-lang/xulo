@@ -828,8 +828,23 @@ pub fn add_alias(ck: mut Checker, item: Node, module_id: string) {
     )
 }
 
+pub fn generic_param_names(item: Node): List<string> {
+    let mut out: List<string> = []
+    for child in item.children {
+        if child.kind == "GenericParams" {
+            for param in child.children {
+                if param.kind == "GenericParam" or param.kind == "ConstGenericParam" {
+                    out.push(param.value)
+                }
+            }
+        }
+    }
+    return out
+}
+
 pub fn add_impl(ck: mut Checker, item: Node, module_id: string) {
     note_generic_params(ck, item)
+    let impl_params = generic_param_names(item)
     let mut type_names: List<string> = []
     for child in item.children {
         if child.kind == "TypeName" {
@@ -845,6 +860,14 @@ pub fn add_impl(ck: mut Checker, item: Node, module_id: string) {
     let owner = type_names[0]
     for child in item.children {
         if child.kind == "Fn" {
+            note_generic_params(ck, child)
+            let mut method_params: List<string> = []
+            for p in impl_params {
+                method_params.push(p)
+            }
+            for p in generic_param_names(child) {
+                method_params.push(p)
+            }
             ck.methods.push(
                 MethodSig(
                     owner: owner,
@@ -854,6 +877,9 @@ pub fn add_impl(ck: mut Checker, item: Node, module_id: string) {
                     min_params: 0,
                     params: [],
                     ret: "unknown",
+                    type_params: method_params,
+                    param_templates: [],
+                    ret_template: "unknown",
                     decl: child,
                 ),
             )
@@ -874,7 +900,7 @@ pub fn resolve_method_signatures(ck: mut Checker) {
             ck.methods[i].owner = struct_canonical(ck, struct_index)
         } else {
             let enum_index = resolve_enum(ck, ck.methods[i].module_id, raw_owner, 0)
-            if enum_index >= 0 and !ck.enums[enum_index].is_generic {
+            if enum_index >= 0 {
                 ck.methods[i].owner = enum_canonical(ck, enum_index)
             } else {
                 ck.methods[i].owner = "unknown"
@@ -882,9 +908,12 @@ pub fn resolve_method_signatures(ck: mut Checker) {
             }
         }
         let item = ck.methods[i].decl
+        let type_params = ck.methods[i].type_params
         let mut names: List<string> = []
         let mut params: List<string> = []
+        let mut param_templates: List<string> = []
         let mut ret = "unknown"
+        let mut ret_template = "unknown"
         let mut min_params = 0
         let mut seen_default = false
         for child in item.children {
@@ -894,10 +923,12 @@ pub fn resolve_method_signatures(ck: mut Checker) {
                 }
                 names.push(child.value)
                 let mut ty = "unknown"
+                let mut template = "unknown"
                 let mut has_default = false
                 for part in child.children {
                     if ck_types::is_type_node(ck, part) {
                         ty = ck_types::type_of(ck, part)
+                        template = ck_types::template_type(ck, part, type_params)
                     } else if part.kind != "Pub" and part.kind != "Async"
                         and part.kind != "Mut" and part.kind != "Shared"
                     {
@@ -909,8 +940,10 @@ pub fn resolve_method_signatures(ck: mut Checker) {
                     seen_default = true
                 }
                 params.push(ty)
+                param_templates.push(template)
             } else if ck_types::is_type_node(ck, child) {
                 ret = ck_types::type_of(ck, child)
+                ret_template = ck_types::template_type(ck, child, type_params)
             }
         }
         if !seen_default {
@@ -921,6 +954,8 @@ pub fn resolve_method_signatures(ck: mut Checker) {
             ck.methods[i].min_params = min_params
             ck.methods[i].params = params
             ck.methods[i].ret = ret
+            ck.methods[i].param_templates = param_templates
+            ck.methods[i].ret_template = ret_template
         }
         i = i + 1
     }

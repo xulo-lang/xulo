@@ -26,6 +26,11 @@ values, and is left to a future standard-library `std/ui` module.
 
 ### Changed
 
+- Stage 1's parser keeps an `impl<T, …>` parameter list, and the checker now
+  instantiates `impl<T> Type<T>` methods: the receiver type supplies `T` for
+  the method's parameter and return templates (`Box<int>.get()` returns
+  `number`), and method-level parameters infer from the call arguments.
+  `xuloc/corpus/accept/generic_methods.xulo` pins the behavior.
 - Stage 1's checker now instantiates user-defined generic structs:
   `Palette<int>` substitutes field types (`items: List<int>`) on reads and in
   constructor arguments, constructor calls infer the struct's type parameters,

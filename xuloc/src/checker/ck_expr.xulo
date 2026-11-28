@@ -780,6 +780,34 @@ pub fn check_method_call(ck: mut Checker, node: Node, callee: Node): string {
         }
         p = p + 1
     }
+    if sig.type_params.len > 0 {
+        let mut values: List<string> = []
+        let mut v = 0
+        while v < sig.type_params.len {
+            values.push("unknown")
+            v = v + 1
+        }
+        if ck_types::is_generic(ck, recv, sig.owner) {
+            let recv_args = ck_types::generic_args(ck, recv, sig.owner)
+            let mut r = 0
+            while r < recv_args.len and r < values.len {
+                values[r] = recv_args[r]
+                r = r + 1
+            }
+        }
+        let mut q = 0
+        while q < arg_types.len and q < sig.param_templates.len {
+            ck_types::infer_template(
+                ck,
+                sig.param_templates[q],
+                arg_types[q],
+                sig.type_params,
+                values,
+            )
+            q = q + 1
+        }
+        return ck_types::apply_subst(sig.ret_template, sig.type_params, values)
+    }
     return sig.ret
 }
 

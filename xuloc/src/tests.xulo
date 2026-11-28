@@ -142,6 +142,7 @@ fn checker_accepts_the_bootstrap_corpus() {
         "xuloc/corpus/accept/imports.xulo",
         "xuloc/corpus/accept/generic_enums.xulo",
         "xuloc/corpus/accept/generic_structs.xulo",
+        "xuloc/corpus/accept/generic_methods.xulo",
     ]
     for path in files {
         match std::fs::read(path) {

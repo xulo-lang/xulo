@@ -567,11 +567,7 @@ pub fn dc_impl_decl(p: mut Parser): Node {
     let start = tokens::tk_advance(p)
     let mut n = nodes::nd_mk(p, "Impl", "", start)
     if tokens::tk_at(p, "<") {
-        tokens::tk_advance(p)
-        while p.error == "" and !tokens::tk_at(p, ">") and !tokens::tk_at_kind(p, "eof") {
-            tokens::tk_advance(p)
-        }
-        tokens::tk_expect(p, ">")
+        add(n, types::ty_generic_params(p))
     }
     let first = types::ty_type_expr(p)
     n.value = first.value

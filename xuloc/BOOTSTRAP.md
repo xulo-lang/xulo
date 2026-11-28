@@ -253,6 +253,8 @@ arguments from the actual parameters (and leaves unresolved ones `unknown`),
 a generic enum instantiation (`Option<int>`) substitutes its payload types in
 constructors and `match` bindings, a generic struct instantiation
 (`Palette<int>`) substitutes its field types and finds its inherent methods,
+an `impl<T> Type<T>` method refines its `T` from the receiver type at the call
+site,
 a
 `trait` declaration is accepted with
 dispatch left opaque, a macro definition body is skipped and a macro
