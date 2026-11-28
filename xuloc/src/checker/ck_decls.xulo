@@ -20,10 +20,13 @@ pub fn find_function_in(ck: Checker, module_id: string, name: string): number {
 }
 
 pub fn find_method(ck: Checker, owner: string, name: string): number {
+    let head = ck_types::type_head(owner)
     let mut i = ck.methods.len
     while i > 0 {
         i = i - 1
-        if ck.methods[i].owner == owner and ck.methods[i].name == name {
+        if ck.methods[i].name == name
+            and (ck.methods[i].owner == owner or ck.methods[i].owner == head)
+        {
             return i
         }
     }
@@ -79,9 +82,11 @@ pub fn struct_canonical(ck: Checker, index: number): string {
 }
 
 pub fn find_struct_by_type(ck: Checker, ty: string): number {
+    let head = ck_types::type_head(ty)
     let mut i = 0
     while i < ck.structs.len {
-        if struct_canonical(ck, i) == ty {
+        let canonical = struct_canonical(ck, i)
+        if canonical == ty or canonical == head {
             return i
         }
         i = i + 1
@@ -677,6 +682,7 @@ pub fn add_builtin_types(ck: mut Checker) {
                 name: "Error",
                 module_id: "",
                 is_pub: true,
+                generic_params: [],
                 field_nodes: [],
                 fields: [FieldSig(name: "message", ty: "string")],
             ),
@@ -713,6 +719,16 @@ pub fn add_struct(ck: mut Checker, item: Node, module_id: string) {
         return
     }
     note_generic_params(ck, item)
+    let mut generic_params: List<string> = []
+    for child in item.children {
+        if child.kind == "GenericParams" {
+            for param in child.children {
+                if param.kind == "GenericParam" {
+                    generic_params.push(param.value)
+                }
+            }
+        }
+    }
     let mut field_nodes: List<Node> = []
     for child in item.children {
         if child.kind == "Field" {
@@ -724,6 +740,7 @@ pub fn add_struct(ck: mut Checker, item: Node, module_id: string) {
             name: item.value,
             module_id: module_id,
             is_pub: ck_util::has_child_kind(item, "Pub"),
+            generic_params: generic_params,
             field_nodes: field_nodes,
             fields: [],
         ),

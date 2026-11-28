@@ -903,6 +903,20 @@ pub fn collection_method(ck: mut Checker, node: Node, recv: string, name: string
     return ""
 }
 
+fn struct_field_template(ck: mut Checker, index: number, field: number): string {
+    let sig = ck.structs[index]
+    if field < 0 or field >= sig.field_nodes.len {
+        return "unknown"
+    }
+    let node = sig.field_nodes[field]
+    for child in node.children {
+        if ck_types::is_type_node(ck, child) {
+            return ck_types::template_type(ck, child, sig.generic_params)
+        }
+    }
+    return "unknown"
+}
+
 pub fn check_struct_constructor(ck: mut Checker, node: Node, index: number,
                             labels: List<string>, types: List<string>): string {
     let sig = ck.structs[index]
@@ -912,6 +926,22 @@ pub fn check_struct_constructor(ck: mut Checker, node: Node, index: number,
         used.push(false)
         f = f + 1
     }
+    let params = sig.generic_params
+    let mut values: List<string> = []
+    let mut tp = 0
+    while tp < params.len {
+        values.push("unknown")
+        tp = tp + 1
+    }
+    let mut templates: List<string> = []
+    if params.len > 0 {
+        f = 0
+        while f < sig.fields.len {
+            templates.push(struct_field_template(ck, index, f))
+            f = f + 1
+        }
+    }
+    let mut targets: List<number> = []
     let mut seen_named = false
     let mut a = 0
     while a < types.len {
@@ -924,7 +954,7 @@ pub fn check_struct_constructor(ck: mut Checker, node: Node, index: number,
             }
             target = a
             if target >= sig.fields.len {
-                ck_diag::fail(ck, 
+                ck_diag::fail(ck,
                     node,
                     "E0205",
                     "too many fields in initializer of `" + sig.name + "`",
@@ -935,7 +965,7 @@ pub fn check_struct_constructor(ck: mut Checker, node: Node, index: number,
             seen_named = true
             target = struct_field_index(ck, index, label)
             if target < 0 {
-                ck_diag::fail(ck, 
+                ck_diag::fail(ck,
                     node,
                     "E0206",
                     "`" + sig.name + "` has no field `" + label + "`",
@@ -944,7 +974,7 @@ pub fn check_struct_constructor(ck: mut Checker, node: Node, index: number,
             }
         }
         if used[target] {
-            ck_diag::fail(ck, 
+            ck_diag::fail(ck,
                 node,
                 "E0208",
                 "field `" + sig.fields[target].name + "` is initialized twice",
@@ -952,12 +982,27 @@ pub fn check_struct_constructor(ck: mut Checker, node: Node, index: number,
             return ck_decls::struct_canonical(ck, index)
         }
         used[target] = true
-        if !ck_types::assignable(ck, sig.fields[target].ty, types[a]) {
-            ck_diag::fail(ck, 
+        targets.push(target)
+        if params.len > 0 and target < templates.len {
+            ck_types::infer_template(ck, templates[target], types[a], params, values)
+        }
+        a = a + 1
+    }
+    a = 0
+    while a < types.len {
+        let target = targets[a]
+        let mut expected = "unknown"
+        if params.len > 0 and target < templates.len {
+            expected = ck_types::apply_subst(templates[target], params, values)
+        } else {
+            expected = sig.fields[target].ty
+        }
+        if !ck_types::assignable(ck, expected, types[a]) {
+            ck_diag::fail(ck,
                 node,
                 "E0202",
                 "field `" + sig.fields[target].name + "` expects `"
-                    + sig.fields[target].ty + "`, found `" + types[a] + "`",
+                    + expected + "`, found `" + types[a] + "`",
             )
             return ck_decls::struct_canonical(ck, index)
         }
@@ -966,7 +1011,7 @@ pub fn check_struct_constructor(ck: mut Checker, node: Node, index: number,
     f = 0
     while f < used.len {
         if !used[f] and !ck_types::is_optional(ck, sig.fields[f].ty) {
-            ck_diag::fail(ck, 
+            ck_diag::fail(ck,
                 node,
                 "E0205",
                 "missing field `" + sig.fields[f].name + "` in initializer of `"
@@ -975,6 +1020,18 @@ pub fn check_struct_constructor(ck: mut Checker, node: Node, index: number,
             return ck_decls::struct_canonical(ck, index)
         }
         f = f + 1
+    }
+    if params.len > 0 {
+        let mut text = ck_decls::struct_canonical(ck, index) + "<"
+        let mut p = 0
+        while p < params.len {
+            if p > 0 {
+                text = text + ","
+            }
+            text = text + values[p]
+            p = p + 1
+        }
+        return text + ">"
     }
     return ck_decls::struct_canonical(ck, index)
 }
@@ -1159,6 +1216,22 @@ pub fn check_optional_member(ck: mut Checker, node: Node): string {
     return ty + "?"
 }
 
+fn struct_member_type(ck: mut Checker, struct_index: number, field: number,
+                      recv: string): string {
+    let sig = ck.structs[struct_index]
+    if sig.generic_params.len > 0 {
+        let canonical = ck_decls::struct_canonical(ck, struct_index)
+        if ck_types::is_generic(ck, recv, canonical) {
+            let args = ck_types::generic_args(ck, recv, canonical)
+            if args.len >= sig.generic_params.len {
+                let template = struct_field_template(ck, struct_index, field)
+                return ck_types::apply_subst(template, sig.generic_params, args)
+            }
+        }
+    }
+    return sig.fields[field].ty
+}
+
 pub fn member_type(ck: mut Checker, node: Node, recv: string): string {
     if recv == "unknown" {
         ck.complete = false
@@ -1207,7 +1280,7 @@ pub fn member_type(ck: mut Checker, node: Node, recv: string): string {
     if struct_index >= 0 {
         let field = struct_field_index(ck, struct_index, node.value)
         if field >= 0 {
-            return ck.structs[struct_index].fields[field].ty
+            return struct_member_type(ck, struct_index, field, recv)
         }
         if ck.has_macros {
             // A derive macro may add the field.

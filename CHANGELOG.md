@@ -26,6 +26,12 @@ values, and is left to a future standard-library `std/ui` module.
 
 ### Changed
 
+- Stage 1's checker now instantiates user-defined generic structs:
+  `Palette<int>` substitutes field types (`items: List<int>`) on reads and in
+  constructor arguments, constructor calls infer the struct's type parameters,
+  generic inherent methods remain callable, and assignability compares the
+  arguments structurally. `xuloc/corpus/accept/generic_structs.xulo` covers
+  construction, fields, and an `impl<T>` method.
 - Stage 1's checker now instantiates user-defined generic enums:
   `Option<int>` keeps its payload types through `Option::Some(1)`,
   `Option::None`, and `match` bindings; constructor arguments infer the enum's

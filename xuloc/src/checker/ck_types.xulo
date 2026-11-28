@@ -445,6 +445,25 @@ pub fn type_of(ck: mut Checker, node: Node): string {
     }
     let struct_index = ck_decls::resolve_struct(ck, ck.current_module, name, 0)
     if struct_index >= 0 {
+        let params = ck.structs[struct_index].generic_params
+        if params.len > 0 {
+            let args = type_arguments(ck, node)
+            if args.len < params.len {
+                // `Palette` without arguments is partially modeled.
+                ck.complete = false
+                return ck_decls::struct_canonical(ck, struct_index)
+            }
+            let mut text = ck_decls::struct_canonical(ck, struct_index) + "<"
+            let mut i = 0
+            while i < params.len {
+                if i > 0 {
+                    text = text + ","
+                }
+                text = text + args[i]
+                i = i + 1
+            }
+            return text + ">"
+        }
         return ck_decls::struct_canonical(ck, struct_index)
     }
     let enum_index = ck_decls::resolve_enum(ck, ck.current_module, name, 0)

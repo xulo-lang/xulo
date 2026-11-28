@@ -251,7 +251,9 @@ bind their `as` alias and an optional `Ptr?` argument may be omitted, generic
 type/const parameters are `unknown` in a body, while a generic call infers its
 arguments from the actual parameters (and leaves unresolved ones `unknown`),
 a generic enum instantiation (`Option<int>`) substitutes its payload types in
-constructors and `match` bindings, a
+constructors and `match` bindings, a generic struct instantiation
+(`Palette<int>`) substitutes its field types and finds its inherent methods,
+a
 `trait` declaration is accepted with
 dispatch left opaque, a macro definition body is skipped and a macro
 invocation is `unknown` (with a declared macro, unresolved names stay opaque),

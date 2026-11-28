@@ -1,0 +1,31 @@
+// Gate 3: generic struct construction, fields, and inherent methods.
+struct Box<T> {
+    value: T
+}
+
+struct Pair<A, B> {
+    left: A,
+    right: B
+}
+
+struct Palette<T> {
+    items: List<T>
+}
+
+impl<T> Palette<T> {
+    fn size(self): number {
+        self.items.len
+    }
+}
+
+fn main() {
+    let b: Box<int> = Box(value: 1)
+    let n: number = b.value
+    print(n)
+    let p: Pair<int, string> = Pair(left: 1, right: "x")
+    let s: string = p.right
+    print(p.left, s)
+    let palette: Palette<int> = Palette(items: [1, 2])
+    let xs: List<number> = palette.items
+    print(palette.size(), xs)
+}

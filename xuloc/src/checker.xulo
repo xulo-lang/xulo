@@ -46,7 +46,9 @@
 // opaque address, generic type/const parameters are `unknown` in a body but a
 // call infers them from its arguments (so `first([1, 2])` yields `number`),
 // generic enum instantiations (`Option<int>`) carry their payload types
-// through constructors and `match`, a `trait` declaration is
+// through constructors and `match`, a generic struct instantiation
+// (`Palette<int>`) substitutes field types and keeps its methods reachable,
+// a `trait` declaration is
 // accepted with dispatch left opaque, macro definition bodies are skipped and
 // a macro invocation is `unknown` (a declared macro also makes unresolved
 // names opaque), names imported from an external module are opaque, a named
@@ -134,6 +136,7 @@ pub struct StructSig {
     pub name: string,
     pub module_id: string,
     pub is_pub: bool,
+    pub generic_params: List<string>,
     /// Field type annotations, resolved after every struct name is known.
     pub field_nodes: List<Node>,
     pub fields: List<FieldSig>,
