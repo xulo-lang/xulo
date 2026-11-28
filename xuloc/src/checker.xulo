@@ -28,9 +28,11 @@
 // modeled, `extern "C"` declarations bind their `as` alias with `Ptr` as an
 // opaque address, generic type/const parameters are `unknown` (so `T`
 // signatures and bodies check as far as they can), a `trait` declaration is
-// accepted with dispatch left opaque, and ranges, optional chaining, `try`,
-// and null narrowing are checked. Generic instantiation and the remaining
-// pattern forms arrive in later WP6 slices.
+// accepted with dispatch left opaque, macro definition bodies are skipped and
+// a macro invocation is `unknown` (a declared macro also makes unresolved
+// names opaque), and ranges, optional chaining, `try`, and null narrowing are
+// checked. Generic instantiation and the remaining pattern forms arrive in
+// later WP6 slices.
 //
 // Types are canonical strings (`number`, `string`, `bool`, `unit`, `unknown`,
 // `null`, `List<T>`, `T?`) so comparisons never depend on structural equality.
@@ -185,6 +187,10 @@ pub struct Checker {
     /// item in the program. They are not concrete types, so `type_of` maps
     /// them to `unknown` instead of reporting E0101.
     generic_names: List<string>,
+    /// Whether the program declares a macro. A macro can generate items the
+    /// checker cannot see, so an unresolved name is "not modeled" rather than
+    /// a confirmed error.
+    has_macros: bool,
     complete: bool,
     error: string,
     code: string,
@@ -210,6 +216,7 @@ pub fn check(root: Node): CheckResult {
         next_scope: 1,
         current_return: "unit",
         generic_names: [],
+        has_macros: false,
         complete: true,
         error: "",
         code: "",
@@ -1051,6 +1058,21 @@ impl Checker {
         }
     }
 
+    /// `#[macro]`, `#[macro_attr]`, and `#[macro_derive(Target)]` mark a
+    /// module-level function as a compile-time macro definition.
+    fn is_macro_decl(self, item: Node): bool {
+        for child in item.children {
+            if child.kind == "Attribute" {
+                if child.value == "macro" or child.value == "macro_attr"
+                    or child.value == "macro_derive"
+                {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
     /// Bind a `const N: int` parameter so the body can use `N` as a value.
     fn bind_const_params(mut self, item: Node) {
         for child in item.children {
@@ -1252,6 +1274,11 @@ impl Checker {
         if self.has_external_glob(self.current_module) {
             // `use std::fmt::*`: a bare name may be declared by a module the
             // checker cannot read.
+            self.complete = false
+            return "unknown"
+        }
+        if self.has_macros {
+            // A macro may generate this type declaration.
             self.complete = false
             return "unknown"
         }
@@ -1633,7 +1660,11 @@ impl Checker {
     fn collect_functions(mut self, root: Node, module_id: string) {
         for item in root.children {
             if item.kind == "Fn" {
-                self.add_function(item, module_id)
+                if self.is_macro_decl(item) {
+                    self.has_macros = true
+                } else {
+                    self.add_function(item, module_id)
+                }
             } else if item.kind == "Const" {
                 self.add_const_sig(item, module_id)
             } else if item.kind == "Mod" {
@@ -1974,7 +2005,11 @@ impl Checker {
         }
         for child in item.children {
             if child.kind == "Fn" {
-                self.add_function(child, module_id)
+                if self.is_macro_decl(child) {
+                    self.has_macros = true
+                } else {
+                    self.add_function(child, module_id)
+                }
             } else if child.kind == "Const" {
                 self.add_const_sig(child, module_id)
             } else if child.kind == "Mod" {
@@ -2363,7 +2398,9 @@ impl Checker {
                 break
             }
             if item.kind == "Fn" {
-                self.check_function(item)
+                if !self.is_macro_decl(item) {
+                    self.check_function(item)
+                }
             } else if item.kind == "Let" {
                 self.check_let(item)
             } else if item.kind == "Const" {
@@ -3072,6 +3109,11 @@ impl Checker {
         if node.kind == "Lock" {
             return self.check_lock(node)
         }
+        if node.kind == "MacroCall" {
+            // The expansion is not in this buffer.
+            self.complete = false
+            return "unknown"
+        }
         if node.kind == "Assign" {
             if node.children.len < 2 {
                 return "unknown"
@@ -3515,6 +3557,11 @@ impl Checker {
         }
         if index < 0 {
             if callee.kind == "Path" {
+                self.complete = false
+                return "unknown"
+            }
+            if self.has_macros {
+                // A declared macro may generate this function.
                 self.complete = false
                 return "unknown"
             }
@@ -4067,6 +4114,11 @@ impl Checker {
             let field = self.struct_field_index(struct_index, node.value)
             if field >= 0 {
                 return self.structs[struct_index].fields[field].ty
+            }
+            if self.has_macros {
+                // A derive macro may add the field.
+                self.complete = false
+                return "unknown"
             }
             self.fail(
                 node,

@@ -244,7 +244,9 @@ external `use path::*` keeps bare names opaque, `await` yields its operand's
 task type, `spawn`/`lock`/`shared` are modeled, `extern "C"` declarations
 bind their `as` alias and an optional `Ptr?` argument may be omitted, generic
 type/const parameters are `unknown`, a `trait` declaration is accepted with
-dispatch left opaque, and
+dispatch left opaque, a macro definition body is skipped and a macro
+invocation is `unknown` (with a declared macro, unresolved names stay opaque),
+and
 ranges, optional chaining, null narrowing, `try`, block
 expressions, and assignment expressions are checked. Generic instantiation
 and std calls still report E0003 or leave
@@ -437,7 +439,7 @@ so stage 2 does not inherit them silently.
   static constructors), list/object spread, function types and closures,
   union types and `is` narrowing, external glob imports, `await` and
   `spawn`/`lock`/`shared`, `extern "C"` declarations and `Ptr`, generic
-  parameters, trait declarations,
+  parameters, trait declarations, macro declarations and invocations,
   ranges, optional chaining, and
   null narrowing; file-backed
   modules are opaque, and generic instantiation and the remaining pattern
