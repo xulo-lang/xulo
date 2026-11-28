@@ -331,6 +331,9 @@ pub fn dc_fn_decl(p: mut Parser): Node {
         tokens::tk_advance(p)
         add(n, types::ty_type_expr(p))
     }
+    if tokens::tk_at(p, "where") {
+        add(n, types::ty_where_clause(p))
+    }
     while p.error == "" and !tokens::tk_at(p, "{") and !tokens::tk_at_kind(p, "eof") {
         tokens::tk_advance(p)
     }

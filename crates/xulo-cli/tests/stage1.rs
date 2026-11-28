@@ -309,6 +309,7 @@ fn stage1_check_agrees_with_stage0_on_the_corpus() {
         ("xuloc/corpus/reject/trait_signature_mismatch.xulo", false),
         ("xuloc/corpus/reject/trait_missing_method.xulo", false),
         ("xuloc/corpus/reject/generic_bound_mismatch.xulo", false),
+        ("xuloc/corpus/reject/where_bound_mismatch.xulo", false),
     ];
     for (relative, accept) in cases {
         let file = root.join(relative);

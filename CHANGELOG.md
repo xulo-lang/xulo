@@ -26,11 +26,16 @@ values, and is left to a future standard-library `std/ui` module.
 
 ### Changed
 
+- Stage 1's parser keeps `where T: Trait, U: Other` clauses and the checker
+  records them alongside inline bounds, so a generic call validates every
+  declared bound (`E0801`). `reject/where_bound_mismatch.xulo` pins the
+  diagnostic; `xuloc/corpus/accept/generic_bounds.xulo` covers a `where`
+  bound end to end.
 - Stage 1's checker now checks inline generic trait bounds: after inferring a
   call's type arguments, each `T: Trait` is verified against the program's
   `impl Trait for Type` set (`E0801` when the type does not implement the
-  trait). Imported/opaque traits stay lenient; `where` clauses are not modeled
-  yet. `xuloc/corpus/accept/generic_bounds.xulo` and
+  trait). Imported/opaque traits stay lenient.
+  `xuloc/corpus/accept/generic_bounds.xulo` and
   `reject/generic_bound_mismatch.xulo` pin the behavior.
 - Stage 1's checker now validates trait implementation conformance: every
   `impl Trait for Type` must provide all of the trait's methods (`E0802`), and

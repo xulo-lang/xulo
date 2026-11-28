@@ -204,3 +204,36 @@ pub fn ty_generic_params(p: mut Parser): Node {
     n.end = tokens::tk_prev(p).end
     return n
 }
+
+/// `where T: Area + Named, U: Display`: a function's additional bounds.
+pub fn ty_where_clause(p: mut Parser): Node {
+    let start = tokens::tk_advance(p)
+    let mut n = node("Where", "", start.start, start.end, start.line, start.column)
+    while p.error == "" and !tokens::tk_at(p, "{") and !tokens::tk_at_kind(p, "eof") {
+        let clause_start = tokens::tk_current(p)
+        let mut clause = node(
+            "WhereBound",
+            "",
+            clause_start.start,
+            clause_start.end,
+            clause_start.line,
+            clause_start.column,
+        )
+        clause.value = tokens::tk_ident_name(p)
+        tokens::tk_expect(p, ":")
+        add(clause, ty_type_expr(p))
+        while tokens::tk_at(p, "+") {
+            tokens::tk_advance(p)
+            add(clause, ty_type_expr(p))
+        }
+        clause.end = tokens::tk_prev(p).end
+        add(n, clause)
+        if tokens::tk_at(p, ",") {
+            tokens::tk_advance(p)
+        } else {
+            break
+        }
+    }
+    n.end = tokens::tk_prev(p).end
+    return n
+}

@@ -15,7 +15,12 @@ fn measure<T: Area>(v: T): number {
     Area::area(v)
 }
 
+fn scaled<T>(v: T): number where T: Area {
+    Area::area(v) * 2
+}
+
 fn main() {
     let n: number = measure(Sq(side: 2))
-    print(n)
+    let m: number = scaled(Sq(side: 3))
+    print(n, m)
 }

@@ -52,8 +52,8 @@
 // call site, a trait's methods register as `Trait::method` signatures so
 // their calls get the declared return type, an `impl Trait for Type` also
 // keeps its methods on `Type` with `self` typed and must match the trait's
-// signatures and full method set, an inline `T: Trait` bound is checked
-// against the inferred type at a call site, and
+// signatures and full method set, inline `T: Trait` and `where T: Trait`
+// bounds are checked against the inferred type at a call site, and
 // a `trait` declaration is
 // accepted with dispatch left opaque, macro definition bodies are skipped and
 // a macro invocation is `unknown` (a declared macro also makes unresolved

@@ -869,6 +869,20 @@ pub fn generic_bounds(item: Node): List<TypeBound> {
                     }
                 }
             }
+        } else if child.kind == "Where" {
+            for clause in child.children {
+                if clause.kind == "WhereBound" {
+                    let mut traits: List<string> = []
+                    for bound in clause.children {
+                        if bound.kind == "TypeName" {
+                            traits.push(bound.value)
+                        }
+                    }
+                    if traits.len > 0 {
+                        out.push(TypeBound(name: clause.value, traits: traits))
+                    }
+                }
+            }
         }
     }
     return out
