@@ -18,10 +18,11 @@
 // checked. Tuple types, literals, positional reads, writes, and destructuring
 // are modeled as `(T1,T2)` strings, `type` aliases expand on demand, and an
 // inherent `impl Type` exposes methods with `self`, default parameters relax a
-// call's minimum arity, `Result`/`Error` are prelude types, and ranges,
-// optional chaining, `try`/`await`, and null narrowing are modeled. Traits,
-// generic impls, closures, and the remaining pattern forms arrive in later WP6
-// slices.
+// call's minimum arity, `Result`/`Error` are prelude types, `Map<K, V>`,
+// `Set<T>`, and `Array<T, N>` carry their element types through literals,
+// constructors, members, iteration, and spread, and ranges, optional chaining,
+// `try`/`await`, and null narrowing are modeled. Traits, generic impls,
+// closures, and the remaining pattern forms arrive in later WP6 slices.
 //
 // Types are canonical strings (`number`, `string`, `bool`, `unit`, `unknown`,
 // `null`, `List<T>`, `T?`) so comparisons never depend on structural equality.
@@ -1001,9 +1002,30 @@ impl Checker {
             or node.kind == "FnType"
     }
 
+    /// Collect the type arguments written on a `TypeName` or `TypeApply`.
+    fn type_arguments(mut self, node: Node): List<string> {
+        let mut out: List<string> = []
+        let mut i = 0
+        while i < node.children.len {
+            let child = node.children[i]
+            if child.kind == "TypeArgs" {
+                for arg in child.children {
+                    out.push(self.type_of(arg))
+                }
+            }
+            i = i + 1
+        }
+        return out
+    }
+
     fn type_of(mut self, node: Node): string {
         if self.error != "" {
             return "unknown"
+        }
+        if node.kind == "LiteralType" {
+            // `Array<int, 3>`: the length is a value, not a type, but the
+            // checker only needs the element type.
+            return self.literal_type(node.value)
         }
         if node.kind == "OptionalType" {
             if node.children.len == 0 {
@@ -1059,6 +1081,23 @@ impl Checker {
         }
         if name == "unknown" {
             return "unknown"
+        }
+        if name == "Map" or name == "Set" {
+            let args = self.type_arguments(node)
+            if name == "Map" {
+                if args.len < 2 {
+                    self.complete = false
+                    self.fail(node, "E0101", "`Map` needs key and value type arguments")
+                    return "unknown"
+                }
+                return "Map<" + args[0] + "," + args[1] + ">"
+            }
+            if args.len < 1 {
+                self.complete = false
+                self.fail(node, "E0101", "`Set` needs an element type argument")
+                return "unknown"
+            }
+            return "Set<" + args[0] + ">"
         }
         if name == "List" or name == "Array" {
             let mut i = 0
@@ -1142,6 +1181,76 @@ impl Checker {
         return ty.slice(5, ty.len - 1)
     }
 
+    fn is_generic(self, ty: string, head: string): bool {
+        if ty.len < head.len + 2 {
+            return false
+        }
+        return ty.slice(0, head.len + 1) == head + "<"
+            and ty.slice(ty.len - 1, ty.len) == ">"
+    }
+
+    /// Split the top-level arguments of `Head<A,B>`; nesting is respected.
+    fn generic_args(self, ty: string, head: string): List<string> {
+        let mut out: List<string> = []
+        if !self.is_generic(ty, head) {
+            return out
+        }
+        let inner = ty.slice(head.len + 1, ty.len - 1)
+        let chars = inner.split("")
+        let mut part = StringBuilder::new()
+        let mut depth = 0
+        let mut i = 0
+        while i < chars.len {
+            let c = chars[i]
+            if c == "," and depth == 0 {
+                out.push(part.build())
+                part = StringBuilder::new()
+            } else {
+                if c == "<" or c == "(" {
+                    depth = depth + 1
+                } else if c == ">" or c == ")" {
+                    depth = depth - 1
+                }
+                part.append(c)
+            }
+            i = i + 1
+        }
+        out.push(part.build())
+        return out
+    }
+
+    fn is_map(self, ty: string): bool {
+        return self.is_generic(ty, "Map")
+    }
+
+    fn map_key(self, ty: string): string {
+        let args = self.generic_args(ty, "Map")
+        if args.len < 2 {
+            return "unknown"
+        }
+        return args[0]
+    }
+
+    fn map_value(self, ty: string): string {
+        let args = self.generic_args(ty, "Map")
+        if args.len < 2 {
+            return "unknown"
+        }
+        return args[1]
+    }
+
+    fn is_set(self, ty: string): bool {
+        return self.is_generic(ty, "Set")
+    }
+
+    fn set_element(self, ty: string): string {
+        let args = self.generic_args(ty, "Set")
+        if args.len < 1 {
+            return "unknown"
+        }
+        return args[0]
+    }
+
     fn assignable(self, expected: string, actual: string): bool {
         if expected == actual {
             return true
@@ -1169,11 +1278,26 @@ impl Checker {
         if self.is_list(expected) and self.is_list(actual) {
             return self.assignable(self.list_element(expected), self.list_element(actual))
         }
+        if self.is_map(expected) and self.is_map(actual) {
+            return self.assignable(self.map_key(expected), self.map_key(actual))
+                and self.assignable(self.map_value(expected), self.map_value(actual))
+        }
+        if self.is_set(expected) and self.is_set(actual) {
+            return self.assignable(self.set_element(expected), self.set_element(actual))
+        }
         return false
     }
 
     fn unify(mut self, node: Node, left: string, right: string): string {
         if left == right {
+            return left
+        }
+        if left == "unknown" {
+            // An empty literal or an unmodeled operand should not erase the
+            // type the other side already established.
+            return right
+        }
+        if right == "unknown" {
             return left
         }
         if self.assignable(left, right) {
@@ -2058,6 +2182,11 @@ impl Checker {
             self.fail(item, "E0003", "a binding needs an initializer")
             return
         }
+        if ty != "" and self.is_map(ty) and initializer.kind == "Map" {
+            self.check_map_against(initializer, ty)
+            self.bind(item.value, ty)
+            return
+        }
         let actual = self.check_expr(initializer)
         if ty != "" and initializer.kind == "Map" {
             let struct_index = self.find_struct_by_type(ty)
@@ -2079,6 +2208,69 @@ impl Checker {
             )
         }
         self.bind(item.value, ty)
+    }
+
+    /// Check a `{ k: v }` initializer against an expected `Map<K, V>`.
+    fn check_map_against(mut self, node: Node, ty: string) {
+        let key_ty = self.map_key(ty)
+        let value_ty = self.map_value(ty)
+        for child in node.children {
+            if child.kind == "Entry" {
+                if child.children.len >= 2 {
+                    let key = self.check_expr(child.children[0])
+                    let value = self.check_expr(child.children[1])
+                    if self.error != "" {
+                        return
+                    }
+                    if !self.assignable(key_ty, key) {
+                        self.fail(
+                            child,
+                            "E0201",
+                            "map key expects `" + key_ty + "`, found `" + key + "`",
+                        )
+                        return
+                    }
+                    if !self.assignable(value_ty, value) {
+                        self.fail(
+                            child,
+                            "E0201",
+                            "map value expects `" + value_ty + "`, found `" + value + "`",
+                        )
+                        return
+                    }
+                } else if child.children.len == 1 {
+                    // An untyped object entry has an identifier key, which is
+                    // a string by construction.
+                    if !self.assignable(key_ty, "string") {
+                        self.fail(
+                            child,
+                            "E0201",
+                            "map key expects `" + key_ty + "`, found `string`",
+                        )
+                        return
+                    }
+                    let value = self.check_expr(child.children[0])
+                    if self.error != "" {
+                        return
+                    }
+                    if !self.assignable(value_ty, value) {
+                        self.fail(
+                            child,
+                            "E0201",
+                            "map value expects `" + value_ty + "`, found `" + value + "`",
+                        )
+                        return
+                    }
+                } else {
+                    self.complete = false
+                }
+            } else {
+                // A spread needs the operand's shape, which is not available
+                // when the expected type is a map.
+                self.check_expr(child)
+                self.complete = false
+            }
+        }
     }
 
     fn check_struct_object(mut self, node: Node, index: number) {
@@ -2363,7 +2555,9 @@ impl Checker {
             self.leave_scope()
             return
         }
-        if !self.is_list(iterable) and !self.is_range(iterable) {
+        if !self.is_list(iterable) and !self.is_range(iterable)
+            and !self.is_map(iterable) and !self.is_set(iterable)
+        {
             self.fail(
                 stmt.children[0],
                 "E0213",
@@ -2374,6 +2568,10 @@ impl Checker {
         self.enter_scope()
         if self.is_range(iterable) {
             self.bind(stmt.value, "number")
+        } else if self.is_map(iterable) {
+            self.bind(stmt.value, self.map_key(iterable))
+        } else if self.is_set(iterable) {
+            self.bind(stmt.value, self.set_element(iterable))
         } else {
             self.bind(stmt.value, self.list_element(iterable))
         }
@@ -2503,6 +2701,17 @@ impl Checker {
             }
             return text + ")"
         }
+        if node.kind == "Spread" {
+            if node.children.len == 0 {
+                self.complete = false
+                return "unknown"
+            }
+            let inner = self.check_expr(node.children[0])
+            if inner == "unknown" {
+                self.complete = false
+            }
+            return inner
+        }
         if node.kind == "Map" {
             return self.check_map_literal(node)
         }
@@ -2606,8 +2815,13 @@ impl Checker {
             if left == "string" and right == "string" {
                 return "string"
             }
-            if self.is_list(left) and left == right {
-                return left
+            if self.is_list(left) and self.is_list(right) {
+                let elem = self.unify(
+                    node,
+                    self.list_element(left),
+                    self.list_element(right),
+                )
+                return "List<" + elem + ">"
             }
             self.fail(
                 node,
@@ -2687,7 +2901,14 @@ impl Checker {
         if node.children.len == 0 {
             return "unit"
         }
-        let callee = node.children[0]
+        let mut callee = node.children[0]
+        let mut type_args: List<string> = []
+        if callee.kind == "TypeApply" and callee.children.len > 0 {
+            // `f<T>(…)` / `Array::filled<T, N>(…)`: the callee is the first
+            // child and the type arguments are a sibling.
+            type_args = self.type_arguments(callee)
+            callee = callee.children[0]
+        }
         if callee.kind == "Member" or callee.kind == "OptionalMember" {
             return self.check_method_call(node, callee)
         }
@@ -2740,6 +2961,46 @@ impl Checker {
         }
         if name == "panic" {
             return "unit"
+        }
+        if name == "Array::filled" {
+            let mut elem = "unknown"
+            if type_args.len > 0 {
+                elem = type_args[0]
+            } else if arg_types.len > 0 {
+                elem = arg_types[0]
+            }
+            if arg_types.len != 1 {
+                self.fail(node, "E0207", "`Array::filled` expects 1 argument")
+                return "List<" + elem + ">"
+            }
+            if !self.assignable(elem, arg_types[0]) {
+                self.fail(
+                    node,
+                    "E0202",
+                    "`Array::filled` expects a `" + elem + "` value, found `"
+                        + arg_types[0] + "`",
+                )
+            }
+            return "List<" + elem + ">"
+        }
+        if name == "Set::from_list" {
+            if arg_types.len != 1 {
+                self.fail(node, "E0207", "`Set::from_list` expects 1 argument")
+                return "Set<unknown>"
+            }
+            if self.is_list(arg_types[0]) {
+                return "Set<" + self.list_element(arg_types[0]) + ">"
+            }
+            if arg_types[0] == "unknown" {
+                self.complete = false
+                return "Set<unknown>"
+            }
+            self.fail(
+                node,
+                "E0202",
+                "`Set::from_list` expects a list, found `" + arg_types[0] + "`",
+            )
+            return "Set<unknown>"
         }
         let struct_index = self.resolve_struct(self.current_module, name, 0)
         if struct_index >= 0 {
@@ -2820,6 +3081,14 @@ impl Checker {
             self.complete = false
             return "unknown"
         }
+        if self.is_map(recv) or self.is_set(recv) or self.is_list(recv)
+            or recv == "string"
+        {
+            let builtin = self.collection_method(node, recv, callee.value, arg_types)
+            if builtin != "" {
+                return builtin
+            }
+        }
         let index = self.find_method(recv, callee.value)
         if index < 0 {
             // Built-in collection/string members are outside this pass.
@@ -2850,6 +3119,126 @@ impl Checker {
             p = p + 1
         }
         return sig.ret
+    }
+
+    fn expect_arity(mut self, node: Node, name: string, args: List<string>,
+                    count: number): bool {
+        if args.len == count {
+            return true
+        }
+        self.fail(
+            node,
+            "E0207",
+            "`" + name + "` expects " + str(count) + " arguments, found " + str(args.len),
+        )
+        return false
+    }
+
+    fn expect_arg(mut self, node: Node, name: string, index: number,
+                  expected: string, args: List<string>): bool {
+        if args.len <= index {
+            return false
+        }
+        if self.assignable(expected, args[index]) {
+            return true
+        }
+        self.fail(
+            node,
+            "E0202",
+            "argument " + str(index + 1) + " to `" + name + "` expects `"
+                + expected + "`, found `" + args[index] + "`",
+        )
+        return false
+    }
+
+    /// Built-in collection members (`Map`, `Set`, and `List`). Returns `""`
+    /// when the name is not a builtin, so user methods still resolve.
+    fn collection_method(mut self, node: Node, recv: string, name: string,
+                         args: List<string>): string {
+        if self.is_map(recv) {
+            let key = self.map_key(recv)
+            let value = self.map_value(recv)
+            if name == "get" or name == "remove" {
+                self.expect_arity(node, name, args, 1)
+                self.expect_arg(node, name, 0, key, args)
+                return value + "?"
+            }
+            if name == "set" {
+                if self.expect_arity(node, name, args, 2) {
+                    self.expect_arg(node, name, 0, key, args)
+                    self.expect_arg(node, name, 1, value, args)
+                }
+                return "unit"
+            }
+            if name == "has" or name == "contains" {
+                self.expect_arity(node, name, args, 1)
+                self.expect_arg(node, name, 0, key, args)
+                return "bool"
+            }
+            if name == "keys" {
+                return "List<" + key + ">"
+            }
+            if name == "values" {
+                return "List<" + value + ">"
+            }
+            if name == "entries" {
+                return "List<(" + key + "," + value + ")>"
+            }
+            if name == "len" or name == "size" {
+                return "number"
+            }
+            return ""
+        }
+        if self.is_set(recv) {
+            let elem = self.set_element(recv)
+            if name == "has" or name == "contains" or name == "insert"
+                or name == "remove"
+            {
+                self.expect_arity(node, name, args, 1)
+                self.expect_arg(node, name, 0, elem, args)
+                return "bool"
+            }
+            if name == "len" or name == "size" {
+                return "number"
+            }
+            return ""
+        }
+        if self.is_list(recv) {
+            let elem = self.list_element(recv)
+            if name == "len" or name == "size" {
+                return "number"
+            }
+            if name == "contains" {
+                self.expect_arity(node, name, args, 1)
+                self.expect_arg(node, name, 0, elem, args)
+                return "bool"
+            }
+            if name == "push" or name == "append" {
+                if self.expect_arity(node, name, args, 1) {
+                    self.expect_arg(node, name, 0, elem, args)
+                }
+                return "unit"
+            }
+            if name == "pop" or name == "first" or name == "last" {
+                return elem + "?"
+            }
+            return ""
+        }
+        if recv == "string" {
+            if name == "len" or name == "byte_len" or name == "size" {
+                return "number"
+            }
+            if name == "contains" {
+                if self.expect_arity(node, name, args, 1) {
+                    self.expect_arg(node, name, 0, "string", args)
+                }
+                return "bool"
+            }
+            if name == "split" {
+                return "List<string>"
+            }
+        }
+        return ""
     }
 
     fn check_struct_constructor(mut self, node: Node, index: number,
@@ -3065,6 +3454,11 @@ impl Checker {
                 return "number"
             }
         }
+        if node.value == "size" or node.value == "len" {
+            if self.is_map(recv) or self.is_set(recv) {
+                return "number"
+            }
+        }
         let position = self.index_text(node.value)
         if position >= 0 and self.is_tuple_type(recv) {
             let parts = self.tuple_types(recv)
@@ -3128,6 +3522,16 @@ impl Checker {
         if recv == "unknown" or index == "unknown" {
             self.complete = false
             return "unknown"
+        }
+        if self.is_map(recv) {
+            if !self.assignable(self.map_key(recv), index) {
+                self.fail(
+                    node.children[1],
+                    "E0201",
+                    "map key expects `" + self.map_key(recv) + "`, found `" + index + "`",
+                )
+            }
+            return self.map_value(recv)
         }
         if !self.is_number(index) {
             self.fail(
@@ -3509,21 +3913,77 @@ impl Checker {
 
     fn check_map_literal(mut self, node: Node): string {
         let mut fields: List<FieldSig> = []
+        // `Map<K, V>{ k: v }` uses expression keys (two children per entry);
+        // `{ k: v }` uses identifier keys (one child) and stays an anonymous
+        // object so member reads keep their shape.
+        let mut typed = node.children.len > 0
+        let mut key_ty = ""
+        let mut value_ty = ""
         for child in node.children {
             if child.kind == "Entry" {
-                if child.children.len > 0 {
+                if child.children.len >= 2 {
+                    let key = self.check_expr(child.children[0])
+                    let value = self.check_expr(child.children[1])
+                    if self.error != "" {
+                        return "unknown"
+                    }
+                    if key_ty == "" {
+                        key_ty = key
+                    } else {
+                        key_ty = self.unify(child, key_ty, key)
+                    }
+                    if value_ty == "" {
+                        value_ty = value
+                    } else {
+                        value_ty = self.unify(child, value_ty, value)
+                    }
+                } else if child.children.len == 1 {
+                    typed = false
                     let ty = self.check_expr(child.children[0])
                     fields.push(FieldSig(name: child.value, ty: ty))
                 } else {
+                    typed = false
                     fields.push(FieldSig(name: child.value, ty: "unknown"))
                 }
+            } else if child.kind == "Spread" {
+                typed = false
+                let inner = self.check_expr(child)
+                if self.error != "" {
+                    return "unknown"
+                }
+                let anon = self.find_anon(inner)
+                if anon >= 0 {
+                    for field in self.anon_objects[anon].fields {
+                        fields.push(field)
+                    }
+                } else if inner == "unknown" or self.is_map(inner) {
+                    // A spread of an opaque or map value needs the expected
+                    // type; the entries that follow are still checked.
+                    self.complete = false
+                } else {
+                    self.fail(
+                        child,
+                        "E0214",
+                        "`" + inner + "` cannot be spread into an object",
+                    )
+                    return "unknown"
+                }
             } else {
-                // Spread and other object forms need an expected type.
+                typed = false
                 self.complete = false
             }
         }
         if self.error != "" {
             return "unknown"
+        }
+        if typed {
+            if key_ty == "" {
+                key_ty = "unknown"
+            }
+            if value_ty == "" {
+                value_ty = "unknown"
+            }
+            return "Map<" + key_ty + "," + value_ty + ">"
         }
         let id = self.next_anon
         self.next_anon = self.next_anon + 1
@@ -3546,16 +4006,47 @@ impl Checker {
     }
 
     fn check_list(mut self, node: Node): string {
-        if node.children.len == 0 {
-            return "List<unknown>"
+        let mut elem = ""
+        for child in node.children {
+            if child.kind == "Spread" {
+                let inner = self.check_expr(child)
+                if self.error != "" {
+                    return "unknown"
+                }
+                if self.is_list(inner) {
+                    let item = self.list_element(inner)
+                    if elem == "" {
+                        elem = item
+                    } else {
+                        elem = self.unify(child, elem, item)
+                    }
+                } else if inner == "unknown" {
+                    self.complete = false
+                    if elem == "" {
+                        elem = "unknown"
+                    }
+                } else {
+                    self.fail(
+                        child,
+                        "E0214",
+                        "`" + inner + "` cannot be spread into a list",
+                    )
+                    return "unknown"
+                }
+            } else {
+                let ty = self.check_expr(child)
+                if self.error != "" {
+                    return "unknown"
+                }
+                if elem == "" {
+                    elem = ty
+                } else {
+                    elem = self.unify(child, elem, ty)
+                }
+            }
         }
-        let first = self.check_expr(node.children[0])
-        let mut elem = first
-        let mut i = 1
-        while i < node.children.len {
-            let ty = self.check_expr(node.children[i])
-            elem = self.unify(node.children[i], elem, ty)
-            i = i + 1
+        if elem == "" {
+            elem = "unknown"
         }
         return "List<" + elem + ">"
     }

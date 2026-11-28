@@ -235,9 +235,11 @@ type through literals, annotations, positional reads/writes, and destructuring,
 `type` aliases expand on demand, inherent `impl Type` methods bind `self` and
 are callable with arity/type checks, default parameters relax the minimum
 arity, optional struct fields may be omitted, `Result`/`Error` are prelude
-types, and ranges, optional chaining, null narrowing, `try`, `await`, block
+types, `Map<K, V>`, `Set<T>`, and `Array<T, N>` carry their element/key types
+through literals, constructors, members, indexing, iteration, and spread, and
+ranges, optional chaining, null narrowing, `try`, `await`, block
 expressions, and assignment expressions are checked. Traits, generic impls,
-generics, closures, spreads, and std calls still report E0003 or leave
+generics, closures, and std calls still report E0003 or leave
 `complete = false` ("not supported / not modeled") rather than being silently
 accepted. `build` runs the checker and stops only on a
 confirmed error, so the partial analysis never rejects a program that code
@@ -423,8 +425,10 @@ so stage 2 does not inherit them silently.
   simple struct construction/member reads, non-generic enum construction and
   `match`, template interpolation, untyped object literals, tuple
   expressions/types, simple `type` aliases, inherent methods, builtin
-  `Result`/`Error`, ranges, optional chaining, and null narrowing; file-backed
-  modules are opaque, and traits, generic impls, generics, closures, spreads,
+  `Result`/`Error`, `Map<K, V>`/`Set<T>`/`Array<T, N>` (with their member and
+  static constructors), list/object spread, ranges, optional chaining, and
+  null narrowing; file-backed
+  modules are opaque, and traits, generic impls, generics, closures,
   and the remaining pattern forms still report E0003.
   `build` runs `check` first and
   refuses only a *confirmed* error: `CheckResult.complete` is `false` whenever

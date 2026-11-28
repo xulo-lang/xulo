@@ -1,0 +1,39 @@
+// Gate 3: builtin collections — `Map`, `Set`, `Array`, and spread.
+fn sum(xs: Array<int, 3>): int {
+    let mut total = 0
+    for x in xs {
+        total = total + x
+    }
+    total
+}
+
+fn main() {
+    let mut counts: Map<string, int> = { apples: 2, pears: 1 }
+    counts.set("plums", 5)
+    print(counts.size, counts.get("apples"), counts.get("plums"))
+    print(counts.has("plums"), counts.remove("pears"), counts.size)
+    print(counts.keys())
+    for key in counts {
+        print(key)
+    }
+
+    let typed = Map<string, int>{ "a": 1, "b": 2 }
+    print(typed.get("b"))
+
+    let s = Set::from_list([1, 2, 2, 3])
+    print(s.size, s.has(2), s.has(9))
+    let mut words = Set::from_list(["a", "b"])
+    print(words.insert("c"), words.insert("a"), words.size)
+
+    let filled = Array::filled<int, 3>(7)
+    print(filled.len, filled[0], sum(filled))
+    let literal: Array<int, 3> = [1, 2, 3]
+    print(sum(literal))
+
+    let head = [1, 2]
+    let tail = [3, 4]
+    print([...head, ...tail, 9])
+    let base = { a: 1 }
+    let merged = { ...base, b: 2 }
+    print(merged.a, merged.b)
+}

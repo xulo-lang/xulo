@@ -56,6 +56,13 @@ values, and is left to a future standard-library `std/ui` module.
 - Stage 1's checker now honors default parameters: a call may omit trailing
   defaulted arguments, so `examples/functions/params.xulo` reports
   `no errors`.
+- Stage 1's checker now models `Map<K, V>`, `Set<T>`, and `Array<T, N>`:
+  annotation and literal types, the `Map`/`Set` members (`size`, `get`, `set`,
+  `has`, `remove`, `keys`, `values`, `entries`, `insert`), `Set::from_list` and
+  `Array::filled<T, N>`, key/value indexing, iteration over map keys and set
+  elements, and list/object spread. `examples/collections/*` and the new
+  `xuloc/corpus/accept/collections.xulo` pin the behavior end to end; the
+  example check baseline drops from 20 to 16 failures.
 - Stage 1's checker now treats `Result`/`Error` as prelude types and models
   `try`, `await`, block and assignment expressions, ranges (`a..<b`, `a..=b`),
   optional chaining (`?.`), and `!= null` / `== null` narrowing. `unknown`

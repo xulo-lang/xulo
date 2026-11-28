@@ -133,6 +133,7 @@ fn checker_accepts_the_bootstrap_corpus() {
         "xuloc/corpus/accept/aliases.xulo",
         "xuloc/corpus/accept/methods.xulo",
         "xuloc/corpus/accept/results.xulo",
+        "xuloc/corpus/accept/collections.xulo",
     ]
     for path in files {
         match std::fs::read(path) {
