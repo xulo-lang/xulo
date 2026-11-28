@@ -23,9 +23,11 @@
 // constructors, members, iteration, and spread, function types `fn(A)->R` and
 // closures (block and arrow bodies, captured locals) are checked, union types
 // `A|B` and `is` narrowing are modeled, a heterogeneous literal is
-// `List<unknown>`, an external `use path::*` keeps bare names opaque, and
-// ranges, optional chaining, `try`/`await`, and null narrowing are modeled. Traits,
-// generic impls, and the remaining pattern forms arrive in later WP6 slices.
+// `List<unknown>`, an external `use path::*` keeps bare names opaque,
+// `await` yields its operand's task type, and `spawn`/`lock`/`shared` are
+// modeled; ranges, optional chaining, `try`, and null narrowing are checked.
+// Traits, generic impls, and the remaining pattern forms arrive in later WP6
+// slices.
 //
 // Types are canonical strings (`number`, `string`, `bool`, `unit`, `unknown`,
 // `null`, `List<T>`, `T?`) so comparisons never depend on structural equality.
@@ -2708,6 +2710,14 @@ impl Checker {
             }
             return self.check_expr(expr)
         }
+        if stmt.kind == "Lock" {
+            self.check_lock(stmt)
+            return "unit"
+        }
+        if stmt.kind == "Spawn" {
+            self.check_spawn(stmt)
+            return "unit"
+        }
         if stmt.kind == "Return" {
             self.check_return(stmt)
             return "unit"
@@ -2946,6 +2956,12 @@ impl Checker {
         if node.kind == "Block" {
             return self.check_block(node, true)
         }
+        if node.kind == "Spawn" {
+            return self.check_spawn(node)
+        }
+        if node.kind == "Lock" {
+            return self.check_lock(node)
+        }
         if node.kind == "Assign" {
             if node.children.len < 2 {
                 return "unknown"
@@ -3052,6 +3068,53 @@ impl Checker {
         return "number"
     }
 
+    /// `spawn async { … }`, `spawn.thread`, `spawn.process { … }`, and
+    /// `spawn.on(target)`: a task's type is its body's type, while a service
+    /// declaration is an opaque handle.
+    fn check_spawn(mut self, node: Node): string {
+        let mut result = "unit"
+        let mut has_body = false
+        let mut service = false
+        for child in node.children {
+            if child.kind == "Block" {
+                result = self.check_block(child, true)
+                has_body = true
+            } else if self.is_type_node(child) {
+                service = true
+                self.type_of(child)
+                if self.error != "" {
+                    return "unknown"
+                }
+            } else {
+                self.check_expr(child)
+                if self.error != "" {
+                    return "unknown"
+                }
+            }
+        }
+        if service {
+            return "unknown"
+        }
+        if !has_body {
+            self.complete = false
+        }
+        return result
+    }
+
+    fn check_lock(mut self, node: Node): string {
+        if node.children.len == 0 {
+            return "unit"
+        }
+        self.check_expr(node.children[0])
+        if self.error != "" {
+            return "unknown"
+        }
+        if node.children.len > 1 {
+            return self.check_block(node.children[1], true)
+        }
+        return "unit"
+    }
+
     fn check_unary(mut self, node: Node): string {
         if node.children.len == 0 {
             return "unit"
@@ -3063,6 +3126,11 @@ impl Checker {
         if ty == "unknown" {
             self.complete = false
             return "unknown"
+        }
+        if node.value == "await" {
+            // `await task` yields the task's payload; the checker models a
+            // task as the type of its body.
+            return ty
         }
         if node.value == "!" {
             if ty != "bool" {
@@ -3272,6 +3340,10 @@ impl Checker {
             return "unit"
         }
         if name == "panic" {
+            return "unit"
+        }
+        if name == "reply" {
+            // A service handler's reply value is consumed by the runtime.
             return "unit"
         }
         if name == "Array::filled" {

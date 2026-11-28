@@ -1,0 +1,20 @@
+// Gate 3: `async` functions, `await`, `spawn`, `lock`, and `shared`.
+async fn slow(id: number): number {
+    id * 10
+}
+
+fn double(x: number): number {
+    x * 2
+}
+
+async fn main() {
+    print(await slow(1))
+    let job = spawn async { double(2) }
+    print(await job)
+    let thread_job = spawn.thread async { 3 }
+    print(await thread_job)
+    let counter = shared 0
+    lock counter {
+        print(counter)
+    }
+}

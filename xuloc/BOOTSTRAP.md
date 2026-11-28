@@ -240,8 +240,9 @@ through literals, constructors, members, indexing, iteration, and spread,
 function types `fn(…)->…` and closures bind their parameters and returned
 type, union types `A | B` accept either member and `is` / `is not` narrow the
 tested binding in `if` branches, heterogeneous literals infer `unknown`, an
-external `use path::*` keeps bare names opaque, and
-ranges, optional chaining, null narrowing, `try`, `await`, block
+external `use path::*` keeps bare names opaque, `await` yields its operand's
+task type and `spawn`/`lock`/`shared` are modeled, and
+ranges, optional chaining, null narrowing, `try`, block
 expressions, and assignment expressions are checked. Traits, generic impls,
 generics, and std calls still report E0003 or leave
 `complete = false` ("not supported / not modeled") rather than being silently
@@ -431,7 +432,8 @@ so stage 2 does not inherit them silently.
   expressions/types, simple `type` aliases, inherent methods, builtin
   `Result`/`Error`, `Map<K, V>`/`Set<T>`/`Array<T, N>` (with their member and
   static constructors), list/object spread, function types and closures,
-  union types and `is` narrowing, external glob imports,
+  union types and `is` narrowing, external glob imports, `await` and
+  `spawn`/`lock`/`shared`,
   ranges, optional chaining, and
   null narrowing; file-backed
   modules are opaque, and traits, generic impls, generics,

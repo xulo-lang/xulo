@@ -266,6 +266,7 @@ fn stage1_check_agrees_with_stage0_on_the_corpus() {
         ("xuloc/corpus/accept/collections.xulo", true),
         ("xuloc/corpus/accept/closures.xulo", true),
         ("xuloc/corpus/accept/unions.xulo", true),
+        ("xuloc/corpus/accept/concurrency.xulo", true),
         ("xuloc/corpus/reject/undefined_name.xulo", false),
         ("xuloc/corpus/reject/type_mismatch.xulo", false),
         ("xuloc/corpus/reject/arity.xulo", false),
@@ -469,6 +470,25 @@ fn stage1_check_accepts_unions_and_narrowing() {
         "examples/std/fmt.xulo",
         "examples/std/json.xulo",
         "examples/std/io_extra.xulo",
+    ] {
+        let out = run_stage1("check", &root.join(relative));
+        assert_success(&out, &format!("stage 1 check of {relative}"));
+        assert!(
+            stdout_of(&out).contains("no errors"),
+            "{relative} should check cleanly:\n{}",
+            stdout_of(&out)
+        );
+    }
+}
+
+/// `async` functions, `await`, `spawn`, `lock`, and `shared` are modeled.
+#[test]
+fn stage1_check_accepts_concurrency() {
+    let root = repo_root();
+    for relative in [
+        "examples/concurrency/async_tasks.xulo",
+        "examples/concurrency/spawn_lock.xulo",
+        "examples/testing/test_functions.xulo",
     ] {
         let out = run_stage1("check", &root.join(relative));
         assert_success(&out, &format!("stage 1 check of {relative}"));
