@@ -51,7 +51,8 @@
 // an `impl<T> Type<T>` method refines its `T` from the receiver type at the
 // call site, a trait's methods register as `Trait::method` signatures so
 // their calls get the declared return type, an `impl Trait for Type` also
-// keeps its methods on `Type` with `self` typed, and
+// keeps its methods on `Type` with `self` typed and must match the trait's
+// signatures and full method set, and
 // a `trait` declaration is
 // accepted with dispatch left opaque, macro definition bodies are skipped and
 // a macro invocation is `unknown` (a declared macro also makes unresolved
@@ -125,6 +126,15 @@ pub struct MethodSig {
     pub type_params: List<string>,
     pub param_templates: List<string>,
     pub ret_template: string,
+    /// The trait named by `impl Trait for Type`, or `""` for an inherent impl.
+    pub trait_name: string,
+    pub decl: Node,
+}
+
+pub struct TraitImplSig {
+    pub trait_name: string,
+    pub type_name: string,
+    pub module_id: string,
     pub decl: Node,
 }
 
@@ -214,6 +224,7 @@ pub struct ModuleSig {
 pub struct Checker {
     pub functions: List<FuncSig>,
     pub methods: List<MethodSig>,
+    pub trait_impls: List<TraitImplSig>,
     pub structs: List<StructSig>,
     pub enums: List<EnumSig>,
     pub aliases: List<AliasSig>,
@@ -250,6 +261,7 @@ pub fn check(root: Node): CheckResult {
     let mut checker = Checker(
         functions: [],
         methods: [],
+        trait_impls: [],
         structs: [],
         enums: [],
         aliases: [],
@@ -282,6 +294,7 @@ pub fn check(root: Node): CheckResult {
     ck_decls::resolve_enums(checker)
     ck_decls::resolve_function_signatures(checker)
     ck_decls::resolve_method_signatures(checker)
+    ck_decls::resolve_trait_impls(checker)
     if checker.error == "" {
         ck_stmt::check_program(checker, root)
     }

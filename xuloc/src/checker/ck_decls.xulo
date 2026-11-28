@@ -1,7 +1,7 @@
 // Checker: declaration collection and signature resolution.
 
 use ast::Node;
-use super::{Checker, FuncSig, MethodSig, ConstSig, FieldSig, StructSig, VariantSig, EnumSig, AliasSig};
+use super::{Checker, FuncSig, MethodSig, ConstSig, FieldSig, StructSig, VariantSig, EnumSig, AliasSig, TraitImplSig};
 use super::ck_util;
 use super::ck_diag;
 use super::ck_module;
@@ -899,10 +899,20 @@ pub fn add_impl(ck: mut Checker, item: Node, module_id: string) {
     // matching the backend's runtime dispatch. A plain `impl Type` uses the
     // single name.
     let mut owner = ""
+    let mut trait_name = ""
     if type_names.len == 1 {
         owner = type_names[0]
     } else if type_names.len == 2 {
+        trait_name = type_names[0]
         owner = type_names[1]
+        ck.trait_impls.push(
+            TraitImplSig(
+                trait_name: trait_name,
+                type_name: owner,
+                module_id: module_id,
+                decl: item,
+            ),
+        )
     } else {
         ck.complete = false
         return
@@ -929,6 +939,7 @@ pub fn add_impl(ck: mut Checker, item: Node, module_id: string) {
                     type_params: method_params,
                     param_templates: [],
                     ret_template: "unknown",
+                    trait_name: trait_name,
                     decl: child,
                 ),
             )
@@ -1005,6 +1016,116 @@ pub fn resolve_method_signatures(ck: mut Checker) {
             ck.methods[i].ret = ret
             ck.methods[i].param_templates = param_templates
             ck.methods[i].ret_template = ret_template
+        }
+        let trait_name = ck.methods[i].trait_name
+        let owner_name = ck.methods[i].owner
+        let method_module = ck.methods[i].module_id
+        if ck.error == "" and trait_name != "" {
+            // `impl Trait for Type`: the implementation signature must match
+            // the trait's declaration (receiver excluded).
+            let qualified = trait_name + "::" + item.value
+            let tindex = find_function_in(ck, method_module, qualified)
+            if tindex < 0 {
+                // An imported or otherwise opaque trait: not judgeable.
+                ck.complete = false
+            } else {
+                let tsig = ck.functions[tindex]
+                let expected_count = tsig.params.len - 1
+                if expected_count < 0 or params.len != expected_count {
+                    ck_diag::fail(ck,
+                        item,
+                        "E0803",
+                        "`impl " + trait_name + " for " + owner_name
+                            + "` method `" + item.value + "` has the wrong arity (trait declares "
+                            + str(expected_count) + ")",
+                    )
+                } else {
+                    let mut p = 0
+                    while p < params.len and ck.error == "" {
+                        if !mutually_assignable(ck, tsig.params[p + 1], params[p]) {
+                            ck_diag::fail(ck,
+                                item,
+                                "E0803",
+                                "`impl " + trait_name + " for " + owner_name
+                                    + "` method `" + item.value + "` parameter `" + names[p]
+                                    + "` must be `" + tsig.params[p + 1] + "`, found `"
+                                    + params[p] + "`",
+                            )
+                        }
+                        p = p + 1
+                    }
+                    if ck.error == "" and !mutually_assignable(ck, tsig.ret, ret) {
+                        ck_diag::fail(ck,
+                            item,
+                            "E0803",
+                            "`impl " + trait_name + " for " + owner_name
+                                + "` method `" + item.value + "` must return `"
+                                + tsig.ret + "`, found `" + ret + "`",
+                        )
+                    }
+                }
+            }
+        }
+        i = i + 1
+    }
+    ck.current_module = saved_module
+}
+
+fn mutually_assignable(ck: Checker, expected: string, actual: string): bool {
+    return ck_types::assignable(ck, expected, actual)
+        and ck_types::assignable(ck, actual, expected)
+}
+
+/// Every `impl Trait for Type` must provide all of the trait's methods.
+pub fn resolve_trait_impls(ck: mut Checker) {
+    let saved_module = ck.current_module
+    let mut i = 0
+    while i < ck.trait_impls.len and ck.error == "" {
+        ck.current_module = ck.trait_impls[i].module_id
+        let trait_name = ck.trait_impls[i].trait_name
+        let type_name = ck.trait_impls[i].type_name
+        let decl = ck.trait_impls[i].decl
+        let mut owner = "unknown"
+        let struct_index = resolve_struct(ck, ck.trait_impls[i].module_id, type_name, 0)
+        if struct_index >= 0 {
+            owner = struct_canonical(ck, struct_index)
+        } else {
+            let enum_index = resolve_enum(ck, ck.trait_impls[i].module_id, type_name, 0)
+            if enum_index >= 0 {
+                owner = enum_canonical(ck, enum_index)
+            } else {
+                ck.complete = false
+            }
+        }
+        if owner != "unknown" {
+            let prefix = trait_name + "::"
+            let mut found_trait = false
+            let mut f = 0
+            while f < ck.functions.len and ck.error == "" {
+                let fn_sig = ck.functions[f]
+                if fn_sig.module_id == ck.trait_impls[i].module_id {
+                    if fn_sig.name.len > prefix.len {
+                        if fn_sig.name.slice(0, prefix.len) == prefix {
+                            found_trait = true
+                            let method = fn_sig.name.slice(prefix.len, fn_sig.name.len)
+                            if find_method(ck, owner, method) < 0 {
+                                ck_diag::fail(ck,
+                                    decl,
+                                    "E0802",
+                                    "`impl " + trait_name + " for " + type_name
+                                        + "` does not implement all of `" + trait_name
+                                        + "`'s methods: missing " + method,
+                                )
+                            }
+                        }
+                    }
+                }
+                f = f + 1
+            }
+            if !found_trait {
+                // The trait is declared elsewhere; its method set is unknown.
+                ck.complete = false
+            }
         }
         i = i + 1
     }

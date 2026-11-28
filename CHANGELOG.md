@@ -26,6 +26,11 @@ values, and is left to a future standard-library `std/ui` module.
 
 ### Changed
 
+- Stage 1's checker now validates trait implementation conformance: every
+  `impl Trait for Type` must provide all of the trait's methods (`E0802`), and
+  each method's arity, parameter types, and return type must match the
+  declaration (`E0803`). `reject/trait_signature_mismatch.xulo` and
+  `reject/trait_missing_method.xulo` pin the diagnostics.
 - Stage 1's checker now registers `impl Trait for Type` methods on `Type`
   (matching the backend's dispatch), so their bodies are checked with `self`
   bound to the implementing type and `recv.method()` resolves alongside
