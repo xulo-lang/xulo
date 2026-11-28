@@ -142,7 +142,8 @@ listed in `xuloc/BOOTSTRAP.md`. Evidence:
 with stage 0 on accept/reject for the bootstrap subset. Diagnostics include
 file/line/column and exit nonzero on failure.
 
-**Current assessment:** **Reached (2026-11-16).** `xuloc/src/checker.xulo` checks
+**Current assessment:** **Reached (2026-11-16).** `xuloc/src/checker.xulo` and
+its `checker/` modules check
 the fixed corpus under `xuloc/corpus/` (functions, bindings, control flow,
 lists, strings, calls, return types, inline modules with `use` aliases,
 groups, globs, and `super` paths, simple structs with inherent methods,

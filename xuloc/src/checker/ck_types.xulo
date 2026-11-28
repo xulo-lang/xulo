@@ -1,0 +1,716 @@
+// Checker: canonical type strings, assignability, and unification.
+
+use ast::Node;
+use super::{Checker};
+use super::ck_diag;
+use super::ck_module;
+use super::ck_decls;
+
+/// Expand an alias to its target type, caching the result. `alias_depth`
+/// breaks `type A = B` / `type B = A` cycles.
+pub fn expand_alias(ck: mut Checker, index: number, depth: number): string {
+    if index < 0 or index >= ck.aliases.len {
+        return "unknown"
+    }
+    if ck.aliases[index].target != "" {
+        return ck.aliases[index].target
+    }
+    if ck.aliases[index].is_generic or depth > 32 or ck.alias_depth > 32 {
+        ck.complete = false
+        return "unknown"
+    }
+    ck.alias_depth = ck.alias_depth + 1
+    let saved_module = ck.current_module
+    ck.current_module = ck.aliases[index].module_id
+    let type_node = ck.aliases[index].type_node
+    let target = type_of(ck, type_node)
+    ck.current_module = saved_module
+    ck.alias_depth = ck.alias_depth - 1
+    if ck.error != "" {
+        return "unknown"
+    }
+    ck.aliases[index].target = target
+    return target
+}
+
+pub fn is_type_node(ck: Checker, node: Node): bool {
+    return node.kind == "TypeName"
+        or node.kind == "OptionalType"
+        or node.kind == "TupleType"
+        or node.kind == "FnType"
+        or node.kind == "|"
+        or node.kind == "&"
+}
+
+pub fn is_generic_name(ck: Checker, name: string): bool {
+    let mut i = 0
+    while i < ck.generic_names.len {
+        if ck.generic_names[i] == name {
+            return true
+        }
+        i = i + 1
+    }
+    return false
+}
+
+/// Collect the type arguments written on a `TypeName` or `TypeApply`.
+pub fn type_arguments(ck: mut Checker, node: Node): List<string> {
+    let mut out: List<string> = []
+    let mut i = 0
+    while i < node.children.len {
+        let child = node.children[i]
+        if child.kind == "TypeArgs" {
+            for arg in child.children {
+                out.push(type_of(ck, arg))
+            }
+        }
+        i = i + 1
+    }
+    return out
+}
+
+pub fn type_of(ck: mut Checker, node: Node): string {
+    if ck.error != "" {
+        return "unknown"
+    }
+    if node.kind == "LiteralType" {
+        // `Array<int, 3>`: the length is a value, not a type, but the
+        // checker only needs the element type.
+        return literal_type(ck, node.value)
+    }
+    if node.kind == "|" {
+        let mut out = ""
+        for child in node.children {
+            let member = type_of(ck, child)
+            if ck.error != "" {
+                return "unknown"
+            }
+            if member == "unknown" {
+                ck.complete = false
+            }
+            if out == "" {
+                out = member
+            } else if !union_has_member(ck, out, member) {
+                out = out + "|" + member
+            }
+        }
+        if out == "" {
+            return "unknown"
+        }
+        return out
+    }
+    if node.kind == "&" {
+        // Intersection values are outside the bootstrap subset; a
+        // declaration alone is accepted and does not constrain anything.
+        ck.complete = false
+        return "unknown"
+    }
+    if node.kind == "OptionalType" {
+        if node.children.len == 0 {
+            ck.complete = false
+            ck_diag::fail(ck, node, "E0101", "an optional type needs an inner type")
+            return "unknown"
+        }
+        return type_of(ck, node.children[0]) + "?"
+    }
+    if node.kind == "TupleType" {
+        let mut text = "("
+        let mut i = 0
+        while i < node.children.len {
+            if i > 0 {
+                text = text + ","
+            }
+            text = text + type_of(ck, node.children[i])
+            i = i + 1
+        }
+        return text + ")"
+    }
+    if node.kind == "FnType" {
+        if node.children.len == 0 {
+            return make_fn_type(ck, [], "unknown")
+        }
+        let ret = type_of(ck, node.children[node.children.len - 1])
+        let mut params: List<string> = []
+        let mut i = 0
+        while i < node.children.len - 1 {
+            params.push(type_of(ck, node.children[i]))
+            i = i + 1
+        }
+        return make_fn_type(ck, params, ret)
+    }
+    if node.kind != "TypeName" {
+        ck_diag::fail(ck, node, "E0003", "stage 1 checker does not support this type yet")
+        return "unknown"
+    }
+    let name = node.value
+    if name == "int"
+        or name == "i8"
+        or name == "i16"
+        or name == "i32"
+        or name == "i64"
+        or name == "u8"
+        or name == "u16"
+        or name == "u32"
+        or name == "u64"
+        or name == "usize"
+        or name == "isize"
+        or name == "float"
+        or name == "f32"
+        or name == "f64"
+        or name == "number"
+    {
+        return "number"
+    }
+    if name == "bool" {
+        return "bool"
+    }
+    if name == "string" {
+        return "string"
+    }
+    if name == "unit" {
+        return "unit"
+    }
+    if name == "unknown" {
+        return "unknown"
+    }
+    if is_generic_name(ck, name) {
+        // A type parameter has no concrete definition; its operations are
+        // checked as far as `unknown` allows.
+        return "unknown"
+    }
+    if name == "Ptr" {
+        // An opaque FFI address. Equality and optional narrowing are the
+        // only operations the checker models.
+        return "Ptr"
+    }
+    if name == "Map" or name == "Set" {
+        let args = type_arguments(ck, node)
+        if name == "Map" {
+            if args.len < 2 {
+                ck.complete = false
+                ck_diag::fail(ck, node, "E0101", "`Map` needs key and value type arguments")
+                return "unknown"
+            }
+            return "Map<" + args[0] + "," + args[1] + ">"
+        }
+        if args.len < 1 {
+            ck.complete = false
+            ck_diag::fail(ck, node, "E0101", "`Set` needs an element type argument")
+            return "unknown"
+        }
+        return "Set<" + args[0] + ">"
+    }
+    if name == "List" or name == "Array" {
+        let mut i = 0
+        while i < node.children.len {
+            let child = node.children[i]
+            if child.kind == "TypeArgs" and child.children.len > 0 {
+                let elem = type_of(ck, child.children[0])
+                return "List<" + elem + ">"
+            }
+            i = i + 1
+        }
+        ck.complete = false
+        ck_diag::fail(ck, node, "E0101", "`" + name + "` needs a type argument")
+        return "unknown"
+    }
+    let struct_index = ck_decls::resolve_struct(ck, ck.current_module, name, 0)
+    if struct_index >= 0 {
+        return ck_decls::struct_canonical(ck, struct_index)
+    }
+    let enum_index = ck_decls::resolve_enum(ck, ck.current_module, name, 0)
+    if enum_index >= 0 {
+        if ck.enums[enum_index].is_generic {
+            // A generic enum's payloads mention type parameters this pass
+            // does not instantiate.
+            ck.complete = false
+            return "unknown"
+        }
+        return ck_decls::enum_canonical(ck, enum_index)
+    }
+    let alias_index = ck_decls::resolve_alias(ck, ck.current_module, name, 0)
+    if alias_index >= 0 {
+        return expand_alias(ck, alias_index, 0)
+    }
+    if ck_module::is_foreign_type(ck, ck.current_module, name) {
+        // `use type opaque::Meters`: the name is a type by declaration,
+        // but its definition is outside this checker's input.
+        ck.complete = false
+        return "unknown"
+    }
+    if ck_module::has_external_glob(ck, ck.current_module) {
+        // `use std::fmt::*`: a bare name may be declared by a module the
+        // checker cannot read.
+        ck.complete = false
+        return "unknown"
+    }
+    if ck_module::is_external_import(ck, name) {
+        // `use std::http::{Request, Response}`: the name is a type from an
+        // external module.
+        ck.complete = false
+        return "unknown"
+    }
+    if ck.has_macros {
+        // A macro may generate this type declaration.
+        ck.complete = false
+        return "unknown"
+    }
+    // Enum, alias, generic parameter, and opaque imported types are not
+    // modeled here; the name is unknown to the checker, not necessarily
+    // wrong, so `build` must not reject on this alone.
+    ck.complete = false
+    ck_diag::fail(ck, node, "E0101", "unknown type `" + name + "`")
+    return "unknown"
+}
+
+pub fn is_number(ck: Checker, ty: string): bool {
+    return ty == "number"
+}
+
+pub fn is_optional(ck: Checker, ty: string): bool {
+    if ty.len == 0 {
+        return false
+    }
+    return ty.slice(ty.len - 1, ty.len) == "?"
+}
+
+pub fn optional_inner(ck: Checker, ty: string): string {
+    if !is_optional(ck, ty) {
+        return ty
+    }
+    return ty.slice(0, ty.len - 1)
+}
+
+pub fn is_range(ck: Checker, ty: string): bool {
+    return ty == "Range"
+}
+
+pub fn is_list(ck: Checker, ty: string): bool {
+    if ty.len < 6 {
+        return false
+    }
+    return ty.slice(0, 5) == "List<"
+}
+
+pub fn list_element(ck: Checker, ty: string): string {
+    if !is_list(ck, ty) {
+        return "unknown"
+    }
+    return ty.slice(5, ty.len - 1)
+}
+
+pub fn is_generic(ck: Checker, ty: string, head: string): bool {
+    if ty.len < head.len + 2 {
+        return false
+    }
+    return ty.slice(0, head.len + 1) == head + "<"
+        and ty.slice(ty.len - 1, ty.len) == ">"
+}
+
+/// Split the top-level arguments of `Head<A,B>`; nesting is respected.
+pub fn generic_args(ck: Checker, ty: string, head: string): List<string> {
+    let mut out: List<string> = []
+    if !is_generic(ck, ty, head) {
+        return out
+    }
+    let inner = ty.slice(head.len + 1, ty.len - 1)
+    let chars = inner.split("")
+    let mut part = StringBuilder::new()
+    let mut depth = 0
+    let mut i = 0
+    while i < chars.len {
+        let c = chars[i]
+        if c == "," and depth == 0 {
+            out.push(part.build())
+            part = StringBuilder::new()
+        } else {
+            if c == "<" or c == "(" {
+                depth = depth + 1
+            } else if c == ">" or c == ")" {
+                depth = depth - 1
+            }
+            part.append(c)
+        }
+        i = i + 1
+    }
+    out.push(part.build())
+    return out
+}
+
+pub fn is_map(ck: Checker, ty: string): bool {
+    return is_generic(ck, ty, "Map")
+}
+
+pub fn map_key(ck: Checker, ty: string): string {
+    let args = generic_args(ck, ty, "Map")
+    if args.len < 2 {
+        return "unknown"
+    }
+    return args[0]
+}
+
+pub fn map_value(ck: Checker, ty: string): string {
+    let args = generic_args(ck, ty, "Map")
+    if args.len < 2 {
+        return "unknown"
+    }
+    return args[1]
+}
+
+pub fn is_set(ck: Checker, ty: string): bool {
+    return is_generic(ck, ty, "Set")
+}
+
+pub fn set_element(ck: Checker, ty: string): string {
+    let args = generic_args(ck, ty, "Set")
+    if args.len < 1 {
+        return "unknown"
+    }
+    return args[0]
+}
+
+pub fn is_union(ck: Checker, ty: string): bool {
+    let chars = ty.split("")
+    let mut depth = 0
+    let mut i = 0
+    while i < chars.len {
+        let c = chars[i]
+        if c == "<" or c == "(" {
+            depth = depth + 1
+        } else if c == ">" or c == ")" {
+            depth = depth - 1
+        } else if c == "|" and depth == 0 {
+            return true
+        }
+        i = i + 1
+    }
+    return false
+}
+
+pub fn union_members(ck: Checker, ty: string): List<string> {
+    let mut out: List<string> = []
+    let chars = ty.split("")
+    let mut part = StringBuilder::new()
+    let mut depth = 0
+    let mut i = 0
+    while i < chars.len {
+        let c = chars[i]
+        if c == "|" and depth == 0 {
+            out.push(part.build())
+            part = StringBuilder::new()
+        } else {
+            if c == "<" or c == "(" {
+                depth = depth + 1
+            } else if c == ">" or c == ")" {
+                depth = depth - 1
+            }
+            part.append(c)
+        }
+        i = i + 1
+    }
+    out.push(part.build())
+    return out
+}
+
+pub fn union_has_member(ck: Checker, ty: string, member: string): bool {
+    for known in union_members(ck, ty) {
+        if known == member {
+            return true
+        }
+    }
+    return false
+}
+
+pub fn without_union_member(ck: Checker, ty: string, member: string): string {
+    if !is_union(ck, ty) {
+        return ty
+    }
+    let mut out = ""
+    for known in union_members(ck, ty) {
+        if known != member {
+            if out == "" {
+                out = known
+            } else {
+                out = out + "|" + known
+            }
+        }
+    }
+    if out == "" {
+        return "unknown"
+    }
+    return out
+}
+
+pub fn is_fn_type(ck: Checker, ty: string): bool {
+    if ty.len < 4 {
+        return false
+    }
+    return ty.slice(0, 3) == "fn("
+}
+
+pub fn make_fn_type(ck: Checker, params: List<string>, ret: string): string {
+    let mut out = "fn("
+    let mut i = 0
+    while i < params.len {
+        if i > 0 {
+            out = out + ","
+        }
+        out = out + params[i]
+        i = i + 1
+    }
+    return out + ")->" + ret
+}
+
+/// The index of the `)` closing the outer `fn(`, or `-1`.
+pub fn fn_close(ck: Checker, ty: string): number {
+    let chars = ty.split("")
+    let mut depth = 0
+    let mut i = 3
+    while i < chars.len {
+        let c = chars[i]
+        if c == ")" and depth == 0 {
+            return i
+        }
+        if c == "(" or c == "<" {
+            depth = depth + 1
+        } else if c == ")" or c == ">" {
+            depth = depth - 1
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+pub fn fn_params(ck: Checker, ty: string): List<string> {
+    let mut out: List<string> = []
+    if !is_fn_type(ck, ty) {
+        return out
+    }
+    let close = fn_close(ck, ty)
+    if close < 0 {
+        return out
+    }
+    let inner = ty.slice(3, close)
+    if inner == "" {
+        return out
+    }
+    let chars = inner.split("")
+    let mut part = StringBuilder::new()
+    let mut depth = 0
+    let mut i = 0
+    while i < chars.len {
+        let c = chars[i]
+        if c == "," and depth == 0 {
+            out.push(part.build())
+            part = StringBuilder::new()
+        } else {
+            if c == "(" or c == "<" {
+                depth = depth + 1
+            } else if c == ")" or c == ">" {
+                depth = depth - 1
+            }
+            part.append(c)
+        }
+        i = i + 1
+    }
+    out.push(part.build())
+    return out
+}
+
+pub fn fn_ret(ck: Checker, ty: string): string {
+    if !is_fn_type(ck, ty) {
+        return "unknown"
+    }
+    let close = fn_close(ck, ty)
+    if close < 0 or close + 3 > ty.len {
+        return "unknown"
+    }
+    return ty.slice(close + 3, ty.len)
+}
+
+pub fn assignable(ck: Checker, expected: string, actual: string): bool {
+    if expected == actual {
+        return true
+    }
+    if expected == "unknown" {
+        return true
+    }
+    if actual == "unknown" {
+        // An unmodeled expression is not evidence of a type error.
+        return true
+    }
+    if is_number(ck, expected) and is_number(ck, actual) {
+        return true
+    }
+    if is_union(ck, expected) {
+        for member in union_members(ck, expected) {
+            if assignable(ck, member, actual) {
+                return true
+            }
+        }
+        return false
+    }
+    if is_union(ck, actual) {
+        for member in union_members(ck, actual) {
+            if !assignable(ck, expected, member) {
+                return false
+            }
+        }
+        return true
+    }
+    if actual == "null" {
+        return is_optional(ck, expected)
+    }
+    if is_optional(ck, expected) {
+        // `T` fits `T?`: the optional adds null to the domain.
+        return assignable(ck, optional_inner(ck, expected), actual)
+    }
+    if is_optional(ck, actual) and is_optional(ck, expected) {
+        return assignable(ck, optional_inner(ck, expected), optional_inner(ck, actual))
+    }
+    if is_list(ck, expected) and is_list(ck, actual) {
+        return assignable(ck, list_element(ck, expected), list_element(ck, actual))
+    }
+    if is_fn_type(ck, expected) and is_fn_type(ck, actual) {
+        let expected_params = fn_params(ck, expected)
+        let actual_params = fn_params(ck, actual)
+        if expected_params.len != actual_params.len {
+            return false
+        }
+        let mut i = 0
+        while i < expected_params.len {
+            if !assignable(ck, expected_params[i], actual_params[i]) {
+                return false
+            }
+            i = i + 1
+        }
+        return assignable(ck, fn_ret(ck, expected), fn_ret(ck, actual))
+    }
+    if is_map(ck, expected) and is_map(ck, actual) {
+        return assignable(ck, map_key(ck, expected), map_key(ck, actual))
+            and assignable(ck, map_value(ck, expected), map_value(ck, actual))
+    }
+    if is_set(ck, expected) and is_set(ck, actual) {
+        return assignable(ck, set_element(ck, expected), set_element(ck, actual))
+    }
+    return false
+}
+
+pub fn unify(ck: mut Checker, node: Node, left: string, right: string): string {
+    if left == right {
+        return left
+    }
+    if left == "unknown" {
+        // An empty literal or an unmodeled operand should not erase the
+        // type the other side already established.
+        return right
+    }
+    if right == "unknown" {
+        return left
+    }
+    if assignable(ck, left, right) {
+        return left
+    }
+    if assignable(ck, right, left) {
+        return right
+    }
+    if is_optional(ck, left) and right == "null" {
+        return left
+    }
+    if is_optional(ck, right) and left == "null" {
+        return right
+    }
+    ck_diag::fail(ck, 
+        node,
+        "E0211",
+        "`" + left + "` and `" + right + "` have no common type",
+    )
+    return "unknown"
+}
+
+pub fn literal_type(ck: Checker, text: string): string {
+    if text == "true" or text == "false" {
+        return "bool"
+    }
+    if text == "null" {
+        return "null"
+    }
+    if text.len == 0 {
+        return "unknown"
+    }
+    let first = text.slice(0, 1)
+    if first == "\"" or first == "'" or first == "`" {
+        return "string"
+    }
+    return "number"
+}
+
+pub fn is_tuple_type(ck: Checker, ty: string): bool {
+    if ty.len < 2 {
+        return false
+    }
+    return ty.slice(0, 1) == "(" and ty.slice(ty.len - 1, ty.len) == ")"
+}
+
+/// Split `(A,B)` / `(A,(B,C))` into top-level element types.
+pub fn tuple_types(ck: Checker, ty: string): List<string> {
+    let mut out: List<string> = []
+    if !is_tuple_type(ck, ty) {
+        return out
+    }
+    let inner = ty.slice(1, ty.len - 1)
+    let chars = inner.split("")
+    let mut part = StringBuilder::new()
+    let mut depth = 0
+    let mut i = 0
+    while i < chars.len {
+        let c = chars[i]
+        if c == "," and depth == 0 {
+            out.push(part.build())
+            part = StringBuilder::new()
+        } else {
+            if c == "<" or c == "(" {
+                depth = depth + 1
+            } else if c == ">" or c == ")" {
+                depth = depth - 1
+            }
+            part.append(c)
+        }
+        i = i + 1
+    }
+    out.push(part.build())
+    return out
+}
+
+/// A member name that is a tuple position (`0`, `1`, …); `-1` otherwise.
+pub fn index_text(ck: Checker, text: string): number {
+    if text == "" {
+        return -1
+    }
+    let mut value = 0
+    let chars = text.split("")
+    let mut i = 0
+    while i < chars.len {
+        let code = chars[i].code_at(0)
+        if code < 48 or code > 57 {
+            return -1
+        }
+        value = value * 10 + (code - 48)
+        i = i + 1
+    }
+    return value
+}
+
+pub fn find_anon(ck: Checker, ty: string): number {
+    if ty.len < 4 or ty.slice(0, 4) != "@obj" {
+        return -1
+    }
+    let mut i = 0
+    while i < ck.anon_objects.len {
+        if "@obj" + str(ck.anon_objects[i].id) == ty {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}

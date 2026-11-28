@@ -1,0 +1,1116 @@
+// Checker: declaration collection and signature resolution.
+
+use ast::Node;
+use super::{Checker, FuncSig, MethodSig, ConstSig, FieldSig, StructSig, VariantSig, EnumSig, AliasSig};
+use super::ck_util;
+use super::ck_diag;
+use super::ck_module;
+use super::ck_types;
+
+pub fn find_function_in(ck: Checker, module_id: string, name: string): number {
+    let mut i = ck.functions.len
+    while i > 0 {
+        i = i - 1
+        let sig = ck.functions[i]
+        if sig.module_id == module_id and sig.name == name {
+            return i
+        }
+    }
+    return -1
+}
+
+pub fn find_method(ck: Checker, owner: string, name: string): number {
+    let mut i = ck.methods.len
+    while i > 0 {
+        i = i - 1
+        if ck.methods[i].owner == owner and ck.methods[i].name == name {
+            return i
+        }
+    }
+    return -1
+}
+
+pub fn find_method_in(ck: Checker, module_id: string, name: string): number {
+    let mut i = ck.methods.len
+    while i > 0 {
+        i = i - 1
+        if ck.methods[i].module_id == module_id and ck.methods[i].name == name {
+            return i
+        }
+    }
+    return -1
+}
+
+pub fn find_const_in(ck: Checker, module_id: string, name: string): number {
+    let index = ck_module::module_index(ck, module_id)
+    if index < 0 {
+        return -1
+    }
+    let mut i = 0
+    while i < ck.modules[index].consts.len {
+        if ck.modules[index].consts[i].name == name {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+pub fn find_struct_in(ck: Checker, module_id: string, name: string): number {
+    let mut i = ck.structs.len
+    while i > 0 {
+        i = i - 1
+        if ck.structs[i].module_id == module_id and ck.structs[i].name == name {
+            return i
+        }
+    }
+    return -1
+}
+
+pub fn struct_canonical(ck: Checker, index: number): string {
+    if index < 0 or index >= ck.structs.len {
+        return "unknown"
+    }
+    let sig = ck.structs[index]
+    if sig.module_id == "" {
+        return sig.name
+    }
+    return sig.module_id + "::" + sig.name
+}
+
+pub fn find_struct_by_type(ck: Checker, ty: string): number {
+    let mut i = 0
+    while i < ck.structs.len {
+        if struct_canonical(ck, i) == ty {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+/// Local view: this module's struct, then `use` imports and globs.
+pub fn resolve_struct(ck: Checker, module_id: string, name: string, depth: number): number {
+    if depth > 32 {
+        return -1
+    }
+    let own = find_struct_in(ck, module_id, name)
+    if own >= 0 {
+        return own
+    }
+    let scope = ck_module::module_index(ck, module_id)
+    if scope < 0 {
+        return -1
+    }
+    let mut i = ck.modules[scope].imports.len - 1
+    while i >= 0 {
+        let import = ck.modules[scope].imports[i]
+        if import.alias == name and import.member != "" {
+            let found = export_struct(ck, import.target, import.member, depth + 1)
+            if found != -1 {
+                return found
+            }
+        }
+        i = i - 1
+    }
+    i = ck.modules[scope].globs.len - 1
+    while i >= 0 {
+        let found = export_struct(ck, ck.modules[scope].globs[i].target, name, depth + 1)
+        if found != -1 {
+            return found
+        }
+        i = i - 1
+    }
+    if module_id != "" {
+        return find_struct_in(ck, "", name)
+    }
+    return -1
+}
+
+pub fn export_struct(ck: Checker, module_id: string, name: string, depth: number): number {
+    if depth > 32 {
+        return -1
+    }
+    let index = ck_module::module_index(ck, module_id)
+    if index < 0 or ck.modules[index].opaque {
+        return -1
+    }
+    let own = find_struct_in(ck, module_id, name)
+    if own >= 0 {
+        if ck.structs[own].is_pub {
+            return own
+        }
+        return -1
+    }
+    let mut i = ck.modules[index].imports.len - 1
+    while i >= 0 {
+        let import = ck.modules[index].imports[i]
+        if import.alias == name and import.is_pub and import.member != "" {
+            let found = export_struct(ck, import.target, import.member, depth + 1)
+            if found != -1 {
+                return found
+            }
+        }
+        i = i - 1
+    }
+    i = ck.modules[index].globs.len - 1
+    while i >= 0 {
+        if ck.modules[index].globs[i].is_pub {
+            let found = export_struct(ck, ck.modules[index].globs[i].target, name, depth + 1)
+            if found != -1 {
+                return found
+            }
+        }
+        i = i - 1
+    }
+    return -1
+}
+
+pub fn find_enum_in(ck: Checker, module_id: string, name: string): number {
+    let mut i = ck.enums.len
+    while i > 0 {
+        i = i - 1
+        if ck.enums[i].module_id == module_id and ck.enums[i].name == name {
+            return i
+        }
+    }
+    return -1
+}
+
+pub fn enum_canonical(ck: Checker, index: number): string {
+    if index < 0 or index >= ck.enums.len {
+        return "unknown"
+    }
+    let sig = ck.enums[index]
+    if sig.module_id == "" {
+        return sig.name
+    }
+    return sig.module_id + "::" + sig.name
+}
+
+pub fn find_enum_by_type(ck: Checker, ty: string): number {
+    let mut i = 0
+    while i < ck.enums.len {
+        if enum_canonical(ck, i) == ty {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+pub fn resolve_enum(ck: Checker, module_id: string, name: string, depth: number): number {
+    if depth > 32 {
+        return -1
+    }
+    let own = find_enum_in(ck, module_id, name)
+    if own >= 0 {
+        return own
+    }
+    let scope = ck_module::module_index(ck, module_id)
+    if scope < 0 {
+        return -1
+    }
+    let mut i = ck.modules[scope].imports.len - 1
+    while i >= 0 {
+        let import = ck.modules[scope].imports[i]
+        if import.alias == name and import.member != "" {
+            let found = export_enum(ck, import.target, import.member, depth + 1)
+            if found != -1 {
+                return found
+            }
+        }
+        i = i - 1
+    }
+    i = ck.modules[scope].globs.len - 1
+    while i >= 0 {
+        let found = export_enum(ck, ck.modules[scope].globs[i].target, name, depth + 1)
+        if found != -1 {
+            return found
+        }
+        i = i - 1
+    }
+    if module_id != "" {
+        return find_enum_in(ck, "", name)
+    }
+    return -1
+}
+
+pub fn export_enum(ck: Checker, module_id: string, name: string, depth: number): number {
+    if depth > 32 {
+        return -1
+    }
+    let index = ck_module::module_index(ck, module_id)
+    if index < 0 or ck.modules[index].opaque {
+        return -1
+    }
+    let own = find_enum_in(ck, module_id, name)
+    if own >= 0 {
+        if ck.enums[own].is_pub {
+            return own
+        }
+        return -1
+    }
+    let mut i = ck.modules[index].imports.len - 1
+    while i >= 0 {
+        let import = ck.modules[index].imports[i]
+        if import.alias == name and import.is_pub and import.member != "" {
+            let found = export_enum(ck, import.target, import.member, depth + 1)
+            if found != -1 {
+                return found
+            }
+        }
+        i = i - 1
+    }
+    i = ck.modules[index].globs.len - 1
+    while i >= 0 {
+        if ck.modules[index].globs[i].is_pub {
+            let found = export_enum(ck, ck.modules[index].globs[i].target, name, depth + 1)
+            if found != -1 {
+                return found
+            }
+        }
+        i = i - 1
+    }
+    return -1
+}
+
+pub fn find_alias_in(ck: Checker, module_id: string, name: string): number {
+    let mut i = ck.aliases.len
+    while i > 0 {
+        i = i - 1
+        if ck.aliases[i].module_id == module_id and ck.aliases[i].name == name {
+            return i
+        }
+    }
+    return -1
+}
+
+pub fn resolve_alias(ck: Checker, module_id: string, name: string, depth: number): number {
+    if depth > 32 {
+        return -1
+    }
+    let own = find_alias_in(ck, module_id, name)
+    if own >= 0 {
+        return own
+    }
+    let scope = ck_module::module_index(ck, module_id)
+    if scope < 0 {
+        return -1
+    }
+    let mut i = ck.modules[scope].imports.len - 1
+    while i >= 0 {
+        let import = ck.modules[scope].imports[i]
+        if import.alias == name and import.member != "" {
+            let found = export_alias(ck, import.target, import.member, depth + 1)
+            if found != -1 {
+                return found
+            }
+        }
+        i = i - 1
+    }
+    i = ck.modules[scope].globs.len - 1
+    while i >= 0 {
+        let found = export_alias(ck, ck.modules[scope].globs[i].target, name, depth + 1)
+        if found != -1 {
+            return found
+        }
+        i = i - 1
+    }
+    return -1
+}
+
+pub fn export_alias(ck: Checker, module_id: string, name: string, depth: number): number {
+    if depth > 32 {
+        return -1
+    }
+    let index = ck_module::module_index(ck, module_id)
+    if index < 0 or ck.modules[index].opaque {
+        return -1
+    }
+    let own = find_alias_in(ck, module_id, name)
+    if own >= 0 {
+        if ck.aliases[own].is_pub {
+            return own
+        }
+        return -1
+    }
+    let mut i = ck.modules[index].imports.len - 1
+    while i >= 0 {
+        let import = ck.modules[index].imports[i]
+        if import.alias == name and import.is_pub and import.member != "" {
+            let found = export_alias(ck, import.target, import.member, depth + 1)
+            if found != -1 {
+                return found
+            }
+        }
+        i = i - 1
+    }
+    i = ck.modules[index].globs.len - 1
+    while i >= 0 {
+        if ck.modules[index].globs[i].is_pub {
+            let found = export_alias(ck, ck.modules[index].globs[i].target, name, depth + 1)
+            if found != -1 {
+                return found
+            }
+        }
+        i = i - 1
+    }
+    return -1
+}
+
+pub fn variant_index(ck: Checker, enum_index: number, name: string): number {
+    if enum_index < 0 or enum_index >= ck.enums.len {
+        return -1
+    }
+    let mut i = 0
+    while i < ck.enums[enum_index].variants.len {
+        if ck.enums[enum_index].variants[i].name == name {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+/// `Enum::Variant` in the current module: returns the enum index, or -1.
+pub fn resolve_variant_path(ck: Checker, path: string): number {
+    let parts = ck_util::split_path(path)
+    if parts.len != 2 {
+        return -1
+    }
+    return resolve_enum(ck, ck.current_module, parts[0], 0)
+}
+
+/// Resolve a name used as a value in `module_id`: a module constant, or a
+/// constant reached through `use`. Returns `""` when it is not a value.
+pub fn value_type(ck: Checker, module_id: string, name: string, depth: number): string {
+    if depth > 32 {
+        return ""
+    }
+    let index = find_const_in(ck, module_id, name)
+    if index >= 0 {
+        let ty = ck.modules[ck_module::module_index(ck, module_id)].consts[index].ty
+        if ty != "" {
+            return ty
+        }
+        return "unknown"
+    }
+    let scope = ck_module::module_index(ck, module_id)
+    if scope < 0 {
+        return ""
+    }
+    let mut i = ck.modules[scope].imports.len - 1
+    while i >= 0 {
+        let import = ck.modules[scope].imports[i]
+        if import.alias == name and import.member != "" {
+            let ty = export_value_type(ck, import.target, import.member, depth + 1)
+            if ty != "" {
+                return ty
+            }
+        }
+        i = i - 1
+    }
+    i = ck.modules[scope].globs.len - 1
+    while i >= 0 {
+        let ty = export_value_type(ck, ck.modules[scope].globs[i].target, name, depth + 1)
+        if ty != "" {
+            return ty
+        }
+        i = i - 1
+    }
+    return ""
+}
+
+pub fn path_value_type(ck: Checker, path: string): string {
+    let parts = ck_util::split_path(path)
+    if parts.len < 2 {
+        return ""
+    }
+    let mut segments: List<string> = []
+    let mut i = 1
+    while i + 1 < parts.len {
+        segments.push(parts[i])
+        i = i + 1
+    }
+    let target = ck_module::resolve_module(ck, ck.current_module, parts[0], segments)
+    if target == "#" {
+        return ""
+    }
+    return export_value_type(ck, target, parts[parts.len - 1], 0)
+}
+
+pub fn export_value_type(ck: Checker, module_id: string, name: string, depth: number): string {
+    if depth > 32 {
+        return ""
+    }
+    let index = ck_module::module_index(ck, module_id)
+    if index < 0 {
+        return ""
+    }
+    if ck.modules[index].opaque {
+        return "unknown"
+    }
+    let c = find_const_in(ck, module_id, name)
+    if c >= 0 and ck.modules[index].consts[c].is_pub {
+        let ty = ck.modules[index].consts[c].ty
+        if ty != "" {
+            return ty
+        }
+        return "unknown"
+    }
+    let mut i = ck.modules[index].imports.len - 1
+    while i >= 0 {
+        let import = ck.modules[index].imports[i]
+        if import.alias == name and import.is_pub and import.member != "" {
+            let ty = export_value_type(ck, import.target, import.member, depth + 1)
+            if ty != "" {
+                return ty
+            }
+        }
+        i = i - 1
+    }
+    i = ck.modules[index].globs.len - 1
+    while i >= 0 {
+        if ck.modules[index].globs[i].is_pub {
+            let ty = export_value_type(ck, ck.modules[index].globs[i].target, name, depth + 1)
+            if ty != "" {
+                return ty
+            }
+        }
+        i = i - 1
+    }
+    return ""
+}
+
+/// Function index (`>= 0`), `-1` for a name this package does not define,
+/// or `-2` when the answer is hidden behind an opaque/file-backed module.
+pub fn resolve_function(ck: Checker, from: string, path: string, depth: number): number {
+    if depth > 32 {
+        return -1
+    }
+    let parts = ck_util::split_path(path)
+    if parts.len == 1 {
+        let own = find_function_in(ck, from, parts[0])
+        if own >= 0 {
+            return own
+        }
+        let scope = ck_module::module_index(ck, from)
+        if scope < 0 {
+            return -1
+        }
+        let mut i = ck.modules[scope].imports.len - 1
+        while i >= 0 {
+            let import = ck.modules[scope].imports[i]
+            if import.alias == parts[0] and import.member != "" {
+                let found = export_function(ck, import.target, import.member, depth + 1)
+                if found != -1 {
+                    return found
+                }
+            }
+            i = i - 1
+        }
+        i = ck.modules[scope].globs.len - 1
+        let mut external = false
+        while i >= 0 {
+            let target = ck.modules[scope].globs[i].target
+            if target == "#" {
+                external = true
+            } else {
+                let found = export_function(ck, target, parts[0], depth + 1)
+                if found != -1 {
+                    return found
+                }
+            }
+            i = i - 1
+        }
+        if external {
+            return -2
+        }
+        if ck_module::is_external_import(ck, parts[0]) {
+            return -2
+        }
+        return -1
+    }
+    let head = parts[0]
+    let mut segments: List<string> = []
+    let mut i = 1
+    while i + 1 < parts.len {
+        segments.push(parts[i])
+        i = i + 1
+    }
+    let target = ck_module::resolve_module(ck, from, head, segments)
+    if target == "#" {
+        return -2
+    }
+    return export_function(ck, target, parts[parts.len - 1], depth + 1)
+}
+
+pub fn export_function(ck: Checker, module_id: string, name: string, depth: number): number {
+    if depth > 32 {
+        return -1
+    }
+    let index = ck_module::module_index(ck, module_id)
+    if index < 0 {
+        return -1
+    }
+    if ck.modules[index].opaque {
+        return -2
+    }
+    let own = find_function_in(ck, module_id, name)
+    if own >= 0 {
+        if ck.functions[own].is_pub {
+            return own
+        }
+        return -1
+    }
+    let mut i = ck.modules[index].imports.len - 1
+    while i >= 0 {
+        let import = ck.modules[index].imports[i]
+        if import.alias == name and import.is_pub and import.member != "" {
+            let found = export_function(ck, import.target, import.member, depth + 1)
+            if found != -1 {
+                return found
+            }
+        }
+        i = i - 1
+    }
+    i = ck.modules[index].globs.len - 1
+    while i >= 0 {
+        if ck.modules[index].globs[i].is_pub {
+            let found = export_function(ck, ck.modules[index].globs[i].target, name, depth + 1)
+            if found != -1 {
+                return found
+            }
+        }
+        i = i - 1
+    }
+    return -1
+}
+
+pub fn note_generic_params(ck: mut Checker, item: Node) {
+    for child in item.children {
+        if child.kind == "GenericParams" {
+            for param in child.children {
+                if param.kind == "GenericParam" or param.kind == "ConstGenericParam" {
+                    ck.generic_names.push(param.value)
+                }
+            }
+        }
+    }
+}
+
+/// `#[macro]`, `#[macro_attr]`, and `#[macro_derive(Target)]` mark a
+/// module-level function as a compile-time macro definition.
+pub fn is_macro_decl(ck: Checker, item: Node): bool {
+    for child in item.children {
+        if child.kind == "Attribute" {
+            if child.value == "macro" or child.value == "macro_attr"
+                or child.value == "macro_derive"
+            {
+                return true
+            }
+        }
+    }
+    return false
+}
+
+pub fn collect_functions(ck: mut Checker, root: Node, module_id: string) {
+    for item in root.children {
+        if item.kind == "Fn" {
+            if is_macro_decl(ck, item) {
+                ck.has_macros = true
+            } else {
+                add_function(ck, item, module_id)
+            }
+        } else if item.kind == "Const" {
+            add_const_sig(ck, item, module_id)
+        } else if item.kind == "Mod" {
+            collect_mod(ck, item, module_id)
+        } else if item.kind == "Use" {
+            ck_module::add_module_use(ck, module_id, item)
+        } else if item.kind == "Struct" {
+            add_struct(ck, item, module_id)
+        } else if item.kind == "Enum" {
+            add_enum(ck, item, module_id)
+        } else if item.kind == "TypeAlias" {
+            add_alias(ck, item, module_id)
+        } else if item.kind == "Impl" {
+            add_impl(ck, item, module_id)
+        } else if item.kind == "Extern" {
+            for child in item.children {
+                if child.kind == "ExternFn" {
+                    add_extern_function(ck, child, module_id)
+                }
+            }
+        }
+    }
+}
+
+/// Register struct names before function signatures are read, so a
+/// parameter or return type may name a struct declared later.
+pub fn collect_structs(ck: mut Checker, items: Node, module_id: string) {
+    for item in items.children {
+        if item.kind == "Struct" {
+            add_struct(ck, item, module_id)
+        } else if item.kind == "Enum" {
+            add_enum(ck, item, module_id)
+        } else if item.kind == "TypeAlias" {
+            add_alias(ck, item, module_id)
+        } else if item.kind == "Mod" and ck_util::has_child_kind(item, "ModBody") {
+            let child = if module_id == "" {
+                item.value
+            } else {
+                module_id + "::" + item.value
+            }
+            collect_structs(ck, item, child)
+        }
+    }
+}
+
+/// Prelude `Result`/`Error`: a user declaration of the same name wins,
+/// because the builtins are added after the user's type names.
+pub fn add_builtin_types(ck: mut Checker) {
+    if find_struct_in(ck, "", "Error") < 0 {
+        ck.structs.push(
+            StructSig(
+                name: "Error",
+                module_id: "",
+                is_pub: true,
+                field_nodes: [],
+                fields: [FieldSig(name: "message", ty: "string")],
+            ),
+        )
+    }
+    if find_enum_in(ck, "", "Result") < 0 {
+        ck.enums.push(
+            EnumSig(
+                name: "Result",
+                module_id: "",
+                is_pub: true,
+                is_generic: false,
+                variant_nodes: [],
+                variants: [
+                    VariantSig(
+                        name: "Ok",
+                        field_nodes: [],
+                        fields: [FieldSig(name: "", ty: "unknown")],
+                    ),
+                    VariantSig(
+                        name: "Err",
+                        field_nodes: [],
+                        fields: [FieldSig(name: "", ty: "unknown")],
+                    ),
+                ],
+            ),
+        )
+    }
+}
+
+pub fn add_struct(ck: mut Checker, item: Node, module_id: string) {
+    if find_struct_in(ck, module_id, item.value) >= 0 {
+        return
+    }
+    note_generic_params(ck, item)
+    let mut field_nodes: List<Node> = []
+    for child in item.children {
+        if child.kind == "Field" {
+            field_nodes.push(child)
+        }
+    }
+    ck.structs.push(
+        StructSig(
+            name: item.value,
+            module_id: module_id,
+            is_pub: ck_util::has_child_kind(item, "Pub"),
+            field_nodes: field_nodes,
+            fields: [],
+        ),
+    )
+}
+
+/// Fill struct field types after every struct name exists, so a field may
+/// name a struct declared later in the same module.
+pub fn resolve_structs(ck: mut Checker) {
+    let saved_module = ck.current_module
+    let mut i = 0
+    while i < ck.structs.len and ck.error == "" {
+        ck.current_module = ck.structs[i].module_id
+        let mut f = 0
+        while f < ck.structs[i].field_nodes.len and ck.error == "" {
+            let field = ck.structs[i].field_nodes[f]
+            let mut ty = "unknown"
+            for child in field.children {
+                if ck_types::is_type_node(ck, child) {
+                    ty = ck_types::type_of(ck, child)
+                }
+            }
+            ck.structs[i].fields.push(FieldSig(name: field.value, ty: ty))
+            f = f + 1
+        }
+        i = i + 1
+    }
+    ck.current_module = saved_module
+}
+
+pub fn add_enum(ck: mut Checker, item: Node, module_id: string) {
+    if find_enum_in(ck, module_id, item.value) >= 0 {
+        return
+    }
+    note_generic_params(ck, item)
+    let mut variant_nodes: List<Node> = []
+    for child in item.children {
+        if child.kind == "Variant" {
+            variant_nodes.push(child)
+        }
+    }
+    ck.enums.push(
+        EnumSig(
+            name: item.value,
+            module_id: module_id,
+            is_pub: ck_util::has_child_kind(item, "Pub"),
+            is_generic: ck_util::has_child_kind(item, "GenericParams"),
+            variant_nodes: variant_nodes,
+            variants: [],
+        ),
+    )
+}
+
+pub fn add_alias(ck: mut Checker, item: Node, module_id: string) {
+    if find_alias_in(ck, module_id, item.value) >= 0 {
+        return
+    }
+    note_generic_params(ck, item)
+    let mut type_node = item
+    for child in item.children {
+        if ck_types::is_type_node(ck, child) {
+            type_node = child
+        }
+    }
+    ck.aliases.push(
+        AliasSig(
+            name: item.value,
+            module_id: module_id,
+            is_pub: ck_util::has_child_kind(item, "Pub"),
+            is_generic: ck_util::has_child_kind(item, "GenericParams"),
+            type_node: type_node,
+            target: "",
+        ),
+    )
+}
+
+pub fn add_impl(ck: mut Checker, item: Node, module_id: string) {
+    note_generic_params(ck, item)
+    let mut type_names: List<string> = []
+    for child in item.children {
+        if child.kind == "TypeName" {
+            type_names.push(child.value)
+        }
+    }
+    // `impl Trait for Type` has two type names; trait dispatch stays
+    // outside this pass.
+    if type_names.len != 1 {
+        ck.complete = false
+        return
+    }
+    let owner = type_names[0]
+    for child in item.children {
+        if child.kind == "Fn" {
+            ck.methods.push(
+                MethodSig(
+                    owner: owner,
+                    name: child.value,
+                    module_id: module_id,
+                    param_names: [],
+                    min_params: 0,
+                    params: [],
+                    ret: "unknown",
+                    decl: child,
+                ),
+            )
+        }
+    }
+}
+
+/// Resolve owner types and signatures once structs, enums, aliases, and
+/// imports are known.
+pub fn resolve_method_signatures(ck: mut Checker) {
+    let saved_module = ck.current_module
+    let mut i = 0
+    while i < ck.methods.len and ck.error == "" {
+        ck.current_module = ck.methods[i].module_id
+        let raw_owner = ck.methods[i].owner
+        let struct_index = resolve_struct(ck, ck.methods[i].module_id, raw_owner, 0)
+        if struct_index >= 0 {
+            ck.methods[i].owner = struct_canonical(ck, struct_index)
+        } else {
+            let enum_index = resolve_enum(ck, ck.methods[i].module_id, raw_owner, 0)
+            if enum_index >= 0 and !ck.enums[enum_index].is_generic {
+                ck.methods[i].owner = enum_canonical(ck, enum_index)
+            } else {
+                ck.methods[i].owner = "unknown"
+                ck.complete = false
+            }
+        }
+        let item = ck.methods[i].decl
+        let mut names: List<string> = []
+        let mut params: List<string> = []
+        let mut ret = "unknown"
+        let mut min_params = 0
+        let mut seen_default = false
+        for child in item.children {
+            if child.kind == "Param" {
+                if child.value == "self" or child.value == "mut self" {
+                    continue
+                }
+                names.push(child.value)
+                let mut ty = "unknown"
+                let mut has_default = false
+                for part in child.children {
+                    if ck_types::is_type_node(ck, part) {
+                        ty = ck_types::type_of(ck, part)
+                    } else if part.kind != "Pub" and part.kind != "Async"
+                        and part.kind != "Mut" and part.kind != "Shared"
+                    {
+                        has_default = true
+                    }
+                }
+                if has_default and !seen_default {
+                    min_params = params.len
+                    seen_default = true
+                }
+                params.push(ty)
+            } else if ck_types::is_type_node(ck, child) {
+                ret = ck_types::type_of(ck, child)
+            }
+        }
+        if !seen_default {
+            min_params = params.len
+        }
+        if ck.error == "" {
+            ck.methods[i].param_names = names
+            ck.methods[i].min_params = min_params
+            ck.methods[i].params = params
+            ck.methods[i].ret = ret
+        }
+        i = i + 1
+    }
+    ck.current_module = saved_module
+}
+
+/// Fill variant payload types after every type name exists. A generic
+/// enum's payloads may mention type parameters, so they stay unresolved
+/// (the enum itself is then treated as an opaque type).
+pub fn resolve_enums(ck: mut Checker) {
+    let saved_module = ck.current_module
+    let mut i = 0
+    while i < ck.enums.len and ck.error == "" {
+        ck.current_module = ck.enums[i].module_id
+        if !ck.enums[i].is_generic {
+            let mut v = 0
+            while v < ck.enums[i].variant_nodes.len and ck.error == "" {
+                let variant = ck.enums[i].variant_nodes[v]
+                let mut variant_fields: List<FieldSig> = []
+                let mut field_nodes: List<Node> = []
+                let mut payload_nodes: List<Node> = []
+                for child in variant.children {
+                    if child.kind == "Payload" {
+                        for part in child.children {
+                            if part.kind == "PayloadField" {
+                                let mut ty = "unknown"
+                                for type_child in part.children {
+                                    if ck_types::is_type_node(ck, type_child) {
+                                        ty = ck_types::type_of(ck, type_child)
+                                    }
+                                }
+                                variant_fields.push(FieldSig(name: part.value, ty: ty))
+                            } else if ck_types::is_type_node(ck, part) {
+                                payload_nodes.push(part)
+                            }
+                        }
+                    }
+                }
+                let mut p = 0
+                while p < payload_nodes.len {
+                    let ty = ck_types::type_of(ck, payload_nodes[p])
+                    variant_fields.push(FieldSig(name: "", ty: ty))
+                    p = p + 1
+                }
+                field_nodes.push(variant)
+                ck.enums[i].variants.push(
+                    VariantSig(
+                        name: variant.value,
+                        field_nodes: field_nodes,
+                        fields: variant_fields,
+                    ),
+                )
+                v = v + 1
+            }
+        }
+        i = i + 1
+    }
+    ck.current_module = saved_module
+}
+
+pub fn collect_mod(ck: mut Checker, item: Node, parent: string) {
+    let module_id = if parent == "" { item.value } else { parent + "::" + item.value }
+    let inline = ck_util::has_child_kind(item, "ModBody")
+    // A file-backed module lives in another file; the checker has no
+    // loader, so its interface is opaque rather than "not found".
+    ck_module::add_module(ck, module_id, parent, !inline)
+    if !inline {
+        return
+    }
+    for child in item.children {
+        if child.kind == "Fn" {
+            if is_macro_decl(ck, child) {
+                ck.has_macros = true
+            } else {
+                add_function(ck, child, module_id)
+            }
+        } else if child.kind == "Const" {
+            add_const_sig(ck, child, module_id)
+        } else if child.kind == "Mod" {
+            collect_mod(ck, child, module_id)
+        } else if child.kind == "Use" {
+            ck_module::add_module_use(ck, module_id, child)
+        } else if child.kind == "Struct" {
+            add_struct(ck, child, module_id)
+        } else if child.kind == "Enum" {
+            add_enum(ck, child, module_id)
+        } else if child.kind == "TypeAlias" {
+            add_alias(ck, child, module_id)
+        } else if child.kind == "Impl" {
+            add_impl(ck, child, module_id)
+        } else if child.kind == "Extern" {
+            for entry in child.children {
+                if entry.kind == "ExternFn" {
+                    add_extern_function(ck, entry, module_id)
+                }
+            }
+        }
+    }
+}
+
+pub fn add_function(ck: mut Checker, item: Node, module_id: string) {
+    if ck.error != "" {
+        return
+    }
+    note_generic_params(ck, item)
+    ck.functions.push(
+        FuncSig(
+            name: item.value,
+            module_id: module_id,
+            is_pub: ck_util::has_child_kind(item, "Pub"),
+            min_params: 0,
+            params: [],
+            ret: "unknown",
+            decl: item,
+        ),
+    )
+}
+
+/// `extern "C" { fn abs(x: i32): i32 as c_abs }`: the C symbol stays in
+/// the declaration; the local binding is the `as` alias when present.
+pub fn add_extern_function(ck: mut Checker, item: Node, module_id: string) {
+    if ck.error != "" {
+        return
+    }
+    let mut name = item.value
+    for child in item.children {
+        if child.kind == "ExternAlias" {
+            name = child.value
+        }
+    }
+    ck.functions.push(
+        FuncSig(
+            name: name,
+            module_id: module_id,
+            is_pub: true,
+            min_params: 0,
+            params: [],
+            ret: "unit",
+            decl: item,
+        ),
+    )
+}
+
+/// Resolve parameter and return types after `use` and struct names are
+/// known, so a signature may name an imported or forward-declared type.
+pub fn resolve_function_signatures(ck: mut Checker) {
+    let saved_module = ck.current_module
+    let mut i = 0
+    while i < ck.functions.len and ck.error == "" {
+        let sig = ck.functions[i]
+        ck.current_module = sig.module_id
+        let item = sig.decl
+        let mut params: List<string> = []
+        let mut ret = "unknown"
+        if item.kind == "ExternFn" {
+            // A C function without a return annotation is `void`.
+            ret = "unit"
+        }
+        let mut min_params = 0
+        let mut seen_default = false
+        for child in item.children {
+            if child.kind == "Param" {
+                if child.value == "self" or child.value == "mut self" {
+                    ck_diag::fail(ck, child, "E0003", "stage 1 checker does not support methods yet")
+                    break
+                }
+                let mut ty = "unknown"
+                let mut has_default = false
+                for part in child.children {
+                    if ck_types::is_type_node(ck, part) {
+                        ty = ck_types::type_of(ck, part)
+                    } else if part.kind != "Pub" and part.kind != "Async"
+                        and part.kind != "Mut" and part.kind != "Shared"
+                    {
+                        has_default = true
+                    }
+                }
+                if item.kind == "ExternFn" and ck_types::is_optional(ck, ty) {
+                    // `free(p: Ptr?)`: an omitted optional FFI argument
+                    // binds `null`.
+                    has_default = true
+                }
+                if has_default and !seen_default {
+                    min_params = params.len
+                    seen_default = true
+                }
+                params.push(ty)
+            } else if ck_types::is_type_node(ck, child) {
+                ret = ck_types::type_of(ck, child)
+            }
+        }
+        if !seen_default {
+            min_params = params.len
+        }
+        if ck.error == "" {
+            ck.functions[i].min_params = min_params
+            ck.functions[i].params = params
+            ck.functions[i].ret = ret
+        }
+        i = i + 1
+    }
+    ck.current_module = saved_module
+}
+
+pub fn add_const_sig(ck: mut Checker, item: Node, module_id: string) {
+    if ck.error != "" {
+        return
+    }
+    ck.current_module = module_id
+    let mut ty = ""
+    for child in item.children {
+        if ck_types::is_type_node(ck, child) {
+            ty = ck_types::type_of(ck, child)
+        }
+    }
+    let index = ck_module::module_index(ck, module_id)
+    if index >= 0 and ck.error == "" {
+        ck.modules[index].consts.push(
+            ConstSig(name: item.value, ty: ty, is_pub: ck_util::has_child_kind(item, "Pub")),
+        )
+    }
+}

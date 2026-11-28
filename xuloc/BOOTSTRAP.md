@@ -18,7 +18,8 @@ xuloc/
 │   ├── lexer.xulo     #   UTF-8 scanner
 │   ├── parser.xulo    #   parser state, `parse` entry, module list
 │   ├── parser/        #   procedural parser modules (see below)
-│   ├── checker.xulo   #   first semantic pass
+│   ├── checker.xulo   #   checker entry, result/signature records, state
+│   ├── checker/       #   procedural checker modules (see below)
 │   ├── backend.xulo   #   codegen entry, collection, emitter state
 │   ├── backend/       #   procedural emission modules (see below)
 │   └── tests.xulo     #   stage 1's own #[test] functions
@@ -58,7 +59,8 @@ corpus is not compiled by the package, so they stay outside `src/`.
 | `xuloc/src/lexer.xulo` | UTF-8 scalar scanner: tokens, spans, line/column, comments, literals, operators |
 | `xuloc/src/parser.xulo` | Parser state (`Parser`), `parse`/`parse_expression` entries, and the submodule tree |
 | `xuloc/src/parser/*.xulo` | Procedural parser modules: `tokens`, `nodes`, `template`, `types`, `decls`, `stmts`, `exprs`, `primary`, `control`, `patterns` |
-| `xuloc/src/checker.xulo` | Name and type checking for the Gate 3 corpus: functions, bindings, control flow, lists, optionals, calls |
+| `xuloc/src/checker.xulo` | Checker entry: `check`, `CheckResult`, signature/scope records, and the `Checker` state |
+| `xuloc/src/checker/*.xulo` | Procedural checker modules: `ck_util` (AST helpers), `ck_diag` (diagnostics/scopes), `ck_module` (module tree and `use`), `ck_types` (types/assignability/unification), `ck_decls` (declarations and signatures), `ck_stmt` (statements/blocks), `ck_expr` (expressions/calls/patterns) |
 | `xuloc/src/backend.xulo` | Codegen entry: `compile`, declaration collection, emitter state, naming and literal text |
 | `xuloc/src/backend/*.xulo` | Procedural emission modules: `bk_util`, `bk_state`, `bk_ns` (module namespaces), `bk_emit`, `bk_stmt`, `bk_expr`, `bk_call`, `bk_pattern` |
 | `xuloc/runtime/runtime.c` | Unity entry point included by generated programs; assembles the `runtime_*.inc` modules in dependency order |
@@ -319,12 +321,13 @@ so stage 2 does not inherit them silently.
     recursive calls such as `self.expr()` work on the caller's binding. This is
     the proven L9/L10 pattern stage 1 relies on.
 
-13. **Scope exit does not use `pop`/`truncate`.** `checker.xulo` records a
+13. **Scope exit does not use `pop`/`truncate`.** `checker/` records a
     scope id per binding and keeps an active-scope count. Leaving a block only
     decrements the count, so old bindings become invisible without list
     removal. This keeps the checker inside the AOT-lowered list operations.
 
-14. **Types are canonical strings.** `checker.xulo` represents `number`,
+14. **Types are canonical strings.** `checker/ck_types.xulo` represents
+    `number`,
     `string`, `bool`, `unit`, `unknown`, `null`, `List<T>`, and `T?` as strings.
     Type comparison is therefore string equality, avoiding the structural
     equality gap for tuples/lists and keeping the checker small.

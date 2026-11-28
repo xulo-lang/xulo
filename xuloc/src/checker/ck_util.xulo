@@ -1,0 +1,32 @@
+// Checker: small AST helpers shared by every checker module.
+
+use ast::Node;
+
+pub fn split_path(path: string): List<string> {
+let mut parts: List<string> = []
+let mut part = StringBuilder::new()
+let chars = path.split("")
+let mut i = 0
+while i < chars.len {
+    let c = chars[i]
+    if c == ":" and i + 1 < chars.len and chars[i + 1] == ":" {
+        parts.push(part.build())
+        part = StringBuilder::new()
+        i = i + 2
+    } else {
+        part.append(c)
+        i = i + 1
+    }
+}
+parts.push(part.build())
+return parts
+}
+
+pub fn has_child_kind(node: Node, kind: string): bool {
+for child in node.children {
+    if child.kind == kind {
+        return true
+    }
+}
+return false
+}

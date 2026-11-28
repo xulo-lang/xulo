@@ -26,6 +26,13 @@ values, and is left to a future standard-library `std/ui` module.
 
 ### Changed
 
+- The stage 1 checker is now modular: `xuloc/src/checker.xulo` keeps the result
+  and signature records, the `Checker` state, and the `check` entry point,
+  while the passes live in `xuloc/src/checker/` (`ck_util`, `ck_diag`,
+  `ck_module`, `ck_types`, `ck_decls`, `ck_stmt`, `ck_expr`). Each pass is a
+  free function taking the checker state, matching the backend's procedural
+  split, because Xulo methods cannot cross module boundaries. Behavior is
+  unchanged; the self-parse test now walks `xuloc/src/` recursively.
 - The conformance triage now classifies the 13 examples that write statements at
   module scope as **fragments that assume a function body**, not as a
   module-scope-statement parser gap: `spec/grammar.md` defines `Program` as

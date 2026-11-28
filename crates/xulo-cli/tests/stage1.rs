@@ -142,17 +142,32 @@ fn stage1_parse_keeps_module_and_use_structure() {
 
 /// T5b: every stage 1 source file parses with itself.
 ///
+/// Every `.xulo` file under `dir`, recursively, sorted.
+fn collect_xulo_sources(dir: &Path, out: &mut Vec<PathBuf>) {
+    let mut entries: Vec<PathBuf> = std::fs::read_dir(dir)
+        .expect("source directory should exist")
+        .map(|entry| entry.expect("source entry should be readable").path())
+        .collect();
+    entries.sort();
+    for path in entries {
+        if path.is_dir() {
+            collect_xulo_sources(&path, out);
+        } else if path.extension().is_some_and(|ext| ext == "xulo") {
+            out.push(path);
+        }
+    }
+}
+
+/// T5b: every stage 1 source file parses with itself.
+///
 /// The file set is discovered from `xuloc/src/` instead of being hard-coded, so a
-/// new stage 1 source file (for example the Gate 3 checker) is covered as soon
-/// as it lands.
+/// new stage 1 source file (for example a checker or parser module) is covered
+/// as soon as it lands.
 #[test]
 fn stage1_parses_its_own_source() {
     let root = repo_root();
-    let mut sources: Vec<PathBuf> = std::fs::read_dir(root.join("xuloc/src"))
-        .expect("xuloc/src should exist")
-        .map(|entry| entry.expect("xuloc/src entry should be readable").path())
-        .filter(|path| path.extension().is_some_and(|ext| ext == "xulo"))
-        .collect();
+    let mut sources: Vec<PathBuf> = Vec::new();
+    collect_xulo_sources(&root.join("xuloc/src"), &mut sources);
     sources.sort();
     assert!(
         sources.len() >= 6,

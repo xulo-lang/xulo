@@ -1,0 +1,386 @@
+// Checker: module tree and `use` resolution.
+
+use ast::Node;
+use super::{Checker, ImportSig, GlobSig, ModuleSig};
+use super::ck_util;
+
+pub fn module_index(ck: Checker, module_id: string): number {
+    let mut i = 0
+    while i < ck.modules.len {
+        if ck.modules[i].id == module_id {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+pub fn add_module(ck: mut Checker, module_id: string, parent: string, opaque: bool) {
+    if module_index(ck, module_id) >= 0 {
+        return
+    }
+    ck.modules.push(
+        ModuleSig(
+            id: module_id,
+            parent: parent,
+            opaque: opaque,
+            consts: [],
+            imports: [],
+            globs: [],
+            uses: [],
+            foreign_types: [],
+        ),
+    )
+}
+
+pub fn child_module(ck: Checker, parent: string, name: string): string {
+    let id = if parent == "" { name } else { parent + "::" + name }
+    if module_index(ck, id) >= 0 {
+        return id
+    }
+    return "#"
+}
+
+pub fn module_parent(ck: Checker, module_id: string): string {
+    let index = module_index(ck, module_id)
+    if index < 0 {
+        return "#"
+    }
+    return ck.modules[index].parent
+}
+
+pub fn import_module(ck: Checker, module_id: string, name: string): string {
+    let index = module_index(ck, module_id)
+    if index < 0 {
+        return "#"
+    }
+    let mut i = ck.modules[index].imports.len - 1
+    while i >= 0 {
+        let import = ck.modules[index].imports[i]
+        if import.alias == name and import.member == "" {
+            return import.target
+        }
+        i = i - 1
+    }
+    return "#"
+}
+
+/// Walk a module path from `from`; `"#"` means the path leaves the
+/// package (or names a module that is not in this file).
+pub fn resolve_module(ck: Checker, from: string, head: string, segments: List<string>): string {
+    let mut current = ""
+    if head == "self" {
+        current = from
+    } else if head == "super" {
+        current = module_parent(ck, from)
+        if current == "#" {
+            return "#"
+        }
+    } else {
+        current = child_module(ck, from, head)
+        if current == "#" {
+            current = import_module(ck, from, head)
+        }
+        if current == "#" {
+            current = child_module(ck, "", head)
+        }
+        if current == "#" {
+            return "#"
+        }
+    }
+    let mut i = 0
+    while i < segments.len {
+        let segment = segments[i]
+        if segment == "self" {
+            i = i + 1
+            continue
+        }
+        if segment == "super" {
+            let parent = module_parent(ck, current)
+            if parent == "#" {
+                return "#"
+            }
+            current = parent
+            i = i + 1
+            continue
+        }
+        let child = child_module(ck, current, segment)
+        if child != "#" {
+            current = child
+        } else {
+            let aliased = import_module(ck, current, segment)
+            if aliased == "#" {
+                return "#"
+            }
+            current = aliased
+        }
+        i = i + 1
+    }
+    return current
+}
+
+pub fn note_external_import(ck: mut Checker, name: string) {
+    if name == "" {
+        return
+    }
+    let mut i = 0
+    while i < ck.external_imports.len {
+        if ck.external_imports[i] == name {
+            return
+        }
+        i = i + 1
+    }
+    ck.external_imports.push(name)
+}
+
+pub fn is_external_import(ck: Checker, name: string): bool {
+    let mut i = 0
+    while i < ck.external_imports.len {
+        if ck.external_imports[i] == name {
+            return true
+        }
+        i = i + 1
+    }
+    return false
+}
+
+pub fn add_module_use(ck: mut Checker, module_id: string, item: Node) {
+    let index = module_index(ck, module_id)
+    if index >= 0 {
+        ck.modules[index].uses.push(item)
+    }
+}
+
+pub fn resolve_uses(ck: mut Checker) {
+    let mut m = 0
+    while m < ck.modules.len {
+        let module_id = ck.modules[m].id
+        let mut u = 0
+        while u < ck.modules[m].uses.len {
+            let node = ck.modules[m].uses[u]
+            resolve_use(ck, module_id, node)
+            u = u + 1
+        }
+        m = m + 1
+    }
+}
+
+pub fn resolve_use(ck: mut Checker, module_id: string, node: Node) {
+    let type_only = ck_util::has_child_kind(node, "UseType")
+    let is_pub = ck_util::has_child_kind(node, "Pub")
+    let head = node.value
+    let mut segments: List<string> = []
+    let mut alias = ""
+    let mut group = node
+    let mut has_group = false
+    let mut glob = false
+    for child in node.children {
+        if child.kind == "UseSegment" {
+            segments.push(child.value)
+        } else if child.kind == "UseAlias" {
+            alias = child.value
+        } else if child.kind == "UseGroup" {
+            group = child
+            has_group = true
+        } else if child.kind == "UseGlob" {
+            glob = true
+        }
+    }
+    if has_group {
+        if head == "" {
+            for entry in group.children {
+                mark_export(ck, module_id, entry.value)
+            }
+            return
+        }
+        let prefix = resolve_module(ck, module_id, head, segments)
+        if prefix == "#" {
+            // `use std::http::{Request, Response}`: every entry may name a
+            // type, function, or constant outside this buffer.
+            for entry in group.children {
+                let mut entry_alias = ""
+                for child in entry.children {
+                    if child.kind == "UseAlias" {
+                        entry_alias = child.value
+                    }
+                }
+                let bound = if entry_alias == "" { entry.value } else { entry_alias }
+                note_external_import(ck, bound)
+            }
+            return
+        }
+        for entry in group.children {
+            let mut rel: List<string> = []
+            let mut entry_alias = ""
+            for child in entry.children {
+                if child.kind == "UseSegment" {
+                    rel.push(child.value)
+                } else if child.kind == "UseAlias" {
+                    entry_alias = child.value
+                }
+            }
+            let mut target = prefix
+            let mut i = 0
+            while i + 1 < rel.len {
+                let child = child_module(ck, target, rel[i])
+                if child != "#" {
+                    target = child
+                } else {
+                    let aliased = import_module(ck, target, rel[i])
+                    if aliased == "#" {
+                        target = "#"
+                        break
+                    }
+                    target = aliased
+                }
+                i = i + 1
+            }
+            if target == "#" {
+                continue
+            }
+            let bound = if entry_alias == "" { entry.value } else { entry_alias }
+            if type_only {
+                note_foreign_type(ck, module_id, bound, target)
+            }
+            let child = child_module(ck, target, entry.value)
+            if child != "#" {
+                add_import(ck, module_id, bound, child, "", is_pub)
+            } else {
+                add_import(ck, module_id, bound, target, entry.value, is_pub)
+            }
+        }
+        return
+    }
+    if glob {
+        let target = resolve_module(ck, module_id, head, segments)
+        // `#` records an external glob (`use std::fmt::*`): the module is
+        // outside this buffer, so a bare name may still come from it.
+        add_glob(ck, module_id, target, is_pub)
+        return
+    }
+    if head == "" {
+        return
+    }
+    if segments.len == 0 {
+        let target = resolve_module(ck, module_id, head, [])
+        if target != "#" {
+            let bound = if alias == "" { head } else { alias }
+            add_import(ck, module_id, bound, target, "", is_pub)
+        }
+        return
+    }
+    let member = segments[segments.len - 1]
+    let mut prefix: List<string> = []
+    let mut i = 0
+    while i + 1 < segments.len {
+        prefix.push(segments[i])
+        i = i + 1
+    }
+    let bound = if alias == "" { member } else { alias }
+    let target = resolve_module(ck, module_id, head, prefix)
+    if target == "#" {
+        // `use std::os::exec_path`: the binding exists, but its kind and
+        // signature are outside this buffer.
+        note_external_import(ck, bound)
+        return
+    }
+    if type_only {
+        note_foreign_type(ck, module_id, bound, target)
+    }
+    let child = child_module(ck, target, member)
+    if child != "#" {
+        add_import(ck, module_id, bound, child, "", is_pub)
+        return
+    }
+    add_import(ck, module_id, bound, target, member, is_pub)
+}
+
+pub fn note_foreign_type(ck: mut Checker, module_id: string, name: string, target: string) {
+    let index = module_index(ck, module_id)
+    if index < 0 {
+        return
+    }
+    if target == "#" {
+        ck.modules[index].foreign_types.push(name)
+        return
+    }
+    let target_index = module_index(ck, target)
+    if target_index >= 0 and ck.modules[target_index].opaque {
+        ck.modules[index].foreign_types.push(name)
+    }
+}
+
+pub fn is_foreign_type(ck: Checker, module_id: string, name: string): bool {
+    let index = module_index(ck, module_id)
+    if index < 0 {
+        return false
+    }
+    let mut i = 0
+    while i < ck.modules[index].foreign_types.len {
+        if ck.modules[index].foreign_types[i] == name {
+            return true
+        }
+        i = i + 1
+    }
+    return false
+}
+
+pub fn add_import(ck: mut Checker, module_id: string, bound: string,
+              target: string, member: string, is_pub: bool) {
+    let index = module_index(ck, module_id)
+    if index >= 0 {
+        ck.modules[index].imports.push(
+            ImportSig(alias: bound, target: target, member: member, is_pub: is_pub),
+        )
+    }
+}
+
+pub fn add_glob(ck: mut Checker, module_id: string, target: string, is_pub: bool) {
+    let index = module_index(ck, module_id)
+    if index >= 0 {
+        ck.modules[index].globs.push(GlobSig(target: target, is_pub: is_pub))
+    }
+}
+
+pub fn has_external_glob(ck: Checker, module_id: string): bool {
+    let index = module_index(ck, module_id)
+    if index < 0 {
+        return false
+    }
+    let mut i = 0
+    while i < ck.modules[index].globs.len {
+        if ck.modules[index].globs[i].target == "#" {
+            return true
+        }
+        i = i + 1
+    }
+    return false
+}
+
+pub fn mark_export(ck: mut Checker, module_id: string, name: string) {
+    let mut f = 0
+    while f < ck.functions.len {
+        if ck.functions[f].module_id == module_id and ck.functions[f].name == name {
+            ck.functions[f].is_pub = true
+        }
+        f = f + 1
+    }
+    let index = module_index(ck, module_id)
+    if index < 0 {
+        return
+    }
+    let mut c = 0
+    while c < ck.modules[index].consts.len {
+        if ck.modules[index].consts[c].name == name {
+            ck.modules[index].consts[c].is_pub = true
+        }
+        c = c + 1
+    }
+    let mut i = 0
+    while i < ck.modules[index].imports.len {
+        if ck.modules[index].imports[i].alias == name {
+            ck.modules[index].imports[i].is_pub = true
+        }
+        i = i + 1
+    }
+}

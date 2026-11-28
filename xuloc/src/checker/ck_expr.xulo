@@ -1,0 +1,1646 @@
+// Checker: expressions, calls, patterns, and match arms.
+
+use ast::Node;
+use super::{Checker, FieldSig, AnonSig};
+use super::ck_util;
+use super::ck_diag;
+use super::ck_module;
+use super::ck_types;
+use super::ck_decls;
+use super::ck_stmt;
+
+pub fn check_expr(ck: mut Checker, node: Node): string {
+    if ck.error != "" {
+        return "unknown"
+    }
+    if node.kind == "Literal" {
+        return ck_types::literal_type(ck, node.value)
+    }
+    if node.kind == "Name" {
+        let mut ty = ck_diag::lookup(ck, node.value)
+        if ty == "" {
+            ty = ck_decls::value_type(ck, ck.current_module, node.value, 0)
+            if ty == "unknown" {
+                // A module constant whose type is hidden (opaque module,
+                // missing annotation, or unknown import).
+                ck.complete = false
+            }
+        }
+        if ty == "" {
+            let fn_index = ck_decls::resolve_function(ck, ck.current_module, node.value, 0)
+            if fn_index >= 0 {
+                let sig = ck.functions[fn_index]
+                return ck_types::make_fn_type(ck, sig.params, sig.ret)
+            }
+            if fn_index == -2 {
+                ck.complete = false
+                return "unknown"
+            }
+            if ck_module::is_external_import(ck, node.value) {
+                // A value imported from outside this buffer.
+                ck.complete = false
+                return "unknown"
+            }
+            ck_diag::fail(ck, node, "E0101", "cannot find value `" + node.value + "` in this scope")
+            return "unknown"
+        }
+        return ty
+    }
+    if node.kind == "Path" {
+        let enum_index = ck_decls::resolve_variant_path(ck, node.value)
+        if enum_index >= 0 {
+            if ck.enums[enum_index].is_generic {
+                ck.complete = false
+                return "unknown"
+            }
+            let parts = ck_util::split_path(node.value)
+            let variant = ck_decls::variant_index(ck, enum_index, parts[parts.len - 1])
+            if variant >= 0 and ck.enums[enum_index].variants[variant].fields.len == 0 {
+                return ck_decls::enum_canonical(ck, enum_index)
+            }
+            ck.complete = false
+            return "unknown"
+        }
+        let ty = ck_decls::path_value_type(ck, node.value)
+        if ty == "" or ty == "unknown" {
+            // A std path, a function value, or a module the checker does
+            // not model.
+            ck.complete = false
+            return "unknown"
+        }
+        return ty
+    }
+    if node.kind == "Group" {
+        if node.children.len == 0 {
+            return "unit"
+        }
+        return check_expr(ck, node.children[0])
+    }
+    if node.kind == "Binary" {
+        return check_binary(ck, node)
+    }
+    if node.kind == "Unary" {
+        return check_unary(ck, node)
+    }
+    if node.kind == "Call" {
+        return check_call(ck, node)
+    }
+    if node.kind == "Member" {
+        return check_member(ck, node)
+    }
+    if node.kind == "OptionalMember" {
+        return check_optional_member(ck, node)
+    }
+    if node.kind == "Index" {
+        return check_index(ck, node)
+    }
+    if node.kind == "If" {
+        return check_if(ck, node)
+    }
+    if node.kind == "Ternary" {
+        return check_ternary(ck, node)
+    }
+    if node.kind == "List" {
+        return check_list(ck, node)
+    }
+    if node.kind == "Block" {
+        return ck_stmt::check_block(ck, node, true)
+    }
+    if node.kind == "Spawn" {
+        return check_spawn(ck, node)
+    }
+    if node.kind == "Lock" {
+        return check_lock(ck, node)
+    }
+    if node.kind == "MacroCall" {
+        // The expansion is not in this buffer.
+        ck.complete = false
+        return "unknown"
+    }
+    if node.kind == "Assign" {
+        if node.children.len < 2 {
+            return "unknown"
+        }
+        let lhs = ck_stmt::place_type(ck, node.children[0])
+        let rhs = check_expr(ck, node.children[1])
+        if ck.error == "" and (lhs == "unknown" or rhs == "unknown") {
+            ck.complete = false
+        } else if ck.error == "" and !ck_types::assignable(ck, lhs, rhs) {
+            ck_diag::fail(ck, node, "E0201", "expected `" + lhs + "`, found `" + rhs + "`")
+        }
+        return rhs
+    }
+    if node.kind == "Try" or node.kind == "Await" {
+        if node.children.len > 0 {
+            check_expr(ck, node.children[0])
+        }
+        ck.complete = false
+        return "unknown"
+    }
+    if node.kind == "Is" {
+        if node.children.len < 2 {
+            ck.complete = false
+            return "bool"
+        }
+        let left = check_expr(ck, node.children[0])
+        let right = ck_types::type_of(ck, node.children[1])
+        if ck.error != "" {
+            return "unknown"
+        }
+        if left == "unknown" or right == "unknown" {
+            ck.complete = false
+        }
+        return "bool"
+    }
+    if node.kind == "Closure" or node.kind == "ArrowClosure" {
+        return check_closure(ck, node)
+    }
+    if node.kind == "Tuple" {
+        let mut text = "("
+        let mut i = 0
+        while i < node.children.len {
+            if i > 0 {
+                text = text + ","
+            }
+            text = text + check_expr(ck, node.children[i])
+            i = i + 1
+        }
+        if ck.error != "" {
+            return "unknown"
+        }
+        return text + ")"
+    }
+    if node.kind == "Spread" {
+        if node.children.len == 0 {
+            ck.complete = false
+            return "unknown"
+        }
+        let inner = check_expr(ck, node.children[0])
+        if inner == "unknown" {
+            ck.complete = false
+        }
+        return inner
+    }
+    if node.kind == "Map" {
+        return check_map_literal(ck, node)
+    }
+    if node.kind == "Match" {
+        return check_match(ck, node)
+    }
+    if node.kind == "Template" {
+        for child in node.children {
+            if child.kind != "TemplateText" {
+                check_expr(ck, child)
+                if ck.error != "" {
+                    return "unknown"
+                }
+            }
+        }
+        return "string"
+    }
+    ck_diag::fail(ck, 
+        node,
+        "E0003",
+        "stage 1 checker does not support `" + node.kind + "` expressions yet",
+    )
+    return "unknown"
+}
+
+/// `spawn async { … }`, `spawn.thread`, `spawn.process { … }`, and
+/// `spawn.on(target)`: a task's type is its body's type, while a service
+/// declaration is an opaque handle.
+pub fn check_spawn(ck: mut Checker, node: Node): string {
+    let mut result = "unit"
+    let mut has_body = false
+    let mut service = false
+    for child in node.children {
+        if child.kind == "Block" {
+            result = ck_stmt::check_block(ck, child, true)
+            has_body = true
+        } else if ck_types::is_type_node(ck, child) {
+            service = true
+            ck_types::type_of(ck, child)
+            if ck.error != "" {
+                return "unknown"
+            }
+        } else {
+            check_expr(ck, child)
+            if ck.error != "" {
+                return "unknown"
+            }
+        }
+    }
+    if service {
+        return "unknown"
+    }
+    if !has_body {
+        ck.complete = false
+    }
+    return result
+}
+
+pub fn check_lock(ck: mut Checker, node: Node): string {
+    if node.children.len == 0 {
+        return "unit"
+    }
+    check_expr(ck, node.children[0])
+    if ck.error != "" {
+        return "unknown"
+    }
+    if node.children.len > 1 {
+        return ck_stmt::check_block(ck, node.children[1], true)
+    }
+    return "unit"
+}
+
+pub fn check_unary(ck: mut Checker, node: Node): string {
+    if node.children.len == 0 {
+        return "unit"
+    }
+    let ty = check_expr(ck, node.children[0])
+    if ck.error != "" {
+        return "unknown"
+    }
+    if ty == "unknown" {
+        ck.complete = false
+        return "unknown"
+    }
+    if node.value == "await" {
+        // `await task` yields the task's payload; the checker models a
+        // task as the type of its body.
+        return ty
+    }
+    if node.value == "!" {
+        if ty != "bool" {
+            ck_diag::fail(ck, node, "E0201", "expected `bool`, found `" + ty + "`")
+            return "unknown"
+        }
+        return "bool"
+    }
+    if node.value == "-" or node.value == "~" {
+        if !ck_types::is_number(ck, ty) {
+            ck_diag::fail(ck, node, "E0201", "expected `number`, found `" + ty + "`")
+            return "unknown"
+        }
+        return "number"
+    }
+    if node.value == "shared" or node.value == "copy" or node.value == "move" {
+        return ty
+    }
+    ck_diag::fail(ck, node, "E0003", "stage 1 checker does not support `" + node.value + "` yet")
+    return "unknown"
+}
+
+pub fn check_binary(ck: mut Checker, node: Node): string {
+    if node.children.len < 2 {
+        return "unit"
+    }
+    let left = check_expr(ck, node.children[0])
+    let right = check_expr(ck, node.children[1])
+    if ck.error != "" {
+        return "unknown"
+    }
+    if left == "unknown" or right == "unknown" {
+        ck.complete = false
+        return "unknown"
+    }
+    let op = node.value
+    if op == "..<" or op == "..=" {
+        if ck_types::is_number(ck, left) and ck_types::is_number(ck, right) {
+            return "Range"
+        }
+        ck_diag::fail(ck, node, "E0201", "a range needs `number` operands")
+        return "unknown"
+    }
+    if op == "+" {
+        if ck_types::is_number(ck, left) and ck_types::is_number(ck, right) {
+            return "number"
+        }
+        if left == "string" and right == "string" {
+            return "string"
+        }
+        if ck_types::is_list(ck, left) and ck_types::is_list(ck, right) {
+            let elem = ck_types::unify(ck, 
+                node,
+                ck_types::list_element(ck, left),
+                ck_types::list_element(ck, right),
+            )
+            return "List<" + elem + ">"
+        }
+        ck_diag::fail(ck, 
+            node,
+            "E0201",
+            "operator `+` cannot combine `" + left + "` and `" + right + "`",
+        )
+        return "unknown"
+    }
+    if op == "-"
+        or op == "*"
+        or op == "/"
+        or op == "%"
+        or op == "**"
+        or op == "&"
+        or op == "|"
+        or op == "^"
+        or op == "<<"
+        or op == ">>"
+    {
+        if ck_types::is_number(ck, left) and ck_types::is_number(ck, right) {
+            return "number"
+        }
+        ck_diag::fail(ck, 
+            node,
+            "E0201",
+            "operator `" + op + "` needs `number` operands, found `" + left + "` and `" + right + "`",
+        )
+        return "unknown"
+    }
+    if op == "<" or op == ">" or op == "<=" or op == ">=" {
+        if ck_types::is_number(ck, left) and ck_types::is_number(ck, right) {
+            return "bool"
+        }
+        ck_diag::fail(ck, 
+            node,
+            "E0201",
+            "operator `" + op + "` needs `number` operands",
+        )
+        return "unknown"
+    }
+    if op == "and" or op == "or" {
+        if left == "bool" and right == "bool" {
+            return "bool"
+        }
+        ck_diag::fail(ck, node, "E0201", "operator `" + op + "` needs `bool` operands")
+        return "unknown"
+    }
+    if op == "==" or op == "!=" {
+        if ck_types::assignable(ck, left, right) or ck_types::assignable(ck, right, left) {
+            return "bool"
+        }
+        ck_diag::fail(ck, 
+            node,
+            "E0201",
+            "`" + left + "` and `" + right + "` cannot be compared",
+        )
+        return "unknown"
+    }
+    if op == "??" {
+        if left == "null" {
+            return right
+        }
+        if ck_types::is_optional(ck, left) {
+            return ck_types::unify(ck, node, ck_types::optional_inner(ck, left), right)
+        }
+        if left == "unknown" {
+            return right
+        }
+        ck_diag::fail(ck, node, "E0201", "`??` needs an optional or null left operand")
+        return "unknown"
+    }
+    ck_diag::fail(ck, node, "E0003", "stage 1 checker does not support `" + op + "` yet")
+    return "unknown"
+}
+
+pub fn check_call(ck: mut Checker, node: Node): string {
+    if node.children.len == 0 {
+        return "unit"
+    }
+    let mut callee = node.children[0]
+    let mut type_args: List<string> = []
+    if callee.kind == "TypeApply" and callee.children.len > 0 {
+        // `f<T>(…)` / `Array::filled<T, N>(…)`: the callee is the first
+        // child and the type arguments are a sibling.
+        type_args = ck_types::type_arguments(ck, callee)
+        callee = callee.children[0]
+    }
+    if callee.kind == "Member" or callee.kind == "OptionalMember" {
+        return check_method_call(ck, node, callee)
+    }
+    let mut name = ""
+    if callee.kind == "Name" or callee.kind == "Path" {
+        name = callee.value
+    }
+    let mut arg_types: List<string> = []
+    let mut arg_names: List<string> = []
+    let mut i = 1
+    while i < node.children.len {
+        let mut arg = node.children[i]
+        if arg.kind == "Arg" {
+            arg_names.push(arg.value)
+            if arg.children.len > 0 {
+                arg = arg.children[0]
+            }
+        } else {
+            arg_names.push("")
+        }
+        arg_types.push(check_expr(ck, arg))
+        i = i + 1
+    }
+    if ck.error != "" {
+        return "unknown"
+    }
+    if callee.kind != "Name" and callee.kind != "Path" {
+        // A call through any expression: `fs[0]()`, `make()(1)`, and so on.
+        let target = check_expr(ck, callee)
+        if ck_types::is_fn_type(ck, target) {
+            return check_fn_value_call(ck, node, "value", target, arg_types)
+        }
+        if target == "unknown" {
+            ck.complete = false
+            return "unknown"
+        }
+        ck_diag::fail(ck, callee, "E0204", "this expression is not callable")
+        return "unknown"
+    }
+    if ck_types::is_fn_type(ck, ck_diag::lookup(ck, name)) {
+        return check_fn_value_call(ck, node, name, ck_diag::lookup(ck, name), arg_types)
+    }
+    if name == "print" or name == "println" {
+        return "unit"
+    }
+    if name == "str" {
+        if arg_types.len != 1 {
+            ck_diag::fail(ck, node, "E0207", "`str` expects 1 argument")
+        }
+        return "string"
+    }
+    if name == "assert" {
+        if arg_types.len != 2 {
+            ck_diag::fail(ck, node, "E0207", "`assert` expects 2 arguments")
+            return "unit"
+        }
+        if arg_types[0] != "bool" {
+            ck_diag::fail(ck, node, "E0202", "`assert` expects a `bool` condition")
+        }
+        if arg_types[1] != "string" {
+            ck_diag::fail(ck, node, "E0202", "`assert` expects a `string` message")
+        }
+        return "unit"
+    }
+    if name == "panic" {
+        return "unit"
+    }
+    if name == "reply" {
+        // A service handler's reply value is consumed by the runtime.
+        return "unit"
+    }
+    if name == "Array::filled" {
+        let mut elem = "unknown"
+        if type_args.len > 0 {
+            elem = type_args[0]
+        } else if arg_types.len > 0 {
+            elem = arg_types[0]
+        }
+        if arg_types.len != 1 {
+            ck_diag::fail(ck, node, "E0207", "`Array::filled` expects 1 argument")
+            return "List<" + elem + ">"
+        }
+        if !ck_types::assignable(ck, elem, arg_types[0]) {
+            ck_diag::fail(ck, 
+                node,
+                "E0202",
+                "`Array::filled` expects a `" + elem + "` value, found `"
+                    + arg_types[0] + "`",
+            )
+        }
+        return "List<" + elem + ">"
+    }
+    if name == "Set::from_list" {
+        if arg_types.len != 1 {
+            ck_diag::fail(ck, node, "E0207", "`Set::from_list` expects 1 argument")
+            return "Set<unknown>"
+        }
+        if ck_types::is_list(ck, arg_types[0]) {
+            return "Set<" + ck_types::list_element(ck, arg_types[0]) + ">"
+        }
+        if arg_types[0] == "unknown" {
+            ck.complete = false
+            return "Set<unknown>"
+        }
+        ck_diag::fail(ck, 
+            node,
+            "E0202",
+            "`Set::from_list` expects a list, found `" + arg_types[0] + "`",
+        )
+        return "Set<unknown>"
+    }
+    let struct_index = ck_decls::resolve_struct(ck, ck.current_module, name, 0)
+    if struct_index >= 0 {
+        return check_struct_constructor(ck, node, struct_index, arg_names, arg_types)
+    }
+    if callee.kind == "Path" {
+        let enum_index = ck_decls::resolve_variant_path(ck, name)
+        if enum_index >= 0 {
+            return check_variant_constructor(ck, node, enum_index, name, arg_names, arg_types)
+        }
+    }
+    let index = ck_decls::resolve_function(ck, ck.current_module, name, 0)
+    if index == -2 {
+        // A file-backed module or an external/std path: its interface is
+        // outside the checker's input, so this is not a confirmed error.
+        ck.complete = false
+        return "unknown"
+    }
+    if index < 0 {
+        if callee.kind == "Path" {
+            ck.complete = false
+            return "unknown"
+        }
+        if ck.has_macros {
+            // A declared macro may generate this function.
+            ck.complete = false
+            return "unknown"
+        }
+        if ck_diag::lookup(ck, name) != "" {
+            ck_diag::fail(ck, node, "E0204", "`" + name + "` is not callable")
+        } else {
+            ck.complete = false
+            ck_diag::fail(ck, node, "E0101", "cannot find function `" + name + "`")
+        }
+        return "unknown"
+    }
+    let sig = ck.functions[index]
+    if arg_types.len < sig.min_params or arg_types.len > sig.params.len {
+        ck_diag::fail(ck, 
+            node,
+            "E0207",
+            "`" + name + "` expects " + str(sig.min_params) + ".." + str(sig.params.len)
+                + " arguments, found " + str(arg_types.len),
+        )
+        return sig.ret
+    }
+    let mut p = 0
+    while p < arg_types.len {
+        if !ck_types::assignable(ck, sig.params[p], arg_types[p]) {
+            ck_diag::fail(ck, 
+            node,
+                "E0202",
+                "argument " + str(p + 1) + " to `" + name + "` expects `" + sig.params[p] + "`, found `" + arg_types[p] + "`",
+            )
+            return sig.ret
+        }
+        p = p + 1
+    }
+    return sig.ret
+}
+
+/// A function literal (`fn(x: T): R { … }`) or arrow closure
+/// (`(x: T): R => expr`). An unannotated parameter or return stays
+/// `unknown`, so the body is checked as far as its types allow.
+pub fn check_closure(ck: mut Checker, node: Node): string {
+    let mut params: List<string> = []
+    let mut ret = ""
+    let mut body = node
+    for child in node.children {
+        if child.kind == "Param" {
+            let mut ty = "unknown"
+            for part in child.children {
+                if ck_types::is_type_node(ck, part) {
+                    ty = ck_types::type_of(ck, part)
+                }
+            }
+            params.push(ty)
+        } else if ck_types::is_type_node(ck, child) {
+            ret = ck_types::type_of(ck, child)
+        } else {
+            body = child
+        }
+    }
+    if ck.error != "" {
+        return "unknown"
+    }
+    ck_diag::enter_scope(ck)
+    let mut index = 0
+    for child in node.children {
+        if child.kind == "Param" {
+            ck_diag::bind(ck, child.value, params[index])
+            index = index + 1
+        }
+    }
+    let body_ty = check_expr(ck, body)
+    ck_diag::leave_scope(ck)
+    if ck.error != "" {
+        return "unknown"
+    }
+    if ret == "" {
+        ret = body_ty
+    } else if body_ty != "unknown" and !ck_types::assignable(ck, ret, body_ty) {
+        ck_diag::fail(ck, 
+            body,
+            "E0201",
+            "closure returns `" + body_ty + "`, expected `" + ret + "`",
+        )
+        return "unknown"
+    }
+    return ck_types::make_fn_type(ck, params, ret)
+}
+
+pub fn check_fn_value_call(ck: mut Checker, node: Node, label: string, ty: string,
+                       args: List<string>): string {
+    let params = ck_types::fn_params(ck, ty)
+    let ret = ck_types::fn_ret(ck, ty)
+    if args.len != params.len {
+        ck_diag::fail(ck, 
+            node,
+            "E0207",
+            "`" + label + "` expects " + str(params.len) + " arguments, found "
+                + str(args.len),
+        )
+        return ret
+    }
+    let mut i = 0
+    while i < args.len {
+        if !ck_types::assignable(ck, params[i], args[i]) {
+            ck_diag::fail(ck, 
+                node,
+                "E0202",
+                "argument " + str(i + 1) + " to `" + label + "` expects `"
+                    + params[i] + "`, found `" + args[i] + "`",
+            )
+            return ret
+        }
+        i = i + 1
+    }
+    return ret
+}
+
+pub fn check_method_call(ck: mut Checker, node: Node, callee: Node): string {
+    let mut arg_types: List<string> = []
+    let mut i = 1
+    while i < node.children.len {
+        let mut arg = node.children[i]
+        if arg.kind == "Arg" {
+            if arg.children.len > 0 {
+                arg = arg.children[0]
+            }
+        }
+        arg_types.push(check_expr(ck, arg))
+        i = i + 1
+    }
+    if callee.children.len == 0 {
+        return "unknown"
+    }
+    let recv = check_expr(ck, callee.children[0])
+    if ck.error != "" {
+        return "unknown"
+    }
+    if recv == "unknown" {
+        ck.complete = false
+        return "unknown"
+    }
+    if ck_types::is_map(ck, recv) or ck_types::is_set(ck, recv) or ck_types::is_list(ck, recv)
+        or recv == "string"
+    {
+        let builtin = collection_method(ck, node, recv, callee.value, arg_types)
+        if builtin != "" {
+            return builtin
+        }
+    }
+    let index = ck_decls::find_method(ck, recv, callee.value)
+    if index < 0 {
+        // Built-in collection/string members are outside this pass.
+        ck.complete = false
+        return "unknown"
+    }
+    let sig = ck.methods[index]
+    if arg_types.len < sig.min_params or arg_types.len > sig.params.len {
+        ck_diag::fail(ck, 
+            node,
+            "E0207",
+            "`" + sig.name + "` expects " + str(sig.min_params) + ".."
+                + str(sig.params.len) + " arguments, found " + str(arg_types.len),
+        )
+        return sig.ret
+    }
+    let mut p = 0
+    while p < arg_types.len {
+        if !ck_types::assignable(ck, sig.params[p], arg_types[p]) {
+            ck_diag::fail(ck, 
+                node,
+                "E0202",
+                "argument " + str(p + 1) + " to `" + sig.name + "` expects `"
+                    + sig.params[p] + "`, found `" + arg_types[p] + "`",
+            )
+            return sig.ret
+        }
+        p = p + 1
+    }
+    return sig.ret
+}
+
+pub fn expect_arity(ck: mut Checker, node: Node, name: string, args: List<string>,
+                count: number): bool {
+    if args.len == count {
+        return true
+    }
+    ck_diag::fail(ck, 
+        node,
+        "E0207",
+        "`" + name + "` expects " + str(count) + " arguments, found " + str(args.len),
+    )
+    return false
+}
+
+pub fn expect_arg(ck: mut Checker, node: Node, name: string, index: number,
+              expected: string, args: List<string>): bool {
+    if args.len <= index {
+        return false
+    }
+    if ck_types::assignable(ck, expected, args[index]) {
+        return true
+    }
+    ck_diag::fail(ck, 
+        node,
+        "E0202",
+        "argument " + str(index + 1) + " to `" + name + "` expects `"
+            + expected + "`, found `" + args[index] + "`",
+    )
+    return false
+}
+
+/// Built-in collection members (`Map`, `Set`, and `List`). Returns `""`
+/// when the name is not a builtin, so user methods still resolve.
+pub fn collection_method(ck: mut Checker, node: Node, recv: string, name: string,
+                     args: List<string>): string {
+    if ck_types::is_map(ck, recv) {
+        let key = ck_types::map_key(ck, recv)
+        let value = ck_types::map_value(ck, recv)
+        if name == "get" or name == "remove" {
+            expect_arity(ck, node, name, args, 1)
+            expect_arg(ck, node, name, 0, key, args)
+            return value + "?"
+        }
+        if name == "set" {
+            if expect_arity(ck, node, name, args, 2) {
+                expect_arg(ck, node, name, 0, key, args)
+                expect_arg(ck, node, name, 1, value, args)
+            }
+            return "unit"
+        }
+        if name == "has" or name == "contains" {
+            expect_arity(ck, node, name, args, 1)
+            expect_arg(ck, node, name, 0, key, args)
+            return "bool"
+        }
+        if name == "keys" {
+            return "List<" + key + ">"
+        }
+        if name == "values" {
+            return "List<" + value + ">"
+        }
+        if name == "entries" {
+            return "List<(" + key + "," + value + ")>"
+        }
+        if name == "len" or name == "size" {
+            return "number"
+        }
+        return ""
+    }
+    if ck_types::is_set(ck, recv) {
+        let elem = ck_types::set_element(ck, recv)
+        if name == "has" or name == "contains" or name == "insert"
+            or name == "remove"
+        {
+            expect_arity(ck, node, name, args, 1)
+            expect_arg(ck, node, name, 0, elem, args)
+            return "bool"
+        }
+        if name == "len" or name == "size" {
+            return "number"
+        }
+        return ""
+    }
+    if ck_types::is_list(ck, recv) {
+        let elem = ck_types::list_element(ck, recv)
+        if name == "len" or name == "size" {
+            return "number"
+        }
+        if name == "contains" {
+            expect_arity(ck, node, name, args, 1)
+            expect_arg(ck, node, name, 0, elem, args)
+            return "bool"
+        }
+        if name == "push" or name == "append" {
+            if expect_arity(ck, node, name, args, 1) {
+                expect_arg(ck, node, name, 0, elem, args)
+            }
+            return "unit"
+        }
+        if name == "pop" or name == "first" or name == "last" {
+            return elem + "?"
+        }
+        return ""
+    }
+    if recv == "string" {
+        if name == "len" or name == "byte_len" or name == "size" {
+            return "number"
+        }
+        if name == "contains" {
+            if expect_arity(ck, node, name, args, 1) {
+                expect_arg(ck, node, name, 0, "string", args)
+            }
+            return "bool"
+        }
+        if name == "split" {
+            return "List<string>"
+        }
+    }
+    return ""
+}
+
+pub fn check_struct_constructor(ck: mut Checker, node: Node, index: number,
+                            labels: List<string>, types: List<string>): string {
+    let sig = ck.structs[index]
+    let mut used: List<bool> = []
+    let mut f = 0
+    while f < sig.fields.len {
+        used.push(false)
+        f = f + 1
+    }
+    let mut seen_named = false
+    let mut a = 0
+    while a < types.len {
+        let label = labels[a]
+        let mut target = -1
+        if label == "" {
+            if seen_named {
+                ck_diag::fail(ck, node, "E0208", "a positional argument follows a named argument")
+                return ck_decls::struct_canonical(ck, index)
+            }
+            target = a
+            if target >= sig.fields.len {
+                ck_diag::fail(ck, 
+                    node,
+                    "E0205",
+                    "too many fields in initializer of `" + sig.name + "`",
+                )
+                return ck_decls::struct_canonical(ck, index)
+            }
+        } else {
+            seen_named = true
+            target = struct_field_index(ck, index, label)
+            if target < 0 {
+                ck_diag::fail(ck, 
+                    node,
+                    "E0206",
+                    "`" + sig.name + "` has no field `" + label + "`",
+                )
+                return ck_decls::struct_canonical(ck, index)
+            }
+        }
+        if used[target] {
+            ck_diag::fail(ck, 
+                node,
+                "E0208",
+                "field `" + sig.fields[target].name + "` is initialized twice",
+            )
+            return ck_decls::struct_canonical(ck, index)
+        }
+        used[target] = true
+        if !ck_types::assignable(ck, sig.fields[target].ty, types[a]) {
+            ck_diag::fail(ck, 
+                node,
+                "E0202",
+                "field `" + sig.fields[target].name + "` expects `"
+                    + sig.fields[target].ty + "`, found `" + types[a] + "`",
+            )
+            return ck_decls::struct_canonical(ck, index)
+        }
+        a = a + 1
+    }
+    f = 0
+    while f < used.len {
+        if !used[f] and !ck_types::is_optional(ck, sig.fields[f].ty) {
+            ck_diag::fail(ck, 
+                node,
+                "E0205",
+                "missing field `" + sig.fields[f].name + "` in initializer of `"
+                    + sig.name + "`",
+            )
+            return ck_decls::struct_canonical(ck, index)
+        }
+        f = f + 1
+    }
+    return ck_decls::struct_canonical(ck, index)
+}
+
+pub fn check_variant_constructor(ck: mut Checker, node: Node, enum_index: number,
+                             path: string, labels: List<string>, types: List<string>): string {
+    if ck.enums[enum_index].is_generic {
+        ck.complete = false
+        return "unknown"
+    }
+    let parts = ck_util::split_path(path)
+    let variant = parts[parts.len - 1]
+    let v = ck_decls::variant_index(ck, enum_index, variant)
+    if v < 0 {
+        ck_diag::fail(ck, 
+            node,
+            "E0102",
+            "`" + ck.enums[enum_index].name + "` has no variant `" + variant + "`",
+        )
+        return ck_decls::enum_canonical(ck, enum_index)
+    }
+    let fields = ck.enums[enum_index].variants[v].fields
+    if types.len != fields.len {
+        ck_diag::fail(ck, 
+            node,
+            "E0207",
+            "variant `" + variant + "` expects " + str(fields.len)
+                + " payload values, found " + str(types.len),
+        )
+        return ck_decls::enum_canonical(ck, enum_index)
+    }
+    let mut i = 0
+    while i < types.len {
+        if labels[i] != "" {
+            let target = variant_field_index(ck, enum_index, v, labels[i])
+            if target < 0 {
+                ck_diag::fail(ck, 
+                    node,
+                    "E0102",
+                    "variant `" + variant + "` has no payload field `" + labels[i] + "`",
+                )
+                return ck_decls::enum_canonical(ck, enum_index)
+            }
+            if !ck_types::assignable(ck, fields[target].ty, types[i]) {
+                ck_diag::fail(ck, 
+                    node,
+                    "E0202",
+                    "payload field `" + labels[i] + "` expects `"
+                        + fields[target].ty + "`, found `" + types[i] + "`",
+                )
+                return ck_decls::enum_canonical(ck, enum_index)
+            }
+        } else if !ck_types::assignable(ck, fields[i].ty, types[i]) {
+            ck_diag::fail(ck, 
+                node,
+                "E0202",
+                "payload " + str(i + 1) + " of `" + variant + "` expects `"
+                    + fields[i].ty + "`, found `" + types[i] + "`",
+            )
+            return ck_decls::enum_canonical(ck, enum_index)
+        }
+        i = i + 1
+    }
+    return ck_decls::enum_canonical(ck, enum_index)
+}
+
+pub fn variant_field_index(ck: Checker, enum_index: number, variant: number, name: string): number {
+    if enum_index < 0 or enum_index >= ck.enums.len {
+        return -1
+    }
+    if variant < 0 or variant >= ck.enums[enum_index].variants.len {
+        return -1
+    }
+    let fields = ck.enums[enum_index].variants[variant].fields
+    let mut i = 0
+    while i < fields.len {
+        if fields[i].name == name {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+pub fn struct_field_index(ck: Checker, index: number, name: string): number {
+    if index < 0 or index >= ck.structs.len {
+        return -1
+    }
+    let mut i = 0
+    while i < ck.structs[index].fields.len {
+        if ck.structs[index].fields[i].name == name {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+pub fn check_member(ck: mut Checker, node: Node): string {
+    if node.children.len == 0 {
+        return "unknown"
+    }
+    let recv = check_expr(ck, node.children[0])
+    if ck.error != "" {
+        return "unknown"
+    }
+    return member_type(ck, node, recv)
+}
+
+pub fn check_optional_member(ck: mut Checker, node: Node): string {
+    if node.children.len == 0 {
+        return "unknown"
+    }
+    let recv = check_expr(ck, node.children[0])
+    if ck.error != "" {
+        return "unknown"
+    }
+    if recv == "null" {
+        return "null"
+    }
+    if recv == "unknown" {
+        ck.complete = false
+        return "unknown"
+    }
+    let ty = member_type(ck, node, ck_types::optional_inner(ck, recv))
+    if ty == "unknown" or ty == "null" or ck_types::is_optional(ck, ty) {
+        return ty
+    }
+    return ty + "?"
+}
+
+pub fn member_type(ck: mut Checker, node: Node, recv: string): string {
+    if recv == "unknown" {
+        ck.complete = false
+        return "unknown"
+    }
+    if node.value == "len" or node.value == "byte_len" {
+        if recv == "string" or ck_types::is_list(ck, recv) {
+            return "number"
+        }
+    }
+    if node.value == "size" or node.value == "len" {
+        if ck_types::is_map(ck, recv) or ck_types::is_set(ck, recv) {
+            return "number"
+        }
+    }
+    let position = ck_types::index_text(ck, node.value)
+    if position >= 0 and ck_types::is_tuple_type(ck, recv) {
+        let parts = ck_types::tuple_types(ck, recv)
+        if position >= parts.len {
+            ck_diag::fail(ck, 
+                node,
+                "E0220",
+                "tuple position " + node.value + " is out of range for `" + recv + "`",
+            )
+            return "unknown"
+        }
+        return parts[position]
+    }
+    let anon = ck_types::find_anon(ck, recv)
+    if anon >= 0 {
+        let mut i = ck.anon_objects[anon].fields.len
+        while i > 0 {
+            i = i - 1
+            if ck.anon_objects[anon].fields[i].name == node.value {
+                return ck.anon_objects[anon].fields[i].ty
+            }
+        }
+        ck_diag::fail(ck, 
+            node,
+            "E0206",
+            "object literal has no field `" + node.value + "`",
+        )
+        return "unknown"
+    }
+    let struct_index = ck_decls::find_struct_by_type(ck, recv)
+    if struct_index >= 0 {
+        let field = struct_field_index(ck, struct_index, node.value)
+        if field >= 0 {
+            return ck.structs[struct_index].fields[field].ty
+        }
+        if ck.has_macros {
+            // A derive macro may add the field.
+            ck.complete = false
+            return "unknown"
+        }
+        ck_diag::fail(ck, 
+            node,
+            "E0206",
+            "`" + ck.structs[struct_index].name + "` has no field `"
+                + node.value + "`",
+        )
+        return "unknown"
+    }
+    ck_diag::fail(ck, 
+        node,
+        "E0102",
+        "no member `" + node.value + "` on `" + recv + "`",
+    )
+    return "unknown"
+}
+
+pub fn check_index(ck: mut Checker, node: Node): string {
+    if node.children.len < 2 {
+        return "unknown"
+    }
+    let recv = check_expr(ck, node.children[0])
+    let index = check_expr(ck, node.children[1])
+    if ck.error != "" {
+        return "unknown"
+    }
+    if recv == "unknown" or index == "unknown" {
+        ck.complete = false
+        return "unknown"
+    }
+    if ck_types::is_map(ck, recv) {
+        if !ck_types::assignable(ck, ck_types::map_key(ck, recv), index) {
+            ck_diag::fail(ck, 
+                node.children[1],
+                "E0201",
+                "map key expects `" + ck_types::map_key(ck, recv) + "`, found `" + index + "`",
+            )
+        }
+        return ck_types::map_value(ck, recv)
+    }
+    if !ck_types::is_number(ck, index) {
+        ck_diag::fail(ck, 
+            node.children[1],
+            "E0201",
+            "an index must be `number`, found `" + index + "`",
+        )
+        return "unknown"
+    }
+    if ck_types::is_list(ck, recv) {
+        return ck_types::list_element(ck, recv)
+    }
+    ck_diag::fail(ck, node, "E0215", "`" + recv + "` cannot be indexed")
+    return "unknown"
+}
+
+pub fn check_if(ck: mut Checker, node: Node): string {
+    if node.children.len < 2 {
+        return "unit"
+    }
+    let cond = check_expr(ck, node.children[0])
+    if ck.error != "" {
+        return "unknown"
+    }
+    if cond == "unknown" {
+        ck.complete = false
+        return "unknown"
+    }
+    if cond != "bool" {
+        ck_diag::fail(ck, 
+            node.children[0],
+            "E0201",
+            "expected `bool`, found `" + cond + "`",
+        )
+        return "unknown"
+    }
+    let mut narrow_name = ""
+    let mut then_narrow = ""
+    let mut else_narrow = ""
+    let condition = node.children[0]
+    if condition.kind == "Binary" and condition.children.len == 2
+        and (condition.value == "!=" or condition.value == "==")
+    {
+        let left = condition.children[0]
+        let right = condition.children[1]
+        let mut tested = left
+        let mut null_on_right = true
+        if left.kind == "Literal" and left.value == "null" {
+            tested = right
+            null_on_right = false
+        } else if !(right.kind == "Literal" and right.value == "null") {
+            tested = condition
+        }
+        let is_null_test = null_on_right
+            and right.kind == "Literal" and right.value == "null"
+        let is_null_test2 = !null_on_right
+            and left.kind == "Literal" and left.value == "null"
+        if tested.kind == "Name" and (is_null_test or is_null_test2) {
+            let ty = ck_diag::lookup(ck, tested.value)
+            if ck_types::is_optional(ck, ty) {
+                narrow_name = tested.value
+                let inner = ck_types::optional_inner(ck, ty)
+                if condition.value == "==" {
+                    else_narrow = inner
+                } else {
+                    then_narrow = inner
+                }
+            }
+        }
+    } else if condition.kind == "Is" and condition.children.len >= 2
+        and condition.children[0].kind == "Name"
+    {
+        let name = condition.children[0].value
+        let current = ck_diag::lookup(ck, name)
+        let tested = ck_types::type_of(ck, condition.children[1])
+        if ck.error == "" and tested != "unknown" {
+            narrow_name = name
+            if condition.value == "is not" {
+                then_narrow = ck_types::without_union_member(ck, current, tested)
+                else_narrow = tested
+            } else {
+                then_narrow = tested
+                else_narrow = ck_types::without_union_member(ck, current, tested)
+            }
+        }
+    }
+    let then_ty = if narrow_name != "" and then_narrow != "" {
+        ck_diag::enter_scope(ck)
+        ck_diag::bind(ck, narrow_name, then_narrow)
+        let ty = ck_stmt::check_block(ck, node.children[1], true)
+        ck_diag::leave_scope(ck)
+        ty
+    } else {
+        ck_stmt::check_block(ck, node.children[1], true)
+    }
+    if node.children.len < 3 {
+        return "unit"
+    }
+    let else_node = node.children[2]
+    let else_ty = if narrow_name != "" and else_narrow != "" {
+        ck_diag::enter_scope(ck)
+        ck_diag::bind(ck, narrow_name, else_narrow)
+        let ty = if else_node.kind == "If" {
+            check_expr(ck, else_node)
+        } else {
+            ck_stmt::check_block(ck, else_node, true)
+        }
+        ck_diag::leave_scope(ck)
+        ty
+    } else if else_node.kind == "If" {
+        check_expr(ck, else_node)
+    } else {
+        ck_stmt::check_block(ck, else_node, true)
+    }
+    return ck_types::unify(ck, node, then_ty, else_ty)
+}
+
+pub fn check_ternary(ck: mut Checker, node: Node): string {
+    if node.children.len < 3 {
+        return "unknown"
+    }
+    let cond = check_expr(ck, node.children[0])
+    if ck.error != "" {
+        return "unknown"
+    }
+    if cond != "bool" {
+        ck_diag::fail(ck, node.children[0], "E0201", "a ternary condition must be `bool`")
+        return "unknown"
+    }
+    let then_ty = check_expr(ck, node.children[1])
+    let else_ty = check_expr(ck, node.children[2])
+    return ck_types::unify(ck, node, then_ty, else_ty)
+}
+
+pub fn check_match(ck: mut Checker, node: Node): string {
+    return check_match_arms(ck, node, true)
+}
+
+pub fn check_match_arms(ck: mut Checker, node: Node, unify_arms: bool): string {
+    if node.children.len == 0 {
+        return "unit"
+    }
+    let subject = check_expr(ck, node.children[0])
+    if ck.error != "" {
+        return "unknown"
+    }
+    let mut result = "unit"
+    let mut first = true
+    let mut i = 1
+    while i < node.children.len {
+        let arm = node.children[i]
+        if arm.kind != "Arm" or arm.children.len == 0 {
+            ck.complete = false
+            i = i + 1
+            continue
+        }
+        ck_diag::enter_scope(ck)
+        check_pattern(ck, arm.children[0], subject)
+        // The guard, when present, sits between the pattern and the body.
+        let mut g = 1
+        while g + 1 < arm.children.len {
+            let child = arm.children[g]
+            if child.kind == "Guard" and child.children.len > 0 {
+                let guard_ty = check_expr(ck, child.children[0])
+                if ck.error == "" and guard_ty != "bool" and guard_ty != "unknown" {
+                    ck_diag::fail(ck, 
+                        child,
+                        "E0201",
+                        "a match guard must be `bool`, found `" + guard_ty + "`",
+                    )
+                }
+                if guard_ty == "unknown" {
+                    ck.complete = false
+                }
+            }
+            g = g + 1
+        }
+        let body = arm.children[arm.children.len - 1]
+        let arm_ty = if body.kind == "Block" {
+            ck_stmt::check_block(ck, body, true)
+        } else {
+            check_expr(ck, body)
+        }
+        ck_diag::leave_scope(ck)
+        if ck.error != "" {
+            return "unknown"
+        }
+        if first {
+            result = arm_ty
+            first = false
+        } else if unify_arms {
+            result = ck_types::unify(ck, node, result, arm_ty)
+        }
+        i = i + 1
+    }
+    if result == "unknown" {
+        ck.complete = false
+    }
+    return result
+}
+
+pub fn check_pattern(ck: mut Checker, pattern: Node, subject: string) {
+    if pattern.kind == "NamePattern" {
+        let value = pattern.value
+        if value == "_" {
+            return
+        }
+        if value.split("::").len > 1 {
+            let enum_index = ck_decls::resolve_variant_path(ck, value)
+            if enum_index < 0 {
+                ck.complete = false
+                return
+            }
+            if ck.enums[enum_index].is_generic {
+                ck.complete = false
+                return
+            }
+            if subject != "unknown" and subject != ck_decls::enum_canonical(ck, enum_index) {
+                ck_diag::fail(ck, 
+                    pattern,
+                    "E0201",
+                    "pattern `" + value + "` does not match `" + subject + "`",
+                )
+            }
+            return
+        }
+        ck_diag::bind(ck, value, subject)
+        return
+    }
+    if pattern.kind == "VariantPattern" {
+        if pattern.value.split("::").len == 1 {
+            let struct_index = ck_decls::resolve_struct(ck, ck.current_module, pattern.value, 0)
+            if struct_index >= 0 {
+                if subject != "unknown" and subject != ck_decls::struct_canonical(ck, struct_index) {
+                    ck_diag::fail(ck, 
+                        pattern,
+                        "E0201",
+                        "pattern `" + pattern.value + "` does not match `" + subject + "`",
+                    )
+                    return
+                }
+                let fields = ck.structs[struct_index].fields
+                for child in pattern.children {
+                    if child.kind == "PatternPayload" {
+                        if child.children.len != fields.len {
+                            ck.complete = false
+                            return
+                        }
+                        let mut p = 0
+                        while p < child.children.len {
+                            let binding = child.children[p]
+                            if binding.kind == "NamePattern" and binding.value != "_" {
+                                ck_diag::bind(ck, binding.value, fields[p].ty)
+                            } else if binding.kind != "NamePattern" {
+                                ck.complete = false
+                            }
+                            p = p + 1
+                        }
+                    }
+                }
+                return
+            }
+        }
+        let enum_index = ck_decls::resolve_variant_path(ck, pattern.value)
+        if enum_index < 0 {
+            ck.complete = false
+            return
+        }
+        if ck.enums[enum_index].is_generic {
+            // Payload types mention type parameters; bind the names so
+            // the arm body still checks, but keep the pass incomplete.
+            for child in pattern.children {
+                if child.kind == "PatternPayload" {
+                    for binding in child.children {
+                        if binding.kind == "NamePattern" and binding.value != "_" {
+                            ck_diag::bind(ck, binding.value, "unknown")
+                        }
+                    }
+                }
+            }
+            ck.complete = false
+            return
+        }
+        if subject != "unknown" and subject != ck_decls::enum_canonical(ck, enum_index) {
+            ck_diag::fail(ck, 
+                pattern,
+                "E0201",
+                "pattern `" + pattern.value + "` does not match `" + subject + "`",
+            )
+            return
+        }
+        let parts = ck_util::split_path(pattern.value)
+        let variant = ck_decls::variant_index(ck, enum_index, parts[parts.len - 1])
+        if variant < 0 {
+            ck.complete = false
+            return
+        }
+        let fields = ck.enums[enum_index].variants[variant].fields
+        for child in pattern.children {
+            if child.kind != "PatternPayload" {
+                continue
+            }
+            if child.children.len != fields.len {
+                ck.complete = false
+                return
+            }
+            let mut p = 0
+            while p < child.children.len {
+                let binding = child.children[p]
+                if binding.kind == "NamePattern" and binding.value != "_" {
+                    ck_diag::bind(ck, binding.value, fields[p].ty)
+                } else if binding.kind != "NamePattern" {
+                    ck.complete = false
+                }
+                p = p + 1
+            }
+        }
+        return
+    }
+    if pattern.kind == "TypePattern" {
+        // `bool b`, `int i`, `string s`: bind the trailing name.
+        let words = pattern.value.split(" ")
+        let mut type_text = ""
+        let mut binder = ""
+        for word in words {
+            if word != "" {
+                if type_text == "" {
+                    type_text = word
+                }
+                binder = word
+            }
+        }
+        if type_text == "int" or type_text == "number" or type_text == "float" {
+            type_text = "number"
+        }
+        if binder != "" and binder != "_" {
+            ck_diag::bind(ck, binder, type_text)
+        }
+        return
+    }
+    // Literal, range, or-patterns and struct patterns carry no binding the
+    // checker needs here; shapes it cannot read stay "not modeled".
+    if pattern.kind != "LiteralPattern" {
+        ck.complete = false
+    }
+}
+
+pub fn check_map_literal(ck: mut Checker, node: Node): string {
+    let mut fields: List<FieldSig> = []
+    // `Map<K, V>{ k: v }` uses expression keys (two children per entry);
+    // `{ k: v }` uses identifier keys (one child) and stays an anonymous
+    // object so member reads keep their shape.
+    let mut typed = node.children.len > 0
+    let mut key_ty = ""
+    let mut value_ty = ""
+    for child in node.children {
+        if child.kind == "Entry" {
+            if child.children.len >= 2 {
+                let key = check_expr(ck, child.children[0])
+                let value = check_expr(ck, child.children[1])
+                if ck.error != "" {
+                    return "unknown"
+                }
+                if key_ty == "" {
+                    key_ty = key
+                } else {
+                    key_ty = ck_types::unify(ck, child, key_ty, key)
+                }
+                if value_ty == "" {
+                    value_ty = value
+                } else {
+                    value_ty = ck_types::unify(ck, child, value_ty, value)
+                }
+            } else if child.children.len == 1 {
+                typed = false
+                let ty = check_expr(ck, child.children[0])
+                fields.push(FieldSig(name: child.value, ty: ty))
+            } else {
+                typed = false
+                fields.push(FieldSig(name: child.value, ty: "unknown"))
+            }
+        } else if child.kind == "Spread" {
+            typed = false
+            let inner = check_expr(ck, child)
+            if ck.error != "" {
+                return "unknown"
+            }
+            let anon = ck_types::find_anon(ck, inner)
+            if anon >= 0 {
+                for field in ck.anon_objects[anon].fields {
+                    fields.push(field)
+                }
+            } else if inner == "unknown" or ck_types::is_map(ck, inner) {
+                // A spread of an opaque or map value needs the expected
+                // type; the entries that follow are still checked.
+                ck.complete = false
+            } else {
+                ck_diag::fail(ck, 
+                    child,
+                    "E0214",
+                    "`" + inner + "` cannot be spread into an object",
+                )
+                return "unknown"
+            }
+        } else {
+            typed = false
+            ck.complete = false
+        }
+    }
+    if ck.error != "" {
+        return "unknown"
+    }
+    if typed {
+        if key_ty == "" {
+            key_ty = "unknown"
+        }
+        if value_ty == "" {
+            value_ty = "unknown"
+        }
+        return "Map<" + key_ty + "," + value_ty + ">"
+    }
+    let id = ck.next_anon
+    ck.next_anon = ck.next_anon + 1
+    ck.anon_objects.push(AnonSig(id: id, fields: fields))
+    return "@obj" + str(id)
+}
+
+/// Merge two list-element types. A heterogeneous literal is valid and
+/// infers `unknown` (matching stage 0); `null` widens the other side to
+/// optional.
+pub fn merge_element(ck: mut Checker, node: Node, current: string, next: string): string {
+    if current == "unknown" {
+        return next
+    }
+    if next == "unknown" {
+        return current
+    }
+    if current == "null" {
+        if ck_types::is_optional(ck, next) {
+            return next
+        }
+        return next + "?"
+    }
+    if next == "null" {
+        if ck_types::is_optional(ck, current) {
+            return current
+        }
+        return current + "?"
+    }
+    if ck_types::assignable(ck, current, next) or ck_types::assignable(ck, next, current) {
+        return ck_types::unify(ck, node, current, next)
+    }
+    return "unknown"
+}
+
+pub fn check_list(ck: mut Checker, node: Node): string {
+    let mut elem = ""
+    for child in node.children {
+        if child.kind == "Spread" {
+            let inner = check_expr(ck, child)
+            if ck.error != "" {
+                return "unknown"
+            }
+            if ck_types::is_list(ck, inner) {
+                let item = ck_types::list_element(ck, inner)
+                if elem == "" {
+                    elem = item
+                } else {
+                    elem = merge_element(ck, child, elem, item)
+                }
+            } else if inner == "unknown" {
+                ck.complete = false
+                if elem == "" {
+                    elem = "unknown"
+                }
+            } else {
+                ck_diag::fail(ck, 
+                    child,
+                    "E0214",
+                    "`" + inner + "` cannot be spread into a list",
+                )
+                return "unknown"
+            }
+        } else {
+            let ty = check_expr(ck, child)
+            if ck.error != "" {
+                return "unknown"
+            }
+            if elem == "" {
+                elem = ty
+            } else {
+                elem = merge_element(ck, child, elem, ty)
+            }
+        }
+    }
+    if elem == "" {
+        elem = "unknown"
+    }
+    return "List<" + elem + ">"
+}

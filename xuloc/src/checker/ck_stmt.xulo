@@ -1,0 +1,655 @@
+// Checker: statements, blocks, and function bodies.
+
+use ast::Node;
+use super::{Checker};
+use super::ck_util;
+use super::ck_diag;
+use super::ck_types;
+use super::ck_decls;
+use super::ck_expr;
+
+/// Bind a `const N: int` parameter so the body can use `N` as a value.
+pub fn bind_const_params(ck: mut Checker, item: Node) {
+    for child in item.children {
+        if child.kind == "GenericParams" {
+            for param in child.children {
+                if param.kind == "ConstGenericParam" {
+                    ck_diag::bind(ck, param.value, "number")
+                }
+            }
+        }
+    }
+}
+
+pub fn check_program(ck: mut Checker, root: Node) {
+    check_module_items(ck, root, "", false)
+}
+
+pub fn check_module_items(ck: mut Checker, items: Node, module_id: string, nested: bool) {
+    let saved_module = ck.current_module
+    ck.current_module = module_id
+    if nested {
+        ck_diag::enter_scope(ck)
+    }
+    for item in items.children {
+        if ck.error != "" {
+            break
+        }
+        if item.kind == "Fn" {
+            if !ck_decls::is_macro_decl(ck, item) {
+                check_function(ck, item)
+            }
+        } else if item.kind == "Let" {
+            check_let(ck, item)
+        } else if item.kind == "Const" {
+            check_const(ck, item)
+        } else if item.kind == "Mod" {
+            if ck_util::has_child_kind(item, "ModBody") {
+                let child = if module_id == "" {
+                    item.value
+                } else {
+                    module_id + "::" + item.value
+                }
+                check_module_items(ck, item, child, true)
+            }
+            // A file-backed module's body is not in this buffer; calls
+            // into it resolve as opaque instead of producing a false
+            // "not found".
+        } else if item.kind == "Attribute" or item.kind == "Use"
+            or item.kind == "Pub" or item.kind == "Async" or item.kind == "ModBody"
+        {
+            // Attributes are attached to their declaration, imports were
+            // resolved before checking, and the markers are not
+            // declarations.
+        } else if item.kind == "Struct" or item.kind == "Enum"
+            or item.kind == "TypeAlias" or item.kind == "Extern"
+        {
+            // Fields, payloads, alias targets, and FFI signatures are
+            // resolved before checking.
+        } else if item.kind == "Trait" {
+            // Trait declarations carry signatures only; dispatch through
+            // `Trait::method(recv)` stays opaque, so the pass is partial.
+            ck.complete = false
+        } else if item.kind == "Impl" {
+            for child in item.children {
+                if child.kind == "Fn" {
+                    check_method(ck, child)
+                }
+            }
+        } else {
+            ck_diag::fail(ck, 
+                item,
+                "E0003",
+                "stage 1 checker does not support `" + item.kind + "` declarations yet",
+            )
+        }
+    }
+    if nested {
+        ck_diag::leave_scope(ck)
+    }
+    ck.current_module = saved_module
+}
+
+pub fn check_function(ck: mut Checker, item: Node) {
+    let index = ck_decls::find_function_in(ck, ck.current_module, item.value)
+    if index < 0 {
+        ck_diag::fail(ck, item, "E0101", "cannot find function `" + item.value + "`")
+        return
+    }
+    let sig = ck.functions[index]
+    ck.current_return = sig.ret
+    ck_diag::enter_scope(ck)
+    bind_const_params(ck, item)
+    let mut p = 0
+    while p < sig.params.len {
+        let name = param_name(ck, item, p)
+        ck_diag::bind(ck, name, sig.params[p])
+        p = p + 1
+    }
+    let mut body = item
+    let mut found = false
+    for child in item.children {
+        if child.kind == "Block" {
+            body = child
+            found = true
+        }
+    }
+    if !found {
+        ck_diag::fail(ck, item, "E0003", "a function needs a body")
+    } else {
+        check_block(ck, body, false)
+    }
+    ck_diag::leave_scope(ck)
+}
+
+pub fn check_method(ck: mut Checker, item: Node) {
+    let index = ck_decls::find_method_in(ck, ck.current_module, item.value)
+    if index < 0 {
+        ck.complete = false
+        return
+    }
+    let sig = ck.methods[index]
+    ck.current_return = sig.ret
+    ck_diag::enter_scope(ck)
+    ck_diag::bind(ck, "self", sig.owner)
+    let mut p = 0
+    while p < sig.param_names.len and p < sig.params.len {
+        ck_diag::bind(ck, sig.param_names[p], sig.params[p])
+        p = p + 1
+    }
+    let mut body = item
+    let mut found = false
+    for child in item.children {
+        if child.kind == "Block" {
+            body = child
+            found = true
+        }
+    }
+    if !found {
+        ck_diag::fail(ck, item, "E0003", "a method needs a body")
+    } else {
+        check_block(ck, body, false)
+    }
+    ck_diag::leave_scope(ck)
+}
+
+// The parser stores parameter names on the direct `Param` children.
+pub fn param_name(ck: Checker, item: Node, index: number): string {
+    let mut seen = 0
+    for child in item.children {
+        if child.kind == "Param" {
+            if seen == index {
+                return child.value
+            }
+            seen = seen + 1
+        }
+    }
+    return "_"
+}
+
+pub fn check_const(ck: mut Checker, item: Node) {
+    let mut ty = ""
+    let mut initializer = item
+    let mut found = false
+    for child in item.children {
+        if child.kind == "Pub" or child.kind == "Async" {
+            continue
+        }
+        if ck_types::is_type_node(ck, child) {
+            ty = ck_types::type_of(ck, child)
+        } else {
+            initializer = child
+            found = true
+        }
+    }
+    if !found {
+        ck_diag::fail(ck, item, "E0003", "a constant needs an initializer")
+        return
+    }
+    let actual = ck_expr::check_expr(ck, initializer)
+    if ty == "" {
+        ty = actual
+    } else if !ck_types::assignable(ck, ty, actual) {
+        ck_diag::fail(ck, 
+            initializer,
+            "E0201",
+            "expected `" + ty + "`, found `" + actual + "`",
+        )
+    }
+    ck_diag::bind(ck, item.value, ty)
+}
+
+pub fn check_let(ck: mut Checker, item: Node) {
+    if item.value == "" and item.children.len >= 2
+        and item.children[0].kind == "Destructure"
+    {
+        let pattern = item.children[0]
+        let initializer = item.children[item.children.len - 1]
+        let actual = ck_expr::check_expr(ck, initializer)
+        if ck.error != "" {
+            // Still bind the names so later reads do not add cascading
+            // "not found" errors to a partial analysis.
+            for binding in pattern.children {
+                if binding.kind == "NamePattern" and binding.value != "_" {
+                    ck_diag::bind(ck, binding.value, "unknown")
+                }
+            }
+            return
+        }
+        bind_destructure(ck, pattern, actual)
+        return
+    }
+    let mut ty = ""
+    let mut initializer = item
+    let mut found = false
+    for child in item.children {
+        if child.kind == "Mut" or child.kind == "Pub" or child.kind == "Async" {
+            // Mutability is tracked when the checker grows assignment rules.
+        } else if ck_types::is_type_node(ck, child) {
+            ty = ck_types::type_of(ck, child)
+        } else {
+            initializer = child
+            found = true
+        }
+    }
+    if !found {
+        ck_diag::fail(ck, item, "E0003", "a binding needs an initializer")
+        return
+    }
+    if ty != "" and ck_types::is_map(ck, ty) and initializer.kind == "Map" {
+        check_map_against(ck, initializer, ty)
+        ck_diag::bind(ck, item.value, ty)
+        return
+    }
+    if ty != "" and initializer.kind == "Map" {
+        let struct_index = ck_decls::find_struct_by_type(ck, ck_types::optional_inner(ck, ty))
+        if struct_index >= 0 {
+            check_struct_object(ck, initializer, struct_index)
+            if ck.error == "" {
+                ck_diag::bind(ck, item.value, ty)
+            }
+            return
+        }
+    }
+    let actual = ck_expr::check_expr(ck, initializer)
+    if ty == "" {
+        ty = actual
+    } else if !ck_types::assignable(ck, ty, actual) {
+        ck_diag::fail(ck, 
+            initializer,
+            "E0201",
+            "expected `" + ty + "`, found `" + actual + "`",
+        )
+    }
+    ck_diag::bind(ck, item.value, ty)
+}
+
+/// Check a `{ k: v }` initializer against an expected `Map<K, V>`.
+pub fn check_map_against(ck: mut Checker, node: Node, ty: string) {
+    let key_ty = ck_types::map_key(ck, ty)
+    let value_ty = ck_types::map_value(ck, ty)
+    for child in node.children {
+        if child.kind == "Entry" {
+            if child.children.len >= 2 {
+                let key = ck_expr::check_expr(ck, child.children[0])
+                let value = ck_expr::check_expr(ck, child.children[1])
+                if ck.error != "" {
+                    return
+                }
+                if !ck_types::assignable(ck, key_ty, key) {
+                    ck_diag::fail(ck, 
+                        child,
+                        "E0201",
+                        "map key expects `" + key_ty + "`, found `" + key + "`",
+                    )
+                    return
+                }
+                if !ck_types::assignable(ck, value_ty, value) {
+                    ck_diag::fail(ck, 
+                        child,
+                        "E0201",
+                        "map value expects `" + value_ty + "`, found `" + value + "`",
+                    )
+                    return
+                }
+            } else if child.children.len == 1 {
+                // An untyped object entry has an identifier key, which is
+                // a string by construction.
+                if !ck_types::assignable(ck, key_ty, "string") {
+                    ck_diag::fail(ck, 
+                        child,
+                        "E0201",
+                        "map key expects `" + key_ty + "`, found `string`",
+                    )
+                    return
+                }
+                let value = ck_expr::check_expr(ck, child.children[0])
+                if ck.error != "" {
+                    return
+                }
+                if !ck_types::assignable(ck, value_ty, value) {
+                    ck_diag::fail(ck, 
+                        child,
+                        "E0201",
+                        "map value expects `" + value_ty + "`, found `" + value + "`",
+                    )
+                    return
+                }
+            } else {
+                ck.complete = false
+            }
+        } else {
+            // A spread needs the operand's shape, which is not available
+            // when the expected type is a map.
+            ck_expr::check_expr(ck, child)
+            ck.complete = false
+        }
+    }
+}
+
+pub fn check_struct_object(ck: mut Checker, node: Node, index: number) {
+    let sig = ck.structs[index]
+    let mut used: List<bool> = []
+    let mut f = 0
+    while f < sig.fields.len {
+        used.push(false)
+        f = f + 1
+    }
+    for child in node.children {
+        if child.kind != "Entry" {
+            ck.complete = false
+            continue
+        }
+        if child.children.len == 0 {
+            ck.complete = false
+            continue
+        }
+        let mut target = ck_expr::struct_field_index(ck, index, child.value)
+        if target < 0 {
+            ck_diag::fail(ck, 
+                node,
+                "E0206",
+                "`" + sig.name + "` has no field `" + child.value + "`",
+            )
+            return
+        }
+        if used[target] {
+            ck_diag::fail(ck, 
+                node,
+                "E0208",
+                "field `" + sig.fields[target].name + "` is initialized twice",
+            )
+            return
+        }
+        used[target] = true
+        let ty = ck_expr::check_expr(ck, child.children[0])
+        if ck.error != "" {
+            return
+        }
+        if !ck_types::assignable(ck, sig.fields[target].ty, ty) {
+            ck_diag::fail(ck, 
+                node,
+                "E0202",
+                "field `" + sig.fields[target].name + "` expects `"
+                    + sig.fields[target].ty + "`, found `" + ty + "`",
+            )
+            return
+        }
+    }
+    f = 0
+    while f < used.len {
+        if !used[f] and !ck_types::is_optional(ck, sig.fields[f].ty) {
+            ck_diag::fail(ck, 
+                node,
+                "E0205",
+                "missing field `" + sig.fields[f].name + "` in initializer of `"
+                    + sig.name + "`",
+            )
+            return
+        }
+        f = f + 1
+    }
+}
+
+pub fn bind_destructure(ck: mut Checker, pattern: Node, actual: string) {
+    if pattern.value == "object" {
+        let anon = ck_types::find_anon(ck, actual)
+        let struct_index = ck_decls::find_struct_by_type(ck, actual)
+        for binding in pattern.children {
+            if binding.kind != "NamePattern" or binding.value == "_" {
+                continue
+            }
+            let name = binding.value
+            let mut ty = "unknown"
+            if anon >= 0 {
+                let mut f = ck.anon_objects[anon].fields.len
+                while f > 0 {
+                    f = f - 1
+                    if ck.anon_objects[anon].fields[f].name == name {
+                        ty = ck.anon_objects[anon].fields[f].ty
+                    }
+                }
+            } else if struct_index >= 0 {
+                let f = ck_expr::struct_field_index(ck, struct_index, name)
+                if f >= 0 {
+                    ty = ck.structs[struct_index].fields[f].ty
+                }
+            } else {
+                ck.complete = false
+            }
+            ck_diag::bind(ck, name, ty)
+        }
+        return
+    }
+    if pattern.value == "tuple" {
+        let parts = ck_types::tuple_types(ck, actual)
+        if parts.len != pattern.children.len {
+            ck.complete = false
+        }
+        let mut i = 0
+        while i < pattern.children.len {
+            let binding = pattern.children[i]
+            if binding.kind == "NamePattern" and binding.value != "_" {
+                if i < parts.len {
+                    ck_diag::bind(ck, binding.value, parts[i])
+                } else {
+                    ck_diag::bind(ck, binding.value, "unknown")
+                }
+            }
+            i = i + 1
+        }
+        return
+    }
+    ck.complete = false
+    for binding in pattern.children {
+        if binding.kind == "NamePattern" and binding.value != "_" {
+            ck_diag::bind(ck, binding.value, "unknown")
+        }
+    }
+}
+
+pub fn check_block(ck: mut Checker, block: Node, value_used: bool): string {
+    ck_diag::enter_scope(ck)
+    let mut value = "unit"
+    let mut index = 0
+    for stmt in block.children {
+        if ck.error != "" {
+            break
+        }
+        value = check_statement(ck, 
+            stmt,
+            value_used and index == block.children.len - 1,
+        )
+        index = index + 1
+    }
+    ck_diag::leave_scope(ck)
+    return value
+}
+
+pub fn check_statement(ck: mut Checker, stmt: Node, value_used: bool): string {
+    if stmt.kind == "Let" {
+        check_let(ck, stmt)
+        return "unit"
+    }
+    if stmt.kind == "Const" {
+        check_const(ck, stmt)
+        return "unit"
+    }
+    if stmt.kind == "Assign" {
+        check_assign(ck, stmt)
+        return "unit"
+    }
+    if stmt.kind == "ExprStmt" {
+        if stmt.children.len == 0 {
+            return "unit"
+        }
+        let expr = stmt.children[0]
+        if !value_used and expr.kind == "Match" {
+            // A statement-position `match` may mix arm types (one arm
+            // prints, another yields a value); only a value-position
+            // match needs a common type.
+            ck_expr::check_match_arms(ck, expr, false)
+            return "unit"
+        }
+        return ck_expr::check_expr(ck, expr)
+    }
+    if stmt.kind == "Lock" {
+        ck_expr::check_lock(ck, stmt)
+        return "unit"
+    }
+    if stmt.kind == "Spawn" {
+        ck_expr::check_spawn(ck, stmt)
+        return "unit"
+    }
+    if stmt.kind == "Return" {
+        check_return(ck, stmt)
+        return "unit"
+    }
+    if stmt.kind == "Jump" {
+        return "unit"
+    }
+    if stmt.kind == "Defer" {
+        if stmt.children.len > 0 {
+            ck_expr::check_expr(ck, stmt.children[0])
+        }
+        return "unit"
+    }
+    if stmt.kind == "While" {
+        check_while(ck, stmt)
+        return "unit"
+    }
+    if stmt.kind == "For" {
+        check_for(ck, stmt)
+        return "unit"
+    }
+    if stmt.kind == "Fn" {
+        ck_diag::fail(ck, stmt, "E0003", "nested functions are not supported yet")
+        return "unit"
+    }
+    ck_diag::fail(ck, 
+        stmt,
+        "E0003",
+        "stage 1 checker does not support `" + stmt.kind + "` statements yet",
+    )
+    return "unit"
+}
+
+pub fn check_assign(ck: mut Checker, stmt: Node) {
+    if stmt.children.len < 2 {
+        ck_diag::fail(ck, stmt, "E0003", "an assignment needs two operands")
+        return
+    }
+    let lhs = place_type(ck, stmt.children[0])
+    let rhs = ck_expr::check_expr(ck, stmt.children[1])
+    if ck.error == "" and (lhs == "unknown" or rhs == "unknown") {
+        ck.complete = false
+        return
+    }
+    if ck.error == "" and !ck_types::assignable(ck, lhs, rhs) {
+        ck_diag::fail(ck, 
+            stmt,
+            "E0201",
+            "expected `" + lhs + "`, found `" + rhs + "`",
+        )
+    }
+}
+
+pub fn place_type(ck: mut Checker, node: Node): string {
+    if node.kind == "Name" {
+        let ty = ck_diag::lookup(ck, node.value)
+        if ty == "" {
+            ck_diag::fail(ck, node, "E0101", "cannot find value `" + node.value + "` in this scope")
+            return "unknown"
+        }
+        return ty
+    }
+    if node.kind == "Index" {
+        return ck_expr::check_index(ck, node)
+    }
+    if node.kind == "Member" {
+        return ck_expr::check_expr(ck, node)
+    }
+    ck_diag::fail(ck, node, "E0003", "stage 1 checker does not support this assignment target yet")
+    return "unknown"
+}
+
+pub fn check_return(ck: mut Checker, stmt: Node) {
+    let mut actual = "unit"
+    if stmt.children.len > 0 {
+        actual = ck_expr::check_expr(ck, stmt.children[0])
+    }
+    if ck.error != "" {
+        return
+    }
+    if !ck_types::assignable(ck, ck.current_return, actual) {
+        ck_diag::fail(ck, 
+            stmt,
+            "E0203",
+            "expected `" + ck.current_return + "`, found `" + actual + "`",
+        )
+    }
+}
+
+pub fn check_while(ck: mut Checker, stmt: Node) {
+    if stmt.children.len == 0 {
+        ck_diag::fail(ck, stmt, "E0003", "a loop needs a condition")
+        return
+    }
+    let cond = ck_expr::check_expr(ck, stmt.children[0])
+    if ck.error == "" and cond != "bool" {
+        ck_diag::fail(ck, 
+            stmt.children[0],
+            "E0201",
+            "expected `bool`, found `" + cond + "`",
+        )
+        return
+    }
+    if stmt.children.len > 1 {
+        check_block(ck, stmt.children[1], false)
+    }
+}
+
+pub fn check_for(ck: mut Checker, stmt: Node) {
+    if stmt.children.len == 0 {
+        ck_diag::fail(ck, stmt, "E0003", "a for loop needs an iterable")
+        return
+    }
+    let iterable = ck_expr::check_expr(ck, stmt.children[0])
+    if ck.error != "" {
+        return
+    }
+    if iterable == "unknown" {
+        ck.complete = false
+        ck_diag::enter_scope(ck)
+        ck_diag::bind(ck, stmt.value, "unknown")
+        if stmt.children.len > 1 {
+            check_block(ck, stmt.children[1], false)
+        }
+        ck_diag::leave_scope(ck)
+        return
+    }
+    if !ck_types::is_list(ck, iterable) and !ck_types::is_range(ck, iterable)
+        and !ck_types::is_map(ck, iterable) and !ck_types::is_set(ck, iterable)
+    {
+        ck_diag::fail(ck, 
+            stmt.children[0],
+            "E0213",
+            "`" + iterable + "` is not iterable",
+        )
+        return
+    }
+    ck_diag::enter_scope(ck)
+    if ck_types::is_range(ck, iterable) {
+        ck_diag::bind(ck, stmt.value, "number")
+    } else if ck_types::is_map(ck, iterable) {
+        ck_diag::bind(ck, stmt.value, ck_types::map_key(ck, iterable))
+    } else if ck_types::is_set(ck, iterable) {
+        ck_diag::bind(ck, stmt.value, ck_types::set_element(ck, iterable))
+    } else {
+        ck_diag::bind(ck, stmt.value, ck_types::list_element(ck, iterable))
+    }
+    if stmt.children.len > 1 {
+        check_block(ck, stmt.children[1], false)
+    }
+    ck_diag::leave_scope(ck)
+}
