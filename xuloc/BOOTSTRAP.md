@@ -229,8 +229,10 @@ leave `CheckResult.complete = false` instead of producing a false "not found";
 `use type` from such a module marks the name as a foreign type, and operations
 on the resulting `unknown` type stay unchecked. Simple structs are modeled:
 field types, constructors with named or positional fields, and member reads.
-Non-generic enums are modeled with payload constructors and `match` arms
-(variant, literal, type, binder, wildcard, and guard patterns). Template
+Enums are modeled with payload constructors and `match` arms
+(variant, literal, type, binder, wildcard, and guard patterns); a generic enum
+instantiation keeps its payload types through construction and binding.
+Template
 strings check their interpolated expressions, an untyped object literal gets
 an anonymous shape so its member reads are checked, tuples carry a `(T1,T2)`
 type through literals, annotations, positional reads/writes, and destructuring,
@@ -247,7 +249,9 @@ external `use path::*` keeps bare names opaque, `await` yields its operand's
 task type, `spawn`/`lock`/`shared` are modeled, `extern "C"` declarations
 bind their `as` alias and an optional `Ptr?` argument may be omitted, generic
 type/const parameters are `unknown` in a body, while a generic call infers its
-arguments from the actual parameters (and leaves unresolved ones `unknown`), a
+arguments from the actual parameters (and leaves unresolved ones `unknown`),
+a generic enum instantiation (`Option<int>`) substitutes its payload types in
+constructors and `match` bindings, a
 `trait` declaration is accepted with
 dispatch left opaque, a macro definition body is skipped and a macro
 invocation is `unknown` (with a declared macro, unresolved names stay opaque),

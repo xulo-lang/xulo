@@ -24,8 +24,10 @@
 // `use` paths (aliases, groups, globs), and `pub use` re-exports are modeled;
 // a file-backed module is opaque because the checker has no loader. Simple
 // structs are modeled too: field types, constructors, and member reads.
-// Non-generic enums are modeled with payload constructors and `match` arms
-// (variant, literal, type, binder, wildcard, and guard patterns). Template
+// Enums are modeled with payload constructors and `match` arms (variant,
+// literal, type, binder, wildcard, and guard patterns); a generic enum
+// instantiation keeps its payload types through construction and binding.
+// Template
 // strings check their interpolated expressions, and an untyped object literal
 // gets an anonymous shape so its member reads and object destructuring are
 // checked. Tuple types, literals, positional reads, writes, and destructuring
@@ -42,8 +44,9 @@
 // `await` yields its operand's task type, `spawn`/`lock`/`shared` are
 // modeled, `extern "C"` declarations bind their `as` alias with `Ptr` as an
 // opaque address, generic type/const parameters are `unknown` in a body but a
-// call infers them from its arguments (so `first([1, 2])` yields `number`), a
-// `trait` declaration is
+// call infers them from its arguments (so `first([1, 2])` yields `number`),
+// generic enum instantiations (`Option<int>`) carry their payload types
+// through constructors and `match`, a `trait` declaration is
 // accepted with dispatch left opaque, macro definition bodies are skipped and
 // a macro invocation is `unknown` (a declared macro also makes unresolved
 // names opaque), names imported from an external module are opaque, a named
@@ -147,6 +150,7 @@ pub struct EnumSig {
     pub module_id: string,
     pub is_pub: bool,
     pub is_generic: bool,
+    pub generic_params: List<string>,
     pub variant_nodes: List<Node>,
     pub variants: List<VariantSig>,
 }

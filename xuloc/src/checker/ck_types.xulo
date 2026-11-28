@@ -449,11 +449,24 @@ pub fn type_of(ck: mut Checker, node: Node): string {
     }
     let enum_index = ck_decls::resolve_enum(ck, ck.current_module, name, 0)
     if enum_index >= 0 {
-        if ck.enums[enum_index].is_generic {
-            // A generic enum's payloads mention type parameters this pass
-            // does not instantiate.
-            ck.complete = false
-            return "unknown"
+        let params = ck.enums[enum_index].generic_params
+        if ck.enums[enum_index].is_generic and params.len > 0 {
+            let args = type_arguments(ck, node)
+            if args.len < params.len {
+                // `Option` without arguments is a partially modeled type.
+                ck.complete = false
+                return "unknown"
+            }
+            let mut text = ck_decls::enum_canonical(ck, enum_index) + "<"
+            let mut i = 0
+            while i < params.len {
+                if i > 0 {
+                    text = text + ","
+                }
+                text = text + args[i]
+                i = i + 1
+            }
+            return text + ">"
         }
         return ck_decls::enum_canonical(ck, enum_index)
     }
@@ -526,6 +539,14 @@ pub fn list_element(ck: Checker, ty: string): string {
         return "unknown"
     }
     return ty.slice(5, ty.len - 1)
+}
+
+pub fn type_head(ty: string): string {
+    let parts = ty.split("<")
+    if parts.len > 0 {
+        return parts[0]
+    }
+    return ty
 }
 
 pub fn is_generic(ck: Checker, ty: string, head: string): bool {
@@ -869,6 +890,26 @@ pub fn assignable(ck: Checker, expected: string, actual: string): bool {
     }
     if is_set(ck, expected) and is_set(ck, actual) {
         return assignable(ck, set_element(ck, expected), set_element(ck, actual))
+    }
+    let expected_head = type_head(expected)
+    let actual_head = type_head(actual)
+    if expected_head != "" and expected_head == actual_head
+        and is_generic(ck, expected, expected_head)
+        and is_generic(ck, actual, actual_head)
+    {
+        let expected_args = generic_args(ck, expected, expected_head)
+        let actual_args = generic_args(ck, actual, actual_head)
+        if expected_args.len != actual_args.len {
+            return false
+        }
+        let mut i = 0
+        while i < expected_args.len {
+            if !assignable(ck, expected_args[i], actual_args[i]) {
+                return false
+            }
+            i = i + 1
+        }
+        return true
     }
     return false
 }

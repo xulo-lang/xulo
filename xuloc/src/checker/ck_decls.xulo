@@ -689,6 +689,7 @@ pub fn add_builtin_types(ck: mut Checker) {
                 module_id: "",
                 is_pub: true,
                 is_generic: false,
+                generic_params: [],
                 variant_nodes: [],
                 variants: [
                     VariantSig(
@@ -758,6 +759,16 @@ pub fn add_enum(ck: mut Checker, item: Node, module_id: string) {
         return
     }
     note_generic_params(ck, item)
+    let mut generic_params: List<string> = []
+    for child in item.children {
+        if child.kind == "GenericParams" {
+            for param in child.children {
+                if param.kind == "GenericParam" {
+                    generic_params.push(param.value)
+                }
+            }
+        }
+    }
     let mut variant_nodes: List<Node> = []
     for child in item.children {
         if child.kind == "Variant" {
@@ -770,6 +781,7 @@ pub fn add_enum(ck: mut Checker, item: Node, module_id: string) {
             module_id: module_id,
             is_pub: ck_util::has_child_kind(item, "Pub"),
             is_generic: ck_util::has_child_kind(item, "GenericParams"),
+            generic_params: generic_params,
             variant_nodes: variant_nodes,
             variants: [],
         ),
@@ -898,54 +910,50 @@ pub fn resolve_method_signatures(ck: mut Checker) {
     ck.current_module = saved_module
 }
 
-/// Fill variant payload types after every type name exists. A generic
-/// enum's payloads may mention type parameters, so they stay unresolved
-/// (the enum itself is then treated as an opaque type).
+/// Resolve each variant's payload types. A generic enum keeps its payload
+/// *type nodes* so an instantiation (`Option<int>`) can substitute them; the
+/// eagerly resolved `fields` use `unknown` for type parameters.
 pub fn resolve_enums(ck: mut Checker) {
     let saved_module = ck.current_module
     let mut i = 0
     while i < ck.enums.len and ck.error == "" {
         ck.current_module = ck.enums[i].module_id
-        if !ck.enums[i].is_generic {
-            let mut v = 0
-            while v < ck.enums[i].variant_nodes.len and ck.error == "" {
-                let variant = ck.enums[i].variant_nodes[v]
-                let mut variant_fields: List<FieldSig> = []
-                let mut field_nodes: List<Node> = []
-                let mut payload_nodes: List<Node> = []
-                for child in variant.children {
-                    if child.kind == "Payload" {
-                        for part in child.children {
-                            if part.kind == "PayloadField" {
-                                let mut ty = "unknown"
-                                for type_child in part.children {
-                                    if ck_types::is_type_node(ck, type_child) {
-                                        ty = ck_types::type_of(ck, type_child)
-                                    }
+        let mut v = 0
+        while v < ck.enums[i].variant_nodes.len and ck.error == "" {
+            let variant = ck.enums[i].variant_nodes[v]
+            let mut variant_fields: List<FieldSig> = []
+            let mut type_nodes: List<Node> = []
+            for child in variant.children {
+                if child.kind == "Payload" {
+                    for part in child.children {
+                        if part.kind == "PayloadField" {
+                            let mut ty = "unknown"
+                            let mut node = part
+                            for type_child in part.children {
+                                if ck_types::is_type_node(ck, type_child) {
+                                    ty = ck_types::type_of(ck, type_child)
+                                    node = type_child
                                 }
-                                variant_fields.push(FieldSig(name: part.value, ty: ty))
-                            } else if ck_types::is_type_node(ck, part) {
-                                payload_nodes.push(part)
                             }
+                            variant_fields.push(FieldSig(name: part.value, ty: ty))
+                            type_nodes.push(node)
+                        } else if ck_types::is_type_node(ck, part) {
+                            variant_fields.push(
+                                FieldSig(name: "", ty: ck_types::type_of(ck, part)),
+                            )
+                            type_nodes.push(part)
                         }
                     }
                 }
-                let mut p = 0
-                while p < payload_nodes.len {
-                    let ty = ck_types::type_of(ck, payload_nodes[p])
-                    variant_fields.push(FieldSig(name: "", ty: ty))
-                    p = p + 1
-                }
-                field_nodes.push(variant)
-                ck.enums[i].variants.push(
-                    VariantSig(
-                        name: variant.value,
-                        field_nodes: field_nodes,
-                        fields: variant_fields,
-                    ),
-                )
-                v = v + 1
             }
+            ck.enums[i].variants.push(
+                VariantSig(
+                    name: variant.value,
+                    field_nodes: type_nodes,
+                    fields: variant_fields,
+                ),
+            )
+            v = v + 1
         }
         i = i + 1
     }

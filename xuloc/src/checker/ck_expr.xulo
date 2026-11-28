@@ -49,13 +49,22 @@ pub fn check_expr(ck: mut Checker, node: Node): string {
     if node.kind == "Path" {
         let enum_index = ck_decls::resolve_variant_path(ck, node.value)
         if enum_index >= 0 {
-            if ck.enums[enum_index].is_generic {
-                ck.complete = false
-                return "unknown"
-            }
             let parts = ck_util::split_path(node.value)
             let variant = ck_decls::variant_index(ck, enum_index, parts[parts.len - 1])
             if variant >= 0 and ck.enums[enum_index].variants[variant].fields.len == 0 {
+                let params = ck.enums[enum_index].generic_params
+                if params.len > 0 {
+                    let mut text = ck_decls::enum_canonical(ck, enum_index) + "<"
+                    let mut p = 0
+                    while p < params.len {
+                        if p > 0 {
+                            text = text + ","
+                        }
+                        text = text + "unknown"
+                        p = p + 1
+                    }
+                    return text + ">"
+                }
                 return ck_decls::enum_canonical(ck, enum_index)
             }
             ck.complete = false
@@ -972,10 +981,6 @@ pub fn check_struct_constructor(ck: mut Checker, node: Node, index: number,
 
 pub fn check_variant_constructor(ck: mut Checker, node: Node, enum_index: number,
                              path: string, labels: List<string>, types: List<string>): string {
-    if ck.enums[enum_index].is_generic {
-        ck.complete = false
-        return "unknown"
-    }
     let parts = ck_util::split_path(path)
     let variant = parts[parts.len - 1]
     let v = ck_decls::variant_index(ck, enum_index, variant)
@@ -997,10 +1002,25 @@ pub fn check_variant_constructor(ck: mut Checker, node: Node, enum_index: number
         )
         return ck_decls::enum_canonical(ck, enum_index)
     }
+    let enum_name = ck.enums[enum_index].name
+    let params = ck.enums[enum_index].generic_params
+    let mut values: List<string> = []
+    let mut tp = 0
+    while tp < params.len {
+        values.push("unknown")
+        tp = tp + 1
+    }
+    let mut templates: List<string> = []
+    if params.len > 0 {
+        for field_node in ck.enums[enum_index].variants[v].field_nodes {
+            templates.push(ck_types::template_type(ck, field_node, params))
+        }
+    }
     let mut i = 0
     while i < types.len {
+        let mut target = i
         if labels[i] != "" {
-            let target = variant_field_index(ck, enum_index, v, labels[i])
+            target = variant_field_index(ck, enum_index, v, labels[i])
             if target < 0 {
                 ck_diag::fail(ck, 
                     node,
@@ -1009,27 +1029,45 @@ pub fn check_variant_constructor(ck: mut Checker, node: Node, enum_index: number
                 )
                 return ck_decls::enum_canonical(ck, enum_index)
             }
-            if !ck_types::assignable(ck, fields[target].ty, types[i]) {
+        }
+        if params.len > 0 and target < templates.len {
+            ck_types::infer_template(ck, templates[target], types[i], params, values)
+        }
+        i = i + 1
+    }
+    i = 0
+    while i < types.len {
+        let mut target = i
+        if labels[i] != "" {
+            target = variant_field_index(ck, enum_index, v, labels[i])
+        }
+        let mut expected = "unknown"
+        if params.len > 0 and target < templates.len {
+            expected = ck_types::apply_subst(templates[target], params, values)
+        } else if target < fields.len {
+            expected = fields[target].ty
+        }
+        if !ck_types::assignable(ck, expected, types[i]) {
+            if labels[i] != "" {
                 ck_diag::fail(ck, 
                     node,
                     "E0202",
                     "payload field `" + labels[i] + "` expects `"
-                        + fields[target].ty + "`, found `" + types[i] + "`",
+                        + expected + "`, found `" + types[i] + "`",
                 )
-                return ck_decls::enum_canonical(ck, enum_index)
+            } else {
+                ck_diag::fail(ck,
+                    node,
+                    "E0202",
+                    "payload " + str(i + 1) + " of `" + variant + "` expects `"
+                        + expected + "`, found `" + types[i] + "`",
+                )
             }
-        } else if !ck_types::assignable(ck, fields[i].ty, types[i]) {
-            ck_diag::fail(ck, 
-                node,
-                "E0202",
-                "payload " + str(i + 1) + " of `" + variant + "` expects `"
-                    + fields[i].ty + "`, found `" + types[i] + "`",
-            )
             return ck_decls::enum_canonical(ck, enum_index)
         }
         i = i + 1
     }
-    if ck.enums[enum_index].name == "Result" {
+    if enum_name == "Result" {
         let mut ok = "unknown"
         let mut err = "unknown"
         if types.len > 0 {
@@ -1040,6 +1078,18 @@ pub fn check_variant_constructor(ck: mut Checker, node: Node, enum_index: number
             }
         }
         return "Result<" + ok + "," + err + ">"
+    }
+    if params.len > 0 {
+        let mut text = ck_decls::enum_canonical(ck, enum_index) + "<"
+        let mut p = 0
+        while p < params.len {
+            if p > 0 {
+                text = text + ","
+            }
+            text = text + values[p]
+            p = p + 1
+        }
+        return text + ">"
     }
     return ck_decls::enum_canonical(ck, enum_index)
 }
@@ -1403,6 +1453,25 @@ pub fn check_match_arms(ck: mut Checker, node: Node, unify_arms: bool): string {
     return result
 }
 
+fn enum_subject_args(ck: Checker, enum_index: number, subject: string): List<string> {
+    let canonical = ck_decls::enum_canonical(ck, enum_index)
+    if ck_types::is_generic(ck, subject, canonical) {
+        return ck_types::generic_args(ck, subject, canonical)
+    }
+    return []
+}
+
+fn subject_matches_enum(ck: Checker, enum_index: number, subject: string): bool {
+    if subject == "unknown" {
+        return true
+    }
+    let canonical = ck_decls::enum_canonical(ck, enum_index)
+    if subject == canonical {
+        return true
+    }
+    return ck_types::is_generic(ck, subject, canonical)
+}
+
 pub fn check_pattern(ck: mut Checker, pattern: Node, subject: string) {
     if pattern.kind == "NamePattern" {
         let value = pattern.value
@@ -1415,15 +1484,7 @@ pub fn check_pattern(ck: mut Checker, pattern: Node, subject: string) {
                 ck.complete = false
                 return
             }
-            if ck.enums[enum_index].is_generic {
-                ck.complete = false
-                return
-            }
-            let canonical = ck_decls::enum_canonical(ck, enum_index)
-            let matches = subject == "unknown" or subject == canonical
-                or (ck.enums[enum_index].name == "Result"
-                    and ck_types::is_result(ck, subject))
-            if !matches {
+            if !subject_matches_enum(ck, enum_index, subject) {
                 ck_diag::fail(ck, 
                     pattern,
                     "E0201",
@@ -1474,26 +1535,7 @@ pub fn check_pattern(ck: mut Checker, pattern: Node, subject: string) {
             ck.complete = false
             return
         }
-        if ck.enums[enum_index].is_generic {
-            // Payload types mention type parameters; bind the names so
-            // the arm body still checks, but keep the pass incomplete.
-            for child in pattern.children {
-                if child.kind == "PatternPayload" {
-                    for binding in child.children {
-                        if binding.kind == "NamePattern" and binding.value != "_" {
-                            ck_diag::bind(ck, binding.value, "unknown")
-                        }
-                    }
-                }
-            }
-            ck.complete = false
-            return
-        }
-        let canonical = ck_decls::enum_canonical(ck, enum_index)
-        let matches = subject == "unknown" or subject == canonical
-            or (ck.enums[enum_index].name == "Result"
-                and ck_types::is_result(ck, subject))
-        if !matches {
+        if !subject_matches_enum(ck, enum_index, subject) {
             ck_diag::fail(ck, 
                 pattern,
                 "E0201",
@@ -1508,10 +1550,23 @@ pub fn check_pattern(ck: mut Checker, pattern: Node, subject: string) {
             return
         }
         let fields = ck.enums[enum_index].variants[variant].fields
+        let params = ck.enums[enum_index].generic_params
+        let subject_args = enum_subject_args(ck, enum_index, subject)
+        let field_nodes = ck.enums[enum_index].variants[variant].field_nodes
         let mut payload_tys: List<string> = []
         let mut fi = 0
         while fi < fields.len {
-            payload_tys.push(fields[fi].ty)
+            let mut ty = fields[fi].ty
+            if params.len > 0 {
+                if subject_args.len >= params.len and fi < field_nodes.len {
+                    let template = ck_types::template_type(ck, field_nodes[fi], params)
+                    ty = ck_types::apply_subst(template, params, subject_args)
+                } else {
+                    ck.complete = false
+                    ty = "unknown"
+                }
+            }
+            payload_tys.push(ty)
             fi = fi + 1
         }
         if ck.enums[enum_index].name == "Result" and ck_types::is_result(ck, subject) {

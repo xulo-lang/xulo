@@ -1,0 +1,37 @@
+// Gate 3: user-defined generic enums, payload inference, and match binding.
+enum Option<T> {
+    Some(T),
+    None
+}
+
+enum Either<L, R> {
+    Left(L),
+    Right(R)
+}
+
+fn unwrap(o: Option<int>): int {
+    match o {
+        Option::Some(v) => v
+        Option::None => 0
+    }
+}
+
+fn main() {
+    let a: Option<int> = Option::Some(3)
+    let b: Option<int> = Option::None
+    print(unwrap(a), unwrap(b))
+    let left: Either<int, string> = Either::Left(1)
+    let right: Either<int, string> = Either::Right("x")
+    match left {
+        Either::Left(l) => print(l)
+        Either::Right(r) => print(r)
+    }
+    match right {
+        Either::Left(l) => print(l)
+        Either::Right(r) => print(r)
+    }
+    match Option::Some(true) {
+        Option::Some(v) => print(v)
+        Option::None => print("none")
+    }
+}

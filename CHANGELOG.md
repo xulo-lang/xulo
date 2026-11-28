@@ -26,6 +26,11 @@ values, and is left to a future standard-library `std/ui` module.
 
 ### Changed
 
+- Stage 1's checker now instantiates user-defined generic enums:
+  `Option<int>` keeps its payload types through `Option::Some(1)`,
+  `Option::None`, and `match` bindings; constructor arguments infer the enum's
+  type parameters, and assignability compares generic arguments structurally.
+  `xuloc/corpus/accept/generic_enums.xulo` covers inference and binding.
 - Stage 1's checker now infers type arguments for generic function calls from
   the actual arguments (`first([1, 2])` returns `number`,
   `twice("x")` returns `List<string>`), while an unresolved parameter stays
