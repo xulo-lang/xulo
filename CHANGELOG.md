@@ -26,6 +26,12 @@ values, and is left to a future standard-library `std/ui` module.
 
 ### Changed
 
+- Stage 1's checker now infers type arguments for generic function calls from
+  the actual arguments (`first([1, 2])` returns `number`,
+  `twice("x")` returns `List<string>`), while an unresolved parameter stays
+  `unknown`. Signature templates keep `$T$` placeholders and substitution is
+  applied to the return type. `xuloc/corpus/accept/generics.xulo` covers
+  typed generic calls; `reject/generic_call_mismatch.xulo` pins the mismatch.
 - Stage 1's checker now carries `Result<T, E>` payload types instead of
   treating every `Result` as opaque: `type_of`, `assignable`, `Result::Ok` /
   `Result::Err` constructors, and `match` bindings use the instantiated

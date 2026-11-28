@@ -11,14 +11,22 @@ fn first<T>(list: List<T>): T {
     list[0]
 }
 
+fn twice<T>(value: T): List<T> {
+    [value, value]
+}
+
 struct Palette<T> {
     items: List<T>
 }
 
 fn main() {
+    let n: number = first([10, 20])
+    let word: string = identity("x")
+    let pair: List<number> = twice(7)
     print(identity(42))
-    print(identity("x"))
-    print(first([10, 20]))
+    print(word)
+    print(n)
+    print(pair)
     let p = Palette(items: [1, 2, 3])
     print(p.items.len)
 }

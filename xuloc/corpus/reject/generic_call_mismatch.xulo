@@ -1,0 +1,8 @@
+fn first<T>(list: List<T>): T {
+    list[0]
+}
+
+fn main() {
+    let s: string = first([1, 2])
+    print(s)
+}

@@ -69,6 +69,225 @@ pub fn type_arguments(ck: mut Checker, node: Node): List<string> {
     return out
 }
 
+/// A signature template: like `type_of`, but a generic parameter becomes
+/// `$T$` so a call site can infer it from the arguments and substitute it in
+/// the return type.
+pub fn template_type(ck: mut Checker, node: Node, params: List<string>): string {
+    if node.kind == "OptionalType" {
+        if node.children.len == 0 {
+            return "unknown"
+        }
+        return template_type(ck, node.children[0], params) + "?"
+    }
+    if node.kind == "TupleType" {
+        let mut text = "("
+        let mut i = 0
+        while i < node.children.len {
+            if i > 0 {
+                text = text + ","
+            }
+            text = text + template_type(ck, node.children[i], params)
+            i = i + 1
+        }
+        return text + ")"
+    }
+    if node.kind == "FnType" {
+        if node.children.len == 0 {
+            return make_fn_type(ck, [], "unknown")
+        }
+        let ret = template_type(ck, node.children[node.children.len - 1], params)
+        let mut fn_params: List<string> = []
+        let mut i = 0
+        while i < node.children.len - 1 {
+            fn_params.push(template_type(ck, node.children[i], params))
+            i = i + 1
+        }
+        return make_fn_type(ck, fn_params, ret)
+    }
+    if node.kind == "|" {
+        let mut out = ""
+        for child in node.children {
+            let member = template_type(ck, child, params)
+            if out == "" {
+                out = member
+            } else {
+                out = out + "|" + member
+            }
+        }
+        if out == "" {
+            return "unknown"
+        }
+        return out
+    }
+    if node.kind != "TypeName" {
+        return type_of(ck, node)
+    }
+    let name = node.value
+    if type_param_index(params, name) >= 0 {
+        return "$" + name + "$"
+    }
+    if name == "Result" or name == "Map" or name == "Set"
+        or name == "List" or name == "Array"
+    {
+        let args = template_arguments(ck, node, params)
+        if name == "Result" {
+            if args.len >= 2 {
+                return "Result<" + args[0] + "," + args[1] + ">"
+            }
+            if args.len == 1 {
+                return "Result<" + args[0] + ",unknown>"
+            }
+            return "Result"
+        }
+        if name == "Map" {
+            if args.len >= 2 {
+                return "Map<" + args[0] + "," + args[1] + ">"
+            }
+            return "unknown"
+        }
+        if name == "Set" {
+            if args.len >= 1 {
+                return "Set<" + args[0] + ">"
+            }
+            return "unknown"
+        }
+        if args.len >= 1 {
+            return "List<" + args[0] + ">"
+        }
+        return "unknown"
+    }
+    return type_of(ck, node)
+}
+
+fn template_arguments(ck: mut Checker, node: Node, params: List<string>): List<string> {
+    let mut out: List<string> = []
+    let mut i = 0
+    while i < node.children.len {
+        let child = node.children[i]
+        if child.kind == "TypeArgs" {
+            for arg in child.children {
+                out.push(template_type(ck, arg, params))
+            }
+        }
+        i = i + 1
+    }
+    return out
+}
+
+pub fn type_param_index(params: List<string>, name: string): number {
+    let mut i = 0
+    while i < params.len {
+        if params[i] == name {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+/// Match a signature template against an actual argument type, filling the
+/// generic slots that are still `unknown`.
+pub fn infer_template(ck: Checker, template: string, actual: string,
+                      params: List<string>, values: mut List<string>) {
+    if actual == "unknown" {
+        return
+    }
+    if template.len > 2
+        and template.slice(0, 1) == "$"
+        and template.slice(template.len - 1, template.len) == "$"
+    {
+        let idx = type_param_index(params, template.slice(1, template.len - 1))
+        if idx >= 0 {
+            if values[idx] == "unknown" {
+                values[idx] = actual
+            }
+            return
+        }
+    }
+    if is_optional(ck, template) and is_optional(ck, actual) {
+        infer_template(
+            ck,
+            optional_inner(ck, template),
+            optional_inner(ck, actual),
+            params,
+            values,
+        )
+        return
+    }
+    if is_list(ck, template) and is_list(ck, actual) {
+        infer_template(
+            ck,
+            list_element(ck, template),
+            list_element(ck, actual),
+            params,
+            values,
+        )
+        return
+    }
+    if is_map(ck, template) and is_map(ck, actual) {
+        infer_template(ck, map_key(ck, template), map_key(ck, actual), params, values)
+        infer_template(ck, map_value(ck, template), map_value(ck, actual), params, values)
+        return
+    }
+    if is_set(ck, template) and is_set(ck, actual) {
+        infer_template(ck, set_element(ck, template), set_element(ck, actual), params, values)
+        return
+    }
+    if is_result(ck, template) and is_result(ck, actual) {
+        infer_template(ck, result_ok(ck, template), result_ok(ck, actual), params, values)
+        infer_template(ck, result_err(ck, template), result_err(ck, actual), params, values)
+        return
+    }
+    if is_tuple_type(ck, template) and is_tuple_type(ck, actual) {
+        let left = tuple_types(ck, template)
+        let right = tuple_types(ck, actual)
+        let mut i = 0
+        while i < left.len and i < right.len {
+            infer_template(ck, left[i], right[i], params, values)
+            i = i + 1
+        }
+        return
+    }
+    if is_fn_type(ck, template) and is_fn_type(ck, actual) {
+        let left = fn_params(ck, template)
+        let right = fn_params(ck, actual)
+        let mut i = 0
+        while i < left.len and i < right.len {
+            infer_template(ck, left[i], right[i], params, values)
+            i = i + 1
+        }
+        infer_template(ck, fn_ret(ck, template), fn_ret(ck, actual), params, values)
+    }
+}
+
+/// Replace `$T$` tokens in a template; an unresolved parameter yields
+/// `unknown` rather than leaking the token into diagnostics.
+pub fn apply_subst(template: string, params: List<string>, values: List<string>): string {
+    let mut out = template
+    let mut i = 0
+    while i < params.len {
+        let token = "$" + params[i] + "$"
+        if out.split(token).len > 1 {
+            let parts = out.split(token)
+            let mut joined = ""
+            let mut p = 0
+            while p < parts.len {
+                if p > 0 {
+                    joined = joined + values[i]
+                }
+                joined = joined + parts[p]
+                p = p + 1
+            }
+            out = joined
+        }
+        i = i + 1
+    }
+    if out.split("$").len > 1 {
+        return "unknown"
+    }
+    return out
+}
+
 pub fn type_of(ck: mut Checker, node: Node): string {
     if ck.error != "" {
         return "unknown"

@@ -299,6 +299,7 @@ fn stage1_check_agrees_with_stage0_on_the_corpus() {
         ("xuloc/corpus/reject/union_mismatch.xulo", false),
         ("xuloc/corpus/reject/extern_argument.xulo", false),
         ("xuloc/corpus/reject/try_non_result.xulo", false),
+        ("xuloc/corpus/reject/generic_call_mismatch.xulo", false),
     ];
     for (relative, accept) in cases {
         let file = root.join(relative);

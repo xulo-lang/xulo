@@ -246,7 +246,9 @@ tested binding in `if` branches, heterogeneous literals infer `unknown`, an
 external `use path::*` keeps bare names opaque, `await` yields its operand's
 task type, `spawn`/`lock`/`shared` are modeled, `extern "C"` declarations
 bind their `as` alias and an optional `Ptr?` argument may be omitted, generic
-type/const parameters are `unknown`, a `trait` declaration is accepted with
+type/const parameters are `unknown` in a body, while a generic call infers its
+arguments from the actual parameters (and leaves unresolved ones `unknown`), a
+`trait` declaration is accepted with
 dispatch left opaque, a macro definition body is skipped and a macro
 invocation is `unknown` (with a declared macro, unresolved names stay opaque),
 a name bound by an external `use` path stays opaque and a named function used

@@ -41,8 +41,9 @@
 // `List<unknown>`, an external `use path::*` keeps bare names opaque,
 // `await` yields its operand's task type, `spawn`/`lock`/`shared` are
 // modeled, `extern "C"` declarations bind their `as` alias with `Ptr` as an
-// opaque address, generic type/const parameters are `unknown` (so `T`
-// signatures and bodies check as far as they can), a `trait` declaration is
+// opaque address, generic type/const parameters are `unknown` in a body but a
+// call infers them from its arguments (so `first([1, 2])` yields `number`), a
+// `trait` declaration is
 // accepted with dispatch left opaque, macro definition bodies are skipped and
 // a macro invocation is `unknown` (a declared macro also makes unresolved
 // names opaque), names imported from an external module are opaque, a named
@@ -94,6 +95,11 @@ pub struct FuncSig {
     /// `unknown` when the declaration omits the return type: the checker does
     /// not infer it, so a call must not claim a narrower type.
     pub ret: string,
+    /// Generic parameter names (`T`, `N`) and the templates that mention them
+    /// as `$T$`; call sites infer the arguments and substitute the return.
+    pub type_params: List<string>,
+    pub param_templates: List<string>,
+    pub ret_template: string,
     /// The declaration, kept so parameter and return types are resolved after
     /// every module and struct name is known.
     pub decl: Node,

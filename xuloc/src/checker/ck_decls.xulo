@@ -1005,6 +1005,9 @@ pub fn add_function(ck: mut Checker, item: Node, module_id: string) {
             min_params: 0,
             params: [],
             ret: "unknown",
+            type_params: [],
+            param_templates: [],
+            ret_template: "unknown",
             decl: item,
         ),
     )
@@ -1030,6 +1033,9 @@ pub fn add_extern_function(ck: mut Checker, item: Node, module_id: string) {
             min_params: 0,
             params: [],
             ret: "unit",
+            type_params: [],
+            param_templates: [],
+            ret_template: "unit",
             decl: item,
         ),
     )
@@ -1044,11 +1050,24 @@ pub fn resolve_function_signatures(ck: mut Checker) {
         let sig = ck.functions[i]
         ck.current_module = sig.module_id
         let item = sig.decl
+        let mut type_params: List<string> = []
+        for child in item.children {
+            if child.kind == "GenericParams" {
+                for param in child.children {
+                    if param.kind == "GenericParam" or param.kind == "ConstGenericParam" {
+                        type_params.push(param.value)
+                    }
+                }
+            }
+        }
         let mut params: List<string> = []
+        let mut param_templates: List<string> = []
         let mut ret = "unknown"
+        let mut ret_template = "unknown"
         if item.kind == "ExternFn" {
             // A C function without a return annotation is `void`.
             ret = "unit"
+            ret_template = "unit"
         }
         let mut min_params = 0
         let mut seen_default = false
@@ -1059,10 +1078,12 @@ pub fn resolve_function_signatures(ck: mut Checker) {
                     break
                 }
                 let mut ty = "unknown"
+                let mut template = "unknown"
                 let mut has_default = false
                 for part in child.children {
                     if ck_types::is_type_node(ck, part) {
                         ty = ck_types::type_of(ck, part)
+                        template = ck_types::template_type(ck, part, type_params)
                     } else if part.kind != "Pub" and part.kind != "Async"
                         and part.kind != "Mut" and part.kind != "Shared"
                     {
@@ -1079,8 +1100,10 @@ pub fn resolve_function_signatures(ck: mut Checker) {
                     seen_default = true
                 }
                 params.push(ty)
+                param_templates.push(template)
             } else if ck_types::is_type_node(ck, child) {
                 ret = ck_types::type_of(ck, child)
+                ret_template = ck_types::template_type(ck, child, type_params)
             }
         }
         if !seen_default {
@@ -1090,6 +1113,9 @@ pub fn resolve_function_signatures(ck: mut Checker) {
             ck.functions[i].min_params = min_params
             ck.functions[i].params = params
             ck.functions[i].ret = ret
+            ck.functions[i].type_params = type_params
+            ck.functions[i].param_templates = param_templates
+            ck.functions[i].ret_template = ret_template
         }
         i = i + 1
     }
