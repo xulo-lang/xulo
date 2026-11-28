@@ -26,9 +26,11 @@
 // `List<unknown>`, an external `use path::*` keeps bare names opaque,
 // `await` yields its operand's task type, `spawn`/`lock`/`shared` are
 // modeled, `extern "C"` declarations bind their `as` alias with `Ptr` as an
-// opaque address, and ranges, optional chaining, `try`, and null narrowing are
-// checked. Traits, generic impls, and the remaining pattern forms arrive in
-// later WP6 slices.
+// opaque address, generic type/const parameters are `unknown` (so `T`
+// signatures and bodies check as far as they can), a `trait` declaration is
+// accepted with dispatch left opaque, and ranges, optional chaining, `try`,
+// and null narrowing are checked. Generic instantiation and the remaining
+// pattern forms arrive in later WP6 slices.
 //
 // Types are canonical strings (`number`, `string`, `bool`, `unit`, `unknown`,
 // `null`, `List<T>`, `T?`) so comparisons never depend on structural equality.
@@ -179,6 +181,10 @@ pub struct Checker {
     active_scopes: number,
     next_scope: number,
     current_return: string,
+    /// Type and const parameter names (`T`, `N`) declared by any generic
+    /// item in the program. They are not concrete types, so `type_of` maps
+    /// them to `unknown` instead of reporting E0101.
+    generic_names: List<string>,
     complete: bool,
     error: string,
     code: string,
@@ -203,6 +209,7 @@ pub fn check(root: Node): CheckResult {
         active_scopes: 0,
         next_scope: 1,
         current_return: "unit",
+        generic_names: [],
         complete: true,
         error: "",
         code: "",
@@ -1021,6 +1028,42 @@ impl Checker {
             or node.kind == "&"
     }
 
+    fn is_generic_name(self, name: string): bool {
+        let mut i = 0
+        while i < self.generic_names.len {
+            if self.generic_names[i] == name {
+                return true
+            }
+            i = i + 1
+        }
+        return false
+    }
+
+    fn note_generic_params(mut self, item: Node) {
+        for child in item.children {
+            if child.kind == "GenericParams" {
+                for param in child.children {
+                    if param.kind == "GenericParam" or param.kind == "ConstGenericParam" {
+                        self.generic_names.push(param.value)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Bind a `const N: int` parameter so the body can use `N` as a value.
+    fn bind_const_params(mut self, item: Node) {
+        for child in item.children {
+            if child.kind == "GenericParams" {
+                for param in child.children {
+                    if param.kind == "ConstGenericParam" {
+                        self.bind(param.value, "number")
+                    }
+                }
+            }
+        }
+    }
+
     /// Collect the type arguments written on a `TypeName` or `TypeApply`.
     fn type_arguments(mut self, node: Node): List<string> {
         let mut out: List<string> = []
@@ -1139,6 +1182,11 @@ impl Checker {
             return "unit"
         }
         if name == "unknown" {
+            return "unknown"
+        }
+        if self.is_generic_name(name) {
+            // A type parameter has no concrete definition; its operations are
+            // checked as far as `unknown` allows.
             return "unknown"
         }
         if name == "Ptr" {
@@ -1674,6 +1722,7 @@ impl Checker {
         if self.find_struct_in(module_id, item.value) >= 0 {
             return
         }
+        self.note_generic_params(item)
         let mut field_nodes: List<Node> = []
         for child in item.children {
             if child.kind == "Field" {
@@ -1719,6 +1768,7 @@ impl Checker {
         if self.find_enum_in(module_id, item.value) >= 0 {
             return
         }
+        self.note_generic_params(item)
         let mut variant_nodes: List<Node> = []
         for child in item.children {
             if child.kind == "Variant" {
@@ -1741,6 +1791,7 @@ impl Checker {
         if self.find_alias_in(module_id, item.value) >= 0 {
             return
         }
+        self.note_generic_params(item)
         let mut type_node = item
         for child in item.children {
             if self.is_type_node(child) {
@@ -1760,6 +1811,7 @@ impl Checker {
     }
 
     fn add_impl(mut self, item: Node, module_id: string) {
+        self.note_generic_params(item)
         let mut type_names: List<string> = []
         for child in item.children {
             if child.kind == "TypeName" {
@@ -1951,6 +2003,7 @@ impl Checker {
         if self.error != "" {
             return
         }
+        self.note_generic_params(item)
         self.functions.push(
             FuncSig(
                 name: item.value,
@@ -2338,6 +2391,10 @@ impl Checker {
             {
                 // Fields, payloads, alias targets, and FFI signatures are
                 // resolved before checking.
+            } else if item.kind == "Trait" {
+                // Trait declarations carry signatures only; dispatch through
+                // `Trait::method(recv)` stays opaque, so the pass is partial.
+                self.complete = false
             } else if item.kind == "Impl" {
                 for child in item.children {
                     if child.kind == "Fn" {
@@ -2367,6 +2424,7 @@ impl Checker {
         let sig = self.functions[index]
         self.current_return = sig.ret
         self.enter_scope()
+        self.bind_const_params(item)
         let mut p = 0
         while p < sig.params.len {
             let name = self.param_name(item, p)

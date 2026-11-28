@@ -56,6 +56,12 @@ values, and is left to a future standard-library `std/ui` module.
 - Stage 1's checker now honors default parameters: a call may omit trailing
   defaulted arguments, so `examples/functions/params.xulo` reports
   `no errors`.
+- Stage 1's checker now treats generic type/const parameters (`T`, `const N:
+  int`) as `unknown` instead of unknown types, binds const parameters in the
+  body, and accepts `trait` declarations with trait dispatch left opaque.
+  `examples/functions/generics`, `types/generics_impl`, and
+  `types/trait_shapes` report `no errors`; the example check baseline drops
+  from 6 to 3. `xuloc/corpus/accept/generics.xulo` pins the behavior.
 - Stage 1's checker now models `extern "C"` declarations: the `as` alias is
   the local binding, a declaration without a return type is `unit`, `Ptr` is
   an opaque address type, and an optional `Ptr?` parameter may be omitted.

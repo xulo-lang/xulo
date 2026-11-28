@@ -1,0 +1,24 @@
+// Gate 3: generic functions, generic structs, and trait declarations.
+trait Area {
+    fn area(self): number
+}
+
+fn identity<T>(value: T): T {
+    value
+}
+
+fn first<T>(list: List<T>): T {
+    list[0]
+}
+
+struct Palette<T> {
+    items: List<T>
+}
+
+fn main() {
+    print(identity(42))
+    print(identity("x"))
+    print(first([10, 20]))
+    let p = Palette(items: [1, 2, 3])
+    print(p.items.len)
+}

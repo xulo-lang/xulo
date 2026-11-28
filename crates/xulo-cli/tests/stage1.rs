@@ -268,6 +268,7 @@ fn stage1_check_agrees_with_stage0_on_the_corpus() {
         ("xuloc/corpus/accept/unions.xulo", true),
         ("xuloc/corpus/accept/concurrency.xulo", true),
         ("xuloc/corpus/accept/extern.xulo", true),
+        ("xuloc/corpus/accept/generics.xulo", true),
         ("xuloc/corpus/reject/undefined_name.xulo", false),
         ("xuloc/corpus/reject/type_mismatch.xulo", false),
         ("xuloc/corpus/reject/arity.xulo", false),
@@ -515,6 +516,26 @@ fn stage1_check_accepts_extern() {
         "{relative} should check cleanly:\n{}",
         stdout_of(&out)
     );
+}
+
+/// Generic type/const parameters and trait declarations are modeled; trait
+/// dispatch stays opaque.
+#[test]
+fn stage1_check_accepts_generics_and_traits() {
+    let root = repo_root();
+    for relative in [
+        "examples/functions/generics.xulo",
+        "examples/types/generics_impl.xulo",
+        "examples/types/trait_shapes.xulo",
+    ] {
+        let out = run_stage1("check", &root.join(relative));
+        assert_success(&out, &format!("stage 1 check of {relative}"));
+        assert!(
+            stdout_of(&out).contains("no errors"),
+            "{relative} should check cleanly:\n{}",
+            stdout_of(&out)
+        );
+    }
 }
 
 /// T9: the stage 1 lexer/parser is measured against the example corpus, and
