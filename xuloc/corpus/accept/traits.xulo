@@ -1,0 +1,28 @@
+// Gate 3: trait method signatures and `Trait::method(receiver)` calls.
+trait Area {
+    fn area(self): number
+}
+
+trait Named {
+    fn label(self): string
+}
+
+struct Rectangle {
+    w: number,
+    h: number
+}
+
+impl Area for Rectangle {
+    fn area(self): number { self.w * self.h }
+}
+
+impl Named for Rectangle {
+    fn label(self): string { "rect" }
+}
+
+fn main() {
+    let r = Rectangle(w: 3, h: 4)
+    let n: number = Area::area(r)
+    let label: string = Named::label(r)
+    print(n, label)
+}

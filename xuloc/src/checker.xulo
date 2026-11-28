@@ -49,7 +49,9 @@
 // through constructors and `match`, a generic struct instantiation
 // (`Palette<int>`) substitutes field types and keeps its methods reachable,
 // an `impl<T> Type<T>` method refines its `T` from the receiver type at the
-// call site, a `trait` declaration is
+// call site, a trait's methods register as `Trait::method` signatures so
+// their calls get the declared return type, and
+// a `trait` declaration is
 // accepted with dispatch left opaque, macro definition bodies are skipped and
 // a macro invocation is `unknown` (a declared macro also makes unresolved
 // names opaque), names imported from an external module are opaque, a named

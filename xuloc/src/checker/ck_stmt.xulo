@@ -67,8 +67,9 @@ pub fn check_module_items(ck: mut Checker, items: Node, module_id: string, neste
             // Fields, payloads, alias targets, and FFI signatures are
             // resolved before checking.
         } else if item.kind == "Trait" {
-            // Trait declarations carry signatures only; dispatch through
-            // `Trait::method(recv)` stays opaque, so the pass is partial.
+            // Trait signatures register as `Trait::method` functions; the
+            // `impl Trait for Type` bodies and dispatch checks stay outside
+            // this pass, so the analysis remains partial.
             ck.complete = false
         } else if item.kind == "Impl" {
             for child in item.children {

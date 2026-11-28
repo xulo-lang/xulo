@@ -26,6 +26,12 @@ values, and is left to a future standard-library `std/ui` module.
 
 ### Changed
 
+- Stage 1's checker now registers trait method signatures: `Area::area(recv)`
+  returns the trait's declared type (and takes the receiver as its first
+  argument), so `let n: number = Area::area(rect)` is checked. Trait impl
+  bodies and dispatch verification stay outside the pass.
+  `xuloc/corpus/accept/traits.xulo` covers two traits;
+  `reject/trait_return_mismatch.xulo` pins the mismatch.
 - Stage 1's parser keeps an `impl<T, …>` parameter list, and the checker now
   instantiates `impl<T> Type<T>` methods: the receiver type supplies `T` for
   the method's parameter and return templates (`Box<int>.get()` returns

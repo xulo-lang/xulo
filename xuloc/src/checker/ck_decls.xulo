@@ -538,6 +538,14 @@ pub fn resolve_function(ck: Checker, from: string, path: string, depth: number):
         return -1
     }
     let head = parts[0]
+    if parts.len == 2 {
+        // `Trait::method`: trait method signatures are registered under the
+        // qualified name, so they win over a module path of the same shape.
+        let own = find_function_in(ck, from, parts[0] + "::" + parts[1])
+        if own >= 0 {
+            return own
+        }
+    }
     let mut segments: List<string> = []
     let mut i = 1
     while i + 1 < parts.len {
@@ -642,6 +650,8 @@ pub fn collect_functions(ck: mut Checker, root: Node, module_id: string) {
             add_alias(ck, item, module_id)
         } else if item.kind == "Impl" {
             add_impl(ck, item, module_id)
+        } else if item.kind == "Trait" {
+            add_trait(ck, item, module_id)
         } else if item.kind == "Extern" {
             for child in item.children {
                 if child.kind == "ExternFn" {
@@ -840,6 +850,40 @@ pub fn generic_param_names(item: Node): List<string> {
         }
     }
     return out
+}
+
+/// A trait's methods are callable as `Trait::method(receiver, …)`. Register
+/// each signature as a qualified function; the receiver is its first
+/// parameter. The body and the `impl Trait for Type` check stay outside this
+/// pass, so a generic trait keeps the analysis partial.
+pub fn add_trait(ck: mut Checker, item: Node, module_id: string) {
+    note_generic_params(ck, item)
+    let is_pub = ck_util::has_child_kind(item, "Pub")
+    for child in item.children {
+        if child.kind == "TraitMethod" {
+            let qualified = item.value + "::" + child.value
+            if find_function_in(ck, module_id, qualified) >= 0 {
+                continue
+            }
+            ck.functions.push(
+                FuncSig(
+                    name: qualified,
+                    module_id: module_id,
+                    is_pub: is_pub,
+                    min_params: 0,
+                    params: [],
+                    ret: "unknown",
+                    type_params: [],
+                    param_templates: [],
+                    ret_template: "unknown",
+                    decl: child,
+                ),
+            )
+        }
+    }
+    if ck_util::has_child_kind(item, "GenericParams") {
+        ck.complete = false
+    }
 }
 
 pub fn add_impl(ck: mut Checker, item: Node, module_id: string) {
@@ -1042,6 +1086,8 @@ pub fn collect_mod(ck: mut Checker, item: Node, parent: string) {
             add_alias(ck, child, module_id)
         } else if child.kind == "Impl" {
             add_impl(ck, child, module_id)
+        } else if child.kind == "Trait" {
+            add_trait(ck, child, module_id)
         } else if child.kind == "Extern" {
             for entry in child.children {
                 if entry.kind == "ExternFn" {
@@ -1134,6 +1180,13 @@ pub fn resolve_function_signatures(ck: mut Checker) {
         for child in item.children {
             if child.kind == "Param" {
                 if child.value == "self" or child.value == "mut self" {
+                    if item.kind == "TraitMethod" {
+                        // `Trait::method(receiver, …)`: the receiver occupies
+                        // the first argument slot.
+                        params.push("unknown")
+                        param_templates.push("unknown")
+                        continue
+                    }
                     ck_diag::fail(ck, child, "E0003", "stage 1 checker does not support methods yet")
                     break
                 }

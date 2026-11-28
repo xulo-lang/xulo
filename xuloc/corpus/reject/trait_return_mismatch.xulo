@@ -1,0 +1,17 @@
+trait Area {
+    fn area(self): number
+}
+
+struct Rectangle {
+    w: number
+}
+
+impl Area for Rectangle {
+    fn area(self): number { self.w }
+}
+
+fn main() {
+    let r = Rectangle(w: 3)
+    let s: string = Area::area(r)
+    print(s)
+}
