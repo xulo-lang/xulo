@@ -1,0 +1,24 @@
+trait Area {
+    fn area(self): number
+}
+
+struct Sq {
+    side: number
+}
+
+impl Area for Sq {
+    fn area(self): number { self.side * self.side }
+}
+
+struct Other {
+    x: number
+}
+
+fn measure<T: Area>(v: T): number {
+    Area::area(v)
+}
+
+fn main() {
+    print(measure(Sq(side: 2)))
+    print(measure(Other(x: 1)))
+}

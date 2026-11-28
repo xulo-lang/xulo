@@ -257,7 +257,8 @@ an `impl<T> Type<T>` method refines its `T` from the receiver type at the call
 site, trait methods register as `Trait::method` signatures with their declared
 return types, `impl Trait for Type` also registers its methods on `Type` (so
 `self` is typed and `recv.method()` works) and must provide every trait method
-with a matching signature,
+with a matching signature, an inline `T: Trait` bound is checked against the
+inferred type at a call site (`where` clauses are not modeled yet),
 a
 `trait` declaration is accepted with
 dispatch left opaque, a macro definition body is skipped and a macro

@@ -1,0 +1,21 @@
+// Gate 3: `T: Trait` bounds are checked at generic call sites.
+trait Area {
+    fn area(self): number
+}
+
+struct Sq {
+    side: number
+}
+
+impl Area for Sq {
+    fn area(self): number { self.side * self.side }
+}
+
+fn measure<T: Area>(v: T): number {
+    Area::area(v)
+}
+
+fn main() {
+    let n: number = measure(Sq(side: 2))
+    print(n)
+}

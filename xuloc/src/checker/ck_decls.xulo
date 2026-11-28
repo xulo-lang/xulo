@@ -1,7 +1,7 @@
 // Checker: declaration collection and signature resolution.
 
 use ast::Node;
-use super::{Checker, FuncSig, MethodSig, ConstSig, FieldSig, StructSig, VariantSig, EnumSig, AliasSig, TraitImplSig};
+use super::{Checker, FuncSig, MethodSig, ConstSig, FieldSig, StructSig, VariantSig, EnumSig, AliasSig, TraitImplSig, TypeBound};
 use super::ck_util;
 use super::ck_diag;
 use super::ck_module;
@@ -852,6 +852,28 @@ pub fn generic_param_names(item: Node): List<string> {
     return out
 }
 
+pub fn generic_bounds(item: Node): List<TypeBound> {
+    let mut out: List<TypeBound> = []
+    for child in item.children {
+        if child.kind == "GenericParams" {
+            for param in child.children {
+                if param.kind == "GenericParam" {
+                    let mut traits: List<string> = []
+                    for bound in param.children {
+                        if bound.kind == "TypeName" {
+                            traits.push(bound.value)
+                        }
+                    }
+                    if traits.len > 0 {
+                        out.push(TypeBound(name: param.value, traits: traits))
+                    }
+                }
+            }
+        }
+    }
+    return out
+}
+
 /// A trait's methods are callable as `Trait::method(receiver, …)`. Register
 /// each signature as a qualified function; the receiver is its first
 /// parameter. The body and the `impl Trait for Type` check stay outside this
@@ -876,6 +898,7 @@ pub fn add_trait(ck: mut Checker, item: Node, module_id: string) {
                     type_params: [],
                     param_templates: [],
                     ret_template: "unknown",
+                    bounds: [],
                     decl: child,
                 ),
             )
@@ -927,6 +950,13 @@ pub fn add_impl(ck: mut Checker, item: Node, module_id: string) {
             for p in generic_param_names(child) {
                 method_params.push(p)
             }
+            let mut method_bounds: List<TypeBound> = []
+            for b in generic_bounds(item) {
+                method_bounds.push(b)
+            }
+            for b in generic_bounds(child) {
+                method_bounds.push(b)
+            }
             ck.methods.push(
                 MethodSig(
                     owner: owner,
@@ -939,6 +969,7 @@ pub fn add_impl(ck: mut Checker, item: Node, module_id: string) {
                     type_params: method_params,
                     param_templates: [],
                     ret_template: "unknown",
+                    bounds: method_bounds,
                     trait_name: trait_name,
                     decl: child,
                 ),
@@ -1074,6 +1105,89 @@ pub fn resolve_method_signatures(ck: mut Checker) {
 fn mutually_assignable(ck: Checker, expected: string, actual: string): bool {
     return ck_types::assignable(ck, expected, actual)
         and ck_types::assignable(ck, actual, expected)
+}
+
+fn local_trait(ck: Checker, module_id: string, trait_name: string): bool {
+    let prefix = trait_name + "::"
+    let mut i = 0
+    while i < ck.functions.len {
+        let fn_sig = ck.functions[i]
+        if fn_sig.module_id == module_id and fn_sig.name.len > prefix.len {
+            if fn_sig.name.slice(0, prefix.len) == prefix {
+                return true
+            }
+        }
+        i = i + 1
+    }
+    return false
+}
+
+/// Whether `ty` has an `impl Trait for Type` in this program. A trait that is
+/// not declared in this buffer is opaque, so the answer is "yes".
+pub fn implements_trait(ck: Checker, module_id: string, ty: string,
+                        trait_name: string): bool {
+    if ty == "unknown" {
+        return true
+    }
+    let head = ck_types::type_head(ty)
+    let struct_index = find_struct_by_type(ck, ty)
+    let mut type_canonical = head
+    if struct_index >= 0 {
+        type_canonical = struct_canonical(ck, struct_index)
+    } else {
+        let enum_index = find_enum_by_type(ck, head)
+        if enum_index >= 0 {
+            type_canonical = enum_canonical(ck, enum_index)
+        }
+    }
+    let mut i = 0
+    while i < ck.trait_impls.len {
+        let impl_sig = ck.trait_impls[i]
+        if impl_sig.trait_name == trait_name {
+            let mut impl_type = impl_sig.type_name
+            let struct_i = resolve_struct(ck, impl_sig.module_id, impl_sig.type_name, 0)
+            if struct_i >= 0 {
+                impl_type = struct_canonical(ck, struct_i)
+            } else {
+                let enum_i = resolve_enum(ck, impl_sig.module_id, impl_sig.type_name, 0)
+                if enum_i >= 0 {
+                    impl_type = enum_canonical(ck, enum_i)
+                }
+            }
+            if impl_type == type_canonical or impl_type == head {
+                return true
+            }
+        }
+        i = i + 1
+    }
+    if !local_trait(ck, module_id, trait_name) {
+        return true
+    }
+    return false
+}
+
+pub fn check_bounds(ck: mut Checker, module_id: string, bounds: List<TypeBound>,
+                    type_params: List<string>, values: List<string>, node: Node) {
+    for bound in bounds {
+        let idx = ck_types::type_param_index(type_params, bound.name)
+        if idx < 0 or idx >= values.len {
+            continue
+        }
+        let ty = values[idx]
+        if ty == "unknown" {
+            continue
+        }
+        for trait_name in bound.traits {
+            if !implements_trait(ck, module_id, ty, trait_name) {
+                ck_diag::fail(ck,
+                    node,
+                    "E0801",
+                    "`" + ck_types::type_head(ty) + "` does not implement `"
+                        + trait_name + "`",
+                )
+            }
+        }
+    }
 }
 
 /// Every `impl Trait for Type` must provide all of the trait's methods.
@@ -1240,6 +1354,7 @@ pub fn add_function(ck: mut Checker, item: Node, module_id: string) {
             type_params: [],
             param_templates: [],
             ret_template: "unknown",
+            bounds: generic_bounds(item),
             decl: item,
         ),
     )
@@ -1268,6 +1383,7 @@ pub fn add_extern_function(ck: mut Checker, item: Node, module_id: string) {
             type_params: [],
             param_templates: [],
             ret_template: "unit",
+            bounds: [],
             decl: item,
         ),
     )

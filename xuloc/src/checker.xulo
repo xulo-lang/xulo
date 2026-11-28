@@ -52,7 +52,8 @@
 // call site, a trait's methods register as `Trait::method` signatures so
 // their calls get the declared return type, an `impl Trait for Type` also
 // keeps its methods on `Type` with `self` typed and must match the trait's
-// signatures and full method set, and
+// signatures and full method set, an inline `T: Trait` bound is checked
+// against the inferred type at a call site, and
 // a `trait` declaration is
 // accepted with dispatch left opaque, macro definition bodies are skipped and
 // a macro invocation is `unknown` (a declared macro also makes unresolved
@@ -110,6 +111,8 @@ pub struct FuncSig {
     pub type_params: List<string>,
     pub param_templates: List<string>,
     pub ret_template: string,
+    /// `T: Trait` constraints declared on the function or its impl.
+    pub bounds: List<TypeBound>,
     /// The declaration, kept so parameter and return types are resolved after
     /// every module and struct name is known.
     pub decl: Node,
@@ -126,6 +129,7 @@ pub struct MethodSig {
     pub type_params: List<string>,
     pub param_templates: List<string>,
     pub ret_template: string,
+    pub bounds: List<TypeBound>,
     /// The trait named by `impl Trait for Type`, or `""` for an inherent impl.
     pub trait_name: string,
     pub decl: Node,
@@ -136,6 +140,11 @@ pub struct TraitImplSig {
     pub type_name: string,
     pub module_id: string,
     pub decl: Node,
+}
+
+pub struct TypeBound {
+    pub name: string,
+    pub traits: List<string>,
 }
 
 pub struct ConstSig {

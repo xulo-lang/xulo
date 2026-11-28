@@ -634,6 +634,7 @@ pub fn check_call(ck: mut Checker, node: Node): string {
             )
             q = q + 1
         }
+        ck_decls::check_bounds(ck, sig.module_id, sig.bounds, sig.type_params, values, node)
         return ck_types::apply_subst(sig.ret_template, sig.type_params, values)
     }
     return sig.ret
@@ -806,6 +807,7 @@ pub fn check_method_call(ck: mut Checker, node: Node, callee: Node): string {
             )
             q = q + 1
         }
+        ck_decls::check_bounds(ck, sig.module_id, sig.bounds, sig.type_params, values, node)
         return ck_types::apply_subst(sig.ret_template, sig.type_params, values)
     }
     return sig.ret
