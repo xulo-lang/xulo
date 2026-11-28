@@ -1,0 +1,31 @@
+// Gate 3: function types, closures, and calls through values.
+fn apply(f: fn(number): number, x: number): number {
+    f(x)
+}
+
+fn make_adder(n: number): fn(number): number {
+    fn(v: number): number { v + n }
+}
+
+fn make_counter(): fn(): number {
+    let mut count = 0
+    fn(): number {
+        count = count + 1
+        count
+    }
+}
+
+fn main() {
+    let double = fn(x: number): number { x * 2 }
+    print(apply(double, 21))
+    let add5 = make_adder(5)
+    print(add5(10))
+    let counter = make_counter()
+    print(counter(), counter(), counter())
+    let triple = (x: number): number => x * 3
+    print(triple(4))
+    let square = x => x * x
+    print(square(5))
+    let fs = [fn(): number { 1 }, fn(): number { 2 }]
+    print(fs[0](), fs[1]())
+}

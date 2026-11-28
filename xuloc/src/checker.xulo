@@ -20,9 +20,10 @@
 // inherent `impl Type` exposes methods with `self`, default parameters relax a
 // call's minimum arity, `Result`/`Error` are prelude types, `Map<K, V>`,
 // `Set<T>`, and `Array<T, N>` carry their element types through literals,
-// constructors, members, iteration, and spread, and ranges, optional chaining,
-// `try`/`await`, and null narrowing are modeled. Traits, generic impls,
-// closures, and the remaining pattern forms arrive in later WP6 slices.
+// constructors, members, iteration, and spread, function types `fn(A)->R` and
+// closures (block and arrow bodies, captured locals) are checked, and ranges,
+// optional chaining, `try`/`await`, and null narrowing are modeled. Traits,
+// generic impls, and the remaining pattern forms arrive in later WP6 slices.
 //
 // Types are canonical strings (`number`, `string`, `bool`, `unit`, `unknown`,
 // `null`, `List<T>`, `T?`) so comparisons never depend on structural equality.
@@ -57,6 +58,8 @@ pub struct FuncSig {
     is_pub: bool,
     min_params: number,
     params: List<string>,
+    /// `unknown` when the declaration omits the return type: the checker does
+    /// not infer it, so a call must not claim a narrower type.
     ret: string,
     /// The declaration, kept so parameter and return types are resolved after
     /// every module and struct name is known.
@@ -1047,6 +1050,19 @@ impl Checker {
             }
             return text + ")"
         }
+        if node.kind == "FnType" {
+            if node.children.len == 0 {
+                return self.make_fn_type([], "unknown")
+            }
+            let ret = self.type_of(node.children[node.children.len - 1])
+            let mut params: List<string> = []
+            let mut i = 0
+            while i < node.children.len - 1 {
+                params.push(self.type_of(node.children[i]))
+                i = i + 1
+            }
+            return self.make_fn_type(params, ret)
+        }
         if node.kind != "TypeName" {
             self.fail(node, "E0003", "stage 1 checker does not support this type yet")
             return "unknown"
@@ -1251,6 +1267,93 @@ impl Checker {
         return args[0]
     }
 
+    fn is_fn_type(self, ty: string): bool {
+        if ty.len < 4 {
+            return false
+        }
+        return ty.slice(0, 3) == "fn("
+    }
+
+    fn make_fn_type(self, params: List<string>, ret: string): string {
+        let mut out = "fn("
+        let mut i = 0
+        while i < params.len {
+            if i > 0 {
+                out = out + ","
+            }
+            out = out + params[i]
+            i = i + 1
+        }
+        return out + ")->" + ret
+    }
+
+    /// The index of the `)` closing the outer `fn(`, or `-1`.
+    fn fn_close(self, ty: string): number {
+        let chars = ty.split("")
+        let mut depth = 0
+        let mut i = 3
+        while i < chars.len {
+            let c = chars[i]
+            if c == ")" and depth == 0 {
+                return i
+            }
+            if c == "(" or c == "<" {
+                depth = depth + 1
+            } else if c == ")" or c == ">" {
+                depth = depth - 1
+            }
+            i = i + 1
+        }
+        return -1
+    }
+
+    fn fn_params(self, ty: string): List<string> {
+        let mut out: List<string> = []
+        if !self.is_fn_type(ty) {
+            return out
+        }
+        let close = self.fn_close(ty)
+        if close < 0 {
+            return out
+        }
+        let inner = ty.slice(3, close)
+        if inner == "" {
+            return out
+        }
+        let chars = inner.split("")
+        let mut part = StringBuilder::new()
+        let mut depth = 0
+        let mut i = 0
+        while i < chars.len {
+            let c = chars[i]
+            if c == "," and depth == 0 {
+                out.push(part.build())
+                part = StringBuilder::new()
+            } else {
+                if c == "(" or c == "<" {
+                    depth = depth + 1
+                } else if c == ")" or c == ">" {
+                    depth = depth - 1
+                }
+                part.append(c)
+            }
+            i = i + 1
+        }
+        out.push(part.build())
+        return out
+    }
+
+    fn fn_ret(self, ty: string): string {
+        if !self.is_fn_type(ty) {
+            return "unknown"
+        }
+        let close = self.fn_close(ty)
+        if close < 0 or close + 3 > ty.len {
+            return "unknown"
+        }
+        return ty.slice(close + 3, ty.len)
+    }
+
     fn assignable(self, expected: string, actual: string): bool {
         if expected == actual {
             return true
@@ -1277,6 +1380,21 @@ impl Checker {
         }
         if self.is_list(expected) and self.is_list(actual) {
             return self.assignable(self.list_element(expected), self.list_element(actual))
+        }
+        if self.is_fn_type(expected) and self.is_fn_type(actual) {
+            let expected_params = self.fn_params(expected)
+            let actual_params = self.fn_params(actual)
+            if expected_params.len != actual_params.len {
+                return false
+            }
+            let mut i = 0
+            while i < expected_params.len {
+                if !self.assignable(expected_params[i], actual_params[i]) {
+                    return false
+                }
+                i = i + 1
+            }
+            return self.assignable(self.fn_ret(expected), self.fn_ret(actual))
         }
         if self.is_map(expected) and self.is_map(actual) {
             return self.assignable(self.map_key(expected), self.map_key(actual))
@@ -1517,7 +1635,7 @@ impl Checker {
                         param_names: [],
                         min_params: 0,
                         params: [],
-                        ret: "unit",
+                        ret: "unknown",
                         decl: child,
                     ),
                 )
@@ -1548,7 +1666,7 @@ impl Checker {
             let item = self.methods[i].decl
             let mut names: List<string> = []
             let mut params: List<string> = []
-            let mut ret = "unit"
+            let mut ret = "unknown"
             let mut min_params = 0
             let mut seen_default = false
             for child in item.children {
@@ -1686,7 +1804,7 @@ impl Checker {
                 is_pub: has_child_kind(item, "Pub"),
                 min_params: 0,
                 params: [],
-                ret: "unit",
+                ret: "unknown",
                 decl: item,
             ),
         )
@@ -1702,7 +1820,7 @@ impl Checker {
             self.current_module = sig.module_id
             let item = sig.decl
             let mut params: List<string> = []
-            let mut ret = "unit"
+            let mut ret = "unknown"
             let mut min_params = 0
             let mut seen_default = false
             for child in item.children {
@@ -2187,9 +2305,8 @@ impl Checker {
             self.bind(item.value, ty)
             return
         }
-        let actual = self.check_expr(initializer)
         if ty != "" and initializer.kind == "Map" {
-            let struct_index = self.find_struct_by_type(ty)
+            let struct_index = self.find_struct_by_type(self.optional_inner(ty))
             if struct_index >= 0 {
                 self.check_struct_object(initializer, struct_index)
                 if self.error == "" {
@@ -2198,6 +2315,7 @@ impl Checker {
                 return
             }
         }
+        let actual = self.check_expr(initializer)
         if ty == "" {
             ty = actual
         } else if !self.assignable(ty, actual) {
@@ -2686,6 +2804,9 @@ impl Checker {
             self.complete = false
             return "unknown"
         }
+        if node.kind == "Closure" or node.kind == "ArrowClosure" {
+            return self.check_closure(node)
+        }
         if node.kind == "Tuple" {
             let mut text = "("
             let mut i = 0
@@ -2912,12 +3033,10 @@ impl Checker {
         if callee.kind == "Member" or callee.kind == "OptionalMember" {
             return self.check_method_call(node, callee)
         }
-        if callee.kind != "Name" and callee.kind != "Path" {
-            self.complete = false
-            self.fail(callee, "E0204", "this expression is not callable")
-            return "unknown"
+        let mut name = ""
+        if callee.kind == "Name" or callee.kind == "Path" {
+            name = callee.value
         }
-        let name = callee.value
         let mut arg_types: List<string> = []
         let mut arg_names: List<string> = []
         let mut i = 1
@@ -2936,6 +3055,22 @@ impl Checker {
         }
         if self.error != "" {
             return "unknown"
+        }
+        if callee.kind != "Name" and callee.kind != "Path" {
+            // A call through any expression: `fs[0]()`, `make()(1)`, and so on.
+            let target = self.check_expr(callee)
+            if self.is_fn_type(target) {
+                return self.check_fn_value_call(node, "value", target, arg_types)
+            }
+            if target == "unknown" {
+                self.complete = false
+                return "unknown"
+            }
+            self.fail(callee, "E0204", "this expression is not callable")
+            return "unknown"
+        }
+        if self.is_fn_type(self.lookup(name)) {
+            return self.check_fn_value_call(node, name, self.lookup(name), arg_types)
         }
         if name == "print" or name == "println" {
             return "unit"
@@ -3055,6 +3190,86 @@ impl Checker {
             p = p + 1
         }
         return sig.ret
+    }
+
+    /// A function literal (`fn(x: T): R { … }`) or arrow closure
+    /// (`(x: T): R => expr`). An unannotated parameter or return stays
+    /// `unknown`, so the body is checked as far as its types allow.
+    fn check_closure(mut self, node: Node): string {
+        let mut params: List<string> = []
+        let mut ret = ""
+        let mut body = node
+        for child in node.children {
+            if child.kind == "Param" {
+                let mut ty = "unknown"
+                for part in child.children {
+                    if self.is_type_node(part) {
+                        ty = self.type_of(part)
+                    }
+                }
+                params.push(ty)
+            } else if self.is_type_node(child) {
+                ret = self.type_of(child)
+            } else {
+                body = child
+            }
+        }
+        if self.error != "" {
+            return "unknown"
+        }
+        self.enter_scope()
+        let mut index = 0
+        for child in node.children {
+            if child.kind == "Param" {
+                self.bind(child.value, params[index])
+                index = index + 1
+            }
+        }
+        let body_ty = self.check_expr(body)
+        self.leave_scope()
+        if self.error != "" {
+            return "unknown"
+        }
+        if ret == "" {
+            ret = body_ty
+        } else if body_ty != "unknown" and !self.assignable(ret, body_ty) {
+            self.fail(
+                body,
+                "E0201",
+                "closure returns `" + body_ty + "`, expected `" + ret + "`",
+            )
+            return "unknown"
+        }
+        return self.make_fn_type(params, ret)
+    }
+
+    fn check_fn_value_call(mut self, node: Node, label: string, ty: string,
+                           args: List<string>): string {
+        let params = self.fn_params(ty)
+        let ret = self.fn_ret(ty)
+        if args.len != params.len {
+            self.fail(
+                node,
+                "E0207",
+                "`" + label + "` expects " + str(params.len) + " arguments, found "
+                    + str(args.len),
+            )
+            return ret
+        }
+        let mut i = 0
+        while i < args.len {
+            if !self.assignable(params[i], args[i]) {
+                self.fail(
+                    node,
+                    "E0202",
+                    "argument " + str(i + 1) + " to `" + label + "` expects `"
+                        + params[i] + "`, found `" + args[i] + "`",
+                )
+                return ret
+            }
+            i = i + 1
+        }
+        return ret
     }
 
     fn check_method_call(mut self, node: Node, callee: Node): string {

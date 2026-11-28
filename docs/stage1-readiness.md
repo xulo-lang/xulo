@@ -147,8 +147,9 @@ the fixed corpus under `xuloc/corpus/` (functions, bindings, control flow,
 lists, strings, calls, return types, inline modules with `use` aliases,
 groups, globs, and `super` paths, simple structs with inherent methods,
 non-generic enums with `match` patterns, tuples, type aliases, builtin
-`Result`/`Error`, and `Map`/`Set`/`Array` with spread). Stage 1 and stage 0
-agree on accept/reject for all eight accepted files and all ten rejected
+`Result`/`Error`, `Map`/`Set`/`Array` with spread, and function types and
+closures). Stage 1 and stage 0
+agree on accept/reject for all nine accepted files and all eleven rejected
 files, and D4 aligns their
 diagnostic codes as well; rejected diagnostics carry `file:line:column`, an `E…`
 code, and exit 1. Evidence:
@@ -796,7 +797,7 @@ Last recorded verification (2026-11-22):
 | Stage 1 smoke tests | `cargo test -p xulo-cli --test stage1` — self-parses `xuloc/src/*.xulo`, clean diagnostics, `xulo test` |
 | Stage 1 under `xupm test` | `cargo test -p xupm --test cli runs_stage1_test_file` — 17 stage 1 tests passed |
 | Stage 1 native build | `cargo test -p xupm --test aot_differential stage1_binary_matches_the_interpreter` (with `XULO_AOT_DIFFERENTIAL=1`) — interpreter and native output agree |
-| Stage 1 checker | `cargo test -p xulo-cli --test stage1 stage1_check_agrees_with_stage0_on_the_corpus` — 8 accept + 10 reject files (including inline modules, structs/methods, enums, tuples, aliases, Result/Error, and collections) agree with stage 0 |
+| Stage 1 checker | `cargo test -p xulo-cli --test stage1 stage1_check_agrees_with_stage0_on_the_corpus` — 9 accept + 11 reject files (including inline modules, structs/methods, enums, tuples, aliases, Result/Error, collections, and closures) agree with stage 0 |
 | Stage 1 corpus ratchet | `cargo test -p xulo-cli --test stage1 stage1_example_corpus_tracks_baseline` — 66 files scanned, all lex and parse; `tests/stage1_examples_baseline.tsv` is empty |
 | Stage 1 self-host (WP6) | `XULO_STAGE1_BUILD=1 cargo test -p xupm --test stage1_build` — 20 passed (corpus, stage 2 self-build, T5c differential, B8b reproducible build, root-child `super` imports) in about a minute |
 

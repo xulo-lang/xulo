@@ -134,6 +134,7 @@ fn checker_accepts_the_bootstrap_corpus() {
         "xuloc/corpus/accept/methods.xulo",
         "xuloc/corpus/accept/results.xulo",
         "xuloc/corpus/accept/collections.xulo",
+        "xuloc/corpus/accept/closures.xulo",
     ]
     for path in files {
         match std::fs::read(path) {
@@ -270,8 +271,8 @@ fn checker_accepts_an_inner_type_for_an_optional() {
 
 #[test]
 fn checker_marks_partial_analysis() {
-    let closure: ParseResult = parse_source("fn main() { let f = fn(a: int): int { a } }\n")
-    let partial: CheckResult = check(closure.root)
+    let unsupported: ParseResult = parse_source("trait Area {\n    fn area(self): number;\n}\nfn main() {}\n")
+    let partial: CheckResult = check(unsupported.root)
     assert(!partial.complete, "an unsupported construct is not a verdict")
 
     let wrong: ParseResult = parse_source("fn main() { let x: int = \"a\" }\n")

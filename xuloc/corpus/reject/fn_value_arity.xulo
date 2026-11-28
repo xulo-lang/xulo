@@ -1,0 +1,4 @@
+fn main() {
+    let f: fn(number): number = fn(x: number): number { x }
+    print(f(1, 2))
+}

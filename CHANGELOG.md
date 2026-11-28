@@ -56,6 +56,12 @@ values, and is left to a future standard-library `std/ui` module.
 - Stage 1's checker now honors default parameters: a call may omit trailing
   defaulted arguments, so `examples/functions/params.xulo` reports
   `no errors`.
+- Stage 1's checker now models function types (`fn(A, B)->R`), function
+  literals, and arrow closures: parameters and the declared return type are
+  checked, captures see the enclosing scope, and values can be called through
+  any expression (`fs[0]()`, `make()(1)`). `examples/functions/closures_hof`
+  and `examples/std/regex` now report `no errors`; the example check baseline
+  drops from 16 to 14. `xuloc/corpus/accept/closures.xulo` pins the behavior.
 - Stage 1's checker now models `Map<K, V>`, `Set<T>`, and `Array<T, N>`:
   annotation and literal types, the `Map`/`Set` members (`size`, `get`, `set`,
   `has`, `remove`, `keys`, `values`, `entries`, `insert`), `Set::from_list` and

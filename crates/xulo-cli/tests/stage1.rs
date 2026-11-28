@@ -264,6 +264,7 @@ fn stage1_check_agrees_with_stage0_on_the_corpus() {
         ("xuloc/corpus/accept/methods.xulo", true),
         ("xuloc/corpus/accept/results.xulo", true),
         ("xuloc/corpus/accept/collections.xulo", true),
+        ("xuloc/corpus/accept/closures.xulo", true),
         ("xuloc/corpus/reject/undefined_name.xulo", false),
         ("xuloc/corpus/reject/type_mismatch.xulo", false),
         ("xuloc/corpus/reject/arity.xulo", false),
@@ -274,6 +275,7 @@ fn stage1_check_agrees_with_stage0_on_the_corpus() {
         ("xuloc/corpus/reject/struct_field_mismatch.xulo", false),
         ("xuloc/corpus/reject/alias_mismatch.xulo", false),
         ("xuloc/corpus/reject/list_element_mismatch.xulo", false),
+        ("xuloc/corpus/reject/fn_value_arity.xulo", false),
     ];
     for (relative, accept) in cases {
         let file = root.join(relative);
@@ -426,6 +428,24 @@ fn stage1_check_accepts_builtin_collections() {
         "examples/collections/maps.xulo",
         "examples/collections/sets.xulo",
         "examples/collections/collections.xulo",
+    ] {
+        let out = run_stage1("check", &root.join(relative));
+        assert_success(&out, &format!("stage 1 check of {relative}"));
+        assert!(
+            stdout_of(&out).contains("no errors"),
+            "{relative} should check cleanly:\n{}",
+            stdout_of(&out)
+        );
+    }
+}
+
+/// Function types and closures are modeled, including calls through values.
+#[test]
+fn stage1_check_accepts_function_values() {
+    let root = repo_root();
+    for relative in [
+        "examples/functions/closures_hof.xulo",
+        "examples/std/regex.xulo",
     ] {
         let out = run_stage1("check", &root.join(relative));
         assert_success(&out, &format!("stage 1 check of {relative}"));
