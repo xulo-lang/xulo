@@ -269,6 +269,7 @@ fn stage1_check_agrees_with_stage0_on_the_corpus() {
         ("xuloc/corpus/accept/concurrency.xulo", true),
         ("xuloc/corpus/accept/extern.xulo", true),
         ("xuloc/corpus/accept/generics.xulo", true),
+        ("xuloc/corpus/accept/imports.xulo", true),
         ("xuloc/corpus/reject/undefined_name.xulo", false),
         ("xuloc/corpus/reject/type_mismatch.xulo", false),
         ("xuloc/corpus/reject/arity.xulo", false),
@@ -544,6 +545,20 @@ fn stage1_check_accepts_generics_and_traits() {
 fn stage1_check_accepts_macro_declarations() {
     let root = repo_root();
     let relative = "examples/macros/macros.xulo";
+    let out = run_stage1("check", &root.join(relative));
+    assert_success(&out, &format!("stage 1 check of {relative}"));
+    assert!(
+        stdout_of(&out).contains("no errors"),
+        "{relative} should check cleanly:\n{}",
+        stdout_of(&out)
+    );
+}
+
+/// External group imports and named function values are modeled.
+#[test]
+fn stage1_check_accepts_external_imports() {
+    let root = repo_root();
+    let relative = "examples/std/http.xulo";
     let out = run_stage1("check", &root.join(relative));
     assert_success(&out, &format!("stage 1 check of {relative}"));
     assert!(

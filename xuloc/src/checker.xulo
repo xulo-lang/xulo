@@ -30,9 +30,10 @@
 // signatures and bodies check as far as they can), a `trait` declaration is
 // accepted with dispatch left opaque, macro definition bodies are skipped and
 // a macro invocation is `unknown` (a declared macro also makes unresolved
-// names opaque), and ranges, optional chaining, `try`, and null narrowing are
-// checked. Generic instantiation and the remaining pattern forms arrive in
-// later WP6 slices.
+// names opaque), names imported from an external module are opaque, a named
+// function used as a value has its `fn(...)->...` type, and ranges, optional
+// chaining, `try`, and null narrowing are checked. Generic instantiation and
+// the remaining pattern forms arrive in later WP6 slices.
 //
 // Types are canonical strings (`number`, `string`, `bool`, `unit`, `unknown`,
 // `null`, `List<T>`, `T?`) so comparisons never depend on structural equality.
@@ -191,6 +192,10 @@ pub struct Checker {
     /// checker cannot see, so an unresolved name is "not modeled" rather than
     /// a confirmed error.
     has_macros: bool,
+    /// Bare names bound by a `use` whose target is outside this buffer
+    /// (`use std::http::{Request, Response}`). They may be types, functions,
+    /// or constants, so every lookup treats them as opaque.
+    external_imports: List<string>,
     complete: bool,
     error: string,
     code: string,
@@ -217,6 +222,7 @@ pub fn check(root: Node): CheckResult {
         current_return: "unit",
         generic_names: [],
         has_macros: false,
+        external_imports: [],
         complete: true,
         error: "",
         code: "",
@@ -966,6 +972,9 @@ impl Checker {
             if external {
                 return -2
             }
+            if self.is_external_import(parts[0]) {
+                return -2
+            }
             return -1
         }
         let head = parts[0]
@@ -1033,6 +1042,31 @@ impl Checker {
             or node.kind == "FnType"
             or node.kind == "|"
             or node.kind == "&"
+    }
+
+    fn note_external_import(mut self, name: string) {
+        if name == "" {
+            return
+        }
+        let mut i = 0
+        while i < self.external_imports.len {
+            if self.external_imports[i] == name {
+                return
+            }
+            i = i + 1
+        }
+        self.external_imports.push(name)
+    }
+
+    fn is_external_import(self, name: string): bool {
+        let mut i = 0
+        while i < self.external_imports.len {
+            if self.external_imports[i] == name {
+                return true
+            }
+            i = i + 1
+        }
+        return false
     }
 
     fn is_generic_name(self, name: string): bool {
@@ -1274,6 +1308,12 @@ impl Checker {
         if self.has_external_glob(self.current_module) {
             // `use std::fmt::*`: a bare name may be declared by a module the
             // checker cannot read.
+            self.complete = false
+            return "unknown"
+        }
+        if self.is_external_import(name) {
+            // `use std::http::{Request, Response}`: the name is a type from an
+            // external module.
             self.complete = false
             return "unknown"
         }
@@ -2208,6 +2248,18 @@ impl Checker {
             }
             let prefix = self.resolve_module(module_id, head, segments)
             if prefix == "#" {
+                // `use std::http::{Request, Response}`: every entry may name a
+                // type, function, or constant outside this buffer.
+                for entry in group.children {
+                    let mut entry_alias = ""
+                    for child in entry.children {
+                        if child.kind == "UseAlias" {
+                            entry_alias = child.value
+                        }
+                    }
+                    let bound = if entry_alias == "" { entry.value } else { entry_alias }
+                    self.note_external_import(bound)
+                }
                 return
             }
             for entry in group.children {
@@ -2277,11 +2329,14 @@ impl Checker {
             prefix.push(segments[i])
             i = i + 1
         }
+        let bound = if alias == "" { member } else { alias }
         let target = self.resolve_module(module_id, head, prefix)
         if target == "#" {
+            // `use std::os::exec_path`: the binding exists, but its kind and
+            // signature are outside this buffer.
+            self.note_external_import(bound)
             return
         }
-        let bound = if alias == "" { member } else { alias }
         if type_only {
             self.note_foreign_type(module_id, bound, target)
         }
@@ -3038,6 +3093,20 @@ impl Checker {
                 }
             }
             if ty == "" {
+                let fn_index = self.resolve_function(self.current_module, node.value, 0)
+                if fn_index >= 0 {
+                    let sig = self.functions[fn_index]
+                    return self.make_fn_type(sig.params, sig.ret)
+                }
+                if fn_index == -2 {
+                    self.complete = false
+                    return "unknown"
+                }
+                if self.is_external_import(node.value) {
+                    // A value imported from outside this buffer.
+                    self.complete = false
+                    return "unknown"
+                }
                 self.fail(node, "E0101", "cannot find value `" + node.value + "` in this scope")
                 return "unknown"
             }

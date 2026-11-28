@@ -246,7 +246,8 @@ bind their `as` alias and an optional `Ptr?` argument may be omitted, generic
 type/const parameters are `unknown`, a `trait` declaration is accepted with
 dispatch left opaque, a macro definition body is skipped and a macro
 invocation is `unknown` (with a declared macro, unresolved names stay opaque),
-and
+a name bound by an external `use` path stays opaque and a named function used
+as a value carries its signature, and
 ranges, optional chaining, null narrowing, `try`, block
 expressions, and assignment expressions are checked. Generic instantiation
 and std calls still report E0003 or leave

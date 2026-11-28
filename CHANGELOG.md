@@ -56,6 +56,13 @@ values, and is left to a future standard-library `std/ui` module.
 - Stage 1's checker now honors default parameters: a call may omit trailing
   defaulted arguments, so `examples/functions/params.xulo` reports
   `no errors`.
+- Stage 1's checker now treats bare names bound by an external `use` path
+  (`use std::http::{Request, Response}`, `use std::os::exec_path`) as opaque,
+  and a named function used as a value gets its `fn(...)->...` type.
+  `examples/std/http.xulo` reports `no errors`; the example check baseline
+  drops from 2 to 1 (only the intentional `errors/type_error.xulo` remains).
+  `xuloc/corpus/accept/imports.xulo` pins external group imports and function
+  values.
 - Stage 1's checker now skips macro definition bodies (`#[macro]`,
   `#[macro_attr]`, `#[macro_derive]`), treats a macro invocation as `unknown`,
   and keeps unresolved names opaque when a macro is declared (a macro may

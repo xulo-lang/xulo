@@ -1,0 +1,15 @@
+// Gate 3: external group imports and named function values.
+use std::fmt::{format};
+
+fn inc(x: number): number {
+    x + 1
+}
+
+fn apply(f: fn(number): number, x: number): number {
+    f(x)
+}
+
+fn main() {
+    print(format("hi"))
+    print(apply(inc, 41))
+}
