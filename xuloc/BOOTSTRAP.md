@@ -237,7 +237,8 @@ type through literals, annotations, positional reads/writes, and destructuring,
 `type` aliases expand on demand, inherent `impl Type` methods bind `self` and
 are callable with arity/type checks, default parameters relax the minimum
 arity, optional struct fields may be omitted, `Result`/`Error` are prelude
-types, `Map<K, V>`, `Set<T>`, and `Array<T, N>` carry their element/key types
+types whose `Result<T, E>` payloads flow through `?`, `Result::Ok`/`Err`
+constructors, and `match` bindings, `Map<K, V>`, `Set<T>`, and `Array<T, N>` carry their element/key types
 through literals, constructors, members, indexing, iteration, and spread,
 function types `fn(…)->…` and closures bind their parameters and returned
 type, union types `A | B` accept either member and `is` / `is not` narrow the

@@ -31,8 +31,10 @@
 // checked. Tuple types, literals, positional reads, writes, and destructuring
 // are modeled as `(T1,T2)` strings, `type` aliases expand on demand, and an
 // inherent `impl Type` exposes methods with `self`, default parameters relax a
-// call's minimum arity, `Result`/`Error` are prelude types, `Map<K, V>`,
-// `Set<T>`, and `Array<T, N>` carry their element types through literals,
+// call's minimum arity, `Result`/`Error` are prelude types with the payload
+// types of `Result<T, E>` carried through `?`, constructors, and `match`,
+// `Map<K, V>`, `Set<T>`, and `Array<T, N>` carry their element types through
+// literals,
 // constructors, members, iteration, and spread, function types `fn(A)->R` and
 // closures (block and arrow bodies, captured locals) are checked, union types
 // `A|B` and `is` narrowing are modeled, a heterogeneous literal is

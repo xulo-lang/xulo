@@ -130,7 +130,33 @@ pub fn check_expr(ck: mut Checker, node: Node): string {
         }
         return rhs
     }
-    if node.kind == "Try" or node.kind == "Await" {
+    if node.kind == "Try" {
+        if node.children.len == 0 {
+            ck.complete = false
+            return "unknown"
+        }
+        let ty = check_expr(ck, node.children[0])
+        if ck.error != "" {
+            return "unknown"
+        }
+        if ty == "unknown" {
+            ck.complete = false
+            return "unknown"
+        }
+        if ck_types::is_result(ck, ty) {
+            return ck_types::result_ok(ck, ty)
+        }
+        if ck_types::is_optional(ck, ty) {
+            return ck_types::optional_inner(ck, ty)
+        }
+        ck_diag::fail(ck,
+            node,
+            "E0217",
+            "`?` requires a `T?` or `Result<T, E>` operand, found `" + ty + "`",
+        )
+        return "unknown"
+    }
+    if node.kind == "Await" {
         if node.children.len > 0 {
             check_expr(ck, node.children[0])
         }
@@ -983,6 +1009,18 @@ pub fn check_variant_constructor(ck: mut Checker, node: Node, enum_index: number
         }
         i = i + 1
     }
+    if ck.enums[enum_index].name == "Result" {
+        let mut ok = "unknown"
+        let mut err = "unknown"
+        if types.len > 0 {
+            if variant == "Ok" {
+                ok = types[0]
+            } else if variant == "Err" {
+                err = types[0]
+            }
+        }
+        return "Result<" + ok + "," + err + ">"
+    }
     return ck_decls::enum_canonical(ck, enum_index)
 }
 
@@ -1361,7 +1399,11 @@ pub fn check_pattern(ck: mut Checker, pattern: Node, subject: string) {
                 ck.complete = false
                 return
             }
-            if subject != "unknown" and subject != ck_decls::enum_canonical(ck, enum_index) {
+            let canonical = ck_decls::enum_canonical(ck, enum_index)
+            let matches = subject == "unknown" or subject == canonical
+                or (ck.enums[enum_index].name == "Result"
+                    and ck_types::is_result(ck, subject))
+            if !matches {
                 ck_diag::fail(ck, 
                     pattern,
                     "E0201",
@@ -1427,7 +1469,11 @@ pub fn check_pattern(ck: mut Checker, pattern: Node, subject: string) {
             ck.complete = false
             return
         }
-        if subject != "unknown" and subject != ck_decls::enum_canonical(ck, enum_index) {
+        let canonical = ck_decls::enum_canonical(ck, enum_index)
+        let matches = subject == "unknown" or subject == canonical
+            or (ck.enums[enum_index].name == "Result"
+                and ck_types::is_result(ck, subject))
+        if !matches {
             ck_diag::fail(ck, 
                 pattern,
                 "E0201",
@@ -1442,11 +1488,29 @@ pub fn check_pattern(ck: mut Checker, pattern: Node, subject: string) {
             return
         }
         let fields = ck.enums[enum_index].variants[variant].fields
+        let mut payload_tys: List<string> = []
+        let mut fi = 0
+        while fi < fields.len {
+            payload_tys.push(fields[fi].ty)
+            fi = fi + 1
+        }
+        if ck.enums[enum_index].name == "Result" and ck_types::is_result(ck, subject) {
+            let mut selected = "unknown"
+            let variant_name = ck.enums[enum_index].variants[variant].name
+            if variant_name == "Ok" {
+                selected = ck_types::result_ok(ck, subject)
+            } else if variant_name == "Err" {
+                selected = ck_types::result_err(ck, subject)
+            }
+            if payload_tys.len > 0 {
+                payload_tys[0] = selected
+            }
+        }
         for child in pattern.children {
             if child.kind != "PatternPayload" {
                 continue
             }
-            if child.children.len != fields.len {
+            if child.children.len != payload_tys.len {
                 ck.complete = false
                 return
             }
@@ -1454,7 +1518,7 @@ pub fn check_pattern(ck: mut Checker, pattern: Node, subject: string) {
             while p < child.children.len {
                 let binding = child.children[p]
                 if binding.kind == "NamePattern" and binding.value != "_" {
-                    ck_diag::bind(ck, binding.value, fields[p].ty)
+                    ck_diag::bind(ck, binding.value, payload_tys[p])
                 } else if binding.kind != "NamePattern" {
                     ck.complete = false
                 }

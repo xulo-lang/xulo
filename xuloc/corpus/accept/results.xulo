@@ -1,4 +1,4 @@
-// Gate 3: builtin `Result`/`Error`, `?` propagation, and payload matching.
+// Gate 3: builtin `Result`/`Error`, typed `?` propagation, and payload matching.
 fn parse(v: int): Result<int, Error> {
     if v > 0 {
         Result::Ok(v)
@@ -12,7 +12,16 @@ fn doubled(v: int): Result<int, Error> {
     Result::Ok(value * 2)
 }
 
+fn shifted(v: int): Result<int, Error> {
+    let value: int = parse(v)?
+    Result::Ok(value + 10)
+}
+
 fn main() {
+    match shifted(2) {
+        Result::Ok(v) => print(v)
+        Result::Err(e) => print(e.message)
+    }
     match doubled(2) {
         Result::Ok(v) => print(v)
         Result::Err(e) => print(e.message)

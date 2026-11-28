@@ -26,6 +26,13 @@ values, and is left to a future standard-library `std/ui` module.
 
 ### Changed
 
+- Stage 1's checker now carries `Result<T, E>` payload types instead of
+  treating every `Result` as opaque: `type_of`, `assignable`, `Result::Ok` /
+  `Result::Err` constructors, and `match` bindings use the instantiated
+  ok/error types, and postfix `?` yields the ok type (`E0217` when the operand
+  is neither `T?` nor a `Result`). Tuple types are assignable element-wise.
+  `xuloc/corpus/accept/results.xulo` covers typed `?` and payloads;
+  `reject/try_non_result.xulo` pins the diagnostic.
 - The stage 1 checker is now modular: `xuloc/src/checker.xulo` keeps the result
   and signature records, the `Checker` state, and the `check` entry point,
   while the passes live in `xuloc/src/checker/` (`ck_util`, `ck_diag`,

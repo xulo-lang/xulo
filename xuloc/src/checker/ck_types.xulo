@@ -214,6 +214,16 @@ pub fn type_of(ck: mut Checker, node: Node): string {
         ck_diag::fail(ck, node, "E0101", "`" + name + "` needs a type argument")
         return "unknown"
     }
+    if name == "Result" {
+        let args = type_arguments(ck, node)
+        if args.len >= 2 {
+            return "Result<" + args[0] + "," + args[1] + ">"
+        }
+        if args.len == 1 {
+            return "Result<" + args[0] + ",unknown>"
+        }
+        return "Result"
+    }
     let struct_index = ck_decls::resolve_struct(ck, ck.current_module, name, 0)
     if struct_index >= 0 {
         return ck_decls::struct_canonical(ck, struct_index)
@@ -335,6 +345,26 @@ pub fn generic_args(ck: Checker, ty: string, head: string): List<string> {
     }
     out.push(part.build())
     return out
+}
+
+pub fn is_result(ck: Checker, ty: string): bool {
+    return is_generic(ck, ty, "Result")
+}
+
+pub fn result_ok(ck: Checker, ty: string): string {
+    let args = generic_args(ck, ty, "Result")
+    if args.len < 2 {
+        return "unknown"
+    }
+    return args[0]
+}
+
+pub fn result_err(ck: Checker, ty: string): string {
+    let args = generic_args(ck, ty, "Result")
+    if args.len < 2 {
+        return "unknown"
+    }
+    return args[1]
 }
 
 pub fn is_map(ck: Checker, ty: string): bool {
@@ -558,6 +588,19 @@ pub fn assignable(ck: Checker, expected: string, actual: string): bool {
         }
         return true
     }
+    if is_result(ck, expected) {
+        if actual == "Result" {
+            return true
+        }
+        if is_result(ck, actual) {
+            return assignable(ck, result_ok(ck, expected), result_ok(ck, actual))
+                and assignable(ck, result_err(ck, expected), result_err(ck, actual))
+        }
+        return false
+    }
+    if expected == "Result" and is_result(ck, actual) {
+        return true
+    }
     if actual == "null" {
         return is_optional(ck, expected)
     }
@@ -567,6 +610,21 @@ pub fn assignable(ck: Checker, expected: string, actual: string): bool {
     }
     if is_optional(ck, actual) and is_optional(ck, expected) {
         return assignable(ck, optional_inner(ck, expected), optional_inner(ck, actual))
+    }
+    if is_tuple_type(ck, expected) and is_tuple_type(ck, actual) {
+        let expected_parts = tuple_types(ck, expected)
+        let actual_parts = tuple_types(ck, actual)
+        if expected_parts.len != actual_parts.len {
+            return false
+        }
+        let mut i = 0
+        while i < expected_parts.len {
+            if !assignable(ck, expected_parts[i], actual_parts[i]) {
+                return false
+            }
+            i = i + 1
+        }
+        return true
     }
     if is_list(ck, expected) and is_list(ck, actual) {
         return assignable(ck, list_element(ck, expected), list_element(ck, actual))
