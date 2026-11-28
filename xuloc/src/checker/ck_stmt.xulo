@@ -72,9 +72,23 @@ pub fn check_module_items(ck: mut Checker, items: Node, module_id: string, neste
             // this pass, so the analysis remains partial.
             ck.complete = false
         } else if item.kind == "Impl" {
+            let mut names: List<string> = []
             for child in item.children {
-                if child.kind == "Fn" {
-                    check_method(ck, child)
+                if child.kind == "TypeName" {
+                    names.push(child.value)
+                }
+            }
+            let mut owner = ""
+            if names.len == 1 {
+                owner = names[0]
+            } else if names.len == 2 {
+                owner = names[1]
+            }
+            if owner != "" {
+                for child in item.children {
+                    if child.kind == "Fn" {
+                        check_method(ck, child, owner)
+                    }
                 }
             }
         } else {
@@ -123,8 +137,21 @@ pub fn check_function(ck: mut Checker, item: Node) {
     ck_diag::leave_scope(ck)
 }
 
-pub fn check_method(ck: mut Checker, item: Node) {
-    let index = ck_decls::find_method_in(ck, ck.current_module, item.value)
+pub fn check_method(ck: mut Checker, item: Node, owner: string) {
+    let mut canonical = "unknown"
+    let struct_index = ck_decls::resolve_struct(ck, ck.current_module, owner, 0)
+    if struct_index >= 0 {
+        canonical = ck_decls::struct_canonical(ck, struct_index)
+    } else {
+        let enum_index = ck_decls::resolve_enum(ck, ck.current_module, owner, 0)
+        if enum_index >= 0 {
+            canonical = ck_decls::enum_canonical(ck, enum_index)
+        } else {
+            ck.complete = false
+            return
+        }
+    }
+    let index = ck_decls::find_method(ck, canonical, item.value)
     if index < 0 {
         ck.complete = false
         return

@@ -26,6 +26,12 @@ values, and is left to a future standard-library `std/ui` module.
 
 ### Changed
 
+- Stage 1's checker now registers `impl Trait for Type` methods on `Type`
+  (matching the backend's dispatch), so their bodies are checked with `self`
+  bound to the implementing type and `recv.method()` resolves alongside
+  `Trait::method(recv)`. Method lookup during the body check is owner-aware,
+  so two types may share a method name. `xuloc/corpus/accept/traits.xulo`
+  covers both call forms.
 - Stage 1's checker now registers trait method signatures: `Area::area(recv)`
   returns the trait's declared type (and takes the receiver as its first
   argument), so `let n: number = Area::area(rect)` is checked. Trait impl

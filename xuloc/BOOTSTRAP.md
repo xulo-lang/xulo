@@ -255,7 +255,8 @@ constructors and `match` bindings, a generic struct instantiation
 (`Palette<int>`) substitutes its field types and finds its inherent methods,
 an `impl<T> Type<T>` method refines its `T` from the receiver type at the call
 site, trait methods register as `Trait::method` signatures with their declared
-return types,
+return types, `impl Trait for Type` also registers its methods on `Type` (so
+`self` is typed and `recv.method()` works), and
 a
 `trait` declaration is accepted with
 dispatch left opaque, a macro definition body is skipped and a macro

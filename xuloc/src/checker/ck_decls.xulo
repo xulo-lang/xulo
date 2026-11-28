@@ -895,13 +895,18 @@ pub fn add_impl(ck: mut Checker, item: Node, module_id: string) {
             type_names.push(child.value)
         }
     }
-    // `impl Trait for Type` has two type names; trait dispatch stays
-    // outside this pass.
-    if type_names.len != 1 {
+    // `impl Trait for Type`: register the methods on the implementing type,
+    // matching the backend's runtime dispatch. A plain `impl Type` uses the
+    // single name.
+    let mut owner = ""
+    if type_names.len == 1 {
+        owner = type_names[0]
+    } else if type_names.len == 2 {
+        owner = type_names[1]
+    } else {
         ck.complete = false
         return
     }
-    let owner = type_names[0]
     for child in item.children {
         if child.kind == "Fn" {
             note_generic_params(ck, child)
