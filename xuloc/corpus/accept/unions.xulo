@@ -1,0 +1,24 @@
+// Gate 3: union types, `is` narrowing, and heterogeneous literals.
+type Version = "v1" | "v2"
+
+fn pick(v: int | string): string {
+    if v is int {
+        "int"
+    } else {
+        "string"
+    }
+}
+
+fn main() {
+    print(pick(3), pick("x"))
+    let v: int | string = 7
+    print(v is int, v is not string)
+    let version: Version = "v1"
+    print(version)
+    let xs = [1, "two", false, null]
+    print(xs)
+    match 1 {
+        1 => null
+        _ => print("other")
+    }
+}

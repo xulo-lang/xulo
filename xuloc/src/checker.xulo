@@ -21,8 +21,10 @@
 // call's minimum arity, `Result`/`Error` are prelude types, `Map<K, V>`,
 // `Set<T>`, and `Array<T, N>` carry their element types through literals,
 // constructors, members, iteration, and spread, function types `fn(A)->R` and
-// closures (block and arrow bodies, captured locals) are checked, and ranges,
-// optional chaining, `try`/`await`, and null narrowing are modeled. Traits,
+// closures (block and arrow bodies, captured locals) are checked, union types
+// `A|B` and `is` narrowing are modeled, a heterogeneous literal is
+// `List<unknown>`, an external `use path::*` keeps bare names opaque, and
+// ranges, optional chaining, `try`/`await`, and null narrowing are modeled. Traits,
 // generic impls, and the remaining pattern forms arrive in later WP6 slices.
 //
 // Types are canonical strings (`number`, `string`, `bool`, `unit`, `unknown`,
@@ -931,12 +933,21 @@ impl Checker {
                 i = i - 1
             }
             i = self.modules[scope].globs.len - 1
+            let mut external = false
             while i >= 0 {
-                let found = self.export_function(self.modules[scope].globs[i].target, parts[0], depth + 1)
-                if found != -1 {
-                    return found
+                let target = self.modules[scope].globs[i].target
+                if target == "#" {
+                    external = true
+                } else {
+                    let found = self.export_function(target, parts[0], depth + 1)
+                    if found != -1 {
+                        return found
+                    }
                 }
                 i = i - 1
+            }
+            if external {
+                return -2
             }
             return -1
         }
@@ -1003,6 +1014,8 @@ impl Checker {
             or node.kind == "OptionalType"
             or node.kind == "TupleType"
             or node.kind == "FnType"
+            or node.kind == "|"
+            or node.kind == "&"
     }
 
     /// Collect the type arguments written on a `TypeName` or `TypeApply`.
@@ -1029,6 +1042,33 @@ impl Checker {
             // `Array<int, 3>`: the length is a value, not a type, but the
             // checker only needs the element type.
             return self.literal_type(node.value)
+        }
+        if node.kind == "|" {
+            let mut out = ""
+            for child in node.children {
+                let member = self.type_of(child)
+                if self.error != "" {
+                    return "unknown"
+                }
+                if member == "unknown" {
+                    self.complete = false
+                }
+                if out == "" {
+                    out = member
+                } else if !self.union_has_member(out, member) {
+                    out = out + "|" + member
+                }
+            }
+            if out == "" {
+                return "unknown"
+            }
+            return out
+        }
+        if node.kind == "&" {
+            // Intersection values are outside the bootstrap subset; a
+            // declaration alone is accepted and does not constrain anything.
+            self.complete = false
+            return "unknown"
         }
         if node.kind == "OptionalType" {
             if node.children.len == 0 {
@@ -1153,6 +1193,12 @@ impl Checker {
             self.complete = false
             return "unknown"
         }
+        if self.has_external_glob(self.current_module) {
+            // `use std::fmt::*`: a bare name may be declared by a module the
+            // checker cannot read.
+            self.complete = false
+            return "unknown"
+        }
         // Enum, alias, generic parameter, and opaque imported types are not
         // modeled here; the name is unknown to the checker, not necessarily
         // wrong, so `build` must not reject on this alone.
@@ -1267,6 +1313,78 @@ impl Checker {
         return args[0]
     }
 
+    fn is_union(self, ty: string): bool {
+        let chars = ty.split("")
+        let mut depth = 0
+        let mut i = 0
+        while i < chars.len {
+            let c = chars[i]
+            if c == "<" or c == "(" {
+                depth = depth + 1
+            } else if c == ">" or c == ")" {
+                depth = depth - 1
+            } else if c == "|" and depth == 0 {
+                return true
+            }
+            i = i + 1
+        }
+        return false
+    }
+
+    fn union_members(self, ty: string): List<string> {
+        let mut out: List<string> = []
+        let chars = ty.split("")
+        let mut part = StringBuilder::new()
+        let mut depth = 0
+        let mut i = 0
+        while i < chars.len {
+            let c = chars[i]
+            if c == "|" and depth == 0 {
+                out.push(part.build())
+                part = StringBuilder::new()
+            } else {
+                if c == "<" or c == "(" {
+                    depth = depth + 1
+                } else if c == ">" or c == ")" {
+                    depth = depth - 1
+                }
+                part.append(c)
+            }
+            i = i + 1
+        }
+        out.push(part.build())
+        return out
+    }
+
+    fn union_has_member(self, ty: string, member: string): bool {
+        for known in self.union_members(ty) {
+            if known == member {
+                return true
+            }
+        }
+        return false
+    }
+
+    fn without_union_member(self, ty: string, member: string): string {
+        if !self.is_union(ty) {
+            return ty
+        }
+        let mut out = ""
+        for known in self.union_members(ty) {
+            if known != member {
+                if out == "" {
+                    out = known
+                } else {
+                    out = out + "|" + known
+                }
+            }
+        }
+        if out == "" {
+            return "unknown"
+        }
+        return out
+    }
+
     fn is_fn_type(self, ty: string): bool {
         if ty.len < 4 {
             return false
@@ -1366,6 +1484,22 @@ impl Checker {
             return true
         }
         if self.is_number(expected) and self.is_number(actual) {
+            return true
+        }
+        if self.is_union(expected) {
+            for member in self.union_members(expected) {
+                if self.assignable(member, actual) {
+                    return true
+                }
+            }
+            return false
+        }
+        if self.is_union(actual) {
+            for member in self.union_members(actual) {
+                if !self.assignable(expected, member) {
+                    return false
+                }
+            }
             return true
         }
         if actual == "null" {
@@ -1978,9 +2112,9 @@ impl Checker {
         }
         if glob {
             let target = self.resolve_module(module_id, head, segments)
-            if target != "#" {
-                self.add_glob(module_id, target, is_pub)
-            }
+            // `#` records an external glob (`use std::fmt::*`): the module is
+            // outside this buffer, so a bare name may still come from it.
+            self.add_glob(module_id, target, is_pub)
             return
         }
         if head == "" {
@@ -2062,6 +2196,21 @@ impl Checker {
         if index >= 0 {
             self.modules[index].globs.push(GlobSig(target: target, is_pub: is_pub))
         }
+    }
+
+    fn has_external_glob(self, module_id: string): bool {
+        let index = self.module_index(module_id)
+        if index < 0 {
+            return false
+        }
+        let mut i = 0
+        while i < self.modules[index].globs.len {
+            if self.modules[index].globs[i].target == "#" {
+                return true
+            }
+            i = i + 1
+        }
+        return false
     }
 
     fn mark_export(mut self, module_id: string, name: string) {
@@ -2181,7 +2330,7 @@ impl Checker {
         if !found {
             self.fail(item, "E0003", "a function needs a body")
         } else {
-            self.check_block(body)
+            self.check_block(body, false)
         }
         self.leave_scope()
     }
@@ -2212,7 +2361,7 @@ impl Checker {
         if !found {
             self.fail(item, "E0003", "a method needs a body")
         } else {
-            self.check_block(body)
+            self.check_block(body, false)
         }
         self.leave_scope()
     }
@@ -2514,20 +2663,25 @@ impl Checker {
 
     // ── statements ───────────────────────────────────────────────────────
 
-    fn check_block(mut self, block: Node): string {
+    fn check_block(mut self, block: Node, value_used: bool): string {
         self.enter_scope()
         let mut value = "unit"
+        let mut index = 0
         for stmt in block.children {
             if self.error != "" {
                 break
             }
-            value = self.check_statement(stmt)
+            value = self.check_statement(
+                stmt,
+                value_used and index == block.children.len - 1,
+            )
+            index = index + 1
         }
         self.leave_scope()
         return value
     }
 
-    fn check_statement(mut self, stmt: Node): string {
+    fn check_statement(mut self, stmt: Node, value_used: bool): string {
         if stmt.kind == "Let" {
             self.check_let(stmt)
             return "unit"
@@ -2544,7 +2698,15 @@ impl Checker {
             if stmt.children.len == 0 {
                 return "unit"
             }
-            return self.check_expr(stmt.children[0])
+            let expr = stmt.children[0]
+            if !value_used and expr.kind == "Match" {
+                // A statement-position `match` may mix arm types (one arm
+                // prints, another yields a value); only a value-position
+                // match needs a common type.
+                self.check_match_arms(expr, false)
+                return "unit"
+            }
+            return self.check_expr(expr)
         }
         if stmt.kind == "Return" {
             self.check_return(stmt)
@@ -2650,7 +2812,7 @@ impl Checker {
             return
         }
         if stmt.children.len > 1 {
-            self.check_block(stmt.children[1])
+            self.check_block(stmt.children[1], false)
         }
     }
 
@@ -2668,7 +2830,7 @@ impl Checker {
             self.enter_scope()
             self.bind(stmt.value, "unknown")
             if stmt.children.len > 1 {
-                self.check_block(stmt.children[1])
+                self.check_block(stmt.children[1], false)
             }
             self.leave_scope()
             return
@@ -2694,7 +2856,7 @@ impl Checker {
             self.bind(stmt.value, self.list_element(iterable))
         }
         if stmt.children.len > 1 {
-            self.check_block(stmt.children[1])
+            self.check_block(stmt.children[1], false)
         }
         self.leave_scope()
     }
@@ -2782,7 +2944,7 @@ impl Checker {
             return self.check_list(node)
         }
         if node.kind == "Block" {
-            return self.check_block(node)
+            return self.check_block(node, true)
         }
         if node.kind == "Assign" {
             if node.children.len < 2 {
@@ -2803,6 +2965,21 @@ impl Checker {
             }
             self.complete = false
             return "unknown"
+        }
+        if node.kind == "Is" {
+            if node.children.len < 2 {
+                self.complete = false
+                return "bool"
+            }
+            let left = self.check_expr(node.children[0])
+            let right = self.type_of(node.children[1])
+            if self.error != "" {
+                return "unknown"
+            }
+            if left == "unknown" or right == "unknown" {
+                self.complete = false
+            }
+            return "bool"
         }
         if node.kind == "Closure" or node.kind == "ArrowClosure" {
             return self.check_closure(node)
@@ -3784,8 +3961,8 @@ impl Checker {
             return "unknown"
         }
         let mut narrow_name = ""
-        let mut narrow_ty = ""
-        let mut narrow_else = false
+        let mut then_narrow = ""
+        let mut else_narrow = ""
         let condition = node.children[0]
         if condition.kind == "Binary" and condition.children.len == 2
             and (condition.value == "!=" or condition.value == "==")
@@ -3808,38 +3985,58 @@ impl Checker {
                 let ty = self.lookup(tested.value)
                 if self.is_optional(ty) {
                     narrow_name = tested.value
-                    narrow_ty = self.optional_inner(ty)
-                    narrow_else = condition.value == "=="
+                    let inner = self.optional_inner(ty)
+                    if condition.value == "==" {
+                        else_narrow = inner
+                    } else {
+                        then_narrow = inner
+                    }
+                }
+            }
+        } else if condition.kind == "Is" and condition.children.len >= 2
+            and condition.children[0].kind == "Name"
+        {
+            let name = condition.children[0].value
+            let current = self.lookup(name)
+            let tested = self.type_of(condition.children[1])
+            if self.error == "" and tested != "unknown" {
+                narrow_name = name
+                if condition.value == "is not" {
+                    then_narrow = self.without_union_member(current, tested)
+                    else_narrow = tested
+                } else {
+                    then_narrow = tested
+                    else_narrow = self.without_union_member(current, tested)
                 }
             }
         }
-        let then_ty = if narrow_name != "" and !narrow_else {
+        let then_ty = if narrow_name != "" and then_narrow != "" {
             self.enter_scope()
-            self.bind(narrow_name, narrow_ty)
-            let ty = self.check_block(node.children[1])
+            self.bind(narrow_name, then_narrow)
+            let ty = self.check_block(node.children[1], true)
             self.leave_scope()
             ty
         } else {
-            self.check_block(node.children[1])
+            self.check_block(node.children[1], true)
         }
         if node.children.len < 3 {
             return "unit"
         }
         let else_node = node.children[2]
-        let else_ty = if narrow_name != "" and narrow_else {
+        let else_ty = if narrow_name != "" and else_narrow != "" {
             self.enter_scope()
-            self.bind(narrow_name, narrow_ty)
+            self.bind(narrow_name, else_narrow)
             let ty = if else_node.kind == "If" {
                 self.check_expr(else_node)
             } else {
-                self.check_block(else_node)
+                self.check_block(else_node, true)
             }
             self.leave_scope()
             ty
         } else if else_node.kind == "If" {
             self.check_expr(else_node)
         } else {
-            self.check_block(else_node)
+            self.check_block(else_node, true)
         }
         return self.unify(node, then_ty, else_ty)
     }
@@ -3862,6 +4059,10 @@ impl Checker {
     }
 
     fn check_match(mut self, node: Node): string {
+        return self.check_match_arms(node, true)
+    }
+
+    fn check_match_arms(mut self, node: Node, unify_arms: bool): string {
         if node.children.len == 0 {
             return "unit"
         }
@@ -3902,7 +4103,7 @@ impl Checker {
             }
             let body = arm.children[arm.children.len - 1]
             let arm_ty = if body.kind == "Block" {
-                self.check_block(body)
+                self.check_block(body, true)
             } else {
                 self.check_expr(body)
             }
@@ -3913,7 +4114,7 @@ impl Checker {
             if first {
                 result = arm_ty
                 first = false
-            } else {
+            } else if unify_arms {
                 result = self.unify(node, result, arm_ty)
             }
             i = i + 1
@@ -4220,6 +4421,34 @@ impl Checker {
         return -1
     }
 
+    /// Merge two list-element types. A heterogeneous literal is valid and
+    /// infers `unknown` (matching stage 0); `null` widens the other side to
+    /// optional.
+    fn merge_element(mut self, node: Node, current: string, next: string): string {
+        if current == "unknown" {
+            return next
+        }
+        if next == "unknown" {
+            return current
+        }
+        if current == "null" {
+            if self.is_optional(next) {
+                return next
+            }
+            return next + "?"
+        }
+        if next == "null" {
+            if self.is_optional(current) {
+                return current
+            }
+            return current + "?"
+        }
+        if self.assignable(current, next) or self.assignable(next, current) {
+            return self.unify(node, current, next)
+        }
+        return "unknown"
+    }
+
     fn check_list(mut self, node: Node): string {
         let mut elem = ""
         for child in node.children {
@@ -4233,7 +4462,7 @@ impl Checker {
                     if elem == "" {
                         elem = item
                     } else {
-                        elem = self.unify(child, elem, item)
+                        elem = self.merge_element(child, elem, item)
                     }
                 } else if inner == "unknown" {
                     self.complete = false
@@ -4256,7 +4485,7 @@ impl Checker {
                 if elem == "" {
                     elem = ty
                 } else {
-                    elem = self.unify(child, elem, ty)
+                    elem = self.merge_element(child, elem, ty)
                 }
             }
         }

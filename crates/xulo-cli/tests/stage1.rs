@@ -265,6 +265,7 @@ fn stage1_check_agrees_with_stage0_on_the_corpus() {
         ("xuloc/corpus/accept/results.xulo", true),
         ("xuloc/corpus/accept/collections.xulo", true),
         ("xuloc/corpus/accept/closures.xulo", true),
+        ("xuloc/corpus/accept/unions.xulo", true),
         ("xuloc/corpus/reject/undefined_name.xulo", false),
         ("xuloc/corpus/reject/type_mismatch.xulo", false),
         ("xuloc/corpus/reject/arity.xulo", false),
@@ -276,6 +277,7 @@ fn stage1_check_agrees_with_stage0_on_the_corpus() {
         ("xuloc/corpus/reject/alias_mismatch.xulo", false),
         ("xuloc/corpus/reject/list_element_mismatch.xulo", false),
         ("xuloc/corpus/reject/fn_value_arity.xulo", false),
+        ("xuloc/corpus/reject/union_mismatch.xulo", false),
     ];
     for (relative, accept) in cases {
         let file = root.join(relative);
@@ -446,6 +448,27 @@ fn stage1_check_accepts_function_values() {
     for relative in [
         "examples/functions/closures_hof.xulo",
         "examples/std/regex.xulo",
+    ] {
+        let out = run_stage1("check", &root.join(relative));
+        assert_success(&out, &format!("stage 1 check of {relative}"));
+        assert!(
+            stdout_of(&out).contains("no errors"),
+            "{relative} should check cleanly:\n{}",
+            stdout_of(&out)
+        );
+    }
+}
+
+/// Union types and `is` narrowing are modeled, and heterogeneous literals
+/// infer `unknown` instead of failing.
+#[test]
+fn stage1_check_accepts_unions_and_narrowing() {
+    let root = repo_root();
+    for relative in [
+        "examples/types/aliases.xulo",
+        "examples/std/fmt.xulo",
+        "examples/std/json.xulo",
+        "examples/std/io_extra.xulo",
     ] {
         let out = run_stage1("check", &root.join(relative));
         assert_success(&out, &format!("stage 1 check of {relative}"));

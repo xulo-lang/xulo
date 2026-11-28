@@ -56,6 +56,13 @@ values, and is left to a future standard-library `std/ui` module.
 - Stage 1's checker now honors default parameters: a call may omit trailing
   defaulted arguments, so `examples/functions/params.xulo` reports
   `no errors`.
+- Stage 1's checker now models union types (`A | B`), `is`/`is not` tests and
+  branch narrowing, heterogeneous literals as `List<unknown>`, and external
+  glob imports (`use std::fmt::*`) as opaque. A statement-position `match` may
+  mix arm types. `examples/types/aliases`, `std/fmt`, `std/json`, and
+  `std/io_extra` now report `no errors`; the example check baseline drops from
+  14 to 10. `xuloc/corpus/accept/unions.xulo` and
+  `reject/union_mismatch.xulo` pin the behavior.
 - Stage 1's checker now models function types (`fn(A, B)->R`), function
   literals, and arrow closures: parameters and the declared return type are
   checked, captures see the enclosing scope, and values can be called through

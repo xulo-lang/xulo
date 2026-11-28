@@ -135,6 +135,7 @@ fn checker_accepts_the_bootstrap_corpus() {
         "xuloc/corpus/accept/results.xulo",
         "xuloc/corpus/accept/collections.xulo",
         "xuloc/corpus/accept/closures.xulo",
+        "xuloc/corpus/accept/unions.xulo",
     ]
     for path in files {
         match std::fs::read(path) {
